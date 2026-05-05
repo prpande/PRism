@@ -19,7 +19,7 @@ public class StaticFilesAndFallbackTests
         // (file served) or a different non-404 status, NOT a generic API-routing 404.
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateClient();
-        var resp = await client.GetAsync(new Uri("/", UriKind.Relative));
+        _ = await client.GetAsync(new Uri("/", UriKind.Relative));
 
         // If wwwroot/index.html exists, we get 200. If wwwroot is empty (no frontend build yet),
         // we get 404 BUT it's the static-files / fallback 404, not the routing 404 — distinguishable

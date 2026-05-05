@@ -44,4 +44,24 @@ public class OriginCheckMiddlewareTests : IClassFixture<PRismWebApplicationFacto
         var resp = await client.GetAsync(new Uri("/api/health", UriKind.Relative));
         resp.IsSuccessStatusCode.Should().BeTrue();
     }
+
+    [Theory]
+    [InlineData("http://localhost:5173")]
+    [InlineData("http://127.0.0.1:5173")]
+    [InlineData("http://[::1]:5173")]
+    public async Task POST_with_loopback_origin_on_different_port_is_allowed(string origin)
+    {
+        // The Vite dev server runs on :5173 and proxies /api to the backend on :5180.
+        // The browser sends Origin=http://localhost:5173, which is loopback but a different
+        // port than the backend host. For a localhost-only desktop app this is legitimate
+        // same-machine traffic, not a CSRF vector — accept it.
+        var client = _factory.CreateClient();
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = new StringContent("{\"theme\":\"dark\"}", System.Text.Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("Origin", origin);
+        var resp = await client.SendAsync(req);
+        resp.StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
+    }
 }

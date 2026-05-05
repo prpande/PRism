@@ -80,4 +80,18 @@ public class GitHubReviewService_ValidateCredentialsAsyncTests
         result.Ok.Should().BeFalse();
         result.Error.Should().Be(AuthValidationError.NetworkError);
     }
+
+    [Fact]
+    public async Task Returns_server_error_when_200_body_is_not_json()
+    {
+        // GitHub-side intermediaries (proxies, captive portals, GHES misconfig) can return
+        // 200 with HTML or otherwise malformed body. JsonDocument.Parse must not escape as 500.
+        var headers = new Dictionary<string, string> { ["X-OAuth-Scopes"] = "repo, read:user, read:org" };
+        var handler = FakeHttpMessageHandler.Returns(HttpStatusCode.OK, "<html>captive portal</html>", headers);
+        var sut = BuildSut(handler);
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeFalse();
+        result.Error.Should().Be(AuthValidationError.ServerError);
+        result.ErrorDetail.Should().NotBeNullOrEmpty();
+    }
 }

@@ -24,7 +24,9 @@ internal sealed class OriginCheckMiddleware
 
         var origin = ctx.Request.Headers["Origin"].FirstOrDefault();
         var expected = $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}";
-        if (string.IsNullOrEmpty(origin) || string.Equals(origin, expected, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrEmpty(origin)
+            || string.Equals(origin, expected, StringComparison.OrdinalIgnoreCase)
+            || (IsLoopback(origin) && IsLoopback(ctx.Request.Host.Host)))
         {
             await _next(ctx).ConfigureAwait(false);
             return;
@@ -32,5 +34,21 @@ internal sealed class OriginCheckMiddleware
 
         ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
         await ctx.Response.WriteAsync("Cross-origin request rejected.").ConfigureAwait(false);
+    }
+
+    // The Vite dev server proxies /api on its own port (5173) to the backend (5180); the browser
+    // sends Origin=http://localhost:5173 which is loopback but a different port. For a
+    // localhost-only desktop app, same-machine traffic across loopback ports is legitimate, not
+    // a CSRF vector. Cross-origin attackers cannot bind localhost on a different port from a
+    // remote browser, so this relaxation does not weaken the CSRF guarantee.
+    private static bool IsLoopback(string hostOrOrigin)
+    {
+        if (string.IsNullOrEmpty(hostOrOrigin)) return false;
+        var host = hostOrOrigin;
+        if (Uri.TryCreate(hostOrOrigin, UriKind.Absolute, out var u)) host = u.Host;
+        return string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || host == "127.0.0.1"
+            || host == "[::1]"
+            || host == "::1";
     }
 }

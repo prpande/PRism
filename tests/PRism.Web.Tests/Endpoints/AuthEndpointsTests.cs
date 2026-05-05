@@ -71,6 +71,36 @@ public class AuthEndpointsTests
         body.Login.Should().Be("octocat");
     }
 
+    [Fact]
+    public async Task Connect_with_malformed_json_body_returns_400()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(System.UriPartial.Authority);
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/auth/connect", UriKind.Relative))
+        {
+            Content = new StringContent("not json", System.Text.Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("Origin", origin);
+        var resp = await client.SendAsync(req);
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task HostChangeResolution_with_malformed_json_body_returns_400()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(System.UriPartial.Authority);
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/auth/host-change-resolution", UriKind.Relative))
+        {
+            Content = new StringContent("{ broken", System.Text.Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("Origin", origin);
+        var resp = await client.SendAsync(req);
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
+    }
+
     public sealed record AuthStateResponse(bool HasToken, string Host, HostMismatchInfo? HostMismatch);
     public sealed record HostMismatchInfo(string Old, string New);
     public sealed record ConnectResponse(bool Ok, string? Login, string? Host, string? Error, string? Detail);

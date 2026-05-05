@@ -29,7 +29,16 @@ internal static class AuthEndpoints
 
         app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, CancellationToken ct) =>
         {
-            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
+            JsonDocument doc;
+            try
+            {
+                doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { ok = false, error = "invalid-json" });
+            }
+            using var _doc = doc;
             var pat = doc.RootElement.TryGetProperty("pat", out var p) ? p.GetString() : null;
             if (string.IsNullOrWhiteSpace(pat))
                 return Results.BadRequest(new { ok = false, error = "pat-required" });
@@ -53,7 +62,16 @@ internal static class AuthEndpoints
 
         app.MapPost("/api/auth/host-change-resolution", async (HttpContext ctx, IAppStateStore stateStore, IConfigStore config, IHostApplicationLifetime lifetime, CancellationToken ct) =>
         {
-            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
+            JsonDocument doc;
+            try
+            {
+                doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "invalid-json" });
+            }
+            using var _doc = doc;
             var resolution = doc.RootElement.TryGetProperty("resolution", out var r) ? r.GetString() : null;
 
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);

@@ -77,8 +77,19 @@ public sealed class GitHubReviewService : IReviewService
                 $"missing scopes: {string.Join(", ", missing)}");
 
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        using var doc = JsonDocument.Parse(body);
-        var login = doc.RootElement.TryGetProperty("login", out var l) ? l.GetString() : null;
+        string? login;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            login = doc.RootElement.TryGetProperty("login", out var l) ? l.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            // GitHub-side intermediaries (proxy, captive portal, GHES misconfig) can return
+            // 200 with HTML or otherwise malformed JSON. Surface as ServerError, not 500.
+            return new AuthValidationResult(false, null, scopes, AuthValidationError.ServerError,
+                "GitHub returned an unparseable response body.");
+        }
 
         return new AuthValidationResult(true, login, scopes, AuthValidationError.None, null);
     }
