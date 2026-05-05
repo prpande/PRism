@@ -47,6 +47,23 @@ These principles override any specific feature decision. When a future contribut
 6. **GitHub-coupled, internally clean.** PoC commits to GitHub as the only backend (github.com cloud and GitHub Enterprise Server, both supported via a configurable host). There is no multi-provider abstraction — no `IReviewProvider` interface that promises pluggability, no Azure DevOps / GitLab / Bitbucket adapters in the roadmap, no extensibility bags for provider-specific verdicts. GitHub-specific code lives in its own project (`PRism.GitHub`) for clean dependencies and testability, but the project is *the* implementation, not "the GitHub adapter." If a non-GitHub backend is ever wanted, it would be a v2+ refactor, not a feature of this architecture.
 7. **Capability-flag-gated AI surfaces.** Every AI slot in the UI is hidden in PoC via a single `/api/capabilities` check. v2 lights them up by registering implementations and flipping flags.
 
+## Development process
+
+**All production code is written test-first, red → green → refactor.** This is a project-wide commitment, not a per-slice judgment call.
+
+- **Red**: write a failing test that proves the new behavior is needed; confirm it fails for the expected reason.
+- **Green**: write the simplest implementation that makes the test pass; don't generalize or anticipate.
+- **Refactor**: clean up while tests stay green.
+
+The DoD's "Tests (automated)" subsection below enumerates the *artifacts* that must exist by the end of the PoC (submit pipeline, reconciliation algorithm, state migration). TDD is the *process* by which every test in the codebase — including those the DoD does not enumerate — comes into existence. Tests are the spec at the implementation level: if a behavior isn't tested, it isn't required; if production code lands without a test that fails before it, the work is incomplete.
+
+Practical implications:
+- A diff that introduces production code without a paired test is a process violation. The reviewer asks why.
+- Bug fixes start with a regression test that fails on `main`, then the fix lands.
+- Behavior-preserving refactors don't require new tests (the existing suite is the safety net), but if the area being refactored isn't covered, write tests first that pin current behavior, then refactor.
+- "I'll add tests later" is not a tracked work item — it indicates the original work was never finished.
+- Mock external boundaries only (GitHub HTTP, OS keychain). Don't mock the system under test.
+
 ## The PoC demo (litmus test)
 
 If the PoC can do exactly the following end-to-end, it is done:
