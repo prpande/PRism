@@ -11,7 +11,7 @@ public sealed class PlaceholderInboxItemEnricher : IInboxItemEnricher
     {
         var result = items
             .Select(i => new InboxItemEnrichment(
-                $"{i.Reference.Owner}/{i.Reference.Repo}#{i.Reference.Number}",
+                i.Reference.PrId,
                 PlaceholderData.SummaryCategory,
                 PlaceholderData.SummaryBody))
             .ToArray();
