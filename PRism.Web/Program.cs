@@ -35,15 +35,30 @@ builder.Services.AddSingleton<IReviewService>(sp =>
     return new GitHubReviewService(http, () => tokens.ReadAsync(CancellationToken.None), config.Current.Github.Host);
 });
 
+builder.Services.AddProblemDetails(o =>
+{
+    o.CustomizeProblemDetails = ctx =>
+    {
+        var requestId = ctx.HttpContext.Items["RequestId"] as string;
+        if (!string.IsNullOrEmpty(requestId))
+            ctx.ProblemDetails.Extensions["traceId"] = requestId;
+    };
+});
+
 var app = builder.Build();
 
 app.UseMiddleware<RequestIdMiddleware>();
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 app.UseMiddleware<OriginCheckMiddleware>();
 
 app.MapHealth(dataDir: dataDir, port: 5180);
 app.MapCapabilities();
 app.MapPreferences();
 app.MapAuth();
+
+if (builder.Environment.IsEnvironment("Test"))
+    app.MapGet("/test/boom", () => { throw new InvalidOperationException("test boom"); });
 
 app.Run();
 
