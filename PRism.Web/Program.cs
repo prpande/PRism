@@ -1,9 +1,13 @@
 using System.Diagnostics.CodeAnalysis;
+using PRism.AI.Contracts.Noop;
+using PRism.AI.Contracts.Seams;
+using PRism.AI.Placeholder;
 using PRism.Core;
 using PRism.Core.Ai;
 using PRism.Core.Auth;
 using PRism.Core.Config;
 using PRism.Core.Hosting;
+using PRism.Core.Json;
 using PRism.Core.State;
 using PRism.GitHub;
 using PRism.Web.Endpoints;
@@ -35,6 +39,63 @@ builder.Services.AddSingleton<IReviewService>(sp =>
     return new GitHubReviewService(http, () => tokens.ReadAsync(CancellationToken.None), config.Current.Github.Host);
 });
 
+// AI seams: register both Noop and Placeholder, plus the selector.
+builder.Services.AddSingleton<NoopPrSummarizer>();
+builder.Services.AddSingleton<NoopFileFocusRanker>();
+builder.Services.AddSingleton<NoopHunkAnnotator>();
+builder.Services.AddSingleton<NoopPreSubmitValidator>();
+builder.Services.AddSingleton<NoopComposerAssistant>();
+builder.Services.AddSingleton<NoopDraftSuggester>();
+builder.Services.AddSingleton<NoopDraftReconciliator>();
+builder.Services.AddSingleton<NoopInboxEnricher>();
+builder.Services.AddSingleton<NoopInboxRanker>();
+
+builder.Services.AddSingleton<PlaceholderPrSummarizer>();
+builder.Services.AddSingleton<PlaceholderFileFocusRanker>();
+builder.Services.AddSingleton<PlaceholderHunkAnnotator>();
+builder.Services.AddSingleton<PlaceholderPreSubmitValidator>();
+builder.Services.AddSingleton<PlaceholderComposerAssistant>();
+builder.Services.AddSingleton<PlaceholderDraftSuggester>();
+builder.Services.AddSingleton<PlaceholderDraftReconciliator>();
+builder.Services.AddSingleton<PlaceholderInboxEnricher>();
+builder.Services.AddSingleton<PlaceholderInboxRanker>();
+
+builder.Services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
+    sp.GetRequiredService<AiPreviewState>(),
+    new Dictionary<Type, object>
+    {
+        [typeof(IPrSummarizer)] = sp.GetRequiredService<NoopPrSummarizer>(),
+        [typeof(IFileFocusRanker)] = sp.GetRequiredService<NoopFileFocusRanker>(),
+        [typeof(IHunkAnnotator)] = sp.GetRequiredService<NoopHunkAnnotator>(),
+        [typeof(IPreSubmitValidator)] = sp.GetRequiredService<NoopPreSubmitValidator>(),
+        [typeof(IComposerAssistant)] = sp.GetRequiredService<NoopComposerAssistant>(),
+        [typeof(IDraftSuggester)] = sp.GetRequiredService<NoopDraftSuggester>(),
+        [typeof(IDraftReconciliator)] = sp.GetRequiredService<NoopDraftReconciliator>(),
+        [typeof(IInboxEnricher)] = sp.GetRequiredService<NoopInboxEnricher>(),
+        [typeof(IInboxRanker)] = sp.GetRequiredService<NoopInboxRanker>(),
+    },
+    new Dictionary<Type, object>
+    {
+        [typeof(IPrSummarizer)] = sp.GetRequiredService<PlaceholderPrSummarizer>(),
+        [typeof(IFileFocusRanker)] = sp.GetRequiredService<PlaceholderFileFocusRanker>(),
+        [typeof(IHunkAnnotator)] = sp.GetRequiredService<PlaceholderHunkAnnotator>(),
+        [typeof(IPreSubmitValidator)] = sp.GetRequiredService<PlaceholderPreSubmitValidator>(),
+        [typeof(IComposerAssistant)] = sp.GetRequiredService<PlaceholderComposerAssistant>(),
+        [typeof(IDraftSuggester)] = sp.GetRequiredService<PlaceholderDraftSuggester>(),
+        [typeof(IDraftReconciliator)] = sp.GetRequiredService<PlaceholderDraftReconciliator>(),
+        [typeof(IInboxEnricher)] = sp.GetRequiredService<PlaceholderInboxEnricher>(),
+        [typeof(IInboxRanker)] = sp.GetRequiredService<PlaceholderInboxRanker>(),
+    }));
+
+// JSON options: align HTTP serialization with the camelCase Api policy.
+builder.Services.ConfigureHttpJsonOptions(o =>
+{
+    var api = JsonSerializerOptionsFactory.Api;
+    o.SerializerOptions.PropertyNamingPolicy = api.PropertyNamingPolicy;
+    o.SerializerOptions.DictionaryKeyPolicy = api.DictionaryKeyPolicy;
+    foreach (var c in api.Converters) o.SerializerOptions.Converters.Add(c);
+});
+
 builder.Services.AddProblemDetails(o =>
 {
     o.CustomizeProblemDetails = ctx =>
@@ -46,6 +107,34 @@ builder.Services.AddProblemDetails(o =>
 });
 
 var app = builder.Build();
+
+// Production-only: lockfile + port + browser launch.
+// In Test environment, the WebApplicationFactory uses an in-memory test server,
+// so port binding, lockfile acquisition, and browser launching must be skipped.
+if (!app.Environment.IsEnvironment("Test"))
+{
+    var binaryPath = Environment.ProcessPath ?? "PRism";
+    var lockHandle = LockfileManager.Acquire(dataDir, binaryPath, Environment.ProcessId);
+    app.Lifetime.ApplicationStopping.Register(() => lockHandle.Dispose());
+
+    // Port selection (5180-5199 in production; tests use the WebApplicationFactory's TestServer).
+    var port = PortSelector.SelectFirstAvailable();
+    app.Urls.Clear();
+    app.Urls.Add($"http://localhost:{port}");
+
+    // Browser launch on application started, unless --no-browser was passed (case-insensitive).
+    var noBrowser = args.Contains("--no-browser", StringComparer.OrdinalIgnoreCase);
+    if (!noBrowser)
+    {
+        app.Lifetime.ApplicationStarted.Register(() =>
+        {
+            var launcher = new BrowserLauncher(new SystemProcessRunner(), BrowserLauncher.CurrentPlatform());
+            launcher.Launch($"http://localhost:{port}");
+        });
+    }
+
+    Console.WriteLine($"PRism listening on http://localhost:{port} (dataDir: {dataDir})");
+}
 
 app.UseMiddleware<RequestIdMiddleware>();
 app.UseExceptionHandler();
