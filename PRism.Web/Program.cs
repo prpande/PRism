@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Hosting;
 using PRism.AI.Contracts.Noop;
 using PRism.AI.Contracts.Seams;
 using PRism.AI.Placeholder;
@@ -11,6 +12,7 @@ using PRism.Core.Hosting;
 using PRism.Core.Inbox;
 using PRism.Core.Json;
 using PRism.Core.State;
+using PRism.Core.Time;
 using PRism.GitHub;
 using PRism.GitHub.Inbox;
 using PRism.Web.Endpoints;
@@ -140,6 +142,7 @@ builder.Services.AddSingleton<ICiFailingDetector>(sp =>
 });
 
 builder.Services.AddSingleton<IViewerLoginProvider, ViewerLoginProvider>();
+builder.Services.AddSingleton<IClock, SystemClock>();
 
 builder.Services.AddSingleton<IInboxRefreshOrchestrator>(sp =>
 {
@@ -156,6 +159,14 @@ builder.Services.AddSingleton<IInboxRefreshOrchestrator>(sp =>
         sp.GetRequiredService<IAppStateStore>(),
         loginCache.Get);
 });
+
+builder.Services.AddHostedService<InboxPoller>(sp =>
+    new InboxPoller(
+        sp.GetRequiredService<IInboxRefreshOrchestrator>(),
+        sp.GetRequiredService<InboxSubscriberCount>(),
+        sp.GetRequiredService<IConfigStore>(),
+        sp.GetRequiredService<IClock>(),
+        sp.GetRequiredService<ILogger<InboxPoller>>()));
 
 // JSON options: align HTTP serialization with the camelCase Api policy.
 builder.Services.ConfigureHttpJsonOptions(o =>
