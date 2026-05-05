@@ -13,4 +13,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="PRism.Web.Tests" />
+  </ItemGroup>
+
 </Project>
