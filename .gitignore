@@ -74,6 +74,9 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/.vite/
 
+# Frontend build output (Vite emits into PRism.Web/wwwroot)
+PRism.Web/wwwroot/
+
 # OS
 .DS_Store
 Thumbs.db
