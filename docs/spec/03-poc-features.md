@@ -139,6 +139,16 @@ The per-section costs add up in two places PoC must track explicitly:
 - `IInboxItemEnricher` could attach summaries / category badges to rows. PoC: no enrichments.
 - Both flagged behind `ai.inboxRanking` and `ai.inboxEnrichment` capabilities; rendered with no-op stubs.
 
+### Activity rail (right-side rail in the inbox grid)
+
+The inbox grid has a right-side "Activity" rail (per [`design/handoff/screens.jsx`](../../design/handoff/screens.jsx) `ActivityFeed`) showing recent cross-PR activity ("amelia.cho pushed iter 3 to #1842", "ci-bot marked CI failing on #1827", etc.) and a "Watching" sub-list of repos.
+
+**The rail is deliberately NOT backed by an AI seam in the PoC.** It renders as a hand-canned static React component with items lifted verbatim from the design handoff, gated on the existing `ui.aiPreview` flag (no per-rail `ai.*` capability). This is a deliberate exception to the "every AI surface in the inbox is backed by a `Noop*` / `Placeholder*` seam pair" pattern. See [`04-ai-seam-architecture.md`](04-ai-seam-architecture.md) § "What's NOT seamed (deliberate deferrals)" for the rationale and the v2 retrofit posture.
+
+When `ui.aiPreview` is `false`, the rail is not rendered (parent grid collapses to single-column). When `true`, the rail renders the canned data — same flag-flip semantics as the seam-backed AI surfaces, even though no seam is involved.
+
+The rail is also hidden below the 1180px viewport breakpoint per the design handoff's responsive rules (independent of the `aiPreview` flag).
+
 ---
 
 ## 3. PR detail view
