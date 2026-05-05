@@ -151,6 +151,9 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseMiddleware<OriginCheckMiddleware>();
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.MapHealth(dataDir: dataDir, port: port);
 app.MapCapabilities();
 app.MapPreferences();
@@ -158,6 +161,10 @@ app.MapAuth();
 
 if (builder.Environment.IsEnvironment("Test"))
     app.MapGet("/test/boom", () => { throw new InvalidOperationException("test boom"); });
+
+// SPA fallback for client-side routes only. Unknown /api/* paths still return 404 so API
+// consumers don't get HTML back when they hit a bad endpoint.
+app.MapFallbackToFile("{*path:regex(^(?!api/).*$)}", "index.html");
 
 app.Run();
 
