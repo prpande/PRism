@@ -1,0 +1,42 @@
+.header {
+  display: flex;
+  align-items: center;
+  height: var(--header-h, 56px);
+  padding: 0 var(--s-6, 24px);
+  gap: var(--s-4, 16px);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-1);
+}
+.tabs {
+  display: flex;
+  gap: var(--s-3, 12px);
+  align-items: center;
+}
+.tab {
+  padding: 6px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text-2);
+}
+.tabActive {
+  composes: tab;
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-weight: 500;
+}
+.spacer {
+  flex: 1;
+}
+.search {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-1);
+  background: var(--surface-2);
+  color: var(--text-2);
+  width: 280px;
+}
+.search:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
