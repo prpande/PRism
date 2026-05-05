@@ -55,6 +55,7 @@ public class InboxEndpointsTests
         resp.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
         var body = await resp.Content.ReadAsStringAsync();
         body.Should().Contain("/inbox/initializing");
+        fakeOrch.RefreshCalls.Should().Be(1, "the GET handler must kick a refresh once on first call before timing out");
     }
 
     [Fact]

@@ -574,7 +574,7 @@ A single context provider at `InboxPage` level keeps the tree shallow; subcompon
 | `pulls/{n}/reviews` 404 (per-PR) | Backend | PR silently filtered from awaiting-author section (token doesn't cover repo). | Soft footer covers it. |
 | `pulls/{n}/check-runs` 404 (per-PR) | Backend | Same — PR filtered from CI-failing. | Same. |
 | Network exception during refresh | Backend | Skip this tick; log; preserve prior snapshot. | Frontend continues serving prior snapshot. |
-| `GET /api/inbox` before first refresh completes | Backend | Block up to 5s on a TaskCompletionSource; if not ready, `503` with `ProblemDetails { type: /inbox/initializing }`. | Frontend retries with exponential backoff; after 3 attempts inline error renders. |
+| `GET /api/inbox` before first refresh completes | Backend | Block up to 10s on a TaskCompletionSource; if not ready, `503` with `ProblemDetails { type: /inbox/initializing }`. | Frontend retries with exponential backoff; after 3 attempts inline error renders. |
 | `POST /api/inbox/parse-pr-url` malformed JSON | Backend | `400 { error: "invalid-json" }`. | Frontend renders generic input error. |
 | `POST /api/inbox/parse-pr-url` non-string `url` | Backend | `400 { error: "url-required" }`. | Same. |
 | SSE: client disconnect | Backend | Decrement subscriber count; close `HttpResponse`. | n/a |

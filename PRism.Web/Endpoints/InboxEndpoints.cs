@@ -26,16 +26,17 @@ internal static class InboxEndpoints
         {
             if (orch.Current == null)
             {
+                // Spec § 5.2 deadlock-avoidance: kick a one-shot refresh on first call so
+                // we are not stuck waiting for an SSE connect that may not have raced ahead.
+                // CancellationToken.None decouples the refresh from the request CT — caller
+                // cancellation should not abort the in-flight refresh that future requests
+                // will benefit from.
+                _ = orch.RefreshAsync(CancellationToken.None);
                 if (!await orch.WaitForFirstSnapshotAsync(TimeSpan.FromSeconds(10), ct).ConfigureAwait(false))
-                {
-                    // Kick on-demand refresh (spec § 5.2 deadlock-avoidance).
-                    _ = orch.RefreshAsync(CancellationToken.None);
-                    if (!await orch.WaitForFirstSnapshotAsync(TimeSpan.FromSeconds(10), ct).ConfigureAwait(false))
-                        return Results.Problem(
-                            title: "Inbox initializing",
-                            statusCode: 503,
-                            type: "/inbox/initializing");
-                }
+                    return Results.Problem(
+                        title: "Inbox initializing",
+                        statusCode: 503,
+                        type: "/inbox/initializing");
             }
             var snap = orch.Current!;
             var sections = snap.Sections
