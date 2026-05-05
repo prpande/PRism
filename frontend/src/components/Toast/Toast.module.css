@@ -1,0 +1,17 @@
+.toast {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  margin-bottom: 8px;
+}
+.info {
+  border-color: var(--info, var(--border-1));
+}
+.error {
+  border-color: var(--danger, var(--border-1));
+}

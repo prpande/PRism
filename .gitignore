@@ -55,3 +55,31 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Test results / coverage
+[Tt]est[Rr]esult*/
+*.trx
+coverage/
+
+# Tooling
+.vs/
+.idea/
+.vscode/
+*.swp
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.vite/
+
+# Frontend build output (Vite emits into PRism.Web/wwwroot)
+PRism.Web/wwwroot/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pr-autopilot ephemeral state (not versioned)
+.pr-autopilot/

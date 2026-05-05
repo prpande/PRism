@@ -1,0 +1,23 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4, 16px);
+  max-width: 520px;
+  padding: var(--s-10, 40px);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-4, 12px);
+}
+.scopes {
+  display: flex;
+  gap: var(--s-2, 8px);
+}
+.error {
+  color: var(--danger-fg, #b00);
+  background: var(--danger-soft, #fee);
+  padding: var(--s-3, 12px);
+  border-radius: 6px;
+}
+.continue {
+  margin-top: var(--s-3, 12px);
+}

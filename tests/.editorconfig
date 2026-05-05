@@ -1,0 +1,18 @@
+[*.cs]
+# Test method names use underscores (xUnit convention)
+dotnet_diagnostic.CA1707.severity = none
+
+# Test helpers and test classes are public for xUnit discovery and cross-test reuse
+dotnet_diagnostic.CA1515.severity = none
+
+# Nested test fixtures/payload types are an idiomatic xUnit pattern
+dotnet_diagnostic.CA1034.severity = none
+
+# Tests intentionally bind concrete impls to interface variables to verify seam contracts
+dotnet_diagnostic.CA1859.severity = none
+
+# Test fixtures hand off ownership of disposables (HttpClient, handlers) to the SUT
+dotnet_diagnostic.CA2000.severity = none
+
+# Inline expected-value arrays in assertions (e.g. BeEquivalentTo(new[] { ... })) read better than extracted fields
+dotnet_diagnostic.CA1861.severity = none
