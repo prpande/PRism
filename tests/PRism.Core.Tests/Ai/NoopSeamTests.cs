@@ -68,11 +68,12 @@ public class NoopSeamTests
     }
 
     [Fact]
-    public async Task NoopInboxEnricher_returns_null()
+    public async Task NoopInboxItemEnricher_returns_empty_array()
     {
-        IInboxEnricher s = new NoopInboxEnricher();
-        var result = await s.EnrichAsync(Ref, CancellationToken.None);
-        result.Should().BeNull();
+        IInboxItemEnricher s = new NoopInboxItemEnricher();
+        var input = new[] { new PrInboxItem(Ref, "Title", "author", "acme/api", DateTime.UtcNow) };
+        var result = await s.EnrichAsync(input, CancellationToken.None);
+        result.Should().BeEmpty();
     }
 
     [Fact]

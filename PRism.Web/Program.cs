@@ -47,7 +47,7 @@ builder.Services.AddSingleton<NoopPreSubmitValidator>();
 builder.Services.AddSingleton<NoopComposerAssistant>();
 builder.Services.AddSingleton<NoopDraftSuggester>();
 builder.Services.AddSingleton<NoopDraftReconciliator>();
-builder.Services.AddSingleton<NoopInboxEnricher>();
+builder.Services.AddSingleton<NoopInboxItemEnricher>();
 builder.Services.AddSingleton<NoopInboxRanker>();
 
 builder.Services.AddSingleton<PlaceholderPrSummarizer>();
@@ -57,7 +57,7 @@ builder.Services.AddSingleton<PlaceholderPreSubmitValidator>();
 builder.Services.AddSingleton<PlaceholderComposerAssistant>();
 builder.Services.AddSingleton<PlaceholderDraftSuggester>();
 builder.Services.AddSingleton<PlaceholderDraftReconciliator>();
-builder.Services.AddSingleton<PlaceholderInboxEnricher>();
+builder.Services.AddSingleton<PlaceholderInboxItemEnricher>();
 builder.Services.AddSingleton<PlaceholderInboxRanker>();
 
 builder.Services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
@@ -71,7 +71,7 @@ builder.Services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
         [typeof(IComposerAssistant)] = sp.GetRequiredService<NoopComposerAssistant>(),
         [typeof(IDraftSuggester)] = sp.GetRequiredService<NoopDraftSuggester>(),
         [typeof(IDraftReconciliator)] = sp.GetRequiredService<NoopDraftReconciliator>(),
-        [typeof(IInboxEnricher)] = sp.GetRequiredService<NoopInboxEnricher>(),
+        [typeof(IInboxItemEnricher)] = sp.GetRequiredService<NoopInboxItemEnricher>(),
         [typeof(IInboxRanker)] = sp.GetRequiredService<NoopInboxRanker>(),
     },
     new Dictionary<Type, object>
@@ -83,7 +83,7 @@ builder.Services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
         [typeof(IComposerAssistant)] = sp.GetRequiredService<PlaceholderComposerAssistant>(),
         [typeof(IDraftSuggester)] = sp.GetRequiredService<PlaceholderDraftSuggester>(),
         [typeof(IDraftReconciliator)] = sp.GetRequiredService<PlaceholderDraftReconciliator>(),
-        [typeof(IInboxEnricher)] = sp.GetRequiredService<PlaceholderInboxEnricher>(),
+        [typeof(IInboxItemEnricher)] = sp.GetRequiredService<PlaceholderInboxItemEnricher>(),
         [typeof(IInboxRanker)] = sp.GetRequiredService<PlaceholderInboxRanker>(),
     }));
 
