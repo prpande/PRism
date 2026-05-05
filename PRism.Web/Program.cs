@@ -5,8 +5,10 @@ var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
 app.UseMiddleware<RequestIdMiddleware>();
+app.UseMiddleware<OriginCheckMiddleware>();
 
 app.MapGet("/api/health", () => new { status = "ok" });
+app.MapPost("/api/preferences", () => Results.Ok(new { theme = "system", accent = "indigo", aiPreview = false }));
 
 app.Run();
 
