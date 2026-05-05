@@ -1,5 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace PRism.Core.Config;
 
+[SuppressMessage("Naming", "CA1724:Type names should not match namespaces",
+    Justification = "Conflict is with Microsoft.Identity.Client.AppConfig — an internal MSAL namespace not exposed at PRism boundaries; renaming PRism's AppConfig domain type is not warranted.")]
 public sealed record AppConfig(
     PollingConfig Polling,
     InboxConfig Inbox,
