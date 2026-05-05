@@ -112,13 +112,21 @@ var app = builder.Build();
 // In Test environment, the WebApplicationFactory uses an in-memory test server;
 // the reported port is a placeholder (5180) since TestServer handles binding.
 var isTest = app.Environment.IsEnvironment("Test");
-var port = isTest ? 5180 : PortSelector.SelectFirstAvailable();
+var explicitUrls = builder.Configuration["urls"];
+var port = isTest
+    ? 5180
+    : (!string.IsNullOrEmpty(explicitUrls)
+        ? ExtractPort(explicitUrls)
+        : PortSelector.SelectFirstAvailable());
 
 // Production-only: lockfile + URL binding + browser launch.
 if (!isTest)
 {
-    app.Urls.Clear();
-    app.Urls.Add($"http://localhost:{port}");
+    if (string.IsNullOrEmpty(explicitUrls))
+    {
+        app.Urls.Clear();
+        app.Urls.Add($"http://localhost:{port}");
+    }
 
     var binaryPath = Environment.ProcessPath ?? "PRism";
     var lockHandle = LockfileManager.Acquire(dataDir, binaryPath, Environment.ProcessId);
@@ -160,6 +168,14 @@ static IConfigStore CreateConfigStore(string dataDir)
     var store = new ConfigStore(dataDir);
     store.InitAsync(CancellationToken.None).GetAwaiter().GetResult();
     return store;
+}
+
+// Parse a port out of an --urls value (first URL when ;/, separated). Falls back to 5180.
+static int ExtractPort(string urls)
+{
+    var first = urls.Split(';', ',')[0].Trim();
+    if (Uri.TryCreate(first, UriKind.Absolute, out var u)) return u.Port;
+    return 5180;
 }
 
 #pragma warning disable CA1515 // WebApplicationFactory<Program> in tests requires Program to be publicly accessible.
