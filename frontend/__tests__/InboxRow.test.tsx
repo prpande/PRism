@@ -90,7 +90,12 @@ describe('InboxRow', () => {
   it('navigates to /pr/:owner/:repo/:number on click', async () => {
     renderRow(basePr);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button'));
+    await user.click(screen.getByRole('button', { name: /Refactor auth flow/i }));
     expect(await screen.findByTestId('pr-detail')).toBeInTheDocument();
+  });
+
+  it('renders friendly age text for very recent PRs', () => {
+    renderRow({ ...basePr, updatedAt: new Date().toISOString() });
+    expect(screen.getByText(/just now/i)).toBeInTheDocument();
   });
 });

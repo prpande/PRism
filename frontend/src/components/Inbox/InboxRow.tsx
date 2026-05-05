@@ -19,10 +19,10 @@ function freshness(updatedAt: string): 'fresh' | 'today' | 'older' {
 
 function formatAge(updatedAt: string): string {
   const ms = Date.now() - new Date(updatedAt).getTime();
-  if (ms < 60_000) return 'now';
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`;
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h`;
-  return `${Math.floor(ms / 86_400_000)}d`;
+  if (ms < 60_000) return 'just now';
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
 export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
@@ -36,14 +36,18 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
     fr === 'fresh' ? styles.rowFresh : fr === 'today' ? styles.rowToday : styles.rowOlder;
 
   return (
-    <button className={`${styles.row} ${frClass}`} onClick={onClick}>
+    <button
+      className={`${styles.row} ${frClass}`}
+      onClick={onClick}
+      aria-label={`${pr.title} · ${pr.repo} · iteration ${pr.iterationNumber}`}
+    >
       <span className={styles.status}>
         {pr.ci === 'failing' ? (
           <span className={`${styles.dot} ${styles.dotDanger}`} title="CI failing" />
         ) : isFirstVisit ? (
           <span className={styles.newChip}>New</span>
         ) : (
-          <span className={styles.dot} style={{ opacity: 0 }} />
+          <span className={styles.dot} style={{ opacity: 0 }} aria-hidden="true" />
         )}
       </span>
       <span className={styles.main}>
@@ -55,7 +59,7 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
           <span className={styles.dotsep}>·</span>
           <span className={styles.mono}>iter {pr.iterationNumber}</span>
           <span className={styles.dotsep}>·</span>
-          <span>{formatAge(pr.updatedAt)} ago</span>
+          <span>{formatAge(pr.updatedAt)}</span>
         </span>
       </span>
       <span className={styles.tail}>
