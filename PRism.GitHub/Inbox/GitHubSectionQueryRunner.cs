@@ -40,8 +40,8 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
                     var items = await SearchAsync(kv.Value, token, ct).ConfigureAwait(false);
                     return (kv.Key, (IReadOnlyList<RawPrInboxItem>)items);
                 }
-#pragma warning disable CA1031 // Per-section isolation: any failure → empty list, others continue
-                catch (Exception)
+#pragma warning disable CA1031 // generic catch — per-section failure isolates per spec/03-poc-features.md § 2 polling. Cancellation and rate-limit propagate.
+                catch (Exception ex) when (ex is not OperationCanceledException && ex is not RateLimitExceededException)
 #pragma warning restore CA1031
                 {
                     return (kv.Key, (IReadOnlyList<RawPrInboxItem>)Array.Empty<RawPrInboxItem>());
@@ -62,6 +62,13 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
 
         using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            var retryAfter = resp.Headers.RetryAfter?.Delta;
+            throw new RateLimitExceededException(
+                "GitHub Search API rate-limited (429); orchestrator should skip this tick.",
+                retryAfter);
+        }
         resp.EnsureSuccessStatusCode();
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);
