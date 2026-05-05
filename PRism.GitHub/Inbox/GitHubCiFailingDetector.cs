@@ -53,8 +53,9 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
     {
         var checksTask = FetchChecksAsync(pr, headSha, token, ct);
         var statusesTask = FetchCombinedStatusAsync(pr, headSha, token, ct);
-        var (checks, statuses) = (await checksTask.ConfigureAwait(false),
-                                  await statusesTask.ConfigureAwait(false));
+        var results = await Task.WhenAll(checksTask, statusesTask).ConfigureAwait(false);
+        var checks = results[0];
+        var statuses = results[1];
         if (checks == CiStatus.Failing || statuses == CiStatus.Failing) return CiStatus.Failing;
         if (checks == CiStatus.Pending || statuses == CiStatus.Pending) return CiStatus.Pending;
         return CiStatus.None;
@@ -71,6 +72,9 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         if (!doc.RootElement.TryGetProperty("check_runs", out var runs)) return CiStatus.None;
         var anyFailing = false;
         var anyPending = false;
+        // "cancelled" classifies as Failing per spec — a user-aborted CI run is
+        // treated as a failure signal. Superseded-run filtering (where a new push
+        // invalidates an old cancellation) is not handled here; v2 may refine.
         foreach (var r in runs.EnumerateArray())
         {
             var status = r.GetProperty("status").GetString();
@@ -90,6 +94,10 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);
         var state = doc.RootElement.TryGetProperty("state", out var s) ? s.GetString() : "success";
+        // GitHub's combined-status endpoint returns state="pending" when no legacy
+        // statuses are registered; combined with check-runs results in the outer
+        // Failing > Pending > None precedence, so an "all-Checks-pass + no-statuses"
+        // PR may still surface as Pending. Acceptable for PoC; v2 may refine.
         return state switch
         {
             "failure" or "error" => CiStatus.Failing,
