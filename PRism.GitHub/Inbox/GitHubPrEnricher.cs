@@ -64,8 +64,8 @@ public sealed class GitHubPrEnricher : IPrEnricher
         var additions = doc.RootElement.TryGetProperty("additions", out var a) ? a.GetInt32() : 0;
         var deletions = doc.RootElement.TryGetProperty("deletions", out var d) ? d.GetInt32() : 0;
         var commits = doc.RootElement.TryGetProperty("commits", out var c) ? c.GetInt32() : 1;
-        var pushedAt = doc.RootElement.TryGetProperty("updated_at", out var u)
-            ? u.GetDateTimeOffset() : raw.UpdatedAt;
+        var pushedAt = doc.RootElement.TryGetProperty("pushed_at", out var p)
+            ? p.GetDateTimeOffset() : raw.UpdatedAt;
 
         return raw with
         {

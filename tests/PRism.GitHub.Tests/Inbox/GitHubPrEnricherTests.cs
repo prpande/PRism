@@ -29,6 +29,7 @@ public sealed class GitHubPrEnricherTests
           "additions": 5,
           "deletions": 2,
           "commits": 3,
+          "pushed_at": "2026-05-06T09:50:00Z",
           "updated_at": "2026-05-06T10:00:00Z"
         }
         """;
@@ -58,7 +59,7 @@ public sealed class GitHubPrEnricherTests
         item.Additions.Should().Be(5);
         item.Deletions.Should().Be(2);
         item.IterationNumberApprox.Should().Be(3);
-        item.PushedAt.Should().Be(DateTimeOffset.Parse("2026-05-06T10:00:00Z", CultureInfo.InvariantCulture));
+        item.PushedAt.Should().Be(DateTimeOffset.Parse("2026-05-06T09:50:00Z", CultureInfo.InvariantCulture));
     }
 
     [Fact]
