@@ -80,3 +80,6 @@ PRism.Web/wwwroot/
 # OS
 .DS_Store
 Thumbs.db
+
+# pr-autopilot ephemeral state (not versioned)
+.pr-autopilot/
