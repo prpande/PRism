@@ -153,6 +153,33 @@ public class ConfigStoreTests
     }
 
     [Fact]
+    public async Task LoadAsync_with_partial_config_fills_all_missing_sub_records_from_defaults()
+    {
+        using var dir = new TempDataDir();
+        // Only github.host is provided; every other sub-record must come from defaults.
+        var partialJson = """
+            { "github": { "host": "https://ghe.acme.com" } }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), partialJson);
+
+        var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Github.Host.Should().Be("https://ghe.acme.com"); // user value preserved
+        store.Current.Ui.Should().NotBeNull();
+        store.Current.Ui.AiPreview.Should().BeFalse();              // from default
+        store.Current.Polling.Should().NotBeNull();
+        store.Current.Polling.InboxSeconds.Should().Be(120);        // from default
+        store.Current.Review.Should().NotBeNull();
+        store.Current.Iterations.Should().NotBeNull();
+        store.Current.Logging.Should().NotBeNull();
+        store.Current.Llm.Should().NotBeNull();
+        store.Current.Inbox.Should().NotBeNull();
+        store.Current.Inbox.Deduplicate.Should().BeTrue();
+        store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
+    }
+
+    [Fact]
     public void AppConfig_roundtrips_expanded_inbox_config_via_json()
     {
         var config = AppConfig.Default;
