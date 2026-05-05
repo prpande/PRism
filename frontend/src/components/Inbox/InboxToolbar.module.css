@@ -1,0 +1,8 @@
+/* InboxToolbar — top bar housing the paste-URL input */
+.toolbar {
+  display: flex;
+  align-items: center;
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--border-1);
+  background: var(--surface-1);
+}

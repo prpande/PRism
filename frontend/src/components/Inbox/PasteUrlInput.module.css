@@ -1,0 +1,38 @@
+/* PasteUrlInput — URL paste field with inline error pill */
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  flex: 1;
+  min-width: 0;
+}
+
+.input {
+  width: 100%;
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  outline: none;
+  transition: border-color var(--t-fast);
+  box-sizing: border-box;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.error {
+  display: inline-block;
+  padding: 2px var(--s-3);
+  background: var(--danger-soft, color-mix(in oklch, var(--danger-fg) 12%, transparent));
+  color: var(--danger-fg);
+  border-radius: var(--radius-2);
+  font-size: var(--text-sm);
+}
