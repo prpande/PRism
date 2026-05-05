@@ -12,6 +12,7 @@ using PRism.Core.Inbox;
 using PRism.Core.Json;
 using PRism.Core.State;
 using PRism.GitHub;
+using PRism.GitHub.Inbox;
 using PRism.Web.Endpoints;
 using PRism.Web.Middleware;
 using PRism.Web.Sse;
@@ -95,6 +96,67 @@ builder.Services.AddSingleton<IReviewEventBus, ReviewEventBus>();
 builder.Services.AddSingleton<InboxSubscriberCount>();
 builder.Services.AddSingleton<SseChannel>();
 
+// Phase 10 minimal DI — Phase 11 expands to the full pipeline.
+builder.Services.AddSingleton<IInboxDeduplicator, InboxDeduplicator>();
+
+builder.Services.AddSingleton<ISectionQueryRunner>(sp =>
+{
+    var config = sp.GetRequiredService<IConfigStore>();
+    var tokens = sp.GetRequiredService<ITokenStore>();
+#pragma warning disable CA2000
+    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
+#pragma warning restore CA2000
+    return new GitHubSectionQueryRunner(http, () => tokens.ReadAsync(CancellationToken.None));
+});
+
+builder.Services.AddSingleton<IPrEnricher>(sp =>
+{
+    var config = sp.GetRequiredService<IConfigStore>();
+    var tokens = sp.GetRequiredService<ITokenStore>();
+#pragma warning disable CA2000
+    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
+#pragma warning restore CA2000
+    return new GitHubPrEnricher(http, () => tokens.ReadAsync(CancellationToken.None));
+});
+
+builder.Services.AddSingleton<IAwaitingAuthorFilter>(sp =>
+{
+    var config = sp.GetRequiredService<IConfigStore>();
+    var tokens = sp.GetRequiredService<ITokenStore>();
+#pragma warning disable CA2000
+    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
+#pragma warning restore CA2000
+    return new GitHubAwaitingAuthorFilter(http, () => tokens.ReadAsync(CancellationToken.None));
+});
+
+builder.Services.AddSingleton<ICiFailingDetector>(sp =>
+{
+    var config = sp.GetRequiredService<IConfigStore>();
+    var tokens = sp.GetRequiredService<ITokenStore>();
+#pragma warning disable CA2000
+    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
+#pragma warning restore CA2000
+    return new GitHubCiFailingDetector(http, () => tokens.ReadAsync(CancellationToken.None));
+});
+
+builder.Services.AddSingleton<IViewerLoginProvider, ViewerLoginProvider>();
+
+builder.Services.AddSingleton<IInboxRefreshOrchestrator>(sp =>
+{
+    var loginCache = sp.GetRequiredService<IViewerLoginProvider>();
+    return new InboxRefreshOrchestrator(
+        sp.GetRequiredService<IConfigStore>(),
+        sp.GetRequiredService<ISectionQueryRunner>(),
+        sp.GetRequiredService<IPrEnricher>(),
+        sp.GetRequiredService<IAwaitingAuthorFilter>(),
+        sp.GetRequiredService<ICiFailingDetector>(),
+        sp.GetRequiredService<IInboxDeduplicator>(),
+        sp.GetRequiredService<IAiSeamSelector>(),
+        sp.GetRequiredService<IReviewEventBus>(),
+        sp.GetRequiredService<IAppStateStore>(),
+        loginCache.Get);
+});
+
 // JSON options: align HTTP serialization with the camelCase Api policy.
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -166,6 +228,7 @@ app.MapCapabilities();
 app.MapPreferences();
 app.MapAuth();
 app.MapEvents();
+app.MapInbox();
 
 if (builder.Environment.IsEnvironment("Test"))
     app.MapGet("/test/boom", () => { throw new InvalidOperationException("test boom"); });

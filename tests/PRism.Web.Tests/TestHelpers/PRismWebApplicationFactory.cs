@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using PRism.Core;
 using PRism.Core.Contracts;
+using PRism.Core.Inbox;
+using PRism.Web.Tests.Endpoints;
 
 namespace PRism.Web.Tests.TestHelpers;
 
@@ -11,6 +13,7 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
 {
     public string DataDir { get; } = Path.Combine(Path.GetTempPath(), $"PRism-test-{Guid.NewGuid():N}");
     public Func<Task<AuthValidationResult>>? ValidateOverride { get; set; }
+    public FakeInboxRefreshOrchestrator? FakeOrchestrator { get; set; }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -27,6 +30,14 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
                 var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IReviewService));
                 if (existing is not null) services.Remove(existing);
                 services.AddSingleton<IReviewService>(new StubReviewService(ValidateOverride));
+            }
+
+            // Replace IInboxRefreshOrchestrator with a fake when FakeOrchestrator is set.
+            if (FakeOrchestrator is not null)
+            {
+                var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IInboxRefreshOrchestrator));
+                if (existing is not null) services.Remove(existing);
+                services.AddSingleton<IInboxRefreshOrchestrator>(FakeOrchestrator);
             }
         });
     }
