@@ -6,12 +6,15 @@ using PRism.Core;
 using PRism.Core.Ai;
 using PRism.Core.Auth;
 using PRism.Core.Config;
+using PRism.Core.Events;
 using PRism.Core.Hosting;
+using PRism.Core.Inbox;
 using PRism.Core.Json;
 using PRism.Core.State;
 using PRism.GitHub;
 using PRism.Web.Endpoints;
 using PRism.Web.Middleware;
+using PRism.Web.Sse;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -87,6 +90,11 @@ builder.Services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
         [typeof(IInboxRanker)] = sp.GetRequiredService<PlaceholderInboxRanker>(),
     }));
 
+// SSE: event bus, subscriber counter, and SSE channel (Phase 9).
+builder.Services.AddSingleton<IReviewEventBus, ReviewEventBus>();
+builder.Services.AddSingleton<InboxSubscriberCount>();
+builder.Services.AddSingleton<SseChannel>();
+
 // JSON options: align HTTP serialization with the camelCase Api policy.
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -157,6 +165,7 @@ app.MapHealth(dataDir: dataDir, port: port);
 app.MapCapabilities();
 app.MapPreferences();
 app.MapAuth();
+app.MapEvents();
 
 if (builder.Environment.IsEnvironment("Test"))
     app.MapGet("/test/boom", () => { throw new InvalidOperationException("test boom"); });
