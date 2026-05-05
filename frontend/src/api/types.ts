@@ -25,6 +25,7 @@ export interface CapabilitiesResponse {
 
 export interface AuthState {
   hasToken: boolean;
+  host: string;
   hostMismatch: { old: string; new: string } | null;
 }
 

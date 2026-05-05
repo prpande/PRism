@@ -20,6 +20,16 @@ public class AuthEndpointsTests
     }
 
     [Fact]
+    public async Task State_returns_configured_github_host()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var resp = await client.GetFromJsonAsync<AuthStateResponse>(new Uri("/api/auth/state", UriKind.Relative));
+        resp.Should().NotBeNull();
+        resp!.Host.Should().Be("https://github.com");
+    }
+
+    [Fact]
     public async Task Connect_with_invalid_PAT_returns_ok_false_with_error()
     {
         using var factory = new PRismWebApplicationFactory
@@ -61,7 +71,7 @@ public class AuthEndpointsTests
         body.Login.Should().Be("octocat");
     }
 
-    public sealed record AuthStateResponse(bool HasToken, HostMismatchInfo? HostMismatch);
+    public sealed record AuthStateResponse(bool HasToken, string Host, HostMismatchInfo? HostMismatch);
     public sealed record HostMismatchInfo(string Old, string New);
     public sealed record ConnectResponse(bool Ok, string? Login, string? Host, string? Error, string? Detail);
 }

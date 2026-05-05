@@ -9,8 +9,11 @@ import { useAuth } from './hooks/useAuth';
 import { apiClient } from './api/client';
 
 export function App() {
-  const { authState, refetch } = useAuth();
+  const { authState, error, refetch } = useAuth();
 
+  if (authState === null && error) {
+    return <div role="alert">Failed to load auth state: {error.message}</div>;
+  }
   if (authState === null) return <div aria-busy="true">Loading…</div>;
 
   if (authState.hostMismatch) {

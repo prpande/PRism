@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetupForm } from '../components/Setup/SetupForm';
 import { apiClient } from '../api/client';
+import { useAuth } from '../hooks/useAuth';
 import type { ConnectResponse } from '../api/types';
 
 export function SetupPage() {
+  const { authState } = useAuth();
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
@@ -23,5 +25,7 @@ export function SetupPage() {
     }
   };
 
-  return <SetupForm host="https://github.com" onSubmit={onSubmit} error={error} busy={busy} />;
+  if (authState === null) return <div aria-busy="true">Loading…</div>;
+
+  return <SetupForm host={authState.host} onSubmit={onSubmit} error={error} busy={busy} />;
 }

@@ -17,13 +17,14 @@ internal static class AuthEndpoints
         {
             var hasToken = await tokens.HasTokenAsync(ct).ConfigureAwait(false);
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
+            var host = config.Current.Github.Host;
             object? mismatch = null;
             if (state.LastConfiguredGithubHost is not null
-                && !string.Equals(state.LastConfiguredGithubHost, config.Current.Github.Host, StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(state.LastConfiguredGithubHost, host, StringComparison.OrdinalIgnoreCase))
             {
-                mismatch = new { old = state.LastConfiguredGithubHost, @new = config.Current.Github.Host };
+                mismatch = new { old = state.LastConfiguredGithubHost, @new = host };
             }
-            return Results.Ok(new { hasToken, hostMismatch = mismatch });
+            return Results.Ok(new { hasToken, host, hostMismatch = mismatch });
         });
 
         app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, CancellationToken ct) =>

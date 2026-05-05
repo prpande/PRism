@@ -25,7 +25,9 @@ const server = setupServer(
       },
     }),
   ),
-  http.get('/api/auth/state', () => HttpResponse.json({ hasToken: false, hostMismatch: null })),
+  http.get('/api/auth/state', () =>
+    HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+  ),
 );
 
 beforeAll(() => server.listen());
@@ -53,5 +55,24 @@ describe('useAuth', () => {
     const { result } = renderHook(() => useAuth());
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
+  });
+
+  it('refetches auth state when window regains focus', async () => {
+    let calls = 0;
+    server.use(
+      http.get('/api/auth/state', () => {
+        calls += 1;
+        return HttpResponse.json({
+          hasToken: calls > 1,
+          host: 'https://github.com',
+          hostMismatch: null,
+        });
+      }),
+    );
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.authState).not.toBeNull());
+    expect(result.current.authState?.hasToken).toBe(false);
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(result.current.authState?.hasToken).toBe(true));
   });
 });

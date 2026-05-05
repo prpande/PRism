@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -23,6 +23,14 @@ function renderRouted() {
 }
 
 describe('SetupPage', () => {
+  beforeEach(() => {
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+  });
+
   it('routes to /inbox-shell on successful PAT submission', async () => {
     server.use(
       http.post('/api/auth/connect', () =>
@@ -30,7 +38,7 @@ describe('SetupPage', () => {
       ),
     );
     renderRouted();
-    await userEvent.type(screen.getByLabelText(/personal access token/i), 'ghp_test');
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_test');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     expect(await screen.findByText('InboxShellMock')).toBeInTheDocument();
   });
@@ -46,8 +54,25 @@ describe('SetupPage', () => {
       ),
     );
     renderRouted();
-    await userEvent.type(screen.getByLabelText(/personal access token/i), 'ghp_bad');
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_bad');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     expect(await screen.findByText(/rejected/i)).toBeInTheDocument();
+  });
+
+  it('builds the PAT link from the configured GHES host', async () => {
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({
+          hasToken: false,
+          host: 'https://github.acme.com',
+          hostMismatch: null,
+        }),
+      ),
+    );
+    renderRouted();
+    const link = await screen.findByRole('link', { name: /generate a token/i });
+    expect(link.getAttribute('href')).toBe(
+      'https://github.acme.com/settings/personal-access-tokens/new',
+    );
   });
 });

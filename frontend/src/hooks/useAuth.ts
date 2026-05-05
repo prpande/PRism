@@ -16,6 +16,11 @@ export function useAuth() {
 
   useEffect(() => {
     void refetch();
+    const handler = () => {
+      void refetch();
+    };
+    window.addEventListener('focus', handler);
+    return () => window.removeEventListener('focus', handler);
   }, [refetch]);
 
   const connect = useCallback(async (pat: string) => {
