@@ -1,0 +1,96 @@
+using System.Net.Http.Headers;
+using System.Text.Json;
+using PRism.Core.Contracts;
+using PRism.Core.Inbox;
+
+namespace PRism.GitHub.Inbox;
+
+public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
+{
+    private static readonly Dictionary<string, string> SectionQueries = new()
+    {
+        ["review-requested"] = "is:open is:pr review-requested:@me archived:false",
+        ["awaiting-author"]  = "is:open is:pr reviewed-by:@me archived:false",
+        ["authored-by-me"]   = "is:open is:pr author:@me archived:false",
+        ["mentioned"]        = "is:open is:pr mentions:@me archived:false",
+        // ci-failing starts as "authored-by-me"; per-PR detector filters
+        ["ci-failing"]       = "is:open is:pr author:@me archived:false",
+    };
+
+    private readonly HttpClient _http;
+    private readonly Func<Task<string?>> _readToken;
+
+    public GitHubSectionQueryRunner(HttpClient http, Func<Task<string?>> readToken)
+    {
+        _http = http;
+        _readToken = readToken;
+    }
+
+    public async Task<IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> QueryAllAsync(
+        IReadOnlySet<string> visibleSectionIds, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(visibleSectionIds);
+        var token = await _readToken().ConfigureAwait(false);
+        var tasks = SectionQueries
+            .Where(kv => visibleSectionIds.Contains(kv.Key))
+            .Select(async kv =>
+            {
+                try
+                {
+                    var items = await SearchAsync(kv.Value, token, ct).ConfigureAwait(false);
+                    return (kv.Key, (IReadOnlyList<RawPrInboxItem>)items);
+                }
+#pragma warning disable CA1031 // Per-section isolation: any failure → empty list, others continue
+                catch (Exception)
+#pragma warning restore CA1031
+                {
+                    return (kv.Key, (IReadOnlyList<RawPrInboxItem>)Array.Empty<RawPrInboxItem>());
+                }
+            })
+            .ToList();
+        var done = await Task.WhenAll(tasks).ConfigureAwait(false);
+        return done.ToDictionary(t => t.Key, t => t.Item2);
+    }
+
+    private async Task<List<RawPrInboxItem>> SearchAsync(string q, string? token, CancellationToken ct)
+    {
+        var url = $"search/issues?q={Uri.EscapeDataString(q)}&per_page=50";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        if (!string.IsNullOrEmpty(token))
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        req.Headers.UserAgent.ParseAdd("PRism/0.1");
+        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(body);
+
+        var result = new List<RawPrInboxItem>();
+        if (!doc.RootElement.TryGetProperty("items", out var items)) return result;
+
+        foreach (var item in items.EnumerateArray())
+        {
+            var prUrl = item.GetProperty("pull_request").GetProperty("html_url").GetString() ?? "";
+            var path = new Uri(prUrl).AbsolutePath.Trim('/').Split('/');
+            if (path.Length < 4 || path[2] != "pull") continue;
+            if (!int.TryParse(path[3], out var n)) continue;
+
+            var repo = $"{path[0]}/{path[1]}";
+            var login = item.GetProperty("user").GetProperty("login").GetString() ?? "";
+            var title = item.GetProperty("title").GetString() ?? "";
+            var updated = item.GetProperty("updated_at").GetDateTimeOffset();
+            var comments = item.TryGetProperty("comments", out var c) ? c.GetInt32() : 0;
+
+            result.Add(new RawPrInboxItem(
+                new PrReference(path[0], path[1], n),
+                title, login, repo,
+                updated, updated, // pushed-at not in Search API; placeholder, refined in fan-out
+                comments,
+                0, 0, // additions/deletions not in Search API; refined in fan-out
+                "",   // head_sha not in Search API; refined in fan-out
+                1));  // iteration approx
+        }
+        return result;
+    }
+}
