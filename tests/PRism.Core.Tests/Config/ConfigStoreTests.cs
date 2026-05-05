@@ -1,4 +1,6 @@
+using System.Text.Json;
 using PRism.Core.Config;
+using PRism.Core.Json;
 using PRism.Core.Tests.TestHelpers;
 using FluentAssertions;
 using Xunit;
@@ -99,5 +101,38 @@ public class ConfigStoreTests
             await Task.Delay(100);
 
         store.Current.Ui.Theme.Should().Be("dark");
+    }
+
+    [Fact]
+    public async Task Default_inbox_config_has_dedupe_on_all_sections_visible_footer_on()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Inbox.Deduplicate.Should().BeTrue();
+        store.Current.Inbox.ShowHiddenScopeFooter.Should().BeTrue();
+        store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
+        store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
+        store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
+        store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
+        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AppConfig_roundtrips_expanded_inbox_config_via_json()
+    {
+        var config = AppConfig.Default;
+        var json = JsonSerializer.Serialize(config, JsonSerializerOptionsFactory.Storage);
+        var parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonSerializerOptionsFactory.Storage);
+
+        parsed.Should().NotBeNull();
+        parsed!.Inbox.Deduplicate.Should().BeTrue();
+        parsed.Inbox.ShowHiddenScopeFooter.Should().BeTrue();
+        parsed.Inbox.Sections.ReviewRequested.Should().BeTrue();
+        parsed.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
+        parsed.Inbox.Sections.AuthoredByMe.Should().BeTrue();
+        parsed.Inbox.Sections.Mentioned.Should().BeTrue();
+        parsed.Inbox.Sections.CiFailing.Should().BeTrue();
     }
 }
