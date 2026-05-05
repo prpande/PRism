@@ -27,7 +27,7 @@ app.UseMiddleware<OriginCheckMiddleware>();
 
 app.MapHealth(dataDir: dataDir, port: 5180);
 app.MapCapabilities();
-app.MapPost("/api/preferences", () => Results.Ok(new { theme = "system", accent = "indigo", aiPreview = false }));
+app.MapPreferences();
 
 app.Run();
 
