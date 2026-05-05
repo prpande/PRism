@@ -96,7 +96,24 @@ public sealed class GitHubReviewService : IReviewService
 
     // Stubs for methods that land in later slices.
     public Task<InboxSection[]> GetInboxAsync(CancellationToken ct) => throw new NotImplementedException("Inbox lands in S2.");
-    public bool TryParsePrUrl(string url, out PrReference? reference) => throw new NotImplementedException("URL parsing lands in S2.");
+    public bool TryParsePrUrl(string url, out PrReference? reference)
+    {
+        reference = null;
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u)) return false;
+        if (u.Scheme != "https" && u.Scheme != "http") return false;
+
+        if (!Uri.TryCreate(_host, UriKind.Absolute, out var h)) return false;
+        if (!string.Equals(u.Host, h.Host, StringComparison.OrdinalIgnoreCase)) return false;
+
+        var segs = u.AbsolutePath.Trim('/').Split('/');
+        if (segs.Length < 4) return false;
+        if (!string.Equals(segs[2], "pull", StringComparison.Ordinal)) return false;
+        if (!int.TryParse(segs[3], out var n) || n <= 0) return false;
+
+        reference = new PrReference(segs[0], segs[1], n);
+        return true;
+    }
     public Task<Pr> GetPrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("PR detail lands in S3.");
     public Task<PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Iterations land in S3.");
     public Task<FileChange[]> GetDiffAsync(PrReference reference, string fromSha, string toSha, CancellationToken ct) => throw new NotImplementedException("Diff lands in S3.");
