@@ -1,0 +1,24 @@
+# Ensure consistent LF line endings across platforms.
+# Windows runners default to core.autocrlf=true, which converts checkouts to
+# CRLF; that breaks Prettier (default endOfLine: "lf") and `dotnet format`
+# (which fines whitespace differences). This file overrides the global setting.
+
+* text=auto eol=lf
+
+# Explicitly mark binary types so they're never touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.dll binary
+*.exe binary
+*.snk binary
+
+# Windows-specific scripts keep CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
