@@ -1,0 +1,6 @@
+[*.cs]
+# Test method names use underscores (xUnit convention)
+dotnet_diagnostic.CA1707.severity = none
+
+# Test helpers and test classes are public for xUnit discovery and cross-test reuse
+dotnet_diagnostic.CA1515.severity = none
