@@ -120,6 +120,39 @@ public class ConfigStoreTests
     }
 
     [Fact]
+    public async Task LoadAsync_with_pre_phase2_config_fills_new_fields_from_defaults()
+    {
+        using var dir = new TempDataDir();
+        // Legacy config.json shape from S0+S1 — has show-hidden-scope-footer but
+        // no deduplicate or sections keys. Wire format is kebab-case (matches Storage policy).
+        var legacyJson = """
+            {
+              "polling": { "active-pr-seconds": 30, "inbox-seconds": 120 },
+              "inbox": { "show-hidden-scope-footer": true },
+              "review": { "block-submit-on-stale-drafts": true, "require-verdict-reconfirm-on-new-iteration": true },
+              "iterations": { "cluster-gap-seconds": 60 },
+              "logging": { "level": "info", "state-events": true, "state-events-retention-files": 30 },
+              "ui": { "theme": "system", "accent": "indigo", "ai-preview": false },
+              "github": { "host": "https://github.com", "local-workspace": null },
+              "llm": {}
+            }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), legacyJson);
+
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Inbox.ShowHiddenScopeFooter.Should().BeTrue(); // preserved from legacy file
+        store.Current.Inbox.Deduplicate.Should().BeTrue();           // filled from default
+        store.Current.Inbox.Sections.Should().NotBeNull();
+        store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
+        store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
+        store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
+        store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
+        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
+    }
+
+    [Fact]
     public void AppConfig_roundtrips_expanded_inbox_config_via_json()
     {
         var config = AppConfig.Default;

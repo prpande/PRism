@@ -83,7 +83,27 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 raw = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
 
             var parsed = JsonSerializer.Deserialize<AppConfig>(raw, JsonSerializerOptionsFactory.Storage);
-            _current = parsed ?? AppConfig.Default;
+            if (parsed is null)
+            {
+                _current = AppConfig.Default;
+                LastLoadError = null;
+                return;
+            }
+
+            // Legacy config.json files from S0+S1 lack the inbox.sections and inbox.deduplicate
+            // keys. System.Text.Json doesn't enforce non-nullable annotations at the JSON boundary,
+            // so Sections may deserialize as null even though the record type says non-null.
+            // Detect this by checking Sections for null; if missing, use the entire default Inbox
+            // block but preserve any ShowHiddenScopeFooter the user explicitly set.
+            parsed = parsed with
+            {
+                Inbox = parsed.Inbox is null
+                    ? AppConfig.Default.Inbox
+                    : parsed.Inbox.Sections is null
+                        ? AppConfig.Default.Inbox with { ShowHiddenScopeFooter = parsed.Inbox.ShowHiddenScopeFooter }
+                        : parsed.Inbox,
+            };
+            _current = parsed;
             LastLoadError = null;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
