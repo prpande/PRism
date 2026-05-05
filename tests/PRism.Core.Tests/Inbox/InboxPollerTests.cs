@@ -9,9 +9,6 @@ namespace PRism.Core.Tests.Inbox;
 
 public sealed class InboxPollerTests
 {
-    // Cadence is 50ms to keep tests fast
-    private const int CadenceMs = 50;
-
     private static (
         InboxPoller Poller,
         Mock<IInboxRefreshOrchestrator> OrchestratorMock,
@@ -23,20 +20,8 @@ public sealed class InboxPollerTests
             .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var configMock = new Mock<IConfigStore>();
-        configMock.Setup(c => c.Current).Returns(new AppConfig(
-            new PollingConfig(30, CadenceMs / 1000 == 0 ? 0 : CadenceMs / 1000),
-            AppConfig.Default.Inbox,
-            AppConfig.Default.Review,
-            AppConfig.Default.Iterations,
-            AppConfig.Default.Logging,
-            AppConfig.Default.Ui,
-            AppConfig.Default.Github,
-            AppConfig.Default.Llm));
-
         // Use a real PollingConfig with a near-zero cadence (1 second minimum for TimeSpan.FromSeconds,
         // but 0 rounds to zero which means Task.Delay(0,...) — effectively immediate)
-        // Override to use 0 seconds so Task.Delay is nearly instant
         var fastConfig = new Mock<IConfigStore>();
         fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
         {

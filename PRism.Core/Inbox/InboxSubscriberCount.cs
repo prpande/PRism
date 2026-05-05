@@ -22,6 +22,10 @@ public sealed class InboxSubscriberCount
 
     public Task WaitForSubscriberAsync(CancellationToken ct)
     {
+        // Race-safe by design: when Decrement triggers the TCS exchange, a concurrent
+        // reader may capture the old (completed) TCS via Volatile.Read and pass through
+        // immediately. This causes one extra refresh tick — harmless. The next call to
+        // WaitForSubscriberAsync sees the new (uncompleted) TCS and gates correctly.
         var t = Volatile.Read(ref _hasSubscribers).Task;
         return t.IsCompleted ? Task.CompletedTask : t.WaitAsync(ct);
     }
