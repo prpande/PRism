@@ -108,19 +108,21 @@ builder.Services.AddProblemDetails(o =>
 
 var app = builder.Build();
 
-// Production-only: lockfile + port + browser launch.
-// In Test environment, the WebApplicationFactory uses an in-memory test server,
-// so port binding, lockfile acquisition, and browser launching must be skipped.
-if (!app.Environment.IsEnvironment("Test"))
+// Resolve port early so MapHealth can report the actual bound port.
+// In Test environment, the WebApplicationFactory uses an in-memory test server;
+// the reported port is a placeholder (5180) since TestServer handles binding.
+var isTest = app.Environment.IsEnvironment("Test");
+var port = isTest ? 5180 : PortSelector.SelectFirstAvailable();
+
+// Production-only: lockfile + URL binding + browser launch.
+if (!isTest)
 {
+    app.Urls.Clear();
+    app.Urls.Add($"http://localhost:{port}");
+
     var binaryPath = Environment.ProcessPath ?? "PRism";
     var lockHandle = LockfileManager.Acquire(dataDir, binaryPath, Environment.ProcessId);
     app.Lifetime.ApplicationStopping.Register(() => lockHandle.Dispose());
-
-    // Port selection (5180-5199 in production; tests use the WebApplicationFactory's TestServer).
-    var port = PortSelector.SelectFirstAvailable();
-    app.Urls.Clear();
-    app.Urls.Add($"http://localhost:{port}");
 
     // Browser launch on application started, unless --no-browser was passed (case-insensitive).
     var noBrowser = args.Contains("--no-browser", StringComparer.OrdinalIgnoreCase);
@@ -141,7 +143,7 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseMiddleware<OriginCheckMiddleware>();
 
-app.MapHealth(dataDir: dataDir, port: 5180);
+app.MapHealth(dataDir: dataDir, port: port);
 app.MapCapabilities();
 app.MapPreferences();
 app.MapAuth();
