@@ -7,3 +7,6 @@ dotnet_diagnostic.CA1515.severity = none
 
 # Nested test fixtures/payload types are an idiomatic xUnit pattern
 dotnet_diagnostic.CA1034.severity = none
+
+# Tests intentionally bind concrete impls to interface variables to verify seam contracts
+dotnet_diagnostic.CA1859.severity = none

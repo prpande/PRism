@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\PRism.Core.Contracts\PRism.Core.Contracts.csproj" />
+  </ItemGroup>
+
 </Project>
