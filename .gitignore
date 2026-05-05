@@ -55,3 +55,25 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
+# Test results / coverage
+[Tt]est[Rr]esult*/
+*.trx
+coverage/
+
+# Tooling
+.vs/
+.idea/
+.vscode/
+*.swp
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+frontend/.vite/
+
+# OS
+.DS_Store
+Thumbs.db
