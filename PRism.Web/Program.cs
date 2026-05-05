@@ -151,8 +151,7 @@ app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseMiddleware<OriginCheckMiddleware>();
 
-app.UseDefaultFiles();
-app.UseStaticFiles();
+app.MapStaticAssets();
 
 app.MapHealth(dataDir: dataDir, port: port);
 app.MapCapabilities();
@@ -162,9 +161,12 @@ app.MapAuth();
 if (builder.Environment.IsEnvironment("Test"))
     app.MapGet("/test/boom", () => { throw new InvalidOperationException("test boom"); });
 
-// SPA fallback for client-side routes only. Unknown /api/* paths still return 404 so API
-// consumers don't get HTML back when they hit a bad endpoint.
-app.MapFallbackToFile("{*path:regex(^(?!api/).*$)}", "index.html");
+// Unknown /api/* paths return 404 (more specific pattern wins over the SPA fallback).
+app.MapFallback("/api/{*rest}", () => Microsoft.AspNetCore.Http.Results.NotFound());
+
+// SPA fallback: every other unmatched route serves the React app's index.html so client-side
+// routing works.
+app.MapFallbackToFile("index.html");
 
 app.Run();
 
