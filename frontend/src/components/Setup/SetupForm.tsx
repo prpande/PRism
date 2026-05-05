@@ -50,11 +50,7 @@ export function SetupForm({ host, onSubmit, error, busy }: Props) {
           {error}
         </div>
       )}
-      <button
-        type="submit"
-        className={styles.continue}
-        disabled={pat.trim().length === 0 || busy}
-      >
+      <button type="submit" className={styles.continue} disabled={pat.trim().length === 0 || busy}>
         {busy ? 'Validating…' : 'Continue'}
       </button>
     </form>
