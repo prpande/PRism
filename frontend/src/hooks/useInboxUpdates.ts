@@ -15,5 +15,9 @@ export function useInboxUpdates() {
     return close;
   }, []);
 
-  return { hasUpdate, summary, dismiss: () => setHasUpdate(false) };
+  const dismiss = () => {
+    setHasUpdate(false);
+    setSummary('');
+  };
+  return { hasUpdate, summary, dismiss };
 }

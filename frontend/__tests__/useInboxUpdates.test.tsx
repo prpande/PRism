@@ -46,7 +46,9 @@ describe('useInboxUpdates', () => {
         newOrUpdatedPrCount: 1,
       }),
     );
+    await waitFor(() => expect(result.current.hasUpdate).toBe(true));
     act(() => result.current.dismiss());
     expect(result.current.hasUpdate).toBe(false);
+    expect(result.current.summary).toBe('');
   });
 });
