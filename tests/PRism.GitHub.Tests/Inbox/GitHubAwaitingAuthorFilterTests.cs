@@ -173,4 +173,46 @@ public sealed class GitHubAwaitingAuthorFilterTests
         result.Should().BeEmpty();
         requestCount.Should().Be(0);
     }
+
+    [Fact]
+    public async Task Concurrency_capped_at_eight()
+    {
+        // Track in-flight count; assert max never exceeds the documented cap.
+        var inFlight = 0;
+        var maxObserved = 0;
+        var inFlightLock = new object();
+
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            // synchronous spike: increment, snapshot, sleep briefly, decrement.
+            // The handler is sync (Task.FromResult), so multiple parallel callers
+            // overlap inside the bookkeeping window before responding.
+            lock (inFlightLock)
+            {
+                inFlight++;
+                if (inFlight > maxObserved) maxObserved = inFlight;
+            }
+            // tiny stall so the parallel callers have a chance to overlap
+            Thread.Sleep(10);
+            lock (inFlightLock) inFlight--;
+
+            var body = ReviewsResponse("viewer", "old-sha");
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            };
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
+        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+
+        // 20 distinct candidates so we exceed the cap by a wide margin
+        var candidates = Enumerable.Range(1, 20)
+            .Select(n => Raw(n, headSha: $"head-{n}"))
+            .ToList();
+
+        await sut.FilterAsync("viewer", candidates, default);
+
+        maxObserved.Should().BeLessThanOrEqualTo(8,
+            "the SemaphoreSlim cap of 8 must hold under load");
+    }
 }

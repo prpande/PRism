@@ -28,6 +28,9 @@ public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
         var token = await _readToken().ConfigureAwait(false);
         using var sem = new SemaphoreSlim(ConcurrencyCap);
 
+        // 5xx / timeout from any per-PR probe propagates here — the orchestrator
+        // decides whether to skip the tick. Unlike the section runner (which isolates
+        // per-section failures), per-PR failures abort the filter tick.
         var probed = await Task.WhenAll(candidates.Select(async c =>
         {
             await sem.WaitAsync(ct).ConfigureAwait(false);
