@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\PRism.Core\PRism.Core.csproj" />
+    <ProjectReference Include="..\PRism.GitHub\PRism.GitHub.csproj" />
+    <ProjectReference Include="..\PRism.AI.Contracts\PRism.AI.Contracts.csproj" />
+    <ProjectReference Include="..\PRism.AI.Placeholder\PRism.AI.Placeholder.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>
