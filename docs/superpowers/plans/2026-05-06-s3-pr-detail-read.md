@@ -50,28 +50,26 @@ If anything fails, stop and resolve before proceeding.
 
 ### Step 1.1: Write the failing test for v1 → v2 migration
 
+The existing `AppStateStore` constructor takes a **directory** (`AppStateStore(string dataDir)`), not a file path; it joins `state.json` internally. Existing tests use the `TempDataDir` helper (`tests/PRism.Core.Tests/TestHelpers/TempDataDir.cs`) and write the fixture file at `Path.Combine(dir.Path, "state.json")`. The migration tests follow that pattern verbatim.
+
 - [ ] **Create the test file.**
 
 ```csharp
 // tests/PRism.Core.Tests/State/AppStateStoreMigrationTests.cs
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using FluentAssertions;
 using PRism.Core.State;
+using PRism.Core.Tests.TestHelpers;
 using Xunit;
 
 namespace PRism.Core.Tests.State;
 
 public class AppStateStoreMigrationTests
 {
-    private static string TempStatePath() =>
-        Path.Combine(Path.GetTempPath(), $"prism-state-{Guid.NewGuid():N}.json");
-
     [Fact]
     public async Task LoadAsync_migrates_v1_state_file_to_v2_and_adds_empty_viewed_files_to_each_session()
     {
-        var path = TempStatePath();
-        await File.WriteAllTextAsync(path, """
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
         {
           "version": 1,
           "review-sessions": {
@@ -83,19 +81,17 @@ public class AppStateStoreMigrationTests
             }
           },
           "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
-          "last-configured-github-host": "github.com"
+          "last-configured-github-host": "https://github.com"
         }
         """);
 
-        var store = new AppStateStore(path);
+        using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
         state.Version.Should().Be(2);
         state.ReviewSessions.Should().ContainKey("owner/repo/123");
         state.ReviewSessions["owner/repo/123"].ViewedFiles.Should().BeEmpty();
         state.ReviewSessions["owner/repo/123"].LastViewedHeadSha.Should().Be("abc123");
-
-        File.Delete(path);
     }
 }
 ```
@@ -146,16 +142,24 @@ public sealed record AppState(
 }
 ```
 
-### Step 1.5: Add the `MigrateIfNeeded` + `MigrateV1ToV2` private helpers
+### Step 1.5: Bump `CurrentVersion` and add migration helpers
 
-- [ ] Modify `PRism.Core/State/AppStateStore.cs`. Add a private `const int CurrentVersion = 2;` near the top of the class. Add a `bool IsReadOnlyMode { get; private set; }` public property. Then add the migration helpers as private static methods at the bottom of the class:
+The existing `AppStateStore` already has a `private const int CurrentVersion = 1;` at line 8. Bump it to `2` and add `IsReadOnlyMode` plus `MigrateIfNeeded` / `MigrateV1ToV2`. Also need `using System.Text.Json.Nodes;` at the top of the file (alongside the existing `using System.Text.Json;`).
+
+- [ ] Modify `PRism.Core/State/AppStateStore.cs`:
 
 ```csharp
-internal const int CurrentVersion = 2;
+// At the top of the file, add:
+using System.Text.Json.Nodes;
 
+// Replace the existing `private const int CurrentVersion = 1;` with:
+private const int CurrentVersion = 2;
+
+// Add as a public property near the top of the class (alongside _path, _gate):
 public bool IsReadOnlyMode { get; private set; }
 
-private JsonNode MigrateIfNeeded(JsonNode root)
+// Add at the bottom of the class as private (instance) helpers:
+private JsonNode? MigrateIfNeeded(JsonNode root)
 {
     var versionNode = root["version"];
     if (versionNode is null)
@@ -166,7 +170,7 @@ private JsonNode MigrateIfNeeded(JsonNode root)
     if (stored > CurrentVersion)
     {
         IsReadOnlyMode = true;
-        return root;
+        return root;     // load best-effort; SaveAsync will refuse
     }
 
     if (stored < 2) root = MigrateV1ToV2(root);
@@ -179,9 +183,10 @@ private static JsonNode MigrateV1ToV2(JsonNode root)
     var sessions = root["review-sessions"]?.AsObject();
     if (sessions is not null)
     {
-        foreach (var (_, session) in sessions)
+        foreach (var sessionEntry in sessions)
         {
-            session!["viewed-files"] ??= new JsonObject();
+            if (sessionEntry.Value is JsonObject obj && obj["viewed-files"] is null)
+                obj["viewed-files"] = new JsonObject();
         }
     }
     root["version"] = 2;
@@ -189,54 +194,64 @@ private static JsonNode MigrateV1ToV2(JsonNode root)
 }
 ```
 
-### Step 1.6: Wire `MigrateIfNeeded` into `LoadAsync`
+### Step 1.6: Wire migration into `LoadAsync`
 
-- [ ] In `AppStateStore.LoadAsync`, change the parse-and-deserialize sequence to parse → migrate → deserialize. Locate the existing block that does `JsonSerializer.Deserialize<AppState>(raw, ...)` and replace with:
+The existing `LoadAsync` body (`AppStateStore.cs` lines 35-59) uses `JsonDocument.Parse` then `JsonSerializer.Deserialize<AppState>(raw, ...)` and has a `catch (JsonException)` that quarantines as `state.json.corrupt-<timestamp>`. The migration runs between parse and deserialize. Because `UnsupportedStateVersionException` thrown by `MigrateIfNeeded` is NOT a `JsonException`, it propagates out of `LoadAsync` unchanged — matching the existing contract that future-version files surface as a thrown exception (the **read-only-mode** path is for `version > CurrentVersion`, taken before the throw can fire; the throw remains for `version` field missing entirely).
+
+- [ ] Replace the body inside the inner `try { ... } catch (JsonException) { ... }` block of `LoadAsync` (the block currently spanning lines 35-59):
 
 ```csharp
-JsonNode? node;
 try
 {
-    node = JsonNode.Parse(raw);
+    var node = JsonNode.Parse(raw, documentOptions: new JsonDocumentOptions
+    {
+        AllowTrailingCommas = true,
+        CommentHandling = JsonCommentHandling.Skip
+    });
+    if (node is null) throw new JsonException("state.json parsed to null");
+
+    node = MigrateIfNeeded(node);   // throws UnsupportedStateVersionException(0) on missing version
+
+    var state = node.Deserialize<AppState>(JsonSerializerOptionsFactory.Storage)
+        ?? AppState.Default;
+    return state;
 }
 catch (JsonException)
 {
-    QuarantineFile(raw);
+    var quarantine = $"{_path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
+    File.Move(_path, quarantine, overwrite: false);
+    await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
     return AppState.Default;
 }
-
-if (node is null)
-{
-    QuarantineFile(raw);
-    return AppState.Default;
-}
-
-node = MigrateIfNeeded(node);
-
-var state = node.Deserialize<AppState>(StorageJsonOptions);
-if (state is null)
-{
-    QuarantineFile(raw);
-    return AppState.Default;
-}
-
-return state;
 ```
 
-(Leave the existing `QuarantineFile` / `StorageJsonOptions` references alone; they exist in S0+S1's `AppStateStore`.)
+The `UnsupportedStateVersionException` is intentionally unhandled here — the existing test `LoadAsync_refuses_unknown_version` (in `AppStateStoreTests.cs`) asserts the throw, and we preserve that behavior for `version` missing too. **Note:** `IsReadOnlyMode = false` is set inside `MigrateIfNeeded` for v1/v2 inputs and `IsReadOnlyMode = true` for future-version inputs; the future-version path returns the unmodified node and the deserialize runs best-effort.
 
 ### Step 1.7: Make `SaveAsync` honor `IsReadOnlyMode`
 
-- [ ] In `AppStateStore.SaveAsync` (or `SaveCoreAsync`), at the top of the method body add:
+- [ ] In `AppStateStore.SaveAsync` (the public entrypoint, lines 67-78), add the check before acquiring the gate:
 
 ```csharp
-if (IsReadOnlyMode)
-    throw new InvalidOperationException(
-        "AppStateStore is in read-only mode (state.json was written by a newer PRism version). " +
-        "Saves are blocked until the binary is upgraded.");
+public async Task SaveAsync(AppState state, CancellationToken ct)
+{
+    if (IsReadOnlyMode)
+        throw new InvalidOperationException(
+            "AppStateStore is in read-only mode (state.json was written by a newer PRism version). " +
+            "Saves are blocked until the binary is upgraded.");
+
+    await _gate.WaitAsync(ct).ConfigureAwait(false);
+    try
+    {
+        await SaveCoreAsync(state, ct).ConfigureAwait(false);
+    }
+    finally
+    {
+        _gate.Release();
+    }
+}
 ```
 
-The endpoints that perform writes (mark-viewed, viewed, subscriptions) catch this exception and translate it to `423 { type: "/state/read-only" }` per § 8 — that translation lands in the endpoint task (Task 4 / Task 5). For now, the throw is the seam.
+The throw is intentionally `InvalidOperationException` (not a domain exception) because endpoints catch it and translate to `423 { type: "/state/read-only" }` per § 8 — that translation lands in Task 4. The cold-start path in `LoadAsync` that writes `AppState.Default` when the file is missing also calls `SaveCoreAsync` (not `SaveAsync`), so first-launch is unaffected.
 
 ### Step 1.8: Run the test to verify it passes
 
@@ -256,8 +271,8 @@ Expected: **PASS**.
 [Fact]
 public async Task LoadAsync_leaves_v2_state_file_unchanged()
 {
-    var path = TempStatePath();
-    await File.WriteAllTextAsync(path, """
+    using var dir = new TempDataDir();
+    await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
     {
       "version": 2,
       "review-sessions": {
@@ -270,86 +285,79 @@ public async Task LoadAsync_leaves_v2_state_file_unchanged()
         }
       },
       "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
-      "last-configured-github-host": "github.com"
+      "last-configured-github-host": "https://github.com"
     }
     """);
 
-    var store = new AppStateStore(path);
+    using var store = new AppStateStore(dir.Path);
     var state = await store.LoadAsync(CancellationToken.None);
 
     state.Version.Should().Be(2);
     state.ReviewSessions["owner/repo/123"].ViewedFiles.Should().ContainKey("src/Foo.cs");
     store.IsReadOnlyMode.Should().BeFalse();
-
-    File.Delete(path);
 }
 
 [Fact]
 public async Task LoadAsync_throws_on_missing_version_field()
 {
-    var path = TempStatePath();
-    await File.WriteAllTextAsync(path, """
+    using var dir = new TempDataDir();
+    await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
     {
       "review-sessions": {},
       "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
-      "last-configured-github-host": "github.com"
+      "last-configured-github-host": "https://github.com"
     }
     """);
 
-    var store = new AppStateStore(path);
-    // Missing version is treated as malformed JSON via the existing quarantine path.
-    var state = await store.LoadAsync(CancellationToken.None);
-
-    state.Should().BeEquivalentTo(AppState.Default);
-    File.Exists(path).Should().BeFalse();      // original quarantined
-    Directory.GetFiles(Path.GetDirectoryName(path)!, $"{Path.GetFileName(path)}.corrupt-*").Should().NotBeEmpty();
-
-    foreach (var f in Directory.GetFiles(Path.GetDirectoryName(path)!, $"{Path.GetFileName(path)}.corrupt-*"))
-        File.Delete(f);
+    using var store = new AppStateStore(dir.Path);
+    // Missing version is the existing AppStateStore contract — throws (matches the
+    // existing `LoadAsync_refuses_unknown_version` test pattern at line 36).
+    await FluentActions.Invoking(() => store.LoadAsync(CancellationToken.None))
+        .Should().ThrowAsync<UnsupportedStateVersionException>()
+        .Where(e => e.Version == 0);
 }
 
 [Fact]
 public async Task LoadAsync_enters_read_only_mode_on_future_version()
 {
-    var path = TempStatePath();
-    await File.WriteAllTextAsync(path, """
+    using var dir = new TempDataDir();
+    await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
     {
       "version": 99,
       "review-sessions": {},
       "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
-      "last-configured-github-host": "github.com"
+      "last-configured-github-host": "https://github.com"
     }
     """);
 
-    var store = new AppStateStore(path);
+    using var store = new AppStateStore(dir.Path);
     _ = await store.LoadAsync(CancellationToken.None);
 
     store.IsReadOnlyMode.Should().BeTrue();
-    File.Delete(path);
 }
 
 [Fact]
 public async Task SaveAsync_throws_when_in_read_only_mode()
 {
-    var path = TempStatePath();
-    await File.WriteAllTextAsync(path, """
+    using var dir = new TempDataDir();
+    await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
     {
       "version": 99,
       "review-sessions": {},
       "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
-      "last-configured-github-host": "github.com"
+      "last-configured-github-host": "https://github.com"
     }
     """);
 
-    var store = new AppStateStore(path);
+    using var store = new AppStateStore(dir.Path);
     var state = await store.LoadAsync(CancellationToken.None);
 
     var act = async () => await store.SaveAsync(state, CancellationToken.None);
     await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*read-only mode*");
-
-    File.Delete(path);
 }
 ```
+
+**Note:** The existing `AppStateStoreTests` at lines 36-45 (`LoadAsync_refuses_unknown_version`) asserts version `2` is currently rejected. Once `CurrentVersion = 2` (Step 1.5), that test will fail because v2 is now valid. **Update that test** to use a future version (e.g., `99`) instead, and rename it from `LoadAsync_refuses_unknown_version` to `LoadAsync_refuses_future_version`. This is a known-companion edit to Step 1.5.
 
 ### Step 1.10: Run all migration tests
 
@@ -744,16 +752,29 @@ public class ForcePushMultiplierTests
     }
 
     [Fact]
-    public void Force_push_with_null_shas_positions_by_occurredAt_with_clamp()
+    public void Force_push_with_null_shas_positions_by_occurredAt_in_window()
     {
         var t0 = DateTimeOffset.UtcNow;
         var prev = Commit("a", t0);
         var next = Commit("b", t0.AddSeconds(2000));
-        // Force-push event clock-skewed earlier than prev — the clamp should treat it as co-located with prev.
-        var fp = new ClusteringForcePush(null, null, t0.AddSeconds(-10));
-        // Expected: clamped, so the "long gap" check still applies if next.committedDate is far ahead.
+        // Null SHAs (GC'd) → use occurredAt directly. Place inside (prev, next] window.
+        var fp = new ClusteringForcePush(null, null, t0.AddSeconds(1500));
         new ForcePushMultiplier().For(prev, next, Input(new[] { prev, next }, new[] { fp }), Defaults)
             .Should().BeApproximately(1.5, 0.001);
+    }
+
+    [Fact]
+    public void Force_push_with_null_shas_clock_skewed_before_prev_does_not_apply()
+    {
+        var t0 = DateTimeOffset.UtcNow;
+        var prev = Commit("a", t0);
+        var next = Commit("b", t0.AddSeconds(2000));
+        // Clock-skewed earlier than prev → clamp pins it to prev.CommittedDate.
+        // Strict-greater window check `positionedAt > prev.CommittedDate` excludes it
+        // (no false-positive long-gap multiplier from a skewed event).
+        var fp = new ClusteringForcePush(null, null, t0.AddSeconds(-10));
+        new ForcePushMultiplier().For(prev, next, Input(new[] { prev, next }, new[] { fp }), Defaults)
+            .Should().BeApproximately(1.0, 0.001);
     }
 
     [Fact]
@@ -1113,7 +1134,33 @@ git -C C:\src\PRism-s3-spec commit -m "feat(iterations): weighted-distance clust
 - Modify: `PRism.GitHub/GitHubReviewService.cs`
 - Test: `tests/PRism.GitHub.Tests/GitHubReviewServiceTests.cs`
 
-### Step 3.1: Define the new DTOs
+### Step 3.1: Extend the `Pr` record with S3 fields
+
+The existing `Pr` record (`PRism.Core.Contracts/Pr.cs`) has 5 fields: `(Reference, Title, Author, State, HeadSha)`. S3 needs additional fields. A grep for `new Pr(` across the solution returns zero hits — no production code constructs `Pr` today (S2's `StubReviewService.GetPrAsync` throws `NotImplementedException`). Extending the record is therefore safe.
+
+- [ ] Replace `PRism.Core.Contracts/Pr.cs` with:
+
+```csharp
+namespace PRism.Core.Contracts;
+
+public sealed record Pr(
+    PrReference Reference,
+    string Title,
+    string Body,
+    string Author,
+    string State,
+    string HeadSha,
+    string BaseSha,
+    string HeadBranch,
+    string BaseBranch,
+    string Mergeability,            // "MERGEABLE" | "CONFLICTING" | "UNKNOWN" — matches GitHub's mergeStateStatus values
+    string CiSummary,               // e.g. "3 checks passing, 1 failing" — backend computes
+    bool IsMerged,
+    bool IsClosed,
+    DateTimeOffset OpenedAt);
+```
+
+### Step 3.2: Define the new DTOs
 
 - [ ] Create `PRism.Core.Contracts/PrDetailDto.cs`:
 
@@ -1126,8 +1173,6 @@ public sealed record PrDetailDto(
     IReadOnlyList<IssueCommentDto> RootComments,
     IReadOnlyList<ReviewThreadDto> ReviewComments);
 ```
-
-(Reuses the existing `Pr` record from `PRism.Core.Contracts/Pr.cs`; if it doesn't have `HeadSha`/`BaseSha`/`Mergeability`/`State` fields yet, extend that record before continuing — those are needed by S3.)
 
 - [ ] Create `PRism.Core.Contracts/IterationDto.cs`:
 
@@ -1195,21 +1240,49 @@ namespace PRism.Core.Contracts;
 public sealed record DiffRangeRequest(string BaseSha, string HeadSha);
 ```
 
-### Step 3.2: Extend `IReviewService`
+### Step 3.3: Extend `IReviewService` — breaking signature changes flagged
 
-- [ ] Modify `PRism.Core/IReviewService.cs`. Add these methods to the existing interface:
+The existing `IReviewService` (`PRism.Core/IReviewService.cs`) has methods that **collide on signature** with the new ones the spec needs:
+
+| Existing (S0+S1) | S3 wants | Resolution |
+|---|---|---|
+| `Task<FileChange[]> GetDiffAsync(PrReference, string fromSha, string toSha, CT)` | `Task<DiffDto> GetDiffAsync(PrReference, DiffRangeRequest, CT)` | Different parameter list (positional record vs strings); valid C# **overload** — keep both. The new overload is what S3's endpoints call; the old one stays for any future caller that wants the bare `FileChange[]`. |
+| `Task<string> GetFileContentAsync(PrReference, string, string, CT)` | `Task<FileContentResult> GetFileContentAsync(PrReference, string, string, CT)` | **Same parameter list, different return type — illegal C# overload.** Replace the old method (no production caller exists; `StubReviewService` throws `NotImplementedException`). |
+| `Task<Pr> GetPrAsync(PrReference, CT)` | `Task<PrDetailDto?> GetPrDetailAsync(PrReference, CT)` | Different name, different return type — both can coexist. `GetPrAsync` stays unused (no caller). |
+| `Task<PrIteration[]> GetIterationsAsync(PrReference, CT)` | (S3 uses `IterationDto` inside `PrDetailDto`) | `GetIterationsAsync` stays unused. |
+| `Task<ExistingComment[]> GetCommentsAsync(PrReference, CT)` | (S3 uses `IssueCommentDto`/`ReviewThreadDto` inside `PrDetailDto`) | `GetCommentsAsync` stays unused. |
+
+- [ ] Modify `PRism.Core/IReviewService.cs`. Add the using:
 
 ```csharp
-Task<PrDetailDto?> GetPrDetailAsync(PrReference prRef, CancellationToken ct);
-
-Task<DiffDto> GetDiffAsync(PrReference prRef, DiffRangeRequest range, CancellationToken ct);
-
-Task<FileContentResult> GetFileContentAsync(PrReference prRef, string path, string sha, CancellationToken ct);
-
-Task<ClusteringInput> GetTimelineAsync(PrReference prRef, CancellationToken ct);
+using PRism.Core.Iterations;
 ```
 
-Add the result type for file content (in `PRism.Core.Contracts/`):
+- [ ] **Replace** the existing `Task<string> GetFileContentAsync(...)` (line 24) with the new shape:
+
+```csharp
+Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct);
+```
+
+- [ ] **Add** the new methods alongside the existing ones (no removal):
+
+```csharp
+// New PR detail surface (S3) — kept alongside existing GetPrAsync/GetIterationsAsync/GetCommentsAsync,
+// which become unused but stay for now (deletion is in scope for ADR-S5-1's capability split).
+Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct);
+
+Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct);
+//        ^ overload — coexists with the legacy `GetDiffAsync(PrReference, string, string, CT)`.
+
+Task<ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct);
+
+Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct);
+//        ^ NEW: cheap-REST poll (3 calls: pulls/{n} + comments?per_page=1 + reviews?per_page=1
+//          with Link rel=last header parse). Lightweight alternative to GetPrDetailAsync for
+//          the active-PR poller's 30s tick. See spec § 6.2.
+```
+
+- [ ] Create `PRism.Core.Contracts/FileContentResult.cs`:
 
 ```csharp
 namespace PRism.Core.Contracts;
@@ -1222,36 +1295,130 @@ public sealed record FileContentResult(
     long ByteSize);
 ```
 
-Add the using statement at the top of `IReviewService.cs` for `PRism.Core.Iterations` (the timeline returns a `ClusteringInput`).
-
-### Step 3.3: Write `GitHubReviewServiceTests` for the diff-fetcher
-
-- [ ] In `tests/PRism.GitHub.Tests/GitHubReviewServiceTests.cs`, add (or create the file):
+- [ ] Create `PRism.Core.Contracts/ActivePrPollSnapshot.cs`:
 
 ```csharp
+namespace PRism.Core.Contracts;
+
+public sealed record ActivePrPollSnapshot(
+    string HeadSha,
+    string Mergeability,
+    string PrState,        // "OPEN" | "CLOSED" | "MERGED"
+    int CommentCount,
+    int ReviewCount);
+```
+
+- [ ] **Update `StubReviewService`** in `tests/PRism.Web.Tests/TestHelpers/PRismWebApplicationFactory.cs` to match the new interface. Replace the legacy `Task<string> GetFileContentAsync(...) => throw new NotImplementedException()` with:
+
+```csharp
+public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException();
+public Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
+public Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct) => throw new NotImplementedException();
+public Task<ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
+public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
+```
+
+(Keep the existing `GetDiffAsync(PrReference, string, string, CT)` throwing — it's the legacy overload.)
+
+### Step 3.4: Write `GitHubReviewServiceTests` for the diff-fetcher
+
+S2's existing test infrastructure under `tests/PRism.GitHub.Tests/TestHelpers/` is `FakeHttpMessageHandler` (a `Func<HttpRequestMessage, HttpResponseMessage>` responder) wrapped by `FakeHttpClientFactory`. There is **no** `FakeGitHubServer` builder. This step extends `FakeHttpMessageHandler` patterns (router-by-URL, page-yielding) rather than inventing a new builder.
+
+- [ ] First, add a small helper for building paginated responses in `tests/PRism.GitHub.Tests/TestHelpers/PaginatedFakeHandler.cs`:
+
+```csharp
+using System.Net;
+
+namespace PRism.GitHub.Tests.TestHelpers;
+
+/// <summary>
+/// Routes requests by path-prefix to scripted responses. Each rule can yield
+/// successive pages; on each match, the next page is returned and Link headers
+/// are emitted for non-last pages so the caller's pagination loop terminates correctly.
+/// </summary>
+internal sealed class PaginatedFakeHandler : HttpMessageHandler
+{
+    private readonly List<Rule> _rules = new();
+
+    public PaginatedFakeHandler RouteJson(string pathPrefix, params string[] pages)
+    {
+        _rules.Add(new Rule(pathPrefix, pages.Select(p => (HttpStatusCode.OK, p)).ToList()));
+        return this;
+    }
+
+    public int CallCountFor(string pathPrefix) =>
+        _rules.FirstOrDefault(r => r.PathPrefix == pathPrefix)?.Index ?? 0;
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage req, CancellationToken ct)
+    {
+        var path = req.RequestUri!.AbsolutePath;
+        var rule = _rules.FirstOrDefault(r => path.StartsWith(r.PathPrefix, StringComparison.Ordinal));
+        if (rule is null) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        if (rule.Index >= rule.Pages.Count)
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json") });
+
+        var (status, body) = rule.Pages[rule.Index];
+        var hasNext = rule.Index + 1 < rule.Pages.Count;
+        rule.Index++;
+
+        var resp = new HttpResponseMessage(status)
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+        };
+        if (hasNext)
+        {
+            // Link rel="next" — pagination loop in GitHubReviewService.GetDiffAsync follows this.
+            resp.Headers.TryAddWithoutValidation("Link",
+                $"<https://api.github.com{rule.PathPrefix}?page={rule.Index + 1}>; rel=\"next\"");
+        }
+        return Task.FromResult(resp);
+    }
+
+    private sealed class Rule
+    {
+        public string PathPrefix { get; }
+        public List<(HttpStatusCode, string)> Pages { get; }
+        public int Index { get; set; }
+        public Rule(string prefix, List<(HttpStatusCode, string)> pages) { PathPrefix = prefix; Pages = pages; }
+    }
+}
+```
+
+- [ ] Then, the test file:
+
+```csharp
+// tests/PRism.GitHub.Tests/GitHubReviewServiceDiffTests.cs
 using FluentAssertions;
+using PRism.Core;
 using PRism.Core.Contracts;
-using PRism.GitHub;
+using PRism.GitHub.Tests.TestHelpers;
 using Xunit;
 
 namespace PRism.GitHub.Tests;
 
 public class GitHubReviewServiceDiffTests
 {
+    private static IReviewService NewService(PaginatedFakeHandler handler)
+    {
+        var factory = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/"));
+        return new GitHubReviewService(factory, () => Task.FromResult<string?>("ghp_test"), "github.com");
+    }
+
+    private static string FilePage(int n) =>
+        "[" + string.Join(",", Enumerable.Range(0, n).Select(i =>
+            $"{{\"filename\":\"src/F{i}.cs\",\"status\":\"modified\",\"additions\":1,\"deletions\":0,\"patch\":\"@@\"}}"
+        )) + "]";
+
     [Fact]
     public async Task GetDiffAsync_paginates_pulls_files_until_link_next_exhausts()
     {
-        var fake = new FakeGitHubServer()
-            .ReturningPullsFilesPages(new[]
-            {
-                FakeGitHubServer.PageOf(100, hasNext: true),
-                FakeGitHubServer.PageOf(100, hasNext: true),
-                FakeGitHubServer.PageOf(50,  hasNext: false),
-            })
-            .WithPullChangedFilesCount(250);
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/o/r/pulls/1/files", FilePage(100), FilePage(100), FilePage(50))
+            .RouteJson("/repos/o/r/pulls/1", "{\"changed_files\":250,\"head\":{\"sha\":\"head\"},\"base\":{\"sha\":\"base\"}}");
 
-        var sut = NewService(fake);
-        var diff = await sut.GetDiffAsync(
+        var diff = await NewService(handler).GetDiffAsync(
             new PrReference("o", "r", 1),
             new DiffRangeRequest("base", "head"),
             CancellationToken.None);
@@ -1263,32 +1430,24 @@ public class GitHubReviewServiceDiffTests
     [Fact]
     public async Task GetDiffAsync_marks_truncated_when_pull_changed_files_exceeds_assembled_count()
     {
-        var fake = new FakeGitHubServer()
-            .ReturningPullsFilesPages(new[]
-            {
-                FakeGitHubServer.PageOf(100, hasNext: true),
-                FakeGitHubServer.PageOf(100, hasNext: true),
-                FakeGitHubServer.PageOf(100, hasNext: true),
-                // ... up to 30 pages of 100 = 3000 (the GitHub hard cap)
-            })
-            .WithPullChangedFilesCount(3500);   // GitHub knows there are more
+        // Simulate the 3000-file ceiling: 30 pages × 100 = 3000, but pull.changed_files = 3500.
+        var pages = Enumerable.Range(0, 30).Select(_ => FilePage(100)).ToArray();
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/o/r/pulls/1/files", pages)
+            .RouteJson("/repos/o/r/pulls/1", "{\"changed_files\":3500,\"head\":{\"sha\":\"head\"},\"base\":{\"sha\":\"base\"}}");
 
-        var sut = NewService(fake);
-        var diff = await sut.GetDiffAsync(
+        var diff = await NewService(handler).GetDiffAsync(
             new PrReference("o", "r", 1),
             new DiffRangeRequest("base", "head"),
             CancellationToken.None);
 
-        diff.Files.Should().HaveCountLessThanOrEqualTo(3000);
+        diff.Files.Should().HaveCount(3000);
         diff.Truncated.Should().BeTrue();
     }
-
-    private static IReviewService NewService(FakeGitHubServer fake) =>
-        new GitHubReviewService(fake.HttpClient, fake.GitHubHost);
 }
 ```
 
-(The `FakeGitHubServer` builder is part of S2's test infrastructure — extend it as needed. If method shapes don't match, follow the existing patterns in `tests/PRism.GitHub.Tests/Inbox/` for examples.)
+(`FakeHttpClientFactory` already exists at `tests/PRism.GitHub.Tests/TestHelpers/FakeHttpClientFactory.cs` and matches the constructor pattern shown.)
 
 ### Step 3.4: Implement the new `IReviewService` methods on `GitHubReviewService`
 
@@ -1390,21 +1549,54 @@ public async Task<FileContentResult> GetFileContentAsync(PrReference prRef, stri
 
 public async Task<ClusteringInput> GetTimelineAsync(PrReference prRef, CancellationToken ct)
 {
-    var detail = await GetPrDetailAsync(prRef, ct);
-    if (detail is null)
+    // INDEPENDENT GraphQL fetch — does NOT call GetPrDetailAsync. The two methods
+    // share the parsing helpers but each issues its own round-trip; this avoids the
+    // recursion that would (a) double the GraphQL cost on every PR-detail load and
+    // (b) silently degrade timeline data on any GetPrDetailAsync failure.
+    //
+    // Practical: most callers (PrDetailLoader.LoadAsync) call BOTH GetPrDetailAsync
+    // and GetTimelineAsync sequentially because the detail surface needs PR meta +
+    // comments while the clustering needs timeline + per-commit changed-files.
+    // Treating them as siblings rather than parent-child makes the failure modes
+    // independent.
+    var rawTimeline = await PostGraphQL(@"query($owner:String!,$repo:String!,$number:Int!){
+      repository(owner:$owner,name:$repo) {
+        pullRequest(number:$number) {
+          comments(first:100) { nodes { author { login } createdAt } }
+          timelineItems(first:100, itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]) {
+            nodes {
+              __typename
+              ... on PullRequestCommit { commit { oid committedDate message additions deletions } }
+              ... on HeadRefForcePushedEvent { beforeCommit { oid } afterCommit { oid } createdAt }
+              ... on PullRequestReview { submittedAt }
+            }
+          }
+        }
+      }
+    }", new { owner = prRef.Owner, repo = prRef.Repo, number = prRef.Number }, ct);
+
+    if (rawTimeline is null)
         return new ClusteringInput(Array.Empty<ClusteringCommit>(), Array.Empty<ClusteringForcePush>(),
             Array.Empty<ClusteringReviewEvent>(), Array.Empty<ClusteringAuthorComment>());
 
-    // Per-commit changedFiles fan-out (concurrency cap 8).
-    // If commits.Length > coefficients.SkipJaccardAboveCommitCount, return without changedFiles.
-    // The clustering strategy treats null as unknown.
-    var commits = await FetchPerCommitChangedFiles(prRef, /* commits from detail */ ct, concurrencyCap: 8, skipAbove: 100);
+    var pull = rawTimeline.Value.GetProperty("data").GetProperty("repository").GetProperty("pullRequest");
+    var rawCommits = ParseTimelineCommits(pull);   // sha + committedDate + message + additions + deletions, no changedFiles yet
+
+    // Per-commit changedFiles fan-out (concurrency cap 8). If commits.Count > skipAbove,
+    // return without changedFiles (clustering strategy's FileJaccardMultiplier treats null
+    // as unknown and returns neutral 1.0). skipAbove is read from coefficients; passed
+    // explicitly here because IReviewService doesn't have a coefficients dependency.
+    const int SkipAbove = 100;     // matches IterationClusteringCoefficients.SkipJaccardAboveCommitCount default
+    const int ConcurrencyCap = 8;
+    var commits = rawCommits.Count > SkipAbove
+        ? rawCommits.ToArray()      // ChangedFiles stays null
+        : await FetchPerCommitChangedFiles(prRef, rawCommits, ConcurrencyCap, ct);
 
     return new ClusteringInput(
         commits,
-        ParseForcePushes(detail),
-        ParseReviewEvents(detail),
-        ParseAuthorComments(detail));
+        ParseForcePushes(pull),
+        ParseReviewEvents(pull),
+        ParseAuthorComments(pull));
 }
 
 private static bool LooksBinary(byte[] bytes)
@@ -1492,27 +1684,36 @@ git -C C:\src\PRism-s3-spec commit -m "feat(github): IReviewService grows new me
 - [ ] Create `PRism.Core/PrDetail/PrDetailSnapshot.cs`:
 
 ```csharp
+using PRism.Core.Contracts;
+
 namespace PRism.Core.PrDetail;
 
 public sealed record PrDetailSnapshot(
     PrDetailDto Detail,
-    int CoefficientsGeneration);   // bumped on coefficient hot-reload
+    string HeadSha,                  // mirrors Detail.Pr.HeadSha; cache key
+    int CoefficientsGeneration);     // bumped on coefficient hot-reload
 ```
-
-(Use the existing `PrDetailDto` from `PRism.Core.Contracts`.)
 
 - [ ] Create `PRism.Core/PrDetail/IPrDetailLoader.cs`:
 
 ```csharp
+using PRism.Core.Contracts;
+
 namespace PRism.Core.PrDetail;
 
 public interface IPrDetailLoader
 {
     Task<PrDetailSnapshot?> LoadAsync(PrReference prRef, CancellationToken ct);
     Task<PrDetailSnapshot?> TryGetCachedAsync(PrReference prRef);
-    void InvalidateAll();   // called on coefficient hot-reload
+    /// <summary>Invalidates all cached snapshots; called on coefficient hot-reload.</summary>
+    void InvalidateAll();
 }
 ```
+
+**Cache-key contract.** The cache key is the tuple `(prRef, headSha, coefficientsGeneration)`. **All three components must change for a cache miss.** This is load-bearing because:
+
+- A Reload-after-banner must fetch fresh PR detail. The frontend re-hits `GET /api/pr/{ref}`. Without `headSha` in the cache key, the loader returns the stale snapshot whose `Detail.Pr.HeadSha` is the *old* head — iteration tabs and stats freeze. The `(prRef, headSha)` key forces a miss the moment GitHub returns the new head.
+- The detail-fetch flow always calls GitHub for the freshest `pr.HeadSha` *before* probing the cache (i.e., the loader fetches `IReviewService.PollActivePrAsync` first to learn the current head, then keys the cache lookup). Spec § 6.1 implies this ordering.
 
 ### Step 4.2: Write the loader test
 
@@ -1586,6 +1787,13 @@ Implement `FakeReviewService` minimally — for each `IReviewService` method, re
 
 ### Step 4.3: Implement `PrDetailLoader`
 
+The loader's responsibilities:
+1. Probe the cache by `(prRef, headSha, generation)`. If the headSha is unknown to the caller (new mount), call `IReviewService.PollActivePrAsync(prRef, ct)` first — that's a 3-call REST probe (cheap) that returns the current `HeadSha`. Then probe the cache.
+2. On cache miss, fetch `GetPrDetailAsync` (one heavy GraphQL round-trip) AND `GetTimelineAsync` (independent — no recursion through `GetPrDetailAsync`; see Step 3.5 implementation note).
+3. Cluster the timeline via `_clusterer.Cluster(...)`.
+4. Compose the snapshot's iterations by looking up each cluster's commit SHAs in a dictionary built from the timeline's commits (so we get full `CommitDto` shape including message and dates).
+5. Cache and return.
+
 - [ ] Create `PRism.Core/PrDetail/PrDetailLoader.cs`:
 
 ```csharp
@@ -1615,28 +1823,58 @@ public sealed class PrDetailLoader : IPrDetailLoader
 
     public async Task<PrDetailSnapshot?> LoadAsync(PrReference prRef, CancellationToken ct)
     {
-        var key = CacheKey(prRef, _generation);
+        // Probe current headSha cheaply before deciding whether the cache is valid.
+        var pollSnapshot = await _review.PollActivePrAsync(prRef, ct);
+        var key = CacheKey(prRef, pollSnapshot.HeadSha, _generation);
         if (_cache.TryGetValue(key, out var cached)) return cached;
 
         var detail = await _review.GetPrDetailAsync(prRef, ct);
         if (detail is null) return null;
 
+        // Defensive: if the head moved between PollActivePrAsync and GetPrDetailAsync,
+        // re-key on the detail's actual head.
+        if (detail.Pr.HeadSha != pollSnapshot.HeadSha)
+            key = CacheKey(prRef, detail.Pr.HeadSha, _generation);
+
         var timeline = await _review.GetTimelineAsync(prRef, ct);
         var clusters = _clusterer.Cluster(timeline, _coefficients);
-        var iterations = clusters.Select(c => new IterationDto(
-            c.IterationNumber, c.BeforeSha, c.AfterSha,
-            // Map cluster.CommitShas → CommitDto by joining against detail.Iterations or timeline data.
-            c.CommitShas.Select(sha => /* lookup */).ToArray())).ToArray();
 
-        var snapshot = new PrDetailSnapshot(detail with { Iterations = iterations }, _generation);
+        // Build a SHA → commit-meta lookup from the timeline once; reuse for every cluster.
+        var commitBySha = timeline.Commits.ToDictionary(c => c.Sha, c => c);
+
+        var iterations = clusters.Select(c => new IterationDto(
+            c.IterationNumber,
+            c.BeforeSha,
+            c.AfterSha,
+            c.CommitShas
+                .Where(sha => commitBySha.ContainsKey(sha))
+                .Select(sha =>
+                {
+                    var ci = commitBySha[sha];
+                    return new CommitDto(ci.Sha, ci.Message, ci.CommittedDate, ci.Additions, ci.Deletions);
+                })
+                .ToArray()))
+            .ToArray();
+
+        var snapshot = new PrDetailSnapshot(
+            detail with { Iterations = iterations },
+            detail.Pr.HeadSha,
+            _generation);
         _cache[key] = snapshot;
         return snapshot;
     }
 
     public Task<PrDetailSnapshot?> TryGetCachedAsync(PrReference prRef)
     {
-        var key = CacheKey(prRef, _generation);
-        return Task.FromResult(_cache.TryGetValue(key, out var cached) ? cached : null);
+        // Without re-polling we don't know the current head. Return any matching key
+        // for this (prRef, generation) — caller is responsible for accepting potential
+        // staleness (the file-content endpoint uses this for in-diff authz; if the
+        // snapshot was evicted, the endpoint surfaces /file/snapshot-evicted).
+        var prefix = $"{prRef.Owner}/{prRef.Repo}/{prRef.Number}@";
+        var match = _cache.FirstOrDefault(kv =>
+            kv.Key.StartsWith(prefix, StringComparison.Ordinal) &&
+            kv.Key.EndsWith($"#{_generation}", StringComparison.Ordinal));
+        return Task.FromResult(match.Value);
     }
 
     public void InvalidateAll()
@@ -1645,12 +1883,10 @@ public sealed class PrDetailLoader : IPrDetailLoader
         _cache.Clear();
     }
 
-    private static string CacheKey(PrReference prRef, int generation) =>
-        $"{prRef.Owner}/{prRef.Repo}/{prRef.Number}#{generation}";
+    private static string CacheKey(PrReference prRef, string headSha, int generation) =>
+        $"{prRef.Owner}/{prRef.Repo}/{prRef.Number}@{headSha}#{generation}";
 }
 ```
-
-(The `lookup` placeholder above must be filled in: build a `Dictionary<string, ClusteringCommit>` from the timeline once, then look up `sha` for each cluster member.)
 
 ### Step 4.4: Run loader tests
 
@@ -2163,23 +2399,31 @@ public sealed class ActivePrPoller : BackgroundService
 
             try
             {
-                var detail = await _review.GetPrDetailAsync(prRef, ct);
-                if (detail is null) { ApplyBackoff(state, now); continue; }
+                // CHEAP poll — 3 REST calls per spec § 6.2 (pulls/{n} + pulls/{n}/comments?per_page=1
+                // + pulls/{n}/reviews?per_page=1 with Link rel=last header parse). NOT GetPrDetailAsync,
+                // which is a heavyweight GraphQL round-trip + per-commit fan-out and would blow the
+                // rate-limit budget (1200/hr at 5 PRs vs spec's 1800/hr budget for the whole poll loop).
+                var snapshot = await _review.PollActivePrAsync(prRef, ct);
 
-                var headChanged = state.LastHeadSha is { } prev && prev != detail.Pr.HeadSha;
-                var commentChanged = state.LastCommentCount is { } prevCount && prevCount != detail.RootComments.Count;
+                var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
+                var commentChanged = state.LastCommentCount is { } prevCount && prevCount != snapshot.CommentCount;
 
                 if (headChanged || commentChanged)
                 {
-                    _bus.Publish(new ActivePrUpdated(prRef, headChanged, commentChanged,
-                        detail.Pr.HeadSha, detail.RootComments.Count));
+                    _bus.Publish(new ActivePrUpdated(
+                        prRef,
+                        HeadShaChanged: headChanged,
+                        CommentCountChanged: commentChanged,
+                        NewHeadSha: headChanged ? snapshot.HeadSha : null,
+                        NewCommentCount: commentChanged ? snapshot.CommentCount : null));
                 }
 
-                state.LastHeadSha = detail.Pr.HeadSha;
-                state.LastCommentCount = detail.RootComments.Count;
+                state.LastHeadSha = snapshot.HeadSha;
+                state.LastCommentCount = snapshot.CommentCount;
                 state.ConsecutiveErrors = 0;
                 state.NextRetryAt = null;
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Active-PR poll failed for {PrRef}; applying backoff", prRef);
@@ -2197,7 +2441,32 @@ public sealed class ActivePrPoller : BackgroundService
 }
 ```
 
-(The `IReviewEventBus` and `ActivePrUpdated` already exist or are added in `PRism.Core/Events/`. If `ActivePrUpdated` doesn't exist yet, create it as a record matching the spec § 6.2 shape.)
+**Required prerequisite types** (create before the poller compiles):
+
+- [ ] Verify `PRism.Core/Events/IReviewEventBus.cs` exists from S2 (it does — `SseChannel.cs:22` already calls `bus.Subscribe<InboxUpdated>(OnInboxUpdated)`). Confirm it has a `Publish<T>(T evt)` method or equivalent fire-and-forget API.
+
+- [ ] Create `PRism.Core/Events/ActivePrUpdated.cs`:
+
+```csharp
+using PRism.Core.Contracts;
+
+namespace PRism.Core.Events;
+
+public sealed record ActivePrUpdated(
+    PrReference PrRef,
+    bool HeadShaChanged,
+    bool CommentCountChanged,
+    string? NewHeadSha,
+    int? NewCommentCount);
+```
+
+- [ ] Create `PRism.Core.Contracts/SubscriptionRequest.cs` (used by both POST and DELETE on `/api/events/subscriptions` per Step 5.7):
+
+```csharp
+namespace PRism.Core.Contracts;
+
+public sealed record SubscriptionRequest(string SubscriberId, PrReference PrRef);
+```
 
 ### Step 5.6: Update `SseChannel` for per-PR fanout + named heartbeat
 
@@ -2266,40 +2535,61 @@ app.MapDelete("/api/events/subscriptions",
 
 (Body-binding for DELETE uses `[FromBody]`; verify in Program.cs that `KestrelServerOptions.AllowDeleteWithBody = true` if needed.)
 
-### Step 5.8: Tighten `OriginCheckMiddleware`
+### Step 5.8: Tighten `OriginCheckMiddleware` — preserve loopback-port accommodation
 
-- [ ] Modify `PRism.Web/Middleware/OriginCheckMiddleware.cs`. Replace the current empty-Origin short-circuit with explicit rejection on mutating methods:
+The existing middleware (`PRism.Web/Middleware/OriginCheckMiddleware.cs`) has a **load-bearing** dev-mode accommodation: when both Origin and Host are loopback (e.g., Origin `http://localhost:5173` from Vite, Host `localhost:5180` from backend), the request is allowed through. **Preserve that branch** — losing it breaks the dev loop.
+
+The only change S3 makes: **reject empty Origin on mutating methods**. The existing `IsLoopback(origin) && IsLoopback(host)` and `string.Equals(origin, expected, ...)` branches stay.
+
+- [ ] Modify the body of `InvokeAsync` (currently lines 12-37). Replace it with:
 
 ```csharp
 public async Task InvokeAsync(HttpContext ctx)
 {
-    var origin = ctx.Request.Headers.Origin.ToString();
-    var method = ctx.Request.Method;
-    var isMutating = method is "POST" or "PUT" or "PATCH" or "DELETE";
+    ArgumentNullException.ThrowIfNull(ctx);
 
+    var isMutating =
+        HttpMethods.IsPost(ctx.Request.Method) ||
+        HttpMethods.IsPut(ctx.Request.Method) ||
+        HttpMethods.IsPatch(ctx.Request.Method) ||
+        HttpMethods.IsDelete(ctx.Request.Method);
+
+    if (!isMutating)
+    {
+        await _next(ctx).ConfigureAwait(false);
+        return;
+    }
+
+    var origin = ctx.Request.Headers["Origin"].FirstOrDefault();
+    var expected = $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}";
+
+    // Empty Origin on a mutating method → reject. Was previously allowed (line 27 of the
+    // pre-S3 middleware) for non-browser tools without an Origin header; that exemption is
+    // retired in S3 because the spec mandates X-PRism-Session enforcement on mutating
+    // requests, and CSRF defense relies on Origin being present-and-correct.
     if (string.IsNullOrEmpty(origin))
     {
-        if (isMutating)
-        {
-            ctx.Response.StatusCode = 403;
-            await ctx.Response.WriteAsJsonAsync(new ProblemDetails { Type = "/auth/bad-origin", Status = 403 });
-            return;
-        }
-        // Non-mutating with no Origin: allow (curl / direct GET probes still useful for health checks)
-        await _next(ctx);
+        ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        await ctx.Response.WriteAsync("Cross-origin request rejected (missing Origin).").ConfigureAwait(false);
         return;
     }
 
-    if (!IsAllowedOrigin(origin))
+    // Same-origin OR loopback-port accommodation (Vite at :5173 talking to backend at :5180
+    // is legitimate same-machine traffic). The loopback branch is unchanged from S0+S1 —
+    // see the comment block at the bottom of the existing middleware for rationale.
+    if (string.Equals(origin, expected, StringComparison.OrdinalIgnoreCase)
+        || (IsLoopback(origin) && IsLoopback(ctx.Request.Host.Host)))
     {
-        ctx.Response.StatusCode = 403;
-        await ctx.Response.WriteAsJsonAsync(new ProblemDetails { Type = "/auth/bad-origin", Status = 403 });
+        await _next(ctx).ConfigureAwait(false);
         return;
     }
 
-    await _next(ctx);
+    ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+    await ctx.Response.WriteAsync("Cross-origin request rejected.").ConfigureAwait(false);
 }
 ```
+
+(Keep the existing private `IsLoopback(string)` method untouched.)
 
 ### Step 5.9: Implement `SessionTokenMiddleware`
 
@@ -2308,6 +2598,7 @@ public async Task InvokeAsync(HttpContext ctx)
 ```csharp
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Mvc;
 
 namespace PRism.Web.Middleware;
 
@@ -2319,35 +2610,74 @@ public sealed class SessionTokenMiddleware
     public SessionTokenMiddleware(RequestDelegate next, SessionTokenProvider provider)
     {
         _next = next;
+        // Capture once at startup. The provider is a Singleton with `Current` set in its
+        // ctor; both are process-lifetime stable. After backend restart, a new process =
+        // a new token = the old SPA cookie 401s and the SPA force-reloads to pick up the
+        // freshly-stamped cookie (see § 8 contract).
         _expectedToken = Encoding.UTF8.GetBytes(provider.Current);
     }
 
     public async Task InvokeAsync(HttpContext ctx)
     {
-        var method = ctx.Request.Method;
-        if (method is not ("POST" or "PUT" or "PATCH" or "DELETE"))
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        var isMutating =
+            HttpMethods.IsPost(ctx.Request.Method) ||
+            HttpMethods.IsPut(ctx.Request.Method) ||
+            HttpMethods.IsPatch(ctx.Request.Method) ||
+            HttpMethods.IsDelete(ctx.Request.Method);
+
+        if (!isMutating)
         {
-            await _next(ctx);
+            await _next(ctx).ConfigureAwait(false);
             return;
         }
 
         var headerValue = ctx.Request.Headers["X-PRism-Session"].ToString();
         var actual = Encoding.UTF8.GetBytes(headerValue);
 
-        if (actual.Length != _expectedToken.Length || !CryptographicOperations.FixedTimeEquals(actual, _expectedToken))
+        // Length precondition for FixedTimeEquals (which throws on length mismatch).
+        // Token is always 44 chars (Base64 of 32 random bytes) so legitimate clients
+        // always hit the equal-length path. Documented in § 8.
+        var ok = actual.Length == _expectedToken.Length
+              && CryptographicOperations.FixedTimeEquals(actual, _expectedToken);
+
+        if (!ok)
         {
-            ctx.Response.StatusCode = 401;
-            await ctx.Response.WriteAsJsonAsync(new ProblemDetails { Type = "/auth/session-stale", Status = 401 });
+            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            ctx.Response.ContentType = "application/problem+json";
+            await ctx.Response.WriteAsJsonAsync(new ProblemDetails
+            {
+                Type = "/auth/session-stale",
+                Status = StatusCodes.Status401Unauthorized,
+                Title = "Session token mismatch",
+                Detail = "The X-PRism-Session header does not match the per-launch token. Reload the page to refresh the cookie."
+            }).ConfigureAwait(false);
             return;
         }
 
-        await _next(ctx);
+        await _next(ctx).ConfigureAwait(false);
     }
 }
 
 public sealed class SessionTokenProvider
 {
-    public string Current { get; } = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    public string Current { get; }
+
+    public SessionTokenProvider(IHostEnvironment env, IConfiguration config)
+    {
+        // Dev-mode bypass: `dotnet watch run` rotates the process token on every save,
+        // forcing a SPA reload per save. Override with PRISM_DEV_FIXED_TOKEN to keep
+        // the dev loop quiet. Production / non-Development: always-random.
+        var devOverride = config["PRISM_DEV_FIXED_TOKEN"]
+            ?? Environment.GetEnvironmentVariable("PRISM_DEV_FIXED_TOKEN");
+        if (env.IsDevelopment() && !string.IsNullOrEmpty(devOverride))
+        {
+            Current = devOverride;
+            return;
+        }
+        Current = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    }
 }
 ```
 
@@ -2355,31 +2685,43 @@ Register both in `Program.cs`:
 
 ```csharp
 builder.Services.AddSingleton<SessionTokenProvider>();
-// Order matters: Origin first, then Session.
+
+// Order matters: routing first (so MapXxx attributes resolve), then Origin, then Session,
+// then endpoints. Both middlewares run on every mutating request.
+app.UseRouting();
 app.UseMiddleware<OriginCheckMiddleware>();
 app.UseMiddleware<SessionTokenMiddleware>();
 ```
 
 ### Step 5.10: Stamp the cookie on every HTML response
 
-- [ ] In `Program.cs`, add a small middleware (or extend an existing one) that sets the `prism-session` cookie on any response with `text/html` content type, so the SPA always picks up the current token on every full-page reload:
+The cookie must be appended **before** the response body starts streaming — otherwise `Response.Cookies.Append` throws `InvalidOperationException: Headers are read-only, response has already started.` That's a real risk because static-file middleware (used by `MapFallbackToFile("index.html")`) flushes headers as soon as it begins writing. Use `Response.OnStarting` to enqueue the cookie for write at header-flush time.
+
+- [ ] In `Program.cs`, register the middleware **before** `MapStaticAssets` / `MapFallbackToFile`:
 
 ```csharp
 app.Use(async (ctx, next) =>
 {
-    await next();
-    if (ctx.Response.ContentType?.StartsWith("text/html") == true)
+    ctx.Response.OnStarting(() =>
     {
-        var token = ctx.RequestServices.GetRequiredService<SessionTokenProvider>().Current;
-        ctx.Response.Cookies.Append("prism-session", token, new CookieOptions
+        if (ctx.Response.ContentType?.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) == true)
         {
-            HttpOnly = false,    // SPA reads it
-            SameSite = SameSiteMode.Strict,
-            Secure = false       // localhost
-        });
-    }
+            var token = ctx.RequestServices.GetRequiredService<SessionTokenProvider>().Current;
+            ctx.Response.Cookies.Append("prism-session", token, new CookieOptions
+            {
+                HttpOnly = false,                 // SPA reads it via document.cookie
+                SameSite = SameSiteMode.Strict,
+                Secure = false,                   // localhost
+                Path = "/"                        // spec § 8 requires explicit Path=/
+            });
+        }
+        return Task.CompletedTask;
+    });
+    await next().ConfigureAwait(false);
 });
 ```
+
+The `OnStarting` callback fires before the first byte of the response body is written — works correctly with static-file middleware, with minimal-API JSON responses, and with the SSE endpoint (whose Content-Type is `text/event-stream`, so the predicate is false and no cookie is appended on SSE responses, which is intentional — the SPA gets its cookie from the HTML index).
 
 ### Step 5.11: Run the SSE / middleware tests
 
@@ -2689,7 +3031,22 @@ git -C C:\src\PRism-s3-spec commit -m "feat(frontend): overview tab — AI summa
 
 ### Step 10.1: Canonicalize the algorithm doc
 
-- [ ] Copy `C:\Users\pratyush.pande\Downloads\pr-iteration-detection-algorithm.md` to `C:\src\PRism-s3-spec\docs\spec\iteration-clustering-algorithm.md`.
+The source markdown for the iteration-clustering algorithm currently lives outside the repo (it was authored as a standalone doc). Source location varies by implementer; in Pratyush's environment it's `C:\Users\pratyush.pande\Downloads\pr-iteration-detection-algorithm.md`, but other implementers won't have that path.
+
+- [ ] Locate the source (env var `PRISM_ALGORITHM_DOC_SOURCE` if set, otherwise prompt the user). Copy to `docs/spec/iteration-clustering-algorithm.md`:
+
+```powershell
+$src = $env:PRISM_ALGORITHM_DOC_SOURCE
+if (-not $src) {
+    # Default in Pratyush's environment; prompt otherwise.
+    $candidate = "$env:USERPROFILE\Downloads\pr-iteration-detection-algorithm.md"
+    if (Test-Path $candidate) { $src = $candidate }
+    else { Write-Error "Set PRISM_ALGORITHM_DOC_SOURCE or copy the algorithm doc to a known path."; exit 1 }
+}
+Copy-Item $src "C:\src\PRism-s3-spec\docs\spec\iteration-clustering-algorithm.md"
+```
+
+If the source no longer exists (e.g., wiped Downloads folder), the canonical version is preserved in PR #13's commit history at the path `C:/Users/pratyush.pande/Downloads/pr-iteration-detection-algorithm.md` referenced in the spec — recover by checking out a known-good commit and re-deriving from the spec's content. The discipline-check workflow doesn't depend on the doc itself, only on the algorithm code.
 
 ### Step 10.2–10.N: Apply each spec edit per § 9.2
 
