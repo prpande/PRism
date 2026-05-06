@@ -3,15 +3,15 @@
 # Pass-through args go to `dotnet run` (e.g. `./run.ps1 --no-browser`).
 #
 # -Reset selects an optional pre-launch local-state cleanup. Modes:
-#   None  (default) — no cleanup; identical to running without the flag.
-#   Token           — delete <dataDir>\PRism.tokens.cache. Forces Setup on next launch.
-#   Auth            — set state.json.lastConfiguredGithubHost to a sentinel host
+#   None  (default) -- no cleanup; identical to running without the flag.
+#   Token           -- delete <dataDir>\PRism.tokens.cache. Forces Setup on next launch.
+#   Auth            -- set state.json.lastConfiguredGithubHost to a sentinel host
 #                     (https://prism-reset-stub.invalid) so the next launch
 #                     surfaces the host-change-resolution modal. Token cache
 #                     is untouched.
-#   Full            — wipe the entire <dataDir>. True first-launch reset.
+#   Full            -- wipe the entire <dataDir>. True first-launch reset.
 #                     Caveat: on macOS / Linux the OS keychain entry survives;
-#                     see the spec § 7 for the manual cleanup commands.
+#                     see the spec section 7 for the manual cleanup commands.
 # See docs/superpowers/specs/2026-05-06-run-script-reset-design.md for rationale.
 #
 # Cross-platform note: on macOS / Linux the PAT lives in the OS keychain
@@ -39,7 +39,7 @@ $ResetSentinelHost = 'https://prism-reset-stub.invalid'
 
 function Write-Utf8NoBom {
     # Cross-version replacement for `Set-Content -Encoding utf8NoBOM` (PS 7+ only).
-    # [System.Text.UTF8Encoding]::new($false) → no BOM. Works in PS 5.1 (.NET
+    # [System.Text.UTF8Encoding]::new($false) -> no BOM. Works in PS 5.1 (.NET
     # Framework 4.x) and PS 7+ (.NET 5+) identically.
     param([string]$Path, [string]$Text)
     [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
@@ -59,9 +59,9 @@ function Set-LastConfiguredGithubHostToSentinel {
     $statePath = Join-Path $DataDir 'state.json'
 
     if (-not (Test-Path -LiteralPath $statePath)) {
-        # No state.json yet → write a fresh v1 default shape with the sentinel
+        # No state.json yet -> write a fresh v1 default shape with the sentinel
         # host. Mirrors AppState.Empty in PRism.Core/State/AppState.cs.
-        Write-Host "  state.json missing — writing v1 default with sentinel host" -ForegroundColor DarkGray
+        Write-Host "  state.json missing -- writing v1 default with sentinel host" -ForegroundColor DarkGray
         New-Item -ItemType Directory -Force $DataDir | Out-Null
         $fresh = [ordered]@{
             version = 1
@@ -101,7 +101,14 @@ switch ($Reset) {
     'Auth' {
         Set-LastConfiguredGithubHostToSentinel -DataDir $dataDir -Sentinel $ResetSentinelHost
     }
-    'Full' { throw "Reset(Full) not implemented yet — see Task 4." }
+    'Full' {
+        if (Test-Path -LiteralPath $dataDir) {
+            Write-Host "  removing recursively: $dataDir" -ForegroundColor DarkGray
+            Remove-Item -LiteralPath $dataDir -Recurse -Force
+        } else {
+            Write-Host "  $dataDir not present - skip" -ForegroundColor DarkGray
+        }
+    }
 }
 
 Push-Location $PSScriptRoot
