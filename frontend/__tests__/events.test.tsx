@@ -32,12 +32,14 @@ afterEach(() => {
 
 describe('openEventStream onerror', () => {
   it('dispatches prism-auth-rejected when SSE error coincides with revoked token', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      ),
-    ) as unknown as typeof fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as unknown as typeof fetch;
 
     const handler = vi.fn();
     window.addEventListener('prism-auth-rejected', handler);
@@ -56,12 +58,14 @@ describe('openEventStream onerror', () => {
   });
 
   it('does not dispatch prism-auth-rejected when token is still valid', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      ),
-    ) as unknown as typeof fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as unknown as typeof fetch;
 
     const handler = vi.fn();
     window.addEventListener('prism-auth-rejected', handler);
@@ -78,12 +82,14 @@ describe('openEventStream onerror', () => {
   });
 
   it('probes /api/auth/state at most once across repeated SSE errors', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      ),
-    ) as unknown as typeof fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ) as unknown as typeof fetch;
 
     const close = openEventStream({});
     FakeEventSource.instance.fireError();
