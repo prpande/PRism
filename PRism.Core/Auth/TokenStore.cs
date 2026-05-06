@@ -14,6 +14,7 @@ public sealed class TokenStore : ITokenStore
     private readonly bool _useFileCacheForTests;
     private MsalCacheHelper? _helper;
     private string? _transient;
+    private string? _transientLogin;
 
     public TokenStore(string dataDir, bool useFileCacheForTests = false)
     {
@@ -75,6 +76,9 @@ public sealed class TokenStore : ITokenStore
 
     public async Task<string?> ReadAsync(CancellationToken ct)
     {
+        // Transient takes precedence so PAT validation between WriteTransientAsync and Commit/Rollback
+        // sees the candidate token. Without this, the connect endpoint would always validate against null.
+        if (_transient is not null) return _transient;
         var helper = await GetHelperAsync().ConfigureAwait(false);
         var bytes = helper.LoadUnencryptedTokenCache();
         return bytes.Length == 0 ? null : Encoding.UTF8.GetString(bytes);
@@ -83,8 +87,18 @@ public sealed class TokenStore : ITokenStore
     public Task WriteTransientAsync(string token, CancellationToken ct)
     {
         _transient = token;
+        // Clear any prior login from a previous attempt — the caller will set it after re-validation.
+        _transientLogin = null;
         return Task.CompletedTask;
     }
+
+    public Task SetTransientLoginAsync(string login, CancellationToken ct)
+    {
+        _transientLogin = login;
+        return Task.CompletedTask;
+    }
+
+    public Task<string?> ReadTransientLoginAsync(CancellationToken ct) => Task.FromResult(_transientLogin);
 
     public async Task CommitAsync(CancellationToken ct)
     {
@@ -92,11 +106,13 @@ public sealed class TokenStore : ITokenStore
         var helper = await GetHelperAsync().ConfigureAwait(false);
         helper.SaveUnencryptedTokenCache(Encoding.UTF8.GetBytes(_transient));
         _transient = null;
+        _transientLogin = null;
     }
 
     public Task RollbackTransientAsync(CancellationToken ct)
     {
         _transient = null;
+        _transientLogin = null;
         return Task.CompletedTask;
     }
 

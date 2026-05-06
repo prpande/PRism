@@ -115,8 +115,9 @@ First-run PAT connection. Centered card layout on a `--surface-0` page with a fa
 2. H1 "Connect to GitHub" (24px, weight 600)
 3. Sub-copy explaining local-first + token never leaves the machine
 4. **Step 1** — numbered circle "1" + "Generate a token on GitHub"
-   - External link button "Open the PAT page (fine-grained, repo-scoped)"
-   - "Required scopes" row with three mono pills, each with a copy button: `repo`, `read:user`, `read:org`
+   - External link button "Open the PAT page (fine-grained)"
+   - "Required permissions" block listing four fine-grained permissions: Pull requests (Read and write), Contents (Read), Checks (Read), Commit statuses (Read). Metadata: Read note is auto-included.
+   - Muted classic-PAT footnote referencing the `repo`, `read:user`, and `read:org` scopes (matches the validator's `RequiredScopes`).
 5. **Step 2** — numbered circle "2" + "Paste it below"
    - Textarea with placeholder `ghp_… or github_pat_…`
    - Eye toggle (top-right of textarea) to mask/unmask

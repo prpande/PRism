@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
+using PRism.Core.Contracts;
 using PRism.Core.Inbox;
 using PRism.Core.State;
 
@@ -55,11 +56,48 @@ internal static class AuthEndpoints
                 return Results.Ok(new { ok = false, error = errorName, detail = result.ErrorDetail });
             }
 
+            if (result.Warning != AuthValidationWarning.None)
+            {
+                // Soft warning: do NOT commit. Stash the validated login so the eventual
+                // commit endpoint can populate the IViewerLoginProvider cache. Frontend
+                // collects user confirmation and calls POST /api/auth/connect/commit.
+                await tokens.SetTransientLoginAsync(result.Login ?? "", ct).ConfigureAwait(false);
+                return Results.Ok(new
+                {
+                    ok = true,
+                    login = result.Login,
+                    host = config.Current.Github.Host,
+                    warning = WarningToWire(result.Warning),
+                });
+            }
+
             await tokens.CommitAsync(ct).ConfigureAwait(false);
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
             viewerLogin.Set(result.Login ?? "");
             return Results.Ok(new { ok = true, login = result.Login, host = config.Current.Github.Host });
+        });
+
+        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, CancellationToken ct) =>
+        {
+            // Read the validated login BEFORE CommitAsync clears it.
+            var login = await tokens.ReadTransientLoginAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await tokens.CommitAsync(ct).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException)
+            {
+                // No transient pending — process restart, or commit called twice.
+                return Results.Conflict(new { ok = false, error = "no-pending-token" });
+            }
+
+            var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
+            await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+            // Mirror the connect-path Set to keep the cache in lockstep — empty string here
+            // overwrites any stale login from a prior session rather than leaving it intact.
+            viewerLogin.Set(login ?? "");
+            return Results.Ok(new { ok = true, host = config.Current.Github.Host });
         });
 
         app.MapPost("/api/auth/host-change-resolution", async (HttpContext ctx, IAppStateStore stateStore, IConfigStore config, IHostApplicationLifetime lifetime, CancellationToken ct) =>
@@ -94,4 +132,18 @@ internal static class AuthEndpoints
 
         return app;
     }
+
+    // Single source of truth for AuthValidationWarning → wire string mapping.
+    // Adding a new named enum member without extending this switch trips the compiler's
+    // non-exhaustive-switch diagnostic (CS8509/CS8524, treated as error in this project).
+    // The `_ =>` arm is required to satisfy CS8524 for unnamed cast values like
+    // `(AuthValidationWarning)999`, but in practice it cannot fire from in-codebase
+    // callers — those produce a compile error first. `None` is explicit because it IS
+    // a valid named value the compiler can't statically rule out at the call site.
+    private static string WarningToWire(AuthValidationWarning warning) => warning switch
+    {
+        AuthValidationWarning.NoReposSelected => "no-repos-selected",
+        AuthValidationWarning.None => throw new InvalidOperationException("WarningToWire called with None — caller should not serialize a non-warning."),
+        _ => throw new InvalidOperationException($"Unmapped AuthValidationWarning value: {warning}"),
+    };
 }

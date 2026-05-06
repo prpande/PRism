@@ -126,7 +126,86 @@ public class AuthEndpointsTests
         resp.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task Connect_with_no_repos_warning_returns_warning_and_does_not_commit()
+    {
+        using var factory = new PRismWebApplicationFactory
+        {
+            ValidateOverride = () => Task.FromResult(new AuthValidationResult(
+                true, "octocat", null, AuthValidationError.None, null,
+                AuthValidationWarning.NoReposSelected)),
+        };
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/auth/connect", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { pat = "github_pat_zero_repos" }),
+        };
+        req.Headers.Add("Origin", origin);
+
+        var resp = await client.SendAsync(req);
+        resp.IsSuccessStatusCode.Should().BeTrue();
+        var body = await resp.Content.ReadFromJsonAsync<ConnectResponse>();
+        body!.Ok.Should().BeTrue();
+        body.Warning.Should().Be("no-repos-selected");
+
+        // Token must NOT be committed — auth/state still says hasToken: false.
+        var stateResp = await client.GetFromJsonAsync<AuthStateResponse>(new Uri("/api/auth/state", UriKind.Relative));
+        stateResp!.HasToken.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Connect_commit_after_warning_persists_token_and_sets_host()
+    {
+        using var factory = new PRismWebApplicationFactory
+        {
+            ValidateOverride = () => Task.FromResult(new AuthValidationResult(
+                true, "octocat", null, AuthValidationError.None, null,
+                AuthValidationWarning.NoReposSelected)),
+        };
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+
+        // First call: connect returns warning, transient stays pending.
+        using var connectReq = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/auth/connect", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { pat = "github_pat_zero_repos" }),
+        };
+        connectReq.Headers.Add("Origin", origin);
+        var connectResp = await client.SendAsync(connectReq);
+        connectResp.IsSuccessStatusCode.Should().BeTrue();
+
+        // Second call: confirm via commit.
+        using var commitReq = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/auth/connect/commit", UriKind.Relative));
+        commitReq.Headers.Add("Origin", origin);
+        var commitResp = await client.SendAsync(commitReq);
+        commitResp.IsSuccessStatusCode.Should().BeTrue();
+
+        // Token now committed.
+        var stateResp = await client.GetFromJsonAsync<AuthStateResponse>(new Uri("/api/auth/state", UriKind.Relative));
+        stateResp!.HasToken.Should().BeTrue();
+
+        // The validated login must be cached for the awaiting-author inbox query.
+        var viewerLogin = factory.Services.GetRequiredService<IViewerLoginProvider>();
+        viewerLogin.Get().Should().Be("octocat");
+    }
+
+    [Fact]
+    public async Task Connect_commit_returns_409_when_no_transient_pending()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+
+        using var commitReq = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/auth/connect/commit", UriKind.Relative));
+        commitReq.Headers.Add("Origin", origin);
+        var resp = await client.SendAsync(commitReq);
+
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Conflict);
+    }
+
     public sealed record AuthStateResponse(bool HasToken, string Host, HostMismatchInfo? HostMismatch);
     public sealed record HostMismatchInfo(string Old, string New);
-    public sealed record ConnectResponse(bool Ok, string? Login, string? Host, string? Error, string? Detail);
+    public sealed record ConnectResponse(bool Ok, string? Login, string? Host, string? Error, string? Detail, string? Warning);
 }

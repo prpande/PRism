@@ -19,13 +19,21 @@ Every user-facing feature shipping in the PoC, fully specified.
       - Non-HTTP scheme (`ssh://`, `git://`) or otherwise malformed URL — inline error: *"`{value}` is not a valid GitHub host. Expected `https://github.com` or your GHES host (e.g., `https://github.acmecorp.com`)."*
     - The validator runs the same logic on a paste into the URL-paste escape hatch on the inbox; the host the user pastes there is checked against the configured host using these same normalization rules.
   - A link to the **PAT generation page** templated against the host: `<host>/settings/personal-access-tokens/new`. Updates live as the user types in the host field.
-  - The exact scopes required, copy-pasteable: `pull-requests: read+write`, `contents: read`, `metadata: read`.
+  - The Setup screen lists the **fine-grained permissions** PRism requires:
+    - Pull requests: Read and write
+    - Contents: Read
+    - Checks: Read
+    - Commit statuses: Read
+
+    Metadata: Read is auto-included by GitHub. For Repository access, the user picks "All repositories" or "Select repositories" (the public-only mode does not expose private repos PRism needs).
+
+    A muted footnote covers users with an existing classic PAT: *"Already have a classic PAT? It needs the `repo`, `read:user`, and `read:org` scopes."* (Matches `RequiredScopes` in `GitHubReviewService`; mismatching the validator surfaces as `InsufficientScopes`.)
   - A textarea to paste the token.
   - **A small "About local data" disclosure block** below the form: *"PRism stores your drafts, view state, and a forensic recovery log of mutations under `<dataDir>/`. The recovery log (`state-events.jsonl`, default on, ~300 MB ceiling) is what lets us recover a draft if `state.json` is corrupted. Disable it later in `config.json` (`logging.stateEvents: false`) if you prefer a smaller footprint — the trade is that 'my draft disappeared' is unrecoverable."* The disclosure is a one-time onboarding signal so a privacy-conscious user knows the log exists and how to opt out, without making them choose at the moment they're trying to paste a token.
   - A "Continue" button.
 - On Continue:
   - Backend calls `GET /user` against GitHub to validate the token.
-  - On 200: backend then probes `GET /search/issues?q=author:@me&per_page=1` (and one of `q=review-requested:@me&per_page=1`) to detect the **fine-grained-PAT-with-no-repos-selected** failure mode. If both probes return zero results AND zero repos visible to the token, surface a soft warning before navigation: *"Your token has no repos selected. You'll see an empty inbox until you add repos at github.com/settings/tokens. Continue anyway?"* with "Continue" / "Edit token scope" actions. Otherwise: token is encrypted via MSAL and stored in OS keychain; user is navigated to the Inbox.
+  - On 200: backend then probes `GET /search/issues?q=is:pr+author:@me&per_page=1` and `GET /search/issues?q=is:pr+review-requested:@me&per_page=1` to detect the **fine-grained-PAT-with-no-repos-selected** failure mode. If both probes return zero results, surface the soft warning before navigation; otherwise commit the token immediately.
   - **No workspace picker in PoC's setup flow.** PoC has no chat, no clones, no `.prism/` footprint to place — the workspace concept is purely a v2 chat concern. v2's first-chat-open is the natural place to ask the user where their repos live (with full context to explain the choice: a specific repo about to be cloned, an estimated size, the alternative of `<dataDir>/.prism/`). Earlier drafts of this spec included an "optional workspace step" in PoC's setup so users wouldn't have to revisit Setup when v2 lit up; it has been dropped because it asked users to make a decision they could not evaluate (they didn't know what chat would need from `localWorkspace`) for a feature they may never use. The `config.github.localWorkspace` field still exists in the schema (read by P2-2 chat onwards); v2 prompts on first chat-open and writes to it then.
   - On 401: error displayed inline ("Token rejected — check that you copied it correctly").
   - On other: error displayed inline ("Could not reach GitHub — check your network").

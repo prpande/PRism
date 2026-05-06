@@ -18,11 +18,26 @@ describe('SetupForm', () => {
     expect(input.type).toBe('text');
   });
 
-  it('renders the three scope pills', () => {
+  it('renders the four fine-grained permission rows', () => {
     render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
-    expect(screen.getByText('repo')).toBeInTheDocument();
-    expect(screen.getByText('read:user')).toBeInTheDocument();
-    expect(screen.getByText('read:org')).toBeInTheDocument();
+    expect(screen.getByText('Pull requests')).toBeInTheDocument();
+    expect(screen.getByText(/^Read and write$/)).toBeInTheDocument();
+    expect(screen.getByText('Contents')).toBeInTheDocument();
+    expect(screen.getByText('Checks')).toBeInTheDocument();
+    expect(screen.getByText('Commit statuses')).toBeInTheDocument();
+  });
+
+  it('mentions Metadata: Read as auto-included', () => {
+    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
+    expect(screen.getByText(/Metadata: Read is auto-included/i)).toBeInTheDocument();
+  });
+
+  it('shows a classic-PAT footnote', () => {
+    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
+    expect(screen.getByText(/Already have a classic PAT/i)).toBeInTheDocument();
+    // The `repo` scope is referenced in inline code.
+    const codeNodes = screen.getAllByText('repo');
+    expect(codeNodes.some((n) => n.tagName === 'CODE')).toBe(true);
   });
 
   it('renders error pill when error prop is set', () => {

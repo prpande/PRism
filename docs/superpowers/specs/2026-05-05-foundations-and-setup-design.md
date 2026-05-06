@@ -253,7 +253,8 @@ Because no AI host components render in this slice, no seam method is actually c
 | MSAL: Linux libsecret installed but no agent | Detect via DBus/no-provider error. | *"OS keychain library is installed but no keyring agent is running. Start `gnome-keyring-daemon` or `kwalletd`, then restart PRism. Common on WSL and minimal sessions."* |
 | MSAL: any other keychain failure | Pass through error. | *"OS keychain returned an error: `<message>`. See `<dataDir>/logs/` for details."* |
 | PAT validation: 401 | Roll back transient token. | Setup inline error: *"GitHub rejected this token. Check that it hasn't been revoked or expired."* |
-| PAT validation: 403 / missing scopes | Roll back; parse `X-OAuth-Scopes`; diff against required set. | Setup inline error: *"This token is missing scopes: `<missing>`. Regenerate with the listed scopes and try again."* |
+| PAT validation: classic PAT, missing scopes | Roll back transient; parse `X-OAuth-Scopes`; diff against required set. | Setup inline error: *"This token is missing scopes: `<missing>`. Regenerate with the listed scopes and try again."* |
+| PAT validation: fine-grained PAT, no repos selected | Keep transient pending; both Search probes return zero. | Setup modal: *"Your token has no repos selected. You'll see an empty inbox until you add repos at GitHub. Continue anyway?"* with **Continue anyway** / **Edit token scope** actions. |
 | PAT validation: 5xx GitHub | Roll back. | Setup inline error: *"GitHub returned an error. Try again in a moment."* |
 | PAT validation: network / DNS / TLS | Roll back; distinguish DNS from generic. | DNS: *"Couldn't reach `<host>`. Check `github.host` in config or your network."* / Generic: *"Network error reaching GitHub. Check your connection and try again."* |
 | Host-change modal closed without choosing | Backend serves only the modal-host page; refuses to route to `/setup` / `/inbox-shell`. | Modal stays sticky. |

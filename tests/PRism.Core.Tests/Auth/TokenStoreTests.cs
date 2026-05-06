@@ -30,6 +30,20 @@ public class TokenStoreTests
     }
 
     [Fact]
+    public async Task ReadAsync_returns_transient_token_before_Commit()
+    {
+        // Regression: ValidateCredentialsAsync runs between WriteTransient and Commit/Rollback,
+        // and reads the token via TokenStore.ReadAsync. If ReadAsync ignores the transient,
+        // the GitHub call sees no token and the Setup screen shows "no token" for valid PATs.
+        using var dir = new TempDataDir();
+        var store = new TokenStore(dir.Path, useFileCacheForTests: true);
+
+        await store.WriteTransientAsync("ghp_pending", CancellationToken.None);
+
+        (await store.ReadAsync(CancellationToken.None)).Should().Be("ghp_pending");
+    }
+
+    [Fact]
     public async Task WriteTransient_then_Rollback_leaves_HasToken_false()
     {
         using var dir = new TempDataDir();

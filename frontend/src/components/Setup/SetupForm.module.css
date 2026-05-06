@@ -21,3 +21,37 @@
 .continue {
   margin-top: var(--s-3, 12px);
 }
+.permissions {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: var(--s-4, 16px);
+  row-gap: var(--s-2, 8px);
+  margin: var(--s-3, 12px) 0;
+  font-size: 0.95em;
+}
+.permissionRow {
+  display: contents;
+}
+.permissionRow > dt {
+  font-weight: 500;
+}
+.permissionRow > dd {
+  margin: 0;
+  color: var(--text-1);
+}
+.permissionsNote {
+  margin: var(--s-2, 8px) 0;
+  font-size: 0.85em;
+  color: var(--text-2);
+}
+.footnote {
+  margin-top: var(--s-2, 8px);
+  font-size: 0.85em;
+  color: var(--text-2);
+}
+.footnote code {
+  background: var(--surface-2, rgba(0, 0, 0, 0.05));
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 0.95em;
+}

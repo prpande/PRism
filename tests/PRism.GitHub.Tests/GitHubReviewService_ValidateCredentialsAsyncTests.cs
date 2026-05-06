@@ -94,4 +94,198 @@ public class GitHubReviewService_ValidateCredentialsAsyncTests
         result.Error.Should().Be(AuthValidationError.ServerError);
         result.ErrorDetail.Should().NotBeNullOrEmpty();
     }
+
+    [Fact]
+    public async Task Returns_ok_for_fine_grained_pat_with_no_scopes_header()
+    {
+        // Fine-grained PATs do not return X-OAuth-Scopes. The validator must accept them.
+        // Search probe is stubbed to return >0 results so no warning is raised in this test.
+        var firstCall = true;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (firstCall)
+            {
+                firstCall = false;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"login\":\"octocat\"}", System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"total_count\":1,\"items\":[]}", System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        var sut = BuildSut(handler, token: "github_pat_abcDEF123_xyz");
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue();
+        result.Login.Should().Be("octocat");
+        result.Warning.Should().Be(AuthValidationWarning.None);
+    }
+
+    [Fact]
+    public async Task Probe_non_5xx_failure_fails_open_and_returns_primary_success()
+    {
+        // When /user succeeds but the Search probe returns a non-5xx error (e.g. 403),
+        // the validator must fail open: return Ok=true with Warning=None rather than NetworkError.
+        // The credential is valid; the probe anomaly should not reject a valid token.
+        var calls = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"login\":\"octocat\"}", System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+            // Probe returns 403 — EnsureSuccessStatusCode throws HttpRequestException with StatusCode=403.
+            return new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden);
+        });
+        var sut = BuildSut(handler, token: "github_pat_probe_403");
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue();
+        result.Login.Should().Be("octocat");
+        result.Warning.Should().Be(AuthValidationWarning.None);
+    }
+
+    [Fact]
+    public async Task Returns_no_repos_selected_warning_when_both_search_probes_are_empty()
+    {
+        var calls = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls++;
+            var body = calls switch
+            {
+                1 => "{\"login\":\"octocat\"}",                   // /user
+                _ => "{\"total_count\":0,\"items\":[]}",           // both probes
+            };
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        var sut = BuildSut(handler, token: "github_pat_zero_repos");
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue();
+        result.Warning.Should().Be(AuthValidationWarning.NoReposSelected);
+        calls.Should().Be(3);  // /user + 2 probes
+    }
+
+    [Fact]
+    public async Task Skips_second_probe_when_first_probe_returns_results()
+    {
+        var calls = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls++;
+            var body = calls switch
+            {
+                1 => "{\"login\":\"octocat\"}",
+                2 => "{\"total_count\":4,\"items\":[]}",   // first probe non-empty
+                _ => throw new InvalidOperationException("Second probe must not run."),
+            };
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        var sut = BuildSut(handler, token: "github_pat_has_repos");
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue();
+        result.Warning.Should().Be(AuthValidationWarning.None);
+        calls.Should().Be(2);  // /user + first probe only
+    }
+
+    [Fact]
+    public async Task Returns_invalid_token_for_fine_grained_pat_on_401_without_running_probe()
+    {
+        var calls = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls++;
+            return new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized)
+            {
+                Content = new StringContent("{\"message\":\"Bad credentials\"}", System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        var sut = BuildSut(handler, token: "github_pat_revoked");
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeFalse();
+        result.Error.Should().Be(AuthValidationError.InvalidToken);
+        calls.Should().Be(1);  // /user only — probe must not run after auth failure
+    }
+
+    [Fact]
+    public async Task Returns_server_error_when_200_body_has_no_login_field()
+    {
+        // Defense against GitHub-side intermediaries returning a 200 with valid JSON
+        // but no `login` key (proxy / GHES misconfig). Treating it as Ok=true would
+        // commit a token but leave IViewerLoginProvider empty, breaking awaiting-author.
+        var headers = new Dictionary<string, string> { ["X-OAuth-Scopes"] = "repo, read:user, read:org" };
+        var handler = FakeHttpMessageHandler.Returns(HttpStatusCode.OK, "{\"id\":42,\"name\":\"Octocat\"}", headers);
+        var sut = BuildSut(handler);
+
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+
+        result.Ok.Should().BeFalse();
+        result.Error.Should().Be(AuthValidationError.ServerError);
+        result.ErrorDetail.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task Probe_malformed_json_response_fails_open_and_returns_primary_success()
+    {
+        // The probe must not let JsonException escape — its only catch handles
+        // HttpRequestException, so a 200 with non-JSON body would otherwise bubble up
+        // as a 500. Probe is best-effort; primary auth already succeeded, so fail open.
+        var calls = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"login\":\"octocat\"}", System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+            // Probe returns 200 with HTML — JsonDocument.Parse would throw JsonException.
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("<html>captive portal</html>", System.Text.Encoding.UTF8, "text/html"),
+            };
+        });
+        var sut = BuildSut(handler, token: "github_pat_probe_html");
+
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+
+        result.Ok.Should().BeTrue();
+        result.Login.Should().Be("octocat");
+        result.Warning.Should().Be(AuthValidationWarning.None);
+    }
+
+    [Fact]
+    public async Task Surfaces_probe_5xx_as_server_error()
+    {
+        var calls = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"login\":\"octocat\"}", System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError);
+        });
+        var sut = BuildSut(handler, token: "github_pat_probe_5xx");
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeFalse();
+        result.Error.Should().Be(AuthValidationError.ServerError);
+    }
 }
