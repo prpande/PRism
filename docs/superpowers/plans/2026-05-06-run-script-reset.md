@@ -10,6 +10,8 @@
 
 **Spec:** [`docs/superpowers/specs/2026-05-06-run-script-reset-design.md`](../specs/2026-05-06-run-script-reset-design.md). Acceptance criteria in spec § 9.
 
+**Post-implementation corrigendum (2026-05-06).** This plan was authored before discovering that `PRism.Core/Json/JsonSerializerOptionsFactory.cs` configures the storage serializer with `KebabCaseJsonNamingPolicy` and `PropertyNameCaseInsensitive = false`. Property names on disk are therefore kebab-case (`last-configured-github-host`, `review-sessions`, `ai-state`, `repo-clone-map`, `workspace-mtime-at-last-enumeration`), not the camelCase forms used in some code samples below. The shipped `run.ps1` and the spec (§ 4 Auth-mode subsection, § 9 acceptance) use the correct kebab-case keys throughout. Future consumers of this plan should refer to the spec for definitive property naming; the camelCase forms in this plan's code blocks are a historical artifact and would silently produce a state.json the host parses with `LastConfiguredGithubHost = null`, defeating Auth mode.
+
 ---
 
 ## Reference: current `run.ps1`
@@ -350,7 +352,8 @@ function Set-LastConfiguredGithubHostToSentinel {
 
     if (-not (Test-Path -LiteralPath $statePath)) {
         # No state.json yet → write a fresh v1 default shape with the sentinel
-        # host. Mirrors AppState.Empty in PRism.Core/State/AppState.cs.
+        # host. Mirrors AppState.Default in PRism.Core/State/AppState.cs,
+        # serialized via the host's KebabCaseJsonNamingPolicy.
         Write-Host "  state.json missing — writing v1 default with sentinel host" -ForegroundColor DarkGray
         New-Item -ItemType Directory -Force $DataDir | Out-Null
         $fresh = [ordered]@{
@@ -454,7 +457,7 @@ probe reports a host mismatch and the frontend surfaces the
 host-change-resolution modal. Token cache is intentionally untouched —
 deleting it would route the user to /setup and shadow the modal.
 
-If state.json is missing, a fresh v1 default (mirroring AppState.Empty)
+If state.json is missing, a fresh v1 default (mirroring AppState.Default)
 is written with the sentinel host. If state.json exists but is malformed,
 the script aborts with a clear error rather than overwriting it.
 

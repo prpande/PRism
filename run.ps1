@@ -58,22 +58,33 @@ function Set-LastConfiguredGithubHostToSentinel {
     param([string]$DataDir, [string]$Sentinel)
     $statePath = Join-Path $DataDir 'state.json'
 
+    # PRism.Core/Json/JsonSerializerOptionsFactory.cs configures the storage
+    # serializer with KebabCaseJsonNamingPolicy and PropertyNameCaseInsensitive=false,
+    # so JSON property names on disk are kebab-case (e.g. last-configured-github-host).
+    # Camel- or Pascal-cased keys would silently fail to bind in the host's
+    # JsonSerializer.Deserialize<AppState>(...) path, leaving LastConfiguredGithubHost
+    # as null and defeating the whole point of -Reset Auth.
+    $hostKey = 'last-configured-github-host'
+
     if (-not (Test-Path -LiteralPath $statePath)) {
         # No state.json yet -> write a fresh v1 default shape with the sentinel
-        # host. Mirrors AppState.Empty in PRism.Core/State/AppState.cs.
+        # host. Mirrors AppState.Default in PRism.Core/State/AppState.cs.
         Write-Host "  state.json missing -- writing v1 default with sentinel host" -ForegroundColor DarkGray
         New-Item -ItemType Directory -Force $DataDir | Out-Null
         $fresh = [ordered]@{
-            version = 1
-            reviewSessions = @{}
-            aiState = [ordered]@{ repoCloneMap = @{}; workspaceMtimeAtLastEnumeration = $null }
-            lastConfiguredGithubHost = $Sentinel
+            'version' = 1
+            'review-sessions' = @{}
+            'ai-state' = [ordered]@{
+                'repo-clone-map' = @{}
+                'workspace-mtime-at-last-enumeration' = $null
+            }
+            $hostKey = $Sentinel
         }
         Write-Utf8NoBom -Path $statePath -Text ($fresh | ConvertTo-Json -Depth 10)
         return
     }
 
-    Write-Host "  setting state.json.lastConfiguredGithubHost = $Sentinel" -ForegroundColor DarkGray
+    Write-Host "  setting state.json.$hostKey = $Sentinel" -ForegroundColor DarkGray
 
     $raw = Get-Content -LiteralPath $statePath -Raw
     try {
@@ -82,13 +93,21 @@ function Set-LastConfiguredGithubHostToSentinel {
         throw "state.json at $statePath is not valid JSON; refusing to overwrite. Repair the file by hand or use '-Reset Full' to wipe local state. Original parse error: $($_.Exception.Message)"
     }
 
-    # Mutate the field. ConvertFrom-Json yields a PSCustomObject; if the
-    # property is missing, Add-Member adds it. If present, the assignment
-    # overwrites.
-    if ($obj.PSObject.Properties.Name -contains 'lastConfiguredGithubHost') {
-        $obj.lastConfiguredGithubHost = $Sentinel
+    # Empty/whitespace state.json: ConvertFrom-Json returns $null without
+    # throwing, so the catch above does NOT fire. Treat null or non-object
+    # results as "not valid JSON" and emit the same clean diagnostic.
+    if ($null -eq $obj -or $obj -isnot [System.Management.Automation.PSCustomObject]) {
+        throw "state.json at $statePath is not a valid JSON object (empty file or non-object root); refusing to overwrite. Repair the file by hand or use '-Reset Full' to wipe local state."
+    }
+
+    # Mutate the kebab-case field. ConvertFrom-Json yields a PSCustomObject;
+    # if the property is missing (older state.json from a prior schema, or a
+    # hand-edited file), Add-Member adds it. Property names with hyphens
+    # require the quoted indexer form for property access.
+    if ($obj.PSObject.Properties.Name -contains $hostKey) {
+        $obj.$hostKey = $Sentinel
     } else {
-        $obj | Add-Member -NotePropertyName 'lastConfiguredGithubHost' -NotePropertyValue $Sentinel
+        $obj | Add-Member -NotePropertyName $hostKey -NotePropertyValue $Sentinel
     }
 
     Write-Utf8NoBom -Path $statePath -Text ($obj | ConvertTo-Json -Depth 10)
