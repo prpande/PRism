@@ -2,16 +2,11 @@ using System.Text.Json.Serialization;
 
 namespace PRism.Web.Endpoints;
 
-// Wire shapes for AuthEndpoints. See AuthEndpoints.cs for the routes that produce each.
-// JSON serialization respects the camelCase PropertyNamingPolicy plumbed via
-// PRism.Web.Composition.AddPrismWeb -> ConfigureHttpJsonOptions, so PascalCase property
-// names round-trip to camelCase on the wire — matching the original anonymous-type field
-// names byte-for-byte.
-
 internal sealed record AuthStateResponse(bool HasToken, string Host, AuthHostMismatch? HostMismatch);
 
 internal sealed record AuthHostMismatch(
-    [property: JsonPropertyName("old")] string Old,
+    string Old,
+    // `new` is a C# reserved word; the explicit attribute is defensive and self-documenting.
     [property: JsonPropertyName("new")] string New);
 
 // /api/auth/connect: 400 BadRequest on invalid-json or pat-required.

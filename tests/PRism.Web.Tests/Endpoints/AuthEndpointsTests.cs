@@ -205,6 +205,30 @@ public class AuthEndpointsTests
         resp.StatusCode.Should().Be(System.Net.HttpStatusCode.Conflict);
     }
 
+    // Wire-format casing assertion. ReadFromJsonAsync<T> defaults to PropertyNameCaseInsensitive,
+    // so deserialization-shaped tests pass whether the server emits camelCase or PascalCase keys.
+    // This test reads the raw response body and asserts the camelCase invariant directly — guards
+    // against a future ConfigureHttpJsonOptions misconfiguration that would silently break the
+    // frontend's hand-mirrored types.
+    [Fact]
+    public async Task State_response_wire_format_uses_camelCase_keys()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var resp = await client.GetAsync(new Uri("/api/auth/state", UriKind.Relative));
+        resp.IsSuccessStatusCode.Should().BeTrue();
+        var raw = await resp.Content.ReadAsStringAsync();
+
+        // camelCase keys present.
+        raw.Should().Contain("\"hasToken\"");
+        raw.Should().Contain("\"host\"");
+        raw.Should().Contain("\"hostMismatch\"");
+
+        // PascalCase keys must not be on the wire.
+        raw.Should().NotContain("\"HasToken\"");
+        raw.Should().NotContain("\"HostMismatch\"");
+    }
+
     public sealed record AuthStateResponse(bool HasToken, string Host, HostMismatchInfo? HostMismatch);
     public sealed record HostMismatchInfo(string Old, string New);
     public sealed record ConnectResponse(bool Ok, string? Login, string? Host, string? Error, string? Detail, string? Warning);
