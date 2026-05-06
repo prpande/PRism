@@ -2,7 +2,7 @@
 
 **Slice**: S2 — second slice in [`docs/roadmap.md`](../../roadmap.md), follows the shipped S0+S1.
 **Date**: 2026-05-06.
-**Status**: Design approved; pending implementation plan via writing-plans skill.
+**Status**: Shipped via PR #4 (merged 2026-05-06). Branch `worktree-spec+inbox-read` was the implementation home; the worktree may be torn down post-merge.
 **Branch**: `worktree-spec+inbox-read` (worktree at `D:\src\PRism\.claude\worktrees\spec+inbox-read`).
 **Source authorities**: [`docs/spec/`](../../spec/) is the PoC specification this slice implements; [`design/handoff/`](../../../design/handoff/) is the visual reference. This document does not restate the PoC spec; it commits to a specific subset and adds slice-specific decisions.
 
