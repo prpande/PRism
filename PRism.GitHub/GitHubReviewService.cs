@@ -27,6 +27,8 @@ public sealed class GitHubReviewService : IReviewService
         if (string.IsNullOrEmpty(token))
             return new AuthValidationResult(false, null, null, AuthValidationError.InvalidToken, "no token");
 
+        var tokenType = ClassifyToken(token);
+
         using var req = new HttpRequestMessage(HttpMethod.Get, "user");
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
@@ -35,7 +37,16 @@ public sealed class GitHubReviewService : IReviewService
         try
         {
             using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
-            return await InterpretAsync(resp, ct).ConfigureAwait(false);
+            var primary = await InterpretAsync(resp, tokenType, ct).ConfigureAwait(false);
+            if (!primary.Ok || tokenType != TokenType.FineGrained) return primary;
+
+            // Fine-grained: probe Search to detect the no-repos-selected case.
+            var warning = await ProbeRepoVisibilityAsync(token, ct).ConfigureAwait(false);
+            return primary with { Warning = warning };
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is { } code && (int)code >= 500)
+        {
+            return new AuthValidationResult(false, null, null, AuthValidationError.ServerError, $"GitHub returned {(int)code}.");
         }
         catch (HttpRequestException ex) when (IsDnsFailure(ex))
         {
@@ -46,6 +57,11 @@ public sealed class GitHubReviewService : IReviewService
             return new AuthValidationResult(false, null, null, AuthValidationError.NetworkError, ex.Message);
         }
     }
+
+    private enum TokenType { Classic, FineGrained }
+
+    private static TokenType ClassifyToken(string token) =>
+        token.StartsWith("ghp_", StringComparison.Ordinal) ? TokenType.Classic : TokenType.FineGrained;
 
     private static bool IsDnsFailure(HttpRequestException ex)
     {
@@ -58,7 +74,7 @@ public sealed class GitHubReviewService : IReviewService
         return false;
     }
 
-    private static async Task<AuthValidationResult> InterpretAsync(HttpResponseMessage resp, CancellationToken ct)
+    private static async Task<AuthValidationResult> InterpretAsync(HttpResponseMessage resp, TokenType tokenType, CancellationToken ct)
     {
         if (resp.StatusCode == HttpStatusCode.Unauthorized)
             return new AuthValidationResult(false, null, null, AuthValidationError.InvalidToken, "GitHub rejected this token.");
@@ -71,10 +87,14 @@ public sealed class GitHubReviewService : IReviewService
 
         var scopesHeader = resp.Headers.TryGetValues("X-OAuth-Scopes", out var values) ? string.Join(",", values) : "";
         var scopes = scopesHeader.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var missing = RequiredScopes.Except(scopes).ToArray();
-        if (missing.Length > 0)
-            return new AuthValidationResult(false, null, scopes, AuthValidationError.InsufficientScopes,
-                $"missing scopes: {string.Join(", ", missing)}");
+
+        if (tokenType == TokenType.Classic)
+        {
+            var missing = RequiredScopes.Except(scopes).ToArray();
+            if (missing.Length > 0)
+                return new AuthValidationResult(false, null, scopes, AuthValidationError.InsufficientScopes,
+                    $"missing scopes: {string.Join(", ", missing)}");
+        }
 
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         string? login;
@@ -92,6 +112,32 @@ public sealed class GitHubReviewService : IReviewService
         }
 
         return new AuthValidationResult(true, login, scopes, AuthValidationError.None, null);
+    }
+
+    private async Task<AuthValidationWarning> ProbeRepoVisibilityAsync(string token, CancellationToken ct)
+    {
+        if (await SearchHasResultsAsync(token, "is:pr author:@me", ct).ConfigureAwait(false))
+            return AuthValidationWarning.None;
+        if (await SearchHasResultsAsync(token, "is:pr review-requested:@me", ct).ConfigureAwait(false))
+            return AuthValidationWarning.None;
+        return AuthValidationWarning.NoReposSelected;
+    }
+
+    private async Task<bool> SearchHasResultsAsync(string token, string query, CancellationToken ct)
+    {
+        var url = $"search/issues?q={Uri.EscapeDataString(query)}&per_page=1";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        req.Headers.UserAgent.ParseAdd("PRism/0.1");
+        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.TryGetProperty("total_count", out var tc)
+            && tc.ValueKind == JsonValueKind.Number
+            && tc.GetInt32() > 0;
     }
 
     // Stubs for methods that land in later slices.

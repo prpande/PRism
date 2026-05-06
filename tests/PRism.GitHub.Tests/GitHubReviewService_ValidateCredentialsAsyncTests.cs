@@ -94,4 +94,32 @@ public class GitHubReviewService_ValidateCredentialsAsyncTests
         result.Error.Should().Be(AuthValidationError.ServerError);
         result.ErrorDetail.Should().NotBeNullOrEmpty();
     }
+
+    [Fact]
+    public async Task Returns_ok_for_fine_grained_pat_with_no_scopes_header()
+    {
+        // Fine-grained PATs do not return X-OAuth-Scopes. The validator must accept them.
+        // Search probe is stubbed to return >0 results so no warning is raised in this test.
+        var firstCall = true;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (firstCall)
+            {
+                firstCall = false;
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"login\":\"octocat\"}", System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"total_count\":1,\"items\":[]}", System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        var sut = BuildSut(handler, token: "github_pat_abcDEF123_xyz");
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue();
+        result.Login.Should().Be("octocat");
+        result.Warning.Should().Be(AuthValidationWarning.None);
+    }
 }
