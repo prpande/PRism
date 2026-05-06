@@ -219,7 +219,7 @@ Set `RECIPE_NAME` to the chosen recipe's name (e.g., `stale-todo`).
 3. Filter out high-traffic files using the 30-day commit count rule.
 4. Filter out files that don't structurally fit the chosen recipe (e.g., the `vague-log-message` recipe needs a file with an existing logger field; `redundant-xml-doc` needs a public method).
 5. From what remains, pick one.
-6. If no file fits, rotate to the next recipe: `RECIPE_INDEX=$(( (RECIPE_INDEX + 1) % 5 ))` and retry. After 5 unsuccessful rotations, abort with a clear message.
+6. If no file fits, rotate to the next recipe: `RECIPE_INDEX=$(( (RECIPE_INDEX + 1) % 5 ))`, **then re-derive `RECIPE_NAME` from the catalog table at the new index** (otherwise step 7 commits with a stale label), and retry. After 5 unsuccessful rotations, abort with a clear message.
 
 ### Apply the change
 
