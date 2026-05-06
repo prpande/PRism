@@ -72,8 +72,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         // caller on the cold path sees the flag already set and returns immediately.
         if (Interlocked.CompareExchange(ref _coldStartKicked, 1, 0) != 0) return;
         // Fire-and-forget: a failed cold-start refresh is not silent — InboxPoller will
-        // retry on its next tick and log the failure there. Attaching a fault continuation
-        // here would require injecting an ILogger into this class.
+        // retry on its next tick and log the failure there. A fault continuation is
+        // deliberately omitted — adding one would require special-casing
+        // OperationCanceledException propagation inside a continuation.
 #pragma warning disable CA2012 // fire-and-forget by design; see comment above
         _ = RefreshAsync(CancellationToken.None);
 #pragma warning restore CA2012
