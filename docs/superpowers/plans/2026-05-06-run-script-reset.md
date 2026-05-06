@@ -6,7 +6,7 @@
 
 **Architecture:** All changes are confined to `run.ps1`. The script runs the chosen reset operation against `<dataDir>` *before* `npm ci` / `npm run build` / `dotnet run`, so the host never has the lockfile or `state.json` open while files are being deleted. `<dataDir>` is resolved via `[Environment]::GetFolderPath('LocalApplicationData')` joined with `'PRism'`, mirroring `DataDirectoryResolver.Resolve()`. Pass-through args (e.g., `--no-browser`) continue to flow to `dotnet run` via a `ValueFromRemainingArguments` parameter.
 
-**Tech Stack:** PowerShell Core 7 (per the existing `#!/usr/bin/env pwsh` shebang). No new dependencies. No automated test framework — the spec ([`docs/superpowers/specs/2026-05-06-run-script-reset-design.md`](../specs/2026-05-06-run-script-reset-design.md) § 8) commits to a manual smoke checklist as the verification approach, since the C# behaviors each mode exercises are already covered by `tests/PRism.Core.Tests` and `tests/PRism.Web.Tests`.
+**Tech Stack:** PowerShell — both Windows PowerShell 5.1 (`.NET Framework 4.x`) and PowerShell 7+ (`.NET 5+`). The existing `#!/usr/bin/env pwsh` shebang nominates pwsh 7, but the script must remain runnable under 5.1 so any developer's default PS host on Windows works. This means avoiding 7-only features: `Set-Content -Encoding utf8NoBOM` (use `[System.IO.File]::WriteAllText` with explicit `[System.Text.UTF8Encoding]::new($false)` instead), the 3-argument `[System.IO.File]::Move(src, dst, overwrite)` overload (use a direct write — power-loss safety falls through to the host's existing `state.json.corrupt-<timestamp>` recovery path). No new dependencies. No automated test framework — the spec ([`docs/superpowers/specs/2026-05-06-run-script-reset-design.md`](../specs/2026-05-06-run-script-reset-design.md) § 8) commits to a manual smoke checklist as the verification approach, since the C# behaviors each mode exercises are already covered by `tests/PRism.Core.Tests` and `tests/PRism.Web.Tests`.
 
 **Spec:** [`docs/superpowers/specs/2026-05-06-run-script-reset-design.md`](../specs/2026-05-06-run-script-reset-design.md). Acceptance criteria in spec § 9.
 
@@ -336,6 +336,14 @@ function Remove-TokenCacheFiles {
     Remove-Item -LiteralPath $previousPath -Force -ErrorAction SilentlyContinue
 }
 
+function Write-Utf8NoBom {
+    # Cross-version replacement for `Set-Content -Encoding utf8NoBOM` (PS 7+ only).
+    # [System.Text.UTF8Encoding]::new($false) → no BOM. Works in PS 5.1 (.NET
+    # Framework 4.x) and PS 7+ (.NET 5+) identically.
+    param([string]$Path, [string]$Text)
+    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
+}
+
 function Set-LastConfiguredGithubHostToSentinel {
     param([string]$DataDir, [string]$Sentinel)
     $statePath = Join-Path $DataDir 'state.json'
@@ -351,7 +359,7 @@ function Set-LastConfiguredGithubHostToSentinel {
             aiState = [ordered]@{ repoCloneMap = @{}; workspaceMtimeAtLastEnumeration = $null }
             lastConfiguredGithubHost = $Sentinel
         }
-        ($fresh | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $statePath -Encoding utf8NoBOM
+        Write-Utf8NoBom -Path $statePath -Text ($fresh | ConvertTo-Json -Depth 10)
         return
     }
 
@@ -373,10 +381,7 @@ function Set-LastConfiguredGithubHostToSentinel {
         $obj | Add-Member -NotePropertyName 'lastConfiguredGithubHost' -NotePropertyValue $Sentinel
     }
 
-    $tmpPath = "$statePath.tmp"
-    ($obj | ConvertTo-Json -Depth 10) | Set-Content -LiteralPath $tmpPath -Encoding utf8NoBOM
-    # Move with overwrite — the closest practical primitive to atomic on Windows.
-    [System.IO.File]::Move($tmpPath, $statePath, $true)
+    Write-Utf8NoBom -Path $statePath -Text ($obj | ConvertTo-Json -Depth 10)
 }
 
 switch ($Reset) {

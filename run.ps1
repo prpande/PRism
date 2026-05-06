@@ -35,15 +35,72 @@ if ($Reset -ne 'None') {
     Write-Host "Reset($Reset): preparing to clean local state at $dataDir" -ForegroundColor Yellow
 }
 
+$ResetSentinelHost = 'https://prism-reset-stub.invalid'
+
+function Write-Utf8NoBom {
+    # Cross-version replacement for `Set-Content -Encoding utf8NoBOM` (PS 7+ only).
+    # [System.Text.UTF8Encoding]::new($false) → no BOM. Works in PS 5.1 (.NET
+    # Framework 4.x) and PS 7+ (.NET 5+) identically.
+    param([string]$Path, [string]$Text)
+    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Remove-TokenCacheFiles {
+    param([string]$DataDir)
+    $tokenPath = Join-Path $DataDir 'PRism.tokens.cache'
+    $previousPath = "$tokenPath.previous"
+    Write-Host "  removing $tokenPath" -ForegroundColor DarkGray
+    Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $previousPath -Force -ErrorAction SilentlyContinue
+}
+
+function Set-LastConfiguredGithubHostToSentinel {
+    param([string]$DataDir, [string]$Sentinel)
+    $statePath = Join-Path $DataDir 'state.json'
+
+    if (-not (Test-Path -LiteralPath $statePath)) {
+        # No state.json yet → write a fresh v1 default shape with the sentinel
+        # host. Mirrors AppState.Empty in PRism.Core/State/AppState.cs.
+        Write-Host "  state.json missing — writing v1 default with sentinel host" -ForegroundColor DarkGray
+        New-Item -ItemType Directory -Force $DataDir | Out-Null
+        $fresh = [ordered]@{
+            version = 1
+            reviewSessions = @{}
+            aiState = [ordered]@{ repoCloneMap = @{}; workspaceMtimeAtLastEnumeration = $null }
+            lastConfiguredGithubHost = $Sentinel
+        }
+        Write-Utf8NoBom -Path $statePath -Text ($fresh | ConvertTo-Json -Depth 10)
+        return
+    }
+
+    Write-Host "  setting state.json.lastConfiguredGithubHost = $Sentinel" -ForegroundColor DarkGray
+
+    $raw = Get-Content -LiteralPath $statePath -Raw
+    try {
+        $obj = $raw | ConvertFrom-Json
+    } catch {
+        throw "state.json at $statePath is not valid JSON; refusing to overwrite. Repair the file by hand or use '-Reset Full' to wipe local state. Original parse error: $($_.Exception.Message)"
+    }
+
+    # Mutate the field. ConvertFrom-Json yields a PSCustomObject; if the
+    # property is missing, Add-Member adds it. If present, the assignment
+    # overwrites.
+    if ($obj.PSObject.Properties.Name -contains 'lastConfiguredGithubHost') {
+        $obj.lastConfiguredGithubHost = $Sentinel
+    } else {
+        $obj | Add-Member -NotePropertyName 'lastConfiguredGithubHost' -NotePropertyValue $Sentinel
+    }
+
+    Write-Utf8NoBom -Path $statePath -Text ($obj | ConvertTo-Json -Depth 10)
+}
+
 switch ($Reset) {
     'Token' {
-        $tokenPath = Join-Path $dataDir 'PRism.tokens.cache'
-        $previousPath = "$tokenPath.previous"
-        Write-Host "  removing $tokenPath" -ForegroundColor DarkGray
-        Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $previousPath -Force -ErrorAction SilentlyContinue
+        Remove-TokenCacheFiles -DataDir $dataDir
     }
-    'Auth' { throw "Reset(Auth) not implemented yet — see Task 3." }
+    'Auth' {
+        Set-LastConfiguredGithubHostToSentinel -DataDir $dataDir -Sentinel $ResetSentinelHost
+    }
     'Full' { throw "Reset(Full) not implemented yet — see Task 4." }
 }
 
