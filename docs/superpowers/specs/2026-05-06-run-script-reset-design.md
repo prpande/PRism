@@ -2,9 +2,8 @@
 
 **Slice**: dev-tooling, out-of-band — not a roadmap slice. Small change to `run.ps1` for testing scenarios that depend on persisted local state.
 **Date**: 2026-05-06.
-**Status**: Brainstorm complete; awaiting user spec review before writing-plans.
-**Branch**: `worktree-feat+run-script-reset-modes` (worktree at `.claude/worktrees/feat+run-script-reset-modes`).
-**Source authorities**: [`run.ps1`](../../../run.ps1) is the only file changed; [`PRism.Core/Auth/TokenStore.cs`](../../../PRism.Core/Auth/TokenStore.cs), [`PRism.Core/State/AppState.cs`](../../../PRism.Core/State/AppState.cs), and [`PRism.Core/Hosting/DataDirectoryResolver.cs`](../../../PRism.Core/Hosting/DataDirectoryResolver.cs) are the on-disk shape this design has to mirror.
+**Status**: Implemented (PR #8).
+**Source authorities**: [`run.ps1`](../../../run.ps1) is the production code; [`PRism.Core/Auth/TokenStore.cs`](../../../PRism.Core/Auth/TokenStore.cs), [`PRism.Core/State/AppState.cs`](../../../PRism.Core/State/AppState.cs), [`PRism.Core/Json/JsonSerializerOptionsFactory.cs`](../../../PRism.Core/Json/JsonSerializerOptionsFactory.cs), and [`PRism.Core/Hosting/DataDirectoryResolver.cs`](../../../PRism.Core/Hosting/DataDirectoryResolver.cs) are the on-disk shape this design mirrors.
 
 ---
 

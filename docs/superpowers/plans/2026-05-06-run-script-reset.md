@@ -67,11 +67,28 @@ To populate a known starting state for a smoke check:
 
 ```powershell
 # Make sure PRism is not running first.
+# State keys are kebab-case to match the host's KebabCaseJsonNamingPolicy
+# (PRism.Core/Json/JsonSerializerOptionsFactory.cs). The encoding is UTF-8
+# without BOM via the .NET API, which works in both PS 5.1 and PS 7+ (the
+# `-Encoding utf8NoBOM` form on Set-Content is PS 7+ only).
 New-Item -ItemType Directory -Force $dataDir | Out-Null
 'placeholder-token-bytes' | Set-Content (Join-Path $dataDir 'PRism.tokens.cache') -NoNewline
-@{ version = 1; reviewSessions = @{}; aiState = @{ repoCloneMap = @{}; workspaceMtimeAtLastEnumeration = $null }; lastConfiguredGithubHost = 'https://github.com' } |
-    ConvertTo-Json -Depth 10 |
-    Set-Content (Join-Path $dataDir 'state.json') -Encoding utf8NoBOM
+$stateJson = (
+    [ordered]@{
+        'version' = 1
+        'review-sessions' = @{}
+        'ai-state' = [ordered]@{
+            'repo-clone-map' = @{}
+            'workspace-mtime-at-last-enumeration' = $null
+        }
+        'last-configured-github-host' = 'https://github.com'
+    } | ConvertTo-Json -Depth 10
+)
+[System.IO.File]::WriteAllText(
+    (Join-Path $dataDir 'state.json'),
+    $stateJson,
+    [System.Text.UTF8Encoding]::new($false)
+)
 '{}' | Set-Content (Join-Path $dataDir 'config.json')
 ```
 

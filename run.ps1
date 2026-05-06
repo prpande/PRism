@@ -5,10 +5,12 @@
 # -Reset selects an optional pre-launch local-state cleanup. Modes:
 #   None  (default) -- no cleanup; identical to running without the flag.
 #   Token           -- delete <dataDir>\PRism.tokens.cache. Forces Setup on next launch.
-#   Auth            -- set state.json.lastConfiguredGithubHost to a sentinel host
-#                     (https://prism-reset-stub.invalid) so the next launch
-#                     surfaces the host-change-resolution modal. Token cache
-#                     is untouched.
+#   Auth            -- set state.json.last-configured-github-host to a sentinel
+#                     host (https://prism-reset-stub.invalid) so the next launch
+#                     surfaces the host-change-resolution modal. Token cache is
+#                     untouched. Note: keys on disk are kebab-case to match the
+#                     host's KebabCaseJsonNamingPolicy (the C# record property
+#                     is AppState.LastConfiguredGithubHost).
 #   Full            -- wipe the entire <dataDir>. True first-launch reset.
 #                     Caveat: on macOS / Linux the OS keychain entry survives;
 #                     see the spec section 7 for the manual cleanup commands.
@@ -102,8 +104,10 @@ function Set-LastConfiguredGithubHostToSentinel {
 
     # Mutate the kebab-case field. ConvertFrom-Json yields a PSCustomObject;
     # if the property is missing (older state.json from a prior schema, or a
-    # hand-edited file), Add-Member adds it. Property names with hyphens
-    # require the quoted indexer form for property access.
+    # hand-edited file), Add-Member adds it. The $obj.$hostKey form below
+    # uses dynamic member access — PowerShell expands the variable and
+    # accepts hyphens in the resolved name (literal dotted access like
+    # $obj.last-configured-github-host would parse as subtraction).
     if ($obj.PSObject.Properties.Name -contains $hostKey) {
         $obj.$hostKey = $Sentinel
     } else {
