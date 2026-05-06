@@ -193,6 +193,104 @@ public class EventsEndpointsTests
         written.Should().EndWith("\n\n");
     }
 
+    [Fact]
+    public async Task Sse_subscriber_failed_write_evicts_from_writers_and_decrements_subs()
+    {
+        // Regression test: PR #4 follow-up review feedback. The OnInboxUpdated handler
+        // dispatches writes fire-and-forget. If the underlying response stream throws
+        // (e.g. client TCP reset) the exception was previously unobserved AND the
+        // dead subscriber was never evicted, so the publisher kept hammering it on
+        // every subsequent event. The fix observes the task's exception and, on
+        // failure, evicts the subscriber from _writers and decrements _subs.
+        var bus = new ReviewEventBus();
+        var subs = new InboxSubscriberCount();
+        using var channel = new SseChannel(bus, subs, NullLogger<SseChannel>.Instance);
+
+        // Stream that succeeds on the initial heartbeat write but throws on the
+        // first event-write triggered by OnInboxUpdated. We allow the heartbeat
+        // through so the subscriber is fully registered before we induce the failure.
+        var failingBody = new FailOnNthWriteStream(failOnWriteOrdinal: 2);
+        var ctx = new DefaultHttpContext { Response = { Body = failingBody } };
+
+        using var ctsRun = new CancellationTokenSource();
+        var runTask = channel.RunSubscriberAsync(ctx.Response, ctsRun.Token);
+
+        // Wait until the subscriber is registered (initial heartbeat completed).
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (subs.Current == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(5, CancellationToken.None);
+        subs.Current.Should().Be(1, "subscriber should be registered before publishing");
+
+        // Publish an event — this triggers a write that will throw inside the
+        // fire-and-forget task. The eviction-helper must observe the exception and
+        // remove the subscriber.
+        bus.Publish(new InboxUpdated(new[] { "review-requested" }, 1));
+
+        // Wait for the eviction to complete (the helper races the publisher thread).
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (subs.Current != 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10, CancellationToken.None);
+
+        subs.Current.Should().Be(0, "failed write must evict the subscriber and decrement _subs");
+
+        // Publish another event. With the subscriber evicted no further writes should
+        // be attempted on the dead stream — the publisher must not double-decrement
+        // and must not throw.
+        bus.Publish(new InboxUpdated(new[] { "review-requested" }, 2));
+        await Task.Delay(50, CancellationToken.None);
+        subs.Current.Should().Be(0, "subsequent publishes must not double-decrement");
+
+        // Stop the subscriber loop cleanly. The heartbeat loop in RunSubscriberAsync
+        // is independent of the eviction; cancelling it lets the test tear down.
+        await ctsRun.CancelAsync();
+        try { await runTask; } catch (OperationCanceledException) { } catch (IOException) { }
+    }
+
+    /// <summary>
+    /// Stream wrapper that succeeds for the first (failOnWriteOrdinal - 1) WriteAsync
+    /// calls and throws on the Nth and every subsequent write. Used to simulate a
+    /// dead client connection mid-stream.
+    /// </summary>
+    private sealed class FailOnNthWriteStream : Stream
+    {
+        private readonly int _failOnWriteOrdinal;
+        private int _writeCount;
+
+        public FailOnNthWriteStream(int failOnWriteOrdinal) { _failOnWriteOrdinal = failOnWriteOrdinal; }
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { /* no-op */ }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => MaybeThrow();
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            MaybeThrow();
+            return Task.CompletedTask;
+        }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            MaybeThrow();
+            return ValueTask.CompletedTask;
+        }
+
+        public override Task FlushAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        private void MaybeThrow()
+        {
+            var n = Interlocked.Increment(ref _writeCount);
+            if (n >= _failOnWriteOrdinal)
+                throw new IOException($"simulated stream failure on write #{n}");
+        }
+    }
+
     /// <summary>
     /// Stream wrapper that records the maximum number of WriteAsync/FlushAsync calls
     /// in flight at any one moment, with an artificial per-call delay to widen any race.

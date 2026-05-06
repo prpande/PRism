@@ -49,15 +49,22 @@ internal sealed class SseChannel : IDisposable
         catch (OperationCanceledException) { /* normal client disconnect */ }
         finally
         {
-            lock (_gate) _writers.Remove(sub);
-            _subs.Decrement();
-            sub.Dispose();
+            // The publisher path (OnInboxUpdated → WriteAndEvictOnFailureAsync) may
+            // have already evicted this subscriber on a write failure. Use Remove's
+            // bool return to avoid double-decrementing _subs and double-disposing.
+            bool removed;
+            lock (_gate) removed = _writers.Remove(sub);
+            if (removed)
+            {
+                _subs.Decrement();
+                sub.Dispose();
+            }
         }
     }
 
     private static readonly Action<ILogger, Exception?> s_writeFailedLog =
         LoggerMessage.Define(LogLevel.Debug, new EventId(0, "SseWriteFailed"),
-            "SSE write failed; subscriber will be evicted on next loop");
+            "SSE write failed; evicting subscriber");
 
     private void OnInboxUpdated(InboxUpdated evt)
     {
@@ -67,20 +74,42 @@ internal sealed class SseChannel : IDisposable
         lock (_gate) snapshot = _writers.ToArray();
         foreach (var s in snapshot)
         {
-            // Fire-and-forget by design: this handler runs on the publisher's thread and
-            // must not block. Per-subscriber serialization is enforced inside SseSubscriber
-            // (a SemaphoreSlim guards the underlying HttpResponse.Body PipeWriter, which is
-            // not thread-safe). Reviewer suggested also evicting subscribers on write
-            // failure; that is deferred to S3 along with backpressure (spec § 11).
-            try { _ = s.WriteAsync(frame, default); }
-#pragma warning disable CA1031 // SSE write failures should not crash the publisher; subscriber will be evicted on its own loop's next failure.
-            catch (Exception ex)
-            {
-                s_writeFailedLog(_log, ex);
-            }
-#pragma warning restore CA1031
+            // Fire-and-forget by design: this handler runs on the publisher's thread
+            // and must not block. Per-subscriber serialization is enforced inside
+            // SseSubscriber (a SemaphoreSlim guards the underlying HttpResponse.Body
+            // PipeWriter, which is not thread-safe). The helper observes the write
+            // task's exceptions (so they don't become unobserved) and evicts dead
+            // subscribers from _writers so the publisher stops writing to them.
+            // Backpressure remains deferred to S3 (spec § 11).
+            _ = WriteAndEvictOnFailureAsync(s, frame);
         }
     }
+
+#pragma warning disable CA1031 // SSE write failures must not crash the publisher; observe + evict.
+    private async Task WriteAndEvictOnFailureAsync(SseSubscriber s, string frame)
+    {
+        try
+        {
+            await s.WriteAsync(frame, default).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            s_writeFailedLog(_log, ex);
+
+            // Atomically evict the subscriber so the publisher stops writing to it.
+            // RunSubscriberAsync's finally also removes on cancellation; whichever
+            // path wins the Remove race is responsible for the matching decrement +
+            // dispose. The other path observes Remove == false and does nothing.
+            bool removed;
+            lock (_gate) removed = _writers.Remove(s);
+            if (removed)
+            {
+                _subs.Decrement();
+                s.Dispose();
+            }
+        }
+    }
+#pragma warning restore CA1031
 
     public void Dispose() => _busSub.Dispose();
 
@@ -90,9 +119,10 @@ internal sealed class SseChannel : IDisposable
         // Per-subscriber lock that serializes writes to the response body. The two write
         // paths (heartbeat loop in RunSubscriberAsync, and event delivery from the bus
         // via OnInboxUpdated) both flow through WriteAsync, so they cannot interleave
-        // and corrupt SSE framing. Disposed when the subscriber is removed from
-        // _writers (RunSubscriberAsync's finally block) — by that point no further
-        // writes can be issued because the publisher already snapshotted _writers.
+        // and corrupt SSE framing. Disposed by whichever path evicts the subscriber from
+        // _writers (RunSubscriberAsync's finally on cancellation, or
+        // WriteAndEvictOnFailureAsync on a publisher-side write failure) — guarded by
+        // the bool return of List.Remove so only one path disposes.
         private readonly SemaphoreSlim _writeLock = new(1, 1);
 
         public SseSubscriber(HttpResponse response) { _response = response; }
