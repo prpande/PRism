@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { inboxApi } from '../../api/inbox';
 import styles from './PasteUrlInput.module.css';
@@ -7,6 +7,8 @@ export function PasteUrlInput() {
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  // Set to true by onPaste; cleared when onChange consumes it.
+  const pasteInProgress = useRef(false);
 
   const submit = async (raw: string) => {
     setError(null);
@@ -44,10 +46,14 @@ export function PasteUrlInput() {
         value={value}
         onChange={(e) => {
           setValue(e.target.value);
-          setError(null);
+          if (pasteInProgress.current) {
+            pasteInProgress.current = false; // consume the flag; do NOT clear error
+          } else {
+            setError(null);
+          }
         }}
         onPaste={(e) => {
-          // Defer to onChange-fired-after-paste; submit immediately on the new value.
+          pasteInProgress.current = true;
           const pasted = e.clipboardData.getData('text');
           setValue(pasted);
           void submit(pasted);

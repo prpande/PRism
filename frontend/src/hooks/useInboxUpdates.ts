@@ -9,7 +9,8 @@ export function useInboxUpdates() {
     const close = openEventStream({
       onInboxUpdated: (e) => {
         setHasUpdate(true);
-        setSummary(`${e.newOrUpdatedPrCount} new updates`);
+        const n = e.newOrUpdatedPrCount;
+        setSummary(`${n} new ${n === 1 ? 'update' : 'updates'}`);
       },
     });
     return close;

@@ -51,4 +51,16 @@ describe('useInboxUpdates', () => {
     expect(result.current.hasUpdate).toBe(false);
     expect(result.current.summary).toBe('');
   });
+
+  it('uses singular form when newOrUpdatedPrCount is 1', async () => {
+    const { result } = renderHook(() => useInboxUpdates());
+    act(() =>
+      FakeEventSource.instance.dispatch('inbox-updated', {
+        changedSectionIds: [],
+        newOrUpdatedPrCount: 1,
+      }),
+    );
+    await waitFor(() => expect(result.current.hasUpdate).toBe(true));
+    expect(result.current.summary).toBe('1 new update');
+  });
 });

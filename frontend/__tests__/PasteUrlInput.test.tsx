@@ -129,4 +129,25 @@ describe('PasteUrlInput', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t reach the server/i);
     });
   });
+
+  it('does not flicker error pill on host-mismatch paste', async () => {
+    vi.mocked(inboxApi.parsePrUrl).mockResolvedValue({
+      ok: false,
+      ref: null,
+      error: 'host-mismatch',
+      configuredHost: 'https://github.com',
+      urlHost: 'ghe.acme.com',
+    });
+
+    renderInput();
+    const user = userEvent.setup();
+    const input = screen.getByPlaceholderText(/paste a pr url/i);
+
+    await user.click(input);
+    await user.paste('https://ghe.acme.com/foo/bar/pull/9');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/configured for https:\/\/github\.com/i);
+    });
+  });
 });
