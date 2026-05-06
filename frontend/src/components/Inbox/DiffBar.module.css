@@ -1,0 +1,29 @@
+/* DiffBar — visual scale of PR size */
+.diffbar {
+  display: inline-flex;
+  align-items: center;
+}
+
+.track {
+  display: block;
+  width: 64px;
+  height: 4px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.fill {
+  display: flex;
+  height: 100%;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.add {
+  background: var(--success-fg);
+}
+
+.del {
+  background: var(--danger-fg);
+}

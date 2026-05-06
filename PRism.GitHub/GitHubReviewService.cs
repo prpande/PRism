@@ -10,13 +10,13 @@ public sealed class GitHubReviewService : IReviewService
 {
     private static readonly string[] RequiredScopes = ["repo", "read:user", "read:org"];
 
-    private readonly HttpClient _http;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly string _host;
 
-    public GitHubReviewService(HttpClient http, Func<Task<string?>> readToken, string host)
+    public GitHubReviewService(IHttpClientFactory httpFactory, Func<Task<string?>> readToken, string host)
     {
-        _http = http;
+        _httpFactory = httpFactory;
         _readToken = readToken;
         _host = host;
     }
@@ -27,6 +27,7 @@ public sealed class GitHubReviewService : IReviewService
         if (string.IsNullOrEmpty(token))
             return new AuthValidationResult(false, null, null, AuthValidationError.InvalidToken, "no token");
 
+        using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, "user");
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
@@ -34,7 +35,7 @@ public sealed class GitHubReviewService : IReviewService
 
         try
         {
-            using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
             return await InterpretAsync(resp, ct).ConfigureAwait(false);
         }
         catch (HttpRequestException ex) when (IsDnsFailure(ex))
@@ -96,7 +97,23 @@ public sealed class GitHubReviewService : IReviewService
 
     // Stubs for methods that land in later slices.
     public Task<InboxSection[]> GetInboxAsync(CancellationToken ct) => throw new NotImplementedException("Inbox lands in S2.");
-    public bool TryParsePrUrl(string url, out PrReference? reference) => throw new NotImplementedException("URL parsing lands in S2.");
+    public bool TryParsePrUrl(string url, out PrReference? reference)
+    {
+        reference = null;
+        if (string.IsNullOrWhiteSpace(url)) return false;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u)) return false;
+        if (!Uri.TryCreate(_host, UriKind.Absolute, out var h)) return false;
+        if (!string.Equals(u.Scheme, h.Scheme, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(u.Host, h.Host, StringComparison.OrdinalIgnoreCase)) return false;
+
+        var segs = u.AbsolutePath.Trim('/').Split('/');
+        if (segs.Length < 4) return false;
+        if (!string.Equals(segs[2], "pull", StringComparison.Ordinal)) return false;
+        if (!int.TryParse(segs[3], out var n) || n <= 0) return false;
+
+        reference = new PrReference(segs[0], segs[1], n);
+        return true;
+    }
     public Task<Pr> GetPrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("PR detail lands in S3.");
     public Task<PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Iterations land in S3.");
     public Task<FileChange[]> GetDiffAsync(PrReference reference, string fromSha, string toSha, CancellationToken ct) => throw new NotImplementedException("Diff lands in S3.");

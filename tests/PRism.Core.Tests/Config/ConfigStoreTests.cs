@@ -1,4 +1,6 @@
+using System.Text.Json;
 using PRism.Core.Config;
+using PRism.Core.Json;
 using PRism.Core.Tests.TestHelpers;
 using FluentAssertions;
 using Xunit;
@@ -99,5 +101,98 @@ public class ConfigStoreTests
             await Task.Delay(100);
 
         store.Current.Ui.Theme.Should().Be("dark");
+    }
+
+    [Fact]
+    public async Task Default_inbox_config_has_dedupe_on_all_sections_visible_footer_on()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Inbox.Deduplicate.Should().BeTrue();
+        store.Current.Inbox.ShowHiddenScopeFooter.Should().BeTrue();
+        store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
+        store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
+        store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
+        store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
+        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task LoadAsync_with_pre_phase2_config_fills_new_fields_from_defaults()
+    {
+        using var dir = new TempDataDir();
+        // Legacy config.json shape from S0+S1 — has show-hidden-scope-footer but
+        // no deduplicate or sections keys. Wire format is kebab-case (matches Storage policy).
+        var legacyJson = """
+            {
+              "polling": { "active-pr-seconds": 30, "inbox-seconds": 120 },
+              "inbox": { "show-hidden-scope-footer": true },
+              "review": { "block-submit-on-stale-drafts": true, "require-verdict-reconfirm-on-new-iteration": true },
+              "iterations": { "cluster-gap-seconds": 60 },
+              "logging": { "level": "info", "state-events": true, "state-events-retention-files": 30 },
+              "ui": { "theme": "system", "accent": "indigo", "ai-preview": false },
+              "github": { "host": "https://github.com", "local-workspace": null },
+              "llm": {}
+            }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), legacyJson);
+
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Inbox.ShowHiddenScopeFooter.Should().BeTrue(); // preserved from legacy file
+        store.Current.Inbox.Deduplicate.Should().BeTrue();           // filled from default
+        store.Current.Inbox.Sections.Should().NotBeNull();
+        store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
+        store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
+        store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
+        store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
+        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task LoadAsync_with_partial_config_fills_all_missing_sub_records_from_defaults()
+    {
+        using var dir = new TempDataDir();
+        // Only github.host is provided; every other sub-record must come from defaults.
+        var partialJson = """
+            { "github": { "host": "https://ghe.acme.com" } }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), partialJson);
+
+        var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Github.Host.Should().Be("https://ghe.acme.com"); // user value preserved
+        store.Current.Ui.Should().NotBeNull();
+        store.Current.Ui.AiPreview.Should().BeFalse();              // from default
+        store.Current.Polling.Should().NotBeNull();
+        store.Current.Polling.InboxSeconds.Should().Be(120);        // from default
+        store.Current.Review.Should().NotBeNull();
+        store.Current.Iterations.Should().NotBeNull();
+        store.Current.Logging.Should().NotBeNull();
+        store.Current.Llm.Should().NotBeNull();
+        store.Current.Inbox.Should().NotBeNull();
+        store.Current.Inbox.Deduplicate.Should().BeTrue();
+        store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
+    }
+
+    [Fact]
+    public void AppConfig_roundtrips_expanded_inbox_config_via_json()
+    {
+        var config = AppConfig.Default;
+        var json = JsonSerializer.Serialize(config, JsonSerializerOptionsFactory.Storage);
+        var parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonSerializerOptionsFactory.Storage);
+
+        parsed.Should().NotBeNull();
+        parsed!.Inbox.Deduplicate.Should().BeTrue();
+        parsed.Inbox.ShowHiddenScopeFooter.Should().BeTrue();
+        parsed.Inbox.Sections.ReviewRequested.Should().BeTrue();
+        parsed.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
+        parsed.Inbox.Sections.AuthoredByMe.Should().BeTrue();
+        parsed.Inbox.Sections.Mentioned.Should().BeTrue();
+        parsed.Inbox.Sections.CiFailing.Should().BeTrue();
     }
 }

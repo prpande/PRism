@@ -1,0 +1,154 @@
+/* InboxRow — single PR row in the inbox list */
+.row {
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-3) var(--s-4);
+  text-align: left;
+  border-bottom: 1px solid var(--border-1);
+  align-items: center;
+  transition: background var(--t-fast);
+  position: relative;
+  background: transparent;
+  cursor: pointer;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row:hover {
+  background: var(--surface-2);
+}
+
+/* Freshness — left-edge accent on truly-fresh rows */
+.rowFresh::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+.rowToday {
+  /* no additional decoration */
+}
+
+.rowOlder {
+  /* no additional decoration */
+}
+
+/* Status column (16px wide) */
+.status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dotDanger {
+  background: var(--danger-fg);
+}
+
+.newChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Main column */
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.title {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-1);
+  margin-bottom: 4px;
+  text-wrap: pretty;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  flex-wrap: wrap;
+}
+
+.mono {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+
+.dotsep {
+  color: var(--border-strong);
+}
+
+/* Tail column */
+.tail {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: var(--radius-2);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+}
+
+.counts {
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.add {
+  color: var(--success-fg);
+}
+
+.del {
+  color: var(--danger-fg);
+}
+
+.comments {
+  padding: 2px 6px;
+  border-radius: var(--radius-2);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+.row:hover .comments {
+  background: var(--surface-3);
+}

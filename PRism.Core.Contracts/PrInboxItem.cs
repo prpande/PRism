@@ -5,4 +5,13 @@ public sealed record PrInboxItem(
     string Title,
     string Author,
     string Repo,
-    DateTime UpdatedAt);
+    DateTimeOffset UpdatedAt,
+    DateTimeOffset PushedAt,
+    int IterationNumber,
+    int CommentCount,
+    int Additions,
+    int Deletions,
+    string HeadSha,
+    CiStatus Ci,
+    string? LastViewedHeadSha,
+    long? LastSeenCommentId);

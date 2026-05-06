@@ -16,8 +16,12 @@ export function SetupPage() {
     setError(undefined);
     try {
       const result = await apiClient.post<ConnectResponse>('/api/auth/connect', { pat });
-      if (result.ok) navigate('/inbox-shell');
-      else setError(result.detail ?? result.error ?? 'Validation failed.');
+      if (result.ok) {
+        window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
+        navigate('/');
+      } else {
+        setError(result.detail ?? result.error ?? 'Validation failed.');
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {

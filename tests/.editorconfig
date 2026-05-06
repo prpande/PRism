@@ -16,3 +16,9 @@ dotnet_diagnostic.CA2000.severity = none
 
 # Inline expected-value arrays in assertions (e.g. BeEquivalentTo(new[] { ... })) read better than extracted fields
 dotnet_diagnostic.CA1861.severity = none
+
+# FluentAssertions ThrowAsync returns an AwaitableAssertions type that does not expose ConfigureAwait
+dotnet_diagnostic.CA2007.severity = none
+
+# CancellationTokenSource.Cancel() is intentionally synchronous in test setup (pre-cancel before act)
+dotnet_diagnostic.CA1849.severity = none
