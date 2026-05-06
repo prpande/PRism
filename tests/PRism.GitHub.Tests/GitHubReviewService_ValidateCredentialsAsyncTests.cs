@@ -11,8 +11,8 @@ public class GitHubReviewService_ValidateCredentialsAsyncTests
 {
     private static GitHubReviewService BuildSut(HttpMessageHandler handler, string token = "ghp_test", string host = "https://github.com")
     {
-        var client = new HttpClient(handler) { BaseAddress = HostUrlResolver.ApiBase(host) };
-        return new GitHubReviewService(client, () => Task.FromResult<string?>(token), host);
+        var factory = new FakeHttpClientFactory(handler, HostUrlResolver.ApiBase(host));
+        return new GitHubReviewService(factory, () => Task.FromResult<string?>(token), host);
     }
 
     [Fact]

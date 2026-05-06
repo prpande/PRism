@@ -10,13 +10,13 @@ public sealed class GitHubReviewService : IReviewService
 {
     private static readonly string[] RequiredScopes = ["repo", "read:user", "read:org"];
 
-    private readonly HttpClient _http;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly string _host;
 
-    public GitHubReviewService(HttpClient http, Func<Task<string?>> readToken, string host)
+    public GitHubReviewService(IHttpClientFactory httpFactory, Func<Task<string?>> readToken, string host)
     {
-        _http = http;
+        _httpFactory = httpFactory;
         _readToken = readToken;
         _host = host;
     }
@@ -27,6 +27,7 @@ public sealed class GitHubReviewService : IReviewService
         if (string.IsNullOrEmpty(token))
             return new AuthValidationResult(false, null, null, AuthValidationError.InvalidToken, "no token");
 
+        using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, "user");
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
@@ -34,7 +35,7 @@ public sealed class GitHubReviewService : IReviewService
 
         try
         {
-            using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+            using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
             return await InterpretAsync(resp, ct).ConfigureAwait(false);
         }
         catch (HttpRequestException ex) when (IsDnsFailure(ex))

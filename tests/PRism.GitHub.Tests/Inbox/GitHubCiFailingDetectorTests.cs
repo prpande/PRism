@@ -26,11 +26,9 @@ public sealed class GitHubCiFailingDetectorTests
         Content = new StringContent(body, Encoding.UTF8, "application/json"),
     };
 
-    private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler)
-    {
-        var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        return new GitHubCiFailingDetector(http, () => Task.FromResult<string?>("t"));
-    }
+    private static GitHubCiFailingDetector BuildSut(FakeHttpMessageHandler handler) =>
+        new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("t"));
 
     private static FakeHttpMessageHandler RouterHandler(string checkRunsBody, string statusBody)
         => new(req =>
@@ -145,8 +143,7 @@ public sealed class GitHubCiFailingDetectorTests
                 return Respond(HttpStatusCode.OK, AllPassingCheckRuns);
             return Respond(HttpStatusCode.OK, AllPassingStatus);
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubCiFailingDetector(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var candidate = Raw(1, "sha-A");
         await sut.DetectAsync([candidate], default);
@@ -169,8 +166,7 @@ public sealed class GitHubCiFailingDetectorTests
                 return Respond(HttpStatusCode.OK, AllPassingCheckRuns);
             return Respond(HttpStatusCode.OK, AllPassingStatus);
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubCiFailingDetector(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         await sut.DetectAsync([Raw(1, "sha-A")], default);
         await sut.DetectAsync([Raw(1, "sha-B")], default);
@@ -205,8 +201,7 @@ public sealed class GitHubCiFailingDetectorTests
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubCiFailingDetector(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var candidates = Enumerable.Range(1, 20)
             .Select(n => Raw(n, headSha: $"head-{n}"))
@@ -227,8 +222,7 @@ public sealed class GitHubCiFailingDetectorTests
             Interlocked.Increment(ref requestCount);
             return Respond(HttpStatusCode.OK, AllPassingCheckRuns);
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubCiFailingDetector(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var result = await sut.DetectAsync([], default);
 
@@ -247,8 +241,7 @@ public sealed class GitHubCiFailingDetectorTests
             cts.Token.ThrowIfCancellationRequested();
             return Respond(HttpStatusCode.OK, AllPassingCheckRuns);
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubCiFailingDetector(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var act = async () => await sut.DetectAsync([Raw(1, "sha1")], cts.Token);
 

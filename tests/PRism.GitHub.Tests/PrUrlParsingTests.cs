@@ -3,16 +3,18 @@ using FluentAssertions;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.GitHub;
+using PRism.GitHub.Tests.TestHelpers;
 using Xunit;
 
 namespace PRism.GitHub.Tests;
 
 public sealed class PrUrlParsingTests
 {
-#pragma warning disable CA2000
     private static IReviewService Make(string host) =>
-        new GitHubReviewService(new HttpClient(), () => Task.FromResult<string?>("token"), host);
-#pragma warning restore CA2000
+        new GitHubReviewService(
+            new FakeHttpClientFactory(new FakeHttpMessageHandler(_ => new HttpResponseMessage()), HostUrlResolver.ApiBase(host)),
+            () => Task.FromResult<string?>("token"),
+            host);
 
     [Theory]
     [InlineData("https://github.com/foo/bar/pull/42", "https://github.com", "foo", "bar", 42)]

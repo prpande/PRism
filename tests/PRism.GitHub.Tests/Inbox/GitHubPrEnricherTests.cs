@@ -41,11 +41,9 @@ public sealed class GitHubPrEnricherTests
         Content = new StringContent(body, Encoding.UTF8, "application/json"),
     };
 
-    private static GitHubPrEnricher BuildSut(FakeHttpMessageHandler handler)
-    {
-        var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        return new GitHubPrEnricher(http, () => Task.FromResult<string?>("t"));
-    }
+    private static GitHubPrEnricher BuildSut(FakeHttpMessageHandler handler) =>
+        new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("t"));
 
     [Fact]
     public async Task Adds_head_sha_and_diff_stats()
@@ -204,8 +202,7 @@ public sealed class GitHubPrEnricherTests
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubPrEnricher(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
         var input = new[] { Raw(1, updatedAt: DateTimeOffset.Parse("2026-05-06T10:30:00Z", CultureInfo.InvariantCulture)) };
 
         var result = await sut.EnrichAsync(input, default);

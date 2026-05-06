@@ -10,13 +10,13 @@ namespace PRism.GitHub.Inbox;
 public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
 {
     private const int ConcurrencyCap = 8;
-    private readonly HttpClient _http;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly ConcurrentDictionary<(PrReference, string), string?> _lastReviewShaCache = new();
 
-    public GitHubAwaitingAuthorFilter(HttpClient http, Func<Task<string?>> readToken)
+    public GitHubAwaitingAuthorFilter(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
     {
-        _http = http;
+        _httpFactory = httpFactory;
         _readToken = readToken;
     }
 
@@ -56,13 +56,14 @@ public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
         PrReference pr, string viewerLogin, string? token, CancellationToken ct)
     {
         var url = $"repos/{pr.Owner}/{pr.Repo}/pulls/{pr.Number}/reviews?per_page=100";
+        using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         if (!string.IsNullOrEmpty(token))
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
 
-        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
         resp.EnsureSuccessStatusCode();
 

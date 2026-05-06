@@ -23,6 +23,14 @@ var builder = WebApplication.CreateBuilder(args);
 // Resolve dataDir from configuration (test sets it via UseSetting; production uses SpecialFolder).
 var dataDir = builder.Configuration["DataDir"] ?? DataDirectoryResolver.Resolve();
 
+// Named "github" HttpClient — configured with the GitHub API base address.
+// All GitHub components retrieve a fresh wrapper (pooled handler) via IHttpClientFactory.
+builder.Services.AddHttpClient("github", (sp, client) =>
+{
+    var config = sp.GetRequiredService<IConfigStore>();
+    client.BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host);
+});
+
 // DI: ConfigStore + AiPreviewState + AppStateStore + TokenStore + ReviewService singletons.
 builder.Services.AddSingleton<IConfigStore>(_ => CreateConfigStore(dataDir));
 builder.Services.AddSingleton<AiPreviewState>(sp =>
@@ -38,10 +46,8 @@ builder.Services.AddSingleton<IReviewService>(sp =>
 {
     var config = sp.GetRequiredService<IConfigStore>();
     var tokens = sp.GetRequiredService<ITokenStore>();
-#pragma warning disable CA2000 // HttpClient is owned by the singleton IReviewService for app lifetime.
-    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
-#pragma warning restore CA2000
-    return new GitHubReviewService(http, () => tokens.ReadAsync(CancellationToken.None), config.Current.Github.Host);
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return new GitHubReviewService(factory, () => tokens.ReadAsync(CancellationToken.None), config.Current.Github.Host);
 });
 
 // AI seams: register both Noop and Placeholder, plus the selector.
@@ -102,42 +108,30 @@ builder.Services.AddSingleton<IInboxDeduplicator, InboxDeduplicator>();
 
 builder.Services.AddSingleton<ISectionQueryRunner>(sp =>
 {
-    var config = sp.GetRequiredService<IConfigStore>();
     var tokens = sp.GetRequiredService<ITokenStore>();
-#pragma warning disable CA2000
-    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
-#pragma warning restore CA2000
-    return new GitHubSectionQueryRunner(http, () => tokens.ReadAsync(CancellationToken.None));
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return new GitHubSectionQueryRunner(factory, () => tokens.ReadAsync(CancellationToken.None));
 });
 
 builder.Services.AddSingleton<IPrEnricher>(sp =>
 {
-    var config = sp.GetRequiredService<IConfigStore>();
     var tokens = sp.GetRequiredService<ITokenStore>();
-#pragma warning disable CA2000
-    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
-#pragma warning restore CA2000
-    return new GitHubPrEnricher(http, () => tokens.ReadAsync(CancellationToken.None));
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return new GitHubPrEnricher(factory, () => tokens.ReadAsync(CancellationToken.None));
 });
 
 builder.Services.AddSingleton<IAwaitingAuthorFilter>(sp =>
 {
-    var config = sp.GetRequiredService<IConfigStore>();
     var tokens = sp.GetRequiredService<ITokenStore>();
-#pragma warning disable CA2000
-    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
-#pragma warning restore CA2000
-    return new GitHubAwaitingAuthorFilter(http, () => tokens.ReadAsync(CancellationToken.None));
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return new GitHubAwaitingAuthorFilter(factory, () => tokens.ReadAsync(CancellationToken.None));
 });
 
 builder.Services.AddSingleton<ICiFailingDetector>(sp =>
 {
-    var config = sp.GetRequiredService<IConfigStore>();
     var tokens = sp.GetRequiredService<ITokenStore>();
-#pragma warning disable CA2000
-    var http = new HttpClient { BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host) };
-#pragma warning restore CA2000
-    return new GitHubCiFailingDetector(http, () => tokens.ReadAsync(CancellationToken.None));
+    var factory = sp.GetRequiredService<IHttpClientFactory>();
+    return new GitHubCiFailingDetector(factory, () => tokens.ReadAsync(CancellationToken.None));
 });
 
 builder.Services.AddSingleton<IViewerLoginProvider, ViewerLoginProvider>();

@@ -10,6 +10,9 @@ namespace PRism.GitHub.Tests.Inbox;
 
 public sealed class GitHubSectionQueryRunnerTests
 {
+    private static GitHubSectionQueryRunner BuildSut(FakeHttpMessageHandler handler) =>
+        new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("t"));
     private const string SearchResponseOnePr = """
     {
       "items": [
@@ -35,8 +38,7 @@ public sealed class GitHubSectionQueryRunnerTests
             calls.Add(req.RequestUri!.Query);
             return Respond(HttpStatusCode.OK, SearchResponseOnePr);
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubSectionQueryRunner(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         await sut.QueryAllAsync(new HashSet<string>
         {
@@ -59,8 +61,7 @@ public sealed class GitHubSectionQueryRunnerTests
             calls.Add(req.RequestUri!.Query);
             return Respond(HttpStatusCode.OK, SearchResponseOnePr);
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubSectionQueryRunner(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         await sut.QueryAllAsync(new HashSet<string> { "review-requested" }, default);
 
@@ -82,8 +83,7 @@ public sealed class GitHubSectionQueryRunnerTests
                 ? Respond(HttpStatusCode.OK, SearchResponseOnePr)
                 : Respond(HttpStatusCode.InternalServerError, "{}");
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubSectionQueryRunner(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var result = await sut.QueryAllAsync(new HashSet<string>
         {
@@ -109,8 +109,7 @@ public sealed class GitHubSectionQueryRunnerTests
             resp.Headers.Add("Retry-After", "60");
             return resp;
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubSectionQueryRunner(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var act = async () => await sut.QueryAllAsync(
             new HashSet<string> { "review-requested" }, default);
@@ -132,8 +131,7 @@ public sealed class GitHubSectionQueryRunnerTests
             cts.Token.ThrowIfCancellationRequested();
             return Respond(HttpStatusCode.OK, SearchResponseOnePr);
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubSectionQueryRunner(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var act = async () => await sut.QueryAllAsync(
             new HashSet<string> { "review-requested" }, cts.Token);

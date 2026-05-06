@@ -17,12 +17,12 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
         ["ci-failing"]       = "is:open is:pr author:@me archived:false",
     };
 
-    private readonly HttpClient _http;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
 
-    public GitHubSectionQueryRunner(HttpClient http, Func<Task<string?>> readToken)
+    public GitHubSectionQueryRunner(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
     {
-        _http = http;
+        _httpFactory = httpFactory;
         _readToken = readToken;
     }
 
@@ -55,13 +55,14 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
     private async Task<List<RawPrInboxItem>> SearchAsync(string q, string? token, CancellationToken ct)
     {
         var url = $"search/issues?q={Uri.EscapeDataString(q)}&per_page=50";
+        using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         if (!string.IsNullOrEmpty(token))
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
 
-        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
         if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
         {
             var retryAfter = resp.Headers.RetryAfter?.Delta;

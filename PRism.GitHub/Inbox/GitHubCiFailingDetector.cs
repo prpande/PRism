@@ -9,13 +9,13 @@ namespace PRism.GitHub.Inbox;
 public sealed class GitHubCiFailingDetector : ICiFailingDetector
 {
     private const int ConcurrencyCap = 8;
-    private readonly HttpClient _http;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly ConcurrentDictionary<(PrReference, string), CiStatus> _cache = new();
 
-    public GitHubCiFailingDetector(HttpClient http, Func<Task<string?>> readToken)
+    public GitHubCiFailingDetector(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
     {
-        _http = http;
+        _httpFactory = httpFactory;
         _readToken = readToken;
     }
 
@@ -108,11 +108,12 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
 
     private async Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
     {
+        using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         if (!string.IsNullOrEmpty(token))
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
-        return await _http.SendAsync(req, ct).ConfigureAwait(false);
+        return await http.SendAsync(req, ct).ConfigureAwait(false);
     }
 }

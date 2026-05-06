@@ -13,6 +13,10 @@ public sealed class GitHubAwaitingAuthorFilterTests
 {
     private const string ViewerLogin = "alice";
 
+    private static GitHubAwaitingAuthorFilter BuildSut(FakeHttpMessageHandler handler) =>
+        new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => Task.FromResult<string?>("t"));
+
     private static RawPrInboxItem Raw(int n, string headSha = "new", string repo = "acme/api")
     {
         var parts = repo.Split('/');
@@ -40,8 +44,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
         // reviews returns viewer's last review at sha "old"; PR HeadSha is "new"
         var handler = new FakeHttpMessageHandler(_ =>
             Respond(HttpStatusCode.OK, ReviewsResponse(ViewerLogin, "old")));
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "new")], default);
 
@@ -55,8 +58,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
         // reviews returns viewer's last review at sha "head"; PR HeadSha is "head"
         var handler = new FakeHttpMessageHandler(_ =>
             Respond(HttpStatusCode.OK, ReviewsResponse(ViewerLogin, "head")));
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
 
@@ -69,8 +71,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
         // handler returns 404 for pulls/{n}/reviews → PR excluded; no exception
         var handler = new FakeHttpMessageHandler(_ =>
             Respond(HttpStatusCode.NotFound, "{}"));
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var act = async () => await sut.FilterAsync(ViewerLogin, [Raw(1, "sha1")], default);
 
@@ -89,8 +90,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
             Interlocked.Increment(ref requestCount);
             return Respond(HttpStatusCode.OK, ReviewsResponse(ViewerLogin, "old"));
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var candidate = Raw(1, "new");
         await sut.FilterAsync(ViewerLogin, [candidate], default);
@@ -109,8 +109,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
             Interlocked.Increment(ref requestCount);
             return Respond(HttpStatusCode.OK, ReviewsResponse(ViewerLogin, "old"));
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         await sut.FilterAsync(ViewerLogin, [Raw(1, "sha-A")], default);
         await sut.FilterAsync(ViewerLogin, [Raw(1, "sha-B")], default);
@@ -127,8 +126,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
             Interlocked.Increment(ref requestCount);
             return Respond(HttpStatusCode.OK, "[]");
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var result = await sut.FilterAsync(ViewerLogin, [], default);
 
@@ -147,8 +145,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
             cts.Token.ThrowIfCancellationRequested();
             return Respond(HttpStatusCode.OK, ReviewsResponse(ViewerLogin, "old"));
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var act = async () => await sut.FilterAsync(ViewerLogin, [Raw(1, "sha1")], cts.Token);
 
@@ -165,8 +162,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
             Interlocked.Increment(ref requestCount);
             return Respond(HttpStatusCode.OK, ReviewsResponse(ViewerLogin, "sha"));
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         var result = await sut.FilterAsync(ViewerLogin, [Raw(1, "")], default);
 
@@ -202,8 +198,7 @@ public sealed class GitHubAwaitingAuthorFilterTests
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
         });
-        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
-        var sut = new GitHubAwaitingAuthorFilter(http, () => Task.FromResult<string?>("t"));
+        var sut = BuildSut(handler);
 
         // 20 distinct candidates so we exceed the cap by a wide margin
         var candidates = Enumerable.Range(1, 20)
