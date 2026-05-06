@@ -66,14 +66,16 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
 
     public async Task SaveAsync(AppState state, CancellationToken ct)
     {
-        if (IsReadOnlyMode)
-            throw new InvalidOperationException(
-                "AppStateStore is in read-only mode (state.json was written by a newer PRism version). " +
-                "Saves are blocked until the binary is upgraded.");
-
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Read IsReadOnlyMode under the gate so a concurrent LoadAsync's mid-flight
+            // mutation cannot be observed in a torn state.
+            if (IsReadOnlyMode)
+                throw new InvalidOperationException(
+                    "AppStateStore is in read-only mode (state.json was written by a newer PRism version). " +
+                    "Saves are blocked until the binary is upgraded.");
+
             await SaveCoreAsync(state, ct).ConfigureAwait(false);
         }
         finally
@@ -90,13 +92,24 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         File.Move(temp, _path, overwrite: true);
     }
 
-    private JsonNode? MigrateIfNeeded(JsonNode root)
+    private JsonNode MigrateIfNeeded(JsonNode root)
     {
         var versionNode = root["version"];
         if (versionNode is null)
             throw new UnsupportedStateVersionException(0);
 
-        var stored = versionNode.GetValue<int>();
+        int stored;
+        try
+        {
+            stored = versionNode.GetValue<int>();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+        {
+            // Translate to JsonException so the existing quarantine path in LoadAsync handles
+            // a malformed `version` value (e.g. "1" as a string, 1.5 as a float) the same way
+            // as any other corrupt state.json.
+            throw new JsonException("state.json `version` field is not an integer", ex);
+        }
 
         if (stored > CurrentVersion)
         {
