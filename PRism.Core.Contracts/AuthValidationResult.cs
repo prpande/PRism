@@ -5,7 +5,8 @@ public sealed record AuthValidationResult(
     string? Login,
     IReadOnlyList<string>? Scopes,
     AuthValidationError? Error,
-    string? ErrorDetail);
+    string? ErrorDetail,
+    AuthValidationWarning Warning = AuthValidationWarning.None);
 
 public enum AuthValidationError
 {
@@ -15,4 +16,10 @@ public enum AuthValidationError
     NetworkError,
     DnsError,
     ServerError,
+}
+
+public enum AuthValidationWarning
+{
+    None,
+    NoReposSelected,
 }
