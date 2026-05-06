@@ -455,6 +455,38 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
+    public async Task PR_in_two_non_paired_sections_with_placeholder_enricher_does_not_throw()
+    {
+        // Regression: a PR that legitimately appears in two visible sections outside the
+        // InboxDeduplicator's two configured pairs (review-requested↔mentioned,
+        // ci-failing↔authored-by-me) used to crash RefreshAsync at the
+        // `enrichments.ToDictionary(e => e.PrId)` step, because the placeholder enricher
+        // emits one enrichment per input item and `allItems` carries the same PR twice.
+        // The crash kept _firstSnapshotTcs from completing, so /api/inbox returned 503
+        // forever and the frontend showed "Couldn't load inbox. Try again."
+        var dual = RawPr(42);
+        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        {
+            ["authored-by-me"]  = new[] { dual },
+            ["awaiting-author"] = new[] { dual },
+        });
+
+        var configMock = ConfigStoreMock(ConfigWithSections(
+            reviewRequested: false, awaitingAuthor: true, authoredByMe: true,
+            mentioned: false, ciFailing: false));
+        using var sut = Build(
+            config: configMock.Object,
+            sections: sections,
+            aiSelector: new FakeAiSeamSelector(new PlaceholderInboxItemEnricher()));
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        sut.Current.Should().NotBeNull();
+        sut.Current!.Enrichments.Should().ContainKey(dual.Reference.PrId);
+        sut.Current.Enrichments.Should().HaveCount(1, "enrichment is per unique PR, not per section appearance");
+    }
+
+    [Fact]
     public async Task State_json_reads_propagate_to_inbox_items()
     {
         // Arrange: state.json has a session entry for PR #1 in acme/api
