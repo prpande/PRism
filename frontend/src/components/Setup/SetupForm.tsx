@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react';
 import { MaskedInput } from './MaskedInput';
-import { ScopePill } from './ScopePill';
 import styles from './SetupForm.module.css';
 
 interface Props {
@@ -9,6 +8,13 @@ interface Props {
   error?: string;
   busy?: boolean;
 }
+
+const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
+  { name: 'Pull requests', level: 'Read and write' },
+  { name: 'Contents', level: 'Read' },
+  { name: 'Checks', level: 'Read' },
+  { name: 'Commit statuses', level: 'Read' },
+];
 
 export function SetupForm({ host, onSubmit, error, busy }: Props) {
   const [pat, setPat] = useState('');
@@ -29,11 +35,22 @@ export function SetupForm({ host, onSubmit, error, busy }: Props) {
         <a href={patPageUrl} target="_blank" rel="noreferrer">
           Generate a token
         </a>
-        <div className={styles.scopes}>
-          <ScopePill scope="repo" />
-          <ScopePill scope="read:user" />
-          <ScopePill scope="read:org" />
-        </div>
+        <dl className={styles.permissions}>
+          {PERMISSIONS.map((p) => (
+            <div key={p.name} className={styles.permissionRow}>
+              <dt>{p.name}</dt>
+              <dd>{p.level}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className={styles.permissionsNote}>
+          Metadata: Read is auto-included by GitHub. For Repository access, choose
+          <em> All repositories</em> or <em>Select repositories</em>.
+        </p>
+        <p className={styles.footnote}>
+          Already have a classic PAT? It needs the <code>repo</code> scope (and{' '}
+          <code>read:org</code> if you&apos;re in a SAML/SSO-enforced org).
+        </p>
       </div>
       <div>
         <strong>2.</strong> Paste it below
