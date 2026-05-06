@@ -54,3 +54,23 @@ S0+S1 lands the architecture; each subsequent slice plugs in placeholders as the
 ## When a slice changes shape
 
 If implementation reveals a slice is too large or wrong-shaped, update this table and the relevant spec doc *before* re-planning. Don't let the cut drift silently.
+
+## Architectural readiness
+
+Cross-cutting structural work surfaced by a spec/backlog vs. current-code review (May 2026). Each item is gated to the slice it must land before. Items at the *Now* gate are not blocked by any slice and are next in queue.
+
+Full design and rationale: [`superpowers/specs/2026-05-06-architectural-readiness-design.md`](./superpowers/specs/2026-05-06-architectural-readiness-design.md).
+
+| Gate | Item | PR / status |
+|---|---|---|
+| **Now** | Banned-API analyzer (no `Octokit.*` in `PRism.Core` / `PRism.Web` / `PRism.AI.*`) | PR 1 |
+| **Now** | DI extension methods per project (`AddPrismCore` / `AddPrismGitHub` / `AddPrismAi` / `AddPrismWeb`) | PR 2 |
+| **Now** | Named records for all wire shapes (replace inline `new { ok = ... }` in endpoint files) | PR 3 |
+| **Before S4** | Decompose `AppState` into typed sub-records (`InboxState` / `PrSessionsState` / placeholder `AiState`) | open |
+| **Before S4** | Schema-versioned migration support in `AppStateStore` | open |
+| **Before S5** | Split `IReviewService` into capability sub-interfaces (`IReviewAuth` / `IPrDiscovery` / `IPrReader` / `IReviewSubmitter`) | open |
+| **Before S5** | Partial-class split of `GitHubReviewService` by capability area | open (optional) |
+| **Before P0+** | Frontend types codegen for `frontend/src/types/api.ts` (NSwag or equivalent) | open |
+| **Before P0+** | Document homes for `PRism.Git.Clone`, `PRism.Mcp.Host`, `PRism.AI.Chat`, AI cache, prompt-injection sanitizer | open |
+| **Before P0+** | `IHostedService` for `ConfigStore` async init (replaces `GetAwaiter().GetResult()` pragma) | open |
+| **Convention** | State machines live in `<Feature>/Pipeline/` sub-folders with a single entry-point class | adopt before first machine lands (S4 stale-draft reconciliation) |
