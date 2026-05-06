@@ -381,3 +381,15 @@ Outstanding empirical gates (these are not spec-text updates; they are tripwires
 - [ ] **C6** — verify the live `AddPullRequestReviewThreadInput` parameter shape (whether `pullRequestReviewId` or `pullRequestId` is the correct field as of implementation time) via `gh api graphql -f query='...'`. Run before the submit-pipeline implementation lands.
 - [ ] **C7** — verify that the `<!-- prism:client-id:<id> -->` HTML-comment marker survives `addPullRequestReviewThread` round-trips (rendered UI strips the comment; the GraphQL `body` field retains it). The lost-response adoption step in the submit pipeline matches by marker, not by body equivalence. Run before the submit-pipeline implementation lands. See § C7. Documented fallback if the marker is stripped: (a) client-side body normalization parity; (c) accept-best-effort is no longer an option.
 - [ ] **C8** — verify the model defers to current diff over pre-shift answers when prompted with the cumulative head-shift note. Run before P2-2 chat ships. See § C8 for the test sequence and outcomes.
+
+---
+
+## PAT type detection
+
+**Implementation pattern (informational).** PRism's Setup-time validator branches on the token prefix:
+- `ghp_…` → classic PAT; `X-OAuth-Scopes` is parsed and diffed against `["repo", "read:user", "read:org"]`.
+- Anything else (`github_pat_…`, `gho_…`, etc.) → fine-grained / OAuth-style; `X-OAuth-Scopes` is empty for these tokens, so the header check is skipped.
+
+For fine-grained tokens, a follow-up Search probe (`GET /search/issues?q=is:pr+author:@me`/`review-requested:@me`) detects the no-repos-selected failure mode. If both return `total_count: 0`, the connect endpoint returns `warning: "no-repos-selected"` without committing the token; the frontend gates the commit behind a confirmation modal.
+
+This was added in `docs/superpowers/specs/2026-05-06-pat-scopes-and-validation-design.md` after the original adversarial-review pass missed the `X-OAuth-Scopes` shape difference between classic and fine-grained PATs.
