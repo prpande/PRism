@@ -35,4 +35,5 @@ export interface ConnectResponse {
   host?: string;
   error?: string;
   detail?: string;
+  warning?: 'no-repos-selected';
 }
