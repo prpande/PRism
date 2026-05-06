@@ -1,0 +1,1 @@
+N:Octokit;Octokit namespace is banned in this project per docs/spec/02-architecture.md § Dependency rule. Use IReviewService and the PRism.GitHub adapter instead.

@@ -5,6 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- Tests for the Octokit adapter; opt out of the global Octokit ban. -->
+    <BanOctokit>false</BanOctokit>
   </PropertyGroup>
 
   <ItemGroup>

@@ -10,5 +10,12 @@
     <AnalysisMode>AllEnabledByDefault</AnalysisMode>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+    <!-- Default: every project bans Octokit. PRism.GitHub and its tests opt out via <BanOctokit>false</BanOctokit>. -->
+    <BanOctokit Condition="'$(BanOctokit)' == ''">true</BanOctokit>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(BanOctokit)' == 'true'">
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" IncludeAssets="analyzers; build; buildtransitive" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
 </Project>
