@@ -31,3 +31,6 @@ internal sealed record ParsePrUrlResponse(
     string? Error,
     string? ConfiguredHost,
     string? UrlHost);
+
+// 400 BadRequest envelopes for /api/inbox/parse-pr-url (invalid-json, url-required).
+internal sealed record InboxError(string Error);

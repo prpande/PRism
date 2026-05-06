@@ -10,22 +10,20 @@ internal static class PreferencesEndpoints
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        app.MapGet("/api/preferences", (IConfigStore config) => Results.Ok(new
-        {
-            theme = config.Current.Ui.Theme,
-            accent = config.Current.Ui.Accent,
-            aiPreview = config.Current.Ui.AiPreview,
-        }));
+        app.MapGet("/api/preferences", (IConfigStore config) => Results.Ok(new PreferencesResponse(
+            Theme: config.Current.Ui.Theme,
+            Accent: config.Current.Ui.Accent,
+            AiPreview: config.Current.Ui.AiPreview)));
 
         app.MapPost("/api/preferences", async (HttpContext ctx, IConfigStore config, AiPreviewState aiState) =>
         {
             using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted).ConfigureAwait(false);
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                return Results.BadRequest(new { error = "body must be a JSON object" });
+                return Results.BadRequest(new PreferencesError(Error: "body must be a JSON object"));
 
             var props = doc.RootElement.EnumerateObject().ToArray();
             if (props.Length != 1)
-                return Results.BadRequest(new { error = "exactly one field per patch" });
+                return Results.BadRequest(new PreferencesError(Error: "exactly one field per patch"));
 
             var key = props[0].Name;
             object? value = props[0].Value.ValueKind switch
@@ -42,19 +40,17 @@ internal static class PreferencesEndpoints
             }
             catch (ConfigPatchException ex)
             {
-                return Results.BadRequest(new { error = ex.Message });
+                return Results.BadRequest(new PreferencesError(Error: ex.Message));
             }
 
             // Mirror ui.aiPreview into the AiPreviewState holder (also handled by the Changed
             // subscription, but doing it here makes the response synchronous with the change).
             aiState.IsOn = config.Current.Ui.AiPreview;
 
-            return Results.Ok(new
-            {
-                theme = config.Current.Ui.Theme,
-                accent = config.Current.Ui.Accent,
-                aiPreview = config.Current.Ui.AiPreview,
-            });
+            return Results.Ok(new PreferencesResponse(
+                Theme: config.Current.Ui.Theme,
+                Accent: config.Current.Ui.Accent,
+                AiPreview: config.Current.Ui.AiPreview));
         });
 
         return app;
