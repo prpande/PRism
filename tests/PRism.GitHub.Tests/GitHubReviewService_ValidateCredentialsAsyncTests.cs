@@ -122,4 +122,31 @@ public class GitHubReviewService_ValidateCredentialsAsyncTests
         result.Login.Should().Be("octocat");
         result.Warning.Should().Be(AuthValidationWarning.None);
     }
+
+    [Fact]
+    public async Task Probe_non_5xx_failure_fails_open_and_returns_primary_success()
+    {
+        // When /user succeeds but the Search probe returns a non-5xx error (e.g. 403),
+        // the validator must fail open: return Ok=true with Warning=None rather than NetworkError.
+        // The credential is valid; the probe anomaly should not reject a valid token.
+        var calls = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"login\":\"octocat\"}", System.Text.Encoding.UTF8, "application/json"),
+                };
+            }
+            // Probe returns 403 — EnsureSuccessStatusCode throws HttpRequestException with StatusCode=403.
+            return new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden);
+        });
+        var sut = BuildSut(handler, token: "github_pat_probe_403");
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue();
+        result.Login.Should().Be("octocat");
+        result.Warning.Should().Be(AuthValidationWarning.None);
+    }
 }

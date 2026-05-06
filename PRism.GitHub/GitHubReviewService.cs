@@ -41,8 +41,21 @@ public sealed class GitHubReviewService : IReviewService
             if (!primary.Ok || tokenType != TokenType.FineGrained) return primary;
 
             // Fine-grained: probe Search to detect the no-repos-selected case.
-            var warning = await ProbeRepoVisibilityAsync(token, ct).ConfigureAwait(false);
-            return primary with { Warning = warning };
+            try
+            {
+                var warning = await ProbeRepoVisibilityAsync(token, ct).ConfigureAwait(false);
+                return primary with { Warning = warning };
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode is { } c && (int)c >= 500)
+            {
+                throw;  // let the outer 5xx catch surface it as ServerError per spec
+            }
+            catch (HttpRequestException)
+            {
+                // Probe failed for a non-5xx reason (403/422/transport). The token auth itself
+                // succeeded — fail open so a probe anomaly doesn't reject a valid token.
+                return primary;
+            }
         }
         catch (HttpRequestException ex) when (ex.StatusCode is { } code && (int)code >= 500)
         {
@@ -60,6 +73,11 @@ public sealed class GitHubReviewService : IReviewService
 
     private enum TokenType { Classic, FineGrained }
 
+    // PRism only supports user PATs for the PoC: classic (ghp_…) and fine-grained (github_pat_…).
+    // Any other prefix (gho_, ghs_, ghr_, legacy hex) routes through FineGrained, which is the
+    // most permissive: no X-OAuth-Scopes check, so a non-classic token never trips
+    // InsufficientScopes spuriously. App-token shapes are not officially supported as auth
+    // in PoC; this classification is a "fail safely" default rather than affirmative support.
     private static TokenType ClassifyToken(string token) =>
         token.StartsWith("ghp_", StringComparison.Ordinal) ? TokenType.Classic : TokenType.FineGrained;
 
