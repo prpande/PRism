@@ -29,6 +29,24 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$dataDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'PRism'
+
+if ($Reset -ne 'None') {
+    Write-Host "Reset($Reset): preparing to clean local state at $dataDir" -ForegroundColor Yellow
+}
+
+switch ($Reset) {
+    'Token' {
+        $tokenPath = Join-Path $dataDir 'PRism.tokens.cache'
+        $previousPath = "$tokenPath.previous"
+        Write-Host "  removing $tokenPath" -ForegroundColor DarkGray
+        Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $previousPath -Force -ErrorAction SilentlyContinue
+    }
+    'Auth' { throw "Reset(Auth) not implemented yet — see Task 3." }
+    'Full' { throw "Reset(Full) not implemented yet — see Task 4." }
+}
+
 Push-Location $PSScriptRoot
 try {
     Push-Location frontend
