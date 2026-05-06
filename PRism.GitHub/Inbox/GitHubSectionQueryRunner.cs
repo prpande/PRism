@@ -45,7 +45,9 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
         var token = await _readToken().ConfigureAwait(false);
         if (_log.IsEnabled(LogLevel.Debug))
 #pragma warning disable CA1873 // Guarded above; analyzer doesn't pattern-match the IsEnabled call.
-            Log.QueryAllStarted(_log, string.Join(",", visibleSectionIds), token is { Length: > 0 });
+            Log.QueryAllStarted(_log,
+                string.Join(",", visibleSectionIds.OrderBy(s => s, StringComparer.Ordinal)),
+                token is { Length: > 0 });
 #pragma warning restore CA1873
         var tasks = SectionQueries
             .Where(kv => visibleSectionIds.Contains(kv.Key))

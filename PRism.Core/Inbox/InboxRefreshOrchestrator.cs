@@ -87,17 +87,22 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         {
             var visible = ResolveVisibleSections();
             // CA1873 suppression: the IsEnabled guards make the expensive arg evaluation
-            // (string.Join, LINQ Sum/Select) zero-cost when Debug is not enabled, but the
-            // analyzer doesn't pattern-match the guard. The guard is correct.
+            // (ordered LINQ + string.Join) zero-cost when Debug is not enabled, but the
+            // analyzer doesn't pattern-match the guard. OrderBy makes the log lines stable
+            // across ticks so they diff cleanly — HashSet/Dictionary enumeration order
+            // is not contractually guaranteed even when CLR de-facto preserves insertion order.
 #pragma warning disable CA1873
             if (_log.IsEnabled(LogLevel.Debug))
-                Log.RefreshStarted(_log, _viewerLoginProvider(), string.Join(",", visible));
+                Log.RefreshStarted(_log, _viewerLoginProvider(),
+                    string.Join(",", visible.OrderBy(s => s, StringComparer.Ordinal)));
             var raw = await _sections.QueryAllAsync(visible, ct).ConfigureAwait(false);
             if (_log.IsEnabled(LogLevel.Debug))
                 Log.SectionQueriesComplete(_log,
                     raw.Count,
                     raw.Values.Sum(v => v.Count),
-                    string.Join(",", raw.Select(kv => $"{kv.Key}={kv.Value.Count}")));
+                    string.Join(",", raw
+                        .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                        .Select(kv => $"{kv.Key}={kv.Value.Count}")));
 #pragma warning restore CA1873
 
             // Enrich every PR across all sections (one HTTP call per PR, deduplicated by ref)
@@ -171,10 +176,13 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                     .ToList());
 
             // Dedupe
-            var preDedupeTotal = sectionsAsItems.Values.Sum(v => v.Count);
             var deduped = _dedupe.Deduplicate(sectionsAsItems, _config.Current.Inbox.Deduplicate);
-            var postDedupeTotal = deduped.Values.Sum(v => v.Count);
-            Log.DedupeApplied(_log, _config.Current.Inbox.Deduplicate, preDedupeTotal, postDedupeTotal);
+            var postDedupeTotal = deduped.Values.Sum(v => v.Count); // also used by SnapshotBuilt below
+            if (_log.IsEnabled(LogLevel.Debug))
+            {
+                var preDedupeTotal = sectionsAsItems.Values.Sum(v => v.Count);
+                Log.DedupeApplied(_log, _config.Current.Inbox.Deduplicate, preDedupeTotal, postDedupeTotal);
+            }
 
             // AI enrichment. The enricher returns one InboxItemEnrichment per input item, so
             // we must hand it a list with one entry per unique PR — otherwise PRs that appear
