@@ -507,12 +507,15 @@ WeightedDistanceClusteringStrategy.Cluster(input, coefficients)
     weighted_d[i] = max(HARD_FLOOR_5MIN, min(HARD_CEILING_3DAYS, Δt × multiplier))
   
   // Degenerate-case detector: if > 50% of weighted_d are clamped to HARD_FLOOR_5MIN,
-  // the algorithm has insufficient signal — fall back. But cap the fallback at
-  // `iterations.maxFallbackTabs` (default 20): the IterationTabStrip is sized for
-  // "Last 3 inline + dropdown," not 100. If commit count exceeds the cap, emit a
-  // single "iteration detection inconclusive — see All changes" tab instead of a
-  // 100-item dropdown.
-  if (count(d == HARD_FLOOR_5MIN for d in weighted_d) > 0.5 × weighted_d.Length):
+  // the algorithm has insufficient signal — fall back. But:
+  //   (a) cap the fallback at `iterations.maxFallbackTabs` (default 20): the
+  //       IterationTabStrip is sized for "Last 3 inline + dropdown," not 100.
+  //   (b) GATE the fallback by `weighted_d.Length >= MadK * 2` so small-N tight-
+  //       amend cases (3-5 commits with sub-floor gaps) don't spuriously trigger
+  //       fallback; the MAD path produces a single cluster correctly when all
+  //       weighted distances are equal (no edge exceeds median + 1).
+  if (weighted_d.Length >= coefficients.MadK * 2
+      AND count(d == HARD_FLOOR_5MIN for d in weighted_d) > 0.5 × weighted_d.Length):
       if commits.Length <= coefficients.MaxFallbackTabs:
           return one cluster per commit
       else:
