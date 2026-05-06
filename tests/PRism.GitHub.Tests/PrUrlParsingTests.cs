@@ -70,4 +70,12 @@ public sealed class PrUrlParsingTests
         var sut = Make("https://GitHub.com");
         sut.TryParsePrUrl("https://github.com/foo/bar/pull/9", out var r).Should().BeTrue();
     }
+
+    [Fact]
+    public void TryParsePrUrl_rejects_http_url_when_host_is_https()
+    {
+        var sut = Make("https://github.com");
+        sut.TryParsePrUrl("http://github.com/o/r/pull/1", out var r).Should().BeFalse();
+        r.Should().BeNull();
+    }
 }

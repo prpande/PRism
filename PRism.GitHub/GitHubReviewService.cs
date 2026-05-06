@@ -102,9 +102,8 @@ public sealed class GitHubReviewService : IReviewService
         reference = null;
         if (string.IsNullOrWhiteSpace(url)) return false;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var u)) return false;
-        if (u.Scheme != "https" && u.Scheme != "http") return false;
-
         if (!Uri.TryCreate(_host, UriKind.Absolute, out var h)) return false;
+        if (!string.Equals(u.Scheme, h.Scheme, StringComparison.OrdinalIgnoreCase)) return false;
         if (!string.Equals(u.Host, h.Host, StringComparison.OrdinalIgnoreCase)) return false;
 
         var segs = u.AbsolutePath.Trim('/').Split('/');
