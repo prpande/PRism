@@ -50,7 +50,7 @@ For human teammates. ~5 minutes, copy-paste, walk away with a PR URL.
 Steps:
 1. Bootstrap (auth, identity, workspace, MSYS path-conversion fix).
 2. Single-branch shallow clone of `prism-validation` only.
-3. Generate fresh feature branch `prism-validation/<slug>-<YYYYMMDD-HHmmss>`.
+3. Generate fresh feature branch `validation/<slug>-<YYYYMMDD-HHmmss>` (disjoint from the `prism-validation` base branch — see "Branch namespace" below).
 4. Detect repo language (probe for `*.csproj`/`*.sln` → csharp; else markdown fallback).
 5. Pick a recipe via `$(date +%S) % 5`.
 6. Apply recipe — additive only, never breaks compilation, never modifies CI/Docker/csproj.
@@ -68,8 +68,8 @@ Steps:
 3. Read all review activity.
 4. Identify actionable, unanswered comments (skip threads where current user has already replied via `in_reply_to_id` chain).
 5. Apply a single small commit addressing the feedback. Hard limits: <20 lines diff, no new flaws, no reverts.
-6. Commit (`validation: address review feedback [from cloud-env]`), push.
-7. Reply to each addressed thread: `Addressed in <sha>. [from cloud-env]`.
+6. Commit (`validation: address review feedback [cloud-env]`), push.
+7. Reply to each addressed thread: `Addressed in <sha>. [cloud-env]`.
 8. Print summary.
 
 Idempotent — re-running with no new comments is a clean no-op.
@@ -112,13 +112,13 @@ For `Api.Codex` and any future markdown-only repo.
 
 | Mechanism | Rule |
 |---|---|
-| **Feature branch** | `prism-validation/<slug>-<YYYYMMDD-HHmmss>`. Second-grain. Suffix `-2`, `-3` on collision. |
+| **Feature branch** | `validation/<slug>-<YYYYMMDD-HHmmss>`. Second-grain. Suffix `-2`, `-3` on collision. Note: feature branches live under the `validation/` namespace, **not** under `prism-validation/`, to avoid Git's loose-ref file/directory conflict with the base branch. |
 | **Workspace dir** | `~/prism-validation/<slug>/` reused. Existing → `git fetch` + reset to `origin/prism-validation`. Missing → fresh shallow clone. |
 | **Long-lived sandbox branch** | Pre-created remotely. Prompt only resets local copy; never recreates remote (a missing remote branch is an error condition, not a self-heal trigger). |
 | **Recipe rotation** | `seconds % 5` — re-running gives variety, 6 runs cover all 5 plus one repeat. |
 | **Iteration dedup** | Skip comment threads where current user has already replied. |
 | **Reviewer dedup** | Skip nitpick lines whose body matches an existing review comment. |
-| **Cloud-env marker** | `[from cloud-env]` in commit messages and comment bodies. Single-line `sed` removal when Option B (separate identity) lands. |
+| **Cloud-env marker** | `[cloud-env]` literal in commit messages and reply bodies; `[cloud-env] ` prefix on inline review comment bodies. Single-line `sed` removal when Option B (separate identity) lands. |
 
 ## Edge cases & error paths
 
@@ -147,7 +147,7 @@ For `Api.Codex` and any future markdown-only repo.
 
 ## Deferred / future
 
-- **Option B (separate identity)** — when Pratyush sets up a `prism-validation-bot` GitHub user with its own PAT, the cloud-env prompts get a one-line edit removing `[from cloud-env]` markers and switching auth.
+- **Option B (separate identity)** — when Pratyush sets up a `prism-validation-bot` GitHub user with its own PAT, the cloud-env prompts get a one-line edit removing `[cloud-env]` markers and switching auth.
 - **Refresh `prism-validation` from default** — if the sandbox branch drifts so far from `main`/`master` that fixtures stop being interesting, refresh via `gh api`. Out of scope for the prompts themselves.
 - **Adding more repos** — append a row to the README mapping table and run the same one-time `gh api` call that created the initial five sandbox branches.
 

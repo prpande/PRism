@@ -4,7 +4,7 @@ You are Claude Code helping validate **PRism** by pushing a small follow-up comm
 
 This run is fully automated. When you finish, print a one-line summary and stop.
 
-> **Cloud-env identity caveat.** This prompt is intended to run primarily from Claude Cloud under Pratyush's `prpande` identity (Option A in the design). All commit messages and reply bodies must include the `[from cloud-env]` marker so the validation team can visually distinguish this activity from manual driving. When a separate bot identity is provisioned (Option B), the marker can be removed in a single edit.
+> **Cloud-env identity caveat.** This prompt is intended to run primarily from Claude Cloud under Pratyush's `prpande` identity (Option A in the design). All commit messages and reply bodies must include the `[cloud-env]` marker so the validation team can visually distinguish this activity from manual driving. When a separate bot identity is provisioned (Option B), the marker can be removed in a single edit.
 
 ---
 
@@ -42,8 +42,13 @@ GH_EMAIL=$(gh api "users/$GH_LOGIN" --jq '.email // empty')
 [ -z "$GH_EMAIL" ] && GH_EMAIL="${GH_LOGIN}@users.noreply.github.com"
 git config --global user.name "$GH_NAME"
 git config --global user.email "$GH_EMAIL"
-# Confirm read access; print SSO URL and exit on 404
-gh api "repos/$OWNER_REPO" --jq '.full_name' >/dev/null
+# Confirm read access. On 404 the most common cause is SAML/SSO not authorized for the org;
+# the message tells the user how to recover. Do NOT swallow this error silently.
+gh api "repos/$OWNER_REPO" --jq '.full_name' >/dev/null 2>&1 || {
+  echo "Cannot access $OWNER_REPO. If you're an org member, your GitHub PAT likely needs SAML/SSO authorization for that org."
+  echo "Visit https://github.com/orgs/${OWNER_REPO%%/*}/sso, authorize the listed token, and re-run this prompt."
+  exit 1
+}
 ```
 
 Save `GH_LOGIN` for the dedup logic in step 5.
@@ -111,14 +116,17 @@ If `git fetch` fails because the branch was deleted upstream, exit with `"PR hea
 Pull every kind of comment on the PR:
 
 ```bash
+# --paginate is mandatory: default page size silently truncates at ~30,
+# and the dedup logic below NEEDS the full reply chain to work.
+
 # Issue-style comments on the PR
-gh api "repos/$OWNER_REPO/issues/$PR_NUMBER/comments" > /tmp/issue_comments.json
+gh api --paginate "repos/$OWNER_REPO/issues/$PR_NUMBER/comments" > /tmp/issue_comments.json
 
 # Inline review comments (the diff comments)
-gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/comments" > /tmp/review_comments.json
+gh api --paginate "repos/$OWNER_REPO/pulls/$PR_NUMBER/comments" > /tmp/review_comments.json
 
 # Top-level reviews (with their body and verdict)
-gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" > /tmp/reviews.json
+gh api --paginate "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" > /tmp/reviews.json
 ```
 
 Identify **actionable** items:
@@ -171,7 +179,7 @@ Stage and commit:
 
 ```bash
 git add -A
-git commit -m "validation: address review feedback [from cloud-env]"
+git commit -m "validation: address review feedback [cloud-env]"
 NEW_SHA=$(git rev-parse HEAD)
 ```
 
@@ -191,17 +199,17 @@ For each inline review comment you addressed, post a reply. The GitHub API endpo
 
 ```bash
 gh api -X POST "repos/$OWNER_REPO/pulls/$PR_NUMBER/comments/$ORIGINAL_COMMENT_ID/replies" \
-  -f body="Addressed in $NEW_SHA. [from cloud-env]"
+  -f body="Addressed in $NEW_SHA. [cloud-env]"
 ```
 
 For top-level reviews you addressed, post an issue-level comment:
 
 ```bash
 gh api -X POST "repos/$OWNER_REPO/issues/$PR_NUMBER/comments" \
-  -f body="Addressed feedback from review #$REVIEW_ID in $NEW_SHA. [from cloud-env]"
+  -f body="Addressed feedback from review #$REVIEW_ID in $NEW_SHA. [cloud-env]"
 ```
 
-Every reply body **must** end with `[from cloud-env]`. This is the sentinel that lets the validation team distinguish cloud-driven activity from manual driving in PRism.
+Every reply body **must** end with `[cloud-env]`. This is the sentinel that lets the validation team distinguish cloud-driven activity from manual driving in PRism.
 
 ---
 
@@ -210,7 +218,7 @@ Every reply body **must** end with `[from cloud-env]`. This is the sentinel that
 Print one summary line:
 
 ```
-Iteration on $PR_URL: addressed N comments in $NEW_SHA. Skipped M (too vague). [from cloud-env]
+Iteration on $PR_URL: addressed N comments in $NEW_SHA. Skipped M (too vague). [cloud-env]
 ```
 
 Stop. Do not propose further actions.
@@ -224,7 +232,7 @@ Stop. Do not propose further actions.
 3. Stay content-only. Never run `dotnet build`/`dotnet test`/`npm install`.
 4. Never invent a fix for a vague comment. Skip and report.
 5. Never introduce a new validation flaw.
-6. Every commit message and reply body ends with `[from cloud-env]` (until Option B).
+6. Every commit message and reply body ends with `[cloud-env]` (until Option B).
 7. Idempotent: running with no new activity is a clean no-op.
 
 ## Troubleshooting cheat sheet

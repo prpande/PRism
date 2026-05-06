@@ -87,7 +87,9 @@ gh pr diff "$PR_NUMBER" --repo "$OWNER_REPO" > /tmp/pr.diff
 Get existing inline review comments (so you can avoid duplicates):
 
 ```bash
-gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/comments" > /tmp/existing_review_comments.json
+# --paginate is mandatory: dedup at step 5 needs the FULL list of existing
+# review comments. The default page size silently truncates at ~30.
+gh api --paginate "repos/$OWNER_REPO/pulls/$PR_NUMBER/comments" > /tmp/existing_review_comments.json
 ```
 
 ---
@@ -143,11 +145,16 @@ The GitHub API expects a single review payload with all inline comments attached
 
 ## 6. Submit the review
 
-Atomically — one API call, one review record, all comments attached:
+Atomically — one API call, one review record, all comments attached.
+
+**Use your file-writing tool** (Write, not bash heredoc) to write the JSON object you constructed in step 5 to `$PAYLOAD_FILE` — bash heredocs around inline JSON with mixed quoting are fragile. Then run the API call:
 
 ```bash
 PAYLOAD_FILE=$(mktemp)
-# ... write the JSON above to $PAYLOAD_FILE ...
+# (You — the LLM — must now write the JSON payload from step 5 to $PAYLOAD_FILE
+# via your Write tool before continuing. Do NOT skip this step. The mktemp
+# above only creates an empty file; POSTing it without writing the JSON
+# yields a 422.)
 
 REVIEW_RESULT=$(gh api -X POST "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" \
   --input "$PAYLOAD_FILE")

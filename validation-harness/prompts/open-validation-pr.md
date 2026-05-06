@@ -139,14 +139,16 @@ The shallow, single-branch clone is intentional — `prism-validation` is the on
 
 Second-grained timestamp guarantees uniqueness across simultaneous teammate runs:
 
+> **Why `validation/...` and not `prism-validation/...`:** Git stores refs as files in `.git/refs/heads/`. Once a local `prism-validation` ref-file exists (it does, after step 3), Git refuses to create any ref *under* a `prism-validation/` directory because the file blocks the directory. The base branch keeps the name `prism-validation`; feature branches live under the disjoint `validation/` namespace.
+
 ```bash
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-FEATURE_BRANCH="prism-validation/${SLUG}-${TIMESTAMP}"
+FEATURE_BRANCH="validation/${SLUG}-${TIMESTAMP}"
 
 # Rare-collision protection (e.g., two simultaneous runs in the same second)
 COUNTER=2
 CANDIDATE="$FEATURE_BRANCH"
-while git ls-remote --exit-code origin "$CANDIDATE" >/dev/null 2>&1; do
+while git ls-remote --exit-code origin "refs/heads/$CANDIDATE" >/dev/null 2>&1; do
   CANDIDATE="${FEATURE_BRANCH}-${COUNTER}"
   COUNTER=$((COUNTER + 1))
 done
@@ -169,7 +171,8 @@ else
   exit 1
 fi
 
-RECIPE_INDEX=$(($(date +%S) % 5))
+# Force base-10: bash treats leading-zero numerics (08, 09) as octal otherwise.
+RECIPE_INDEX=$(( 10#$(date +%S) % 5 ))
 ```
 
 ### `csharp` catalog (additive, content-only, never breaks compilation)

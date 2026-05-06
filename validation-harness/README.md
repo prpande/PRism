@@ -107,7 +107,7 @@ The `prism-validation` long-lived branch itself stays put.
 
 ## Cloud-env identity caveat (until Option B is set up)
 
-Pratyush currently runs `iterate-pr.md` and `act-as-second-reviewer.md` via Claude Cloud under his own GitHub identity (`prpande`). Comments and commits from those prompts are tagged with `[from cloud-env]` so they're visually distinguishable from his manual activity. When a dedicated `prism-validation-bot` account is provisioned, those tags can be removed in a one-line `sed` against the prompt files.
+Pratyush currently runs `iterate-pr.md` and `act-as-second-reviewer.md` via Claude Cloud under his own GitHub identity (`prpande`). Comments and commits from those prompts carry the literal sentinel `[cloud-env]` (in commit messages, in reply bodies, and as a prefix on inline review comments) so they're visually distinguishable from his manual activity. When a dedicated `prism-validation-bot` account is provisioned, the sentinel can be removed in a one-line `sed` against the prompt files.
 
 ## Source design doc
 
