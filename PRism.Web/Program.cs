@@ -152,6 +152,18 @@ builder.Services.AddSingleton<IInboxRefreshOrchestrator>(sp =>
         loginCache.Get);
 });
 
+// Hydrate the viewer-login cache from a previously stored token before the inbox poller
+// starts. IHostedService.StartAsync runs in registration order, so this MUST be added before
+// AddHostedService<InboxPoller> below — otherwise the first refresh tick after a restart sees
+// an empty viewer login and the awaiting-author section silently returns no PRs until the user
+// re-runs /api/auth/connect.
+builder.Services.AddHostedService<ViewerLoginHydrator>(sp =>
+    new ViewerLoginHydrator(
+        sp.GetRequiredService<ITokenStore>(),
+        sp.GetRequiredService<IReviewService>(),
+        sp.GetRequiredService<IViewerLoginProvider>(),
+        sp.GetRequiredService<ILogger<ViewerLoginHydrator>>()));
+
 builder.Services.AddHostedService<InboxPoller>(sp =>
     new InboxPoller(
         sp.GetRequiredService<IInboxRefreshOrchestrator>(),

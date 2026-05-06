@@ -28,11 +28,17 @@ public sealed partial class InboxPoller : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             await _subs.WaitForSubscriberAsync(stoppingToken).ConfigureAwait(false);
+            var nextDelay = TimeSpan.FromSeconds(_config.Current.Polling.InboxSeconds);
             try
             {
                 await _orchestrator.RefreshAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { throw; }
+            catch (RateLimitExceededException rle)
+            {
+                Log.RefreshTickRateLimited(_log, rle);
+                if (rle.RetryAfter is { } ra && ra > nextDelay) nextDelay = ra;
+            }
 #pragma warning disable CA1031 // poller swallows tick-level errors per spec/03-poc-features.md § 12 — next tick still runs.
             catch (Exception ex)
             {
@@ -40,10 +46,9 @@ public sealed partial class InboxPoller : BackgroundService
             }
 #pragma warning restore CA1031
 
-            var cadence = TimeSpan.FromSeconds(_config.Current.Polling.InboxSeconds);
             try
             {
-                await Task.Delay(cadence, stoppingToken).ConfigureAwait(false);
+                await Task.Delay(nextDelay, stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { return; }
         }
@@ -53,5 +58,8 @@ public sealed partial class InboxPoller : BackgroundService
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Inbox refresh tick failed; will retry next cadence")]
         internal static partial void RefreshTickFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Inbox refresh tick rate-limited by GitHub; honoring Retry-After before next tick")]
+        internal static partial void RefreshTickRateLimited(ILogger logger, RateLimitExceededException ex);
     }
 }

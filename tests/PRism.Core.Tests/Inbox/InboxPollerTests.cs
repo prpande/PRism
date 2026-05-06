@@ -193,6 +193,76 @@ public sealed class InboxPollerTests
     }
 
     [Fact]
+    public async Task RefreshAsync_throws_RateLimitExceededException_then_next_delay_is_max_of_retry_after_and_cadence()
+    {
+        var orchestratorMock = new Mock<IInboxRefreshOrchestrator>();
+        var callTimes = new List<DateTime>();
+        var callCount = 0;
+        orchestratorMock
+            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callTimes.Add(DateTime.UtcNow);
+                callCount++;
+                if (callCount == 1)
+                {
+                    throw new RateLimitExceededException("test", TimeSpan.FromMilliseconds(300));
+                }
+                return Task.CompletedTask;
+            });
+
+        // Cadence = 1s; Retry-After = 300ms. The poller should wait max(retryAfter, cadence) = 1s.
+        // Inverting the test assumption: if the code used cadence-only it would still wait 1s,
+        // so we instead invert: cadence = 100ms, retryAfter = 400ms. Expected delay between
+        // call 1 and call 2 is ~400ms (retryAfter > cadence). Bug behaviour would yield ~100ms.
+        callTimes.Clear();
+        callCount = 0;
+        orchestratorMock
+            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callTimes.Add(DateTime.UtcNow);
+                callCount++;
+                if (callCount == 1)
+                {
+                    throw new RateLimitExceededException("test", TimeSpan.FromMilliseconds(400));
+                }
+                return Task.CompletedTask;
+            });
+
+        var fastConfig = new Mock<IConfigStore>();
+        fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
+        {
+            // PollingConfig.InboxSeconds is int seconds; 0 → cadence = 0s (effectively immediate).
+            // With cadence = 0, max(retryAfter=400ms, cadence=0) = 400ms — that's the gap we expect.
+            // Bug behaviour ignores RetryAfter → gap ≈ 0ms.
+            Polling = new PollingConfig(30, 0)
+        });
+
+        var subs = new InboxSubscriberCount();
+        var poller = new InboxPoller(
+            orchestratorMock.Object,
+            subs,
+            fastConfig.Object,
+            new Mock<ILogger<InboxPoller>>().Object);
+
+        using var cts = new CancellationTokenSource();
+        await poller.StartAsync(cts.Token);
+        subs.Increment();
+
+        // Wait long enough for: tick #1 (rate-limited, ~immediate) + 400ms Retry-After delay + tick #2.
+        await Task.Delay(800);
+        await StopAsync(poller, cts);
+
+        callTimes.Should().HaveCountGreaterOrEqualTo(2,
+            "the poller should have retried after honoring Retry-After");
+
+        var gap = callTimes[1] - callTimes[0];
+        gap.Should().BeGreaterOrEqualTo(TimeSpan.FromMilliseconds(300),
+            "the second refresh must wait at least the Retry-After window (allowing for scheduler jitter)");
+    }
+
+    [Fact]
     public async Task Cancellation_stops_poller_cleanly()
     {
         var (poller, _, subs) = Build();

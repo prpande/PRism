@@ -76,6 +76,7 @@ PRism.Core/
 └── Inbox/                                ← NEW namespace
     ├── InboxRefreshOrchestrator.cs       ← wires the 5 pipeline steps; ~50 LOC of glue
     ├── ISectionQueryRunner.cs
+    ├── IPrEnricher.cs                    ← per-PR fan-out: pulls/{n} → headSha/additions/deletions/pushedAt/iterationNumber
     ├── IAwaitingAuthorFilter.cs
     ├── ICiFailingDetector.cs
     ├── IInboxDeduplicator.cs
@@ -92,8 +93,9 @@ PRism.Core.Contracts/
 PRism.GitHub/
 └── Inbox/                                ← NEW
     ├── GitHubSectionQueryRunner.cs       ← Search API per section (5 parallel calls)
+    ├── GitHubPrEnricher.cs               ← fan-out per PR for headSha + diff stats + pushedAt
     ├── GitHubAwaitingAuthorFilter.cs     ← pulls/{n}/reviews + (prRef,headSha) cache
-    └── GitHubCiFailingDetector.cs        ← Checks API + combined statuses + (prRef,headSha) cache
+    └── GitHubCiFailingDetector.cs        ← Checks API + combined statuses + (prRef,headSha) cache + Link rel="next" pagination
 
 PRism.AI.Contracts/
 ├── Seams/IInboxEnricher.cs               ← RENAMED → IInboxItemEnricher.cs (batched)
@@ -612,7 +614,7 @@ A single context provider at `InboxPage` level keeps the tree shallow; subcompon
 
 - **`InboxDeduplicatorTests`** — 1↔4 dedup; 3↔5 dedup; both pairs simultaneously; PR in 1+4+3+5; `deduplicate: false` returns all memberships; empty input; only-one-section non-empty; unrelated overlap (PR in 1+3 — different pair, no dedup); identity rule (no PR appears twice in result); section ordering preserved.
 - **`InboxRefreshOrchestratorTests`** — happy path with fakes for all five interfaces; one fan-out throws → other sections still complete; enrichment returns `[]` (Noop) → rows render without chips; enrichment partial coverage → only matching rows get chips; diff-vs-prior emits no event when nothing changed; diff emits event with correct `changedSectionIds` and `newOrUpdatedPrCount`; first refresh signals the gating TCS.
-- **`InboxPollerTests`** — subscriber count 0 → no refresh tick fires; first connect → immediate refresh + cadence resumes; last disconnect → cadence pauses (verified via `IClock` advance); exception inside one tick → next tick still runs; cancellation token honored.
+- **`InboxPollerTests`** — subscriber count 0 → no refresh tick fires; first connect → immediate refresh + cadence resumes; last disconnect → cadence pauses (verified by configuring a small `polling.inboxSeconds` and asserting elapsed time across ticks); exception inside one tick → next tick still runs; rate-limit `RetryAfter` honored as next-tick delay; cancellation token honored.
 - **`InboxSubscriberCountTests`** — increment / decrement / concurrent atomicity; reset on application stop.
 
 ### `PRism.GitHub.Tests/Inbox/`
@@ -650,8 +652,8 @@ A single context provider at `InboxPage` level keeps the tree shallow; subcompon
 - `FakeHttpMessageHandler` (already in S0+S1) extended with sequence-based response stubs for the per-PR fan-out.
 - `FakeReviewEventBus` for orchestrator tests (record-published-events helper).
 - SSE polyfill for Vitest/jsdom (decision deferred to writing-plans: `eventsource` npm package vs ~30-line in-house fake).
-- Recorded GitHub Search API JSON fixtures committed under `tests/PRism.GitHub.Tests/Fixtures/inbox-search/`. PRs are anonymized; one fixture per section.
-- Deterministic `IClock` for `InboxPoller` cadence tests (already in S0+S1).
+- Inline `FakeHttpMessageHandler` stubs in `GitHubSectionQueryRunnerTests` (one canned response per section). Recorded JSON fixtures were considered but inline stubs proved tighter for the property-style assertions the tests need; reconsider when v2 adds Search API edge cases that warrant durable fixtures.
+- `InboxPoller` cadence tests use small real-time `polling.inboxSeconds` values + elapsed-time assertions rather than a deterministic `IClock` (the poller does not take an `IClock`; this kept the implementation simpler at the cost of slightly less deterministic timing in tests, accepted because the tests run sub-second).
 
 ## 13. Decisions deferred to writing-plans
 

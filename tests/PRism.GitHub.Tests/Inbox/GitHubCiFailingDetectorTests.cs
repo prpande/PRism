@@ -231,6 +231,54 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
+    public async Task FetchChecksAsync_paginates_when_link_header_present_and_aggregates_failing_across_pages()
+    {
+        // Page 1: 100 passing check_runs + Link header pointing to page 2.
+        // Page 2: 1 failing check_run, no further Link.
+        // Without pagination support, the detector would only see page 1 (all passing)
+        // and misclassify CI as None. With pagination, the failing run on page 2 is
+        // observed and CI must be Failing.
+        var passingRuns = string.Join(",",
+            Enumerable.Repeat(
+                """{ "name": "ci/build", "status": "completed", "conclusion": "success" }""",
+                100));
+        var page1Body = $$"""{ "check_runs": [{{passingRuns}}] }""";
+        const string page2Body = """
+            {
+              "check_runs": [
+                { "name": "ci/matrix-shard-101", "status": "completed", "conclusion": "failure" }
+              ]
+            }
+            """;
+        const string nextUrl = "https://api.github.com/repos/acme/api/commits/sha/check-runs?per_page=100&page=2";
+
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var uri = req.RequestUri!.AbsoluteUri;
+            if (uri.Contains("/check-runs", StringComparison.Ordinal))
+            {
+                if (uri.Contains("page=2", StringComparison.Ordinal))
+                    return Respond(HttpStatusCode.OK, page2Body);
+                var resp = Respond(HttpStatusCode.OK, page1Body);
+                resp.Headers.TryAddWithoutValidation(
+                    "Link",
+                    $"<{nextUrl}>; rel=\"next\", <{nextUrl}>; rel=\"last\"");
+                return resp;
+            }
+            if (uri.Contains("/status", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, AllPassingStatus);
+            return Respond(HttpStatusCode.NotFound, "{}");
+        });
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Should().HaveCount(1);
+        result[0].Ci.Should().Be(CiStatus.Failing,
+            "a failing check_run on page 2 must be observed via Link-header pagination");
+    }
+
+    [Fact]
     public async Task Cancellation_propagates()
     {
         using var cts = new CancellationTokenSource();

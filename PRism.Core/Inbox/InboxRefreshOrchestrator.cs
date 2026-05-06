@@ -102,6 +102,14 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
                 }
             }
 
+            // The authored-by-me superset is fetched whenever ci-failing is enabled (the
+            // detector needs it to derive the failing subset). If the user disabled the
+            // authored-by-me section itself, drop it now so it never reaches the snapshot.
+            if (!_config.Current.Inbox.Sections.AuthoredByMe)
+            {
+                rawWithEnrichment.Remove("authored-by-me");
+            }
+
             // Convert RawPrInboxItem → PrInboxItem (with state.json reads + CI annotation)
             var state = await _stateStore.LoadAsync(ct).ConfigureAwait(false);
             // Section UI ordering — review-requested → awaiting-author → authored-by-me → mentioned →

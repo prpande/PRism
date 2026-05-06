@@ -313,6 +313,43 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
+    public async Task RefreshAsync_when_AuthoredByMe_disabled_but_CiFailing_enabled_does_not_emit_authored_by_me_section()
+    {
+        // The CI detector requires the authored-by-me superset to compute the ci-failing
+        // subset, so ResolveVisibleSections() forces "authored-by-me" into the visible set
+        // even when the user disabled that section. The snapshot, however, must respect
+        // the user's preference and only surface "ci-failing".
+        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        {
+            ["authored-by-me"] = new[] { RawPr(1, "sha-1"), RawPr(2, "sha-2") }
+        });
+
+        // CI detector reports PR #1 as Failing, PR #2 as Passing
+        var ciDetector = new Mock<ICiFailingDetector>();
+        ciDetector.Setup(d => d.DetectAsync(It.IsAny<IReadOnlyList<RawPrInboxItem>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<RawPrInboxItem> items, CancellationToken _) =>
+                (IReadOnlyList<(RawPrInboxItem, CiStatus)>)items
+                    .Select(i => (i, i.Reference.Number == 1 ? CiStatus.Failing : CiStatus.None))
+                    .ToList());
+
+        var configMock = ConfigStoreMock(ConfigWithSections(
+            reviewRequested: false, awaitingAuthor: false, authoredByMe: false,
+            mentioned: false, ciFailing: true));
+        using var sut = Build(
+            config: configMock.Object,
+            sections: sections,
+            ciDetector: ciDetector.Object);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        sut.Current.Should().NotBeNull();
+        sut.Current!.Sections.Should().NotContainKey("authored-by-me");
+        sut.Current.Sections.Should().ContainKey("ci-failing");
+        sut.Current.Sections["ci-failing"].Should().ContainSingle()
+            .Which.Reference.Number.Should().Be(1);
+    }
+
+    [Fact]
     public async Task State_json_reads_propagate_to_inbox_items()
     {
         // Arrange: state.json has a session entry for PR #1 in acme/api
