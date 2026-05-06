@@ -3,7 +3,6 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using PRism.Core.Config;
 using PRism.Core.Inbox;
-using PRism.Core.Time;
 
 namespace PRism.Core.Tests.Inbox;
 
@@ -28,7 +27,6 @@ public sealed class InboxPollerTests
             Polling = new PollingConfig(30, 0)
         });
 
-        var clockMock = new Mock<IClock>();
         var logMock = new Mock<ILogger<InboxPoller>>();
         var subs = new InboxSubscriberCount();
 
@@ -36,7 +34,6 @@ public sealed class InboxPollerTests
             orchestratorMock.Object,
             subs,
             fastConfig.Object,
-            clockMock.Object,
             logMock.Object);
 
         return (poller, orchestratorMock, subs);
@@ -181,7 +178,6 @@ public sealed class InboxPollerTests
             orchestratorMock.Object,
             subs,
             fastConfig.Object,
-            new Mock<IClock>().Object,
             new Mock<ILogger<InboxPoller>>().Object);
 
         using var cts = new CancellationTokenSource();

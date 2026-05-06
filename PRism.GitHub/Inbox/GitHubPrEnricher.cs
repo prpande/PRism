@@ -64,8 +64,20 @@ public sealed class GitHubPrEnricher : IPrEnricher
         var additions = doc.RootElement.TryGetProperty("additions", out var a) ? a.GetInt32() : 0;
         var deletions = doc.RootElement.TryGetProperty("deletions", out var d) ? d.GetInt32() : 0;
         var commits = doc.RootElement.TryGetProperty("commits", out var c) ? c.GetInt32() : 1;
-        var pushedAt = doc.RootElement.TryGetProperty("pushed_at", out var p)
-            ? p.GetDateTimeOffset() : raw.UpdatedAt;
+        // pulls/{n} response does NOT have pushed_at at root. The closest field is
+        // head.repo.pushed_at (the head branch's repo last-push timestamp). If that is
+        // also missing (very rare; only on closed PRs whose head ref was deleted),
+        // fall back to updated_at — the field is informational in S2; v2 / S3 may
+        // query commits/{sha} for the precise head-commit timestamp if needed.
+        DateTimeOffset pushedAt = raw.UpdatedAt;
+        if (doc.RootElement.TryGetProperty("head", out var headEl) &&
+            headEl.TryGetProperty("repo", out var headRepo) &&
+            headRepo.ValueKind == System.Text.Json.JsonValueKind.Object &&
+            headRepo.TryGetProperty("pushed_at", out var pushedAtProp) &&
+            pushedAtProp.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            pushedAt = pushedAtProp.GetDateTimeOffset();
+        }
 
         return raw with
         {

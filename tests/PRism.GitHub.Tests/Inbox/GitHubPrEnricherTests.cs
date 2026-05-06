@@ -25,11 +25,13 @@ public sealed class GitHubPrEnricherTests
 
     private const string PullsResponse = """
         {
-          "head": { "sha": "abc123" },
+          "head": {
+            "sha": "abc123",
+            "repo": { "pushed_at": "2026-05-06T09:50:00Z" }
+          },
           "additions": 5,
           "deletions": 2,
           "commits": 3,
-          "pushed_at": "2026-05-06T09:50:00Z",
           "updated_at": "2026-05-06T10:00:00Z"
         }
         """;
@@ -179,5 +181,35 @@ public sealed class GitHubPrEnricherTests
         var act = async () => await sut.EnrichAsync([Raw(1)], cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task PushedAt_falls_back_to_updatedAt_when_head_repo_is_null()
+    {
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            requestCount++;
+            var body = """
+                {
+                  "head": { "sha": "xyz", "repo": null },
+                  "additions": 0,
+                  "deletions": 0,
+                  "commits": 1,
+                  "updated_at": "2026-05-06T11:00:00Z"
+                }
+                """;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            };
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("https://api.github.com/") };
+        var sut = new GitHubPrEnricher(http, () => Task.FromResult<string?>("t"));
+        var input = new[] { Raw(1, updatedAt: DateTimeOffset.Parse("2026-05-06T10:30:00Z", CultureInfo.InvariantCulture)) };
+
+        var result = await sut.EnrichAsync(input, default);
+
+        result[0].PushedAt.Should().Be(DateTimeOffset.Parse("2026-05-06T10:30:00Z", CultureInfo.InvariantCulture));
     }
 }

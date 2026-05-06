@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using PRism.Core;
 using PRism.Core.Config;
 using PRism.Core.Inbox;
@@ -22,6 +23,7 @@ internal static class InboxEndpoints
         app.MapGet("/api/inbox", async (
             IInboxRefreshOrchestrator orch,
             IConfigStore config,
+            ILogger<InboxLog> log,
             CancellationToken ct) =>
         {
             if (orch.Current == null)
@@ -31,7 +33,16 @@ internal static class InboxEndpoints
                 // CancellationToken.None decouples the refresh from the request CT — caller
                 // cancellation should not abort the in-flight refresh that future requests
                 // will benefit from.
-                _ = orch.RefreshAsync(CancellationToken.None);
+                // Fire-and-forget kick — log faults so a failed cold-start refresh isn't silent.
+                _ = orch.RefreshAsync(CancellationToken.None).ContinueWith(
+                    t =>
+                    {
+                        if (t.Exception != null)
+                            log.RefreshKickFailed(t.Exception);
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
                 if (!await orch.WaitForFirstSnapshotAsync(TimeSpan.FromSeconds(10), ct).ConfigureAwait(false))
                     return Results.Problem(
                         title: "Inbox initializing",
@@ -87,4 +98,14 @@ internal static class InboxEndpoints
 
         return app;
     }
+}
+
+// Marker class for ILogger<T> — must be non-static so it can be used as a type argument.
+internal sealed class InboxLog { }
+
+internal static partial class InboxLogExtensions
+{
+    [LoggerMessage(EventId = 1, Level = LogLevel.Warning,
+        Message = "Cold-start inbox refresh kicked from /api/inbox failed")]
+    public static partial void RefreshKickFailed(this ILogger<InboxLog> log, Exception ex);
 }

@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PRism.Core.Config;
-using PRism.Core.Time;
 
 namespace PRism.Core.Inbox;
 
@@ -10,22 +9,17 @@ public sealed partial class InboxPoller : BackgroundService
     private readonly IInboxRefreshOrchestrator _orchestrator;
     private readonly InboxSubscriberCount _subs;
     private readonly IConfigStore _config;
-#pragma warning disable CA1823 // reserved for test-driven cadence injection in v2 — not currently consumed but required by the DI contract
-    private readonly IClock _clock;
-#pragma warning restore CA1823
     private readonly ILogger<InboxPoller> _log;
 
     public InboxPoller(
         IInboxRefreshOrchestrator orchestrator,
         InboxSubscriberCount subs,
         IConfigStore config,
-        IClock clock,
         ILogger<InboxPoller> log)
     {
         _orchestrator = orchestrator;
         _subs = subs;
         _config = config;
-        _clock = clock;
         _log = log;
     }
 

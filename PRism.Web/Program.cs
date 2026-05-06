@@ -12,7 +12,6 @@ using PRism.Core.Hosting;
 using PRism.Core.Inbox;
 using PRism.Core.Json;
 using PRism.Core.State;
-using PRism.Core.Time;
 using PRism.GitHub;
 using PRism.GitHub.Inbox;
 using PRism.Web.Endpoints;
@@ -142,7 +141,6 @@ builder.Services.AddSingleton<ICiFailingDetector>(sp =>
 });
 
 builder.Services.AddSingleton<IViewerLoginProvider, ViewerLoginProvider>();
-builder.Services.AddSingleton<IClock, SystemClock>();
 
 builder.Services.AddSingleton<IInboxRefreshOrchestrator>(sp =>
 {
@@ -165,7 +163,6 @@ builder.Services.AddHostedService<InboxPoller>(sp =>
         sp.GetRequiredService<IInboxRefreshOrchestrator>(),
         sp.GetRequiredService<InboxSubscriberCount>(),
         sp.GetRequiredService<IConfigStore>(),
-        sp.GetRequiredService<IClock>(),
         sp.GetRequiredService<ILogger<InboxPoller>>()));
 
 // JSON options: align HTTP serialization with the camelCase Api policy.
