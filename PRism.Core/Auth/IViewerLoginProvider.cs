@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace PRism.Core.Auth;
 
@@ -10,9 +12,27 @@ public interface IViewerLoginProvider
     void Set(string login);
 }
 
-public sealed class ViewerLoginProvider : IViewerLoginProvider
+public sealed partial class ViewerLoginProvider : IViewerLoginProvider
 {
     private string _login = string.Empty;
+    private readonly ILogger<ViewerLoginProvider> _log;
+
+    public ViewerLoginProvider(ILogger<ViewerLoginProvider>? log = null)
+    {
+        _log = log ?? NullLogger<ViewerLoginProvider>.Instance;
+    }
+
     public string Get() => Volatile.Read(ref _login);
-    public void Set(string login) => Volatile.Write(ref _login, login);
+
+    public void Set(string login)
+    {
+        Volatile.Write(ref _login, login);
+        Log.LoginSet(_log, string.IsNullOrEmpty(login) ? "(empty)" : login);
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Viewer-login cache set to '{Login}'")]
+        internal static partial void LoginSet(ILogger logger, string login);
+    }
 }

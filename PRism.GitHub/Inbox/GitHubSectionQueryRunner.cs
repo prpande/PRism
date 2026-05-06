@@ -1,11 +1,13 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
 
 namespace PRism.GitHub.Inbox;
 
-public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
+public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
 {
     private static readonly Dictionary<string, string> SectionQueries = new()
     {
@@ -24,11 +26,16 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
+    private readonly ILogger<GitHubSectionQueryRunner> _log;
 
-    public GitHubSectionQueryRunner(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
+    public GitHubSectionQueryRunner(
+        IHttpClientFactory httpFactory,
+        Func<Task<string?>> readToken,
+        ILogger<GitHubSectionQueryRunner>? log = null)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
+        _log = log ?? NullLogger<GitHubSectionQueryRunner>.Instance;
     }
 
     public async Task<IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> QueryAllAsync(
@@ -36,6 +43,10 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
     {
         ArgumentNullException.ThrowIfNull(visibleSectionIds);
         var token = await _readToken().ConfigureAwait(false);
+        if (_log.IsEnabled(LogLevel.Debug))
+#pragma warning disable CA1873 // Guarded above; analyzer doesn't pattern-match the IsEnabled call.
+            Log.QueryAllStarted(_log, string.Join(",", visibleSectionIds), token is { Length: > 0 });
+#pragma warning restore CA1873
         var tasks = SectionQueries
             .Where(kv => visibleSectionIds.Contains(kv.Key))
             .Select(async kv =>
@@ -43,12 +54,14 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
                 try
                 {
                     var items = await SearchAsync(kv.Value, token, ct).ConfigureAwait(false);
+                    Log.SectionQueryComplete(_log, kv.Key, items.Count);
                     return (kv.Key, (IReadOnlyList<RawPrInboxItem>)items);
                 }
 #pragma warning disable CA1031 // generic catch — per-section failure isolates per spec/03-poc-features.md § 2 polling. Cancellation and rate-limit propagate.
                 catch (Exception ex) when (ex is not OperationCanceledException && ex is not RateLimitExceededException)
 #pragma warning restore CA1031
                 {
+                    Log.SectionQueryFailed(_log, ex, kv.Key);
                     return (kv.Key, (IReadOnlyList<RawPrInboxItem>)Array.Empty<RawPrInboxItem>());
                 }
             })
@@ -106,5 +119,17 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
                 1));  // iteration approx
         }
         return result;
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub section queries starting (sections=[{Sections}], has-token={HasToken})")]
+        internal static partial void QueryAllStarted(ILogger logger, string sections, bool hasToken);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "GitHub section '{Section}' returned {Count} items")]
+        internal static partial void SectionQueryComplete(ILogger logger, string section, int count);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "GitHub section '{Section}' query failed; section will be empty this tick")]
+        internal static partial void SectionQueryFailed(ILogger logger, Exception ex, string section);
     }
 }

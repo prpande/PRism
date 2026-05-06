@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
@@ -9,13 +10,17 @@ using PRism.Core.State;
 
 namespace PRism.Web.Endpoints;
 
-internal static class AuthEndpoints
+internal static partial class AuthEndpoints
 {
+    // Marker type so route delegates can resolve a category-specific ILogger without colliding
+    // with the Program-level logger category.
+    private sealed class Category { }
+
     public static IEndpointRouteBuilder MapAuth(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
 
-        app.MapGet("/api/auth/state", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, CancellationToken ct) =>
+        app.MapGet("/api/auth/state", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, ILogger<Category> log, CancellationToken ct) =>
         {
             var hasToken = await tokens.HasTokenAsync(ct).ConfigureAwait(false);
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
@@ -26,10 +31,11 @@ internal static class AuthEndpoints
             {
                 mismatch = new { old = state.LastConfiguredGithubHost, @new = host };
             }
+            Log.AuthStateProbed(log, hasToken, host, mismatch is not null);
             return Results.Ok(new { hasToken, host, hostMismatch = mismatch });
         });
 
-        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, ILogger<Category> log, CancellationToken ct) =>
         {
             JsonDocument doc;
             try
@@ -38,13 +44,18 @@ internal static class AuthEndpoints
             }
             catch (JsonException)
             {
+                Log.ConnectRejected(log, "invalid-json");
                 return Results.BadRequest(new { ok = false, error = "invalid-json" });
             }
             using var _doc = doc;
             var pat = doc.RootElement.TryGetProperty("pat", out var p) ? p.GetString() : null;
             if (string.IsNullOrWhiteSpace(pat))
+            {
+                Log.ConnectRejected(log, "pat-required");
                 return Results.BadRequest(new { ok = false, error = "pat-required" });
+            }
 
+            Log.ConnectValidating(log, pat.Length, config.Current.Github.Host);
             await tokens.WriteTransientAsync(pat, ct).ConfigureAwait(false);
             var result = await review.ValidateCredentialsAsync(ct).ConfigureAwait(false);
             if (!result.Ok)
@@ -53,6 +64,7 @@ internal static class AuthEndpoints
 #pragma warning disable CA1308 // Lowercase enum names are part of the auth contract surfaced to the renderer.
                 var errorName = result.Error?.ToString().ToLowerInvariant();
 #pragma warning restore CA1308
+                Log.ConnectValidationFailed(log, errorName ?? "(null)", result.ErrorDetail ?? "(none)");
                 return Results.Ok(new { ok = false, error = errorName, detail = result.ErrorDetail });
             }
 
@@ -62,6 +74,7 @@ internal static class AuthEndpoints
                 // commit endpoint can populate the IViewerLoginProvider cache. Frontend
                 // collects user confirmation and calls POST /api/auth/connect/commit.
                 await tokens.SetTransientLoginAsync(result.Login ?? "", ct).ConfigureAwait(false);
+                Log.ConnectValidatedWithWarning(log, result.Login ?? "(empty)", result.Warning);
                 return Results.Ok(new
                 {
                     ok = true,
@@ -75,10 +88,11 @@ internal static class AuthEndpoints
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
             viewerLogin.Set(result.Login ?? "");
+            Log.ConnectCommitted(log, result.Login ?? "(empty)");
             return Results.Ok(new { ok = true, login = result.Login, host = config.Current.Github.Host });
         });
 
-        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, ILogger<Category> log, CancellationToken ct) =>
         {
             // Read the validated login BEFORE CommitAsync clears it.
             var login = await tokens.ReadTransientLoginAsync(ct).ConfigureAwait(false);
@@ -89,6 +103,7 @@ internal static class AuthEndpoints
             catch (InvalidOperationException)
             {
                 // No transient pending — process restart, or commit called twice.
+                Log.CommitNoPendingToken(log);
                 return Results.Conflict(new { ok = false, error = "no-pending-token" });
             }
 
@@ -97,6 +112,7 @@ internal static class AuthEndpoints
             // Mirror the connect-path Set to keep the cache in lockstep — empty string here
             // overwrites any stale login from a prior session rather than leaving it intact.
             viewerLogin.Set(login ?? "");
+            Log.CommitSucceeded(log, login ?? "(empty)");
             return Results.Ok(new { ok = true, host = config.Current.Github.Host });
         });
 
@@ -146,4 +162,31 @@ internal static class AuthEndpoints
         AuthValidationWarning.None => throw new InvalidOperationException("WarningToWire called with None — caller should not serialize a non-warning."),
         _ => throw new InvalidOperationException($"Unmapped AuthValidationWarning value: {warning}"),
     };
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "/api/auth/state → has-token={HasToken}, host={Host}, host-mismatch={Mismatch}")]
+        internal static partial void AuthStateProbed(ILogger logger, bool hasToken, string host, bool mismatch);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "/api/auth/connect rejected: {Reason}")]
+        internal static partial void ConnectRejected(ILogger logger, string reason);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: validating PAT (length={PatLength}) against host {Host}")]
+        internal static partial void ConnectValidating(ILogger logger, int patLength, string host);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/connect: validation failed (error={Error}, detail={Detail})")]
+        internal static partial void ConnectValidationFailed(ILogger logger, string error, string detail);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: validated for login={Login} with warning={Warning}; awaiting /commit")]
+        internal static partial void ConnectValidatedWithWarning(ILogger logger, string login, AuthValidationWarning warning);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: committed for login={Login}")]
+        internal static partial void ConnectCommitted(ILogger logger, string login);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/connect/commit rejected: no-pending-token (process restart or double-commit)")]
+        internal static partial void CommitNoPendingToken(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect/commit: committed for login={Login}")]
+        internal static partial void CommitSucceeded(ILogger logger, string login);
+    }
 }

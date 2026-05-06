@@ -110,7 +110,10 @@ builder.Services.AddSingleton<ISectionQueryRunner>(sp =>
 {
     var tokens = sp.GetRequiredService<ITokenStore>();
     var factory = sp.GetRequiredService<IHttpClientFactory>();
-    return new GitHubSectionQueryRunner(factory, () => tokens.ReadAsync(CancellationToken.None));
+    return new GitHubSectionQueryRunner(
+        factory,
+        () => tokens.ReadAsync(CancellationToken.None),
+        sp.GetRequiredService<ILogger<GitHubSectionQueryRunner>>());
 });
 
 builder.Services.AddSingleton<IPrEnricher>(sp =>
@@ -149,7 +152,8 @@ builder.Services.AddSingleton<IInboxRefreshOrchestrator>(sp =>
         sp.GetRequiredService<IAiSeamSelector>(),
         sp.GetRequiredService<IReviewEventBus>(),
         sp.GetRequiredService<IAppStateStore>(),
-        loginCache.Get);
+        loginCache.Get,
+        sp.GetRequiredService<ILogger<InboxRefreshOrchestrator>>());
 });
 
 // Hydrate the viewer-login cache from a previously stored token before the inbox poller

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.Contracts.Dtos;
 using PRism.AI.Contracts.Seams;
 using PRism.Core.Ai;
@@ -8,7 +10,7 @@ using PRism.Core.State;
 
 namespace PRism.Core.Inbox;
 
-public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDisposable
+public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDisposable
 {
     private readonly IConfigStore _config;
     private readonly ISectionQueryRunner _sections;
@@ -20,6 +22,7 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
     private readonly IReviewEventBus _events;
     private readonly IAppStateStore _stateStore;
     private readonly Func<string> _viewerLoginProvider;
+    private readonly ILogger<InboxRefreshOrchestrator> _log;
 
     private InboxSnapshot? _current;
     private TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -36,7 +39,8 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
         IAiSeamSelector aiSelector,
         IReviewEventBus events,
         IAppStateStore stateStore,
-        Func<string> viewerLoginProvider)
+        Func<string> viewerLoginProvider,
+        ILogger<InboxRefreshOrchestrator>? log = null)
     {
         _config = config;
         _sections = sections;
@@ -48,6 +52,7 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
         _events = events;
         _stateStore = stateStore;
         _viewerLoginProvider = viewerLoginProvider;
+        _log = log ?? NullLogger<InboxRefreshOrchestrator>.Instance;
     }
 
     public InboxSnapshot? Current => Volatile.Read(ref _current);
@@ -77,16 +82,30 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
     public async Task RefreshAsync(CancellationToken ct)
     {
         await _writerLock.WaitAsync(ct).ConfigureAwait(false);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             var visible = ResolveVisibleSections();
+            // CA1873 suppression: the IsEnabled guards make the expensive arg evaluation
+            // (string.Join, LINQ Sum/Select) zero-cost when Debug is not enabled, but the
+            // analyzer doesn't pattern-match the guard. The guard is correct.
+#pragma warning disable CA1873
+            if (_log.IsEnabled(LogLevel.Debug))
+                Log.RefreshStarted(_log, _viewerLoginProvider(), string.Join(",", visible));
             var raw = await _sections.QueryAllAsync(visible, ct).ConfigureAwait(false);
+            if (_log.IsEnabled(LogLevel.Debug))
+                Log.SectionQueriesComplete(_log,
+                    raw.Count,
+                    raw.Values.Sum(v => v.Count),
+                    string.Join(",", raw.Select(kv => $"{kv.Key}={kv.Value.Count}")));
+#pragma warning restore CA1873
 
             // Enrich every PR across all sections (one HTTP call per PR, deduplicated by ref)
             var allRawDistinct = raw.Values.SelectMany(v => v)
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
             var enriched = await _enricher.EnrichAsync(allRawDistinct, ct).ConfigureAwait(false);
             var byRef = enriched.ToDictionary(p => p.Reference);
+            Log.PrEnrichmentComplete(_log, allRawDistinct.Count, enriched.Count);
 
             var rawWithEnrichment = raw.ToDictionary(
                 kv => kv.Key,
@@ -100,6 +119,7 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
             {
                 var filtered = await _awaitingFilter
                     .FilterAsync(_viewerLoginProvider(), rawSec2, ct).ConfigureAwait(false);
+                Log.AwaitingAuthorFiltered(_log, rawSec2.Count, filtered.Count);
                 rawWithEnrichment["awaiting-author"] = filtered;
             }
 
@@ -112,8 +132,9 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
 
                 if (visible.Contains("ci-failing"))
                 {
-                    rawWithEnrichment["ci-failing"] = probed
-                        .Where(t => t.Ci == CiStatus.Failing).Select(t => t.Item).ToList();
+                    var failing = probed.Where(t => t.Ci == CiStatus.Failing).Select(t => t.Item).ToList();
+                    Log.CiDetectionComplete(_log, rawSec3.Count, failing.Count);
+                    rawWithEnrichment["ci-failing"] = failing;
                 }
             }
 
@@ -150,13 +171,23 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
                     .ToList());
 
             // Dedupe
+            var preDedupeTotal = sectionsAsItems.Values.Sum(v => v.Count);
             var deduped = _dedupe.Deduplicate(sectionsAsItems, _config.Current.Inbox.Deduplicate);
+            var postDedupeTotal = deduped.Values.Sum(v => v.Count);
+            Log.DedupeApplied(_log, _config.Current.Inbox.Deduplicate, preDedupeTotal, postDedupeTotal);
 
-            // AI enrichment
-            var allItems = deduped.Values.SelectMany(v => v).ToList();
+            // AI enrichment. The enricher returns one InboxItemEnrichment per input item, so
+            // we must hand it a list with one entry per unique PR — otherwise PRs that appear
+            // in two visible sections (e.g. authored-by-me ∩ awaiting-author, an overlap that
+            // InboxDeduplicator does not collapse) would produce duplicate enrichments and
+            // ToDictionary would throw, leaving the snapshot uninitialized and the inbox 503.
+            var allItems = deduped.Values.SelectMany(v => v)
+                .DistinctBy(i => i.Reference)
+                .ToList();
             var enricher = _aiSelector.Resolve<IInboxItemEnricher>();
             var enrichments = await enricher.EnrichAsync(allItems, ct).ConfigureAwait(false);
             var enrichmentMap = enrichments.ToDictionary(e => e.PrId);
+            Log.AiEnrichmentComplete(_log, enricher.GetType().Name, allItems.Count, enrichments.Count);
 
             // Build snapshot + diff
             var newSnap = new InboxSnapshot(deduped, enrichmentMap, DateTimeOffset.UtcNow);
@@ -164,6 +195,9 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
             Volatile.Write(ref _current, newSnap);
 
             if (!_firstSnapshotTcs.Task.IsCompleted) _firstSnapshotTcs.TrySetResult();
+
+            sw.Stop();
+            Log.SnapshotBuilt(_log, postDedupeTotal, deduped.Count, diff.Changed, diff.NewOrUpdatedPrCount, sw.ElapsedMilliseconds);
 
             if (diff.Changed)
             {
@@ -272,4 +306,31 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
     private static int CountAll(InboxSnapshot s) => s.Sections.Values.Sum(v => v.Count);
 
     public void Dispose() => _writerLock.Dispose();
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Inbox refresh starting (viewer-login='{ViewerLogin}', visible-sections=[{VisibleSections}])")]
+        internal static partial void RefreshStarted(ILogger logger, string viewerLogin, string visibleSections);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Section queries complete: {SectionCount} sections, {TotalItems} items total ({Breakdown})")]
+        internal static partial void SectionQueriesComplete(ILogger logger, int sectionCount, int totalItems, string breakdown);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "PR enrichment complete: {Input} input PRs → {Output} enriched")]
+        internal static partial void PrEnrichmentComplete(ILogger logger, int input, int output);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Awaiting-author filter: {Input} candidates → {Output} kept")]
+        internal static partial void AwaitingAuthorFiltered(ILogger logger, int input, int output);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "CI detection: {Authored} authored PRs probed, {Failing} failing")]
+        internal static partial void CiDetectionComplete(ILogger logger, int authored, int failing);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Dedupe applied (enabled={Enabled}): {PreCount} → {PostCount} PRs")]
+        internal static partial void DedupeApplied(ILogger logger, bool enabled, int preCount, int postCount);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "AI enrichment complete ({EnricherType}): {InputItems} unique PRs → {Enrichments} enrichments")]
+        internal static partial void AiEnrichmentComplete(ILogger logger, string enricherType, int inputItems, int enrichments);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Inbox snapshot built: {TotalPrs} PRs across {SectionCount} sections (changed={Changed}, new-or-updated={NewOrUpdated}) in {ElapsedMs}ms")]
+        internal static partial void SnapshotBuilt(ILogger logger, int totalPrs, int sectionCount, bool changed, int newOrUpdated, long elapsedMs);
+    }
 }
