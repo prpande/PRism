@@ -96,6 +96,23 @@ public class ParseUrlEndpointTests
     }
 
     [Fact]
+    public async Task Post_parse_url_with_http_url_against_https_host_returns_host_mismatch()
+    {
+        // Config host = https://github.com (default); URL is http://github.com/... (scheme-only mismatch).
+        // Even though u.Host == h.Host, the scheme differs, so for the user the "host" (origin) is
+        // different. Reuse the host-mismatch error code rather than falling back to not-a-pr-url.
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        var resp = await PostParseUrl(client, """{"url":"http://github.com/owner/repo/pull/1"}""");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("ok").GetBoolean().Should().BeFalse();
+        body.GetProperty("error").GetString().Should().Be("host-mismatch");
+    }
+
+    [Fact]
     public async Task Non_pr_url_returns_not_a_pr_url_error()
     {
         using var factory = new PRismWebApplicationFactory();
@@ -142,6 +159,26 @@ public class ParseUrlEndpointTests
         var client = factory.CreateClient();
 
         var resp = await PostParseUrl(client, "not json");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("error").GetString().Should().Be("invalid-json");
+    }
+
+    [Fact]
+    public async Task Post_parse_url_without_content_type_returns_400_invalid_json()
+    {
+        // ReadFromJsonAsync throws InvalidOperationException (not JsonException) when the
+        // request lacks a JSON Content-Type. Without a HasJsonContentType() pre-check, the
+        // endpoint would 500 instead of returning a structured 400 invalid-json — same
+        // failure shape callers see for malformed bodies.
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        var resp = await PostParseUrl(
+            client,
+            """{"url":"https://github.com/foo/bar/pull/42"}""",
+            contentType: "text/plain");
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();

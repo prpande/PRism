@@ -194,6 +194,62 @@ public class EventsEndpointsTests
     }
 
     [Fact]
+    public async Task Sse_event_write_uses_request_aborted_token()
+    {
+        // Regression test: PR #4 follow-up review feedback. Event-write path inside
+        // OnInboxUpdated previously called WriteAsync with CancellationToken.None,
+        // so a stalled (but not yet TCP-reset) client would block fire-and-forget
+        // write tasks indefinitely, accumulating memory/CPU. The fix stores the
+        // request-aborted token on SseSubscriber at construction and threads it
+        // into the publisher's WriteAsync call.
+        //
+        // Strategy: capture whichever CancellationToken the response stream sees
+        // on the event-write path, then assert it can be cancelled by cancelling
+        // the request-aborted token we passed into RunSubscriberAsync.
+        var bus = new ReviewEventBus();
+        var subs = new InboxSubscriberCount();
+        using var channel = new SseChannel(bus, subs, NullLogger<SseChannel>.Instance);
+
+        var capturingBody = new TokenCapturingStream();
+        var ctx = new DefaultHttpContext { Response = { Body = capturingBody } };
+
+        using var ctsRun = new CancellationTokenSource();
+        var runTask = channel.RunSubscriberAsync(ctx.Response, ctsRun.Token);
+
+        // Wait until the subscriber is registered (initial heartbeat completed).
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (subs.Current == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(5, CancellationToken.None);
+        subs.Current.Should().Be(1, "subscriber should be registered before publishing");
+
+        // Reset the capture so we observe only the event-write token (not the
+        // initial heartbeat which uses the same token by a different code path).
+        capturingBody.Reset();
+
+        // Publish — this triggers OnInboxUpdated → WriteAndEvictOnFailureAsync →
+        // SseSubscriber.WriteAsync(frame, RequestAborted) → response stream WriteAsync.
+        bus.Publish(new InboxUpdated(new[] { "review-requested" }, 1));
+
+        // Wait for the event-write to reach the stream.
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (capturingBody.LastWriteToken is null && DateTime.UtcNow < deadline)
+            await Task.Delay(5, CancellationToken.None);
+
+        capturingBody.LastWriteToken.Should().NotBeNull(
+            "event-write must reach the response stream");
+        capturingBody.LastWriteToken!.Value.CanBeCanceled.Should().BeTrue(
+            "publisher path must thread a cancellable token, not CancellationToken.None");
+
+        // Cancel the request-aborted token. The captured token should observe it.
+        await ctsRun.CancelAsync();
+        capturingBody.LastWriteToken!.Value.IsCancellationRequested.Should().BeTrue(
+            "the token threaded into WriteAsync must be the same request-aborted token " +
+            "passed to RunSubscriberAsync (so stalled clients evict promptly)");
+
+        try { await runTask; } catch (OperationCanceledException) { } catch (IOException) { }
+    }
+
+    [Fact]
     public async Task Sse_subscriber_failed_write_evicts_from_writers_and_decrements_subs()
     {
         // Regression test: PR #4 follow-up review feedback. The OnInboxUpdated handler
@@ -244,6 +300,49 @@ public class EventsEndpointsTests
         // is independent of the eviction; cancelling it lets the test tear down.
         await ctsRun.CancelAsync();
         try { await runTask; } catch (OperationCanceledException) { } catch (IOException) { }
+    }
+
+    /// <summary>
+    /// Stream wrapper that records the CancellationToken observed by the most recent
+    /// WriteAsync call. Used to assert that the publisher's event-write path threads
+    /// the request-aborted token (and not CancellationToken.None) through to the
+    /// underlying response body.
+    /// </summary>
+    private sealed class TokenCapturingStream : Stream
+    {
+        private CancellationToken? _lastWriteToken;
+        public CancellationToken? LastWriteToken => _lastWriteToken;
+
+        public void Reset() => _lastWriteToken = null;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { /* no-op */ }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) { /* no-op */ }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            _lastWriteToken = cancellationToken;
+            return Task.CompletedTask;
+        }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _lastWriteToken = cancellationToken;
+            return ValueTask.CompletedTask;
+        }
+
+        public override Task FlushAsync(CancellationToken cancellationToken)
+        {
+            _lastWriteToken = cancellationToken;
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>

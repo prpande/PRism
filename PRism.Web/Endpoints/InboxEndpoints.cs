@@ -54,6 +54,13 @@ internal static class InboxEndpoints
             IConfigStore config,
             CancellationToken ct) =>
         {
+            // ReadFromJsonAsync throws InvalidOperationException (not JsonException) when the
+            // request lacks a JSON Content-Type, which would otherwise surface as a 500. Pre-check
+            // HasJsonContentType() so missing/wrong Content-Type collapses into the same structured
+            // 400 invalid-json shape callers see for malformed bodies.
+            if (!ctx.Request.HasJsonContentType())
+                return Results.BadRequest(new { error = "invalid-json" });
+
             ParsePrUrlRequest? body;
             try
             {
@@ -77,8 +84,12 @@ internal static class InboxEndpoints
             if (!Uri.TryCreate(body.Url, UriKind.Absolute, out var u))
                 return Results.Ok(new ParsePrUrlResponse(false, null, "malformed", configuredHost, null));
 
+            // Treat scheme mismatch (e.g. http vs https) as host-mismatch: for the user, the
+            // "host" is the full origin (scheme + host). Reusing host-mismatch keeps the frontend
+            // contract narrow — a separate scheme-mismatch code would force frontend changes.
             if (!Uri.TryCreate(configuredHost, UriKind.Absolute, out var h)
-                || !string.Equals(u.Host, h.Host, StringComparison.OrdinalIgnoreCase))
+                || !string.Equals(u.Host, h.Host, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(u.Scheme, h.Scheme, StringComparison.OrdinalIgnoreCase))
             {
                 return Results.Ok(new ParsePrUrlResponse(
                     false, null, "host-mismatch", configuredHost, u.Host));

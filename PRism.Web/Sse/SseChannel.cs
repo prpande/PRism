@@ -30,7 +30,7 @@ internal sealed class SseChannel : IDisposable
         response.Headers["Cache-Control"] = "no-store";
         response.Headers["Connection"] = "keep-alive";
 
-        var sub = new SseSubscriber(response);
+        var sub = new SseSubscriber(response, ct);
         lock (_gate) _writers.Add(sub);
         _subs.Increment();
 
@@ -90,7 +90,25 @@ internal sealed class SseChannel : IDisposable
     {
         try
         {
-            await s.WriteAsync(frame, default).ConfigureAwait(false);
+            // Pass the subscriber's request-aborted token so a stalled/disconnected
+            // client cancels the write promptly rather than blocking the
+            // fire-and-forget task indefinitely (PR #4 review feedback). The
+            // heartbeat loop already uses this token; this brings the publisher
+            // path in line.
+            await s.WriteAsync(frame, s.RequestAborted).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal client-disconnect path: the heartbeat loop's finally will
+            // also evict, but whichever path wins the Remove race owns the
+            // decrement + dispose. Don't log loudly — disconnects are routine.
+            bool removed;
+            lock (_gate) removed = _writers.Remove(s);
+            if (removed)
+            {
+                _subs.Decrement();
+                s.Dispose();
+            }
         }
         catch (Exception ex)
         {
@@ -125,7 +143,18 @@ internal sealed class SseChannel : IDisposable
         // the bool return of List.Remove so only one path disposes.
         private readonly SemaphoreSlim _writeLock = new(1, 1);
 
-        public SseSubscriber(HttpResponse response) { _response = response; }
+        public SseSubscriber(HttpResponse response, CancellationToken requestAborted)
+        {
+            _response = response;
+            RequestAborted = requestAborted;
+        }
+
+        // Per-request cancellation token (HttpContext.RequestAborted), captured at
+        // construction so the publisher's fire-and-forget write path
+        // (OnInboxUpdated → WriteAndEvictOnFailureAsync) can cancel writes when the
+        // client disconnects. The heartbeat loop in RunSubscriberAsync already
+        // receives this token directly via its parameter.
+        public CancellationToken RequestAborted { get; }
 
         public async Task WriteAsync(string frame, CancellationToken ct)
         {
