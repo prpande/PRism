@@ -93,7 +93,7 @@ Steps:
 All additive; none break compilation. The `claude-code-review.yml` reviewer is content-aware and flags any of them.
 
 1. **Stale TODO** — append `// TODO: revisit before next release` to a doc comment.
-2. **Vague log message** — change a `_logger.Log...` body to less informative text.
+2. **Vague log message** — add a new `_logger.LogDebug("processing");` line (with a deliberately vague message) near the top of an existing method body. Purely additive — never modify an existing log line.
 3. **Naming drift in comment** — comment refers to a method by a slightly-wrong name.
 4. **Redundant XML doc** — `/// <summary>Does what the name says.</summary>` above a public method.
 5. **Hardcoded literal** — string constant for a URL/timeout that obviously belongs in `appsettings.json`.

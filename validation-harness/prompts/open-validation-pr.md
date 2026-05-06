@@ -71,15 +71,15 @@ If the active token is missing the `repo` scope, run:
 gh auth refresh -h github.com -s repo,workflow,read:org
 ```
 
-### 2d. Configure git identity from the gh user
+### 2d. Capture git-identity values from the gh user
+
+Just compute the values here. The `git config` calls happen **inside the cloned repo with `--local`** in step 3, so we don't overwrite the teammate's machine-wide `~/.gitconfig`.
 
 ```bash
 GH_LOGIN=$(gh api user --jq '.login')
 GH_NAME=$(gh api user --jq '.name // .login')
 GH_EMAIL=$(gh api "users/$GH_LOGIN" --jq '.email // empty')
 [ -z "$GH_EMAIL" ] && GH_EMAIL="${GH_LOGIN}@users.noreply.github.com"
-git config --global user.name "$GH_NAME"
-git config --global user.email "$GH_EMAIL"
 ```
 
 ### 2e. Confirm read access to the target repo
@@ -111,9 +111,13 @@ This is intentional: only the validation owner creates sandbox branches, never a
 
 ## 3. Workspace + checkout
 
-Use a stable per-repo workspace under the user's home directory. Reuse if possible; rebuild if corrupt.
+Use a stable per-repo workspace under the user's home directory. Reuse if possible; rebuild if corrupt. Note: `git clean -fd` below will remove any untracked files in the workspace — this is intentional (the workspace is automation-managed) but worth a heads-up.
 
 ```bash
+# Hard guards: never run rm -rf with a partially-bound path.
+[ -z "$SLUG" ]       && { echo "SLUG is unset. Aborting."; exit 1; }
+[ -z "$OWNER_REPO" ] && { echo "OWNER_REPO is unset. Aborting."; exit 1; }
+
 WORK_DIR="$HOME/prism-validation/$SLUG"
 
 if [ -d "$WORK_DIR/.git" ]; then
@@ -129,6 +133,10 @@ else
   gh repo clone "$OWNER_REPO" "$SLUG" -- --branch prism-validation --single-branch --depth 50
   cd "$SLUG"
 fi
+
+# Per-repo identity (NOT --global) — never overwrite the teammate's ~/.gitconfig.
+git config --local user.name  "$GH_NAME"
+git config --local user.email "$GH_EMAIL"
 ```
 
 The shallow, single-branch clone is intentional — `prism-validation` is the only branch we ever care about, and a 50-commit depth is plenty for blame/log lookups in step 5.
@@ -218,7 +226,7 @@ Set `RECIPE_NAME` to the chosen recipe's name (e.g., `stale-todo`).
 2. Filter out anything matching the never-modify list above.
 3. Filter out high-traffic files using the 30-day commit count rule.
 4. Filter out files that don't structurally fit the chosen recipe (e.g., the `vague-log-message` recipe needs a file with an existing logger field; `redundant-xml-doc` needs a public method).
-5. From what remains, pick one.
+5. From what remains, pick one. **Capture its path (relative to the repo root) into the `TARGET_FILE` shell variable** — step 7 stages exactly this file.
 6. If no file fits, rotate to the next recipe: `RECIPE_INDEX=$(( (RECIPE_INDEX + 1) % 5 ))`, **then re-derive `RECIPE_NAME` from the catalog table at the new index** (otherwise step 7 commits with a stale label), and retry. After 5 unsuccessful rotations, abort with a clear message.
 
 ### Apply the change
@@ -233,7 +241,10 @@ Make the change inline using your editing tools. Constraints:
 ## 7. Commit, push, open the PR
 
 ```bash
-git add -A
+# Stage exactly the file you edited — not "-A". This makes the diff
+# trivially predictable (it must match the recipe claim) and prevents
+# any stray temp file from sneaking into the commit.
+git add -- "$TARGET_FILE"
 git commit -m "validation: $RECIPE_NAME"
 git push -u origin "$FEATURE_BRANCH"
 
@@ -265,7 +276,7 @@ gh label create prism-validation \
   --description "Automated PRism validation harness — do not merge" \
   >/dev/null 2>&1 || true
 
-PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+PR_NUMBER=$(gh pr view "$FEATURE_BRANCH" --repo "$OWNER_REPO" --json number --jq '.number')
 gh pr edit "$PR_NUMBER" --repo "$OWNER_REPO" --add-label prism-validation >/dev/null
 ```
 

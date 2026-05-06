@@ -35,13 +35,12 @@ export MSYS_NO_PATHCONV=1                       # Git Bash on Windows only
 gh --version && git --version                   # exit with install hint if missing
 gh auth status                                  # gh auth login --web if not authed
                                                 # gh auth refresh -s repo,workflow,read:org if scope missing
-# Set git identity from gh user
+# Capture (don't apply) git-identity values. Step 4 sets these via --local
+# inside the cloned workspace, never overwriting the teammate's ~/.gitconfig.
 GH_LOGIN=$(gh api user --jq '.login')
 GH_NAME=$(gh api user --jq '.name // .login')
 GH_EMAIL=$(gh api "users/$GH_LOGIN" --jq '.email // empty')
 [ -z "$GH_EMAIL" ] && GH_EMAIL="${GH_LOGIN}@users.noreply.github.com"
-git config --global user.name "$GH_NAME"
-git config --global user.email "$GH_EMAIL"
 # Confirm read access. On 404 the most common cause is SAML/SSO not authorized for the org;
 # the message tells the user how to recover. Do NOT swallow this error silently.
 gh api "repos/$OWNER_REPO" --jq '.full_name' >/dev/null 2>&1 || {
@@ -64,6 +63,7 @@ PR_NUMBER=$(gh pr list \
   --repo "$OWNER_REPO" \
   --label prism-validation \
   --state open \
+  --limit 200 \
   --json number,updatedAt \
   --jq 'sort_by(.updatedAt) | reverse | .[0].number // empty')
 ```
@@ -74,12 +74,11 @@ Possible outcomes:
 - **One found**: use it.
 - **Multiple found**: `gh pr list` already returned them sorted; use the most recently updated one. Print the full list of candidate URLs as informational output before proceeding, so the user can see what was skipped.
 
-Capture the PR's head branch and SHA:
+Capture the PR's head branch and URL using `gh`'s built-in `--jq` (no external `jq` binary needed):
 
 ```bash
-PR_INFO=$(gh pr view "$PR_NUMBER" --repo "$OWNER_REPO" --json headRefName,headRefOid,url,author)
-HEAD_BRANCH=$(echo "$PR_INFO" | jq -r '.headRefName')
-PR_URL=$(echo "$PR_INFO" | jq -r '.url')
+HEAD_BRANCH=$(gh pr view "$PR_NUMBER" --repo "$OWNER_REPO" --json headRefName --jq '.headRefName')
+PR_URL=$(gh pr view "$PR_NUMBER" --repo "$OWNER_REPO" --json url --jq '.url')
 ```
 
 ---
@@ -87,6 +86,11 @@ PR_URL=$(echo "$PR_INFO" | jq -r '.url')
 ## 4. Workspace + checkout the PR's head branch
 
 ```bash
+# Hard guards: never run rm -rf with a partially-bound path.
+[ -z "$SLUG" ]       && { echo "SLUG is unset. Aborting."; exit 1; }
+[ -z "$OWNER_REPO" ] && { echo "OWNER_REPO is unset. Aborting."; exit 1; }
+[ -z "$HEAD_BRANCH" ] && { echo "HEAD_BRANCH is unset. Aborting."; exit 1; }
+
 WORK_DIR="$HOME/prism-validation/$SLUG"
 
 if [ -d "$WORK_DIR/.git" ]; then
@@ -98,6 +102,10 @@ else
   gh repo clone "$OWNER_REPO" "$SLUG" -- --branch "$HEAD_BRANCH" --single-branch --depth 50
   cd "$SLUG"
 fi
+
+# Per-repo identity (NOT --global) — never overwrite the teammate's ~/.gitconfig.
+git config --local user.name  "$GH_NAME"
+git config --local user.email "$GH_EMAIL"
 
 # Use an explicit refspec — works even if the existing clone is single-branch
 # on a different branch (common when the workspace was created by open-validation-pr).
@@ -175,10 +183,11 @@ If a comment is too vague to act on confidently (e.g., "this could be cleaner"),
 
 If after filtering and skipping there's **nothing left to fix**, exit cleanly with the no-op message from step 5.
 
-Stage and commit:
+Stage and commit. Before staging, run `git status` and verify the working tree only contains the file(s) you actually edited — no temp files, no accidental untracked artifacts:
 
 ```bash
-git add -A
+git status   # eyeball: modified files match the comments you addressed
+git add -A   # only after the status check looks right
 git commit -m "validation: address review feedback [cloud-env]"
 NEW_SHA=$(git rev-parse HEAD)
 ```

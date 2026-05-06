@@ -28,7 +28,7 @@ Resolve to `OWNER_REPO`. If not provided, ask once.
 
 ## 2. Bootstrap
 
-Identical to the other two prompts:
+Similar to the other two prompts but trimmed: this prompt makes no commits, so no git identity setup is needed.
 
 > **Shell:** all commands below assume POSIX shell. On Windows, use the Bash tool (Git Bash), not PowerShell.
 
@@ -40,7 +40,13 @@ gh auth status
 # gh auth refresh -s repo,workflow,read:org           # if scope missing
 
 GH_LOGIN=$(gh api user --jq '.login')
-gh api "repos/$OWNER_REPO" --jq '.full_name' >/dev/null
+
+# Confirm read access. Same SSO-recovery pattern as the other two prompts.
+gh api "repos/$OWNER_REPO" --jq '.full_name' >/dev/null 2>&1 || {
+  echo "Cannot access $OWNER_REPO. If you're an org member, your GitHub PAT likely needs SAML/SSO authorization for that org."
+  echo "Visit https://github.com/orgs/${OWNER_REPO%%/*}/sso, authorize the listed token, and re-run this prompt."
+  exit 1
+}
 ```
 
 Save `GH_LOGIN` for the dedup logic in step 4.
@@ -56,6 +62,7 @@ PR_NUMBER=$(gh pr list \
   --repo "$OWNER_REPO" \
   --label prism-validation \
   --state open \
+  --limit 200 \
   --json number,updatedAt \
   --jq 'sort_by(.updatedAt) | reverse | .[0].number // empty')
 ```
@@ -66,12 +73,11 @@ Outcomes:
 - One found → use it.
 - Multiple → pick the most recently updated; log all candidate URLs.
 
-Capture the PR's head SHA (you'll need it for the review payload):
+Capture the PR's head SHA (you'll need it for the review payload). Use `gh`'s built-in `--jq` (no external `jq` binary required):
 
 ```bash
-PR_INFO=$(gh pr view "$PR_NUMBER" --repo "$OWNER_REPO" --json headRefOid,url)
-HEAD_SHA=$(echo "$PR_INFO" | jq -r '.headRefOid')
-PR_URL=$(echo "$PR_INFO" | jq -r '.url')
+HEAD_SHA=$(gh pr view "$PR_NUMBER" --repo "$OWNER_REPO" --json headRefOid --jq '.headRefOid')
+PR_URL=$(gh pr view "$PR_NUMBER" --repo "$OWNER_REPO" --json url --jq '.url')
 ```
 
 ---
@@ -156,11 +162,13 @@ PAYLOAD_FILE=$(mktemp)
 # above only creates an empty file; POSTing it without writing the JSON
 # yields a 422.)
 
-REVIEW_RESULT=$(gh api -X POST "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" \
-  --input "$PAYLOAD_FILE")
+REVIEW_ID=$(gh api -X POST "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" \
+  --input "$PAYLOAD_FILE" \
+  --jq '.id')
 
-REVIEW_ID=$(echo "$REVIEW_RESULT" | jq -r '.id')
-REVIEW_HTML_URL=$(echo "$REVIEW_RESULT" | jq -r '.html_url // .pull_request_url')
+# Reuse the PR URL captured in step 3 — gh api -X POST already consumed the
+# response above. (Alternative: re-query via `gh pr view --json url --jq '.url'`.)
+REVIEW_HTML_URL="$PR_URL"
 ```
 
 If the API call fails:

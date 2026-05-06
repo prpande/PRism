@@ -99,7 +99,7 @@ All three prompts can be run repeatedly. Each `open-validation-pr` run produces 
 Validation PRs accumulate. Close them in bulk with one command per repo:
 
 ```bash
-gh pr list --repo <owner>/<repo> --label prism-validation --state open --json number --jq '.[].number' \
+gh pr list --repo <owner>/<repo> --label prism-validation --state open --limit 200 --json number --jq '.[].number' \
   | xargs -I {} gh pr close --repo <owner>/<repo> --delete-branch {}
 ```
 
