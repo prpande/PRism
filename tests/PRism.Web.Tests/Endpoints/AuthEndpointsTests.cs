@@ -185,6 +185,10 @@ public class AuthEndpointsTests
         // Token now committed.
         var stateResp = await client.GetFromJsonAsync<AuthStateResponse>(new Uri("/api/auth/state", UriKind.Relative));
         stateResp!.HasToken.Should().BeTrue();
+
+        // The validated login must be cached for the awaiting-author inbox query.
+        var viewerLogin = factory.Services.GetRequiredService<IViewerLoginProvider>();
+        viewerLogin.Get().Should().Be("octocat");
     }
 
     [Fact]

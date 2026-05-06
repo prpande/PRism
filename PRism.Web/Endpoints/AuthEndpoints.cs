@@ -58,14 +58,16 @@ internal static class AuthEndpoints
 
             if (result.Warning != AuthValidationWarning.None)
             {
-                // Soft warning: do NOT commit. Frontend will collect user confirmation
-                // and call POST /api/auth/connect/commit to finalize.
+                // Soft warning: do NOT commit. Stash the validated login so the eventual
+                // commit endpoint can populate the IViewerLoginProvider cache. Frontend
+                // collects user confirmation and calls POST /api/auth/connect/commit.
+                await tokens.SetTransientLoginAsync(result.Login ?? "", ct).ConfigureAwait(false);
                 return Results.Ok(new
                 {
                     ok = true,
                     login = result.Login,
                     host = config.Current.Github.Host,
-                    warning = "no-repos-selected",
+                    warning = WarningToWire(result.Warning),
                 });
             }
 
@@ -76,8 +78,10 @@ internal static class AuthEndpoints
             return Results.Ok(new { ok = true, login = result.Login, host = config.Current.Github.Host });
         });
 
-        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, CancellationToken ct) =>
         {
+            // Read the validated login BEFORE CommitAsync clears it.
+            var login = await tokens.ReadTransientLoginAsync(ct).ConfigureAwait(false);
             try
             {
                 await tokens.CommitAsync(ct).ConfigureAwait(false);
@@ -90,6 +94,7 @@ internal static class AuthEndpoints
 
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+            if (!string.IsNullOrEmpty(login)) viewerLogin.Set(login);
             return Results.Ok(new { ok = true, host = config.Current.Github.Host });
         });
 
@@ -125,4 +130,13 @@ internal static class AuthEndpoints
 
         return app;
     }
+
+    // Single source of truth for AuthValidationWarning → wire string mapping.
+    // Adding a new enum member without extending this switch is a compile error.
+    private static string WarningToWire(AuthValidationWarning warning) => warning switch
+    {
+        AuthValidationWarning.NoReposSelected => "no-repos-selected",
+        AuthValidationWarning.None => throw new InvalidOperationException("WarningToWire called with None — caller should not serialize a non-warning."),
+        _ => throw new InvalidOperationException($"Unmapped AuthValidationWarning value: {warning}"),
+    };
 }
