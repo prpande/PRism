@@ -37,7 +37,7 @@ N:Octokit;Octokit namespace is banned in this project per spec/02-architecture.m
 
 `N:Octokit` bans the namespace and all sub-namespaces; any `Octokit.*` type triggers `RS0030`.
 
-**Wiring** — `Directory.Build.props` adds the analyzer + banned-symbols file conditionally on an MSBuild property `<BanOctokit>true</BanOctokit>` (default true). `PRism.GitHub.csproj` and `PRism.GitHub.Tests.csproj` opt out by setting `<BanOctokit>false</BanOctokit>`.
+**Wiring** — `Directory.Build.props` adds the analyzer + banned-symbols file conditionally on an MSBuild property `<BanOctokit>true</BanOctokit>` (default true). `PRism.GitHub.csproj` and `PRism.GitHub.Tests.csproj` opt out by setting `<BanOctokit>false</BanOctokit>`. The `PackageReference` must specify `IncludeAssets="analyzers; build; buildtransitive"` explicitly when added via `Directory.Build.props` under Central Package Management — without it the analyzer DLL is referenced but never handed to the compiler's `Analyzer` list (verified during PR #10 — `dotnet msbuild -t:_GetCompilerArguments -v:diag` shows the difference). The version pin is `Microsoft.CodeAnalysis.BannedApiAnalyzers` 4.14.0; an older 3.3.x line was tested first and loaded the analyzer but appeared to silently no-op symbol matching on the .NET 10 toolchain in this repo.
 
 **Project scope:**
 
@@ -112,7 +112,7 @@ Estimated `Program.cs` LoC after: ≤ 110, down from 282.
 | `PRism.GitHub` | `ServiceCollectionExtensions.cs` | `AddPrismGitHub()` — named `github` `HttpClient`, `IReviewService` factory, the four `PRism.GitHub/Inbox/` impls (`ICiFailingDetector`, `ISectionQueryRunner`, `IPrEnricher`, `IAwaitingAuthorFilter`) |
 | `PRism.AI.Contracts` | `ServiceCollectionExtensions.cs` | `AddNoopSeams()` — 9 Noop singletons |
 | `PRism.AI.Placeholder` | `ServiceCollectionExtensions.cs` | `AddPlaceholderSeams()` — 9 Placeholder singletons |
-| `PRism.Web/Composition/ServiceCollectionExtensions.cs` | new | `AddPrismAi()` (calls `AddNoopSeams` + `AddPlaceholderSeams` + registers `IAiSeamSelector` with both dicts), `AddPrismWeb()` (`SseChannel`, `ConfigureHttpJsonOptions`, `AddProblemDetails`) |
+| `PRism.Web` | `Composition/ServiceCollectionExtensions.cs` | `AddPrismAi()` (calls `AddNoopSeams` + `AddPlaceholderSeams` + registers `IAiSeamSelector` with both dicts), `AddPrismWeb()` (`SseChannel`, `ConfigureHttpJsonOptions`, `AddProblemDetails`) |
 
 Every `AddPrism*` returns `IServiceCollection` for chaining (standard pattern).
 
@@ -154,8 +154,10 @@ This is the riskiest of the three PRs because it's the only one that *touches wi
 **Sweep first** — enumerate every anonymous wire shape:
 
 ```bash
-grep -nE "Results\.(Ok|BadRequest|Conflict|NotFound|Problem)\(\s*new \{" PRism.Web/Endpoints/*.cs
+grep -nE "Results\.(Ok|BadRequest|Conflict|NotFound|Problem)\([[:space:]]*new \{" PRism.Web/Endpoints/*.cs
 ```
+
+(Use POSIX `[[:space:]]*` rather than `\s*` — `-E` / ERE on macOS BSD `grep` does not interpret `\s`, and would silently match a literal `s` and miss every shape.)
 
 Plus locals (`var resp = new { … }; return Results.Ok(resp);`). The output of the sweep is the work list — every match becomes a named record.
 
@@ -191,7 +193,7 @@ This is the only PR of the three where TDD produces a permanent suite test. The 
 - **Reserved-word property names.** `mismatch = new { old = ..., @new = ... }` (in `/api/auth/state`) becomes `record HostMismatch(string Old, string New)` with `[JsonPropertyName("new")]` on the `New` property to preserve the wire form.
 - **Nested anonymous types** (the `hostMismatch` example) need their own nested record.
 - **`Results.Problem` calls** use ASP.NET Core's `ProblemDetails` shape. Already typed. Sweep should distinguish; those don't need new records.
-- **Some shapes vary in field presence.** `Results.Ok(new { ok = false, error = errorName, detail = result.ErrorDetail })` — `detail` is sometimes null. Record fields default to `null` for missing values; serialization with `JsonIgnoreCondition.WhenWritingNull` (Web's existing JsonOptions) keeps the wire shape identical to the anonymous type's null-omission behavior. **Verify this is on**; if not, set it on the record properties via attributes.
+- **`null` fields and wire consistency.** `Results.Ok(new { ok = false, error = errorName, detail = result.ErrorDetail })` — `detail` is sometimes null. **Anonymous types in `System.Text.Json` do *not* omit null properties** — they serialize as explicit `"detail": null`. Records do the same by default. Both shapes are wire-identical out of the box. If you decide null keys should be omitted instead, that is a deliberate wire-format change: add `[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]` per property (or set `DefaultIgnoreCondition` on the options). **Before deciding either way:** verify the current wire shape by hitting the endpoint and inspecting the response, and confirm the frontend handles whichever variant you choose.
 - **Frontend types drift check.** After records land, walk `frontend/src/types/api.ts` against the new records. Document any drift in PR description; fix by hand.
 
 **Files touched:**
@@ -201,7 +203,7 @@ This is the only PR of the three where TDD produces a permanent suite test. The 
 - Possibly modified: `frontend/src/types/api.ts` for any drift.
 
 **Acceptance criteria:**
-1. The sweep `grep -nE "Results\.(Ok|BadRequest|Conflict|NotFound)\(\s*new \{" PRism.Web/Endpoints/*.cs` returns zero matches.
+1. The sweep `grep -nE "Results\.(Ok|BadRequest|Conflict|NotFound)\([[:space:]]*new \{" PRism.Web/Endpoints/*.cs` returns zero matches. (Excludes `Results.Problem` calls intentionally — those use ASP.NET Core's `ProblemDetails` and are already typed; see Gotchas below.)
 2. Every route × response code is covered by a golden-file test.
 3. All golden-file tests pass after canonicalized-JSON comparison.
 4. `frontend/src/types/api.ts` reviewed; PR description notes any drift.
@@ -212,7 +214,7 @@ This is the only PR of the three where TDD produces a permanent suite test. The 
 ### ADR-S4-1: Decompose `AppState` into typed sub-records
 
 - **What.** Replace the flat `AppState` record with `AppState { InboxState Inbox; PrSessionsState Reviews; AiState Ai; }` (placeholder `AiState` pre-allocated for P0+). Each sub-state owns its own migration.
-- **Why.** `state.json` grows linearly with features. Without sub-domain organization, by P0+ it becomes a 30+ property record carrying inbox bookkeeping, per-session draft state, idempotency keys (`pendingReviewId`, per-thread `threadId`, per-reply `replyCommentId`), AI session state (`aiState.repoCloneMap`, `aiState.chatSessions[]`, `aiState.alwaysAllowRepoAccess`), token-usage counters, etc. The spec's promised migration policy (`docs/spec/02-architecture.md` § "State schema migration") attaches to the top-level shape; sub-records let migration policies attach per-domain.
+- **Why.** `state.json` grows linearly with features. Without sub-domain organization, by P0+ it becomes a 30+ property record carrying inbox bookkeeping, per-session draft state, idempotency keys (`pendingReviewId`, per-thread `threadId`, per-reply `replyCommentId`), AI session state (`aiState.repoCloneMap`, `aiState.chatSessions[]`, `aiState.alwaysAllowRepoAccess`), token-usage counters, etc. The spec's promised migration policy (`docs/spec/02-architecture.md` § "Schema migration policy") attaches to the top-level shape; sub-records let migration policies attach per-domain.
 - **When.** Before S4 (drafts) starts. S4 is the first slice where state mutations originate inside the app — fixing the shape under the slice that introduces the heaviest writes is much cheaper than retrofitting later.
 - **Non-decisions.** The exact field assignment to each sub-record. Done at slice time against actual code.
 - **Pointers.** `docs/spec/02-architecture.md` § "State schema (PoC)"; `PRism.Core/State/AppState.cs`.
@@ -289,7 +291,7 @@ Decide and document where each P0+ project lands *before* its first implementati
 
 ### Convention-1: State machines live in `<Feature>/Pipeline/` sub-folders
 
-- **What.** Each significant state machine — S4 stale-draft reconciliation (the seven-row matrix per `docs/spec/03-poc-features.md` § 5), S5 submit-pipeline retry, P2-2 chat state-1↔state-2 with fresh-session injection — lives in its own `<Feature>/Pipeline/` (or `<Feature>/StateMachine/`) sub-folder containing one entry-point class plus a state-transition test fixture. The orchestrator class for the feature delegates to the state machine; it does not embed the transition logic.
+- **What.** Each significant state machine — S4 stale-draft reconciliation (the seven-row matrix per `docs/spec/03-poc-features.md` § 5), S5 submit-pipeline retry, P2-2 chat state-1↔state-2 with fresh-session injection — lives in its own `<Feature>/Pipeline/` sub-folder containing one entry-point class plus a state-transition test fixture. The orchestrator class for the feature delegates to the state machine; it does not embed the transition logic. (`Pipeline/` is chosen over `StateMachine/` because it is more general — state machines, transition tables, and the surrounding orchestration can all live there without the folder name overfitting to "state machine".)
 - **Why.** State machines grow tendrils. Without a fixed home, they melt into the surrounding orchestrator and become indistinguishable from the orchestration code. A fixed convention localizes the complexity and makes the transition table the unit-under-test instead of the orchestrator.
 - **When.** Adopt before the first state machine lands (S4 stale-draft reconciliation). The convention does not require any retroactive refactor of existing code.
 - **Pointers.** `docs/spec/03-poc-features.md` § 5 (stale-draft reconciliation); `docs/spec/03-poc-features.md` § 6 (submit pipeline retry); `docs/backlog/03-P2-extended-ai.md` § P2-2 (chat sessions).
