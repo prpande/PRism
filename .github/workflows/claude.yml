@@ -30,6 +30,16 @@ jobs:
         with:
           fetch-depth: 1
 
+      # Workaround for anthropics/claude-code-action#1254: the action's
+      # native installer reports success but leaves no binary at
+      # ~/.local/bin/claude on some runners. Install explicitly here so
+      # the binary is present before the action's runtime checks fire.
+      # Drop this step once the upstream regression is resolved.
+      - name: Pre-install Claude Code CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
