@@ -495,7 +495,8 @@ public sealed class InboxRefreshOrchestratorTests
             LastViewedHeadSha: "abc",
             LastSeenCommentId: "12345",
             PendingReviewId: null,
-            PendingReviewCommitOid: null);
+            PendingReviewCommitOid: null,
+            ViewedFiles: new Dictionary<string, string>());
         var appState = AppState.Default with
         {
             ReviewSessions = new Dictionary<string, ReviewSessionState>

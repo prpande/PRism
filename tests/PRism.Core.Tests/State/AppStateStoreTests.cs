@@ -8,13 +8,13 @@ namespace PRism.Core.Tests.State;
 public class AppStateStoreTests
 {
     [Fact]
-    public async Task LoadAsync_creates_default_v1_state_when_file_missing()
+    public async Task LoadAsync_creates_default_state_when_file_missing()
     {
         using var dir = new TempDataDir();
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(1);
+        state.Version.Should().Be(2);
         state.ReviewSessions.Should().BeEmpty();
         state.LastConfiguredGithubHost.Should().BeNull();
         File.Exists(Path.Combine(dir.Path, "state.json")).Should().BeTrue();
@@ -33,18 +33,6 @@ public class AppStateStoreTests
     }
 
     [Fact]
-    public async Task LoadAsync_refuses_unknown_version()
-    {
-        using var dir = new TempDataDir();
-        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), "{\"version\":2}");
-
-        using var store = new AppStateStore(dir.Path);
-        await FluentActions.Invoking(() => store.LoadAsync(CancellationToken.None))
-            .Should().ThrowAsync<UnsupportedStateVersionException>()
-            .Where(e => e.Version == 2);
-    }
-
-    [Fact]
     public async Task LoadAsync_quarantines_malformed_json_and_creates_fresh()
     {
         using var dir = new TempDataDir();
@@ -54,7 +42,7 @@ public class AppStateStoreTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(1);
+        state.Version.Should().Be(2);
         Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().HaveCount(1);
     }
 
