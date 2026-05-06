@@ -74,6 +74,23 @@ internal static class AuthEndpoints
             return Results.Ok(new { ok = true, login = result.Login, host = config.Current.Github.Host });
         });
 
+        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, CancellationToken ct) =>
+        {
+            try
+            {
+                await tokens.CommitAsync(ct).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException)
+            {
+                // No transient pending — process restart, or commit called twice.
+                return Results.Conflict(new { ok = false, error = "no-pending-token" });
+            }
+
+            var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
+            await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+            return Results.Ok(new { ok = true, host = config.Current.Github.Host });
+        });
+
         app.MapPost("/api/auth/host-change-resolution", async (HttpContext ctx, IAppStateStore stateStore, IConfigStore config, IHostApplicationLifetime lifetime, CancellationToken ct) =>
         {
             JsonDocument doc;
