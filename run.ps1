@@ -1,6 +1,31 @@
 #!/usr/bin/env pwsh
 # Build the frontend into PRism.Web/wwwroot, then launch PRism.Web.
 # Pass-through args go to `dotnet run` (e.g. `./run.ps1 --no-browser`).
+#
+# -Reset selects an optional pre-launch local-state cleanup. Modes:
+#   None  (default) — no cleanup; identical to running without the flag.
+#   Token           — delete <dataDir>\PRism.tokens.cache. Forces Setup on next launch.
+#   Auth            — set state.json.lastConfiguredGithubHost to a sentinel host
+#                     (https://prism-reset-stub.invalid) so the next launch
+#                     surfaces the host-change-resolution modal. Token cache
+#                     is untouched.
+#   Full            — wipe the entire <dataDir>. True first-launch reset.
+#                     Caveat: on macOS / Linux the OS keychain entry survives;
+#                     see the spec § 7 for the manual cleanup commands.
+# See docs/superpowers/specs/2026-05-06-run-script-reset-design.md for rationale.
+#
+# Cross-platform note: on macOS / Linux the PAT lives in the OS keychain
+# (Keychain / libsecret), not the cache file. -Reset Token deletes the file
+# but does NOT clear the keychain entry on those platforms. The deferred
+# in-app "Replace token" feature (S6) reuses TokenStore.ClearAsync, which
+# is keychain-aware on every platform.
+param(
+    [ValidateSet('None', 'Token', 'Auth', 'Full')]
+    [string]$Reset = 'None',
+
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$DotnetArgs
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -17,7 +42,7 @@ try {
         Pop-Location
     }
 
-    dotnet run --project PRism.Web @args
+    dotnet run --project PRism.Web @DotnetArgs
 } finally {
     Pop-Location
 }
