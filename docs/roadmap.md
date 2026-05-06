@@ -66,6 +66,7 @@ Full design and rationale: [`superpowers/specs/2026-05-06-architectural-readines
 | **Now** | Banned-API analyzer (no `Octokit.*` in `PRism.Core` / `PRism.Web` / `PRism.AI.*`) | PR 1 |
 | **Now** | DI extension methods per project (`AddPrismCore` / `AddPrismGitHub` / `AddPrismAi` / `AddPrismWeb`) | PR 2 |
 | **Now** | Named records for all wire shapes (replace inline `new { ok = ... }` in endpoint files) | PR 3 |
+| **In S3** | `SessionTokenMiddleware` (enforces `X-PRism-Session` per `docs/spec/02-architecture.md` § Cross-origin defense) + tightened `OriginCheckMiddleware` (rejects empty Origin on POST/PUT/PATCH/DELETE). Closes the spec-mandated security baseline gap; lands alongside S3's first batch of state-mutating endpoints. | open — design in `superpowers/specs/2026-05-06-s3-pr-detail-read-design.md` § 8 |
 | **Before S4** | Decompose `AppState` into typed sub-records (`InboxState` / `PrSessionsState` / placeholder `AiState`) | open — considered for S3 pull-forward; rejected so the wrap rename can land alongside S4's drafts/replies/reconciliation field additions in a single migration |
 | **Before S4** | Schema-versioned migration support in `AppStateStore` | open — S3 ships a single inline `MigrateV1ToV2` helper; framework extracts when S4's migration #2 motivates it |
 | **Before S5** | Split `IReviewService` into capability sub-interfaces (`IReviewAuth` / `IPrDiscovery` / `IPrReader` / `IReviewSubmitter`) | open |
