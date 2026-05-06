@@ -4,7 +4,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider, ToastContainer } from './components/Toast';
 import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { SetupPage } from './pages/SetupPage';
-import { InboxShellPage } from './pages/InboxShellPage';
+import { InboxPage } from './pages/InboxPage';
+import { S3StubPrPage } from './pages/S3StubPrPage';
 import { useAuth } from './hooks/useAuth';
 import { apiClient } from './api/client';
 
@@ -38,11 +39,15 @@ export function App() {
         <Header />
         <Routes>
           <Route path="/setup" element={<SetupPage />} />
-          <Route path="/inbox-shell" element={<InboxShellPage />} />
           <Route
-            path="*"
-            element={<Navigate to={authState.hasToken ? '/inbox-shell' : '/setup'} replace />}
+            path="/"
+            element={authState.hasToken ? <InboxPage /> : <Navigate to="/setup" replace />}
           />
+          <Route
+            path="/pr/:owner/:repo/:number"
+            element={authState.hasToken ? <S3StubPrPage /> : <Navigate to="/setup" replace />}
+          />
+          <Route path="*" element={<Navigate to={authState.hasToken ? '/' : '/setup'} replace />} />
         </Routes>
         <ToastContainer />
       </ToastProvider>

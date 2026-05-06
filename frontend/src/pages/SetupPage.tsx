@@ -16,7 +16,7 @@ export function SetupPage() {
     setError(undefined);
     try {
       const result = await apiClient.post<ConnectResponse>('/api/auth/connect', { pat });
-      if (result.ok) navigate('/inbox-shell');
+      if (result.ok) navigate('/');
       else setError(result.detail ?? result.error ?? 'Validation failed.');
     } catch (e) {
       setError((e as Error).message);

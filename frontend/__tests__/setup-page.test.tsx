@@ -16,7 +16,7 @@ function renderRouted() {
     <MemoryRouter initialEntries={['/setup']}>
       <Routes>
         <Route path="/setup" element={<SetupPage />} />
-        <Route path="/inbox-shell" element={<div>InboxShellMock</div>} />
+        <Route path="/" element={<div>InboxMock</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -31,7 +31,7 @@ describe('SetupPage', () => {
     );
   });
 
-  it('routes to /inbox-shell on successful PAT submission', async () => {
+  it('routes to / (InboxPage) on successful PAT submission', async () => {
     server.use(
       http.post('/api/auth/connect', () =>
         HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' }),
@@ -40,7 +40,7 @@ describe('SetupPage', () => {
     renderRouted();
     await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_test');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
-    expect(await screen.findByText('InboxShellMock')).toBeInTheDocument();
+    expect(await screen.findByText('InboxMock')).toBeInTheDocument();
   });
 
   it('renders the error pill on validation failure', async () => {
