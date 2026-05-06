@@ -57,6 +57,13 @@ public sealed class GitHubReviewService : IReviewService
                 // succeeded — fail open so a probe anomaly doesn't reject a valid token.
                 return primary;
             }
+            catch (JsonException)
+            {
+                // Probe returned 200 with non-JSON body (captive portal, broken proxy). Same
+                // fail-open intent as the non-5xx HttpRequestException case above — primary
+                // auth already succeeded; don't reject a valid token over a probe anomaly.
+                return primary;
+            }
         }
         catch (HttpRequestException ex) when (ex.StatusCode is { } code && (int)code >= 500)
         {
@@ -128,6 +135,16 @@ public sealed class GitHubReviewService : IReviewService
             // 200 with HTML or otherwise malformed JSON. Surface as ServerError, not 500.
             return new AuthValidationResult(false, null, scopes, AuthValidationError.ServerError,
                 "GitHub returned an unparseable response body.");
+        }
+
+        if (string.IsNullOrEmpty(login))
+        {
+            // 200 with valid JSON but no `login` field — same shape as the JsonException path
+            // above (an intermediary stripped or rewrote the body). Treating this as Ok=true
+            // would commit a token but leave IViewerLoginProvider empty, breaking the
+            // awaiting-author inbox section.
+            return new AuthValidationResult(false, null, scopes, AuthValidationError.ServerError,
+                "GitHub returned a response with no login field.");
         }
 
         return new AuthValidationResult(true, login, scopes, AuthValidationError.None, null);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetupForm } from '../components/Setup/SetupForm';
 import { NoReposWarningModal } from '../components/Setup/NoReposWarningModal';
@@ -11,6 +11,10 @@ export function SetupPage() {
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
+  // True if the user clicked "Edit token scope" while a commit was in flight.
+  // The commit can't be cancelled server-side, but we MUST suppress the
+  // post-commit navigate('/') so the user's "Edit" intent is honored.
+  const editedDuringCommitRef = useRef(false);
   const navigate = useNavigate();
 
   const onSubmit = async (pat: string) => {
@@ -36,9 +40,14 @@ export function SetupPage() {
   };
 
   const onContinueAnyway = async () => {
+    editedDuringCommitRef.current = false;
     setBusy(true);
     try {
       await apiClient.post<{ ok: boolean }>('/api/auth/connect/commit');
+      if (editedDuringCommitRef.current) {
+        // User clicked Edit mid-flight — respect that intent over the late navigate.
+        return;
+      }
       window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
       navigate('/');
     } catch (e) {
@@ -55,7 +64,10 @@ export function SetupPage() {
     }
   };
 
-  const onEdit = () => setShowWarning(false);
+  const onEdit = () => {
+    editedDuringCommitRef.current = true;
+    setShowWarning(false);
+  };
 
   if (authState === null) return <div aria-busy="true">Loading…</div>;
 

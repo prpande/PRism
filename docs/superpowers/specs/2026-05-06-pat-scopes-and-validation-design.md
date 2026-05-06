@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-06
 **Slice:** patch on top of S0+S1 foundations-and-setup
-**Status:** brainstormed; awaiting plan
+**Status:** implemented in PR #5; plan at `docs/superpowers/plans/2026-05-06-pat-scopes-and-validation.md`
 
 ## Context
 
@@ -118,7 +118,7 @@ Commit statuses     Read
 
 A muted line below: *"Metadata: Read is auto-included by GitHub. For Repository access, choose All repositories or Select repositories."*
 
-A muted footnote below the permissions block: *"Already have a classic PAT? It needs the `repo` scope (and `read:org` if you're in a SAML/SSO-enforced org)."* The `repo` and `read:org` strings are inline `<code>`, not pills.
+A muted footnote below the permissions block: *"Already have a classic PAT? It needs the `repo`, `read:user`, and `read:org` scopes."* All three names are inline `<code>`, not pills, and match the validator's `RequiredScopes`.
 
 The `ScopePill` component is no longer used on the primary path. It is preserved for the classic footnote inline-code rendering pattern (or removed if the footnote uses a plain `<code>` element — implementation choice).
 

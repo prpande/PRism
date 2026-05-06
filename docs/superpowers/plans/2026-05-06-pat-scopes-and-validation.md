@@ -837,8 +837,8 @@ export function SetupForm({ host, onSubmit, error, busy }: Props) {
           <em> All repositories</em> or <em>Select repositories</em>.
         </p>
         <p className={styles.footnote}>
-          Already have a classic PAT? It needs the <code>repo</code> scope (and{' '}
-          <code>read:org</code> if you&apos;re in a SAML/SSO-enforced org).
+          Already have a classic PAT? It needs the <code>repo</code>, <code>read:user</code>,
+          and <code>read:org</code> scopes.
         </p>
       </div>
       <div>
@@ -1305,7 +1305,7 @@ Find the Setup section (around line 24). The current text mentions classic-style
 
   Metadata: Read is auto-included by GitHub. For Repository access, the user picks "All repositories" or "Select repositories" (the public-only mode does not expose private repos PRism needs).
 
-  A muted footnote covers users with an existing classic PAT: *"Already have a classic PAT? It needs the `repo` scope (and `read:org` if you're in a SAML/SSO-enforced org)."*
+  A muted footnote covers users with an existing classic PAT: *"Already have a classic PAT? It needs the `repo`, `read:user`, and `read:org` scopes."* (Matches `RequiredScopes`; mismatch surfaces as `InsufficientScopes`.)
 ```
 
 Find the validator behavior text (around line 28 — the existing line about probing search). Confirm the wording matches: *"On 200: backend then probes `GET /search/issues?q=is:pr+author:@me&per_page=1` and `GET /search/issues?q=is:pr+review-requested:@me&per_page=1` to detect the fine-grained-PAT-with-no-repos-selected failure mode. If both probes return zero results, surface the soft warning before navigation; otherwise commit the token immediately."* (Edit only if the existing text predates this design — leave alone if already accurate.)

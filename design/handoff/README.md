@@ -117,7 +117,7 @@ First-run PAT connection. Centered card layout on a `--surface-0` page with a fa
 4. **Step 1** — numbered circle "1" + "Generate a token on GitHub"
    - External link button "Open the PAT page (fine-grained)"
    - "Required permissions" block listing four fine-grained permissions: Pull requests (Read and write), Contents (Read), Checks (Read), Commit statuses (Read). Metadata: Read note is auto-included.
-   - Muted classic-PAT footnote referencing the `repo` (and `read:org` for SSO orgs) scope.
+   - Muted classic-PAT footnote referencing the `repo`, `read:user`, and `read:org` scopes (matches the validator's `RequiredScopes`).
 5. **Step 2** — numbered circle "2" + "Paste it below"
    - Textarea with placeholder `ghp_… or github_pat_…`
    - Eye toggle (top-right of textarea) to mask/unmask

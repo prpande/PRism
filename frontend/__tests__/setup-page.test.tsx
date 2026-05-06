@@ -119,6 +119,50 @@ describe('SetupPage', () => {
     expect(commitCalled).toBe(true);
   });
 
+  it('Edit clicked during in-flight commit cancels navigation', async () => {
+    // The Edit button stays enabled during commit so the user can always retreat.
+    // If they click Edit while the commit is in-flight, the commit may still complete
+    // server-side (we can't cancel it), but the page must NOT navigate to / —
+    // navigating would override the user's stated intent to edit.
+    let releaseCommit: (() => void) | undefined;
+    const commitGate = new Promise<void>((resolve) => {
+      releaseCommit = resolve;
+    });
+    server.use(
+      http.post('/api/auth/connect', () =>
+        HttpResponse.json({
+          ok: true,
+          login: 'octocat',
+          host: 'https://github.com',
+          warning: 'no-repos-selected',
+        }),
+      ),
+      http.post('/api/auth/connect/commit', async () => {
+        await commitGate;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderRouted();
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'github_pat_zero');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+
+    // Click Continue anyway — kicks off the commit (gated, won't resolve yet).
+    await userEvent.click(await screen.findByRole('button', { name: /continue anyway/i }));
+    // While commit is in-flight, click Edit.
+    await userEvent.click(await screen.findByRole('button', { name: /edit token scope/i }));
+    // Now release the commit response.
+    releaseCommit!();
+
+    // Wait long enough for the commit's `.then(navigate)` to flush — give the
+    // route enough time to render InboxMock IF a (buggy) navigation fired.
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Navigation must NOT have occurred — Edit is the user's last expressed intent.
+    expect(screen.queryByText('InboxMock')).not.toBeInTheDocument();
+    // And the modal stays dismissed.
+    expect(screen.queryByText(/no repos selected/i)).not.toBeInTheDocument();
+  });
+
   it('Edit token scope dismisses the modal without commit', async () => {
     let commitCalled = false;
     server.use(

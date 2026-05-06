@@ -94,7 +94,9 @@ internal static class AuthEndpoints
 
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
-            if (!string.IsNullOrEmpty(login)) viewerLogin.Set(login);
+            // Mirror the connect-path Set to keep the cache in lockstep — empty string here
+            // overwrites any stale login from a prior session rather than leaving it intact.
+            viewerLogin.Set(login ?? "");
             return Results.Ok(new { ok = true, host = config.Current.Github.Host });
         });
 
@@ -132,7 +134,12 @@ internal static class AuthEndpoints
     }
 
     // Single source of truth for AuthValidationWarning → wire string mapping.
-    // Adding a new enum member without extending this switch is a compile error.
+    // Adding a new named enum member without extending this switch trips the compiler's
+    // non-exhaustive-switch diagnostic (CS8509/CS8524, treated as error in this project).
+    // The `_ =>` arm is required to satisfy CS8524 for unnamed cast values like
+    // `(AuthValidationWarning)999`, but in practice it cannot fire from in-codebase
+    // callers — those produce a compile error first. `None` is explicit because it IS
+    // a valid named value the compiler can't statically rule out at the call site.
     private static string WarningToWire(AuthValidationWarning warning) => warning switch
     {
         AuthValidationWarning.NoReposSelected => "no-repos-selected",
