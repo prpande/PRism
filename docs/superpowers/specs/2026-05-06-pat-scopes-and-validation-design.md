@@ -123,9 +123,9 @@ A muted footnote below the permissions block: *"Already have a classic PAT? It n
 The `ScopePill` component is no longer used on the primary path. It is preserved for the classic footnote inline-code rendering pattern (or removed if the footnote uses a plain `<code>` element — implementation choice).
 
 `SetupPage.tsx` handles the new `warning` field:
-- `result.ok && !result.warning` → navigate to `/inbox-shell` (current behavior).
+- `result.ok && !result.warning` → navigate to `/` (current behavior).
 - `result.ok && result.warning === "no-repos-selected"` → render a confirmation modal: *"Your token has no repos selected. You'll see an empty inbox until you add repos at GitHub. Continue anyway?"* with **Continue anyway** and **Edit token scope** actions.
-  - Continue → POST `/api/auth/connect/commit` → on success, navigate to `/inbox-shell`.
+  - Continue → POST `/api/auth/connect/commit` → on success, navigate to `/`.
   - Edit → close the modal, leave the user on Setup.
 - `!result.ok` → existing inline error (unchanged).
 

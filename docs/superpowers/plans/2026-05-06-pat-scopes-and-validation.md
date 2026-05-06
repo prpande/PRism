@@ -503,7 +503,7 @@ Expected: FAIL — current endpoint always commits on `Ok = true` and does not i
 In `PRism.Web/Endpoints/AuthEndpoints.cs`, replace the `MapPost("/api/auth/connect", ...)` handler with:
 
 ```csharp
-app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, CancellationToken ct) =>
+app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, CancellationToken ct) =>
 {
     JsonDocument doc;
     try
@@ -532,20 +532,23 @@ app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IRe
 
     if (result.Warning != AuthValidationWarning.None)
     {
-        // Soft warning: do NOT commit. Frontend will collect user confirmation
-        // and call POST /api/auth/connect/commit to finalize.
+        // Soft warning: do NOT commit. Stash the validated login so the eventual
+        // commit endpoint can populate IViewerLoginProvider. Frontend collects
+        // user confirmation and calls POST /api/auth/connect/commit to finalize.
+        await tokens.SetTransientLoginAsync(result.Login ?? "", ct).ConfigureAwait(false);
         return Results.Ok(new
         {
             ok = true,
             login = result.Login,
             host = config.Current.Github.Host,
-            warning = "no-repos-selected",
+            warning = WarningToWire(result.Warning),
         });
     }
 
     await tokens.CommitAsync(ct).ConfigureAwait(false);
     var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
     await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+    viewerLogin.Set(result.Login ?? "");
     return Results.Ok(new { ok = true, login = result.Login, host = config.Current.Github.Host });
 });
 ```
@@ -627,8 +630,10 @@ Expected: FAIL — endpoint does not exist; 404.
 In `PRism.Web/Endpoints/AuthEndpoints.cs`, add this map call inside `MapAuth` after the existing `MapPost("/api/auth/connect", ...)` and before `MapPost("/api/auth/host-change-resolution", ...)`:
 
 ```csharp
-app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, CancellationToken ct) =>
+app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, CancellationToken ct) =>
 {
+    // Read the validated login BEFORE CommitAsync clears the transient.
+    var login = await tokens.ReadTransientLoginAsync(ct).ConfigureAwait(false);
     try
     {
         await tokens.CommitAsync(ct).ConfigureAwait(false);
@@ -641,11 +646,14 @@ app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStor
 
     var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
     await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+    if (!string.IsNullOrEmpty(login)) viewerLogin.Set(login);
     return Results.Ok(new { ok = true, host = config.Current.Github.Host });
 });
 ```
 
 `TokenStore.CommitAsync` already throws `InvalidOperationException("No transient token to commit.")` when `_transient` is null — see `PRism.Core/Auth/TokenStore.cs:91`. The catch maps that to 409.
+
+The login is threaded through `ITokenStore` as a paired transient (`SetTransientLoginAsync` / `ReadTransientLoginAsync`). The connect endpoint stashes it on the warning path right after validation, and the commit endpoint reads it before `CommitAsync` clears both transients, then populates the `IViewerLoginProvider` cache so the awaiting-author inbox section finds the viewer's login for the rest of the process session.
 
 - [ ] **Step 4: Run the happy-path test to confirm GREEN**
 
@@ -961,7 +969,7 @@ git commit -m "feat(api): add warning to ConnectResponse"
 - Modify: `frontend/src/pages/SetupPage.tsx`
 - Test: `frontend/__tests__/setup-page.test.tsx`
 
-When `/api/auth/connect` returns `{ ok: true, warning: 'no-repos-selected' }`, the page renders a modal blocking navigation. **Continue anyway** POSTs to `/api/auth/connect/commit` then routes to `/inbox-shell`. **Edit token scope** dismisses the modal (the user remains on Setup; the in-memory transient on the backend stays around until process exit or the next `/connect`).
+When `/api/auth/connect` returns `{ ok: true, warning: 'no-repos-selected' }`, the page renders a modal blocking navigation. **Continue anyway** POSTs to `/api/auth/connect/commit` then routes to `/`. **Edit token scope** dismisses the modal (the user remains on Setup; the in-memory transient on the backend stays around until process exit or the next `/connect`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -986,7 +994,7 @@ function renderRouted() {
     <MemoryRouter initialEntries={['/setup']}>
       <Routes>
         <Route path="/setup" element={<SetupPage />} />
-        <Route path="/inbox-shell" element={<div>InboxShellMock</div>} />
+        <Route path="/" element={<div>InboxMock</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -1001,7 +1009,7 @@ describe('SetupPage', () => {
     );
   });
 
-  it('routes to /inbox-shell on successful PAT submission', async () => {
+  it('routes to / on successful PAT submission', async () => {
     server.use(
       http.post('/api/auth/connect', () =>
         HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' }),
@@ -1010,7 +1018,7 @@ describe('SetupPage', () => {
     renderRouted();
     await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_test');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
-    expect(await screen.findByText('InboxShellMock')).toBeInTheDocument();
+    expect(await screen.findByText('InboxMock')).toBeInTheDocument();
   });
 
   it('renders the error pill on validation failure', async () => {
@@ -1062,10 +1070,10 @@ describe('SetupPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     expect(await screen.findByText(/no repos selected/i)).toBeInTheDocument();
     // Did NOT auto-redirect.
-    expect(screen.queryByText('InboxShellMock')).not.toBeInTheDocument();
+    expect(screen.queryByText('InboxMock')).not.toBeInTheDocument();
   });
 
-  it('Continue anyway commits and routes to /inbox-shell', async () => {
+  it('Continue anyway commits and routes to /', async () => {
     let commitCalled = false;
     server.use(
       http.post('/api/auth/connect', () =>
@@ -1085,7 +1093,7 @@ describe('SetupPage', () => {
     await userEvent.type(await screen.findByLabelText(/personal access token/i), 'github_pat_zero');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     await userEvent.click(await screen.findByRole('button', { name: /continue anyway/i }));
-    expect(await screen.findByText('InboxShellMock')).toBeInTheDocument();
+    expect(await screen.findByText('InboxMock')).toBeInTheDocument();
     expect(commitCalled).toBe(true);
   });
 
@@ -1111,7 +1119,7 @@ describe('SetupPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: /edit token scope/i }));
     expect(screen.queryByText(/no repos selected/i)).not.toBeInTheDocument();
     expect(commitCalled).toBe(false);
-    expect(screen.queryByText('InboxShellMock')).not.toBeInTheDocument();
+    expect(screen.queryByText('InboxMock')).not.toBeInTheDocument();
   });
 });
 ```
@@ -1220,7 +1228,7 @@ export function SetupPage() {
         setShowWarning(true);
         return;
       }
-      navigate('/inbox-shell');
+      navigate('/');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1232,7 +1240,7 @@ export function SetupPage() {
     setBusy(true);
     try {
       await apiClient.post<{ ok: boolean }>('/api/auth/connect/commit');
-      navigate('/inbox-shell');
+      navigate('/');
     } catch (e) {
       setError((e as Error).message);
       setShowWarning(false);
@@ -1401,8 +1409,8 @@ Then run: `./run.ps1`
 
 In the browser:
 - Setup screen shows four fine-grained permission rows + Metadata note + classic footnote.
-- Pasting a valid fine-grained PAT with permissions and at least one repo selected → routes to `/inbox-shell`.
-- Pasting a valid fine-grained PAT scoped to **no** repos → modal appears. **Continue anyway** routes to `/inbox-shell`. **Edit token scope** dismisses the modal.
+- Pasting a valid fine-grained PAT with permissions and at least one repo selected → routes to `/`.
+- Pasting a valid fine-grained PAT scoped to **no** repos → modal appears. **Continue anyway** routes to `/`. **Edit token scope** dismisses the modal.
 - Pasting an invalid PAT → inline "GitHub rejected this token" pill (unchanged).
 - Pasting a valid classic `ghp_…` PAT with `repo` + `read:user` + `read:org` → routes immediately (no probe).
 
