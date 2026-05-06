@@ -49,11 +49,11 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
         _viewerLoginProvider = viewerLoginProvider;
     }
 
-    public InboxSnapshot? Current => _current;
+    public InboxSnapshot? Current => Volatile.Read(ref _current);
 
     public async Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct)
     {
-        if (_current != null) return true;
+        if (Volatile.Read(ref _current) != null) return true;
         var task = _firstSnapshotTcs.Task;
         var completed = await Task.WhenAny(task, Task.Delay(timeout, ct)).ConfigureAwait(false);
         return completed == task;
@@ -138,7 +138,7 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
             // Build snapshot + diff
             var newSnap = new InboxSnapshot(deduped, enrichmentMap, DateTimeOffset.UtcNow);
             var diff = ComputeDiff(_current, newSnap);
-            _current = newSnap;
+            Volatile.Write(ref _current, newSnap);
 
             if (!_firstSnapshotTcs.Task.IsCompleted) _firstSnapshotTcs.TrySetResult();
 

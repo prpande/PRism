@@ -2,9 +2,12 @@ using System.IO;
 using System.Net;
 using System.Text;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Events;
 using PRism.Core.Inbox;
+using PRism.Web.Sse;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -134,5 +137,157 @@ public class EventsEndpointsTests
         dataLine.Should().Contain("\"changedSectionIds\":[\"review-requested\"]");
         dataLine.Should().Contain("\"newOrUpdatedPrCount\":1");
         dataLine.Should().StartWith("data: ");
+    }
+
+    [Fact]
+    public async Task Sse_subscriber_writes_are_serialized_per_subscriber()
+    {
+        // Regression test: PR #4 review feedback. The heartbeat write path and the
+        // OnInboxUpdated fire-and-forget event-write path can both target the same
+        // HttpResponse.Body (PipeWriter, NOT thread-safe). Without per-subscriber
+        // serialization (e.g. a SemaphoreSlim), concurrent writes interleave and
+        // corrupt the SSE framing.
+        //
+        // This test wraps the response body with a stream that records the maximum
+        // number of writes that are in-flight at any one time, with a small per-write
+        // delay to widen the race window. With per-subscriber serialization,
+        // max-concurrent must be exactly 1.
+        var bus = new ReviewEventBus();
+        var subs = new InboxSubscriberCount();
+        using var channel = new SseChannel(bus, subs, NullLogger<SseChannel>.Instance);
+
+        var trackingBody = new ConcurrencyTrackingStream(perWriteDelayMs: 25);
+        var ctx = new DefaultHttpContext { Response = { Body = trackingBody } };
+
+        using var ctsRun = new CancellationTokenSource();
+        // Start the subscriber loop. The initial heartbeat write happens inside this Task.
+        var runTask = channel.RunSubscriberAsync(ctx.Response, ctsRun.Token);
+
+        // Wait until the subscriber is registered so events will reach it.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (subs.Current == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(5, CancellationToken.None);
+        subs.Current.Should().Be(1, "subscriber should be registered before we publish events");
+
+        // Hammer the bus with many events while the initial heartbeat write is still
+        // in-flight (the tracking stream's per-write delay keeps it alive long enough
+        // for events to race).
+        for (var i = 0; i < 32; i++)
+            bus.Publish(new InboxUpdated(new[] { "review-requested" }, i));
+
+        // Wait for all writes to drain. There are 1 heartbeat + 32 events = 33 expected
+        // frames, each producing one WriteAsync + one FlushAsync = 66 stream operations.
+        deadline = DateTime.UtcNow.AddSeconds(10);
+        while (trackingBody.CompletedOps < 66 && DateTime.UtcNow < deadline)
+            await Task.Delay(20, CancellationToken.None);
+
+        // Stop the subscriber loop cleanly.
+        await ctsRun.CancelAsync();
+        try { await runTask; } catch (OperationCanceledException) { }
+
+        trackingBody.MaxConcurrent.Should().Be(1,
+            "all writes to the same SSE subscriber must be serialized to avoid corrupting SSE framing");
+
+        // Sanity: all bytes written form well-formed SSE frames (each terminated by "\n\n").
+        var written = Encoding.UTF8.GetString(trackingBody.GetWrittenBytes());
+        written.Should().EndWith("\n\n");
+    }
+
+    /// <summary>
+    /// Stream wrapper that records the maximum number of WriteAsync/FlushAsync calls
+    /// in flight at any one moment, with an artificial per-call delay to widen any race.
+    /// </summary>
+    private sealed class ConcurrencyTrackingStream : Stream
+    {
+        private readonly MemoryStream _buffer = new();
+        private readonly object _bufGate = new();
+        private readonly int _perWriteDelayMs;
+        private int _inFlight;
+        private int _maxConcurrent;
+        private int _completedOps;
+
+        public ConcurrencyTrackingStream(int perWriteDelayMs)
+        {
+            _perWriteDelayMs = perWriteDelayMs;
+        }
+
+        public int MaxConcurrent => Volatile.Read(ref _maxConcurrent);
+        public int CompletedOps => Volatile.Read(ref _completedOps);
+
+        public byte[] GetWrittenBytes()
+        {
+            lock (_bufGate) return _buffer.ToArray();
+        }
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { /* no-op */ }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            EnterTrack();
+            try
+            {
+                Thread.Sleep(_perWriteDelayMs);
+                lock (_bufGate) _buffer.Write(buffer, offset, count);
+            }
+            finally { ExitTrack(); }
+        }
+
+        public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            EnterTrack();
+            try
+            {
+                await Task.Delay(_perWriteDelayMs, cancellationToken).ConfigureAwait(false);
+                lock (_bufGate) _buffer.Write(buffer, offset, count);
+            }
+            finally { ExitTrack(); }
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            EnterTrack();
+            try
+            {
+                await Task.Delay(_perWriteDelayMs, cancellationToken).ConfigureAwait(false);
+                lock (_bufGate) _buffer.Write(buffer.Span);
+            }
+            finally { ExitTrack(); }
+        }
+
+        public override async Task FlushAsync(CancellationToken cancellationToken)
+        {
+            EnterTrack();
+            try
+            {
+                await Task.Delay(_perWriteDelayMs, cancellationToken).ConfigureAwait(false);
+            }
+            finally { ExitTrack(); }
+        }
+
+        private void EnterTrack()
+        {
+            var n = Interlocked.Increment(ref _inFlight);
+            // Update max-concurrent atomically.
+            int observed;
+            do
+            {
+                observed = Volatile.Read(ref _maxConcurrent);
+                if (n <= observed) break;
+            }
+            while (Interlocked.CompareExchange(ref _maxConcurrent, n, observed) != observed);
+        }
+
+        private void ExitTrack()
+        {
+            Interlocked.Decrement(ref _inFlight);
+            Interlocked.Increment(ref _completedOps);
+        }
     }
 }

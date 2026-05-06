@@ -83,11 +83,12 @@ public sealed class InboxPollerTests
         await poller.StartAsync(cts.Token);
         subs.Increment();
 
-        // With cadence = 0 (Task.Delay(0,...)), many ticks fire fast
-        await Task.Delay(300);
+        // Cadence is clamped to a 1s floor (defensive against config typos), so
+        // wait long enough to reliably observe at least 2 ticks across that floor.
+        await Task.Delay(2500);
         await StopAsync(poller, cts);
 
-        orchestratorMock.Verify(o => o.RefreshAsync(It.IsAny<CancellationToken>()), Times.AtLeast(3));
+        orchestratorMock.Verify(o => o.RefreshAsync(It.IsAny<CancellationToken>()), Times.AtLeast(2));
     }
 
     [Fact]
@@ -140,9 +141,11 @@ public sealed class InboxPollerTests
         var callsAtPause = orchestratorMock.Invocations
             .Count(i => i.Method.Name == nameof(IInboxRefreshOrchestrator.RefreshAsync));
 
-        // Re-subscribe
+        // Re-subscribe. The InboxSeconds=0 cadence is clamped to a 1s floor, so we
+        // must wait > 1s for the immediate refresh on resume to fire (the poller is
+        // sitting in Task.Delay(1s) when the new Increment arrives).
         subs.Increment();
-        await Task.Delay(200);
+        await Task.Delay(1500);
 
         await StopAsync(poller, cts);
 
@@ -184,8 +187,9 @@ public sealed class InboxPollerTests
         await poller.StartAsync(cts.Token);
         subs.Increment();
 
-        // Wait long enough for both the exception call and the successful call
-        await Task.Delay(300);
+        // Cadence is clamped to a 1s floor; wait long enough for the exception
+        // call plus at least one successful retry tick across that floor.
+        await Task.Delay(2500);
         await StopAsync(poller, cts);
 
         // Both calls happened (exception + at least one success)
@@ -250,8 +254,9 @@ public sealed class InboxPollerTests
         await poller.StartAsync(cts.Token);
         subs.Increment();
 
-        // Wait long enough for: tick #1 (rate-limited, ~immediate) + 400ms Retry-After delay + tick #2.
-        await Task.Delay(800);
+        // Wait long enough for: tick #1 (rate-limited) + max(retryAfter=400ms, clampedCadence=1s)
+        // delay + tick #2. Cadence is clamped to a 1s floor, so allow ample slack.
+        await Task.Delay(2500);
         await StopAsync(poller, cts);
 
         callTimes.Should().HaveCountGreaterOrEqualTo(2,
@@ -260,6 +265,98 @@ public sealed class InboxPollerTests
         var gap = callTimes[1] - callTimes[0];
         gap.Should().BeGreaterOrEqualTo(TimeSpan.FromMilliseconds(300),
             "the second refresh must wait at least the Retry-After window (allowing for scheduler jitter)");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_when_InboxSeconds_zero_clamps_delay_to_one_second()
+    {
+        // Regression: Polling.InboxSeconds=0 used to produce a tight loop because
+        // TimeSpan.FromSeconds(0) → Task.Delay(0,...) returns immediately. The
+        // poller now clamps to a 1s minimum (defensive against config typos).
+        var orchestratorMock = new Mock<IInboxRefreshOrchestrator>();
+        var callTimes = new List<DateTime>();
+        orchestratorMock
+            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callTimes.Add(DateTime.UtcNow);
+                return Task.CompletedTask;
+            });
+
+        var fastConfig = new Mock<IConfigStore>();
+        fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
+        {
+            Polling = new PollingConfig(30, 0)
+        });
+
+        var subs = new InboxSubscriberCount();
+        var poller = new InboxPoller(
+            orchestratorMock.Object,
+            subs,
+            fastConfig.Object,
+            new Mock<ILogger<InboxPoller>>().Object);
+
+        using var cts = new CancellationTokenSource();
+        await poller.StartAsync(cts.Token);
+        subs.Increment();
+
+        // Wait long enough to reliably observe two ticks across the 1s clamp.
+        await Task.Delay(2500);
+        await StopAsync(poller, cts);
+
+        callTimes.Should().HaveCountGreaterOrEqualTo(2,
+            "at least one refresh should fire after the clamp window");
+
+        var gap = callTimes[1] - callTimes[0];
+        gap.Should().BeGreaterOrEqualTo(TimeSpan.FromMilliseconds(900),
+            "with InboxSeconds=0 the cadence must be clamped to ~1s, not 0ms (tight-loop bug)");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_when_InboxSeconds_negative_does_not_throw_and_clamps()
+    {
+        // Regression: Polling.InboxSeconds<0 used to throw ArgumentOutOfRangeException
+        // out of Task.Delay(negative TimeSpan), killing the BackgroundService. The
+        // poller now clamps to a 1s minimum so negative values are tolerated.
+        var orchestratorMock = new Mock<IInboxRefreshOrchestrator>();
+        var callTimes = new List<DateTime>();
+        orchestratorMock
+            .Setup(o => o.RefreshAsync(It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callTimes.Add(DateTime.UtcNow);
+                return Task.CompletedTask;
+            });
+
+        var fastConfig = new Mock<IConfigStore>();
+        fastConfig.Setup(c => c.Current).Returns(AppConfig.Default with
+        {
+            Polling = new PollingConfig(30, -10)
+        });
+
+        var subs = new InboxSubscriberCount();
+        var poller = new InboxPoller(
+            orchestratorMock.Object,
+            subs,
+            fastConfig.Object,
+            new Mock<ILogger<InboxPoller>>().Object);
+
+        using var cts = new CancellationTokenSource();
+        await poller.StartAsync(cts.Token);
+        subs.Increment();
+
+        // Wait long enough for two ticks across the 1s clamp. If the negative
+        // TimeSpan reached Task.Delay, ExecuteAsync would crash and tick #2
+        // would never fire.
+        await Task.Delay(2500);
+
+        // StopAsync must complete cleanly — a crashed ExecuteAsync would
+        // surface its exception here.
+        var stop = async () => await StopAsync(poller, cts);
+        await stop.Should().NotThrowAsync();
+
+        callTimes.Should().HaveCountGreaterOrEqualTo(2,
+            "negative InboxSeconds must clamp; the poller must keep ticking after the first refresh");
     }
 
     [Fact]

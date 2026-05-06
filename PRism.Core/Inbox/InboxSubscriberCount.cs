@@ -9,15 +9,33 @@ public sealed class InboxSubscriberCount
 
     public void Increment()
     {
+        // Volatile.Read on _hasSubscribers so the 0->1 transition completes the TCS that
+        // Decrement most recently swapped in (otherwise a stale plain-field read could
+        // call TrySetResult on the already-completed prior TCS, leaving the active gate
+        // blocked indefinitely).
         if (Interlocked.Increment(ref _count) == 1)
-            _hasSubscribers.TrySetResult();
+            Volatile.Read(ref _hasSubscribers).TrySetResult();
     }
 
     public void Decrement()
     {
-        if (Interlocked.Decrement(ref _count) == 0)
-            Interlocked.Exchange(ref _hasSubscribers,
-                new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        // CAS loop: clamp at zero so an extra Decrement (double-dispose, error path)
+        // cannot drive _count negative and cannot spuriously reset the gate.
+        // Only the 1 -> 0 transition swaps in a fresh (uncompleted) TCS.
+        while (true)
+        {
+            var current = Volatile.Read(ref _count);
+            if (current <= 0)
+                return; // Already drained — nothing to do, and definitely don't go negative.
+
+            if (Interlocked.CompareExchange(ref _count, current - 1, current) != current)
+                continue; // Lost the race — re-read and retry.
+
+            if (current == 1)
+                Interlocked.Exchange(ref _hasSubscribers,
+                    new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+            return;
+        }
     }
 
     public Task WaitForSubscriberAsync(CancellationToken ct)

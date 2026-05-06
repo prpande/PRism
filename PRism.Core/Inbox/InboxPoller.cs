@@ -29,6 +29,10 @@ public sealed partial class InboxPoller : BackgroundService
         {
             await _subs.WaitForSubscriberAsync(stoppingToken).ConfigureAwait(false);
             var nextDelay = TimeSpan.FromSeconds(_config.Current.Polling.InboxSeconds);
+            // Clamp to a 1s floor: defensive against config typos (zero would tight-loop;
+            // negative would throw ArgumentOutOfRangeException out of Task.Delay below).
+            // Applied before the rate-limit max-with logic so the floor holds in both paths.
+            if (nextDelay < TimeSpan.FromSeconds(1)) nextDelay = TimeSpan.FromSeconds(1);
             try
             {
                 await _orchestrator.RefreshAsync(stoppingToken).ConfigureAwait(false);

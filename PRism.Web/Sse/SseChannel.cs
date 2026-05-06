@@ -37,15 +37,13 @@ internal sealed class SseChannel : IDisposable
         try
         {
             // Write an initial heartbeat to flush headers and confirm the stream is live.
-            await response.WriteAsync(":heartbeat\n\n", ct).ConfigureAwait(false);
-            await response.Body.FlushAsync(ct).ConfigureAwait(false);
+            await sub.WriteAsync(":heartbeat\n\n", ct).ConfigureAwait(false);
 
             // Loop: heartbeat every 25s until client disconnects.
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(25), ct).ConfigureAwait(false);
-                await response.WriteAsync(":heartbeat\n\n", ct).ConfigureAwait(false);
-                await response.Body.FlushAsync(ct).ConfigureAwait(false);
+                await sub.WriteAsync(":heartbeat\n\n", ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { /* normal client disconnect */ }
@@ -53,6 +51,7 @@ internal sealed class SseChannel : IDisposable
         {
             lock (_gate) _writers.Remove(sub);
             _subs.Decrement();
+            sub.Dispose();
         }
     }
 
@@ -68,7 +67,12 @@ internal sealed class SseChannel : IDisposable
         lock (_gate) snapshot = _writers.ToArray();
         foreach (var s in snapshot)
         {
-            try { _ = s.WriteAsync(frame); }
+            // Fire-and-forget by design: this handler runs on the publisher's thread and
+            // must not block. Per-subscriber serialization is enforced inside SseSubscriber
+            // (a SemaphoreSlim guards the underlying HttpResponse.Body PipeWriter, which is
+            // not thread-safe). Reviewer suggested also evicting subscribers on write
+            // failure; that is deferred to S3 along with backpressure (spec § 11).
+            try { _ = s.WriteAsync(frame, default); }
 #pragma warning disable CA1031 // SSE write failures should not crash the publisher; subscriber will be evicted on its own loop's next failure.
             catch (Exception ex)
             {
@@ -80,14 +84,33 @@ internal sealed class SseChannel : IDisposable
 
     public void Dispose() => _busSub.Dispose();
 
-    private sealed class SseSubscriber
+    private sealed class SseSubscriber : IDisposable
     {
         private readonly HttpResponse _response;
+        // Per-subscriber lock that serializes writes to the response body. The two write
+        // paths (heartbeat loop in RunSubscriberAsync, and event delivery from the bus
+        // via OnInboxUpdated) both flow through WriteAsync, so they cannot interleave
+        // and corrupt SSE framing. Disposed when the subscriber is removed from
+        // _writers (RunSubscriberAsync's finally block) — by that point no further
+        // writes can be issued because the publisher already snapshotted _writers.
+        private readonly SemaphoreSlim _writeLock = new(1, 1);
+
         public SseSubscriber(HttpResponse response) { _response = response; }
-        public async Task WriteAsync(string frame)
+
+        public async Task WriteAsync(string frame, CancellationToken ct)
         {
-            await _response.WriteAsync(frame).ConfigureAwait(false);
-            await _response.Body.FlushAsync().ConfigureAwait(false);
+            await _writeLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await _response.WriteAsync(frame, ct).ConfigureAwait(false);
+                await _response.Body.FlushAsync(ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                _writeLock.Release();
+            }
         }
+
+        public void Dispose() => _writeLock.Dispose();
     }
 }

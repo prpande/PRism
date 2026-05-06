@@ -12,7 +12,7 @@ public interface IViewerLoginProvider
 
 public sealed class ViewerLoginProvider : IViewerLoginProvider
 {
-    private string _login = "";
-    public string Get() => _login;
-    public void Set(string login) => _login = login;
+    private string _login = string.Empty;
+    public string Get() => Volatile.Read(ref _login);
+    public void Set(string login) => Volatile.Write(ref _login, login);
 }

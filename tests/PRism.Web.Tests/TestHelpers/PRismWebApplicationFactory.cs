@@ -5,7 +5,6 @@ using Microsoft.Extensions.DependencyInjection;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
-using PRism.Web.Tests.Endpoints;
 
 namespace PRism.Web.Tests.TestHelpers;
 
