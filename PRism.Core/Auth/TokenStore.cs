@@ -75,6 +75,9 @@ public sealed class TokenStore : ITokenStore
 
     public async Task<string?> ReadAsync(CancellationToken ct)
     {
+        // Transient takes precedence so PAT validation between WriteTransientAsync and Commit/Rollback
+        // sees the candidate token. Without this, the connect endpoint would always validate against null.
+        if (_transient is not null) return _transient;
         var helper = await GetHelperAsync().ConfigureAwait(false);
         var bytes = helper.LoadUnencryptedTokenCache();
         return bytes.Length == 0 ? null : Encoding.UTF8.GetString(bytes);
