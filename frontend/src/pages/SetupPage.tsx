@@ -62,7 +62,9 @@ export function SetupPage() {
   return (
     <>
       <SetupForm host={authState.host} onSubmit={onSubmit} error={error} busy={busy} />
-      {showWarning && <NoReposWarningModal onContinue={onContinueAnyway} onEdit={onEdit} busy={busy} />}
+      {showWarning && (
+        <NoReposWarningModal onContinue={onContinueAnyway} onEdit={onEdit} busy={busy} />
+      )}
     </>
   );
 }

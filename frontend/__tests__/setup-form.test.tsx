@@ -37,7 +37,7 @@ describe('SetupForm', () => {
     expect(screen.getByText(/Already have a classic PAT/i)).toBeInTheDocument();
     // The `repo` scope is referenced in inline code.
     const codeNodes = screen.getAllByText('repo');
-    expect(codeNodes.some(n => n.tagName === 'CODE')).toBe(true);
+    expect(codeNodes.some((n) => n.tagName === 'CODE')).toBe(true);
   });
 
   it('renders error pill when error prop is set', () => {
