@@ -20,16 +20,30 @@ public static class ServiceCollectionExtensions
     /// the live <c>ui.aiPreview</c> config flag for the selector to read).
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Registration order is load-bearing: <see cref="ViewerLoginHydrator"/> must be added as
     /// an <see cref="Microsoft.Extensions.Hosting.IHostedService"/> BEFORE <see cref="InboxPoller"/>
     /// because <c>StartAsync</c> runs in registration order and the poller's first refresh tick
     /// needs the viewer-login cache populated. The same invariant held in the original
     /// inline-DI shape in <c>Program.cs</c>.
+    /// </para>
+    /// <para>
+    /// <b>Required companion calls.</b> <see cref="IInboxRefreshOrchestrator"/> and
+    /// <see cref="ViewerLoginHydrator"/> are registered here via factory lambdas that close
+    /// over <see cref="IServiceProvider"/> and resolve services registered by other
+    /// <c>AddPrism*</c> extensions: <c>IReviewService</c>, <c>ISectionQueryRunner</c>,
+    /// <c>IPrEnricher</c>, <c>IAwaitingAuthorFilter</c>, <c>ICiFailingDetector</c> (all from
+    /// <c>AddPrismGitHub</c>) and <c>IAiSeamSelector</c> (from <c>AddPrismAi</c>). DI
+    /// factories are lazy, so the cross-method dependencies only resolve at first use after
+    /// <c>Build()</c>; the missing dependency would surface as an <see cref="InvalidOperationException"/>
+    /// at host startup, not at <c>AddPrismCore</c> call time. <b>Callers must invoke
+    /// <c>AddPrismGitHub</c> and <c>AddPrismAi</c> before <c>Build()</c>.</b>
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddPrismCore(this IServiceCollection services, string dataDir)
     {
         ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(dataDir);
+        ArgumentException.ThrowIfNullOrEmpty(dataDir);
 
         services.AddSingleton<IConfigStore>(_ => CreateConfigStore(dataDir));
         services.AddSingleton<AiPreviewState>(sp =>
