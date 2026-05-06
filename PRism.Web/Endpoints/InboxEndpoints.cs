@@ -59,7 +59,7 @@ internal static class InboxEndpoints
             // HasJsonContentType() so missing/wrong Content-Type collapses into the same structured
             // 400 invalid-json shape callers see for malformed bodies.
             if (!ctx.Request.HasJsonContentType())
-                return Results.BadRequest(new { error = "invalid-json" });
+                return Results.BadRequest(new InboxError(Error: "invalid-json"));
 
             ParsePrUrlRequest? body;
             try
@@ -68,10 +68,10 @@ internal static class InboxEndpoints
             }
             catch (System.Text.Json.JsonException)
             {
-                return Results.BadRequest(new { error = "invalid-json" });
+                return Results.BadRequest(new InboxError(Error: "invalid-json"));
             }
             if (body is null || string.IsNullOrWhiteSpace(body.Url))
-                return Results.BadRequest(new { error = "url-required" });
+                return Results.BadRequest(new InboxError(Error: "url-required"));
 
             var configuredHost = config.Current.Github.Host;
             if (review.TryParsePrUrl(body.Url, out var prRef))

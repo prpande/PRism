@@ -25,14 +25,14 @@ internal static partial class AuthEndpoints
             var hasToken = await tokens.HasTokenAsync(ct).ConfigureAwait(false);
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             var host = config.Current.Github.Host;
-            object? mismatch = null;
+            AuthHostMismatch? mismatch = null;
             if (state.LastConfiguredGithubHost is not null
                 && !string.Equals(state.LastConfiguredGithubHost, host, StringComparison.OrdinalIgnoreCase))
             {
-                mismatch = new { old = state.LastConfiguredGithubHost, @new = host };
+                mismatch = new AuthHostMismatch(state.LastConfiguredGithubHost, host);
             }
             Log.AuthStateProbed(log, hasToken, host, mismatch is not null);
-            return Results.Ok(new { hasToken, host, hostMismatch = mismatch });
+            return Results.Ok(new AuthStateResponse(hasToken, host, mismatch));
         });
 
         app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, ILogger<Category> log, CancellationToken ct) =>
@@ -45,14 +45,14 @@ internal static partial class AuthEndpoints
             catch (JsonException)
             {
                 Log.ConnectRejected(log, "invalid-json");
-                return Results.BadRequest(new { ok = false, error = "invalid-json" });
+                return Results.BadRequest(new AuthConnectError(Ok: false, Error: "invalid-json"));
             }
             using var _doc = doc;
             var pat = doc.RootElement.TryGetProperty("pat", out var p) ? p.GetString() : null;
             if (string.IsNullOrWhiteSpace(pat))
             {
                 Log.ConnectRejected(log, "pat-required");
-                return Results.BadRequest(new { ok = false, error = "pat-required" });
+                return Results.BadRequest(new AuthConnectError(Ok: false, Error: "pat-required"));
             }
 
             Log.ConnectValidating(log, pat.Length, config.Current.Github.Host);
@@ -65,7 +65,7 @@ internal static partial class AuthEndpoints
                 var errorName = result.Error?.ToString().ToLowerInvariant();
 #pragma warning restore CA1308
                 Log.ConnectValidationFailed(log, errorName ?? "(null)", result.ErrorDetail ?? "(none)");
-                return Results.Ok(new { ok = false, error = errorName, detail = result.ErrorDetail });
+                return Results.Ok(new AuthConnectValidationFailed(Ok: false, Error: errorName, Detail: result.ErrorDetail));
             }
 
             if (result.Warning != AuthValidationWarning.None)
@@ -75,13 +75,11 @@ internal static partial class AuthEndpoints
                 // collects user confirmation and calls POST /api/auth/connect/commit.
                 await tokens.SetTransientLoginAsync(result.Login ?? "", ct).ConfigureAwait(false);
                 Log.ConnectValidatedWithWarning(log, result.Login ?? "(empty)", result.Warning);
-                return Results.Ok(new
-                {
-                    ok = true,
-                    login = result.Login,
-                    host = config.Current.Github.Host,
-                    warning = WarningToWire(result.Warning),
-                });
+                return Results.Ok(new AuthConnectWithWarning(
+                    Ok: true,
+                    Login: result.Login,
+                    Host: config.Current.Github.Host,
+                    Warning: WarningToWire(result.Warning)));
             }
 
             await tokens.CommitAsync(ct).ConfigureAwait(false);
@@ -89,7 +87,7 @@ internal static partial class AuthEndpoints
             await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
             viewerLogin.Set(result.Login ?? "");
             Log.ConnectCommitted(log, result.Login ?? "(empty)");
-            return Results.Ok(new { ok = true, login = result.Login, host = config.Current.Github.Host });
+            return Results.Ok(new AuthConnectSuccess(Ok: true, Login: result.Login, Host: config.Current.Github.Host));
         });
 
         app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, ILogger<Category> log, CancellationToken ct) =>
@@ -104,7 +102,7 @@ internal static partial class AuthEndpoints
             {
                 // No transient pending — process restart, or commit called twice.
                 Log.CommitNoPendingToken(log);
-                return Results.Conflict(new { ok = false, error = "no-pending-token" });
+                return Results.Conflict(new AuthConnectError(Ok: false, Error: "no-pending-token"));
             }
 
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
@@ -113,7 +111,7 @@ internal static partial class AuthEndpoints
             // overwrites any stale login from a prior session rather than leaving it intact.
             viewerLogin.Set(login ?? "");
             Log.CommitSucceeded(log, login ?? "(empty)");
-            return Results.Ok(new { ok = true, host = config.Current.Github.Host });
+            return Results.Ok(new AuthCommitSuccess(Ok: true, Host: config.Current.Github.Host));
         });
 
         app.MapPost("/api/auth/host-change-resolution", async (HttpContext ctx, IAppStateStore stateStore, IConfigStore config, IHostApplicationLifetime lifetime, CancellationToken ct) =>
@@ -125,7 +123,7 @@ internal static partial class AuthEndpoints
             }
             catch (JsonException)
             {
-                return Results.BadRequest(new { error = "invalid-json" });
+                return Results.BadRequest(new HostChangeError(Error: "invalid-json"));
             }
             using var _doc = doc;
             var resolution = doc.RootElement.TryGetProperty("resolution", out var r) ? r.GetString() : null;
@@ -134,16 +132,16 @@ internal static partial class AuthEndpoints
             if (resolution == "continue")
             {
                 await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
-                return Results.Ok(new { ok = true });
+                return Results.Ok(new HostChangeOk(Ok: true));
             }
             if (resolution == "revert" && state.LastConfiguredGithubHost is not null)
             {
                 // Note: ConfigStore.PatchAsync currently only allows ui.* fields.
                 // For now, host-revert is documented but cannot mutate config. Skip the patch and exit.
                 lifetime.StopApplication();
-                return Results.Ok(new { ok = true, exiting = true });
+                return Results.Ok(new HostChangeExiting(Ok: true, Exiting: true));
             }
-            return Results.BadRequest(new { error = "resolution must be 'continue' or 'revert'" });
+            return Results.BadRequest(new HostChangeError(Error: "resolution must be 'continue' or 'revert'"));
         });
 
         return app;
