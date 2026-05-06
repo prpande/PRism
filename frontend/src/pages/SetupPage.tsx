@@ -26,7 +26,8 @@ export function SetupPage() {
         setShowWarning(true);
         return;
       }
-      navigate('/inbox-shell');
+      window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
+      navigate('/');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -38,7 +39,8 @@ export function SetupPage() {
     setBusy(true);
     try {
       await apiClient.post<{ ok: boolean }>('/api/auth/connect/commit');
-      navigate('/inbox-shell');
+      window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
+      navigate('/');
     } catch (e) {
       setError((e as Error).message);
       setShowWarning(false);

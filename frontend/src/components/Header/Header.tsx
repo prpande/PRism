@@ -8,10 +8,7 @@ export function Header() {
     <header className={styles.header}>
       <Logo />
       <nav className={styles.tabs}>
-        <NavLink
-          to="/inbox-shell"
-          className={({ isActive }) => (isActive ? styles.tabActive : styles.tab)}
-        >
+        <NavLink to="/" className={({ isActive }) => (isActive ? styles.tabActive : styles.tab)}>
           Inbox
         </NavLink>
         <NavLink

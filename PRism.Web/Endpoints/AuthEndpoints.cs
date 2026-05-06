@@ -4,6 +4,7 @@ using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
 using PRism.Core.Contracts;
+using PRism.Core.Inbox;
 using PRism.Core.State;
 
 namespace PRism.Web.Endpoints;
@@ -28,7 +29,7 @@ internal static class AuthEndpoints
             return Results.Ok(new { hasToken, host, hostMismatch = mismatch });
         });
 
-        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewService review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, CancellationToken ct) =>
         {
             JsonDocument doc;
             try
@@ -71,6 +72,7 @@ internal static class AuthEndpoints
             await tokens.CommitAsync(ct).ConfigureAwait(false);
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+            viewerLogin.Set(result.Login ?? "");
             return Results.Ok(new { ok = true, login = result.Login, host = config.Current.Github.Host });
         });
 

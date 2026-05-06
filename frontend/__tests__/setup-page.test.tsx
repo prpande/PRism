@@ -16,7 +16,7 @@ function renderRouted() {
     <MemoryRouter initialEntries={['/setup']}>
       <Routes>
         <Route path="/setup" element={<SetupPage />} />
-        <Route path="/inbox-shell" element={<div>InboxShellMock</div>} />
+        <Route path="/" element={<div>InboxMock</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -31,7 +31,7 @@ describe('SetupPage', () => {
     );
   });
 
-  it('routes to /inbox-shell on successful PAT submission', async () => {
+  it('routes to / (InboxPage) on successful PAT submission', async () => {
     server.use(
       http.post('/api/auth/connect', () =>
         HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' }),
@@ -40,7 +40,7 @@ describe('SetupPage', () => {
     renderRouted();
     await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_test');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
-    expect(await screen.findByText('InboxShellMock')).toBeInTheDocument();
+    expect(await screen.findByText('InboxMock')).toBeInTheDocument();
   });
 
   it('renders the error pill on validation failure', async () => {
@@ -92,10 +92,10 @@ describe('SetupPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     expect(await screen.findByText(/no repos selected/i)).toBeInTheDocument();
     // Did NOT auto-redirect.
-    expect(screen.queryByText('InboxShellMock')).not.toBeInTheDocument();
+    expect(screen.queryByText('InboxMock')).not.toBeInTheDocument();
   });
 
-  it('Continue anyway commits and routes to /inbox-shell', async () => {
+  it('Continue anyway commits and routes to /', async () => {
     let commitCalled = false;
     server.use(
       http.post('/api/auth/connect', () =>
@@ -115,7 +115,7 @@ describe('SetupPage', () => {
     await userEvent.type(await screen.findByLabelText(/personal access token/i), 'github_pat_zero');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     await userEvent.click(await screen.findByRole('button', { name: /continue anyway/i }));
-    expect(await screen.findByText('InboxShellMock')).toBeInTheDocument();
+    expect(await screen.findByText('InboxMock')).toBeInTheDocument();
     expect(commitCalled).toBe(true);
   });
 
@@ -141,6 +141,6 @@ describe('SetupPage', () => {
     await userEvent.click(await screen.findByRole('button', { name: /edit token scope/i }));
     expect(screen.queryByText(/no repos selected/i)).not.toBeInTheDocument();
     expect(commitCalled).toBe(false);
-    expect(screen.queryByText('InboxShellMock')).not.toBeInTheDocument();
+    expect(screen.queryByText('InboxMock')).not.toBeInTheDocument();
   });
 });

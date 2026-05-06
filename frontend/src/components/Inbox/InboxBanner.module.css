@@ -1,0 +1,52 @@
+/* InboxBanner — non-intrusive update notification strip */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-4);
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border-1);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
+
+.summary {
+  flex: 1;
+  min-width: 0;
+}
+
+.reload {
+  padding: 2px var(--s-3);
+  background: transparent;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  font-size: var(--text-sm);
+  color: var(--accent);
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+
+.reload:hover {
+  background: var(--surface-2);
+}
+
+.dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-2);
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background var(--t-fast);
+  line-height: 1;
+}
+
+.dismiss:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}

@@ -83,7 +83,36 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 raw = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
 
             var parsed = JsonSerializer.Deserialize<AppConfig>(raw, JsonSerializerOptionsFactory.Storage);
-            _current = parsed ?? AppConfig.Default;
+            if (parsed is null)
+            {
+                _current = AppConfig.Default;
+                LastLoadError = null;
+                return;
+            }
+
+            // Backfill any sub-record that's null on disk. Older config.json files (or
+            // partial configs in tests) can lack entire top-level sections; without these
+            // guards, a positional record's missing constructor argument deserializes to
+            // null and DI factories that read e.g. config.Current.Ui.AiPreview throw.
+            // The Inbox guard has an extra level: legacy S0+S1 files have the inbox key but
+            // lack inbox.sections / inbox.deduplicate, so Sections can be null even when
+            // Inbox itself is present — in that case preserve ShowHiddenScopeFooter.
+            parsed = parsed with
+            {
+                Polling    = parsed.Polling    ?? AppConfig.Default.Polling,
+                Inbox      = parsed.Inbox is null
+                                ? AppConfig.Default.Inbox
+                                : parsed.Inbox.Sections is null
+                                    ? AppConfig.Default.Inbox with { ShowHiddenScopeFooter = parsed.Inbox.ShowHiddenScopeFooter }
+                                    : parsed.Inbox,
+                Review     = parsed.Review     ?? AppConfig.Default.Review,
+                Iterations = parsed.Iterations ?? AppConfig.Default.Iterations,
+                Logging    = parsed.Logging    ?? AppConfig.Default.Logging,
+                Ui         = parsed.Ui         ?? AppConfig.Default.Ui,
+                Github     = parsed.Github     ?? AppConfig.Default.Github,
+                Llm        = parsed.Llm        ?? AppConfig.Default.Llm,
+            };
+            _current = parsed;
             LastLoadError = null;
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)

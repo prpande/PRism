@@ -1,0 +1,24 @@
+.page {
+  padding: var(--s-4);
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--s-4);
+  margin-top: var(--s-3);
+}
+
+@media (max-width: 1179px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}

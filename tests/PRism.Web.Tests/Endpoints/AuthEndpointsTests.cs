@@ -1,4 +1,6 @@
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using PRism.Core.Auth;
 using PRism.Core.Contracts;
 using PRism.Web.Tests.TestHelpers;
 using System.Net.Http.Json;
@@ -69,6 +71,29 @@ public class AuthEndpointsTests
         var body = await resp.Content.ReadFromJsonAsync<ConnectResponse>();
         body!.Ok.Should().BeTrue();
         body.Login.Should().Be("octocat");
+    }
+
+    [Fact]
+    public async Task Successful_connect_caches_viewer_login()
+    {
+        using var factory = new PRismWebApplicationFactory
+        {
+            ValidateOverride = () => Task.FromResult(new AuthValidationResult(true, "octocat", new[] { "repo", "read:user", "read:org" }, AuthValidationError.None, null)),
+        };
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/auth/connect", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { pat = "ghp_good" }),
+        };
+        req.Headers.Add("Origin", origin);
+        var resp = await client.SendAsync(req);
+        resp.IsSuccessStatusCode.Should().BeTrue();
+        var body = await resp.Content.ReadFromJsonAsync<ConnectResponse>();
+        body!.Ok.Should().BeTrue();
+
+        var viewerLogin = factory.Services.GetRequiredService<IViewerLoginProvider>();
+        viewerLogin.Get().Should().Be("octocat");
     }
 
     [Fact]

@@ -1,0 +1,7 @@
+/* EmptyAllSections — shown when all inbox sections are empty */
+.hint {
+  padding: var(--s-8) var(--s-4);
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  text-align: center;
+}

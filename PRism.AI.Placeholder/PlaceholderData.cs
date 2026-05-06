@@ -29,6 +29,4 @@ internal static class PlaceholderData
         new("info", "No drafts left in stale state"),
         new("warn", "Heads-up about partial-failure tests."),
     });
-
-    public static InboxEnrichment Enrichment { get; } = new("Refactor", "LeaseRenewalProcessor cleanup.");
 }
