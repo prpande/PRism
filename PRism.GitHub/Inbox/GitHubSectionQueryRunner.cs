@@ -13,8 +13,13 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
         ["awaiting-author"]  = "is:open is:pr reviewed-by:@me archived:false",
         ["authored-by-me"]   = "is:open is:pr author:@me archived:false",
         ["mentioned"]        = "is:open is:pr mentions:@me archived:false",
-        // ci-failing starts as "authored-by-me"; per-PR detector filters
-        ["ci-failing"]       = "is:open is:pr author:@me archived:false",
+        // ci-failing is intentionally NOT mapped here. Its query would be identical to
+        // authored-by-me, and InboxRefreshOrchestrator already populates the ci-failing
+        // section by running ICiFailingDetector against the authored-by-me superset.
+        // Mapping it here would fire a redundant Search API call every tick — wasted budget
+        // against GitHub's 30-rpm Search secondary rate limit. ResolveVisibleSections() in
+        // the orchestrator still forces "authored-by-me" into the visible set whenever
+        // ci-failing is enabled, so the detector gets the data it needs.
     };
 
     private readonly IHttpClientFactory _httpFactory;

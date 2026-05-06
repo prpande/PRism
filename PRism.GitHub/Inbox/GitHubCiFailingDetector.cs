@@ -85,6 +85,10 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 ? await SendAsync(initialUrl, token, ct).ConfigureAwait(false)
                 : await SendAsync(nextUri, token, ct).ConfigureAwait(false);
             if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return CiStatus.None;
+            if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+                throw new RateLimitExceededException(
+                    "GitHub rate-limited (429); orchestrator should skip this tick.",
+                    resp.Headers.RetryAfter?.Delta);
             resp.EnsureSuccessStatusCode();
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(body);
@@ -152,6 +156,10 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var url = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/status";
         using var resp = await SendAsync(url, token, ct).ConfigureAwait(false);
         if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return CiStatus.None;
+        if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+            throw new RateLimitExceededException(
+                "GitHub rate-limited (429); orchestrator should skip this tick.",
+                resp.Headers.RetryAfter?.Delta);
         resp.EnsureSuccessStatusCode();
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);

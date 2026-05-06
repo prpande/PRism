@@ -295,4 +295,32 @@ public sealed class GitHubCiFailingDetectorTests
 
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
+
+    [Fact]
+    public async Task FetchChecksAsync_throws_RateLimitExceededException_on_429_with_RetryAfter()
+    {
+        // /check-runs returns 429 with Retry-After: 45. Without an explicit 429 check
+        // the response would flow into EnsureSuccessStatusCode() and surface as a
+        // generic HttpRequestException — the poller's Retry-After-aware handler
+        // never fires. Spec § 10 requires Retry-After honored on every 429.
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+            {
+                var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                {
+                    Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                };
+                resp.Headers.Add("Retry-After", "45");
+                return resp;
+            }
+            return Respond(HttpStatusCode.OK, AllPassingStatus);
+        });
+        var sut = BuildSut(handler);
+
+        var act = async () => await sut.DetectAsync([Raw(1)], default);
+
+        var ex = (await act.Should().ThrowAsync<RateLimitExceededException>()).Which;
+        ex.RetryAfter.Should().Be(TimeSpan.FromSeconds(45));
+    }
 }

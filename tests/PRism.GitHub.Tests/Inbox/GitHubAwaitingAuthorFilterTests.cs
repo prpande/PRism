@@ -171,6 +171,30 @@ public sealed class GitHubAwaitingAuthorFilterTests
     }
 
     [Fact]
+    public async Task FetchLastReviewShaAsync_throws_RateLimitExceededException_on_429_with_RetryAfter()
+    {
+        // pulls/{n}/reviews returns 429 with Retry-After: 20. Without an explicit
+        // 429 check the response would flow into EnsureSuccessStatusCode() and
+        // surface as a generic HttpRequestException — the poller's Retry-After-aware
+        // handler never fires. Spec § 10 requires Retry-After honored on every 429.
+        var handler = new FakeHttpMessageHandler(_ =>
+        {
+            var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
+            resp.Headers.Add("Retry-After", "20");
+            return resp;
+        });
+        var sut = BuildSut(handler);
+
+        var act = async () => await sut.FilterAsync(ViewerLogin, [Raw(1, "head")], default);
+
+        var ex = (await act.Should().ThrowAsync<RateLimitExceededException>()).Which;
+        ex.RetryAfter.Should().Be(TimeSpan.FromSeconds(20));
+    }
+
+    [Fact]
     public async Task Concurrency_capped_at_eight()
     {
         // Track in-flight count; assert max never exceeds the documented cap.

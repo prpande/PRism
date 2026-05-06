@@ -182,6 +182,30 @@ public sealed class GitHubPrEnricherTests
     }
 
     [Fact]
+    public async Task FetchAsync_throws_RateLimitExceededException_on_429_with_RetryAfter()
+    {
+        // pulls/{n} returns 429 with Retry-After: 30. Without an explicit 429 check
+        // the response would flow into EnsureSuccessStatusCode() and surface as a
+        // generic HttpRequestException — the poller's Retry-After-aware handler
+        // never fires. Spec § 10 requires Retry-After honored on every 429.
+        var handler = new FakeHttpMessageHandler(_ =>
+        {
+            var resp = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+            {
+                Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+            };
+            resp.Headers.Add("Retry-After", "30");
+            return resp;
+        });
+        var sut = BuildSut(handler);
+
+        var act = async () => await sut.EnrichAsync([Raw(1)], default);
+
+        var ex = (await act.Should().ThrowAsync<RateLimitExceededException>()).Which;
+        ex.RetryAfter.Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
     public async Task PushedAt_falls_back_to_updatedAt_when_head_repo_is_null()
     {
         var requestCount = 0;

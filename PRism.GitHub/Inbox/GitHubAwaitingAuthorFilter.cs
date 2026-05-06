@@ -65,6 +65,10 @@ public sealed class GitHubAwaitingAuthorFilter : IAwaitingAuthorFilter
 
         using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
         if (resp.StatusCode == HttpStatusCode.NotFound) return null;
+        if (resp.StatusCode == HttpStatusCode.TooManyRequests)
+            throw new RateLimitExceededException(
+                "GitHub rate-limited (429); orchestrator should skip this tick.",
+                resp.Headers.RetryAfter?.Delta);
         resp.EnsureSuccessStatusCode();
 
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);

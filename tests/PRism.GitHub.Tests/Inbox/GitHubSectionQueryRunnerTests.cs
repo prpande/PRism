@@ -49,7 +49,9 @@ public sealed class GitHubSectionQueryRunnerTests
         calls.Should().Contain(q => q.Contains("reviewed-by%3A%40me", StringComparison.Ordinal));
         calls.Should().Contain(q => q.Contains("author%3A%40me", StringComparison.Ordinal));
         calls.Should().Contain(q => q.Contains("mentions%3A%40me", StringComparison.Ordinal));
-        calls.Should().HaveCount(5);
+        // ci-failing is NOT a Search query — the orchestrator derives it from the
+        // authored-by-me superset using ICiFailingDetector. Only 4 calls should fire.
+        calls.Should().HaveCount(4);
     }
 
     [Fact]
@@ -69,12 +71,37 @@ public sealed class GitHubSectionQueryRunnerTests
     }
 
     [Fact]
+    public async Task QueryAllAsync_does_not_fire_a_search_for_ci_failing_when_only_ci_failing_is_visible()
+    {
+        // Regression: "ci-failing" used to be mapped in SectionQueries to the same query
+        // string as "authored-by-me" (`is:open is:pr author:@me archived:false`). The
+        // orchestrator overwrites the ci-failing entry with the CI-detector-filtered subset
+        // of authored-by-me, so the Search API call for ci-failing was discarded every tick —
+        // a wasted hit against GitHub's 30-rpm Search secondary rate limit.
+        // The runner must NOT fire a Search query for "ci-failing"; the orchestrator's
+        // CI fan-out block populates that section from the authored-by-me superset.
+        var calls = new List<string>();
+        var handler = new FakeHttpMessageHandler((req) =>
+        {
+            calls.Add(req.RequestUri!.Query);
+            return Respond(HttpStatusCode.OK, SearchResponseOnePr);
+        });
+        var sut = BuildSut(handler);
+
+        var result = await sut.QueryAllAsync(new HashSet<string> { "ci-failing" }, default);
+
+        calls.Should().BeEmpty(
+            "ci-failing must be derived from authored-by-me by the orchestrator, not fetched separately");
+        result.Should().NotContainKey("ci-failing");
+    }
+
+    [Fact]
     public async Task Section_failure_records_empty_for_that_section_others_succeed()
     {
         // First two requests succeed, remaining requests fail. The runner fires
-        // section queries in parallel; we use a request counter rather than query-
-        // string routing because some sections share identical query strings
-        // (authored-by-me and ci-failing both encode to author%3A%40me).
+        // section queries in parallel. ci-failing is NOT in SectionQueries (the orchestrator
+        // derives it from authored-by-me), so only 4 sections fire HTTP requests even when
+        // the visible set requests 5.
         var requestCount = 0;
         var handler = new FakeHttpMessageHandler((req) =>
         {
@@ -90,11 +117,12 @@ public sealed class GitHubSectionQueryRunnerTests
             "review-requested", "awaiting-author", "authored-by-me", "mentioned", "ci-failing"
         }, default);
 
-        result.Should().HaveCount(5); // every requested section is in the result
+        result.Should().HaveCount(4); // ci-failing is not queried; 4 sections in the result
+        result.Should().NotContainKey("ci-failing");
         var nonEmpty = result.Where(kv => kv.Value.Count > 0).ToList();
         var empty = result.Where(kv => kv.Value.Count == 0).ToList();
         nonEmpty.Should().HaveCount(2); // first two responses succeeded
-        empty.Should().HaveCount(3); // remaining three failed
+        empty.Should().HaveCount(2); // remaining two failed
     }
 
     [Fact]
