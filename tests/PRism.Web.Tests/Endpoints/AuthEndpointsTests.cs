@@ -101,7 +101,36 @@ public class AuthEndpointsTests
         resp.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task Connect_with_no_repos_warning_returns_warning_and_does_not_commit()
+    {
+        using var factory = new PRismWebApplicationFactory
+        {
+            ValidateOverride = () => Task.FromResult(new AuthValidationResult(
+                true, "octocat", null, AuthValidationError.None, null,
+                AuthValidationWarning.NoReposSelected)),
+        };
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/auth/connect", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { pat = "github_pat_zero_repos" }),
+        };
+        req.Headers.Add("Origin", origin);
+
+        var resp = await client.SendAsync(req);
+        resp.IsSuccessStatusCode.Should().BeTrue();
+        var body = await resp.Content.ReadFromJsonAsync<ConnectResponse>();
+        body!.Ok.Should().BeTrue();
+        body.Warning.Should().Be("no-repos-selected");
+
+        // Token must NOT be committed — auth/state still says hasToken: false.
+        var stateResp = await client.GetFromJsonAsync<AuthStateResponse>(new Uri("/api/auth/state", UriKind.Relative));
+        stateResp!.HasToken.Should().BeFalse();
+    }
+
     public sealed record AuthStateResponse(bool HasToken, string Host, HostMismatchInfo? HostMismatch);
     public sealed record HostMismatchInfo(string Old, string New);
-    public sealed record ConnectResponse(bool Ok, string? Login, string? Host, string? Error, string? Detail);
+    public sealed record ConnectResponse(bool Ok, string? Login, string? Host, string? Error, string? Detail, string? Warning);
 }

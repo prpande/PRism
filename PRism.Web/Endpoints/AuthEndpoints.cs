@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
+using PRism.Core.Contracts;
 using PRism.Core.State;
 
 namespace PRism.Web.Endpoints;
@@ -52,6 +53,19 @@ internal static class AuthEndpoints
                 var errorName = result.Error?.ToString().ToLowerInvariant();
 #pragma warning restore CA1308
                 return Results.Ok(new { ok = false, error = errorName, detail = result.ErrorDetail });
+            }
+
+            if (result.Warning != AuthValidationWarning.None)
+            {
+                // Soft warning: do NOT commit. Frontend will collect user confirmation
+                // and call POST /api/auth/connect/commit to finalize.
+                return Results.Ok(new
+                {
+                    ok = true,
+                    login = result.Login,
+                    host = config.Current.Github.Host,
+                    warning = "no-repos-selected",
+                });
             }
 
             await tokens.CommitAsync(ct).ConfigureAwait(false);
