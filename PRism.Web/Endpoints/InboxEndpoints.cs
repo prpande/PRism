@@ -50,6 +50,8 @@ internal static class InboxEndpoints
                         type: "/inbox/initializing");
             }
             var snap = orch.Current!;
+            // Section ordering: relies on Dictionary insertion-order preservation from
+            // InboxRefreshOrchestrator's pipeline. See InboxRefreshOrchestrator for details.
             var sections = snap.Sections
                 .Select(kv => new InboxSectionDto(kv.Key, Labels.TryGetValue(kv.Key, out var lbl) ? lbl : kv.Key, kv.Value))
                 .ToList();

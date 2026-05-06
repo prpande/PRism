@@ -406,3 +406,54 @@ User can override every concern. Validators are advisory, never blocking — exc
 - **Direct dependencies**: P0-1, P0-2
 
 **Description.** Long comment threads (10+ replies) get a summary panel: "Disagreement about whether to handle null inputs at this layer or higher up."
+
+---
+
+## P2-13: `IInboxRanker` real ordering
+
+- **Priority sub-rank**: 13
+- **Direct dependencies**: (none; `IInboxRanker` interface already declared in PoC)
+- **Estimated effort**: M
+- **Capability flag**: existing `ai.inboxRanking`
+- **Seam**: `IInboxRanker` interface (already declared in PoC; PoC ships `NoopInboxRanker`)
+
+**Description.** The PoC ships `NoopInboxRanker` (identity ordering). v2 wires a real ranker (e.g., recency + risk + reviewer-relevance) so the inbox surfaces the most-actionable PRs first. Hooks into the existing `ai.inboxRanking` capability flag and the `IInboxRanker.RankAsync(InboxSection[])` interface declared in `spec/04-ai-seam-architecture.md` § Per-feature service interfaces.
+
+**Why it's at this priority.** The interface already exists and is wired in the inbox orchestrator; v2 just needs to register a non-Noop implementation and flip the capability. No backend refactor required.
+
+**Implementation notes.**
+- `IInboxRanker` invocation point: the orchestrator's pipeline (after deduplication, before AI enrichment; or reorder as writing-plans decides).
+- Input: `InboxSection[]` (each with its `PrInboxItem[]`).
+- Output: same structure, reordered.
+- Seam selection: `IAiSeamSelector.Resolve<IInboxRanker>()` picks Noop (PoC) or real impl (v2+).
+- Example rankers to consider: most-recently-updated first, highest-risk PRs first, team-authored PRs first (to surface self-reviews prominently).
+
+**Acceptance criteria sketch.**
+- Real ranker registered; `/api/capabilities` returns `"ai.inboxRanking": true` when configured.
+- Section order is preserved; only within-section order changes.
+- Ranker operates on real `PrInboxItem` fields (`UpdatedAt`, `Ci` status, author relative to viewer, etc.).
+- Multiple PR sorting strategies can be plugged in via DI.
+
+---
+
+## P2-14: Refine "pending CI" with legacy combined-status semantics
+
+- **Priority sub-rank**: 14
+- **Direct dependencies**: (none; detector logic already in PoC)
+- **Estimated effort**: S
+- **Seam**: `ICiFailingDetector` (already implemented in PoC)
+
+**Description.** The current `GitHubCiFailingDetector` reports `Pending` whenever GitHub's combined-status endpoint returns `state: "pending"`. GitHub returns `pending` both when checks are in-flight AND when no legacy statuses have been registered at all. PoC's user-visible result is "your PR shows pending CI when it actually has no CI." Refine v2 by: (a) treating empty `statuses[]` array as `None` rather than `Pending`, and (b) optionally cross-checking the Checks API count to disambiguate "in-flight" from "never configured."
+
+**Why it's at this priority.** Low effort; narrows a false-positive category that confuses users whose repos use the modern Checks API exclusively and have no legacy statuses configured.
+
+**Implementation notes.**
+- Source: `PRism.GitHub/Inbox/GitHubCiFailingDetector.cs` `FetchCombinedStatusAsync`. Inline comment notes the limitation.
+- Refinement strategy A (simpler): if `statuses[]` is empty, return `CiStatus.None` instead of checking the `state` field.
+- Refinement strategy B: cross-check Checks API result. If Checks API found no running checks, override a "pending" from combined-status to `None`.
+- v2 decision: pick one based on user feedback and telemetry during S2.
+
+**Acceptance criteria sketch.**
+- A PR with modern Checks API configured and no legacy statuses renders `ci: "none"` instead of `ci: "pending"`.
+- A PR with in-flight checks (real pending) still renders `ci: "pending"`.
+- No change to the `CiStatus` enum or its serialization.

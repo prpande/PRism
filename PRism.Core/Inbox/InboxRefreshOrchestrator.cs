@@ -104,6 +104,14 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
 
             // Convert RawPrInboxItem → PrInboxItem (with state.json reads + CI annotation)
             var state = await _stateStore.LoadAsync(ct).ConfigureAwait(false);
+            // Section UI ordering — review-requested → awaiting-author → authored-by-me → mentioned →
+            // ci-failing — is preserved end-to-end by relying on Dictionary<string, ...>'s insertion-
+            // order semantics (CLR contract since .NET 5). ResolveVisibleSections() inserts the keys
+            // in the canonical order; downstream stages preserve that order via .ToDictionary(...) which
+            // iterates the source dictionary's enumerator. If a future refactor swaps any link in the
+            // chain to ConcurrentDictionary or another unordered structure, sections will silently
+            // shuffle in the rendered UI; explicit ordering would have to be reintroduced at the
+            // /api/inbox serialization boundary.
             var sectionsAsItems = rawWithEnrichment.ToDictionary(
                 kv => kv.Key,
                 kv => (IReadOnlyList<PrInboxItem>)kv.Value

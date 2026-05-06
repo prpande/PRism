@@ -664,7 +664,7 @@ A single context provider at `InboxPage` level keeps the tree shallow; subcompon
 - Whether to ship a small `e2e/fixtures/` with anonymized GitHub Search API JSON or to record live during E2E.
 - Whether `InboxContext` is a discrete file or co-located in `InboxPage.tsx`.
 - Whether the AI seam drift-correction is a separate prep PR or rolled into the S2 PR (lean: rolled in).
-- The exact `IInboxRanker` invocation point (the spec lists ranking as identity in PoC; whether to call it as a no-op step in the orchestrator, or skip the call entirely, is a 2-line decision).
+- The exact `IInboxRanker` invocation point (the spec lists ranking as identity in PoC; whether to call it as a no-op step in the orchestrator, or skip the call entirely, is a 2-line decision; see backlog `03-P2-extended-ai.md` § P2-13 for the v2 real-ordering entry).
 
 ## 14. References
 
