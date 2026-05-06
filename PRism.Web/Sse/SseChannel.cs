@@ -47,6 +47,7 @@ internal sealed class SseChannel : IDisposable
             }
         }
         catch (OperationCanceledException) { /* normal client disconnect */ }
+        catch (IOException) { /* broken pipe / connection reset — also normal disconnect on flush */ }
         finally
         {
             // Centralized disposal site (PR #4 review feedback, Copilot). The
