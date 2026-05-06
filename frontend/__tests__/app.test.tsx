@@ -78,6 +78,25 @@ describe('App routing', () => {
     expect(await screen.findByRole('alert')).toBeInTheDocument();
   });
 
+  it('navigates to /setup when prism-auth-rejected event fires', async () => {
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    );
+    // Wait for InboxPage to render (token is present)
+    expect(await screen.findByPlaceholderText(/paste a pr url/i)).toBeInTheDocument();
+    // Simulate a 401 coming back from any API call
+    window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+    // App should now force /setup
+    expect(await screen.findByText(/connect to github/i)).toBeInTheDocument();
+  });
+
   it('renders host-change modal when hostMismatch present', async () => {
     server.use(
       http.get('/api/auth/state', () =>
