@@ -1,0 +1,22 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-4, 12px);
+  padding: var(--s-8, 32px);
+  max-width: 480px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-3, 12px);
+  margin-top: var(--s-4, 16px);
+}

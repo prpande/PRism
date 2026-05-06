@@ -75,4 +75,72 @@ describe('SetupPage', () => {
       'https://github.acme.com/settings/personal-access-tokens/new',
     );
   });
+
+  it('renders a warning modal when connect returns no-repos-selected', async () => {
+    server.use(
+      http.post('/api/auth/connect', () =>
+        HttpResponse.json({
+          ok: true,
+          login: 'octocat',
+          host: 'https://github.com',
+          warning: 'no-repos-selected',
+        }),
+      ),
+    );
+    renderRouted();
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'github_pat_zero');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(await screen.findByText(/no repos selected/i)).toBeInTheDocument();
+    // Did NOT auto-redirect.
+    expect(screen.queryByText('InboxShellMock')).not.toBeInTheDocument();
+  });
+
+  it('Continue anyway commits and routes to /inbox-shell', async () => {
+    let commitCalled = false;
+    server.use(
+      http.post('/api/auth/connect', () =>
+        HttpResponse.json({
+          ok: true,
+          login: 'octocat',
+          host: 'https://github.com',
+          warning: 'no-repos-selected',
+        }),
+      ),
+      http.post('/api/auth/connect/commit', () => {
+        commitCalled = true;
+        return HttpResponse.json({ ok: true, host: 'https://github.com' });
+      }),
+    );
+    renderRouted();
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'github_pat_zero');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /continue anyway/i }));
+    expect(await screen.findByText('InboxShellMock')).toBeInTheDocument();
+    expect(commitCalled).toBe(true);
+  });
+
+  it('Edit token scope dismisses the modal without commit', async () => {
+    let commitCalled = false;
+    server.use(
+      http.post('/api/auth/connect', () =>
+        HttpResponse.json({
+          ok: true,
+          login: 'octocat',
+          host: 'https://github.com',
+          warning: 'no-repos-selected',
+        }),
+      ),
+      http.post('/api/auth/connect/commit', () => {
+        commitCalled = true;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderRouted();
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'github_pat_zero');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /edit token scope/i }));
+    expect(screen.queryByText(/no repos selected/i)).not.toBeInTheDocument();
+    expect(commitCalled).toBe(false);
+    expect(screen.queryByText('InboxShellMock')).not.toBeInTheDocument();
+  });
 });

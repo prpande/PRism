@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetupForm } from '../components/Setup/SetupForm';
+import { NoReposWarningModal } from '../components/Setup/NoReposWarningModal';
 import { apiClient } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import type { ConnectResponse } from '../api/types';
@@ -9,6 +10,7 @@ export function SetupPage() {
   const { authState } = useAuth();
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
   const navigate = useNavigate();
 
   const onSubmit = async (pat: string) => {
@@ -16,8 +18,15 @@ export function SetupPage() {
     setError(undefined);
     try {
       const result = await apiClient.post<ConnectResponse>('/api/auth/connect', { pat });
-      if (result.ok) navigate('/inbox-shell');
-      else setError(result.detail ?? result.error ?? 'Validation failed.');
+      if (!result.ok) {
+        setError(result.detail ?? result.error ?? 'Validation failed.');
+        return;
+      }
+      if (result.warning === 'no-repos-selected') {
+        setShowWarning(true);
+        return;
+      }
+      navigate('/inbox-shell');
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -25,7 +34,27 @@ export function SetupPage() {
     }
   };
 
+  const onContinueAnyway = async () => {
+    setBusy(true);
+    try {
+      await apiClient.post<{ ok: boolean }>('/api/auth/connect/commit');
+      navigate('/inbox-shell');
+    } catch (e) {
+      setError((e as Error).message);
+      setShowWarning(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onEdit = () => setShowWarning(false);
+
   if (authState === null) return <div aria-busy="true">Loading…</div>;
 
-  return <SetupForm host={authState.host} onSubmit={onSubmit} error={error} busy={busy} />;
+  return (
+    <>
+      <SetupForm host={authState.host} onSubmit={onSubmit} error={error} busy={busy} />
+      {showWarning && <NoReposWarningModal onContinue={onContinueAnyway} onEdit={onEdit} busy={busy} />}
+    </>
+  );
 }
