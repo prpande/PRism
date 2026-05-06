@@ -17,7 +17,8 @@ export function NoReposWarningModal({ onContinue, onEdit, busy }: Props) {
         </p>
         <p>Continue anyway, or go back and edit the token scope?</p>
         <div className={styles.actions}>
-          <button type="button" onClick={onEdit} disabled={busy}>
+          {/* Edit stays enabled during commit so the user can always retreat. */}
+          <button type="button" onClick={onEdit}>
             Edit token scope
           </button>
           <button type="button" onClick={() => void onContinue()} disabled={busy}>

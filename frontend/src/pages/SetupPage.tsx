@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SetupForm } from '../components/Setup/SetupForm';
 import { NoReposWarningModal } from '../components/Setup/NoReposWarningModal';
-import { apiClient } from '../api/client';
+import { apiClient, ApiError } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import type { ConnectResponse } from '../api/types';
 
@@ -42,7 +42,13 @@ export function SetupPage() {
       window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
       navigate('/');
     } catch (e) {
-      setError((e as Error).message);
+      // 409 means the in-memory transient is gone (process restart, double-commit).
+      // The user needs to re-paste their token, not see a generic error.
+      if (e instanceof ApiError && e.status === 409) {
+        setError('Setup expired. Re-paste your token to try again.');
+      } else {
+        setError((e as Error).message);
+      }
       setShowWarning(false);
     } finally {
       setBusy(false);
