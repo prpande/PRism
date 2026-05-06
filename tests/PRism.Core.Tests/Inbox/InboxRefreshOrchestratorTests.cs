@@ -383,6 +383,78 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
+    public async Task RefreshAsync_when_only_PR_removals_publishes_InboxUpdated_with_nonzero_count()
+    {
+        // First refresh has 2 PRs in review-requested. Second refresh has 0 PRs in
+        // review-requested (e.g. they were merged / closed). The previous behavior
+        // was to publish InboxUpdated with NewOrUpdatedPrCount == 0, which caused
+        // the frontend banner to render the misleading "0 new updates". Removed
+        // PRs are real changes — they must contribute to the count.
+        var bus = new RecordingEventBus();
+        var call = 0;
+        var sections = new FakeSectionQueryRunner(_ =>
+        {
+            call++;
+            if (call == 1)
+                return new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+                {
+                    ["review-requested"] = new[] { RawPr(1), RawPr(2) },
+                };
+            return new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = Array.Empty<RawPrInboxItem>(),
+            };
+        });
+
+        var configMock = ConfigStoreMock(ConfigWithSections(
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
+            mentioned: false, ciFailing: false));
+        using var sut = Build(config: configMock.Object, sections: sections, events: bus);
+
+        await sut.RefreshAsync(CancellationToken.None); // first
+        await sut.RefreshAsync(CancellationToken.None); // second: both PRs gone
+
+        bus.Published.Should().HaveCount(2);
+        var second = (InboxUpdated)bus.Published[1];
+        second.NewOrUpdatedPrCount.Should().Be(2,
+            "the two removed PRs must be counted so the banner doesn't show '0 new updates'");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_when_section_removed_counts_its_PRs_into_NewOrUpdatedPrCount()
+    {
+        // First refresh has review-requested (2 PRs) and mentioned (1 PR). Second
+        // refresh has only mentioned (1 PR, unchanged). The 2 PRs in the dropped
+        // review-requested section must contribute to NewOrUpdatedPrCount.
+        var bus = new RecordingEventBus();
+        var call = 0;
+        var sections = new FakeSectionQueryRunner(_ =>
+        {
+            call++;
+            if (call == 1)
+                return new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+                {
+                    ["review-requested"] = new[] { RawPr(1), RawPr(2) },
+                    ["mentioned"]        = new[] { RawPr(3) },
+                };
+            return new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["mentioned"] = new[] { RawPr(3) },
+            };
+        });
+
+        using var sut = Build(sections: sections, events: bus);
+
+        await sut.RefreshAsync(CancellationToken.None);
+        await sut.RefreshAsync(CancellationToken.None);
+
+        bus.Published.Should().HaveCount(2);
+        var second = (InboxUpdated)bus.Published[1];
+        second.NewOrUpdatedPrCount.Should().Be(2,
+            "PRs from a removed section must contribute to the count");
+    }
+
+    [Fact]
     public async Task State_json_reads_propagate_to_inbox_items()
     {
         // Arrange: state.json has a session entry for PR #1 in acme/api

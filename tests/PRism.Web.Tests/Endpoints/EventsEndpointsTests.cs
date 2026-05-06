@@ -1,5 +1,6 @@
 using System.IO;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using FluentAssertions;
 using Microsoft.AspNetCore.Http;
@@ -298,6 +299,101 @@ public class EventsEndpointsTests
 
         // Stop the subscriber loop cleanly. The heartbeat loop in RunSubscriberAsync
         // is independent of the eviction; cancelling it lets the test tear down.
+        await ctsRun.CancelAsync();
+        try { await runTask; } catch (OperationCanceledException) { } catch (IOException) { }
+    }
+
+    [Fact]
+    public async Task Sse_subscriber_failed_publisher_write_then_heartbeat_does_not_throw_ObjectDisposedException()
+    {
+        // Regression test: PR #4 review feedback (Copilot, line 61 of SseChannel.cs).
+        // SseSubscriber could be disposed from the publisher path
+        // (WriteAndEvictOnFailureAsync) while RunSubscriberAsync was still running
+        // its heartbeat loop. After eviction, the next heartbeat write would throw
+        // ObjectDisposedException from the semaphore — uncaught (only
+        // OperationCanceledException is caught), it surfaced as an unhandled request
+        // exception.
+        //
+        // Fix (Option A): centralize SseSubscriber.Dispose() in RunSubscriberAsync's
+        // finally block. The publisher's eviction path only Removes from _writers
+        // and decrements _subs; it does NOT dispose. RunSubscriberAsync's finally
+        // is the single disposal site, guaranteed to fire when the request ends.
+        //
+        // To exercise the race deterministically without waiting for the 25s
+        // heartbeat timer, we use reflection (InternalsVisibleTo is configured) to
+        // grab the SseSubscriber out of _writers before eviction and then invoke
+        // its WriteAsync directly after eviction completes. This simulates the
+        // heartbeat-loop's "next write" attempt. With the bug present, the
+        // semaphore inside the subscriber would already be disposed, so the call
+        // throws ObjectDisposedException. With the fix, the semaphore stays alive
+        // until RunSubscriberAsync's finally runs.
+        var bus = new ReviewEventBus();
+        var subs = new InboxSubscriberCount();
+        using var channel = new SseChannel(bus, subs, NullLogger<SseChannel>.Instance);
+
+        // First write (initial heartbeat) succeeds; second write (publisher event)
+        // throws — triggering eviction.
+        var failingBody = new FailOnNthWriteStream(failOnWriteOrdinal: 2);
+        var ctx = new DefaultHttpContext { Response = { Body = failingBody } };
+
+        using var ctsRun = new CancellationTokenSource();
+        var runTask = channel.RunSubscriberAsync(ctx.Response, ctsRun.Token);
+
+        // Wait until the subscriber is registered (initial heartbeat completed).
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (subs.Current == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(5, CancellationToken.None);
+        subs.Current.Should().Be(1, "subscriber should be registered before publishing");
+
+        // Grab the subscriber reference out of _writers before eviction removes it.
+        // We need this to simulate the heartbeat-loop's deferred write attempt.
+        var writersField = typeof(SseChannel).GetField(
+            "_writers", BindingFlags.NonPublic | BindingFlags.Instance);
+        writersField.Should().NotBeNull("test relies on InternalsVisibleTo + reflection to grab the subscriber");
+        var writersList = writersField!.GetValue(channel) as System.Collections.IList;
+        writersList.Should().NotBeNull();
+        writersList!.Count.Should().Be(1);
+        var subscriber = writersList[0];
+        subscriber.Should().NotBeNull();
+
+        // Publish — triggers WriteAndEvictOnFailureAsync; the second write throws,
+        // and the eviction path Removes (and, in the buggy code, Disposed the
+        // subscriber's SemaphoreSlim).
+        bus.Publish(new InboxUpdated(new[] { "review-requested" }, 1));
+
+        // Wait for the eviction to complete.
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (subs.Current != 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10, CancellationToken.None);
+        subs.Current.Should().Be(0, "eviction must complete before we simulate the heartbeat write");
+
+        // Simulate the heartbeat-loop's next write attempt against the (still-
+        // referenced) subscriber. With the bug, the SemaphoreSlim inside is
+        // disposed and WaitAsync throws ObjectDisposedException. With the fix,
+        // the semaphore is still alive — the call may fail with a stream-level
+        // exception (the underlying FailOnNthWriteStream keeps throwing IOException
+        // on every write past the first), but it must NOT throw ObjectDisposedException.
+        var writeAsync = subscriber!.GetType().GetMethod(
+            "WriteAsync",
+            BindingFlags.Public | BindingFlags.Instance,
+            new[] { typeof(string), typeof(CancellationToken) });
+        writeAsync.Should().NotBeNull("test relies on calling SseSubscriber.WriteAsync via reflection");
+
+        Func<Task> simulatedHeartbeat = async () =>
+        {
+            var task = (Task)writeAsync!.Invoke(subscriber, new object[] { ":heartbeat\n\n", CancellationToken.None })!;
+            try { await task; }
+            catch (TargetInvocationException tie) when (tie.InnerException is not null)
+            {
+                throw tie.InnerException;
+            }
+        };
+
+        await simulatedHeartbeat.Should().NotThrowAsync<ObjectDisposedException>(
+            "publisher path must not dispose the SseSubscriber while RunSubscriberAsync's heartbeat " +
+            "loop is still alive — disposal is the heartbeat loop's finally responsibility");
+
+        // Stop the subscriber loop cleanly.
         await ctsRun.CancelAsync();
         try { await runTask; } catch (OperationCanceledException) { } catch (IOException) { }
     }

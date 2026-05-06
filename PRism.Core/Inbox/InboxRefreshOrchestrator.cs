@@ -128,13 +128,21 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
             // Convert RawPrInboxItem → PrInboxItem (with state.json reads + CI annotation)
             var state = await _stateStore.LoadAsync(ct).ConfigureAwait(false);
             // Section UI ordering — review-requested → awaiting-author → authored-by-me → mentioned →
-            // ci-failing — is preserved end-to-end by relying on Dictionary<string, ...>'s insertion-
-            // order semantics (CLR contract since .NET 5). ResolveVisibleSections() inserts the keys
-            // in the canonical order; downstream stages preserve that order via .ToDictionary(...) which
-            // iterates the source dictionary's enumerator. If a future refactor swaps any link in the
-            // chain to ConcurrentDictionary or another unordered structure, sections will silently
-            // shuffle in the rendered UI; explicit ordering would have to be reintroduced at the
-            // /api/inbox serialization boundary.
+            // ci-failing — is NOT supplied by ResolveVisibleSections() (it returns a HashSet<string>,
+            // which has no defined enumeration order). The canonical order comes from two sources:
+            //   1. GitHubSectionQueryRunner.SectionQueries is a Dictionary<string, string> initialized
+            //      with the four base sections in the canonical order (review-requested, awaiting-author,
+            //      authored-by-me, mentioned). Its QueryAllAsync filters by visibleSectionIds.Contains(...)
+            //      while iterating SectionQueries, so the returned dictionary's enumeration follows that
+            //      same insertion order. The .ToDictionary(...) call below preserves it again.
+            //   2. "ci-failing" is inserted explicitly later (in the CI fan-out block above), AFTER the
+            //      four base entries — placing it last in the enumeration.
+            // Footnote: Dictionary<TKey, TValue>'s enumerator order is documented as undefined for the
+            // type, but every CLR shipped since .NET 5 preserves insertion order when no removals occur.
+            // PRism relies on this de-facto guarantee; if a future runtime changes it, sections will
+            // silently shuffle. A future refactor that swaps any link in the chain to ConcurrentDictionary
+            // or another unordered structure has the same failure mode. If either risk materializes,
+            // reintroduce explicit ordering at the /api/inbox serialization boundary.
             var sectionsAsItems = rawWithEnrichment.ToDictionary(
                 kv => kv.Key,
                 kv => (IReadOnlyList<PrInboxItem>)kv.Value
@@ -203,6 +211,15 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
             lastViewedHeadSha, lastSeenCommentId);
     }
 
+    // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its
+    // semantic is broader: it counts every PR that meaningfully *changed* between the
+    // prior and next snapshot — additions, in-place updates (HeadSha/CommentCount/Ci),
+    // and removals (PRs that vanished from a section, plus all PRs in sections that
+    // were dropped entirely). The frontend banner depends on this count being > 0
+    // whenever Changed is true; a "Changed but count == 0" outcome would render the
+    // misleading "0 new updates" string. Renaming the field to match the broadened
+    // meaning would cascade into the DTO contract and the frontend's useInboxUpdates
+    // hook, so the field name is left aspirational and this comment carries the truth.
     private static (bool Changed, IReadOnlyList<string> ChangedSectionIds, int NewOrUpdatedPrCount)
         ComputeDiff(InboxSnapshot? prior, InboxSnapshot next)
     {
@@ -213,6 +230,7 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
         {
             var oldItems = prior.Sections.TryGetValue(kv.Key, out var v) ? v : Array.Empty<PrInboxItem>();
             var oldByRef = oldItems.ToDictionary(p => p.Reference);
+            var newByRef = kv.Value.ToDictionary(p => p.Reference);
             var sectionChanged = false;
             foreach (var n in kv.Value)
             {
@@ -225,15 +243,28 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
                     newOrUpdated++; sectionChanged = true;
                 }
             }
+            // PRs removed from this section since the prior snapshot count too — a
+            // disappeared PR is a real change, even if the field name says otherwise.
+            foreach (var o in oldItems)
+            {
+                if (!newByRef.ContainsKey(o.Reference))
+                {
+                    newOrUpdated++; sectionChanged = true;
+                }
+            }
             if (oldItems.Count != kv.Value.Count) sectionChanged = true;
             if (sectionChanged) changed.Add(kv.Key);
         }
         // Also detect sections present in the prior snapshot but absent from the new one
-        // (e.g., user disables a section in config between two refreshes).
-        foreach (var key in prior.Sections.Keys)
+        // (e.g., user disables a section in config between two refreshes). Every PR in
+        // the dropped section is a removal and contributes to NewOrUpdatedPrCount.
+        foreach (var (key, oldItems) in prior.Sections)
         {
             if (!next.Sections.ContainsKey(key))
+            {
                 changed.Add(key);
+                newOrUpdated += oldItems.Count;
+            }
         }
         return (changed.Count > 0, changed, newOrUpdated);
     }

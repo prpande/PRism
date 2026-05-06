@@ -49,16 +49,21 @@ internal sealed class SseChannel : IDisposable
         catch (OperationCanceledException) { /* normal client disconnect */ }
         finally
         {
-            // The publisher path (OnInboxUpdated → WriteAndEvictOnFailureAsync) may
-            // have already evicted this subscriber on a write failure. Use Remove's
-            // bool return to avoid double-decrementing _subs and double-disposing.
+            // Centralized disposal site (PR #4 review feedback, Copilot). The
+            // publisher path (OnInboxUpdated → WriteAndEvictOnFailureAsync) may
+            // have already removed this subscriber from _writers on a write
+            // failure — Remove's bool return guards against double-decrementing
+            // _subs. The publisher path does NOT dispose, so we ALWAYS dispose
+            // here: this finally is guaranteed to fire when the request completes,
+            // and is the single owner of the SseSubscriber's lifetime. That
+            // closes the race where a publisher-side write failure disposed the
+            // subscriber's SemaphoreSlim out from under the still-running
+            // heartbeat loop, causing the next heartbeat write to surface an
+            // unhandled ObjectDisposedException.
             bool removed;
             lock (_gate) removed = _writers.Remove(sub);
-            if (removed)
-            {
-                _subs.Decrement();
-                sub.Dispose();
-            }
+            if (removed) _subs.Decrement();
+            sub.Dispose();
         }
     }
 
@@ -99,32 +104,29 @@ internal sealed class SseChannel : IDisposable
         }
         catch (OperationCanceledException)
         {
-            // Normal client-disconnect path: the heartbeat loop's finally will
-            // also evict, but whichever path wins the Remove race owns the
-            // decrement + dispose. Don't log loudly — disconnects are routine.
+            // Normal client-disconnect path. Remove from _writers so the publisher
+            // stops writing to this subscriber and decrement _subs once (Remove's
+            // bool return guards against double-decrementing if RunSubscriberAsync's
+            // finally also runs Remove). Disposal is centralized in
+            // RunSubscriberAsync's finally — see the note there. Don't log
+            // loudly — disconnects are routine.
             bool removed;
             lock (_gate) removed = _writers.Remove(s);
-            if (removed)
-            {
-                _subs.Decrement();
-                s.Dispose();
-            }
+            if (removed) _subs.Decrement();
         }
         catch (Exception ex)
         {
             s_writeFailedLog(_log, ex);
 
             // Atomically evict the subscriber so the publisher stops writing to it.
-            // RunSubscriberAsync's finally also removes on cancellation; whichever
-            // path wins the Remove race is responsible for the matching decrement +
-            // dispose. The other path observes Remove == false and does nothing.
+            // Remove's bool return guards against double-decrementing _subs if
+            // RunSubscriberAsync's finally also runs. Disposal is centralized in
+            // RunSubscriberAsync's finally so we never dispose the SemaphoreSlim
+            // out from under the still-running heartbeat loop (PR #4 review:
+            // ObjectDisposedException race).
             bool removed;
             lock (_gate) removed = _writers.Remove(s);
-            if (removed)
-            {
-                _subs.Decrement();
-                s.Dispose();
-            }
+            if (removed) _subs.Decrement();
         }
     }
 #pragma warning restore CA1031
@@ -137,10 +139,13 @@ internal sealed class SseChannel : IDisposable
         // Per-subscriber lock that serializes writes to the response body. The two write
         // paths (heartbeat loop in RunSubscriberAsync, and event delivery from the bus
         // via OnInboxUpdated) both flow through WriteAsync, so they cannot interleave
-        // and corrupt SSE framing. Disposed by whichever path evicts the subscriber from
-        // _writers (RunSubscriberAsync's finally on cancellation, or
-        // WriteAndEvictOnFailureAsync on a publisher-side write failure) — guarded by
-        // the bool return of List.Remove so only one path disposes.
+        // and corrupt SSE framing. Disposal is centralized in RunSubscriberAsync's
+        // finally block (the single lifetime owner) — the publisher's eviction path
+        // (WriteAndEvictOnFailureAsync) only Removes from _writers and decrements
+        // _subs, never disposes. This avoids the race where a publisher-side write
+        // failure could dispose the SemaphoreSlim out from under a still-running
+        // heartbeat loop, causing the next heartbeat write to throw
+        // ObjectDisposedException unhandled (PR #4 review feedback).
         private readonly SemaphoreSlim _writeLock = new(1, 1);
 
         public SseSubscriber(HttpResponse response, CancellationToken requestAborted)
