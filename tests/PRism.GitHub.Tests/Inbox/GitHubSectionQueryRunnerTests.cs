@@ -139,6 +139,45 @@ public sealed class GitHubSectionQueryRunnerTests
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
+    [Fact]
+    public async Task Item_with_malformed_pr_url_is_skipped_other_items_still_returned()
+    {
+        // A response that mixes an invalid html_url with a valid one.
+        // The malformed item must be silently skipped; the valid item must still be returned.
+        const string mixedResponse = """
+            {
+              "items": [
+                {
+                  "number": 99,
+                  "title": "Bad URL PR",
+                  "user": { "login": "amelia" },
+                  "repository_url": "https://api.github.com/repos/acme/api",
+                  "updated_at": "2026-05-06T10:00:00Z",
+                  "comments": 0,
+                  "pull_request": { "html_url": "not-a-valid-url" }
+                },
+                {
+                  "number": 42,
+                  "title": "Good PR",
+                  "user": { "login": "amelia" },
+                  "repository_url": "https://api.github.com/repos/acme/api",
+                  "updated_at": "2026-05-06T10:00:00Z",
+                  "comments": 3,
+                  "pull_request": { "html_url": "https://github.com/acme/api/pull/42" }
+                }
+              ]
+            }
+            """;
+        var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, mixedResponse));
+        var sut = BuildSut(handler);
+
+        var result = await sut.QueryAllAsync(new HashSet<string> { "review-requested" }, default);
+
+        var items = result["review-requested"];
+        items.Should().HaveCount(1, "the malformed-URL item must be silently skipped");
+        items[0].Reference.Number.Should().Be(42);
+    }
+
     private static HttpResponseMessage Respond(HttpStatusCode code, string body) => new(code)
     {
         Content = new StringContent(body, Encoding.UTF8, "application/json"),

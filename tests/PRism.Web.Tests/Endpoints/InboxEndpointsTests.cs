@@ -38,6 +38,30 @@ public class InboxEndpointsTests
             null, null);
 
     [Fact]
+    public async Task Get_inbox_cold_start_kicks_refresh_only_once_for_concurrent_requests()
+    {
+        // Multiple concurrent requests while Current==null must each call WaitForFirstSnapshot,
+        // but only one must fire a RefreshAsync (the "cold-start kick").
+        var fakeOrch = new FakeInboxRefreshOrchestrator
+        {
+            Current = null,
+            WaitOverride = (_, _) => Task.FromResult(false), // always times out → 503
+        };
+
+        using var factory = new PRismWebApplicationFactory();
+        factory.FakeOrchestrator = fakeOrch;
+        var client = factory.CreateClient();
+
+        var tasks = Enumerable.Range(0, 3)
+            .Select(_ => client.GetAsync(new Uri("/api/inbox", UriKind.Relative)))
+            .ToArray();
+        await Task.WhenAll(tasks);
+
+        fakeOrch.RefreshCalls.Should().Be(1,
+            "concurrent cold-start requests must kick exactly one refresh, not one per request");
+    }
+
+    [Fact]
     public async Task Get_inbox_503_when_no_snapshot_after_timeout()
     {
         var fakeOrch = new FakeInboxRefreshOrchestrator

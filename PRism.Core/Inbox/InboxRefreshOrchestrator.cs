@@ -24,6 +24,7 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
     private InboxSnapshot? _current;
     private TaskCompletionSource _firstSnapshotTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly SemaphoreSlim _writerLock = new(1, 1);
+    private int _coldStartKicked;
 
     public InboxRefreshOrchestrator(
         IConfigStore config,
@@ -57,6 +58,20 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
         var task = _firstSnapshotTcs.Task;
         var completed = await Task.WhenAny(task, Task.Delay(timeout, ct)).ConfigureAwait(false);
         return completed == task;
+    }
+
+    /// <inheritdoc/>
+    public void TryColdStartRefresh()
+    {
+        // Atomic CAS: only the thread that flips 0→1 kicks the refresh. Every concurrent
+        // caller on the cold path sees the flag already set and returns immediately.
+        if (Interlocked.CompareExchange(ref _coldStartKicked, 1, 0) != 0) return;
+        // Fire-and-forget: a failed cold-start refresh is not silent — InboxPoller will
+        // retry on its next tick and log the failure there. Attaching a fault continuation
+        // here would require injecting an ILogger into this class.
+#pragma warning disable CA2012 // fire-and-forget by design; see comment above
+        _ = RefreshAsync(CancellationToken.None);
+#pragma warning restore CA2012
     }
 
     public async Task RefreshAsync(CancellationToken ct)
@@ -212,6 +227,13 @@ public sealed class InboxRefreshOrchestrator : IInboxRefreshOrchestrator, IDispo
             }
             if (oldItems.Count != kv.Value.Count) sectionChanged = true;
             if (sectionChanged) changed.Add(kv.Key);
+        }
+        // Also detect sections present in the prior snapshot but absent from the new one
+        // (e.g., user disables a section in config between two refreshes).
+        foreach (var key in prior.Sections.Keys)
+        {
+            if (!next.Sections.ContainsKey(key))
+                changed.Add(key);
         }
         return (changed.Count > 0, changed, newOrUpdated);
     }

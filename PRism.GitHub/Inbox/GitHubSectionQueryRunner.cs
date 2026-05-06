@@ -80,7 +80,8 @@ public sealed class GitHubSectionQueryRunner : ISectionQueryRunner
         foreach (var item in items.EnumerateArray())
         {
             var prUrl = item.GetProperty("pull_request").GetProperty("html_url").GetString() ?? "";
-            var path = new Uri(prUrl).AbsolutePath.Trim('/').Split('/');
+            if (!Uri.TryCreate(prUrl, UriKind.Absolute, out var prUri)) continue;
+            var path = prUri.AbsolutePath.Trim('/').Split('/');
             if (path.Length < 4 || path[2] != "pull") continue;
             if (!int.TryParse(path[3], out var n)) continue;
 

@@ -350,6 +350,39 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
+    public async Task Section_removal_triggers_inbox_updated_event()
+    {
+        // Arrange: first refresh has "review-requested" + "mentioned"; second has only "mentioned".
+        // ComputeDiff must detect the removal of "review-requested" and publish an event.
+        var bus = new RecordingEventBus();
+        var call = 0;
+        var sections = new FakeSectionQueryRunner(_ =>
+        {
+            call++;
+            if (call == 1)
+                return new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+                {
+                    ["review-requested"] = new[] { RawPr(1) },
+                    ["mentioned"]        = new[] { RawPr(2) },
+                };
+            return new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["mentioned"] = new[] { RawPr(2) }, // "review-requested" removed
+            };
+        });
+
+        using var sut = Build(sections: sections, events: bus);
+
+        await sut.RefreshAsync(CancellationToken.None); // first: always changed
+        await sut.RefreshAsync(CancellationToken.None); // second: one section gone
+
+        bus.Published.Should().HaveCount(2, "removing a section is a change and must publish an event");
+        var second = (InboxUpdated)bus.Published[1];
+        second.ChangedSectionIds.Should().Contain("review-requested",
+            "the removed section must appear in the changed-section list");
+    }
+
+    [Fact]
     public async Task State_json_reads_propagate_to_inbox_items()
     {
         // Arrange: state.json has a session entry for PR #1 in acme/api
