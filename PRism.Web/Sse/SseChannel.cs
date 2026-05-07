@@ -1,8 +1,11 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using PRism.Core.Contracts;
 using PRism.Core.Events;
 using PRism.Core.Inbox;
 using PRism.Core.Json;
+using PRism.Core.PrDetail;
 
 namespace PRism.Web.Sse;
 
@@ -10,19 +13,52 @@ internal sealed class SseChannel : IDisposable
 {
     private readonly InboxSubscriberCount _subs;
     private readonly ILogger<SseChannel> _log;
-    private readonly List<SseSubscriber> _writers = new();
-    private readonly object _gate = new();
-    private readonly IDisposable _busSub;
+    private readonly ActivePrSubscriberRegistry _activeRegistry;
 
-    public SseChannel(IReviewEventBus bus, InboxSubscriberCount subs, ILogger<SseChannel> log)
+    // subscriberId → SseSubscriber. The single source of truth for "who is connected".
+    private readonly ConcurrentDictionary<string, SseSubscriber> _subscribers = new();
+
+    // cookieSessionId → ordered list of subscriberIds (most-recent at tail). Multiple SSE
+    // connections from the same browser (multi-tab) share one cookieSessionId — see spec
+    // § 6.2 + the deferrals sidecar entry "[Skip] Singular {cookieSessionId → subscriberId}
+    // map" for why this is a multimap with most-recent-wins for POST/DELETE resolution.
+    private readonly Dictionary<string, List<string>> _cookieToSubs = new(StringComparer.Ordinal);
+    private readonly object _cookieGate = new();
+
+    private readonly IDisposable _busInbox;
+    private readonly IDisposable _busActivePr;
+
+    public SseChannel(
+        IReviewEventBus bus,
+        InboxSubscriberCount subs,
+        ActivePrSubscriberRegistry activeRegistry,
+        ILogger<SseChannel> log)
     {
         ArgumentNullException.ThrowIfNull(bus);
+        ArgumentNullException.ThrowIfNull(activeRegistry);
         _subs = subs;
         _log = log;
-        _busSub = bus.Subscribe<InboxUpdated>(OnInboxUpdated);
+        _activeRegistry = activeRegistry;
+        _busInbox = bus.Subscribe<InboxUpdated>(OnInboxUpdated);
+        _busActivePr = bus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
     }
 
-    public async Task RunSubscriberAsync(HttpResponse response, CancellationToken ct)
+    // Returns the most-recent subscriberId for the given cookieSessionId, or null if no
+    // active SSE connection exists for that cookie. POST/DELETE on /api/events/subscriptions
+    // call this to resolve "which subscriber is the requesting tab" — they NEVER trust a
+    // subscriberId from the request body (closes the cross-tab forge attack).
+    public string? LatestSubscriberIdForCookieSession(string? cookieSessionId)
+    {
+        if (string.IsNullOrEmpty(cookieSessionId)) return null;
+        lock (_cookieGate)
+        {
+            return _cookieToSubs.TryGetValue(cookieSessionId, out var list) && list.Count > 0
+                ? list[^1]
+                : null;
+        }
+    }
+
+    public async Task RunSubscriberAsync(HttpResponse response, string? cookieSessionId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(response);
 
@@ -30,40 +66,59 @@ internal sealed class SseChannel : IDisposable
         response.Headers["Cache-Control"] = "no-store";
         response.Headers["Connection"] = "keep-alive";
 
-        var sub = new SseSubscriber(response, ct);
-        lock (_gate) _writers.Add(sub);
+        // 128-bit cryptorandom subscriber id (Guid.NewGuid is RNG-backed on .NET 6+,
+        // ~122 effective bits after RFC 4122 version/variant). Spec § 6.2 trust model.
+        var subscriberId = Guid.NewGuid().ToString("N");
+        var sub = new SseSubscriber(response, subscriberId, ct);
+        _subscribers[subscriberId] = sub;
+        if (!string.IsNullOrEmpty(cookieSessionId))
+        {
+            lock (_cookieGate)
+            {
+                if (!_cookieToSubs.TryGetValue(cookieSessionId, out var list))
+                    _cookieToSubs[cookieSessionId] = list = new List<string>();
+                list.Add(subscriberId);
+            }
+        }
         _subs.Increment();
 
         try
         {
-            // Write an initial heartbeat to flush headers and confirm the stream is live.
-            await sub.WriteAsync(":heartbeat\n\n", ct).ConfigureAwait(false);
+            // First message: subscriber-assigned. Frontend uses this as the handshake
+            // completion signal AND remembers the subscriberId for subsequent
+            // POST /api/events/subscriptions calls (over fetch with the cookie).
+            var assigned = $"event: subscriber-assigned\ndata: {{\"subscriberId\":\"{subscriberId}\"}}\n\n";
+            await sub.WriteAsync(assigned, ct).ConfigureAwait(false);
 
-            // Loop: heartbeat every 25s until client disconnects.
+            // Heartbeat as a NAMED event (not an SSE comment). Spec § 6.2: comment-form
+            // `:heartbeat` is invisible to browser EventSource onmessage and cannot drive
+            // the frontend silence-watcher.
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(25), ct).ConfigureAwait(false);
-                await sub.WriteAsync(":heartbeat\n\n", ct).ConfigureAwait(false);
+                await sub.WriteAsync("event: heartbeat\ndata: {}\n\n", ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { /* normal client disconnect */ }
-        catch (IOException) { /* broken pipe / connection reset — also normal disconnect on flush */ }
+        catch (IOException) { /* broken pipe / connection reset */ }
         finally
         {
-            // Centralized disposal site (PR #4 review feedback, Copilot). The
-            // publisher path (OnInboxUpdated → WriteAndEvictOnFailureAsync) may
-            // have already removed this subscriber from _writers on a write
-            // failure — Remove's bool return guards against double-decrementing
-            // _subs. The publisher path does NOT dispose, so we ALWAYS dispose
-            // here: this finally is guaranteed to fire when the request completes,
-            // and is the single owner of the SseSubscriber's lifetime. That
-            // closes the race where a publisher-side write failure disposed the
-            // subscriber's SemaphoreSlim out from under the still-running
-            // heartbeat loop, causing the next heartbeat write to surface an
-            // unhandled ObjectDisposedException.
-            bool removed;
-            lock (_gate) removed = _writers.Remove(sub);
-            if (removed) _subs.Decrement();
+            _subscribers.TryRemove(subscriberId, out _);
+            if (!string.IsNullOrEmpty(cookieSessionId))
+            {
+                lock (_cookieGate)
+                {
+                    if (_cookieToSubs.TryGetValue(cookieSessionId, out var list))
+                    {
+                        list.Remove(subscriberId);
+                        if (list.Count == 0) _cookieToSubs.Remove(cookieSessionId);
+                    }
+                }
+            }
+            // Subscription registry holds prRef → subscriberId entries; drop them all on
+            // disconnect so the poller stops polling PRs whose only subscriber is gone.
+            _activeRegistry.RemoveSubscriber(subscriberId);
+            _subs.Decrement();
             sub.Dispose();
         }
     }
@@ -76,18 +131,21 @@ internal sealed class SseChannel : IDisposable
     {
         var json = JsonSerializer.Serialize(evt, JsonSerializerOptionsFactory.Api);
         var frame = $"event: inbox-updated\ndata: {json}\n\n";
-        SseSubscriber[] snapshot;
-        lock (_gate) snapshot = _writers.ToArray();
-        foreach (var s in snapshot)
-        {
-            // Fire-and-forget by design: this handler runs on the publisher's thread
-            // and must not block. Per-subscriber serialization is enforced inside
-            // SseSubscriber (a SemaphoreSlim guards the underlying HttpResponse.Body
-            // PipeWriter, which is not thread-safe). The helper observes the write
-            // task's exceptions (so they don't become unobserved) and evicts dead
-            // subscribers from _writers so the publisher stops writing to them.
-            // Backpressure remains deferred to S3 (spec § 11).
+        // Inbox events broadcast to every subscriber — each connected client sees
+        // every inbox change. Per-subscriber serialization remains in WriteAsync.
+        foreach (var s in _subscribers.Values)
             _ = WriteAndEvictOnFailureAsync(s, frame);
+    }
+
+    private void OnActivePrUpdated(ActivePrUpdated evt)
+    {
+        var json = JsonSerializer.Serialize(evt, JsonSerializerOptionsFactory.Api);
+        var frame = $"event: pr-updated\ndata: {json}\n\n";
+        // Per-PR fanout — only subscribers that registered for evt.PrRef receive the event.
+        foreach (var subscriberId in _activeRegistry.SubscribersFor(evt.PrRef))
+        {
+            if (_subscribers.TryGetValue(subscriberId, out var sub))
+                _ = WriteAndEvictOnFailureAsync(sub, frame);
         }
     }
 
@@ -96,70 +154,56 @@ internal sealed class SseChannel : IDisposable
     {
         try
         {
-            // Pass the subscriber's request-aborted token so a stalled/disconnected
-            // client cancels the write promptly rather than blocking the
-            // fire-and-forget task indefinitely (PR #4 review feedback). The
-            // heartbeat loop already uses this token; this brings the publisher
-            // path in line.
-            await s.WriteAsync(frame, s.RequestAborted).ConfigureAwait(false);
+            // Per-write 5s timeout linked to the request-aborted token (spec § 6.2).
+            // A subscriber whose pipe is blocked beyond 5s gets evicted; healthy subscribers
+            // are unaffected. The same RequestAborted token still drives normal
+            // disconnect detection.
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(s.RequestAborted);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+            await s.WriteAsync(frame, cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            // Normal client-disconnect path. Remove from _writers so the publisher
-            // stops writing to this subscriber and decrement _subs once (Remove's
-            // bool return guards against double-decrementing if RunSubscriberAsync's
-            // finally also runs Remove). Disposal is centralized in
-            // RunSubscriberAsync's finally — see the note there. Don't log
-            // loudly — disconnects are routine.
-            bool removed;
-            lock (_gate) removed = _writers.Remove(s);
-            if (removed) _subs.Decrement();
+            EvictSubscriber(s);
         }
         catch (Exception ex)
         {
             s_writeFailedLog(_log, ex);
-
-            // Atomically evict the subscriber so the publisher stops writing to it.
-            // Remove's bool return guards against double-decrementing _subs if
-            // RunSubscriberAsync's finally also runs. Disposal is centralized in
-            // RunSubscriberAsync's finally so we never dispose the SemaphoreSlim
-            // out from under the still-running heartbeat loop (PR #4 review:
-            // ObjectDisposedException race).
-            bool removed;
-            lock (_gate) removed = _writers.Remove(s);
-            if (removed) _subs.Decrement();
+            EvictSubscriber(s);
         }
     }
 #pragma warning restore CA1031
 
-    public void Dispose() => _busSub.Dispose();
+    private void EvictSubscriber(SseSubscriber s)
+    {
+        if (_subscribers.TryRemove(s.SubscriberId, out _))
+            _subs.Decrement();
+    }
 
-    private sealed class SseSubscriber : IDisposable
+    public void Dispose()
+    {
+        _busInbox.Dispose();
+        _busActivePr.Dispose();
+    }
+
+    internal sealed class SseSubscriber : IDisposable
     {
         private readonly HttpResponse _response;
         // Per-subscriber lock that serializes writes to the response body. The two write
-        // paths (heartbeat loop in RunSubscriberAsync, and event delivery from the bus
-        // via OnInboxUpdated) both flow through WriteAsync, so they cannot interleave
-        // and corrupt SSE framing. Disposal is centralized in RunSubscriberAsync's
-        // finally block (the single lifetime owner) — the publisher's eviction path
-        // (WriteAndEvictOnFailureAsync) only Removes from _writers and decrements
-        // _subs, never disposes. This avoids the race where a publisher-side write
-        // failure could dispose the SemaphoreSlim out from under a still-running
-        // heartbeat loop, causing the next heartbeat write to throw
-        // ObjectDisposedException unhandled (PR #4 review feedback).
+        // paths (heartbeat loop in RunSubscriberAsync and event delivery from the bus
+        // via OnInboxUpdated / OnActivePrUpdated) both flow through WriteAsync. Disposal
+        // is centralized in RunSubscriberAsync's finally block — the publisher's eviction
+        // path only Removes from _subscribers + decrements _subs, never disposes.
         private readonly SemaphoreSlim _writeLock = new(1, 1);
 
-        public SseSubscriber(HttpResponse response, CancellationToken requestAborted)
+        public SseSubscriber(HttpResponse response, string subscriberId, CancellationToken requestAborted)
         {
             _response = response;
+            SubscriberId = subscriberId;
             RequestAborted = requestAborted;
         }
 
-        // Per-request cancellation token (HttpContext.RequestAborted), captured at
-        // construction so the publisher's fire-and-forget write path
-        // (OnInboxUpdated → WriteAndEvictOnFailureAsync) can cancel writes when the
-        // client disconnects. The heartbeat loop in RunSubscriberAsync already
-        // receives this token directly via its parameter.
+        public string SubscriberId { get; }
         public CancellationToken RequestAborted { get; }
 
         public async Task WriteAsync(string frame, CancellationToken ct)

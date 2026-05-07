@@ -3,6 +3,8 @@ source-doc: docs/specs/2026-05-06-s3-pr-detail-read-design.md
 created: 2026-05-07
 last-updated: 2026-05-07
 status: open
+revisions:
+  - 2026-05-07: PR5-design — recorded multimap chosen over (a) last-SSE-wins / (b) reject-second-SSE for `{cookieSessionId → Set<subscriberId>}`
 ---
 
 # Deferrals — S3 PR-detail (read) spec
@@ -193,3 +195,16 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Reason:** Spec-rigor accepted the security need to cap mutating endpoint bodies at 16 KiB. Implementation chose a bespoke `BodySizeLimitMiddleware` with explicit pipeline-ordering, `CappedRoutes` substring path-matcher, and Content-Length null-rejection logic. Plan-rigor scope-guardian P2.3 challenged: ASP.NET Core ships `[RequestSizeLimit]` endpoint metadata + Kestrel's per-route `MaxRequestBodySize` for free; bespoke middleware is parallel infrastructure with substring path-matching that's fragile to new endpoints. Replaced with `[RequestSizeLimit(16384)]` attribute on the four mutating route declarations. Same cap, same pre-binding rejection, framework-native handling for chunked encoding.
 - **Revisit when:** N/A — framework primitive does the job. Only revisit if a future need (e.g., dynamic per-endpoint cap based on route metadata) outgrows `[RequestSizeLimit]`.
 - **New decision lives in:** spec § 8 pipeline ordering, plan Task 5 endpoint declarations.
+
+## [Skip] Singular `{cookieSessionId → subscriberId}` map (last-SSE-wins or reject-second-SSE)
+
+- **Source:** PR5-design session — main-conversation rigor pass before any code, weighed three alternatives for resolving spec § 6.2 line 314 ambiguity
+- **Severity:** P2 (multi-tab dogfood UX)
+- **Date:** 2026-05-07
+- **Reason:** Spec § 6.2 line 314 specifies a singular `{cookieSessionId → subscriberId}` map, but the `prism-session` cookie value is per-process — every tab in the same browser carries the same cookie, so two simultaneous SSE connections from the same user collide on the map key. Three plausible policies were weighed:
+  - **(a) Last-SSE-wins** (overwrite). Old tab keeps its SSE open but its `POST /api/events/subscriptions` calls now resolve to the *new* tab's `subscriberId`, silently mis-attributing subscriptions. Subtle correctness bug for routine multi-tab usage.
+  - **(b) Reject second SSE** (409 on second `GET /api/events`). Breaks the multi-tab dogfood path entirely; teammate-friction memory (`teammate_friction_preference`) is non-negotiable.
+  - **(c) Multimap with most-recent-wins for POST/DELETE.** `{cookieSessionId → Set<subscriberId>}` keyed by cookie, ordered by SSE-connection arrival time. POST/DELETE resolve to the *most recent* `subscriberId` for that cookie; older entries continue receiving fanout for already-registered PRs. Preserves multi-tab correctness for the dominant case (each tab subscribes to its own foreground PR) and accepts the edge case (older tab's *new* subscribe routes through the newer tab's id) as a wash — same browser, same user, same trust boundary per spec § 6.2 last-paragraph threat model.
+  Chosen: (c). (a) and (b) skipped.
+- **Revisit when:** N/A. (c) preserves the spec's stated security property ("an authenticated tab can only operate on its own SSE connection's subscriberId" — generalized: only on a subscriberId belonging to *its own browser session*) and matches the dominant dogfood path. Revisit only if dogfooding surfaces an attack from same-cookie tab boundary, which would invalidate the underlying same-browser-trust premise rather than the multimap itself.
+- **Original finding evidence:** Spec § 6.2 line 313-317 says "SseChannel maintains `{cookieSessionId → subscriberId}` mapping" (singular), but lines 315-317 simultaneously imply per-tab subscriber semantics ("an authenticated tab can only operate on its own SSE connection's subscriberId"). Spec internally inconsistent on multiplicity; this entry resolves the inconsistency to (c).

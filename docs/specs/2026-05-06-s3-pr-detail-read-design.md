@@ -311,10 +311,19 @@ EventsEndpoints
                                             → 204 always (idempotent)
 
   // **SubscriberId is server-issued and bound to the SSE connection.** SseChannel maintains
-  // `{cookieSessionId → subscriberId}` mapping; the POST/DELETE endpoints derive subscriberId
-  // from the requesting cookie's session, NEVER from request bodies. This closes the cross-tab
-  // forge-subscriberId attack: an authenticated tab cannot subscribe ANY subscriberId to ANY PR
-  // — it can only operate on its own SSE connection's subscriberId.
+  // `{cookieSessionId → ordered Set<subscriberId>}` mapping (most-recent SSE connection at
+  // the tail); the POST/DELETE endpoints derive subscriberId from the requesting cookie's
+  // session — specifically the *most-recent* subscriberId for that cookie — NEVER from
+  // request bodies. The multimap shape exists because the `prism-session` cookie is
+  // per-process, so every tab in the same browser carries the same cookie value; multiple
+  // simultaneous SSE connections (one per tab) coexist under the same key, and older
+  // subscribers continue receiving event fanout for the prRefs they previously registered.
+  // This closes the cross-*origin* forge-subscriberId attack (a malicious page on another
+  // origin cannot send the cookie at all), while accepting that two tabs in the *same*
+  // browser session share a trust boundary per the threat model below — they could equally
+  // call the API directly. See deferrals sidecar `[Skip] Singular {cookieSessionId →
+  // subscriberId} map` for the (a) last-SSE-wins / (b) reject-second-SSE alternatives
+  // weighed and skipped.
 
 ActivePrPoller (BackgroundService)
   loop every config.polling.activePrSeconds (default 30):

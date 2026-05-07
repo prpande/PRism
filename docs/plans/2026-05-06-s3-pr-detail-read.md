@@ -3290,7 +3290,7 @@ app.MapPost("/api/events/subscriptions",
         var cookieSessionId = ctx.Request.Cookies["prism-session"];
         if (string.IsNullOrEmpty(cookieSessionId))
             return Results.Problem(type: "/events/no-session", statusCode: 401);
-        var subscriberId = sse.SubscriberIdForCookieSession(cookieSessionId);
+        var subscriberId = sse.LatestSubscriberIdForCookieSession(cookieSessionId);
         if (subscriberId is null)
             return Results.Problem(type: "/events/no-active-sse", statusCode: 403);
         registry.Add(subscriberId, body.PrRef);
@@ -3304,7 +3304,7 @@ app.MapDelete("/api/events/subscriptions",
         var cookieSessionId = ctx.Request.Cookies["prism-session"];
         if (string.IsNullOrEmpty(cookieSessionId))
             return Results.NoContent();   // idempotent — no session → noop
-        var subscriberId = sse.SubscriberIdForCookieSession(cookieSessionId);
+        var subscriberId = sse.LatestSubscriberIdForCookieSession(cookieSessionId);
         if (subscriberId is null)
             return Results.NoContent();   // idempotent — no SSE → noop
         var parsed = PrReference.Parse(prRef);
@@ -3320,7 +3320,7 @@ app.MapGet("/api/events/ping", () => Results.Ok());
 public sealed record SubscribeRequest(PrReference PrRef);
 ```
 
-(P0.1: `SseChannel.SubscriberIdForCookieSession(cookieSessionId)` returns the subscriberId for the active SSE connection on that cookie session, or null if none. The mapping is maintained inside SseChannel as cookie-sessions connect / disconnect.)
+(P0.1 + spec § 6.2 multimap clarification: `SseChannel.LatestSubscriberIdForCookieSession(cookieSessionId)` returns the *most-recent* subscriberId for that cookie's currently-active SSE connections, or null if none. SseChannel maintains `{cookieSessionId → ordered Set<subscriberId>}`; older subscribers from the same cookie continue receiving fanout for prRefs they registered, but POST/DELETE for *new* subscriptions resolve to the latest connection. See deferrals sidecar `[Skip] Singular {cookieSessionId → subscriberId} map` for the alternatives weighed and skipped.)
 
 ### Step 5.8: Tighten `OriginCheckMiddleware` — preserve loopback-port accommodation
 
