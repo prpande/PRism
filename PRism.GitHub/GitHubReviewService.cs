@@ -537,7 +537,10 @@ public sealed partial class GitHubReviewService : IReviewService
     {
         const int MaxPages = 30;   // GitHub's documented cap; pulls/{n}/files truncates beyond this.
         var collected = new List<FileChange>();
-        var url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}/files?per_page=100";
+        // Explicit `string?` so the `url = nextUrl` assignment below stays nullable-clean
+        // under <Nullable>enable</Nullable> + <TreatWarningsAsErrors>true</TreatWarningsAsErrors>.
+        // `var` would infer non-nullable here and the next-link `null` would flag CS8600.
+        string? url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}/files?per_page=100";
         var pageCount = 0;
         var moreAvailable = false;
         using var http = _httpFactory.CreateClient("github");
@@ -914,9 +917,14 @@ public sealed partial class GitHubReviewService : IReviewService
                     comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited));
                 }
             }
-            // anchor SHA isn't returned by reviewThreads in this query; thread-anchor
-            // resolution against the PR diff is a PrDetailLoader concern in Task 4.
-            // Use HeadSha placeholder here; the loader can refine.
+            // AnchorSha is intentionally empty here. The reviewThreads GraphQL connection
+            // doesn't return the per-thread anchor SHA in the current query shape (the SHA
+            // a thread was originally posted against lives on `comments.nodes[0].originalCommit.oid`,
+            // which we don't fetch yet). PrDetailLoader (Task 4) is responsible for resolving
+            // the anchor against the PR diff and stamping a real SHA onto each thread before
+            // the DTO ships to the frontend. Defaulting to HeadSha here would be misleading —
+            // a thread anchored to an older iteration's snapshot would falsely report it
+            // applies to the current head.
             result.Add(new ReviewThreadDto(threadId, path, line, AnchorSha: "", IsResolved: resolved, Comments: comments));
         }
         return result;
