@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using PRism.Core;
 using PRism.Core.Contracts;
+using PRism.Core.Iterations;
 
 namespace PRism.GitHub;
 
@@ -196,10 +197,18 @@ public sealed class GitHubReviewService : IReviewService
         reference = new PrReference(segs[0], segs[1], n);
         return true;
     }
-    public Task<Pr> GetPrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("PR detail lands in S3.");
-    public Task<PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Iterations land in S3.");
-    public Task<FileChange[]> GetDiffAsync(PrReference reference, string fromSha, string toSha, CancellationToken ct) => throw new NotImplementedException("Diff lands in S3.");
-    public Task<ExistingComment[]> GetCommentsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Comments land in S3.");
-    public Task<string> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException("File content lands in S3.");
+    // Legacy S0+S1 surface — unused; retained for the S5 capability split per ADR-S5-1.
+    public Task<Pr> GetPrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Replaced by GetPrDetailAsync in S3.");
+    public Task<PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Replaced by IterationDto inside PrDetailDto in S3.");
+    public Task<FileChange[]> GetDiffAsync(PrReference reference, string fromSha, string toSha, CancellationToken ct) => throw new NotImplementedException("Replaced by GetDiffAsync(prRef, DiffRangeRequest) overload in S3.");
+    public Task<ExistingComment[]> GetCommentsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Replaced by IssueCommentDto/ReviewThreadDto inside PrDetailDto in S3.");
+
+    // S3 PR detail surface — implementations land in this same PR (Task 3.4 onward).
+    public Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("PR detail lands in S3 PR3 Step 3.4+.");
+    public Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct) => throw new NotImplementedException("Diff lands in S3 PR3 Step 3.4+.");
+    public Task<ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Timeline lands in S3 PR3 Step 3.4+.");
+    public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException("File content lands in S3 PR3 Step 3.4+.");
+    public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Active-PR poll lands in S3 PR5 (ActivePrPoller wiring).");
+
     public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException("Submit lands in S5.");
 }
