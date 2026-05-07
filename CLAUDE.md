@@ -117,6 +117,8 @@ The three views are not redundant — they cover different audiences (casual rea
 | New per-slice / per-task design doc | `docs/specs/YYYY-MM-DD-<topic>-design.md` + entry in `docs/specs/README.md` (under "Not started" initially, then promoted as work ships) |
 | New per-slice / per-task plan | `docs/plans/YYYY-MM-DD-<topic>.md` |
 | Spec status change (Not started → In progress → Implemented) | `docs/specs/README.md` group + cross-link to the PR(s) that moved it |
+| Spec edited after its plan was written | Mechanically sync the matching `docs/plans/<source>.md` in the **same PR** before any review or resumed implementation. Default values, file lists, schema fields, error contracts, and test rows propagating from the spec must reach the plan first; otherwise reviews surface stale-cross-ref noise instead of plan-quality findings. |
+| Planning or architectural decision rejects/defers an alternative | New entry in `docs/<specs\|plans>/<source>-deferrals.md` sidecar (create if absent) + reference from the matching `docs/specs/README.md` bullet. Triggered by any session that weighs alternatives — `ce-doc-review` rigor passes, brainstorming Q-decisions, plan-writing alternatives, ADR deferrals, in-conversation rigor passes. See sidecar schema below. |
 | New `.github/workflows/` file or major workflow change | `CLAUDE.md` § Repo state if visible to contributors |
 
 **Out of scope for this rule:**
@@ -132,6 +134,28 @@ The skill is `compound-engineering:ce-doc-review`. If it is not installed in a f
 **Visible rejections.** When handing the cleaned-up doc to the user for the human-review pass, surface every finding `ce-doc-review` raised along with the action taken (Applied / Deferred / Skipped) and a one-line reason for non-applies. The user must be able to spot-check filtering — silent suppression of uncomfortable findings (e.g., premise challenges) under the banner of "didn't hold up to scrutiny" is the failure mode this rule prevents. Practical shape: a brief synthesis block (Coverage table + per-finding action list) printed to the conversation when handing off, not buried in the spec file itself.
 
 **How "automatic" this is:** Claude is the executor. The trigger is the PR diff: when drafting commits that change any of the items above, scan the matching doc *before* opening the PR and include the doc edit in the same PR. PRs that ship code without the matching doc update are incomplete — flag and fix before merge.
+
+**Deferrals sidecar schema.** Each entry in a `<source>-deferrals.md` follows this shape — the first sidecar to land (`docs/specs/2026-05-06-s3-pr-detail-read-deferrals.md`) is the canonical reference:
+
+```markdown
+---
+source-doc: docs/{specs|plans}/<source>.md   # path mirrors the source doc's location
+created: YYYY-MM-DD
+last-updated: YYYY-MM-DD                     # bump when entries are added or status changes
+status: open | resolved | superseded
+---
+
+## [Defer|Skip|Superseded] <Title>
+
+- **Source:** <which session — e.g., `ce-doc-review` 7-persona pass on YYYY-MM-DD>
+- **Severity:** P0 | P1 | P2 | P3 | n/a
+- **Date:** YYYY-MM-DD
+- **Reason:** <why we deferred or skipped — one paragraph>
+- **Revisit when:** <concrete trigger; "n/a" for skips and superseded>
+- **Original finding evidence:** <quote or paraphrase>
+```
+
+`[Defer]` = will revisit (Revisit-when names the trigger). `[Skip]` = rejected with reasoning, do NOT revisit unless new evidence. `[Superseded]` = a prior Apply/Defer/Skip decision that a later rigor pass overturned; references the original entry. Don't re-edit entries after the fact — frozen record. Updates land as new entries citing the prior one.
 
 ## General behavioral guidelines
 
