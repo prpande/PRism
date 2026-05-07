@@ -196,6 +196,15 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Revisit when:** N/A — framework primitive does the job. Only revisit if a future need (e.g., dynamic per-endpoint cap based on route metadata) outgrows `[RequestSizeLimit]`.
 - **New decision lives in:** spec § 8 pipeline ordering, plan Task 5 endpoint declarations.
 
+## [Superseded] Cookie-only on `/api/events`, header-only on other `/api/*` (cookie-OR-header now)
+
+- **Source:** PR5 implementation — CI build-and-test failure on PR #22 surfaced that the existing frontend's `apiClient` does not echo `X-PRism-Session` as a header. Same-origin fetch carries the cookie automatically; the strict cookie-vs-header split landed in the original spec broke every existing SPA call.
+- **Severity:** P1 (broke existing frontend; CI red on cold-start + no-browser e2e tests)
+- **Date:** 2026-05-08
+- **Reason:** Original spec § 8 prescribed cookie-only on `/api/events` (because EventSource can't set custom headers) and header-only everywhere else (defending against same-origin cookie replay from a stale tab). In practice the SPA shipped in earlier slices does NOT read `document.cookie` and echo as `X-PRism-Session` — it relies on the browser's automatic cookie attachment for same-origin fetches. The strict header-only policy on non-SSE `/api/*` would have required a frontend update to land in the same PR, which is out of S3 PR5's backend-only scope. Widening to cookie-OR-header preserves the security model: cookie is per-process random, `SameSite=Strict` (cross-origin attackers cannot get it sent), and `OriginCheckMiddleware` rejects empty Origin on mutating verbs. Cookie-only auth on /api/* is equivalent proof of session because all three protections compose. `/api/health` is exempted entirely (liveness probe convention; no sensitive data).
+- **Revisit when:** N/A — cookie-OR-header is the long-term policy. The frontend can still echo the header for clients that prefer that style; both forms work. Only revisit if a future threat surfaces that distinguishes cookie from header (none currently in the spec § 6.2 threat model).
+- **Original finding evidence:** Spec § 8 (line 956 pre-edit) "For mutating verbs and GETs other than `/api/events`, the middleware reads `X-PRism-Session` from the request header. For `GET /api/events` ..., the middleware reads the same token from the `prism-session` cookie." Now superseded — § 8 reads "accepts EITHER the `X-PRism-Session` request header OR the `prism-session` cookie value."
+
 ## [Skip] Singular `{cookieSessionId → subscriberId}` map (last-SSE-wins or reject-second-SSE)
 
 - **Source:** PR5-design session — main-conversation rigor pass before any code, weighed three alternatives for resolving spec § 6.2 line 314 ambiguity

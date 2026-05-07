@@ -41,31 +41,44 @@ internal sealed class SessionTokenMiddleware
             return;
         }
 
-        // Cookie path for the SSE endpoint exactly (EventSource can't send
-        // custom headers); header path everywhere else under /api.
-        var actualValue = IsSseEndpoint(ctx.Request.Path)
-            ? ctx.Request.Cookies["prism-session"] ?? string.Empty
-            : ctx.Request.Headers["X-PRism-Session"].ToString();
-
-        if (!FixedTimeMatches(actualValue))
+        // /api/health is a liveness probe by convention (also used by the e2e harness
+        // via Playwright's request.newContext which has no browser cookie). Skipping
+        // auth here matches health-endpoint conventions and doesn't expose anything
+        // sensitive — health bodies carry only port + version.
+        if (IsLivenessEndpoint(ctx.Request.Path))
         {
-            ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            // Pass `options: null` + the explicit contentType so the response carries
-            // application/problem+json (the no-options overload defaults to application/json).
-            await ctx.Response.WriteAsJsonAsync(
-                new ProblemDetails
-                {
-                    Type = "/auth/session-stale",
-                    Status = StatusCodes.Status401Unauthorized,
-                    Title = "Session token mismatch",
-                    Detail = "Session token mismatch — reload the page to refresh.",
-                },
-                options: null,
-                contentType: "application/problem+json").ConfigureAwait(false);
+            await _next(ctx).ConfigureAwait(false);
             return;
         }
 
-        await _next(ctx).ConfigureAwait(false);
+        // Accept EITHER the X-PRism-Session header OR the prism-session cookie. The
+        // cookie is per-process random, SameSite=Strict, and same-origin only — so a
+        // cross-origin attacker cannot get it sent. Combined with OriginCheckMiddleware
+        // rejecting empty Origin on mutating verbs, cookie-only auth is equivalent
+        // proof of session for /api/* paths. The header path exists for clients (e.g.
+        // future fetch wrappers) that prefer to echo the cookie value out-of-band, and
+        // is the ONLY option for /api/events from EventSource (which can't set custom
+        // headers — cookie is what EventSource carries).
+        if (FixedTimeMatches(ctx.Request.Headers["X-PRism-Session"].ToString())
+            || FixedTimeMatches(ctx.Request.Cookies["prism-session"] ?? string.Empty))
+        {
+            await _next(ctx).ConfigureAwait(false);
+            return;
+        }
+
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        // Pass `options: null` + the explicit contentType so the response carries
+        // application/problem+json (the no-options overload defaults to application/json).
+        await ctx.Response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Type = "/auth/session-stale",
+                Status = StatusCodes.Status401Unauthorized,
+                Title = "Session token mismatch",
+                Detail = "Session token mismatch — reload the page to refresh.",
+            },
+            options: null,
+            contentType: "application/problem+json").ConfigureAwait(false);
     }
 
     private bool FixedTimeMatches(string actualValue)
@@ -81,8 +94,8 @@ internal sealed class SessionTokenMiddleware
         return equalContent & (actual.Length == _expectedToken.Length);
     }
 
-    private static bool IsSseEndpoint(PathString path) =>
-        path.HasValue && string.Equals(path.Value, "/api/events", StringComparison.Ordinal);
+    private static bool IsLivenessEndpoint(PathString path) =>
+        path.HasValue && string.Equals(path.Value, "/api/health", StringComparison.Ordinal);
 }
 
 // Singleton; Current is captured once per process. Backend restart = new process =

@@ -13,7 +13,7 @@ public class SessionTokenMiddlewareTests
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateUnauthenticatedClient();
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/capabilities");
         req.Headers.Add("X-PRism-Session", factory.SessionToken);
         var resp = await client.SendAsync(req);
 
@@ -26,7 +26,7 @@ public class SessionTokenMiddlewareTests
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateUnauthenticatedClient();
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/capabilities");
         var resp = await client.SendAsync(req);
 
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -45,7 +45,7 @@ public class SessionTokenMiddlewareTests
         var realToken = factory.SessionToken;
         var sameLenWrongToken = new string('A', realToken.Length);
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/capabilities");
         req.Headers.Add("X-PRism-Session", sameLenWrongToken);
         var resp = await client.SendAsync(req);
 
@@ -58,7 +58,7 @@ public class SessionTokenMiddlewareTests
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateUnauthenticatedClient();
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/capabilities");
         req.Headers.Add("X-PRism-Session", "short");
         var resp = await client.SendAsync(req);
 
@@ -71,7 +71,7 @@ public class SessionTokenMiddlewareTests
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateUnauthenticatedClient();
 
-        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/capabilities");
         var resp = await client.SendAsync(req);
 
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -90,6 +90,37 @@ public class SessionTokenMiddlewareTests
         var client = factory.CreateUnauthenticatedClient();
 
         var resp = await client.GetAsync(new Uri("/", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Skips_api_health_liveness_probe_without_token()
+    {
+        // /api/health is a liveness endpoint by convention. The Playwright no-browser
+        // e2e test (request.newContext) hits it without a browser cookie. Auth-gating
+        // a liveness probe breaks that contract and exposes nothing sensitive — health
+        // bodies carry only port + version.
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateUnauthenticatedClient();
+
+        var resp = await client.GetAsync(new Uri("/api/health", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Allows_request_when_only_prism_session_cookie_is_set()
+    {
+        // The SPA's existing apiClient does not echo X-PRism-Session as a header — same-
+        // origin fetch carries the cookie automatically, and that's enough proof. Spec
+        // § 8 + the deferrals sidecar entry record the cookie-OR-header acceptance.
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateUnauthenticatedClient();
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/capabilities");
+        req.Headers.Add("Cookie", $"prism-session={factory.SessionToken}");
+        var resp = await client.SendAsync(req);
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
     }
