@@ -8,7 +8,7 @@
 
 **Tech Stack:** xUnit, FluentAssertions, `Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<TEntryPoint>`, .NET 10, ASP.NET Core minimal APIs.
 
-**Spec:** `docs/superpowers/specs/2026-05-07-flaky-spa-fallback-test-fix-design.md`
+**Spec:** `docs/specs/2026-05-07-flaky-spa-fallback-test-fix-design.md`
 
 ---
 
@@ -220,7 +220,7 @@ The latter asserts the stub marker to prove the fallback path served the respons
 Eliminates the local-flakiness-vs-CI-green split caused by tests depending on
 whether `npm run build` had populated wwwroot/index.html before `dotnet test`.
 
-Spec: docs/superpowers/specs/2026-05-07-flaky-spa-fallback-test-fix-design.md
+Spec: docs/specs/2026-05-07-flaky-spa-fallback-test-fix-design.md
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF

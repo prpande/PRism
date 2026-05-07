@@ -14,7 +14,7 @@
 #   Full            -- wipe the entire <dataDir>. True first-launch reset.
 #                     Caveat: on macOS / Linux the OS keychain entry survives;
 #                     see the spec section 7 for the manual cleanup commands.
-# See docs/superpowers/specs/2026-05-06-run-script-reset-design.md for rationale.
+# See docs/specs/2026-05-06-run-script-reset-design.md for rationale.
 #
 # Cross-platform note: on macOS / Linux the PAT lives in the OS keychain
 # (Keychain / libsecret), not the cache file. -Reset Token deletes the file

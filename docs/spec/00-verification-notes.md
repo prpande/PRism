@@ -392,4 +392,4 @@ Outstanding empirical gates (these are not spec-text updates; they are tripwires
 
 For fine-grained tokens, a follow-up Search probe (`GET /search/issues?q=is:pr+author:@me`/`review-requested:@me`) detects the no-repos-selected failure mode. If both return `total_count: 0`, the connect endpoint returns `warning: "no-repos-selected"` without committing the token; the frontend gates the commit behind a confirmation modal.
 
-This was added in `docs/superpowers/specs/2026-05-06-pat-scopes-and-validation-design.md` after the original adversarial-review pass missed the `X-OAuth-Scopes` shape difference between classic and fine-grained PATs.
+This was added in `docs/specs/2026-05-06-pat-scopes-and-validation-design.md` after the original adversarial-review pass missed the `X-OAuth-Scopes` shape difference between classic and fine-grained PATs.

@@ -31,6 +31,15 @@ Read [`00-priority-methodology.md`](backlog/00-priority-methodology.md) first to
 
 (There is no `04-P3-multi-platform.md`; the multi-platform tier was dropped along with the provider abstraction. PoC and v2 commit to GitHub — cloud and GHES — as the only backend.)
 
+### Implementation specs & plans (`docs/specs/`, `docs/plans/`)
+
+- [`docs/specs/`](specs/) — per-slice / per-task design docs (output of brainstorming). See [`docs/specs/README.md`](specs/README.md) for the status-grouped index.
+- [`docs/plans/`](plans/) — step-by-step implementation plans (output of writing-plans).
+
+### Solutions (`docs/solutions/`)
+
+Documented solutions to past problems (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`).
+
 ### Design
 
 - [`claude-design-prompt.md`](claude-design-prompt.md) — the prompt to feed to Claude Design (or any visual-design agent) to generate the UI/UX styling.

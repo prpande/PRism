@@ -6,9 +6,9 @@
 
 **Architecture:** All changes are confined to `run.ps1`. The script runs the chosen reset operation against `<dataDir>` *before* `npm ci` / `npm run build` / `dotnet run`, so the host never has the lockfile or `state.json` open while files are being deleted. `<dataDir>` is resolved via `[Environment]::GetFolderPath('LocalApplicationData')` joined with `'PRism'`, mirroring `DataDirectoryResolver.Resolve()`. Pass-through args (e.g., `--no-browser`) continue to flow to `dotnet run` via a `ValueFromRemainingArguments` parameter.
 
-**Tech Stack:** PowerShell — both Windows PowerShell 5.1 (`.NET Framework 4.x`) and PowerShell 7+ (`.NET 5+`). The existing `#!/usr/bin/env pwsh` shebang nominates pwsh 7, but the script must remain runnable under 5.1 so any developer's default PS host on Windows works. This means avoiding 7-only features: `Set-Content -Encoding utf8NoBOM` (use `[System.IO.File]::WriteAllText` with explicit `[System.Text.UTF8Encoding]::new($false)` instead), the 3-argument `[System.IO.File]::Move(src, dst, overwrite)` overload (use a direct write — power-loss safety falls through to the host's existing `state.json.corrupt-<timestamp>` recovery path). No new dependencies. No automated test framework — the spec ([`docs/superpowers/specs/2026-05-06-run-script-reset-design.md`](../specs/2026-05-06-run-script-reset-design.md) § 8) commits to a manual smoke checklist as the verification approach, since the C# behaviors each mode exercises are already covered by `tests/PRism.Core.Tests` and `tests/PRism.Web.Tests`.
+**Tech Stack:** PowerShell — both Windows PowerShell 5.1 (`.NET Framework 4.x`) and PowerShell 7+ (`.NET 5+`). The existing `#!/usr/bin/env pwsh` shebang nominates pwsh 7, but the script must remain runnable under 5.1 so any developer's default PS host on Windows works. This means avoiding 7-only features: `Set-Content -Encoding utf8NoBOM` (use `[System.IO.File]::WriteAllText` with explicit `[System.Text.UTF8Encoding]::new($false)` instead), the 3-argument `[System.IO.File]::Move(src, dst, overwrite)` overload (use a direct write — power-loss safety falls through to the host's existing `state.json.corrupt-<timestamp>` recovery path). No new dependencies. No automated test framework — the spec ([`docs/specs/2026-05-06-run-script-reset-design.md`](../specs/2026-05-06-run-script-reset-design.md) § 8) commits to a manual smoke checklist as the verification approach, since the C# behaviors each mode exercises are already covered by `tests/PRism.Core.Tests` and `tests/PRism.Web.Tests`.
 
-**Spec:** [`docs/superpowers/specs/2026-05-06-run-script-reset-design.md`](../specs/2026-05-06-run-script-reset-design.md). Acceptance criteria in spec § 9.
+**Spec:** [`docs/specs/2026-05-06-run-script-reset-design.md`](../specs/2026-05-06-run-script-reset-design.md). Acceptance criteria in spec § 9.
 
 **Post-implementation corrigendum (2026-05-06).** This plan was authored before discovering that `PRism.Core/Json/JsonSerializerOptionsFactory.cs` configures the storage serializer with `KebabCaseJsonNamingPolicy` and `PropertyNameCaseInsensitive = false`. Property names on disk are therefore kebab-case (`last-configured-github-host`, `review-sessions`, `ai-state`, `repo-clone-map`, `workspace-mtime-at-last-enumeration`), not the camelCase forms used in some code samples below. The shipped `run.ps1` and the spec (§ 4 Auth-mode subsection, § 9 acceptance) use the correct kebab-case keys throughout. Future consumers of this plan should refer to the spec for definitive property naming; the camelCase forms in this plan's code blocks are a historical artifact and would silently produce a state.json the host parses with `LastConfiguredGithubHost = null`, defeating Auth mode.
 
@@ -139,7 +139,7 @@ Replace the current top of the file (lines 1–5) with:
 #   Full            — wipe the entire <dataDir>. True first-launch reset.
 #                     Caveat: on macOS / Linux the OS keychain entry survives;
 #                     see the spec § 7 for the manual cleanup commands.
-# See docs/superpowers/specs/2026-05-06-run-script-reset-design.md for rationale.
+# See docs/specs/2026-05-06-run-script-reset-design.md for rationale.
 #
 # Cross-platform note: on macOS / Linux the PAT lives in the OS keychain
 # (Keychain / libsecret), not the cache file. -Reset Token deletes the file
@@ -207,7 +207,7 @@ dotnet run after the param block is added.
 
 Mode bodies (Token / Auth / Full) land in subsequent commits.
 
-Refs docs/superpowers/specs/2026-05-06-run-script-reset-design.md
+Refs docs/specs/2026-05-06-run-script-reset-design.md
 '@)"
 ```
 
@@ -306,7 +306,7 @@ companion. Idempotent — missing files are silent. Auth and Full modes
 still throw "not implemented yet" placeholders so an exhaustive switch
 keeps the gap obvious between commits.
 
-Refs docs/superpowers/specs/2026-05-06-run-script-reset-design.md § 4
+Refs docs/specs/2026-05-06-run-script-reset-design.md § 4
 '@)"
 ```
 
@@ -478,7 +478,7 @@ If state.json is missing, a fresh v1 default (mirroring AppState.Default)
 is written with the sentinel host. If state.json exists but is malformed,
 the script aborts with a clear error rather than overwriting it.
 
-Refs docs/superpowers/specs/2026-05-06-run-script-reset-design.md § 4
+Refs docs/specs/2026-05-06-run-script-reset-design.md § 4
 '@)"
 ```
 
@@ -545,7 +545,7 @@ Missing directory is a silent no-op. Loses draft bodies — the spec
 calls draft text "sacred", so this mode is dev-only by design and
 never surfaces in product UI.
 
-Refs docs/superpowers/specs/2026-05-06-run-script-reset-design.md § 4
+Refs docs/specs/2026-05-06-run-script-reset-design.md § 4
 '@)"
 ```
 
@@ -684,7 +684,7 @@ If any check fails, return to the relevant earlier task. Otherwise proceed to Ta
 ### Task 6: Final read-through and PR-ready cleanup
 
 **Files:**
-- Modify (only if issues found): `run.ps1`, `docs/superpowers/specs/2026-05-06-run-script-reset-design.md`
+- Modify (only if issues found): `run.ps1`, `docs/specs/2026-05-06-run-script-reset-design.md`
 
 **Goal:** Sanity-check the final state of `run.ps1` against the spec acceptance criteria, fix any drift, and stage the branch for `pr-autopilot`.
 
@@ -713,5 +713,5 @@ git commit -m "chore(run.ps1): align with spec acceptance criteria"
 
 Confirm:
 - `git log --oneline main..HEAD` shows 4–5 commits (Tasks 1–4, plus optional cleanup).
-- `git diff main..HEAD --stat` lists `run.ps1`, `docs/roadmap.md`, and `docs/superpowers/specs/2026-05-06-run-script-reset-design.md` (and possibly `docs/superpowers/plans/2026-05-06-run-script-reset.md`) — nothing else.
+- `git diff main..HEAD --stat` lists `run.ps1`, `docs/roadmap.md`, and `docs/specs/2026-05-06-run-script-reset-design.md` (and possibly `docs/plans/2026-05-06-run-script-reset.md`) — nothing else.
 - `git status` reports a clean working tree.
