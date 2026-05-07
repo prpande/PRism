@@ -4,7 +4,7 @@ Local-first PR review tool that runs on the reviewer's own machine. See [`docs/s
 
 ## Status
 
-Pre-implementation; the foundations slice (`docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md`) is in flight. See [`docs/roadmap.md`](docs/roadmap.md) for the broader slice list.
+Pre-implementation; the foundations slice (`docs/specs/2026-05-05-foundations-and-setup-design.md`) is in flight. See [`docs/roadmap.md`](docs/roadmap.md) for the broader slice list.
 
 ## Development workflow
 

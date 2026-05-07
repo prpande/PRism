@@ -9,7 +9,7 @@ PRism is **pre-implementation**. The repo currently contains only:
 - `docs/spec/` — the authoritative PoC specification (read in numerical order)
 - `docs/backlog/` — prioritized v2 backlog (P0 / P1 / P2 / P4; P3 was dropped)
 - `docs/roadmap.md` — implementation slice plan (S0+S1 → S6); the cycle picks one slice, brainstorms it, plans it, builds it
-- `docs/superpowers/specs/` — per-slice implementation design docs (output of brainstorming)
+- `docs/specs/` — per-slice implementation design docs (output of brainstorming)
 - `docs/solutions/` — documented solutions to past problems (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`)
 - `design/handoff/` — visual/interaction design as a self-contained HTML+JSX prototype (reference, **not** production code)
 - `assets/icons/` — app icons (`PRism{16,32,48,64,256,512}.ico` + `PRismOG.png`)

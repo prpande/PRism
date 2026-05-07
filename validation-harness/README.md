@@ -111,4 +111,4 @@ Pratyush currently runs `iterate-pr.md` and `act-as-second-reviewer.md` via Clau
 
 ## Source design doc
 
-Full design rationale, recipe catalogs, and edge-case handling: [`docs/superpowers/specs/2026-05-06-prism-validation-prompt-set-design.md`](../docs/superpowers/specs/2026-05-06-prism-validation-prompt-set-design.md).
+Full design rationale, recipe catalogs, and edge-case handling: [`docs/specs/2026-05-06-prism-validation-prompt-set-design.md`](../docs/specs/2026-05-06-prism-validation-prompt-set-design.md).

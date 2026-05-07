@@ -143,7 +143,7 @@ Three layered defenses keep this class of bug from recurring:
 ## Related Issues
 
 - Commits on `spec/foundations`: `12bfecc` (initial — but broken — UseStaticFiles + regex fallback) and `de60dc1` (the MapStaticAssets + split-fallback fix).
-- Foundations slice spec: [`docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md`](../../superpowers/specs/2026-05-05-foundations-and-setup-design.md) (T30 composition root).
+- Foundations slice spec: [`docs/specs/2026-05-05-foundations-and-setup-design.md`](../../specs/2026-05-05-foundations-and-setup-design.md) (T30 composition root).
 - No prior `docs/solutions/` entries — this is the first.
 
 ## A note on schema fit
