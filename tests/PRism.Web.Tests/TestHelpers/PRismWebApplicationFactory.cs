@@ -18,6 +18,18 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
     {
         ArgumentNullException.ThrowIfNull(builder);
         Directory.CreateDirectory(DataDir);
+
+        // Provide a deterministic wwwroot/index.html so MapFallbackToFile("index.html")
+        // can serve SPA routes during tests, regardless of whether the frontend bundle
+        // has been built. The stub marker lets tests prove the fallback path served the
+        // response. DataDir is deleted recursively in Dispose, so wwwroot/ goes with it.
+        var webRoot = Path.Combine(DataDir, "wwwroot");
+        Directory.CreateDirectory(webRoot);
+        File.WriteAllText(
+            Path.Combine(webRoot, "index.html"),
+            "<!DOCTYPE html><html><body>PRism test stub</body></html>");
+        builder.UseWebRoot(webRoot);
+
         builder.UseSetting("DataDir", DataDir);
         builder.UseEnvironment("Test");
 
