@@ -1,6 +1,6 @@
 # Specs index
 
-Per-slice / per-task design docs. New specs land at `docs/specs/YYYY-MM-DD-<topic>-design.md` (output of the brainstorming skill). Each entry below names its matching plan under `docs/plans/` and the PR(s) that landed it.
+Per-slice / per-task design docs. New specs land at `docs/specs/YYYY-MM-DD-<topic>-design.md` (output of the brainstorming skill). Each entry below names its matching plan under `docs/plans/`, the PR(s) that landed it, and — when present — the matching deferrals sidecar (`<source>-deferrals.md`) that records rejected/deferred alternatives from any planning or architectural decision-making session on the spec.
 
 When a spec's status changes, move its entry to the right group and add the PR reference. Per `CLAUDE.md` § Documentation maintenance, this update lands in the same PR that ships the implementation.
 
@@ -17,7 +17,7 @@ When a spec's status changes, move its entry to the right group and add the PR r
 
 ## In progress
 
-- [`2026-05-06-s3-pr-detail-read-design.md`](2026-05-06-s3-pr-detail-read-design.md) — S3 PR detail (read); plan: [`../plans/2026-05-06-s3-pr-detail-read.md`](../plans/2026-05-06-s3-pr-detail-read.md). PR1 (state migration) + PR2 (iteration clustering) shipped via PRs #14, #15. PR3+ remaining.
+- [`2026-05-06-s3-pr-detail-read-design.md`](2026-05-06-s3-pr-detail-read-design.md) — S3 PR detail (read); plan: [`../plans/2026-05-06-s3-pr-detail-read.md`](../plans/2026-05-06-s3-pr-detail-read.md); deferrals: [`2026-05-06-s3-pr-detail-read-deferrals.md`](2026-05-06-s3-pr-detail-read-deferrals.md) (4 Defer + 6 Skip from `ce-doc-review` rigor pass on 2026-05-07). PR1 (state migration) + PR2 (iteration clustering) shipped via PRs #14, #15. PR3+ remaining.
 - [`2026-05-06-architectural-readiness-design.md`](2026-05-06-architectural-readiness-design.md) — Cross-cutting structural items gated to slices. Mixed status: *Now*-gate items (banned-API analyzer, DI extension methods) shipped per `docs/roadmap.md` § Architectural readiness; named-records item still TBD; S3 / S4 / S5 / P0+ items remain open.
 
 ## Not started
