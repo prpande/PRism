@@ -49,6 +49,10 @@ internal static partial class PrDetailEndpoints
             {
                 if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(sha))
                     return Results.Problem(type: "/file/missing-params", statusCode: 422);
+                // Validate sha consistently with /diff?range=. GitHub would reject malformed
+                // SHAs anyway, but rejecting at the edge avoids an unnecessary REST round-trip.
+                if (!IsValidGitOid(sha))
+                    return Results.Problem(type: "/sha/invalid", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
@@ -69,6 +73,10 @@ internal static partial class PrDetailEndpoints
                 var result = await review.GetFileContentAsync(prRef, path, sha, ct).ConfigureAwait(false);
                 return result.Status switch
                 {
+                    // text/plain regardless of extension — the diff pane and the markdown view
+                    // both render server content client-side. Setting text/markdown for `.md`
+                    // would change browser auto-rendering and break the toggle between
+                    // rendered-markdown and raw-diff views the spec requires.
                     FileContentStatus.Ok        => Results.Text(result.Content!, "text/plain"),
                     FileContentStatus.NotFound  => Results.Problem(type: "/file/missing", statusCode: 404),
                     FileContentStatus.TooLarge  => Results.Problem(type: "/file/too-large", statusCode: 413),
@@ -94,18 +102,30 @@ internal static partial class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/stale-head-sha", statusCode: 409);
 
                 var key = $"{owner}/{repo}/{number}";
-                await stateStore.UpdateAsync(state =>
+                try
                 {
-                    var session = state.ReviewSessions.GetValueOrDefault(key) ??
-                                  new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
-                    var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
-                    sessions[key] = session with
+                    await stateStore.UpdateAsync(state =>
                     {
-                        LastViewedHeadSha = body.HeadSha,
-                        LastSeenCommentId = body.MaxCommentId,
-                    };
-                    return state with { ReviewSessions = sessions };
-                }, ct).ConfigureAwait(false);
+                        var session = state.ReviewSessions.GetValueOrDefault(key) ??
+                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
+                        var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                        sessions[key] = session with
+                        {
+                            LastViewedHeadSha = body.HeadSha,
+                            LastSeenCommentId = body.MaxCommentId,
+                        };
+                        return state with { ReviewSessions = sessions };
+                    }, ct).ConfigureAwait(false);
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("read-only mode", StringComparison.Ordinal))
+                {
+                    // TOCTOU: another process wrote a future-version state.json between the
+                    // pre-check above and AppStateStore acquiring its gate. Surface the
+                    // canonical 423 so the frontend's read-only-mode banner fires instead of
+                    // a generic 500. AppStateStore.UpdateAsync uses this exception shape
+                    // exclusively for the read-only refusal.
+                    return Results.Problem(type: "/state/read-only", statusCode: 423);
+                }
 
                 return Results.NoContent();
             }).WithMetadata(new RequestSizeLimitAttribute(16384));   // P2.3 — 16 KiB cap
@@ -141,30 +161,38 @@ internal static partial class PrDetailEndpoints
 
                 var key = $"{owner}/{repo}/{number}";
                 IResult? capExceeded = null;
-                await stateStore.UpdateAsync(state =>
+                try
                 {
-                    var session = state.ReviewSessions.GetValueOrDefault(key) ??
-                                  new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
-                    var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
-
-                    if (body.Viewed)
+                    await stateStore.UpdateAsync(state =>
                     {
-                        if (viewedFiles.Count >= 10000 && !viewedFiles.ContainsKey(canonical))
+                        var session = state.ReviewSessions.GetValueOrDefault(key) ??
+                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
+                        var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
+
+                        if (body.Viewed)
                         {
-                            capExceeded = Results.Problem(type: "/viewed/cap-exceeded", statusCode: 422);
-                            return state;
+                            if (viewedFiles.Count >= 10000 && !viewedFiles.ContainsKey(canonical))
+                            {
+                                capExceeded = Results.Problem(type: "/viewed/cap-exceeded", statusCode: 422);
+                                return state;
+                            }
+                            viewedFiles[canonical] = body.HeadSha;
                         }
-                        viewedFiles[canonical] = body.HeadSha;
-                    }
-                    else
-                    {
-                        viewedFiles.Remove(canonical);
-                    }
+                        else
+                        {
+                            viewedFiles.Remove(canonical);
+                        }
 
-                    var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
-                    sessions[key] = session with { ViewedFiles = viewedFiles };
-                    return state with { ReviewSessions = sessions };
-                }, ct).ConfigureAwait(false);
+                        var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                        sessions[key] = session with { ViewedFiles = viewedFiles };
+                        return state with { ReviewSessions = sessions };
+                    }, ct).ConfigureAwait(false);
+                }
+                catch (InvalidOperationException ex) when (ex.Message.Contains("read-only mode", StringComparison.Ordinal))
+                {
+                    // Same TOCTOU recovery as mark-viewed above.
+                    return Results.Problem(type: "/state/read-only", statusCode: 423);
+                }
 
                 return capExceeded ?? Results.NoContent();
             }).WithMetadata(new RequestSizeLimitAttribute(16384));
@@ -204,7 +232,10 @@ internal static partial class PrDetailEndpoints
         var segments = path.Split('/');
         foreach (var s in segments)
         {
-            if (s == ".." || s == ".") return null;
+            // Reject `..`, `.`, AND empty segments — `src//Foo.cs` has an empty segment
+            // that wouldn't appear in any real GitHub diff entry, so closing the gap keeps
+            // the validator's contract tight.
+            if (s.Length == 0 || s == ".." || s == ".") return null;
         }
 
         var nfc = path.Normalize(NormalizationForm.FormC);

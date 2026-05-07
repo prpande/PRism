@@ -1,7 +1,7 @@
 ---
 source-doc: docs/plans/2026-05-06-s3-pr-detail-read.md
 created: 2026-05-07
-last-updated: 2026-05-08
+last-updated: 2026-05-08 (PR #21 review round)
 status: open
 ---
 
@@ -148,3 +148,19 @@ This sidecar covers the remainder: plan-affecting items that don't touch the spe
 - **Reason:** Plan Step 4.3 specified `MemoryCache` with bounded LRU + 1h sliding expiration (P1.4). PR4's implementation uses unbounded `ConcurrentDictionary` for both the snapshot cache and the diff memo. Reasoning: (a) adding `Microsoft.Extensions.Caching.Memory` is a new package dependency that nothing else in the codebase currently uses; (b) `MemoryCache`'s LRU eviction is approximate (compaction-triggered, not strictly oldest-first), so writing a deterministic test for the eviction order is brittle — the plan's "load 51 distinct PRs and assert the 1st is evicted on next access" pattern would be flaky against `MemoryCache`'s actual semantics; (c) PoC dogfood usage rarely hits 50 distinct PRs in a single process lifetime — restart bounds growth in practice. PR4 ships unbounded; bound-add is a follow-up if and when needed.
 - **Revisit when:** Dogfooding shows memory growth from cache accumulation, OR a P0+ user reports OOM-class behavior, OR a teammate keeps PRism running long enough that `_snapshots`/`_diffs` accumulate measurably (likely on long-running sessions touching dozens of PRs).
 - **Original finding evidence:** Plan Step 4.3 + the in-source comment block at `PrDetailLoader.cs` ("Snapshot cache. PoC: unbounded ConcurrentDictionary…").
+
+## [Defer] `MarkViewedRequest.MaxCommentId` typed as `string?` rather than `long?`
+
+- **Source:** PR #21 review (local pr-autopilot post-open `review` skill, 2026-05-08)
+- **Severity:** P3
+- **Date:** 2026-05-08
+- **Reason:** Spec § 8 line 896-898 says `maxCommentId` is "highest GitHub `databaseId` (numeric, monotonic)" and `IssueCommentDto.Id` is `long` in `PRism.Core.Contracts`. The wire-format DTO `MarkViewedRequest.MaxCommentId` uses `string?` (verbatim round-trip into `ReviewSessionState.LastSeenCommentId: string?`). The current shape works — the value is monotonic-as-string when frontend computes it from the same numeric source — but the type discipline is loose. Tightening to `long?` cross-cuts S2's existing `LastSeenCommentId` field and would require a migration. Defer to a follow-up that owns both the DTO and the state-shape change end-to-end.
+- **Revisit when:** Either S4's drafts work (which already touches `ReviewSessionState`) bundles the type tightening, OR a frontend-side bug surfaces from the string-vs-long discipline gap (e.g., lexicographic vs numeric comparison disagreement).
+
+## [Defer] Route constraints on `{owner}` / `{repo}` and positive-int constraint on `{number}`
+
+- **Source:** PR #21 review — Copilot bot Low + my local L5
+- **Severity:** P3
+- **Date:** 2026-05-08
+- **Reason:** All five PR4 endpoints use `{owner}` / `{repo}` route segments without constraints, so anything URL-safe lands at the endpoint and goes to GitHub. `{number:int}` accepts negative integers. GitHub-side validation rejects bad values, but explicit route constraints (`{owner:regex([A-Za-z0-9_.-]+)}` and a positive-int constraint on `{number}`) would short-circuit malformed inputs at the routing layer instead of paying for an unnecessary `IReviewService` call. PoC scope; cosmetic at the security level (no bypass). Bundle into a follow-up routing-hygiene PR that touches the inbox endpoints too for consistency.
+- **Revisit when:** A second consumer of `{owner}` / `{repo}` — either S4 endpoints or a future security-review pass — surfaces the same finding. Bundle the constraints across all PR-shaped routes in one PR.

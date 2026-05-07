@@ -106,6 +106,17 @@ public sealed class PrDetailLoader
         };
         var snapshot = new PrDetailSnapshot(finalDetail, detail.Pr.HeadSha, generation);
 
+        // Re-check the generation before publishing into the cache. If `InvalidateAll` ran
+        // between line 73 and here, our snapshot was computed against the now-stale generation
+        // — caching it would leak a stale entry that's invisible to bumped-generation lookups
+        // but still occupies memory until the next InvalidateAll. Return the just-computed
+        // snapshot uncached so the caller still gets fresh data; the next LoadAsync will
+        // re-fetch and cache under the current generation.
+        if (Volatile.Read(ref _generation) != generation)
+        {
+            return snapshot;
+        }
+
         // GetOrAdd collapses concurrent cold-load races to a single winner: two parallel
         // calls for the same prRef both finish their fetch+cluster work, but only the
         // first add becomes the canonical snapshot — both callers then return that one.

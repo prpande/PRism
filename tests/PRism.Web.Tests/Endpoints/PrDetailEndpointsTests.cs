@@ -165,6 +165,22 @@ public class PrDetailEndpointsTests
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/sha/invalid");
     }
 
+    [Fact]
+    public async Task Get_file_returns_422_sha_invalid_when_sha_is_not_a_git_oid()
+    {
+        // /file?sha= must be validated consistently with /diff?range=. The endpoint short-
+        // circuits the snapshot probe and IReviewService call when the SHA is malformed.
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+
+        var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/file?path=src/Foo.cs&sha=notvalid", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/sha/invalid");
+    }
+
     // ---------- GET /api/pr/{ref}/file?path=&sha= ----------
 
     [Fact]
@@ -230,7 +246,11 @@ public class PrDetailEndpointsTests
         var (factory, _) = MakeFactory();
         using var _f = factory;
 
-        var resp = await factory.CreateClient().GetAsync(new Uri("/api/pr/octo/repo/1/file?path=src/Foo.cs&sha=abc", UriKind.Relative));
+        // Use a valid Git OID so the new /sha/invalid guard doesn't short-circuit before
+        // the snapshot probe — the snapshot-evicted contract is what this test exercises.
+        var validHead = new string('b', 40);
+        var resp = await factory.CreateClient().GetAsync(
+            new Uri($"/api/pr/octo/repo/1/file?path=src/Foo.cs&sha={validHead}", UriKind.Relative));
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/file/snapshot-evicted");
@@ -343,6 +363,7 @@ public class PrDetailEndpointsTests
     [InlineData("/leading-slash.cs")]          // leading "/"
     [InlineData("trailing-slash/")]            // trailing "/"
     [InlineData("back\\slash.cs")]             // backslash
+    [InlineData("src//double-slash.cs")]       // empty segment (double-slash)
     public async Task Post_files_viewed_returns_422_for_path_violating_canonicalization_rules(string path)
     {
         var (factory, _) = MakeFactory();
@@ -375,6 +396,47 @@ public class PrDetailEndpointsTests
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/path-too-long");
+    }
+
+    [Fact]
+    public async Task Post_files_viewed_returns_422_cap_exceeded_when_session_already_has_10000_viewed_files()
+    {
+        // Spec § 8: 10000-file cap on ReviewSessions[ref].ViewedFiles. Pre-seed state.json with
+        // 10000 entries so the next POST hits the cap branch. The test setup writes directly
+        // to disk via AppStateStore so the seed survives the WebApplicationFactory boot.
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+
+        // PRismWebApplicationFactory.ConfigureWebHost creates DataDir lazily (on first
+        // CreateClient call). Force creation up-front so the seed AppStateStore has a dir
+        // to write into.
+        Directory.CreateDirectory(factory.DataDir);
+
+        // Seed 10000-entry ViewedFiles into state.json before the SUT loads it.
+        using (var seedStore = new AppStateStore(factory.DataDir))
+        {
+            var initial = await seedStore.LoadAsync(CancellationToken.None);
+            var viewedFiles = Enumerable.Range(0, 10000)
+                .ToDictionary(i => $"seed/file-{i:D5}.cs", _ => "head1");
+            var sessions = new Dictionary<string, ReviewSessionState>
+            {
+                ["octo/repo/1"] = new ReviewSessionState(null, null, null, null, viewedFiles)
+            };
+            await seedStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
+        }
+
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+        var validBase = new string('a', 40);
+        var validHead = new string('b', 40);
+        await client.GetAsync(new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        var resp = await client.PostAsJsonAsync(
+            new Uri("/api/pr/octo/repo/1/files/viewed", UriKind.Relative),
+            new { path = "src/Foo.cs", headSha = "head1", viewed = true });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/cap-exceeded");
     }
 
     [Fact]

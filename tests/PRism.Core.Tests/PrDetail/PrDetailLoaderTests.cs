@@ -161,6 +161,26 @@ public class PrDetailLoaderTests
         review.GetPrDetailCallCount.Should().Be(2);
     }
 
+    [Fact]
+    public async Task InvalidateAll_clears_diff_memo_so_path_lookup_returns_false()
+    {
+        // The InvalidateAll docstring says the diff memo is also cleared. Without a test,
+        // a future refactor could quietly drop the `_diffs.Clear()` call and a stale
+        // path-in-diff lookup would silently let an authz check pass against a stale diff.
+        var review = new FakePrDetailReviewService();
+        review.DefaultDetailResponse = MakeDetail();
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var loader = MakeLoader(review);
+
+        await loader.GetOrFetchDiffAsync(Pr1, new DiffRangeRequest("base1", "head1"), CancellationToken.None);
+        loader.IsPathInAnyCachedDiff(Pr1, "src/Foo.cs").Should().BeTrue();
+
+        loader.InvalidateAll();
+
+        loader.IsPathInAnyCachedDiff(Pr1, "src/Foo.cs").Should().BeFalse(
+            because: "InvalidateAll must clear the diff memo, not just the snapshot cache");
+    }
+
     // Q5 — ClusteringQuality determination tests.
 
     [Fact]
