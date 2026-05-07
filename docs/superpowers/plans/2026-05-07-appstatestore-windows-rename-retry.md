@@ -23,7 +23,7 @@ No new files. No test changes.
 ## Task 1: Add retry to AppStateStore.SaveCoreAsync
 
 **Files:**
-- Modify: `D:\src\PRism\PRism.Core\State\AppStateStore.cs`
+- Modify: `PRism.Core/State/AppStateStore.cs`
 
 This task follows red → green: the existing `SaveAsync_serializes_concurrent_writes` test fails on `main` (locally on Windows) — it is the failing test for TDD purposes. The production change makes it pass.
 

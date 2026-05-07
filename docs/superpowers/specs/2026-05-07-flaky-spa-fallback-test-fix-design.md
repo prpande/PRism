@@ -51,7 +51,8 @@ Replace the single broken test with two positive tests:
 
 - `GET_root_serves_SPA_index_html`
   - `GET /`
-  - asserts: `StatusCode == 200`, `ContentType.MediaType == "text/html"`, body contains `"PRism test stub"`.
+  - asserts: `StatusCode == 200`, `ContentType.MediaType == "text/html"`.
+  - **No body marker check.** `GET /` may be served by either `MapStaticAssets()` (from the build-time manifest pointing at the project's real `wwwroot/index.html`, when the frontend has been built) or by `MapFallbackToFile("index.html")` (the test-factory stub). Both paths produce a passing status + content-type response; we deliberately don't pin the body so the test stays deterministic across "frontend built / not built" environments. The `/inbox-shell` test below carries the marker assertion since only the fallback path can serve it.
 - `Client_side_route_falls_back_to_SPA_index_html`
   - `GET /inbox-shell`
   - asserts: `StatusCode == 200`, `ContentType.MediaType == "text/html"`, body contains `"PRism test stub"`.
