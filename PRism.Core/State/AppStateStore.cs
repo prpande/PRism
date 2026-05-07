@@ -98,6 +98,13 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
 
     private JsonNode MigrateIfNeeded(JsonNode root)
     {
+        // JsonNode's string indexer (root["version"]) and AsObject() throw
+        // InvalidOperationException for non-object nodes — that escapes the
+        // catch (JsonException) in LoadAsync. Funnel non-object roots through
+        // the quarantine path explicitly.
+        if (root is not JsonObject)
+            throw new JsonException("state.json root must be a JSON object");
+
         var versionNode = root["version"];
         if (versionNode is null)
             throw new UnsupportedStateVersionException(0);
@@ -107,11 +114,11 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         {
             stored = versionNode.GetValue<int>();
         }
-        catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException)
         {
             // Translate to JsonException so the existing quarantine path in LoadAsync handles
-            // a malformed `version` value (e.g. "1" as a string, 1.5 as a float) the same way
-            // as any other corrupt state.json.
+            // a malformed `version` value (e.g. "1" as a string, 1.5 as a float, or a number
+            // outside int range) the same way as any other corrupt state.json.
             throw new JsonException("state.json `version` field is not an integer", ex);
         }
 
@@ -121,16 +128,26 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             return root;     // load best-effort; SaveAsync will refuse
         }
 
-        if (stored < 2) root = MigrateV1ToV2(root);
+        // Only versions in [1, CurrentVersion] are recognized. Version 0 / negative
+        // were never real formats; quarantine instead of silently migrating them.
+        if (stored < 1)
+            throw new JsonException($"state.json has unsupported version {stored}");
+
+        if (stored == 1) root = MigrateV1ToV2(root);
         IsReadOnlyMode = false;
         return root;
     }
 
     private static JsonNode MigrateV1ToV2(JsonNode root)
     {
-        var sessions = root["review-sessions"]?.AsObject();
-        if (sessions is not null)
+        var sessionsNode = root["review-sessions"];
+        if (sessionsNode is not null)
         {
+            // AsObject() throws InvalidOperationException for non-object nodes —
+            // funnel through JsonException so LoadAsync's catch quarantines instead.
+            if (sessionsNode is not JsonObject sessions)
+                throw new JsonException("state.json 'review-sessions' must be a JSON object");
+
             foreach (var sessionEntry in sessions)
             {
                 if (sessionEntry.Value is JsonObject obj && obj["viewed-files"] is null)
