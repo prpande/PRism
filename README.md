@@ -4,7 +4,7 @@ Local-first PR review tool that runs on the reviewer's own machine. See [`docs/s
 
 ## Status
 
-Pre-implementation; the foundations slice (`docs/specs/2026-05-05-foundations-and-setup-design.md`) is in flight. See [`docs/roadmap.md`](docs/roadmap.md) for the broader slice list.
+Implementation in progress. S0+S1 (foundations) and S2 (inbox read) have shipped; S3 (PR detail read) is mid-flight with PR1 (state migration) and PR2 (iteration clustering) merged. See [`docs/roadmap.md`](docs/roadmap.md) for the live slice table and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
 
 ## Development workflow
 
