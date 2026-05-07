@@ -230,10 +230,14 @@ public sealed class GitHubReviewService : IReviewService
             "}}" +
             "}}}";
         var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
-        if (raw is null) return null;
 
         using var doc = JsonDocument.Parse(raw);
-        var pull = doc.RootElement.GetProperty("data").GetProperty("repository").GetProperty("pullRequest");
+        // GraphQL error responses can omit `data` entirely or set `data.repository` /
+        // `data.repository.pullRequest` to JSON null (e.g., permission errors return
+        // `{"data": {"repository": null}, "errors": [...]}`). Walk the path defensively
+        // and return null for any of those shapes — semantically "PR not found / not
+        // accessible." Throwing would conflate transport failures with permission denials.
+        if (!TryGetPath(doc.RootElement, out var pull, "data", "repository", "pullRequest")) return null;
         if (pull.ValueKind == JsonValueKind.Null) return null;
 
         var pr = ParsePr(pull, reference);
@@ -303,18 +307,13 @@ public sealed class GitHubReviewService : IReviewService
             "}}" +
             "}}}";
         var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
-        if (raw is null)
-        {
-            return new ClusteringInput(
-                Array.Empty<ClusteringCommit>(),
-                Array.Empty<ClusteringForcePush>(),
-                Array.Empty<ClusteringReviewEvent>(),
-                Array.Empty<ClusteringAuthorComment>());
-        }
 
         using var doc = JsonDocument.Parse(raw);
-        var pull = doc.RootElement.GetProperty("data").GetProperty("repository").GetProperty("pullRequest");
-        if (pull.ValueKind == JsonValueKind.Null)
+        // Defensive path-walk — see GetPrDetailAsync for the GraphQL-error rationale. An
+        // empty timeline maps to an empty ClusteringInput (callers treat it as "no
+        // signal"); the strategy returns an empty cluster list in that case.
+        if (!TryGetPath(doc.RootElement, out var pull, "data", "repository", "pullRequest")
+            || pull.ValueKind == JsonValueKind.Null)
         {
             return new ClusteringInput(
                 Array.Empty<ClusteringCommit>(),
@@ -348,7 +347,11 @@ public sealed class GitHubReviewService : IReviewService
         ArgumentNullException.ThrowIfNull(sha);
 
         const long MaxBytes = 5L * 1024 * 1024;
-        var url = $"repos/{reference.Owner}/{reference.Repo}/contents/{Uri.EscapeDataString(path)}?ref={Uri.EscapeDataString(sha)}";
+        // Per-segment escape: GitHub's contents API requires literal '/' as directory
+        // separators. Uri.EscapeDataString on the whole path encodes '/' as '%2F',
+        // which makes any subdirectoried file return 404. Split, escape, rejoin.
+        var encodedPath = string.Join("/", path.Split('/').Select(Uri.EscapeDataString));
+        var url = $"repos/{reference.Owner}/{reference.Repo}/contents/{encodedPath}?ref={Uri.EscapeDataString(sha)}";
         using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
@@ -600,12 +603,16 @@ public sealed class GitHubReviewService : IReviewService
     // concern (rate-limit defense), not a clustering coefficient. Spec § 6.4.
     private const int InterBatchPaceMs = 100;
 
-    private async Task<string?> PostGraphQLAsync(string query, object variables, CancellationToken ct)
+    private async Task<string> PostGraphQLAsync(string query, object variables, CancellationToken ct)
     {
         var token = await _readToken().ConfigureAwait(false);
         var payload = JsonSerializer.Serialize(new { query, variables });
         using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Post, "graphql")
+        // Absolute URL to defeat the named client's BaseAddress = `<host>/api/v3/`. GHES's
+        // GraphQL endpoint is `<host>/api/graphql` (no /v3); resolving against BaseAddress
+        // would 404 on every GraphQL call against GHES.
+        var endpoint = HostUrlResolver.GraphQlEndpoint(_host);
+        using var req = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
         };
@@ -615,7 +622,11 @@ public sealed class GitHubReviewService : IReviewService
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
 
         using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
-        if (!resp.IsSuccessStatusCode) return null;
+        // EnsureSuccessStatusCode throws HttpRequestException with the status code on
+        // non-2xx — distinguishes transport / auth / 5xx failures from a 200 response that
+        // legitimately reports `pullRequest: null` (PR doesn't exist). Without this, every
+        // failure mode would collapse to "PR not found" at the caller.
+        resp.EnsureSuccessStatusCode();
         return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
     }
 
@@ -707,6 +718,24 @@ public sealed class GitHubReviewService : IReviewService
     {
         if (!node.TryGetProperty("__typename", out var tn)) return false;
         return string.Equals(tn.GetString(), expected, StringComparison.Ordinal);
+    }
+
+    // Walks a chain of property names defensively. Returns false on any missing key,
+    // any non-object intermediate, or short-circuits at the first JSON null.
+    private static bool TryGetPath(JsonElement root, out JsonElement leaf, params string[] path)
+    {
+        var current = root;
+        foreach (var key in path)
+        {
+            if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(key, out var next))
+            {
+                leaf = default;
+                return false;
+            }
+            current = next;
+        }
+        leaf = current;
+        return true;
     }
 
     private static Pr ParsePr(JsonElement pull, PrReference reference)

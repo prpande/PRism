@@ -217,7 +217,13 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         if (stored > CurrentVersion)
         {
             IsReadOnlyMode = true;
-            return root;     // load best-effort; SaveAsync will refuse
+            // Best-effort load: still backfill known v2-shape defaults so the deserializer
+            // doesn't trip on optional fields a future-version file might also lack
+            // (e.g., ui-preferences). Without this, a missing optional field cascades into
+            // the JsonException quarantine path, which would clear IsReadOnlyMode and
+            // delete the file — defeating the read-only intent.
+            EnsureV2Shape(root);
+            return root;
         }
 
         // Only versions in [1, CurrentVersion] are recognized. Version 0 / negative
@@ -252,9 +258,12 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
     }
 
     // Forward-fixup for v2 top-level fields added after the initial v2 cut shipped.
-    // PR #14's v2 wrote files lacking `ui-preferences`; this step runs on every v2 read
-    // (regardless of `stored` version) and backfills the defaulted shape. The next
-    // SaveAsync persists the result. Idempotent — repeated runs are no-ops. Spec § 6.3.
+    // PR #14's v2 wrote files lacking `ui-preferences`; this step runs on every read
+    // that reaches the deserializer (v1→v2 path, plain v2 path, and the future-version
+    // best-effort path) and backfills the defaulted shape. The next SaveAsync persists
+    // the result on the v1/v2 paths; the future-version path stays read-only and only
+    // uses the in-memory backfill to keep deserialization from tripping on optional
+    // missing fields. Idempotent — repeated runs are no-ops. Spec § 6.3.
     private static void EnsureV2Shape(JsonNode root)
     {
         if (root["ui-preferences"] is null)

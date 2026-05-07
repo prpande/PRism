@@ -352,6 +352,40 @@ public class AppStateStoreMigrationTests
     }
 
     [Fact]
+    public async Task LoadAsync_future_version_without_ui_preferences_stays_read_only_with_defaults_filled()
+    {
+        // Future-version state.json missing `ui-preferences` must (a) NOT trip the
+        // JsonException quarantine path (which would clear IsReadOnlyMode and delete the
+        // user's data), and (b) still leave the store in IsReadOnlyMode=true so SaveAsync
+        // refuses writes from the older binary. EnsureV2Shape backfills the in-memory
+        // shape on the future-version path; nothing is persisted because saves are blocked.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 99,
+          "review-sessions": {},
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        store.IsReadOnlyMode.Should().BeTrue();
+        state.UiPreferences.Should().NotBeNull();
+        state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
+
+        // Quarantine file was not created (the file is preserved for future-binary use).
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().BeEmpty();
+        File.Exists(Path.Combine(dir.Path, "state.json")).Should().BeTrue();
+
+        // SaveAsync still refuses (read-only invariant intact).
+        var save = async () => await store.SaveAsync(state, CancellationToken.None);
+        await save.Should().ThrowAsync<InvalidOperationException>().WithMessage("*read-only mode*");
+    }
+
+    [Fact]
     public async Task ResetToDefaultAsync_round_trips_clean_state()
     {
         // Save a non-default state, reset, re-load → must equal AppState.Default.

@@ -74,4 +74,53 @@ public class GitHubReviewServiceFileContentTests
         result.Status.Should().Be(FileContentStatus.Binary);
         result.Content.Should().BeNull();
     }
+
+    [Fact]
+    public async Task GetFileContentAsync_preserves_directory_separators_in_path()
+    {
+        // Regression: Uri.EscapeDataString on the whole path encodes `/` as `%2F` and
+        // GitHub's contents API requires literal slashes for directory separators —
+        // any subdirectoried file would 404. Per-segment escape preserves slashes
+        // while still encoding special characters within a single segment.
+        Uri? captured = null;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            captured = req.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("ok\n")),
+            };
+        });
+        var sut = NewService(handler);
+
+        await sut.GetFileContentAsync(new PrReference("o", "r", 1), "src/sub/Foo.cs", "abc", CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        // Literal slashes preserved between segments; Uri normalizes percent-encoded
+        // unreserved chars, so the absolute path is the simplest way to assert.
+        captured!.AbsolutePath.Should().Be("/repos/o/r/contents/src/sub/Foo.cs");
+        captured.Query.Should().Contain("ref=abc");
+    }
+
+    [Fact]
+    public async Task GetFileContentAsync_encodes_special_characters_within_a_segment()
+    {
+        // A segment with a space or '#' must still be percent-encoded; the per-segment
+        // escape should NOT be a no-op for these characters.
+        Uri? captured = null;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            captured = req.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("ok\n")),
+            };
+        });
+        var sut = NewService(handler);
+
+        await sut.GetFileContentAsync(new PrReference("o", "r", 1), "docs/spec & notes.md", "abc", CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.AbsolutePath.Should().Be("/repos/o/r/contents/docs/spec%20%26%20notes.md");
+    }
 }
