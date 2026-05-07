@@ -3,7 +3,7 @@
 **Slice**: S3 — third slice in [`docs/roadmap.md`](../../roadmap.md), follows the shipped S0+S1 and S2.
 **Date**: 2026-05-06.
 **Status**: Brainstormed; awaiting plan. Refined 2026-05-06 after a 7-persona document review (PR #13).
-**Branch**: `feat/s3-pr-detail-spec` (worktree at `C:/src/PRism-s3-spec`).
+**Branch**: `feat/s3-pr-detail-spec`.
 **Source authorities**: [`docs/spec/`](../../spec/) is the PoC specification this slice implements; [`design/handoff/`](../../../design/handoff/) is the visual reference. This document does not restate the PoC spec; it commits to a specific subset, records deviations from spec text where the design handoff or implementation reality forced a different choice, and adds slice-specific decisions.
 
 ---
