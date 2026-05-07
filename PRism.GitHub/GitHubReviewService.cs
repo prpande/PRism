@@ -237,7 +237,61 @@ public sealed class GitHubReviewService : IReviewService
         return new DiffDto($"{range.BaseSha}..{range.HeadSha}", files, truncated);
     }
 
-    public Task<ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Timeline lands in S3 PR3 Step 3.4+.");
+    public async Task<ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+
+        // Independent GraphQL fetch — does NOT call GetPrDetailAsync. The two methods share
+        // parsing helpers but each issues its own round-trip; siblings rather than parent-child
+        // makes their failure modes independent. Spec § 6.4 / plan Step 3.4.
+        const string query = "query($owner:String!,$repo:String!,$number:Int!){" +
+            "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+            "comments(first:100){nodes{author{login} createdAt}}" +
+            "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
+            "nodes{__typename " +
+            "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
+            "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
+            "... on PullRequestReview{submittedAt}" +
+            "}}" +
+            "}}}";
+        var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
+        if (raw is null)
+        {
+            return new ClusteringInput(
+                Array.Empty<ClusteringCommit>(),
+                Array.Empty<ClusteringForcePush>(),
+                Array.Empty<ClusteringReviewEvent>(),
+                Array.Empty<ClusteringAuthorComment>());
+        }
+
+        using var doc = JsonDocument.Parse(raw);
+        var pull = doc.RootElement.GetProperty("data").GetProperty("repository").GetProperty("pullRequest");
+        if (pull.ValueKind == JsonValueKind.Null)
+        {
+            return new ClusteringInput(
+                Array.Empty<ClusteringCommit>(),
+                Array.Empty<ClusteringForcePush>(),
+                Array.Empty<ClusteringReviewEvent>(),
+                Array.Empty<ClusteringAuthorComment>());
+        }
+
+        var rawCommits = ParseTimelineCommits(pull);
+        var forcePushes = ParseForcePushes(pull);
+        var reviewEvents = ParseReviewEvents(pull);
+        var authorComments = ParseAuthorComments(pull);
+
+        // Per-commit changedFiles fan-out — concurrency cap 8, 100ms inter-batch pace.
+        // 4xx on any commit marks the session degraded (skip remaining fan-out, leave
+        // those commits' ChangedFiles=null). Above SkipJaccardAboveCommitCount, skip
+        // entirely (FileJaccardMultiplier returns neutral 1.0 when ChangedFiles is null).
+        const int SkipAbove = 100;
+        const int ConcurrencyCap = 8;
+        IReadOnlyList<ClusteringCommit> commits = rawCommits.Count > SkipAbove
+            ? rawCommits
+            : await FetchPerCommitChangedFilesAsync(reference, rawCommits, ConcurrencyCap, ct).ConfigureAwait(false);
+
+        return new ClusteringInput(commits, forcePushes, reviewEvents, authorComments);
+    }
 
     public async Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct)
     {
@@ -390,4 +444,201 @@ public sealed class GitHubReviewService : IReviewService
     }
 
     private sealed record PullMeta(string BaseSha, string HeadSha, int ChangedFiles);
+
+    // Inter-batch pace between concurrent per-commit fan-out batches. Transport-layer
+    // concern (rate-limit defense), not a clustering coefficient. Spec § 6.4.
+    private const int InterBatchPaceMs = 100;
+
+    private async Task<string?> PostGraphQLAsync(string query, object variables, CancellationToken ct)
+    {
+        var token = await _readToken().ConfigureAwait(false);
+        var payload = JsonSerializer.Serialize(new { query, variables });
+        using var http = _httpFactory.CreateClient("github");
+        using var req = new HttpRequestMessage(HttpMethod.Post, "graphql")
+        {
+            Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
+        };
+        if (!string.IsNullOrEmpty(token))
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        req.Headers.UserAgent.ParseAdd("PRism/0.1");
+        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+
+        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        if (!resp.IsSuccessStatusCode) return null;
+        return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+    }
+
+    private static List<ClusteringCommit> ParseTimelineCommits(JsonElement pull)
+    {
+        var result = new List<ClusteringCommit>();
+        if (!pull.TryGetProperty("timelineItems", out var ti) ||
+            !ti.TryGetProperty("nodes", out var nodes) ||
+            nodes.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var node in nodes.EnumerateArray())
+        {
+            if (!IsTypeName(node, "PullRequestCommit")) continue;
+            if (!node.TryGetProperty("commit", out var c)) continue;
+            var sha = c.TryGetProperty("oid", out var o) ? o.GetString() ?? "" : "";
+            var date = c.TryGetProperty("committedDate", out var d) ? d.GetDateTimeOffset() : default;
+            var message = c.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
+            var add = c.TryGetProperty("additions", out var a) ? a.GetInt32() : 0;
+            var del = c.TryGetProperty("deletions", out var dl) ? dl.GetInt32() : 0;
+            // ChangedFiles is filled in later by the per-commit REST fan-out (or stays null
+            // when fan-out is skipped above the commit-count cap or after a 4xx degrade).
+            result.Add(new ClusteringCommit(sha, date, message, add, del, ChangedFiles: null));
+        }
+        return result;
+    }
+
+    private static List<ClusteringForcePush> ParseForcePushes(JsonElement pull)
+    {
+        var result = new List<ClusteringForcePush>();
+        if (!pull.TryGetProperty("timelineItems", out var ti) ||
+            !ti.TryGetProperty("nodes", out var nodes) ||
+            nodes.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var node in nodes.EnumerateArray())
+        {
+            if (!IsTypeName(node, "HeadRefForcePushedEvent")) continue;
+            string? before = null;
+            if (node.TryGetProperty("beforeCommit", out var b) && b.ValueKind == JsonValueKind.Object)
+                before = b.TryGetProperty("oid", out var bo) ? bo.GetString() : null;
+            string? after = null;
+            if (node.TryGetProperty("afterCommit", out var aft) && aft.ValueKind == JsonValueKind.Object)
+                after = aft.TryGetProperty("oid", out var ao) ? ao.GetString() : null;
+            var occurred = node.TryGetProperty("createdAt", out var ca) ? ca.GetDateTimeOffset() : default;
+            result.Add(new ClusteringForcePush(before, after, occurred));
+        }
+        return result;
+    }
+
+    private static List<ClusteringReviewEvent> ParseReviewEvents(JsonElement pull)
+    {
+        var result = new List<ClusteringReviewEvent>();
+        if (!pull.TryGetProperty("timelineItems", out var ti) ||
+            !ti.TryGetProperty("nodes", out var nodes) ||
+            nodes.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var node in nodes.EnumerateArray())
+        {
+            if (!IsTypeName(node, "PullRequestReview")) continue;
+            var ts = node.TryGetProperty("submittedAt", out var s) ? s.GetDateTimeOffset() : default;
+            result.Add(new ClusteringReviewEvent(ts));
+        }
+        return result;
+    }
+
+    private static List<ClusteringAuthorComment> ParseAuthorComments(JsonElement pull)
+    {
+        var result = new List<ClusteringAuthorComment>();
+        if (!pull.TryGetProperty("comments", out var comments) ||
+            !comments.TryGetProperty("nodes", out var nodes) ||
+            nodes.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var node in nodes.EnumerateArray())
+        {
+            // The clustering signal cares about *author* comments, not all PR-root comments.
+            // Identifying the PR author requires a separate `author { login }` field on the
+            // PR. PoC is fine with all root comments treated as candidates — clustering
+            // doesn't differentiate; the signal is "PR-side conversation activity."
+            var ts = node.TryGetProperty("createdAt", out var c) ? c.GetDateTimeOffset() : default;
+            result.Add(new ClusteringAuthorComment(ts));
+        }
+        return result;
+    }
+
+    private static bool IsTypeName(JsonElement node, string expected)
+    {
+        if (!node.TryGetProperty("__typename", out var tn)) return false;
+        return string.Equals(tn.GetString(), expected, StringComparison.Ordinal);
+    }
+
+    private async Task<IReadOnlyList<ClusteringCommit>> FetchPerCommitChangedFilesAsync(
+        PrReference reference,
+        List<ClusteringCommit> commits,
+        int concurrencyCap,
+        CancellationToken ct)
+    {
+        if (commits.Count == 0) return commits;
+
+        // Process in fixed-size batches with an inter-batch pace. The session-degrade flag
+        // ratchets to true on any 4xx and stays true; once degraded, remaining batches
+        // resolve every commit's ChangedFiles to null without issuing more requests.
+        var result = new ClusteringCommit[commits.Count];
+        var degraded = false;
+        for (var batchStart = 0; batchStart < commits.Count; batchStart += concurrencyCap)
+        {
+            if (batchStart > 0)
+                await Task.Delay(InterBatchPaceMs, ct).ConfigureAwait(false);
+
+            var batchEnd = Math.Min(batchStart + concurrencyCap, commits.Count);
+            var batchTasks = new List<Task<(int idx, ClusteringCommit commit, bool got4xx)>>(batchEnd - batchStart);
+            for (var i = batchStart; i < batchEnd; i++)
+            {
+                var idx = i;
+                var commit = commits[idx];
+                if (degraded)
+                {
+                    result[idx] = commit;   // ChangedFiles already null
+                    continue;
+                }
+                batchTasks.Add(FetchOneCommitChangedFilesAsync(reference, idx, commit, ct));
+            }
+
+            var batchResults = await Task.WhenAll(batchTasks).ConfigureAwait(false);
+            foreach (var (idx, commit, got4xx) in batchResults)
+            {
+                result[idx] = commit;
+                if (got4xx) degraded = true;
+            }
+        }
+        return result;
+    }
+
+    private async Task<(int idx, ClusteringCommit commit, bool got4xx)> FetchOneCommitChangedFilesAsync(
+        PrReference reference,
+        int idx,
+        ClusteringCommit commit,
+        CancellationToken ct)
+    {
+        var url = $"repos/{reference.Owner}/{reference.Repo}/commits/{commit.Sha}";
+        try
+        {
+            using var http = _httpFactory.CreateClient("github");
+            using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+            if ((int)resp.StatusCode is >= 400 and < 500)
+                return (idx, commit, got4xx: true);
+            if (!resp.IsSuccessStatusCode)
+                return (idx, commit, got4xx: false);
+
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("files", out var files) ||
+                files.ValueKind != JsonValueKind.Array)
+                return (idx, commit, got4xx: false);
+
+            var paths = new List<string>(files.GetArrayLength());
+            foreach (var f in files.EnumerateArray())
+            {
+                if (f.TryGetProperty("filename", out var fn) && fn.GetString() is { } name)
+                    paths.Add(name);
+            }
+            return (idx, commit with { ChangedFiles = paths }, got4xx: false);
+        }
+        catch (HttpRequestException)
+        {
+            // Treat transport errors like a soft degrade — keep ChangedFiles null but don't
+            // mark the session degraded (the next commit might succeed).
+            return (idx, commit, got4xx: false);
+        }
+        catch (TaskCanceledException)
+        {
+            return (idx, commit, got4xx: false);
+        }
+    }
 }
