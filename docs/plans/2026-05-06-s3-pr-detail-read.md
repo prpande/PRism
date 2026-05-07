@@ -377,6 +377,99 @@ git add PRism.Core/State tests/PRism.Core.Tests/State
 git commit -m "feat(state): add ViewedFiles + v1->v2 migration + read-only-on-future-version (S3 PR1)"
 ```
 
+## Follow-up needed (post-PR #14)
+
+PR #14 shipped Steps 1.1–1.11 above. The spec's `ce-doc-review` pass (commit `6c2a487`) added items that didn't land in PR #14 and need a separate follow-up commit on this same `feat/s3-doc-review` branch:
+
+- [ ] **Add `UiPreferences { DiffMode }` record to `AppState`** — new top-level field on `AppState`. JSON name `ui-preferences`; `DiffMode` defaults to `side-by-side` (kebab-case lowercase via `JsonStringEnumConverter`). Spec § 6.3.
+
+  ```csharp
+  public sealed record UiPreferences(DiffMode DiffMode);
+
+  public enum DiffMode { SideBySide, Unified }   // serialized as "side-by-side" | "unified"
+
+  // AppState gains a new field:
+  public sealed record AppState(
+      int Version,
+      IReadOnlyDictionary<string, ReviewSessionState> ReviewSessions,
+      AiState AiState,
+      string? LastConfiguredGithubHost,
+      UiPreferences UiPreferences)
+  {
+      public static AppState Default { get; } = new(
+          Version: 2,
+          ReviewSessions: new Dictionary<string, ReviewSessionState>(),
+          AiState: new AiState(new Dictionary<string, RepoCloneEntry>(), null),
+          LastConfiguredGithubHost: null,
+          UiPreferences: new UiPreferences(DiffMode.SideBySide));
+  }
+  ```
+
+- [ ] **`MigrateV1ToV2` writes `ui-preferences` at the top level when missing** (idempotent). Spec § 6.3.
+
+  ```csharp
+  // Inside MigrateV1ToV2, after the review-sessions loop:
+  if (root["ui-preferences"] is null)
+      root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
+  ```
+
+- [ ] **Add `ResetToDefaultAsync()` API on `AppStateStore`** — bypasses `IsReadOnlyMode`, deletes `state.json` directly via `File.Delete`, and signals process restart to the caller. Setup is the only call site; the future-version → "reset to defaults" recovery path needs this. Spec § 6.3 + § 10.4.
+
+  ```csharp
+  public async Task ResetToDefaultAsync(CancellationToken ct)
+  {
+      // Intentionally bypasses IsReadOnlyMode — the whole point of this API
+      // is to recover from a future-version state.json that put the store
+      // into read-only mode. Caller (Setup) signals process restart after.
+      await _gate.WaitAsync(ct).ConfigureAwait(false);
+      try
+      {
+          if (File.Exists(_path)) File.Delete(_path);
+          IsReadOnlyMode = false;
+          // Caller is responsible for triggering a process restart so the
+          // next launch loads AppState.Default from a clean slate.
+      }
+      finally
+      {
+          _gate.Release();
+      }
+  }
+  ```
+
+- [ ] **Add migration tests for the new behavior:**
+
+  ```csharp
+  [Fact]
+  public async Task LoadAsync_migrates_v1_state_file_adds_ui_preferences_with_side_by_side_default()
+  {
+      // Write v1 state with no ui-preferences. Load. Assert state.UiPreferences.DiffMode == DiffMode.SideBySide.
+  }
+
+  [Fact]
+  public async Task ResetToDefaultAsync_deletes_state_json_even_when_in_read_only_mode()
+  {
+      // Write future-version state. Load (puts store into read-only mode).
+      // Call ResetToDefaultAsync. Assert state.json gone; IsReadOnlyMode == false.
+      // Re-load: assert state == AppState.Default.
+  }
+
+  [Fact]
+  public async Task LoadAsync_quarantines_malformed_json_and_does_not_enter_read_only_mode()
+  {
+      // Write `{not json`. Load. Assert state == AppState.Default;
+      // store.IsReadOnlyMode == false; state.json.corrupt-* exists.
+  }
+  ```
+
+  Test count for this task moves from **5** (state above) to **6** (1.x next-launch path is implicitly covered by `ResetToDefaultAsync` test). Spec § 11.3 mirrors this.
+
+- [ ] **Commit the follow-up:**
+
+  ```powershell
+  git add PRism.Core/State tests/PRism.Core.Tests/State
+  git commit -m "feat(state): add UiPreferences.DiffMode + ResetToDefaultAsync + malformed-json no-read-only (S3 follow-up to PR #14)"
+  ```
+
 ---
 
 ## Task 2: Iteration Clustering Core (incl. discipline-check harness)
@@ -1124,6 +1217,154 @@ git add PRism.Core/Iterations tests/PRism.Core.Tests/Iterations tests/PRism.Core
 git commit -m "feat(iterations): weighted-distance clustering with 2 multipliers + MAD threshold + degenerate fallback (S3 PR2)"
 ```
 
+## Follow-up needed (post-PR #15)
+
+PR #15 shipped Steps 2.1–2.18 above. The spec's `ce-doc-review` pass (commit `6c2a487`) added items that didn't land in PR #15 and need a separate follow-up commit on this same `feat/s3-doc-review` branch:
+
+- [ ] **Add `OneTabPerCommitClusteringStrategy`** implementing `IIterationClusteringStrategy`. Emits one `IterationCluster` per commit, sorted by `committedDate`. The DI fallback target when the discipline-check protocol fails to reach 70% agreement after the tuning rounds (§ 11.5). Spec § 6.4.
+
+  ```csharp
+  // PRism.Core/Iterations/OneTabPerCommitClusteringStrategy.cs
+  namespace PRism.Core.Iterations;
+
+  public sealed class OneTabPerCommitClusteringStrategy : IIterationClusteringStrategy
+  {
+      public IReadOnlyList<IterationCluster> Cluster(
+          ClusteringInput input,
+          IterationClusteringCoefficients coefficients)
+      {
+          if (input.Commits.Count == 0) return Array.Empty<IterationCluster>();
+          var sorted = input.Commits.OrderBy(c => c.CommittedDate).ToArray();
+          return sorted.Select((c, i) =>
+              new IterationCluster(i + 1, c.Sha, c.Sha, new[] { c.Sha })).ToArray();
+      }
+  }
+  ```
+
+  Tests:
+
+  ```csharp
+  [Fact]
+  public void Empty_commits_returns_no_clusters() { /* ... */ }
+
+  [Fact]
+  public void N_commits_returns_N_clusters_sorted_by_committed_date() { /* ... */ }
+
+  [Fact]
+  public void Each_cluster_has_single_commit_sha() { /* ... */ }
+  ```
+
+- [ ] **DI registration logic** for the strategy choice. Bind `WeightedDistanceClusteringStrategy` by default; switch to `OneTabPerCommitClusteringStrategy` when the discipline-check protocol failed to reach 70% agreement after the tuning rounds (the protocol outcome is recorded in spec § 12 and surfaces as a config flag). Spec § 6.4 + § 11.5.
+
+  ```csharp
+  // In PRism.Web/Program.cs, replace the unconditional WeightedDistance binding with:
+  builder.Services.AddSingleton<IIterationClusteringStrategy>(sp =>
+  {
+      var fallback = sp.GetRequiredService<IConfiguration>()
+          .GetValue<bool>("iterations:useOneTabPerCommitFallback");
+      if (fallback) return new OneTabPerCommitClusteringStrategy();
+      return new WeightedDistanceClusteringStrategy(sp.GetServices<IDistanceMultiplier>());
+  });
+  ```
+
+- [ ] **IterationTabStrip degenerate-fallback banner.** When the degenerate-detector fires AND the input has more commits than `MaxFallbackTabs`, the strip renders a banner instead of tabs. Copy: *"Iterations could not be reconstructed (algorithm signal too low for this PR's commit cadence). Showing All changes; commit-by-commit is unavailable."* Spec § 6.4 + § 7.6.
+
+  Frontend test (lands in Task 7's frontend cycle, but recorded here for traceability):
+
+  ```tsx
+  it('renders degenerate-fallback banner when single inconclusive cluster covers > maxFallbackTabs commits', () => {
+    // PrDetailDto with iterations.length === 1 AND iterations[0].commits.length > 20.
+    render(<IterationTabStrip iterations={iterations} {...rest} />);
+    expect(screen.getByText(/Iterations could not be reconstructed/i)).toBeInTheDocument();
+  });
+  ```
+
+- [ ] **Lower `SkipJaccardAboveCommitCount` default 100 → 50** + add 100ms inter-batch pace between fan-out batches. Spec § 6.4.
+
+  ```csharp
+  // IterationClusteringCoefficients.cs:
+  public sealed record IterationClusteringCoefficients(
+      double FileJaccardWeight = 0.5,
+      double ForcePushAfterLongGap = 1.5,
+      int ForcePushLongGapSeconds = 600,
+      int MadK = 3,
+      int HardFloorSeconds = 300,
+      int HardCeilingSeconds = 259200,
+      int SkipJaccardAboveCommitCount = 50,        // ← was 100
+      double DegenerateFloorFraction = 0.5,
+      int MaxFallbackTabs = 20,
+      int InterBatchPaceMs = 100);                 // ← new
+
+  // GitHubReviewService.GetTimelineAsync per-commit fan-out:
+  // After each batch of ConcurrencyCap completes, await Task.Delay(coefficients.InterBatchPaceMs, ct).
+  ```
+
+- [ ] **403 secondary-rate-limit handling** in the per-commit fan-out. Detect the response header `x-ratelimit-resource: secondary` on a 403; pause fan-out until `Retry-After`; degrade remaining commits to `ChangedFiles = null` (which the `FileJaccardMultiplier` treats as neutral 1.0) for the rest of the session. Spec § 6.4.
+
+  ```csharp
+  // Inside FetchPerCommitChangedFiles, when SendAsync returns 403:
+  if ((int)resp.StatusCode == 403 &&
+      resp.Headers.TryGetValues("x-ratelimit-resource", out var resource) &&
+      resource.Contains("secondary"))
+  {
+      var retryAfter = resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(60);
+      await Task.Delay(retryAfter, ct);
+      // After the pause, return null ChangedFiles for the remaining commits in this session.
+      // Practical: set a session-scoped flag so subsequent fan-out batches short-circuit.
+      _secondaryRateLimitTripped = true;
+  }
+  ```
+
+- [ ] **`IDistanceMultiplier` interface signature change.** Spec § 6.4 commits to a pair-local signature: `double Multiply(Commit before, Commit after, IReadOnlyList<ForcePushEvent> forcePushesInGap)`. Whole-input access is intentionally NOT exposed. Update both `IDistanceMultiplier` and the two existing implementations.
+
+  ```csharp
+  // PRism.Core/Iterations/IDistanceMultiplier.cs — REPLACE the existing 4-param shape:
+  public interface IDistanceMultiplier
+  {
+      /// <summary>
+      /// Returns the multiplier in (0, ∞) for the gap between two consecutive commits.
+      /// Pair-local: receives the two commits and the force-pushes that fall in the gap.
+      /// Whole-input access is intentionally NOT exposed.
+      /// </summary>
+      double Multiply(
+          ClusteringCommit before,
+          ClusteringCommit after,
+          IReadOnlyList<ClusteringForcePush> forcePushesInGap);
+  }
+  ```
+
+  Add a contract test:
+
+  ```csharp
+  // tests/PRism.Core.Tests/Iterations/DistanceMultiplierContractTests.cs
+  [Fact]
+  public void IDistanceMultiplier_signature_is_pair_local_not_whole_input()
+  {
+      // Reflection check: Multiply has exactly 3 params; no overload accepts ClusteringInput.
+      var method = typeof(IDistanceMultiplier).GetMethod("Multiply")!;
+      method.GetParameters().Length.Should().Be(3);
+      typeof(IDistanceMultiplier).GetMethods()
+          .Should().NotContain(m => m.GetParameters().Any(p => p.ParameterType == typeof(ClusteringInput)));
+  }
+  ```
+
+  Update `FileJaccardMultiplier` and `ForcePushMultiplier` to the new signature; the strategy filters force-pushes into the gap window before passing them.
+
+- [ ] **§ 11.5 discipline-check tuning protocol** is now concrete: max **3 tuning rounds**; if still <70% after round 3, ship with `OneTabPerCommitClusteringStrategy` registered as the DI binding (`iterations:useOneTabPerCommitFallback = true` in production config). Spec § 11.5.
+
+- [ ] **Tests landing in this follow-up:**
+  - `IDistanceMultiplier` signature contract test (above).
+  - `OneTabPerCommitClusteringStrategy` tests (3 cases above).
+  - Secondary-rate-limit tests on the per-commit fan-out (`Frozen_pr_secondary_rate_limit_does_not_block_clustering`-style smoke).
+  - Banner-on-fallback test on `IterationTabStrip` (frontend; lands with Task 7 work).
+
+- [ ] **Commit the follow-up:**
+
+  ```powershell
+  git add PRism.Core/Iterations PRism.GitHub/GitHubReviewService.cs PRism.Web/Program.cs tests/PRism.Core.Tests/Iterations
+  git commit -m "feat(iterations): OneTabPerCommit fallback + pair-local IDistanceMultiplier + secondary-rate-limit handling + 50/100ms pace defaults (S3 follow-up to PR #15)"
+  ```
+
 ---
 
 ## Task 3: `IReviewService` Extensions — PR detail fetch + dual-endpoint diff + file content + timeline
@@ -1188,7 +1429,13 @@ public sealed record IterationDto(
     int Number,
     string BeforeSha,
     string AfterSha,
-    IReadOnlyList<CommitDto> Commits);
+    IReadOnlyList<CommitDto> Commits,
+    bool HasResolvableRange);
+//        ^ false → BeforeSha/AfterSha point at GC'd commits; UI renders
+//          "Iter N (snapshot lost)" and ComparePicker disables selection.
+//          PrDetailLoader populates this by probing the SHAs against the
+//          GitHub commit cache during cluster-to-DTO transformation.
+//          Spec § 6.1 + § 7.2.
 
 public sealed record CommitDto(string Sha, string Message, DateTimeOffset CommittedDate, int Additions, int Deletions);
 ```
@@ -1435,6 +1682,10 @@ public class GitHubReviewServiceDiffTests
     [Fact]
     public async Task GetDiffAsync_marks_truncated_when_pull_changed_files_exceeds_assembled_count()
     {
+        // Truncation is derived from pull.changed_files > allFiles.Count, NOT from a `compare`
+        // endpoint response. The pulls/{n}/files endpoint may return fewer files than
+        // pull.changed_files reports even before the 30-page cap (server-side soft truncation).
+        // Spec § 6.1.
         // Simulate the 3000-file ceiling: 30 pages × 100 = 3000, but pull.changed_files = 3500.
         var pages = Enumerable.Range(0, 30).Select(_ => FilePage(100)).ToArray();
         var handler = new PaginatedFakeHandler()
@@ -1449,6 +1700,39 @@ public class GitHubReviewServiceDiffTests
         diff.Files.Should().HaveCount(3000);
         diff.Truncated.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task GetDiffAsync_with_cross_iteration_range_uses_3_dot_compare_endpoint()
+    {
+        // When DiffRangeRequest.BaseSha != pull.base.sha, the service routes through
+        // /repos/{o}/{r}/compare/{base}...{head} (3-dot compare) instead of pulls/{n}/files.
+        // Spec § 6.1.
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/o/r/compare/iter1...iter2", "{\"files\":[]}")
+            .RouteJson("/repos/o/r/pulls/1", "{\"changed_files\":0,\"head\":{\"sha\":\"head\"},\"base\":{\"sha\":\"base\"}}");
+
+        var diff = await NewService(handler).GetDiffAsync(
+            new PrReference("o", "r", 1),
+            new DiffRangeRequest("iter1", "iter2"),
+            CancellationToken.None);
+
+        diff.Range.Should().Be("iter1..iter2");
+    }
+
+    [Fact]
+    public async Task GetDiffAsync_returns_range_unreachable_on_gcd_sha()
+    {
+        // GC'd SHA → compare endpoint returns 404 → throws RangeUnreachableException;
+        // endpoint layer maps to ProblemDetails type `/diff/range-unreachable`. Spec § 6.1 + § 8.
+        var handler = new PaginatedFakeHandler();    // no routes → defaults to 404
+        var sut = NewService(handler);
+
+        await sut.Invoking(s => s.GetDiffAsync(
+                new PrReference("o", "r", 1),
+                new DiffRangeRequest("dead-sha", "head"),
+                CancellationToken.None))
+            .Should().ThrowAsync<RangeUnreachableException>();
+    }
 }
 ```
 
@@ -1461,7 +1745,11 @@ public class GitHubReviewServiceDiffTests
 ```csharp
 public async Task<PrDetailDto?> GetPrDetailAsync(PrReference prRef, CancellationToken ct)
 {
-    // Single GraphQL round-trip for PR meta + timeline + comments + review threads.
+    // Initial GraphQL round-trip for PR meta + timeline + comments + review threads, with
+    // `first: 100` on every connection. After the initial response, loop with cursor pagination
+    // up to `iterations.maxTimelinePages` (default 5) on every connection where
+    // `pageInfo.hasNextPage` is true. On cap-hit, log `/timeline/cap-hit` and surface a
+    // soft banner to the UI (the frontend reads the cap-hit signal off `PrDetailDto`).
     // Use the existing _httpClient + GraphQL POST pattern from S2's GitHubSectionQueryRunner.
     var query = """
     query($owner: String!, $repo: String!, $number: Int!) {
@@ -1510,7 +1798,8 @@ public async Task<PrDetailDto?> GetPrDetailAsync(PrReference prRef, Cancellation
 
 public async Task<DiffDto> GetDiffAsync(PrReference prRef, DiffRangeRequest range, CancellationToken ct)
 {
-    // Step 1: paginate /pulls/{n}/files
+    // Step 1: paginate /pulls/{n}/files. Note: this is the PR's *current* diff; cross-iteration
+    // ranges (range that doesn't equal pull.base..pull.head) take the 3-dot compare path below.
     var allFiles = new List<FileChange>();
     var url = $"/repos/{prRef.Owner}/{prRef.Repo}/pulls/{prRef.Number}/files?per_page=100";
     var pageCount = 0;
@@ -1522,12 +1811,30 @@ public async Task<DiffDto> GetDiffAsync(PrReference prRef, DiffRangeRequest rang
         pageCount++;
     }
 
-    // Step 2: get changed_files count from cached /pulls/{n}
+    // Step 2: get changed_files count from /pulls/{n}.
     var pullMeta = await FetchPullMeta(prRef, ct);
     var changedFiles = pullMeta.ChangedFiles;
 
+    // Truncation derivation: NO `compare` endpoint call. We derive `truncated` purely from the
+    // count mismatch between `pull.changed_files` and the assembled `files.length`. The
+    // `pulls/{n}/files` endpoint may return fewer files than `pull.changed_files` reports
+    // even before the 30-page cap (server-side soft truncation on very large PRs). Spec § 6.1.
     var truncated = changedFiles > allFiles.Count;
     return new DiffDto($"{range.BaseSha}..{range.HeadSha}", allFiles, truncated);
+}
+
+// Cross-iteration range fetch: when the requested range is not pull.base..pull.head, route
+// through 3-dot compare (`/repos/{o}/{r}/compare/{base}...{head}`). GC'd SHAs return 404 →
+// surface as ProblemDetails type `/diff/range-unreachable` to the endpoint layer. Spec § 6.1 + § 8.
+private async Task<DiffDto> GetCrossIterationDiffAsync(PrReference prRef, DiffRangeRequest range, CancellationToken ct)
+{
+    var url = $"/repos/{prRef.Owner}/{prRef.Repo}/compare/{Uri.EscapeDataString(range.BaseSha)}...{Uri.EscapeDataString(range.HeadSha)}";
+    using var resp = await _httpClient.GetAsync(url, ct);
+    if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
+        throw new RangeUnreachableException(range.BaseSha, range.HeadSha);
+    // Parse compare response; assemble FileChange[] from `files`. Truncation here is signalled
+    // by GitHub's response shape (compare also has a server-side cap).
+    // ...
 }
 
 public async Task<FileContentResult> GetFileContentAsync(PrReference prRef, string path, string sha, CancellationToken ct)
@@ -1591,7 +1898,17 @@ public async Task<ClusteringInput> GetTimelineAsync(PrReference prRef, Cancellat
     // return without changedFiles (clustering strategy's FileJaccardMultiplier treats null
     // as unknown and returns neutral 1.0). skipAbove is read from coefficients; passed
     // explicitly here because IReviewService doesn't have a coefficients dependency.
-    const int SkipAbove = 100;     // matches IterationClusteringCoefficients.SkipJaccardAboveCommitCount default
+    //
+    // Inter-batch pace: after each batch of ConcurrencyCap completes, await
+    // Task.Delay(InterBatchPaceMs, ct) before kicking off the next batch (default 100ms).
+    // Spec § 6.4.
+    //
+    // 403 secondary-rate-limit handling: when SendAsync returns 403 with header
+    // `x-ratelimit-resource: secondary`, pause for `Retry-After` and degrade the
+    // remainder of the session to ChangedFiles=null (FileJaccardMultiplier returns
+    // neutral 1.0 for null). Implementation lives inside FetchPerCommitChangedFiles.
+    // Spec § 6.4 + § 10.1.
+    const int SkipAbove = 50;      // matches IterationClusteringCoefficients.SkipJaccardAboveCommitCount default (lowered 100 → 50, spec § 6.4)
     const int ConcurrencyCap = 8;
     var commits = rawCommits.Count > SkipAbove
         ? rawCommits.ToArray()      // ChangedFiles stays null
@@ -1634,7 +1951,8 @@ Expected: **2 passing**.
 [Fact]
 public async Task GetTimelineAsync_skips_per_commit_fanout_above_cap()
 {
-    var commits = Enumerable.Range(0, 150)
+    // Default cap is 50 (lowered from 100 per spec § 6.4). 75 > 50 → fan-out skipped.
+    var commits = Enumerable.Range(0, 75)
         .Select(i => new { Sha = $"c{i:D3}", Date = DateTimeOffset.UtcNow.AddSeconds(i * 60) })
         .ToArray();
     var fake = new FakeGitHubServer()
@@ -1643,10 +1961,46 @@ public async Task GetTimelineAsync_skips_per_commit_fanout_above_cap()
     var sut = NewService(fake);
     var input = await sut.GetTimelineAsync(new PrReference("o","r",1), CancellationToken.None);
 
-    input.Commits.Should().HaveCount(150);
+    input.Commits.Should().HaveCount(75);
     input.Commits.Should().AllSatisfy(c => c.ChangedFiles.Should().BeNull(),
-        because: "above 100 commits, the per-commit REST fan-out is skipped");
+        because: "above 50 commits, the per-commit REST fan-out is skipped (spec § 6.4 default)");
     fake.PerCommitFetchCount.Should().Be(0);
+}
+
+[Fact]
+public async Task GetTimelineAsync_paces_inter_batch_with_100ms_delay()
+{
+    // After each batch of ConcurrencyCap (8) completes, the fan-out awaits InterBatchPaceMs (100ms).
+    // For 24 commits with batch size 8 → 3 batches → 2 inter-batch pauses → ≥200ms total pace cost.
+    // Spec § 6.4.
+    var commits = Enumerable.Range(0, 24)
+        .Select(i => new { Sha = $"c{i:D3}", Date = DateTimeOffset.UtcNow.AddSeconds(i * 60) })
+        .ToArray();
+    var fake = new FakeGitHubServer().WithPullRequestTimeline(commits);
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    var input = await NewService(fake).GetTimelineAsync(new PrReference("o","r",1), CancellationToken.None);
+    sw.Stop();
+
+    input.Commits.Should().HaveCount(24);
+    sw.ElapsedMilliseconds.Should().BeGreaterThan(180,
+        because: "two inter-batch 100ms pauses across three batches");
+}
+
+[Fact]
+public async Task GetTimelineAsync_handles_secondary_rate_limit_403_by_pausing_and_degrading_remainder()
+{
+    // 403 with `x-ratelimit-resource: secondary` header triggers Retry-After pause and
+    // degrades the rest of the session to ChangedFiles=null. Spec § 6.4 + § 10.1.
+    var fake = new FakeGitHubServer()
+        .WithPullRequestTimeline(commits: 30 /* fan-out below cap */)
+        .WithSecondaryRateLimitOnCommit(commitIndex: 5, retryAfterSeconds: 1);
+
+    var input = await NewService(fake).GetTimelineAsync(new PrReference("o","r",1), CancellationToken.None);
+
+    // Commits 0..4 have changed-files; from index 5 onward, ChangedFiles is null.
+    input.Commits.Take(5).Should().AllSatisfy(c => c.ChangedFiles.Should().NotBeNull());
+    input.Commits.Skip(5).Should().AllSatisfy(c => c.ChangedFiles.Should().BeNull());
 }
 ```
 
@@ -1675,16 +2029,17 @@ git commit -m "feat(github): IReviewService grows new methods (GetPrDetail/GetDi
 ## Task 4: PR Detail Backend Assembly — Loader, Endpoints, Wire-Format Translation
 
 **Files:**
-- Create: `PRism.Core/PrDetail/IPrDetailLoader.cs`
-- Create: `PRism.Core/PrDetail/PrDetailLoader.cs`
+- Create: `PRism.Core/PrDetail/PrDetailLoader.cs` (concrete class — no `IPrDetailLoader` interface; spec § 4 + § 6.1)
 - Create: `PRism.Core/PrDetail/PrDetailSnapshot.cs`
 - Create: `PRism.Web/Endpoints/PrDetailEndpoints.cs`
 - Create: `PRism.Web/Endpoints/PrDetailDtos.cs`
-- Modify: `PRism.Web/Program.cs` — register `PrDetailLoader`, map endpoints
+- Modify: `PRism.Web/Program.cs` — register `PrDetailLoader` (concrete), map endpoints
 - Test: `tests/PRism.Core.Tests/PrDetail/PrDetailLoaderTests.cs`
 - Test: `tests/PRism.Web.Tests/PrDetailEndpointsTests.cs`
 
-### Step 4.1: Define the loader interface + snapshot record
+### Step 4.1: Define the snapshot record (no loader interface)
+
+`PrDetailLoader` is a **concrete class**. There is no `IPrDetailLoader` interface — tests substitute `IReviewService` directly (the loader's only collaborator that matters for testing is the review service; the clusterer and coefficients are pure-value injections). Spec § 4 + § 6.1.
 
 - [ ] Create `PRism.Core/PrDetail/PrDetailSnapshot.cs`:
 
@@ -1699,21 +2054,16 @@ public sealed record PrDetailSnapshot(
     int CoefficientsGeneration);     // bumped on coefficient hot-reload
 ```
 
-- [ ] Create `PRism.Core/PrDetail/IPrDetailLoader.cs`:
+**No `IPrDetailLoader` interface.** The loader has these public members on the concrete `PrDetailLoader` class:
 
 ```csharp
-using PRism.Core.Contracts;
-
-namespace PRism.Core.PrDetail;
-
-public interface IPrDetailLoader
-{
-    Task<PrDetailSnapshot?> LoadAsync(PrReference prRef, CancellationToken ct);
-    Task<PrDetailSnapshot?> TryGetCachedAsync(PrReference prRef);
-    /// <summary>Invalidates all cached snapshots; called on coefficient hot-reload.</summary>
-    void InvalidateAll();
-}
+public Task<PrDetailSnapshot?> LoadAsync(PrReference prRef, CancellationToken ct);
+public Task<PrDetailSnapshot?> TryGetCachedAsync(PrReference prRef);
+/// <summary>Invalidates all cached snapshots; called on coefficient hot-reload.</summary>
+public void InvalidateAll();
 ```
+
+Tests substitute `IReviewService` directly via constructor injection (the loader's only meaningful collaborator); they do not need to mock the loader itself.
 
 **Cache-key contract.** The cache key is the tuple `(prRef, headSha, coefficientsGeneration)`. **All three components must change for a cache miss.** This is load-bearing because:
 
@@ -1777,7 +2127,9 @@ public class PrDetailLoaderTests
     }
 }
 
-// Stub fake; expand fields as the loader's needs grow.
+// Stub fake; expand fields as the loader's needs grow. Note we substitute IReviewService
+// directly because PrDetailLoader is a concrete class with no interface — tests target the
+// review service instead. Spec § 4 + § 6.1.
 internal class FakeReviewService : IReviewService { /* implement minimally — track call counts */ }
 internal class RecordingClusterer : IIterationClusteringStrategy
 {
@@ -1808,7 +2160,7 @@ using PRism.Core.Iterations;
 
 namespace PRism.Core.PrDetail;
 
-public sealed class PrDetailLoader : IPrDetailLoader
+public sealed class PrDetailLoader
 {
     private readonly IReviewService _review;
     private readonly IIterationClusteringStrategy _clusterer;
@@ -1858,7 +2210,13 @@ public sealed class PrDetailLoader : IPrDetailLoader
                     var ci = commitBySha[sha];
                     return new CommitDto(ci.Sha, ci.Message, ci.CommittedDate, ci.Additions, ci.Deletions);
                 })
-                .ToArray()))
+                .ToArray(),
+            // HasResolvableRange = both endpoints are present in the timeline's commit set.
+            // GC'd SHAs (rare; happens on aggressive force-pushes that prune the old objects)
+            // produce false; UI renders "Iter N (snapshot lost)" and ComparePicker disables
+            // selection. Spec § 6.1 + § 7.2.
+            HasResolvableRange:
+                commitBySha.ContainsKey(c.BeforeSha) && commitBySha.ContainsKey(c.AfterSha)))
             .ToArray();
 
         var snapshot = new PrDetailSnapshot(
@@ -1920,7 +2278,7 @@ public sealed record FileViewedRequest(string Path, string HeadSha, bool Viewed)
 
 ### Step 4.6: Write endpoint tests
 
-- [ ] Create `tests/PRism.Web.Tests/PrDetailEndpointsTests.cs`. The test class uses S2's existing `WebApplicationFactory<Program>` pattern with `FakeGitHubServer`. Add 8 tests:
+- [ ] Create `tests/PRism.Web.Tests/PrDetailEndpointsTests.cs`. The test class uses S2's existing `WebApplicationFactory<Program>` pattern with `FakeGitHubServer`. The test list grew with the spec's `ce-doc-review` pass — see test row updates in Task 11 / spec § 11.3:
 
 ```csharp
 using FluentAssertions;
@@ -1948,16 +2306,35 @@ public class PrDetailEndpointsTests : IClassFixture<WebApplicationFactory<Progra
     public async Task Get_pr_detail_returns_404_problem_on_missing_pr() { /* … */ }
 
     [Fact]
-    public async Task Get_diff_paginates_and_propagates_truncated_flag() { /* … */ }
+    public async Task Get_diff_derives_truncated_from_pull_changed_files_count_mismatch()
+    {
+        // Spec § 6.1: truncated = pull.changed_files > files.length. NO compare endpoint call.
+        // ...
+    }
 
     [Fact]
-    public async Task Get_file_returns_422_when_path_not_in_diff()
+    public async Task Get_file_returns_422_with_not_in_diff_when_path_absent_and_diff_not_truncated()
     {
+        // /file/not-in-diff: path is not in diff AND DiffDto.Truncated == false.
+        // Spec § 8.
         var client = _factory.CreateClient();
         var resp = await client.GetAsync("/api/pr/octo/repo/1/file?path=../etc/passwd&sha=abc");
         resp.StatusCode.Should().Be(System.Net.HttpStatusCode.UnprocessableEntity);
         var problem = await resp.Content.ReadFromJsonAsync<ProblemDetails>();
         problem!.Type.Should().Be("/file/not-in-diff");
+    }
+
+    [Fact]
+    public async Task Get_file_returns_422_with_truncation_window_when_path_absent_but_diff_truncated()
+    {
+        // /file/truncation-window: path is not in cached files AND DiffDto.Truncated == true.
+        // The path may exist in the PR's actual diff, but it landed outside the 30-page window.
+        // Spec § 8.
+        // ... arrange: snapshot with Truncated=true; path not in cached files ...
+        var resp = await client.GetAsync("/api/pr/octo/repo/1/file?path=src/OutsideWindow.cs&sha=abc");
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.UnprocessableEntity);
+        var problem = await resp.Content.ReadFromJsonAsync<ProblemDetails>();
+        problem!.Type.Should().Be("/file/truncation-window");
     }
 
     [Fact]
@@ -1971,6 +2348,62 @@ public class PrDetailEndpointsTests : IClassFixture<WebApplicationFactory<Progra
 
     [Fact]
     public async Task Mark_viewed_returns_409_when_headSha_mismatches() { /* … */ }
+
+    [Fact]
+    public async Task Mark_viewed_writes_max_comment_id_verbatim_into_last_seen_comment_id()
+    {
+        // Frontend computes maxCommentId as the highest GitHub databaseId (numeric, monotonic)
+        // across PrDetailDto.rootComments[].databaseId ∪ PrDetailDto.reviewComments[].comments[].databaseId.
+        // Backend writes verbatim into LastSeenCommentId without re-deriving. Spec § 8.
+        // ...
+    }
+
+    [Fact]
+    public async Task Mark_viewed_rejects_request_body_over_16_KiB()
+    {
+        // 16 KiB body cap on mark-viewed. Spec § 8 + BodySizeLimitMiddleware (Task 5).
+        // Client posts a 17 KiB body (e.g., 17000-char maxCommentId) — middleware rejects with 413
+        // before model binding. Spec § 8.
+        // ...
+    }
+
+    [Theory]
+    [InlineData("../etc/passwd")]              // segment equals ".."
+    [InlineData("./relative")]                 // segment equals "."
+    [InlineData("")]                           // empty path
+    [InlineData("/leading-slash.cs")]          // leading "/"
+    [InlineData("trailing-slash/")]            // trailing "/"
+    [InlineData("nul\0byte.cs")]               // NUL byte
+    [InlineData("control\x1Fchar.cs")]         // C0/C1 control char (U+0000..U+001F or U+007F..U+009F)
+    [InlineData("back\\slash.cs")]             // backslash
+    public async Task Files_viewed_rejects_path_violating_canonicalization_rules(string path)
+    {
+        // 7-rule path canonicalization: any path segment equals `..` or `.`, empty path, leading `/`,
+        // trailing `/`, NUL byte, C0/C1 control char, backslash, NFC byte-length mismatch.
+        // (NFC mismatch is a 9th case below — composed-vs-decomposed Unicode.) Spec § 8.
+        var client = _factory.CreateClient();
+        var resp = await client.PostAsJsonAsync($"/api/pr/octo/repo/1/files/viewed",
+            new { path, headSha = "abc", viewed = true });
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
+    public async Task Files_viewed_rejects_path_with_nfc_byte_length_mismatch()
+    {
+        // Composed café (4 bytes UTF-8) vs decomposed café (5 bytes UTF-8) — server rejects
+        // any path whose NFC-normalized form has a different byte length than the input.
+        // Defends against attackers using decomposed Unicode to bypass an allowlist that
+        // canonicalizes after the check. Spec § 8.
+        var path = "src/Café.cs";   // decomposed
+        // ... post; expect 422 ...
+    }
+
+    [Fact]
+    public async Task Files_viewed_rejects_request_body_over_16_KiB()
+    {
+        // 16 KiB body cap on files/viewed. Spec § 8.
+        // ...
+    }
 }
 ```
 
@@ -1993,7 +2426,7 @@ public static class PrDetailEndpoints
     public static IEndpointRouteBuilder MapPrDetailEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}",
-            async (string owner, string repo, int number, IPrDetailLoader loader, CancellationToken ct) =>
+            async (string owner, string repo, int number, PrDetailLoader loader, CancellationToken ct) =>
             {
                 var snapshot = await loader.LoadAsync(new PrReference(owner, repo, number), ct);
                 if (snapshot is null)
@@ -2005,21 +2438,44 @@ public static class PrDetailEndpoints
             async (string owner, string repo, int number, [FromQuery] string range,
                    IReviewService review, CancellationToken ct) =>
             {
+                // `range=` is two SHAs joined by `..` (URL-encoded). For cross-iteration
+                // ranges (range != pull.base..pull.head), the service routes through
+                // 3-dot compare (`/repos/{o}/{r}/compare/{base}...{head}`). GC'd SHAs
+                // surface as RangeUnreachableException → ProblemDetails type
+                // `/diff/range-unreachable`. Spec § 6.1 + § 8.
                 var (baseSha, headSha) = ParseRange(range);
-                var diff = await review.GetDiffAsync(new PrReference(owner, repo, number),
-                    new DiffRangeRequest(baseSha, headSha), ct);
-                return Results.Ok(diff);
+                try
+                {
+                    var diff = await review.GetDiffAsync(new PrReference(owner, repo, number),
+                        new DiffRangeRequest(baseSha, headSha), ct);
+                    return Results.Ok(diff);
+                }
+                catch (RangeUnreachableException)
+                {
+                    return Results.Problem(type: "/diff/range-unreachable", statusCode: 404);
+                }
             });
 
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/file",
             async (string owner, string repo, int number, [FromQuery] string path, [FromQuery] string sha,
-                   IPrDetailLoader loader, IReviewService review, CancellationToken ct) =>
+                   PrDetailLoader loader, IReviewService review, CancellationToken ct) =>
             {
                 var snapshot = await loader.TryGetCachedAsync(new PrReference(owner, repo, number));
                 if (snapshot is null)
                     return Results.Problem(type: "/file/snapshot-evicted", statusCode: 422);
+
                 if (!snapshot.Detail.HasFileInDiff(path))
-                    return Results.Problem(type: "/file/not-in-diff", statusCode: 422);
+                {
+                    // Split 422 cases per spec § 8 (was: single /file/not-in-diff):
+                    //   /file/not-in-diff       → path not in diff AND truncated == false (genuine miss)
+                    //   /file/truncation-window → path not in cached files AND truncated == true
+                    //                              (path may exist in actual diff, but landed outside
+                    //                              the 30-page window; ask user to open on github.com)
+                    var type = snapshot.Detail.IsDiffTruncated()
+                        ? "/file/truncation-window"
+                        : "/file/not-in-diff";
+                    return Results.Problem(type: type, statusCode: 422);
+                }
 
                 var result = await review.GetFileContentAsync(new PrReference(owner, repo, number), path, sha, ct);
                 return result.Status switch
@@ -2034,7 +2490,7 @@ public static class PrDetailEndpoints
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
             async (string owner, string repo, int number, MarkViewedRequest body,
-                   IPrDetailLoader loader, IAppStateStore stateStore, AppStateStore concreteStore, CancellationToken ct) =>
+                   PrDetailLoader loader, IAppStateStore stateStore, AppStateStore concreteStore, CancellationToken ct) =>
             {
                 if (concreteStore.IsReadOnlyMode)
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
@@ -2058,7 +2514,7 @@ public static class PrDetailEndpoints
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/files/viewed",
             async (string owner, string repo, int number, FileViewedRequest body,
-                   IPrDetailLoader loader, AppStateStore concreteStore, CancellationToken ct) =>
+                   PrDetailLoader loader, AppStateStore concreteStore, CancellationToken ct) =>
             {
                 if (concreteStore.IsReadOnlyMode)
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
@@ -2113,21 +2569,44 @@ public static class PrDetailEndpoints
 
     private static string? CanonicalizePath(string path)
     {
-        if (path.Contains("..") || path.StartsWith('/') || path.EndsWith('/')) return null;
-        // NFC normalize so encoding-equivalent paths collapse.
-        return path.Normalize(System.Text.NormalizationForm.FormC);
+        // 7-rule canonicalization (spec § 8 — expanded from the original 4-rule shape during
+        // the spec's ce-doc-review pass; the 7th rule below — NFC byte-length mismatch — is a
+        // dedicated check on top of the existing 6 character-level rules):
+        //   1. Any path segment equals `..` or `.`
+        //   2. Empty path
+        //   3. Leading `/`
+        //   4. Trailing `/`
+        //   5. NUL byte (U+0000)
+        //   6. C0/C1 control char (U+0000..U+001F or U+007F..U+009F) — supersets rule 5
+        //   7. Backslash
+        //   + NFC byte-length mismatch (defends against decomposed-Unicode allowlist bypass)
+        if (string.IsNullOrEmpty(path)) return null;
+        if (path.StartsWith('/') || path.EndsWith('/')) return null;
+        if (path.Contains('\\')) return null;
+        if (path.Any(c => c < 0x20 || (c >= 0x7F && c <= 0x9F))) return null;
+        var segments = path.Split('/');
+        if (segments.Any(s => s == ".." || s == ".")) return null;
+
+        // NFC byte-length mismatch: composed café (4 bytes) vs decomposed café (5 bytes).
+        var nfc = path.Normalize(System.Text.NormalizationForm.FormC);
+        if (System.Text.Encoding.UTF8.GetByteCount(nfc) != System.Text.Encoding.UTF8.GetByteCount(path))
+            return null;
+
+        return nfc;
     }
 }
 ```
 
-(Add `HasFileInDiff(path)` as an extension method on `PrDetailDto` that checks `dto.Files.Any(f => f.Path == path)`.)
+(Add `HasFileInDiff(path)` and `IsDiffTruncated()` as extension methods on `PrDetailDto`. `HasFileInDiff` checks `dto.Files.Any(f => f.Path == path)`; `IsDiffTruncated` returns the cached `DiffDto.Truncated` flag against the active iteration's range. The truncation flag is what splits the 422 into `/file/not-in-diff` vs `/file/truncation-window`.)
+
+**Session-token enforcement on GET endpoints.** All four endpoints in this Task 4 surface (`GET /api/pr/{ref}`, `GET /diff`, `GET /file`, plus the POST mutators) require `X-PRism-Session`. The middleware that enforces this lives in Task 5 (`SessionTokenMiddleware`); Task 4 endpoints don't have to do anything special — the middleware runs ahead of routing. The fourth endpoint, `GET /api/events`, reads the same token from the `prism-session` cookie because EventSource cannot send custom request headers; that branch is also Task 5. Spec § 8.
 
 ### Step 4.8: Wire endpoints + DI in `Program.cs`
 
-- [ ] In `PRism.Web/Program.cs`, register the loader:
+- [ ] In `PRism.Web/Program.cs`, register the loader as a concrete singleton (no interface):
 
 ```csharp
-builder.Services.AddSingleton<IPrDetailLoader, PrDetailLoader>();
+builder.Services.AddSingleton<PrDetailLoader>();
 builder.Services.AddSingleton<IIterationClusteringStrategy>(sp =>
     new WeightedDistanceClusteringStrategy(sp.GetServices<IDistanceMultiplier>()));
 builder.Services.AddSingleton<IDistanceMultiplier, FileJaccardMultiplier>();
@@ -2151,15 +2630,22 @@ app.MapPrDetailEndpoints();
 dotnet test tests\PRism.Web.Tests --filter "FullyQualifiedName~PrDetailEndpointsTests"
 ```
 
-Expected: **8 passing**.
+Expected: all passing. Test count includes the `Theory` for the 7-rule canonicalization (8 inline cases) plus the named tests for happy paths, /file/not-in-diff vs /file/truncation-window split, NFC mismatch, body-size caps, and stale-head-sha 409s. Spec § 11.3.
 
 ### Step 4.10: Commit
 
 ```powershell
 git checkout -b feat/s3-pr4-prdetail-backend
 git add PRism.Core/PrDetail/ PRism.Web/Endpoints/PrDetailEndpoints.cs PRism.Web/Endpoints/PrDetailDtos.cs PRism.Web/Program.cs tests/PRism.Core.Tests/PrDetail/ tests/PRism.Web.Tests/PrDetailEndpointsTests.cs
-git commit -m "feat(prdetail): backend loader + endpoints + cache (S3 PR4)"
+git commit -m "feat(prdetail): backend loader (concrete, no interface) + endpoints (X-PRism-Session on GETs, 7-rule path canonicalization, 16 KiB body cap, /file/truncation-window split) + cache (S3 PR4)"
 ```
+
+PR4 expanded scope per spec § 11.7:
+- Drop `IPrDetailLoader` from file lists; PrDetailLoader is concrete.
+- X-PRism-Session enforcement on GET endpoints (the middleware lives in Task 5; the endpoints depend on it but don't implement it themselves).
+- Path canonicalization: 7-rule shape (was 4-rule).
+- 16 KiB body cap on `mark-viewed` and `files/viewed`.
+- `/file/truncation-window` 422 split from `/file/not-in-diff`.
 
 ---
 
@@ -2170,14 +2656,18 @@ git commit -m "feat(prdetail): backend loader + endpoints + cache (S3 PR4)"
 - Create: `PRism.Core/PrDetail/ActivePrPoller.cs`
 - Create: `PRism.Core/PrDetail/ActivePrPollerState.cs`
 - Modify: `PRism.Web/Sse/SseChannel.cs` — per-PR fanout, named heartbeat, write-timeout, idle-eviction
-- Modify: `PRism.Web/Endpoints/EventsEndpoints.cs` — subscriber-assigned event, subscribe/unsubscribe REST
-- Modify: `PRism.Web/Middleware/OriginCheckMiddleware.cs` — reject empty Origin on POST/PUT/PATCH/DELETE
-- Create: `PRism.Web/Middleware/SessionTokenMiddleware.cs`
+- Modify: `PRism.Web/Endpoints/EventsEndpoints.cs` — subscriber-assigned event, subscribe/unsubscribe REST, cookie-based session-token on `GET /api/events`
+- Modify: `PRism.Web/Middleware/OriginCheckMiddleware.cs` — reject empty Origin on POST/PUT/PATCH/DELETE only (GETs with empty Origin remain allowed for top-level navigations)
+- Create: `PRism.Web/Middleware/SessionTokenMiddleware.cs` — extends to ALL non-asset endpoints (header for most, cookie for `/api/events`)
+- Create: `PRism.Web/Middleware/BodySizeLimitMiddleware.cs` — 16 KiB cap on the four mutating endpoints (`mark-viewed`, `files/viewed`, `events/subscriptions` POST + DELETE)
+- Create: `PRism.Web/Logging/SensitiveFieldScrubber.cs` — ILogger destructuring policy that scrubs fields named `subscriberId`, `pat`, `token`, `body`, `content` (case-insensitive)
 - Test: `tests/PRism.Core.Tests/PrDetail/ActivePrSubscriberRegistryTests.cs`
 - Test: `tests/PRism.Core.Tests/PrDetail/ActivePrPollerBackoffTests.cs`
 - Test: `tests/PRism.Web.Tests/EventsSubscriptionsEndpointTests.cs`
 - Test: `tests/PRism.Web.Tests/OriginCheckMiddlewareTests.cs`
 - Test: `tests/PRism.Web.Tests/SessionTokenMiddlewareTests.cs`
+- Test: `tests/PRism.Web.Tests/BodySizeLimitMiddlewareTests.cs`
+- Test: `tests/PRism.Web.Tests/SensitiveFieldScrubberTests.cs`
 
 ### Step 5.1: Subscriber registry tests
 
@@ -2439,6 +2929,11 @@ public sealed class ActivePrPoller : BackgroundService
 
     private static void ApplyBackoff(ActivePrPollerState state, DateTimeOffset now)
     {
+        // Standard exponential backoff for transient errors. The 403/secondary-rate-limit
+        // case is handled separately at the IReviewService boundary — when the GitHub
+        // response carries `x-ratelimit-resource: secondary`, the per-PR backoff respects
+        // `Retry-After` directly instead of the 2^n formula, and the per-commit fan-out
+        // degrades the remainder of the session to ChangedFiles=null. Spec § 10.1.
         state.ConsecutiveErrors++;
         var seconds = Math.Min(Math.Pow(2, state.ConsecutiveErrors) * 30, 300);
         state.NextRetryAt = now.AddSeconds(seconds);
@@ -2481,6 +2976,9 @@ public sealed record SubscriptionRequest(string SubscriberId, PrReference PrRef)
 // Pseudo-edit; integrate with the existing SseChannel structure.
 public async Task AddSubscriber(HttpResponse response, CancellationToken ct)
 {
+    // 128-bit cryptorandom subscriber ID via Guid.NewGuid(). Spec § 6.2 explicitly pins
+    // this to 128 bits (NOT 256) — avoids over-engineering when Guid's collision domain
+    // is more than enough for the per-process subscriber count.
     var subscriberId = Guid.NewGuid().ToString("N");
     response.Headers.ContentType = "text/event-stream";
     response.Headers.CacheControl = "no-store";
@@ -2489,6 +2987,8 @@ public async Task AddSubscriber(HttpResponse response, CancellationToken ct)
     // … existing connection-management; on heartbeat tick:
     //   await response.WriteAsync($"event: heartbeat\ndata: {{}}\n\n", ct);
     //   updateLastClientActivity();
+    // Heartbeat is a NAMED event (`event: heartbeat\ndata: {}\n\n`), not an SSE comment.
+    // The frontend's named-heartbeat watcher resets at 35s. Spec § 8.
     // On disconnect: registry.RemoveSubscriber(subscriberId).
 }
 
@@ -2544,7 +3044,7 @@ app.MapDelete("/api/events/subscriptions",
 
 The existing middleware (`PRism.Web/Middleware/OriginCheckMiddleware.cs`) has a **load-bearing** dev-mode accommodation: when both Origin and Host are loopback (e.g., Origin `http://localhost:5173` from Vite, Host `localhost:5180` from backend), the request is allowed through. **Preserve that branch** — losing it breaks the dev loop.
 
-The only change S3 makes: **reject empty Origin on mutating methods**. The existing `IsLoopback(origin) && IsLoopback(host)` and `string.Equals(origin, expected, ...)` branches stay.
+The only change S3 makes: **reject empty Origin on mutating methods only**. GETs with empty Origin remain allowed (top-level navigations don't send an Origin header — rejecting GETs without Origin would break direct URL navigation and any deep-link). POST/PUT/PATCH/DELETE with empty Origin → 403. The existing `IsLoopback(origin) && IsLoopback(host)` and `string.Equals(origin, expected, ...)` branches stay. Spec § 8.
 
 - [ ] Modify the body of `InvokeAsync` (currently lines 12-37). Replace it with:
 
@@ -2626,20 +3126,35 @@ public sealed class SessionTokenMiddleware
     {
         ArgumentNullException.ThrowIfNull(ctx);
 
-        var isMutating =
-            HttpMethods.IsPost(ctx.Request.Method) ||
-            HttpMethods.IsPut(ctx.Request.Method) ||
-            HttpMethods.IsPatch(ctx.Request.Method) ||
-            HttpMethods.IsDelete(ctx.Request.Method);
-
-        if (!isMutating)
+        // Spec § 8: SessionTokenMiddleware now extends to ALL non-asset endpoints
+        // (was: only mutating verbs in earlier drafts). The ce-doc-review pass closed
+        // the gap that GET endpoints were unauthenticated. Two read paths:
+        //
+        //   1. Most non-asset GETs + every mutating verb: read X-PRism-Session
+        //      from the request header.
+        //   2. GET /api/events (the SSE endpoint): read the same token from the
+        //      `prism-session` cookie. EventSource cannot send custom request
+        //      headers, so the SPA's HTML page-load stamps the cookie and the
+        //      EventSource implicitly carries it.
+        //
+        // Asset paths (e.g., /assets/*, /index.html, /favicon.ico) are skipped.
+        if (IsAssetPath(ctx.Request.Path))
         {
             await _next(ctx).ConfigureAwait(false);
             return;
         }
 
-        var headerValue = ctx.Request.Headers["X-PRism-Session"].ToString();
-        var actual = Encoding.UTF8.GetBytes(headerValue);
+        string headerOrCookieValue;
+        if (IsSseEndpoint(ctx.Request.Path))
+        {
+            headerOrCookieValue = ctx.Request.Cookies["prism-session"] ?? string.Empty;
+        }
+        else
+        {
+            headerOrCookieValue = ctx.Request.Headers["X-PRism-Session"].ToString();
+        }
+
+        var actual = Encoding.UTF8.GetBytes(headerOrCookieValue);
 
         // Length precondition for FixedTimeEquals (which throws on length mismatch).
         // Token is always 44 chars (Base64 of 32 random bytes) so legitimate clients
@@ -2656,13 +3171,21 @@ public sealed class SessionTokenMiddleware
                 Type = "/auth/session-stale",
                 Status = StatusCodes.Status401Unauthorized,
                 Title = "Session token mismatch",
-                Detail = "The X-PRism-Session header does not match the per-launch token. Reload the page to refresh the cookie."
+                Detail = "The X-PRism-Session header (or prism-session cookie for /api/events) does not match the per-launch token. Reload the page to refresh the cookie."
             }).ConfigureAwait(false);
             return;
         }
 
         await _next(ctx).ConfigureAwait(false);
     }
+
+    private static bool IsAssetPath(PathString path) =>
+        path.StartsWithSegments("/assets") ||
+        path.Value == "/index.html" ||
+        path.Value == "/favicon.ico";
+
+    private static bool IsSseEndpoint(PathString path) =>
+        path.StartsWithSegments("/api/events");
 }
 
 public sealed class SessionTokenProvider
@@ -2686,16 +3209,28 @@ public sealed class SessionTokenProvider
 }
 ```
 
-Register both in `Program.cs`:
+Register all three middlewares in `Program.cs`. Spec § 8 commits to the pipeline ordering:
+`ExceptionHandler → BodySizeLimit → OriginCheck → SessionToken → Routing → ModelBinding → endpoint`.
 
 ```csharp
 builder.Services.AddSingleton<SessionTokenProvider>();
 
-// Order matters: routing first (so MapXxx attributes resolve), then Origin, then Session,
-// then endpoints. Both middlewares run on every mutating request.
-app.UseRouting();
+// Pipeline ordering per spec § 8:
+//   1. ExceptionHandler — catches anything below.
+//   2. BodySizeLimitMiddleware — 16 KiB cap on the four mutating endpoints; rejects oversized
+//      bodies BEFORE model binding so unauthenticated bodies don't reach binders. Configured
+//      via Kestrel's MaxRequestBodySize for these routes + a defense-in-depth middleware
+//      check that reads Content-Length and short-circuits on > 16 KiB.
+//   3. OriginCheckMiddleware — reject empty Origin on POST/PUT/PATCH/DELETE.
+//   4. SessionTokenMiddleware — header for all non-asset endpoints; cookie for /api/events.
+//   5. Routing.
+//   6. Model binding.
+//   7. Endpoint.
+app.UseExceptionHandler();
+app.UseMiddleware<BodySizeLimitMiddleware>();
 app.UseMiddleware<OriginCheckMiddleware>();
 app.UseMiddleware<SessionTokenMiddleware>();
+app.UseRouting();
 ```
 
 ### Step 5.10: Stamp the cookie on every HTML response
@@ -2728,6 +3263,95 @@ app.Use(async (ctx, next) =>
 
 The `OnStarting` callback fires before the first byte of the response body is written — works correctly with static-file middleware, with minimal-API JSON responses, and with the SSE endpoint (whose Content-Type is `text/event-stream`, so the predicate is false and no cookie is appended on SSE responses, which is intentional — the SPA gets its cookie from the HTML index).
 
+### Step 5.10b: Implement `BodySizeLimitMiddleware`
+
+Spec § 8 commits to a 16 KiB body cap on the four mutating endpoints (`mark-viewed`, `files/viewed`, `events/subscriptions` POST, `events/subscriptions` DELETE). The cap is enforced via a Kestrel + middleware combination so unauthenticated bodies never reach model binding:
+
+- [ ] Create `PRism.Web/Middleware/BodySizeLimitMiddleware.cs`:
+
+```csharp
+namespace PRism.Web.Middleware;
+
+public sealed class BodySizeLimitMiddleware
+{
+    private const long MaxMutatingBodyBytes = 16 * 1024;   // 16 KiB
+
+    private static readonly string[] CappedRoutes =
+    {
+        "/api/pr/", "/api/events/subscriptions"
+        // Path predicate matches any /api/pr/{owner}/{repo}/{n}/mark-viewed,
+        // /api/pr/{owner}/{repo}/{n}/files/viewed, and /api/events/subscriptions.
+    };
+
+    private readonly RequestDelegate _next;
+
+    public BodySizeLimitMiddleware(RequestDelegate next) => _next = next;
+
+    public async Task InvokeAsync(HttpContext ctx)
+    {
+        var path = ctx.Request.Path.Value ?? string.Empty;
+        var method = ctx.Request.Method;
+        var isMutating = HttpMethods.IsPost(method) || HttpMethods.IsPut(method)
+                      || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
+
+        var isCapped = isMutating &&
+            (path.Contains("/mark-viewed", StringComparison.Ordinal)
+             || path.Contains("/files/viewed", StringComparison.Ordinal)
+             || path.StartsWith("/api/events/subscriptions", StringComparison.Ordinal));
+
+        if (isCapped)
+        {
+            // Defense-in-depth: read Content-Length first; if absent or oversized, 413.
+            var contentLength = ctx.Request.ContentLength;
+            if (contentLength is null || contentLength > MaxMutatingBodyBytes)
+            {
+                ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+                await ctx.Response.WriteAsJsonAsync(new ProblemDetails
+                {
+                    Type = "/body/too-large",
+                    Status = 413,
+                    Title = "Request body exceeds 16 KiB cap",
+                });
+                return;
+            }
+        }
+
+        await _next(ctx).ConfigureAwait(false);
+    }
+}
+```
+
+Also configure Kestrel's per-route `MaxRequestBodySize` (via `RequestSizeLimit` attribute or endpoint metadata) on the four routes so chunked-encoding requests without Content-Length still hit the cap before model binding.
+
+Tests in `tests/PRism.Web.Tests/BodySizeLimitMiddlewareTests.cs`:
+- 17 KiB POST to `/mark-viewed` → 413
+- 17 KiB POST to `/files/viewed` → 413
+- 17 KiB POST to `/api/events/subscriptions` → 413
+- 17 KiB DELETE to `/api/events/subscriptions` → 413
+
+### Step 5.10c: Implement the ILogger destructuring policy
+
+Spec § 6.2 + § 10.6 commit to scrubbing fields named `subscriberId`, `pat`, `token`, `body`, `content` (case-insensitive) from any log destructured object. This blocks accidental leakage of GitHub-content payloads (long markdown comment bodies, file contents) into log output:
+
+- [ ] Create `PRism.Web/Logging/SensitiveFieldScrubber.cs` implementing `Serilog.Core.IDestructuringPolicy` (or the equivalent for whichever logger is in use; PRism currently uses Microsoft.Extensions.Logging — adapt to its `JsonConsoleFormatterOptions` or wrap a `LoggerProvider`).
+
+  ```csharp
+  public sealed class SensitiveFieldScrubber : IDestructuringPolicy
+  {
+      private static readonly string[] BlockedFieldNames =
+          { "subscriberId", "pat", "token", "body", "content" };
+
+      public bool TryDestructure(object value, ILogEventPropertyValueFactory factory, out LogEventPropertyValue result)
+      {
+          // Walk the object's properties. For any field whose name matches BlockedFieldNames
+          // (case-insensitive), substitute "[REDACTED]" instead of the actual value.
+          // ...
+      }
+  }
+  ```
+
+  Tests in `tests/PRism.Web.Tests/SensitiveFieldScrubberTests.cs`: log a structured payload `{ subscriberId, headSha }` and assert the captured log line shows `[REDACTED]` for `subscriberId` and the literal SHA for `headSha`.
+
 ### Step 5.11: Run the SSE / middleware tests
 
 - [ ] Add concrete test bodies to:
@@ -2749,9 +3373,16 @@ Expected: all passing.
 
 ```powershell
 git checkout -b feat/s3-pr5-sse-poller-middleware
-git add PRism.Core/PrDetail/ PRism.Web/Sse/ PRism.Web/Endpoints/EventsEndpoints.cs PRism.Web/Middleware/ PRism.Web/Program.cs tests/
-git commit -m "feat(sse): per-PR fanout + active-PR poller + tightened OriginCheck + SessionTokenMiddleware (S3 PR5)"
+git add PRism.Core/PrDetail/ PRism.Web/Sse/ PRism.Web/Endpoints/EventsEndpoints.cs PRism.Web/Middleware/ PRism.Web/Logging/ PRism.Web/Program.cs tests/
+git commit -m "feat(sse): per-PR fanout + active-PR poller (100ms inter-batch pace + secondary-rate-limit handling) + tightened OriginCheck + SessionTokenMiddleware (header + cookie on /api/events) + BodySizeLimitMiddleware (16 KiB) + ILogger destructuring policy (S3 PR5)"
 ```
+
+PR5 expanded scope per spec § 11.7:
+- Cookie-based session-token enforcement on `GET /api/events` (header path covers all other non-asset endpoints).
+- New `BodySizeLimitMiddleware` (16 KiB cap on the four mutating endpoints; configured before model binding).
+- ILogger destructuring policy (scrubs `subscriberId`, `pat`, `token`, `body`, `content` case-insensitive).
+- 100ms inter-batch pace between fan-out batches.
+- 403 secondary-rate-limit handling (pause on `x-ratelimit-resource: secondary` header; respect `Retry-After`; degrade remainder to neutral Jaccard).
 
 ---
 
@@ -2784,6 +3415,14 @@ For each component, follow this rhythm (the same TDD shape as the backend tasks)
 - [ ] Implement the component (matching § 7.1–7.8 of the spec).
 - [ ] Run vitest, confirm pass.
 - [ ] Repeat for each: PrDetailPage routing + on-mount lifecycle, PrHeader render, PrSubTabStrip with disabled Drafts, BannerRefresh appearance, EmptyPrPlaceholder, DraftsTabDisabled.
+- [ ] **BannerRefresh layout/animation contract (spec § 7.1):**
+  - Sticky position below `PrSubTabStrip`.
+  - Renders as an *overlay* (does NOT push content down — the page content underneath stays visually stable).
+  - Animated slide-down with `--t-med` ease-out.
+  - Dismissible: a Close button next to Reload.
+  - Below the 1180px breakpoint, z-index sits **above** the file-tree sheet/scrim (so a banner that fires while the sheet is open remains visible).
+- [ ] **BannerRefresh aggregation behavior (spec § 7.4):** between two Reload presses, multiple `pr-updated` SSE events aggregate. `headShaChanged` latches a "Iter N+1 available" flag (boolean — no double-count); `commentCountChanged` increments a delta counter. On Reload, the GET response becomes the new baseline and the banner clears. Test 4 cases: single head change, single comment delta, multiple events of each type aggregating, mixed.
+- [ ] **Deep-link `?iter=N` clamp on coefficient hot-reload (spec § 6.2 + § 7.5):** when the mounted page detects a `coefficientsGeneration` increment between the initial load and a banner-driven reload, briefly render "Iteration boundaries refreshed — selection may have moved", clamp `iter=N` to the nearest valid iteration (or All-changes), and update the URL via `history.replaceState` so back-button history isn't polluted. Test asserts URL update happens via replaceState (not pushState).
 - [ ] usePrDetail hook (delayed-loading + delayed-spinner): test that skeleton renders only after 100ms pending, holds for 300ms minimum.
 - [ ] useEventSource hook: test ready-state Promise, AbortController on reconnect, 401 force-reload, named-heartbeat watcher reset at 35s.
 - [ ] useActivePrUpdates hook: subscribe on mount, unsubscribe on unmount, banner-firing on `pr-updated` event.
@@ -2869,11 +3508,29 @@ Expected: all passing.
 
 ### Step 7.6: Implement file tree components
 
-- [ ] `FileNode.tsx`, `DirectoryNode.tsx`, `FileTree.tsx`. Apply per-directory rollup `viewed N/M`. Render the AI focus dot column with `aria-label="AI focus: high|medium|low"` when `aiPreview === true`; render `aria-hidden` placeholder span when off.
+- [ ] `FileNode.tsx`, `DirectoryNode.tsx`, `FileTree.tsx`. Apply per-directory rollup `viewed N/M`.
+- [ ] **Filter icon HIDDEN until S6 (spec § 7.2).** Do not render a clickable stub with a tooltip. The icon is simply absent from the file tree header in S3; S6 is when filtering ships.
+- [ ] **AI focus dot column (spec § 7.2):** when `aiPreview === true` and the focus is backed by `PlaceholderFileFocusRanker` (the PoC noop ranker), suffix the `aria-label` with " (preview)". Final shape: `aria-label="AI focus: high (preview)"`. When `aiPreview === false`, render an `aria-hidden` placeholder span (no dot, no label). When a real (non-Noop, non-Placeholder) ranker ships in v2, the suffix drops away.
+- [ ] **Inline toast for viewed-checkbox rollback (spec § 7.2).** When `POST /files/viewed` 4xxs and the optimistic-update reverts, render an inline toast with these properties:
+  - **Position:** right-aligned within the file row (does NOT overlay the path text — sits to the right of the row, in the column where the viewed checkbox lives).
+  - **Duration:** 4 seconds auto-dismiss; click-to-dismiss supported.
+  - **A11y:** `role="status"`, `aria-live="polite"`.
+  - **Stacking:** if a second toast fires on the same row before the first dismisses, the most-recent toast *replaces* the older one (single-toast-per-row). Toasts on different rows stack vertically.
+  - **Animation:** `--t-med` ease-out (matches BannerRefresh).
+- [ ] **Null-SHA iteration UI (spec § 7.2):** iterations with `HasResolvableRange === false` render as "Iter N (snapshot lost)" in the IterationTabStrip; ComparePicker disables selection of these iterations (renders them in a disabled-style row with a tooltip "Snapshot lost — base or head SHA was garbage-collected").
 
 ### Step 7.7: Implement `IterationTabStrip` + `ComparePicker`
 
 - [ ] Render last-3-inline + dropdown; auto-swap on reverse selection; same-iteration empty state.
+- [ ] **Narrow-viewport behavior for IterationTabStrip (spec § 7.7):**
+  - At viewports < 1180px: collapse to "All changes | Iter N (active) | More ▾" with the rest of the iterations in the More dropdown.
+  - At viewports < 900px: only show the active iteration label + More (drop the "All changes" label as well).
+- [ ] **ComparePicker WAI-ARIA combobox keyboard model (spec § 7.8):**
+  - `↓` / `↑` navigate options with wrap-around at the ends.
+  - `Enter` and `Space` activate the highlighted option AND close the listbox.
+  - `Home` / `End` jump to first / last option.
+  - Digit-jump: typing a digit jumps to the iteration with that number.
+  - DOM shape: `role="listbox"` on the container; `role="option"` on each item; `aria-selected` reflects current selection. Focus returns to the trigger button on close.
 
 ### Step 7.8: Implement responsive sheet behavior (< 1180px)
 
@@ -2919,11 +3576,11 @@ git commit -m "feat(frontend): file tree with smart compaction + viewed rollups 
 - [ ] Run:
 
 ```powershell
-cd frontend; npm install react-diff-view diff react-markdown remark-gfm shiki mermaid
+cd frontend; npm install react-diff-view diff react-markdown@^9 remark-gfm@^4 shiki@^1 mermaid@^11
 npm install --save-dev @types/diff
 ```
 
-Pin Mermaid to a specific patch range (e.g., `^11.x.x` exact pin in `package.json`).
+**npm pin majors per spec § 5:** `react-markdown@^9`, `remark-gfm@^4`, `shiki@^1` (or current major; verify the current shiki major before locking — `^1` was current at spec time), `mermaid@^11`. The Renovate manual-approval label extends to all four packages so a major-version bump cannot land via auto-merge — sanitization regressions in any of them are upstream-driven and need a human security-review gate.
 
 ### Step 8.2: Markdown sanitization tests (adversarial corpus)
 
@@ -2965,9 +3622,11 @@ describe('MarkdownRenderer sanitization', () => {
 
 - [ ] Use `react-markdown` v9 with `remark-gfm` and a strict `urlTransform` (allowlist: `http`, `https`, `mailto`). No `rehype-raw`. Pass code blocks through Shiki via the shared `shikiInstance`. Mermaid blocks lazy-load `MermaidBlock`.
 
-### Step 8.4: Mermaid behavioral test
+### Step 8.4: Mermaid behavioral test (3-test smoke check)
 
-- [ ] Create `frontend/src/components/Markdown/__tests__/MermaidBlock.behavioral.test.tsx`. Feed an adversarial flow definition with `click ... callback` directives that point to JavaScript; assert the rendered SVG contains no actionable JS (no `<a href="javascript:...">`, no `onclick=`, no inline event handlers).
+Spec § 5 + § 11.2 commit to a **3-test smoke check** for Mermaid hardening. The PRIMARY defense is the version pin + Renovate manual-approval label (Step 8.1) — the smoke check is a tripwire, not exhaustive coverage. Don't unit-test the library's hardened-mode behavior comprehensively; that's the upstream library's job.
+
+- [ ] Create `frontend/src/components/Markdown/__tests__/MermaidBlock.behavioral.test.tsx`. Feed an adversarial flow definition with `click ... callback` directives that point to JavaScript; assert the rendered SVG contains no actionable JS (no `<a href="javascript:...">`, no `onclick=`, no inline event handlers). Three test cases total — covers the most common bypass shapes; everything else is the version pin's responsibility.
 
 ### Step 8.5: Implement `MermaidBlock`
 
@@ -2975,7 +3634,10 @@ describe('MarkdownRenderer sanitization', () => {
 
 ### Step 8.6: Implement `DiffPane` + supporting components
 
-- [ ] Wire `react-diff-view` to render side-by-side / unified per `tweaks.diffMode`. Three lines of context. Shiki tokens via the shared instance. Add `WordDiffOverlay` using jsdiff for word-level highlights on changed lines. `ExistingCommentWidget` stacks multiple threads inside one widget. `DiffTruncationBanner` renders when `DiffDto.truncated === true` with a deep link to github.com.
+- [ ] Wire `react-diff-view` to render side-by-side / unified per `AppState.UiPreferences.DiffMode`. Three lines of context. Shiki tokens via the shared instance. Add `WordDiffOverlay` using jsdiff for word-level highlights on changed lines. `ExistingCommentWidget` stacks multiple threads inside one widget. `DiffTruncationBanner` renders when `DiffDto.truncated === true` with a deep link to github.com.
+- [ ] **`d` toggle suppressed below 900px (spec § 7.7).** When viewport width < 900px, the `d` keybinding is a no-op with a tooltip `"side-by-side requires ≥ 900px"`. The user's persisted `UiPreferences.DiffMode` is **NOT** mutated by the suppression — when the viewport widens above 900px, side-by-side reapplies.
+- [ ] **Diff-mode persistence backed by `AppState.UiPreferences.DiffMode` (spec § 6.3 + § 7.2).** This is the new top-level state field added in Task 1's follow-up. Persisted globally across launches via `state.json`. Frontend reads via a `useUiPreferences()` hook on initial mount and writes via the existing `IAppStateStore` save path (the endpoint that handles diff-mode persistence is part of S4's settings surface — for S3, the `d` keybinding mutates an in-memory store and the persistence layer wires up when settings ship).
+- [ ] **Diff-mode default `side-by-side`** (per `AppState.Default.UiPreferences`).
 
 ### Step 8.7: Run frontend tests
 
@@ -3011,6 +3673,13 @@ git commit -m "feat(frontend): diff pane + word overlay + markdown pipeline + me
 ### Step 9.1–9.N: Test-first cycle for each component
 
 - [ ] Write tests, implement components, run tests, commit. Match § 7.3 exactly: PrDescription uses `overview-card-hero-no-ai` modifier when `aiPreview === false`; AiSummaryCard renders only when `useCapabilities()['ai.summary']` is true and `aiPreview === true`; PrRootConversation has no Reply button (S4 lights it up); ReviewFilesCta footer renders the keyboard hints.
+- [ ] **AiSummaryCard "Preview" chip (spec § 7.3).** When `aiPreview === true` AND the summary is backed by `PlaceholderPrSummarizer` (the PoC noop), prepend a muted "Preview" chip with copy *"AI preview — sample content, not generated from this PR"*. The chip persists until a non-Noop / non-Placeholder summarizer is registered (i.e., real AI ships in v2). Implementation: read the `aiSummaryProvider` capability flag — when its value is `placeholder`, render the chip; when `real`, drop it.
+- [ ] **PrRootConversation rendering contract (spec § 7.3):**
+  - Each comment widget renders author + timestamp + body via `MarkdownRenderer` (the shared sanitizing pipeline from Task 8).
+  - Reaction emoji counts are read-only (no react button surfaces in S3 — reactions are a v2 concern).
+  - **No per-comment Reply button** (the comment composer ships in S4; until then, no Reply UI).
+  - Hover state is informational only (no action buttons appear on hover).
+  - Static footer at the bottom of the conversation: *"Reply lands when the comment composer ships in S4."*
 
 ### Step 9.last: Commit
 
@@ -3056,6 +3725,10 @@ If the source no longer exists (e.g., wiped Downloads folder), the canonical ver
 ### Step 10.2–10.N: Apply each spec edit per § 9.2
 
 - [ ] For each row in slice spec § 9.2, read the affected target section, apply the change inline. Each edit is small (paragraph rewrites). Verify cross-references after each edit.
+- [ ] **`docs/spec/03-poc-features.md` § 3 "Diff display":** update truncation derivation. Truncation is derived from `pull.changed_files > files.length`, NOT from a `compare` endpoint call. Spec § 9.2.
+- [ ] **Truncation banner copy** (used by `DiffTruncationBanner` in Task 8): *"PRism shows GitHub's first N files of this diff. Full-diff support is on the roadmap. Open on github.com."* Make sure this exact copy lands in the doc and matches the component literal.
+- [ ] **Deferred-items list mirrors spec § 9.5 additions:** "Multi-window single-instance enforcement → architectural-readiness backlog item; named-mutex/flock + IPC focus signal."
+- [ ] **New § 10.6 "Logging discipline for GitHub-content payloads"** lands as part of the spec sync. The plan references it from this doc-updates list — the spec edit lives in `docs/specs/2026-05-06-s3-pr-detail-read-design.md` (already in commit `6c2a487`); no separate doc-task action beyond confirming downstream specs cross-reference it.
 
 ### Step 10.last: Commit
 
@@ -3092,9 +3765,28 @@ dotnet add tests\PRism.GitHub.Tests.Integration reference PRism.GitHub\PRism.Git
 
 Add a `runsettings` file at repo root that filters out `Category=Integration` from the default `dotnet test` run.
 
-### Step 11.3: Write the 5 contract tests + GraphQL-shape-drift
+### Step 11.3: Write the 5 contract tests + GraphQL-shape-drift + secondary-rate-limit smoke
 
 - [ ] Implement each per spec § 11.4. Pin to commit-SHAs in a config record (don't read branch HEAD). The shape-drift test produces a structured field-by-field diff on failure (use `JsonDiffPatch` or hand-roll a small differ).
+- [ ] **Verify the existing 5-test count still holds.** The iteration-clustering algorithm itself didn't change — only DEFAULTS changed (`SkipJaccardAboveCommitCount` 100→50, `InterBatchPaceMs` introduced). The frozen-PR's expected boundaries should land at the same commit SHAs because the test PR was authored to fall well below the 50-commit cap, where the per-commit Jaccard fan-out runs to completion regardless of the pace knob. If a test diverges, treat as a regression to investigate before adjusting expectations.
+- [ ] **Add `Frozen_pr_secondary_rate_limit_does_not_block_clustering`** — a smoke check on the 403/secondary handling. The test only fires meaningfully if the per-commit fan-out hits the secondary rate limit during the test run; in steady state this is **typically skipped** because the frozen PR is small and well under any rate-limit threshold. Implementation:
+
+  ```csharp
+  [SkippableFact]
+  public async Task Frozen_pr_secondary_rate_limit_does_not_block_clustering()
+  {
+      // The smoke check exists to prove the 403/secondary handling doesn't
+      // hard-fail clustering. It triggers only when GitHub's response actually
+      // carries `x-ratelimit-resource: secondary` during the test run.
+      // Production hardening for the path is in unit tests on GitHubReviewService;
+      // this is the integration-side tripwire.
+      Skip.IfNot(Environment.GetEnvironmentVariable("PRISM_INTEGRATION_RATE_LIMIT_REPRO") == "1",
+          "Set PRISM_INTEGRATION_RATE_LIMIT_REPRO=1 to repro a secondary rate-limit (requires saturating fan-out).");
+      // ... assert clustering still produces a non-empty IterationCluster set even after
+      // the rate-limit hit, with neutral-Jaccard for the degraded commits.
+  }
+  ```
+  Spec § 11.4.
 
 ### Step 11.4: Update CI workflow
 
@@ -3116,8 +3808,23 @@ Expected: 5 pinned-SHA tests pass; `Frozen_pr_graphql_shape_unchanged` passes.
 ```powershell
 git checkout -b feat/s3-pr11-contract-tests
 git add tests/PRism.GitHub.Tests.Integration/ PRism.sln .github/workflows/
-git commit -m "test(integration): frozen api-codex PR contract tests + GraphQL shape-drift detector (S3 PR11)"
+git commit -m "test(integration): frozen api-codex PR contract tests + GraphQL shape-drift detector + secondary-rate-limit smoke (S3 PR11)"
 ```
+
+### Step 11.7: Test row updates throughout the plan (mirrors spec § 11.3)
+
+The spec's `ce-doc-review` pass updated multiple test rows. The plan tasks above already incorporate these — the list below is a compact index for cross-reference:
+
+| Test row | Old | New |
+|---|---|---|
+| Diff truncation derivation | "GET /api/pr/{ref}/diff propagates `truncated: true` from `compare`" | "GET /api/pr/{ref}/diff derives `truncated: true` from `pull.changed_files` count mismatch" |
+| /file 422 split | single `/file/not-in-diff` row | `/file/not-in-diff` row + new `/file/truncation-window` row |
+| Body path canonicalization | 4 tests | 7 tests (rules: `..`, `.`, empty, leading `/`, trailing `/`, NUL, control char, backslash, NFC byte-length) |
+| Body size cap | (not in earlier draft) | 4 tests (one per mutating endpoint) |
+| X-PRism-Session enforcement | (only mutating verbs in earlier draft) | 5 tests covering GET enforcement (header for most, cookie for /api/events) |
+| State migration | 4 tests | 6 tests (added `UiPreferences` migration + `ResetToDefaultAsync` + malformed-JSON-no-read-only) |
+| Logging discipline | (not in earlier draft) | 1 test (subscriberId / pat / token / body / content scrub) |
+| Iteration deep-link | (not in earlier draft) | 1 test (`?iter=N` clamps on coefficient hot-reload via `history.replaceState`) |
 
 ---
 
