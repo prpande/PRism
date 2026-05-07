@@ -7,7 +7,7 @@ status: open
 
 # Deferrals — S3 PR-detail (read) plan
 
-Tradeoffs surfaced during the plan-rigor pass on 2026-05-07. Source: `compound-engineering:document-review` 7-persona pass on the synced plan, followed by an in-conversation rigor pass that labeled each finding Apply / Defer / Skip.
+Tradeoffs surfaced during the plan-rigor pass on 2026-05-07. Source: `compound-engineering:ce-doc-review` 7-persona pass on the synced plan, followed by an in-conversation rigor pass that labeled each finding Apply / Defer / Skip.
 
 The Apply items (~30 individual edits across Tasks 1-11) landed in commit applying Q1-Q6 + plan-rigor decisions. The 3 Defer + 5 Skip items below are the rejections.
 

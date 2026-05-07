@@ -1749,7 +1749,7 @@ public class GitHubReviewServiceDiffTests
     }
 
     [Fact]
-    public async Task GetDiffAsync_returns_range_unreachable_on_gcd_sha()
+    public async Task GetDiffAsync_returns_range_unreachable_on_garbage_collected_sha()
     {
         // GC'd SHA → compare endpoint returns 404 → throws RangeUnreachableException;
         // endpoint layer maps to ProblemDetails type `/diff/range-unreachable`. Spec § 6.1 + § 8.

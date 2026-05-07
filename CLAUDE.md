@@ -139,22 +139,23 @@ The skill is `compound-engineering:ce-doc-review`. If it is not installed in a f
 
 ```markdown
 ---
-source-doc: docs/specs/<source>.md
+source-doc: docs/{specs|plans}/<source>.md   # path mirrors the source doc's location
 created: YYYY-MM-DD
+last-updated: YYYY-MM-DD                     # bump when entries are added or status changes
 status: open | resolved | superseded
 ---
 
-## [Defer|Skip] <Title>
+## [Defer|Skip|Superseded] <Title>
 
 - **Source:** <which session — e.g., `ce-doc-review` 7-persona pass on YYYY-MM-DD>
 - **Severity:** P0 | P1 | P2 | P3 | n/a
 - **Date:** YYYY-MM-DD
 - **Reason:** <why we deferred or skipped — one paragraph>
-- **Revisit when:** <concrete trigger; "n/a" for skips>
+- **Revisit when:** <concrete trigger; "n/a" for skips and superseded>
 - **Original finding evidence:** <quote or paraphrase>
 ```
 
-`[Defer]` = will revisit (Revisit-when names the trigger). `[Skip]` = rejected with reasoning, do NOT revisit unless new evidence. Don't re-edit entries after the fact — frozen record. Updates land as new entries citing the prior one.
+`[Defer]` = will revisit (Revisit-when names the trigger). `[Skip]` = rejected with reasoning, do NOT revisit unless new evidence. `[Superseded]` = a prior Apply/Defer/Skip decision that a later rigor pass overturned; references the original entry. Don't re-edit entries after the fact — frozen record. Updates land as new entries citing the prior one.
 
 ## General behavioral guidelines
 

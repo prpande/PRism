@@ -7,7 +7,7 @@ status: open
 
 # Deferrals — S3 PR-detail (read) spec
 
-Tradeoffs surfaced during a multi-session rigor pass on the S3 spec. Source: `compound-engineering:document-review` 7-persona pass on 2026-05-07 (coherence + feasibility + product-lens + design-lens + security-lens + scope-guardian + adversarial), followed by an in-conversation rigor pass that labeled each finding Apply / Defer / Skip.
+Tradeoffs surfaced during a multi-session rigor pass on the S3 spec. Source: `compound-engineering:ce-doc-review` 7-persona pass on 2026-05-07 (coherence + feasibility + product-lens + design-lens + security-lens + scope-guardian + adversarial), followed by an in-conversation rigor pass that labeled each finding Apply / Defer / Skip.
 
 The original 26 Apply items landed in commit `6c2a487`. A subsequent **plan ce-doc-review pass** on the synced plan reversed several of those spec-level Apply items based on new plan-rigor evidence (3-persona consensus on some, on-main code drift on others, design redesign on one). Those reversals are recorded below with status `[Superseded]` so the temporal record stays clean.
 
