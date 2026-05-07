@@ -270,6 +270,88 @@ public class AppStateStoreMigrationTests
     }
 
     [Fact]
+    public async Task SaveAsync_then_LoadAsync_round_trips_default_ui_preferences()
+    {
+        // AppState.Default carries UiPreferences { DiffMode: SideBySide }. A round-trip
+        // through SaveAsync + LoadAsync must preserve it (and persist it to disk).
+        using var dir = new TempDataDir();
+        using (var writeStore = new AppStateStore(dir.Path))
+        {
+            var initial = await writeStore.LoadAsync(CancellationToken.None);
+            await writeStore.SaveAsync(initial, CancellationToken.None);
+        }
+
+        using var readStore = new AppStateStore(dir.Path);
+        var state = await readStore.LoadAsync(CancellationToken.None);
+
+        state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
+
+        // Verify the kebab-case wire format actually landed on disk.
+        var raw = await File.ReadAllTextAsync(Path.Combine(dir.Path, "state.json"));
+        raw.Should().Contain("\"ui-preferences\"")
+           .And.Contain("\"diff-mode\":\"side-by-side\"");
+    }
+
+    [Fact]
+    public async Task LoadAsync_migrates_v1_state_file_adds_ui_preferences_with_side_by_side_default()
+    {
+        // Spec § 6.3: v1 → v2 migration inserts `ui-preferences: { "diff-mode": "side-by-side" }`
+        // at the top level via the EnsureV2Shape forward-fixup step.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 1,
+          "review-sessions": {},
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Version.Should().Be(2);
+        state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
+    }
+
+    [Fact]
+    public async Task LoadAsync_forward_fixes_v2_state_without_ui_preferences()
+    {
+        // The smoking-gun case: PR #14 shipped v2 without `ui-preferences`. Pure v2 → v2
+        // reads on those files would skip MigrateV1ToV2 entirely. Spec § 6.3 EnsureV2Shape
+        // backfills the key on every v2 read regardless of stored version. Idempotent.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 2,
+          "review-sessions": {
+            "owner/repo/1": {
+              "last-viewed-head-sha": null,
+              "last-seen-comment-id": null,
+              "pending-review-id": null,
+              "pending-review-commit-oid": null,
+              "viewed-files": {}
+            }
+          },
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
+
+        // The backfilled key persists on the next save, so a future implementer of the
+        // EnsureV2Shape helper can choose either approach (in-place mutation or post-load
+        // wrap with `state with`) and the wire format still ends up correct.
+        await store.SaveAsync(state, CancellationToken.None);
+        var raw = await File.ReadAllTextAsync(Path.Combine(dir.Path, "state.json"));
+        raw.Should().Contain("\"diff-mode\":\"side-by-side\"");
+    }
+
+    [Fact]
     public async Task LoadAsync_quarantines_state_with_unsupported_low_version()
     {
         using var dir = new TempDataDir();

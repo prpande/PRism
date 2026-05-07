@@ -196,6 +196,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             throw new JsonException($"state.json has unsupported version {stored}");
 
         if (stored == 1) root = MigrateV1ToV2(root);
+        EnsureV2Shape(root);
         IsReadOnlyMode = false;
         return root;
     }
@@ -218,5 +219,15 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         }
         root["version"] = 2;
         return root;
+    }
+
+    // Forward-fixup for v2 top-level fields added after the initial v2 cut shipped.
+    // PR #14's v2 wrote files lacking `ui-preferences`; this step runs on every v2 read
+    // (regardless of `stored` version) and backfills the defaulted shape. The next
+    // SaveAsync persists the result. Idempotent — repeated runs are no-ops. Spec § 6.3.
+    private static void EnsureV2Shape(JsonNode root)
+    {
+        if (root["ui-preferences"] is null)
+            root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
     }
 }
