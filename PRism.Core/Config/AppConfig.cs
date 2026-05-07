@@ -18,7 +18,7 @@ public sealed record AppConfig(
         new PollingConfig(30, 120),
         new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true), true),
         new ReviewConfig(true, true),
-        new IterationsConfig(60),
+        new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
         new UiConfig("system", "indigo", false),
         new GithubConfig("https://github.com", null),
@@ -37,7 +37,7 @@ public sealed record InboxSectionsConfig(
     bool Mentioned,
     bool CiFailing);
 public sealed record ReviewConfig(bool BlockSubmitOnStaleDrafts, bool RequireVerdictReconfirmOnNewIteration);
-public sealed record IterationsConfig(int ClusterGapSeconds);
+public sealed record IterationsConfig(int ClusterGapSeconds, bool ClusteringDisabled = false);
 public sealed record LoggingConfig(string Level, bool StateEvents, int StateEventsRetentionFiles);
 public sealed record UiConfig(string Theme, string Accent, bool AiPreview);
 public sealed record GithubConfig(string Host, string? LocalWorkspace);
