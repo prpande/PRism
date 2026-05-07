@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-06
 **Slice:** patch on top of S0+S1 foundations-and-setup
-**Status:** implemented in PR #5; plan at `docs/superpowers/plans/2026-05-06-pat-scopes-and-validation.md`
+**Status:** implemented in PR #5; plan at `docs/plans/2026-05-06-pat-scopes-and-validation.md`
 
 ## Context
 
@@ -135,7 +135,7 @@ The "Generate a token" link, the textarea, and the placeholder (`ghp_… or gith
 
 - `docs/spec/03-poc-features.md` § 1 (Setup) — replace the scope-string description with the four fine-grained permissions plus the classic footnote text. Keep the spec's existing Search-probe wording at line 28 — it now matches implementation.
 - `docs/spec/02-architecture.md` line 120 — already says fine-grained; verify wording is permission-shaped, not scope-shaped.
-- `docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md:256` — update the missing-scopes error row to note classic uses `X-OAuth-Scopes`; fine-grained skips the header check and uses Search probe instead.
+- `docs/specs/2026-05-05-foundations-and-setup-design.md:256` — update the missing-scopes error row to note classic uses `X-OAuth-Scopes`; fine-grained skips the header check and uses Search probe instead.
 - `docs/spec/00-verification-notes.md` — append a small "PAT type detection" entry: token prefix branches the validator; fine-grained tokens never return `X-OAuth-Scopes`.
 - `design/handoff/README.md:118-119` — replace the three-classic-pills description with the four-permission-row description and the footnote.
 

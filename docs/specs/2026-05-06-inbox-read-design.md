@@ -679,5 +679,5 @@ A single context provider at `InboxPage` level keeps the tree shallow; subcompon
 - [`docs/roadmap.md`](../../roadmap.md) — slice decomposition; carryforwards from S2 are tracked in S3 and S4 rows.
 - [`design/handoff/screens.jsx`](../../../design/handoff/screens.jsx) — `InboxScreen`, `InboxRow`, `InboxSection`, `DiffBar`, `ActivityFeed` are the visual reference; the activity rail's canned data is lifted from the `ActivityFeed` items array.
 - [`design/handoff/README.md`](../../../design/handoff/README.md) — responsive rules; tokens; the 1180px breakpoint for the rail.
-- [`docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md`](2026-05-05-foundations-and-setup-design.md) — the prior slice's design; defines the stack lock-in and the AI seam DI pattern this slice extends.
+- [`docs/specs/2026-05-05-foundations-and-setup-design.md`](2026-05-05-foundations-and-setup-design.md) — the prior slice's design; defines the stack lock-in and the AI seam DI pattern this slice extends.
 - [`CLAUDE.md`](../../../CLAUDE.md) — agent guidance; the TDD development-process rule.

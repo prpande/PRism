@@ -153,7 +153,7 @@ For `Api.Codex` and any future markdown-only repo.
 
 ## Source-of-truth references
 
-- This design doc: `docs/superpowers/specs/2026-05-06-prism-validation-prompt-set-design.md`
+- This design doc: `docs/specs/2026-05-06-prism-validation-prompt-set-design.md`
 - Generated artifacts: `validation-harness/`
 - Trigger that surfaced the MSYS path-conversion gotcha: branch-creation preflight on 2026-05-06.
 - Confirmed at preflight: BizApp.Bff is .NET 10.0; Mobile.BusinessGateway defaults to `master`; the other four default to `main`. None of those facts matter for the prompts (they target `prism-validation` only) but are recorded here in case we ever need to refresh the sandbox.
