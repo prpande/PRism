@@ -8,30 +8,30 @@
 
 **Tech Stack:** .NET 10 / ASP.NET Core (Kestrel + minimal APIs + xUnit + `WebApplicationFactory`); React 18 + Vite + TypeScript + Vitest + React Testing Library; `react-diff-view` + `jsdiff` (npm `diff`) + `react-markdown` v9 + `remark-gfm` + `shiki` + `mermaid` + `eventsource-mock`; `Xunit.SkippableFact` for the discipline-check harness.
 
-**Spec authority:** `C:\src\PRism-s3-spec\docs\superpowers\specs\2026-05-06-s3-pr-detail-read-design.md`. When in doubt, the spec wins; this plan translates it into ordered executable steps.
+**Spec authority:** `docs\superpowers\specs\2026-05-06-s3-pr-detail-read-design.md`. When in doubt, the spec wins; this plan translates it into ordered executable steps.
 
 ---
 
 ## Pre-Task: Working Environment
 
-- [ ] **Verify worktree.** Confirm you're in `C:\src\PRism-s3-spec` on branch `feat/s3-pr-detail-spec` (or a child branch off it). All commands assume this working directory unless stated otherwise.
+- [ ] **Verify worktree.** Confirm you're in `<repo root>` on branch `feat/s3-pr-detail-spec` (or a child branch off it). All commands assume this working directory unless stated otherwise.
 
 ```powershell
-git -C C:\src\PRism-s3-spec status
+git status
 # Expected: On branch feat/s3-pr-detail-spec (or descendant); clean tree.
 ```
 
-- [ ] **Pull latest.** Make sure the spec at `docs/superpowers/specs/2026-05-06-s3-pr-detail-read-design.md` is current.
+- [ ] **Pull latest.** Make sure the spec at `docs/specs/2026-05-06-s3-pr-detail-read-design.md` is current.
 
 ```powershell
-git -C C:\src\PRism-s3-spec pull --ff-only
+git pull --ff-only
 ```
 
 - [ ] **Solution sanity-check.** Confirm S2 builds and tests pass before adding S3 code. This is the green baseline.
 
 ```powershell
-dotnet build C:\src\PRism-s3-spec\PRism.sln
-dotnet test C:\src\PRism-s3-spec\PRism.sln
+dotnet build PRism.sln
+dotnet test PRism.sln
 # Expected: build succeeds; all tests pass.
 ```
 
@@ -101,7 +101,7 @@ public class AppStateStoreMigrationTests
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests\PRism.Core.Tests.csproj --filter "FullyQualifiedName~AppStateStoreMigrationTests"
+dotnet test tests\PRism.Core.Tests\PRism.Core.Tests.csproj --filter "FullyQualifiedName~AppStateStoreMigrationTests"
 ```
 
 Expected: **FAIL** with a compile error: `ReviewSessionState` does not contain `ViewedFiles`.
@@ -258,7 +258,7 @@ The throw is intentionally `InvalidOperationException` (not a domain exception) 
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests\PRism.Core.Tests.csproj --filter "FullyQualifiedName~AppStateStoreMigrationTests"
+dotnet test tests\PRism.Core.Tests\PRism.Core.Tests.csproj --filter "FullyQualifiedName~AppStateStoreMigrationTests"
 ```
 
 Expected: **PASS**.
@@ -364,7 +364,7 @@ public async Task SaveAsync_throws_when_in_read_only_mode()
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests\PRism.Core.Tests.csproj --filter "FullyQualifiedName~AppStateStoreMigrationTests"
+dotnet test tests\PRism.Core.Tests\PRism.Core.Tests.csproj --filter "FullyQualifiedName~AppStateStoreMigrationTests"
 ```
 
 Expected: **5 passing** (legacy → v2; v2 unchanged; missing-version quarantines; future-version → read-only; SaveAsync throws in read-only).
@@ -372,9 +372,9 @@ Expected: **5 passing** (legacy → v2; v2 unchanged; missing-version quarantine
 ### Step 1.11: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr1-state-migration
-git -C C:\src\PRism-s3-spec add PRism.Core/State tests/PRism.Core.Tests/State
-git -C C:\src\PRism-s3-spec commit -m "feat(state): add ViewedFiles + v1->v2 migration + read-only-on-future-version (S3 PR1)"
+git checkout -b feat/s3-pr1-state-migration
+git add PRism.Core/State tests/PRism.Core.Tests/State
+git commit -m "feat(state): add ViewedFiles + v1->v2 migration + read-only-on-future-version (S3 PR1)"
 ```
 
 ---
@@ -403,7 +403,7 @@ git -C C:\src\PRism-s3-spec commit -m "feat(state): add ViewedFiles + v1->v2 mig
 - [ ] Run:
 
 ```powershell
-dotnet add C:\src\PRism-s3-spec\tests\PRism.Core.Tests\PRism.Core.Tests.csproj package Xunit.SkippableFact
+dotnet add tests\PRism.Core.Tests\PRism.Core.Tests.csproj package Xunit.SkippableFact
 ```
 
 ### Step 2.2: Define the input / output types
@@ -582,7 +582,7 @@ public static class MadThresholdComputer
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualifiedName~MadThresholdComputerTests"
+dotnet test tests\PRism.Core.Tests --filter "FullyQualifiedName~MadThresholdComputerTests"
 ```
 
 Expected: **4 passing**.
@@ -693,7 +693,7 @@ public sealed class FileJaccardMultiplier : IDistanceMultiplier
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualifiedName~FileJaccardMultiplierTests"
+dotnet test tests\PRism.Core.Tests --filter "FullyQualifiedName~FileJaccardMultiplierTests"
 ```
 
 Expected: **5 passing**.
@@ -834,7 +834,7 @@ public sealed class ForcePushMultiplier : IDistanceMultiplier
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualifiedName~ForcePushMultiplierTests"
+dotnet test tests\PRism.Core.Tests --filter "FullyQualifiedName~ForcePushMultiplierTests"
 ```
 
 Expected: **5 passing**.
@@ -1070,7 +1070,7 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualifiedName~WeightedDistanceClusteringStrategyTests"
+dotnet test tests\PRism.Core.Tests --filter "FullyQualifiedName~WeightedDistanceClusteringStrategyTests"
 ```
 
 Expected: **9 passing**.
@@ -1111,7 +1111,7 @@ public class ClusteringDisciplineCheck
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualifiedName~Iterations"
+dotnet test tests\PRism.Core.Tests --filter "FullyQualifiedName~Iterations"
 ```
 
 Expected: clustering tests pass; `ClusteringDisciplineCheck` reports as **skipped**.
@@ -1119,9 +1119,9 @@ Expected: clustering tests pass; `ClusteringDisciplineCheck` reports as **skippe
 ### Step 2.18: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr2-iteration-clustering
-git -C C:\src\PRism-s3-spec add PRism.Core/Iterations tests/PRism.Core.Tests/Iterations tests/PRism.Core.Tests/PRism.Core.Tests.csproj
-git -C C:\src\PRism-s3-spec commit -m "feat(iterations): weighted-distance clustering with 2 multipliers + MAD threshold + degenerate fallback (S3 PR2)"
+git checkout -b feat/s3-pr2-iteration-clustering
+git add PRism.Core/Iterations tests/PRism.Core.Tests/Iterations tests/PRism.Core.Tests/PRism.Core.Tests.csproj
+git commit -m "feat(iterations): weighted-distance clustering with 2 multipliers + MAD threshold + degenerate fallback (S3 PR2)"
 ```
 
 ---
@@ -1621,7 +1621,7 @@ private static bool LooksBinary(byte[] bytes)
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.GitHub.Tests --filter "FullyQualifiedName~GitHubReviewServiceDiffTests"
+dotnet test tests\PRism.GitHub.Tests --filter "FullyQualifiedName~GitHubReviewServiceDiffTests"
 ```
 
 Expected: **2 passing**.
@@ -1657,7 +1657,7 @@ public async Task GetTimelineAsync_skips_per_commit_fanout_above_cap()
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.GitHub.Tests
+dotnet test tests\PRism.GitHub.Tests
 ```
 
 Expected: **all passing**.
@@ -1665,9 +1665,9 @@ Expected: **all passing**.
 ### Step 3.8: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr3-ireviewservice-extensions
-git -C C:\src\PRism-s3-spec add PRism.Core/IReviewService.cs PRism.Core.Contracts/ PRism.GitHub/GitHubReviewService.cs tests/PRism.GitHub.Tests/
-git -C C:\src\PRism-s3-spec commit -m "feat(github): IReviewService grows new methods (GetPrDetail/GetDiff/GetFileContent/GetTimeline) (S3 PR3)"
+git checkout -b feat/s3-pr3-ireviewservice-extensions
+git add PRism.Core/IReviewService.cs PRism.Core.Contracts/ PRism.GitHub/GitHubReviewService.cs tests/PRism.GitHub.Tests/
+git commit -m "feat(github): IReviewService grows new methods (GetPrDetail/GetDiff/GetFileContent/GetTimeline) (S3 PR3)"
 ```
 
 ---
@@ -1898,7 +1898,7 @@ public sealed class PrDetailLoader : IPrDetailLoader
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualifiedName~PrDetailLoaderTests"
+dotnet test tests\PRism.Core.Tests --filter "FullyQualifiedName~PrDetailLoaderTests"
 ```
 
 Expected: **3 passing**.
@@ -2148,7 +2148,7 @@ app.MapPrDetailEndpoints();
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Web.Tests --filter "FullyQualifiedName~PrDetailEndpointsTests"
+dotnet test tests\PRism.Web.Tests --filter "FullyQualifiedName~PrDetailEndpointsTests"
 ```
 
 Expected: **8 passing**.
@@ -2156,9 +2156,9 @@ Expected: **8 passing**.
 ### Step 4.10: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr4-prdetail-backend
-git -C C:\src\PRism-s3-spec add PRism.Core/PrDetail/ PRism.Web/Endpoints/PrDetailEndpoints.cs PRism.Web/Endpoints/PrDetailDtos.cs PRism.Web/Program.cs tests/PRism.Core.Tests/PrDetail/ tests/PRism.Web.Tests/PrDetailEndpointsTests.cs
-git -C C:\src\PRism-s3-spec commit -m "feat(prdetail): backend loader + endpoints + cache (S3 PR4)"
+git checkout -b feat/s3-pr4-prdetail-backend
+git add PRism.Core/PrDetail/ PRism.Web/Endpoints/PrDetailEndpoints.cs PRism.Web/Endpoints/PrDetailDtos.cs PRism.Web/Program.cs tests/PRism.Core.Tests/PrDetail/ tests/PRism.Web.Tests/PrDetailEndpointsTests.cs
+git commit -m "feat(prdetail): backend loader + endpoints + cache (S3 PR4)"
 ```
 
 ---
@@ -2300,7 +2300,7 @@ public sealed class ActivePrSubscriberRegistry
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualifiedName~ActivePrSubscriberRegistryTests"
+dotnet test tests\PRism.Core.Tests --filter "FullyQualifiedName~ActivePrSubscriberRegistryTests"
 ```
 
 Expected: **6 passing**.
@@ -2740,7 +2740,7 @@ The `OnStarting` callback fires before the first byte of the response body is wr
 - [ ] Run:
 
 ```powershell
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Web.Tests
+dotnet test tests\PRism.Web.Tests
 ```
 
 Expected: all passing.
@@ -2748,9 +2748,9 @@ Expected: all passing.
 ### Step 5.12: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr5-sse-poller-middleware
-git -C C:\src\PRism-s3-spec add PRism.Core/PrDetail/ PRism.Web/Sse/ PRism.Web/Endpoints/EventsEndpoints.cs PRism.Web/Middleware/ PRism.Web/Program.cs tests/
-git -C C:\src\PRism-s3-spec commit -m "feat(sse): per-PR fanout + active-PR poller + tightened OriginCheck + SessionTokenMiddleware (S3 PR5)"
+git checkout -b feat/s3-pr5-sse-poller-middleware
+git add PRism.Core/PrDetail/ PRism.Web/Sse/ PRism.Web/Endpoints/EventsEndpoints.cs PRism.Web/Middleware/ PRism.Web/Program.cs tests/
+git commit -m "feat(sse): per-PR fanout + active-PR poller + tightened OriginCheck + SessionTokenMiddleware (S3 PR5)"
 ```
 
 ---
@@ -2791,9 +2791,9 @@ For each component, follow this rhythm (the same TDD shape as the backend tasks)
 ### Step 6.last: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr6-frontend-shell
-git -C C:\src\PRism-s3-spec add frontend/
-git -C C:\src\PRism-s3-spec commit -m "feat(frontend): PR detail shell — page, routing, hooks, sub-tabs, banner (S3 PR6)"
+git checkout -b feat/s3-pr6-frontend-shell
+git add frontend/
+git commit -m "feat(frontend): PR detail shell — page, routing, hooks, sub-tabs, banner (S3 PR6)"
 ```
 
 ---
@@ -2854,7 +2854,7 @@ describe('treeBuilder', () => {
 - [ ] Run:
 
 ```powershell
-cd C:\src\PRism-s3-spec\frontend; npm test -- treeBuilder.test
+cd frontend; npm test -- treeBuilder.test
 ```
 
 Expected: all passing.
@@ -2884,7 +2884,7 @@ Expected: all passing.
 - [ ] Run:
 
 ```powershell
-cd C:\src\PRism-s3-spec\frontend; npm test
+cd frontend; npm test
 ```
 
 Expected: all passing.
@@ -2892,9 +2892,9 @@ Expected: all passing.
 ### Step 7.10: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr7-file-tree
-git -C C:\src\PRism-s3-spec add frontend/src/components/PrDetail/FilesTab/ frontend/src/hooks/
-git -C C:\src\PRism-s3-spec commit -m "feat(frontend): file tree with smart compaction + viewed rollups + responsive sheet (S3 PR7)"
+git checkout -b feat/s3-pr7-file-tree
+git add frontend/src/components/PrDetail/FilesTab/ frontend/src/hooks/
+git commit -m "feat(frontend): file tree with smart compaction + viewed rollups + responsive sheet (S3 PR7)"
 ```
 
 ---
@@ -2919,7 +2919,7 @@ git -C C:\src\PRism-s3-spec commit -m "feat(frontend): file tree with smart comp
 - [ ] Run:
 
 ```powershell
-cd C:\src\PRism-s3-spec\frontend; npm install react-diff-view diff react-markdown remark-gfm shiki mermaid
+cd frontend; npm install react-diff-view diff react-markdown remark-gfm shiki mermaid
 npm install --save-dev @types/diff
 ```
 
@@ -2982,7 +2982,7 @@ describe('MarkdownRenderer sanitization', () => {
 - [ ] Run:
 
 ```powershell
-cd C:\src\PRism-s3-spec\frontend; npm test
+cd frontend; npm test
 ```
 
 Expected: all passing, including 14 sanitization cases + Mermaid behavioral.
@@ -2990,9 +2990,9 @@ Expected: all passing, including 14 sanitization cases + Mermaid behavioral.
 ### Step 8.8: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr8-diff-pane
-git -C C:\src\PRism-s3-spec add frontend/src/components/PrDetail/FilesTab/DiffPane/ frontend/src/components/Markdown/ frontend/package.json frontend/package-lock.json
-git -C C:\src\PRism-s3-spec commit -m "feat(frontend): diff pane + word overlay + markdown pipeline + mermaid securityLevel=strict (S3 PR8)"
+git checkout -b feat/s3-pr8-diff-pane
+git add frontend/src/components/PrDetail/FilesTab/DiffPane/ frontend/src/components/Markdown/ frontend/package.json frontend/package-lock.json
+git commit -m "feat(frontend): diff pane + word overlay + markdown pipeline + mermaid securityLevel=strict (S3 PR8)"
 ```
 
 ---
@@ -3015,9 +3015,9 @@ git -C C:\src\PRism-s3-spec commit -m "feat(frontend): diff pane + word overlay 
 ### Step 9.last: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr9-overview-tab
-git -C C:\src\PRism-s3-spec add frontend/src/components/PrDetail/OverviewTab/
-git -C C:\src\PRism-s3-spec commit -m "feat(frontend): overview tab — AI summary placeholder + PR description hero + stats + conversation + CTA (S3 PR9)"
+git checkout -b feat/s3-pr9-overview-tab
+git add frontend/src/components/PrDetail/OverviewTab/
+git commit -m "feat(frontend): overview tab — AI summary placeholder + PR description hero + stats + conversation + CTA (S3 PR9)"
 ```
 
 ---
@@ -3031,7 +3031,7 @@ git -C C:\src\PRism-s3-spec commit -m "feat(frontend): overview tab — AI summa
 - Modify: `docs/spec/02-architecture.md` (state schema + cross-origin defense + migration policy)
 - Modify: `docs/spec/00-verification-notes.md` (algorithm doc reference + react-markdown sanitization note)
 - Modify: `docs/roadmap.md` (S3 status + new "In S3" arch-readiness row already present)
-- Modify: `docs/superpowers/specs/2026-05-06-architectural-readiness-design.md` (status notes already present)
+- Modify: `docs/specs/2026-05-06-architectural-readiness-design.md` (status notes already present)
 - Possibly create: backlog stubs in `docs/backlog/` for the four future multipliers + coefficient calibration
 
 ### Step 10.1: Canonicalize the algorithm doc
@@ -3048,7 +3048,7 @@ if (-not $src) {
     if (Test-Path $candidate) { $src = $candidate }
     else { Write-Error "Set PRISM_ALGORITHM_DOC_SOURCE or copy the algorithm doc to a known path."; exit 1 }
 }
-Copy-Item $src "C:\src\PRism-s3-spec\docs\spec\iteration-clustering-algorithm.md"
+Copy-Item $src "docs\spec\iteration-clustering-algorithm.md"
 ```
 
 If the source no longer exists (e.g., wiped Downloads folder), the canonical version is preserved in PR #13's commit history at the path `C:/Users/pratyush.pande/Downloads/pr-iteration-detection-algorithm.md` referenced in the spec — recover by checking out a known-good commit and re-deriving from the spec's content. The discipline-check workflow doesn't depend on the doc itself, only on the algorithm code.
@@ -3060,9 +3060,9 @@ If the source no longer exists (e.g., wiped Downloads folder), the canonical ver
 ### Step 10.last: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr10-docs
-git -C C:\src\PRism-s3-spec add docs/
-git -C C:\src\PRism-s3-spec commit -m "docs(s3): apply spec / arch-readiness / roadmap updates per § 9 (S3 PR10)"
+git checkout -b feat/s3-pr10-docs
+git add docs/
+git commit -m "docs(s3): apply spec / arch-readiness / roadmap updates per § 9 (S3 PR10)"
 ```
 
 ---
@@ -3085,9 +3085,9 @@ git -C C:\src\PRism-s3-spec commit -m "docs(s3): apply spec / arch-readiness / r
 - [ ] Run:
 
 ```powershell
-dotnet new xunit -o C:\src\PRism-s3-spec\tests\PRism.GitHub.Tests.Integration
-dotnet sln C:\src\PRism-s3-spec\PRism.sln add C:\src\PRism-s3-spec\tests\PRism.GitHub.Tests.Integration\PRism.GitHub.Tests.Integration.csproj
-dotnet add C:\src\PRism-s3-spec\tests\PRism.GitHub.Tests.Integration reference C:\src\PRism-s3-spec\PRism.GitHub\PRism.GitHub.csproj
+dotnet new xunit -o tests\PRism.GitHub.Tests.Integration
+dotnet sln PRism.sln add tests\PRism.GitHub.Tests.Integration\PRism.GitHub.Tests.Integration.csproj
+dotnet add tests\PRism.GitHub.Tests.Integration reference PRism.GitHub\PRism.GitHub.csproj
 ```
 
 Add a `runsettings` file at repo root that filters out `Category=Integration` from the default `dotnet test` run.
@@ -3106,7 +3106,7 @@ Add a `runsettings` file at repo root that filters out `Category=Integration` fr
 
 ```powershell
 $env:PRISM_INTEGRATION_PAT = "<your token>"
-dotnet test C:\src\PRism-s3-spec\tests\PRism.GitHub.Tests.Integration --filter "Category=Integration"
+dotnet test tests\PRism.GitHub.Tests.Integration --filter "Category=Integration"
 ```
 
 Expected: 5 pinned-SHA tests pass; `Frozen_pr_graphql_shape_unchanged` passes.
@@ -3114,9 +3114,9 @@ Expected: 5 pinned-SHA tests pass; `Frozen_pr_graphql_shape_unchanged` passes.
 ### Step 11.6: Commit
 
 ```powershell
-git -C C:\src\PRism-s3-spec checkout -b feat/s3-pr11-contract-tests
-git -C C:\src\PRism-s3-spec add tests/PRism.GitHub.Tests.Integration/ PRism.sln .github/workflows/
-git -C C:\src\PRism-s3-spec commit -m "test(integration): frozen api-codex PR contract tests + GraphQL shape-drift detector (S3 PR11)"
+git checkout -b feat/s3-pr11-contract-tests
+git add tests/PRism.GitHub.Tests.Integration/ PRism.sln .github/workflows/
+git commit -m "test(integration): frozen api-codex PR contract tests + GraphQL shape-drift detector (S3 PR11)"
 ```
 
 ---
@@ -3127,7 +3127,7 @@ git -C C:\src\PRism-s3-spec commit -m "test(integration): frozen api-codex PR co
 
 ```powershell
 $env:PRISM_DISCIPLINE_PR_REFS = "mindbody/Mindbody.BizApp.Bff/123,mindbody/Mindbody.BizApp.Bff/456,mindbody/Mindbody.Mobile.BusinessGateway/789"
-dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualifiedName~ClusteringDisciplineCheck"
+dotnet test tests\PRism.Core.Tests --filter "FullyQualifiedName~ClusteringDisciplineCheck"
 ```
 
 - [ ] Hand-label boundaries; record per-PR agreement % in spec § 12. If aggregate < 70%, tune coefficients in `appsettings.json` and re-run.
@@ -3135,8 +3135,8 @@ dotnet test C:\src\PRism-s3-spec\tests\PRism.Core.Tests --filter "FullyQualified
 - [ ] Commit § 12 update:
 
 ```powershell
-git -C C:\src\PRism-s3-spec add docs/superpowers/specs/2026-05-06-s3-pr-detail-read-design.md
-git -C C:\src\PRism-s3-spec commit -m "docs(s3): record discipline-check observations in spec § 12"
+git add docs/specs/2026-05-06-s3-pr-detail-read-design.md
+git commit -m "docs(s3): record discipline-check observations in spec § 12"
 ```
 
 ---

@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10 LTS (C# 14) · ASP.NET Core minimal APIs · `Microsoft.Identity.Client.Extensions.Msal` · Octokit.NET · `System.Text.Json` with kebab-case naming policy · xUnit · Moq · React 19 · Vite 6 · TypeScript 5.x · React Router v7 · Vitest + Testing Library + MSW · Playwright.
 
-**Source spec:** [`docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md`](../specs/2026-05-05-foundations-and-setup-design.md). The PoC spec it implements is under [`docs/spec/`](../../spec/). The visual reference is [`design/handoff/`](../../../design/handoff/).
+**Source spec:** [`docs/specs/2026-05-05-foundations-and-setup-design.md`](../specs/2026-05-05-foundations-and-setup-design.md). The PoC spec it implements is under [`docs/spec/`](../../spec/). The visual reference is [`design/handoff/`](../../../design/handoff/).
 
 **Process:** TDD throughout per [`CLAUDE.md`](../../../CLAUDE.md) § Development process. Every task is red → green → refactor → commit. No production code lands without a failing test that proved the need.
 
@@ -273,7 +273,7 @@ Local-first PR review tool that runs on the reviewer's own machine. See [`docs/s
 
 ## Status
 
-Pre-implementation; the foundations slice (`docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md`) is in flight. See [`docs/roadmap.md`](docs/roadmap.md) for the broader slice list.
+Pre-implementation; the foundations slice (`docs/specs/2026-05-05-foundations-and-setup-design.md`) is in flight. See [`docs/roadmap.md`](docs/roadmap.md) for the broader slice list.
 
 ## Development workflow
 

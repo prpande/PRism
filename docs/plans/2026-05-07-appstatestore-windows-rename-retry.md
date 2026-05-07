@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10, C#, xUnit, FluentAssertions.
 
-**Spec:** `docs/superpowers/specs/2026-05-07-appstatestore-windows-rename-retry-design.md`
+**Spec:** `docs/specs/2026-05-07-appstatestore-windows-rename-retry-design.md`
 
 ---
 
@@ -207,7 +207,7 @@ Fixes the local flakiness of AppStateStoreTests.SaveAsync_serializes_concurrent_
 (which now serves as the regression test) and closes a real production state-loss
 hole for Windows users with AV active.
 
-Spec: docs/superpowers/specs/2026-05-07-appstatestore-windows-rename-retry-design.md
+Spec: docs/specs/2026-05-07-appstatestore-windows-rename-retry-design.md
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF

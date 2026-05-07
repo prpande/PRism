@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship a working five-section GitHub inbox with a 120s background poller, SSE-driven update banner, URL-paste escape hatch (routing to a temporary S3 stub), AI category chips, and a hand-canned activity rail — implementing the design at [`docs/superpowers/specs/2026-05-06-inbox-read-design.md`](../specs/2026-05-06-inbox-read-design.md).
+**Goal:** Ship a working five-section GitHub inbox with a 120s background poller, SSE-driven update banner, URL-paste escape hatch (routing to a temporary S3 stub), AI category chips, and a hand-canned activity rail — implementing the design at [`docs/specs/2026-05-06-inbox-read-design.md`](../specs/2026-05-06-inbox-read-design.md).
 
 **Architecture:** Backend pipeline of small components — `ISectionQueryRunner` → per-PR fan-out filters (`IAwaitingAuthorFilter`, `ICiFailingDetector`) → `IInboxDeduplicator` → `IInboxItemEnricher` (drift-corrected AI seam) — wired by `InboxRefreshOrchestrator` and driven by an `InboxPoller : BackgroundService` gated on SSE subscriber count. SSE delivered via `/api/events`. Frontend mirrors the design handoff: collapsible sections, paste-URL input, banner, hand-canned activity rail.
 
@@ -3287,7 +3287,7 @@ Push the worktree branch, open a PR against `main`, request review. Two `@claude
 
 After producing this plan, the writer ran the checklist:
 
-**1. Spec coverage** — every section/requirement from `docs/superpowers/specs/2026-05-06-inbox-read-design.md` § 2 (In scope) maps to at least one task:
+**1. Spec coverage** — every section/requirement from `docs/specs/2026-05-06-inbox-read-design.md` § 2 (In scope) maps to at least one task:
 
 | Spec item | Task |
 |---|---|

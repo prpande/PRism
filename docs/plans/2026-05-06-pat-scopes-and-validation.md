@@ -8,7 +8,7 @@
 
 **Tech Stack:** .NET 10 minimal API, xUnit + FluentAssertions, FakeHttpMessageHandler for HTTP isolation, MSAL Extensions TokenStore (already wired). Frontend: React 19 + Vite + TypeScript, Vitest + Testing Library + MSW for HTTP isolation.
 
-**Spec:** `docs/superpowers/specs/2026-05-06-pat-scopes-and-validation-design.md`
+**Spec:** `docs/specs/2026-05-06-pat-scopes-and-validation-design.md`
 
 ---
 
@@ -40,7 +40,7 @@
 **Docs — modify:**
 - `docs/spec/03-poc-features.md` § 1 — replace scope-string description with fine-grained permission list + classic footnote.
 - `docs/spec/00-verification-notes.md` — append PAT-type detection entry.
-- `docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md` § 5.3 / table at line 256 — note token-type branch.
+- `docs/specs/2026-05-05-foundations-and-setup-design.md` § 5.3 / table at line 256 — note token-type branch.
 - `design/handoff/README.md` lines 118–119 — update Setup-screen description.
 
 ---
@@ -1286,7 +1286,7 @@ git commit -m "feat(setup): show no-repos-selected warning modal before commit"
 **Files:**
 - Modify: `docs/spec/03-poc-features.md` (the Setup section, around the existing scope list)
 - Modify: `docs/spec/00-verification-notes.md` (append new entry)
-- Modify: `docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md` (line ~256 row in the error table)
+- Modify: `docs/specs/2026-05-05-foundations-and-setup-design.md` (line ~256 row in the error table)
 - Modify: `design/handoff/README.md` (lines 118–119)
 
 These updates align the canonical docs with what was actually built.
@@ -1323,10 +1323,10 @@ Append a new entry at the end of the doc (after the last existing checkbox/secti
 
 For fine-grained tokens, a follow-up Search probe (`GET /search/issues?q=is:pr+author:@me`/`review-requested:@me`) detects the no-repos-selected failure mode. If both return `total_count: 0`, the connect endpoint returns `warning: "no-repos-selected"` without committing the token; the frontend gates the commit behind a confirmation modal.
 
-This was added in `docs/superpowers/specs/2026-05-06-pat-scopes-and-validation-design.md` after the original adversarial-review pass missed the `X-OAuth-Scopes` shape difference between classic and fine-grained PATs.
+This was added in `docs/specs/2026-05-06-pat-scopes-and-validation-design.md` after the original adversarial-review pass missed the `X-OAuth-Scopes` shape difference between classic and fine-grained PATs.
 ```
 
-- [ ] **Step 3: Update `docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md`**
+- [ ] **Step 3: Update `docs/specs/2026-05-05-foundations-and-setup-design.md`**
 
 Open the file and find the row in the error table (around line 256) that says "PAT validation: 403 / missing scopes". Replace with two rows:
 
@@ -1361,7 +1361,7 @@ If no edit was needed, no file is staged for this step.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add docs/spec/03-poc-features.md docs/spec/00-verification-notes.md docs/superpowers/specs/2026-05-05-foundations-and-setup-design.md design/handoff/README.md docs/spec/02-architecture.md
+git add docs/spec/03-poc-features.md docs/spec/00-verification-notes.md docs/specs/2026-05-05-foundations-and-setup-design.md design/handoff/README.md docs/spec/02-architecture.md
 git commit -m "docs: align spec/handoff with new PAT validation model"
 ```
 
