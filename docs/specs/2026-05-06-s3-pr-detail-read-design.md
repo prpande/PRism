@@ -897,6 +897,7 @@ POST   /api/pr/{owner}/{repo}/{number}/mark-viewed                          [req
        //   PrDetailDto.rootComments[].databaseId ∪ PrDetailDto.reviewComments[].comments[].databaseId.
        //   Frontend computes; backend writes verbatim into LastSeenCommentId.
        → 204  writes lastViewedHeadSha + lastSeenCommentId into ReviewSessions[ref]
+       → 422  { type: "/viewed/snapshot-evicted" } if the PR's PrDetailSnapshot is gone — frontend must refetch /api/pr/{ref} and retry (mirrors /file/snapshot-evicted)
        → 409  { type: "/viewed/stale-head-sha" } if headSha != prDetail.headSha
        → 423  { type: "/state/read-only" } if state.json is in forward-incompat read-only mode (binary needs upgrade)
 
@@ -906,6 +907,8 @@ POST   /api/pr/{owner}/{repo}/{number}/files/viewed                         [req
        → 422  { type: "/viewed/path-not-in-diff" } if path is not in the loaded PR's diff
        → 422  { type: "/viewed/path-too-long" } if path > 4096 bytes
        → 422  { type: "/viewed/cap-exceeded" } if ReviewSessions[ref].ViewedFiles already has 10 000 entries
+       → 422  { type: "/viewed/path-invalid" } if path canonicalization rejects the input (rules below)
+       → 422  { type: "/viewed/snapshot-evicted" } if the PR's PrDetailSnapshot is gone — frontend must refetch /api/pr/{ref} and retry (mirrors /file/snapshot-evicted)
        → 409  { type: "/viewed/stale-head-sha" } if headSha != prDetail.headSha
        → 423  { type: "/state/read-only" } if state.json is in forward-incompat read-only mode
        (Path travels in the body, not the URL — keeps the route static, avoids ASP.NET catch-all

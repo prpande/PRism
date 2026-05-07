@@ -2718,7 +2718,11 @@ public static class PrDetailEndpoints
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
 
                 var snapshot = await loader.TryGetCachedAsync(new PrReference(owner, repo, number));
-                if (snapshot is null || snapshot.Detail.Pr.HeadSha != body.HeadSha)
+                // Spec § 8 distinguishes /viewed/snapshot-evicted (refetch the PR first) from
+                // /viewed/stale-head-sha (head advanced — reload). Frontend reactions differ.
+                if (snapshot is null)
+                    return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);
+                if (snapshot.Detail.Pr.HeadSha != body.HeadSha)
                     return Results.Problem(type: "/viewed/stale-head-sha", statusCode: 409);
 
                 var key = $"{owner}/{repo}/{number}";
@@ -2747,7 +2751,12 @@ public static class PrDetailEndpoints
                 if (stateStore.IsReadOnlyMode)
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
 
-                if (string.IsNullOrEmpty(body.Path) || body.Path.Length > 4096)
+                // Spec § 8: "path > 4096 bytes" — UTF-8 byte count, not C# UTF-16 char count.
+                // 2000 multi-byte CJK characters (~6000 UTF-8 bytes) would slip past a naive
+                // body.Path.Length > 4096 check.
+                if (string.IsNullOrEmpty(body.Path))
+                    return Results.Problem(type: "/viewed/path-invalid", statusCode: 422);
+                if (Encoding.UTF8.GetByteCount(body.Path) > 4096)
                     return Results.Problem(type: "/viewed/path-too-long", statusCode: 422);
 
                 var canonical = CanonicalizePath(body.Path);
@@ -2755,7 +2764,9 @@ public static class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/path-invalid", statusCode: 422);
 
                 var snapshot = await loader.TryGetCachedAsync(new PrReference(owner, repo, number));
-                if (snapshot is null || snapshot.Detail.Pr.HeadSha != body.HeadSha)
+                if (snapshot is null)
+                    return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);
+                if (snapshot.Detail.Pr.HeadSha != body.HeadSha)
                     return Results.Problem(type: "/viewed/stale-head-sha", statusCode: 409);
 
                 if (!snapshot.Detail.HasFileInDiff(canonical))
