@@ -157,6 +157,35 @@ public class AppStateStoreMigrationTests
     }
 
     [Fact]
+    public async Task LoadAsync_resets_read_only_when_future_version_body_quarantined()
+    {
+        using var dir = new TempDataDir();
+        var statePath = Path.Combine(dir.Path, "state.json");
+        // version=99 trips the future-version branch (IsReadOnlyMode=true), but the
+        // structurally-incompatible body (review-sessions as a string) makes Deserialize
+        // throw JsonException — the catch quarantines and writes a fresh v2 default.
+        // After that, the on-disk file IS v2 and saves must work again.
+        await File.WriteAllTextAsync(statePath, """
+        {
+          "version": 99,
+          "review-sessions": "not-a-dict",
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Should().BeEquivalentTo(AppState.Default);
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().NotBeEmpty();
+        store.IsReadOnlyMode.Should().BeFalse();
+
+        var act = async () => await store.SaveAsync(state, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
     public async Task LoadAsync_quarantines_state_with_malformed_version_value()
     {
         using var dir = new TempDataDir();
@@ -164,6 +193,93 @@ public class AppStateStoreMigrationTests
         await File.WriteAllTextAsync(statePath, """
         {
           "version": "not-an-int",
+          "review-sessions": {},
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Should().BeEquivalentTo(AppState.Default);
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_quarantines_state_when_root_is_not_a_json_object()
+    {
+        using var dir = new TempDataDir();
+        var statePath = Path.Combine(dir.Path, "state.json");
+        // Root is a JSON array — root["version"] would throw InvalidOperationException
+        // (not JsonException) on JsonNode's string indexer, escaping the quarantine path.
+        await File.WriteAllTextAsync(statePath, "[]");
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Should().BeEquivalentTo(AppState.Default);
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_quarantines_state_with_overflowing_version_value()
+    {
+        using var dir = new TempDataDir();
+        var statePath = Path.Combine(dir.Path, "state.json");
+        // 99999999999 exceeds int.MaxValue; GetValue<int>() can throw OverflowException
+        // depending on the underlying JsonValue backing — must funnel through quarantine.
+        await File.WriteAllTextAsync(statePath, """
+        {
+          "version": 99999999999,
+          "review-sessions": {},
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Should().BeEquivalentTo(AppState.Default);
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_quarantines_v1_state_when_review_sessions_is_not_an_object()
+    {
+        using var dir = new TempDataDir();
+        var statePath = Path.Combine(dir.Path, "state.json");
+        // v1 input where review-sessions is a string — MigrateV1ToV2's AsObject() would
+        // throw InvalidOperationException, escaping LoadAsync's catch (JsonException).
+        await File.WriteAllTextAsync(statePath, """
+        {
+          "version": 1,
+          "review-sessions": "not-a-dict",
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Should().BeEquivalentTo(AppState.Default);
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().NotBeEmpty();
+        store.IsReadOnlyMode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LoadAsync_quarantines_state_with_unsupported_low_version()
+    {
+        using var dir = new TempDataDir();
+        var statePath = Path.Combine(dir.Path, "state.json");
+        // Version 0 was never a real format. The previous `stored < 2` migration gate
+        // silently ran the v1->v2 migration on it; the contract is that unknown old
+        // versions quarantine instead.
+        await File.WriteAllTextAsync(statePath, """
+        {
+          "version": 0,
           "review-sessions": {},
           "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
           "last-configured-github-host": "https://github.com"
