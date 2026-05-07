@@ -1,11 +1,12 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using PRism.Core.Json;
 
 namespace PRism.Core.State;
 
 public sealed class AppStateStore : IAppStateStore, IDisposable
 {
-    private const int CurrentVersion = 1;
+    private const int CurrentVersion = 2;
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -13,6 +14,8 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
     {
         _path = Path.Combine(dataDir, "state.json");
     }
+
+    public bool IsReadOnlyMode { get; private set; }
 
     public void Dispose() => _gate.Dispose();
 
@@ -34,24 +37,25 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
 
             try
             {
-                using var doc = JsonDocument.Parse(raw, new JsonDocumentOptions
+                var node = JsonNode.Parse(raw, documentOptions: new JsonDocumentOptions
                 {
                     AllowTrailingCommas = true,
                     CommentHandling = JsonCommentHandling.Skip
                 });
-                if (!doc.RootElement.TryGetProperty("version", out var versionElement))
-                    throw new UnsupportedStateVersionException(0);
+                if (node is null) throw new JsonException("state.json parsed to null");
 
-                var version = versionElement.GetInt32();
-                if (version != CurrentVersion)
-                    throw new UnsupportedStateVersionException(version);
+                node = MigrateIfNeeded(node);   // throws UnsupportedStateVersionException(0) on missing version
 
-                var state = JsonSerializer.Deserialize<AppState>(raw, JsonSerializerOptionsFactory.Storage)
+                var state = node.Deserialize<AppState>(JsonSerializerOptionsFactory.Storage)
                     ?? AppState.Default;
                 return state;
             }
             catch (JsonException)
             {
+                // The future-version branch in MigrateIfNeeded may have stamped IsReadOnlyMode=true
+                // before deserialization failed. Quarantine replaces state.json with a fresh v2
+                // default, so the read-only condition no longer holds.
+                IsReadOnlyMode = false;
                 var quarantine = $"{_path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
                 File.Move(_path, quarantine, overwrite: false);
                 await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
@@ -69,6 +73,13 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Read IsReadOnlyMode under the gate so a concurrent LoadAsync's mid-flight
+            // mutation cannot be observed in a torn state.
+            if (IsReadOnlyMode)
+                throw new InvalidOperationException(
+                    "AppStateStore is in read-only mode (state.json was written by a newer PRism version). " +
+                    "Saves are blocked until the binary is upgraded.");
+
             await SaveCoreAsync(state, ct).ConfigureAwait(false);
         }
         finally
@@ -83,5 +94,67 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         var json = JsonSerializer.Serialize(state, JsonSerializerOptionsFactory.Storage);
         await File.WriteAllTextAsync(temp, json, ct).ConfigureAwait(false);
         File.Move(temp, _path, overwrite: true);
+    }
+
+    private JsonNode MigrateIfNeeded(JsonNode root)
+    {
+        // JsonNode's string indexer (root["version"]) and AsObject() throw
+        // InvalidOperationException for non-object nodes — that escapes the
+        // catch (JsonException) in LoadAsync. Funnel non-object roots through
+        // the quarantine path explicitly.
+        if (root is not JsonObject)
+            throw new JsonException("state.json root must be a JSON object");
+
+        var versionNode = root["version"];
+        if (versionNode is null)
+            throw new UnsupportedStateVersionException(0);
+
+        int stored;
+        try
+        {
+            stored = versionNode.GetValue<int>();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException or OverflowException)
+        {
+            // Translate to JsonException so the existing quarantine path in LoadAsync handles
+            // a malformed `version` value (e.g. "1" as a string, 1.5 as a float, or a number
+            // outside int range) the same way as any other corrupt state.json.
+            throw new JsonException("state.json `version` field is not an integer", ex);
+        }
+
+        if (stored > CurrentVersion)
+        {
+            IsReadOnlyMode = true;
+            return root;     // load best-effort; SaveAsync will refuse
+        }
+
+        // Only versions in [1, CurrentVersion] are recognized. Version 0 / negative
+        // were never real formats; quarantine instead of silently migrating them.
+        if (stored < 1)
+            throw new JsonException($"state.json has unsupported version {stored}");
+
+        if (stored == 1) root = MigrateV1ToV2(root);
+        IsReadOnlyMode = false;
+        return root;
+    }
+
+    private static JsonNode MigrateV1ToV2(JsonNode root)
+    {
+        var sessionsNode = root["review-sessions"];
+        if (sessionsNode is not null)
+        {
+            // AsObject() throws InvalidOperationException for non-object nodes —
+            // funnel through JsonException so LoadAsync's catch quarantines instead.
+            if (sessionsNode is not JsonObject sessions)
+                throw new JsonException("state.json 'review-sessions' must be a JSON object");
+
+            foreach (var sessionEntry in sessions)
+            {
+                if (sessionEntry.Value is JsonObject obj && obj["viewed-files"] is null)
+                    obj["viewed-files"] = new JsonObject();
+            }
+        }
+        root["version"] = 2;
+        return root;
     }
 }

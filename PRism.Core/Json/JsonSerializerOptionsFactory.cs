@@ -20,7 +20,9 @@ public static class JsonSerializerOptionsFactory
         var options = new JsonSerializerOptions
         {
             PropertyNamingPolicy = policy,
-            DictionaryKeyPolicy = policy,
+            // Intentionally NOT setting DictionaryKeyPolicy: dictionary keys are user data
+            // (file paths, repo identifiers) that must round-trip identically. Kebab-casing
+            // them mangles paths containing uppercase characters such as "src/Foo.cs".
             WriteIndented = false,
             ReadCommentHandling = JsonCommentHandling.Skip,
             AllowTrailingCommas = true,
