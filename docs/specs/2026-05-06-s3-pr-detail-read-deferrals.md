@@ -9,7 +9,9 @@ status: open
 
 Tradeoffs surfaced during a multi-session rigor pass on the S3 spec. Source: `compound-engineering:document-review` 7-persona pass on 2026-05-07 (coherence + feasibility + product-lens + design-lens + security-lens + scope-guardian + adversarial), followed by an in-conversation rigor pass that labeled each finding Apply / Defer / Skip.
 
-The 26 Apply items landed in the spec ([this commit](../specs/2026-05-06-s3-pr-detail-read-design.md), `feat/s3-doc-review` branch). The 4 Defer + 6 Skip items below are the rejections.
+The original 26 Apply items landed in commit `6c2a487`. A subsequent **plan ce-doc-review pass** on the synced plan reversed several of those spec-level Apply items based on new plan-rigor evidence (3-persona consensus on some, on-main code drift on others, design redesign on one). Those reversals are recorded below with status `[Superseded]` so the temporal record stays clean.
+
+The 4 Defer + 6 Skip items remain unchanged from the original rigor pass. The 5 `[Superseded]` entries are new this round.
 
 ## [Defer] AiHunkAnnotation slot premature scaffolding (B8)
 
@@ -140,3 +142,54 @@ The following decisions were made in-conversation during the S3 rigor pass + the
 - **Date:** 2026-05-07
 - **Reason:** Initial CLAUDE.md draft added 47 lines including full subsections for "Spec→plan sync rule" and "Deferrals tracking", with a sources table, status taxonomy, failure-modes prose, and how-automatic discussion. User pushed back: the existing doc-maintenance pattern is "table row + short paragraph", and the subsection content duplicated info that lives better in the schema/sidecar itself. Slimmed to 23 lines: 2 table rows + 1 brief schema fenced block + a few sentences. The schema and source taxonomy live in the sidecar README and the first sidecar respectively; CLAUDE.md just states the rule.
 - **Revisit when:** A future contributor finds the slim version under-specified and asks for more guidance. At that point, expand selectively rather than restoring the full bloat.
+
+---
+
+## Spec-rigor Apply items reversed by plan-rigor pass
+
+The following items were Apply'd during the original spec-rigor pass (commit `6c2a487`) and then reversed during the plan-rigor pass + Q1-Q6 user decisions on 2026-05-07. They're recorded here as `[Superseded]` so the temporal record stays clean: future readers see what was tried, why it was reversed, and where the new design lives.
+
+### [Superseded] IDistanceMultiplier signature change to pair-local `Multiply(before, after, forcePushesInGap)`
+
+- **Source:** Originally `[Apply]` from spec-rigor pass A9 (2026-05-07); reversed by Q1 user decision after plan-rigor feasibility reviewer P1.1 surfaced on-main code drift
+- **Severity:** P1
+- **Date:** 2026-05-07
+- **Reason:** Spec-rigor accepted A9's "show the IDistanceMultiplier signature so the additivity claim is checkable" finding. The signature shown in the spec edit was an idealized guess — `Multiply(Commit before, Commit after, IReadOnlyList<ForcePushEvent> forcePushesInGap)` — that didn't match on-main code (PR #15 shipped `For(ClusteringCommit prev, ClusteringCommit next, ClusteringInput input, IterationClusteringCoefficients coefficients)` with whole-input access). The drift was created by the spec rigor pass itself, not by an actual design intent. Plan-rigor feasibility reviewer P1.1 caught the contradiction. Reverted to the on-main signature: spec § 6.4 now shows `For(...)` with whole-input access; the plan's Task 2 follow-up signature-change item is dropped.
+- **Revisit when:** N/A unless the team decides to do a non-trivial back-port to narrow the interface to pair-local. Cost (back-port + ripple through `FileJaccardMultiplier`'s cap-gate logic) is real; benefit (additivity checkability) is theoretical.
+- **New decision lives in:** spec § 6.4 (revised pseudocode in commit applying Q1).
+
+### [Superseded] OneTabPerCommitClusteringStrategy as discipline-check fallback
+
+- **Source:** Originally `[Apply]` from spec-rigor pass B1 (2026-05-07); reversed by Q5 user decision after plan-rigor 3-persona consensus + design redesign
+- **Severity:** P1
+- **Date:** 2026-05-07
+- **Reason:** Spec-rigor accepted B1's "70% gate has no failure criterion" finding by adding `OneTabPerCommitClusteringStrategy` as a deterministic fallback (one IterationCluster per commit, sorted by `committedDate`). Plan-rigor 3-persona consensus (product-lens P2.24, scope-guardian SG5, adversarial A8) flagged this as both preemptive (build infra you might not need) AND wrong-shaped (one-tab-per-commit produces N tabs which scales poorly, e.g., 50-commit PR → 50 tabs). User-redesign during Q5 produced a cleaner fallback: `ClusteringQuality: Ok | Low` signal on `PrDetailDto`, with frontend swapping `IterationTabStrip` ↔ `CommitMultiSelectPicker` based on the signal. Same fallback UX for three triggers: ≤1 commit, per-PR degenerate detector, global `iterations.clusteringDisabled = true` config flag.
+- **Revisit when:** N/A — superseded design is materially better. If `CommitMultiSelectPicker` proves wrong-shaped in dogfooding, redesign happens against THAT, not against OneTabPerCommit.
+- **New decision lives in:** spec § 6.4 (ClusteringQuality types + revised pseudocode), § 7.2.1 (CommitMultiSelectPicker frontend section), plan Task 2 follow-up + Task 4 + Task 7.
+
+### [Superseded] `SkipJaccardAboveCommitCount` lowered 100 → 50
+
+- **Source:** Originally `[Apply]` from spec-rigor pass B5 (2026-05-07); reversed by Q6 user decision after plan-rigor scope-guardian P2.27
+- **Severity:** P1
+- **Date:** 2026-05-07
+- **Reason:** Spec-rigor accepted B5's "per-commit fan-out trips secondary rate limit" finding by lowering the cap from 100 to 50 + adding 100ms inter-batch pace + adding dedicated `x-ratelimit-resource: secondary` handling. Plan-rigor scope-guardian P2.27 challenged the cap-lowering: no measurement justifies 50 over 100; halving the budget halves Jaccard signal on 50-100 commit PRs (a common dogfood size) without proven defensive benefit; the 100ms inter-batch pace + concurrency-8 cap alone are the actual defense. User Q6 confirmed: revert cap to 100, keep the pacing + cap defense, simplify 403 handling.
+- **Revisit when:** Dogfooding empirically trips secondary rate limits at 100 commits (in which case lower to 50 with measurement evidence).
+- **New decision lives in:** spec § 6.4 implementation note, plan Task 2 follow-up coefficient defaults.
+
+### [Superseded] Dedicated `x-ratelimit-resource: secondary` header parsing + Retry-After respect
+
+- **Source:** Originally `[Apply]` from spec-rigor pass B5 (paired with cap-lowering, 2026-05-07); reversed by Q6 user decision after plan-rigor scope-guardian P2.28
+- **Severity:** P1
+- **Date:** 2026-05-07
+- **Reason:** Spec-rigor accepted dedicated handling for 403 responses with `x-ratelimit-resource: secondary` header — pause for `Retry-After`, set `_secondaryRateLimitTripped` session flag, degrade. Plan-rigor scope-guardian P2.28 challenged: GitHub's secondary-limit error shape isn't a stable contract (the header isn't formally documented as guaranteed across all endpoints); generic "any 403/4xx in fan-out → mark `ChangedFiles = null`, mark session degraded, log warning, continue" handles the same failure case without parsing headers, without an integration smoke test that's typically skipped, and without session-scoped flag bookkeeping. User Q6 confirmed: drop the dedicated handling.
+- **Revisit when:** GitHub formally documents the secondary-rate-limit response shape AND dogfooding shows the simpler degrade misses important recovery (e.g., we keep retrying past Retry-After and exhausting tokens). Currently no evidence of either.
+- **New decision lives in:** spec § 10.1 (consolidated 403/4xx row), plan Task 2 follow-up.
+
+### [Superseded] Bespoke `BodySizeLimitMiddleware` for 16 KiB cap on mutating endpoints
+
+- **Source:** Originally `[Apply]` during spec-rigor pass (P0-shaped security finding via several reviewers); reversed by plan-rigor scope-guardian P2.3
+- **Severity:** P2
+- **Date:** 2026-05-07
+- **Reason:** Spec-rigor accepted the security need to cap mutating endpoint bodies at 16 KiB. Implementation chose a bespoke `BodySizeLimitMiddleware` with explicit pipeline-ordering, `CappedRoutes` substring path-matcher, and Content-Length null-rejection logic. Plan-rigor scope-guardian P2.3 challenged: ASP.NET Core ships `[RequestSizeLimit]` endpoint metadata + Kestrel's per-route `MaxRequestBodySize` for free; bespoke middleware is parallel infrastructure with substring path-matching that's fragile to new endpoints. Replaced with `[RequestSizeLimit(16384)]` attribute on the four mutating route declarations. Same cap, same pre-binding rejection, framework-native handling for chunked encoding.
+- **Revisit when:** N/A — framework primitive does the job. Only revisit if a future need (e.g., dynamic per-endpoint cap based on route metadata) outgrows `[RequestSizeLimit]`.
+- **New decision lives in:** spec § 8 pipeline ordering, plan Task 5 endpoint declarations.

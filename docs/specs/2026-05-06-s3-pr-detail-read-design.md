@@ -38,7 +38,7 @@ End-to-end demo at slice completion:
 - Word-level diff highlighting via `jsdiff` overlaid on changed lines.
 - Existing review-comment threads rendered inline read-only, anchored to lines. Multiple threads anchored at the same line render as a vertical stack inside one widget (per `react-diff-view`'s one-widget-per-change constraint).
 - Iteration tabs (last three numbered tabs inline + "All iterations ▾" dropdown) and the Compare picker (with auto-swap on reverse selection and the same-iteration empty state).
-- Iteration clustering: `IIterationClusteringStrategy` interface + `WeightedDistanceClusteringStrategy` impl with **two live multipliers** (`FileJaccardMultiplier`, `ForcePushMultiplier`); MAD-based adaptive threshold; hard floor (5 min) and ceiling (3 days); degenerate-case fallback to one-tab-per-commit; coefficients in config; sorts by `committedDate` (refreshed by `--amend`/rebase, more reliable than `authoredDate`). The four future multipliers (message keywords, diff size, review events, branch activity) are documented in `docs/spec/iteration-clustering-algorithm.md` but not implemented in S3.
+- Iteration clustering: `IIterationClusteringStrategy` interface + `WeightedDistanceClusteringStrategy` impl with **two live multipliers** (`FileJaccardMultiplier`, `ForcePushMultiplier`); MAD-based adaptive threshold; hard floor (5 min) and ceiling (3 days); per-PR degenerate-case detector returns null (PrDetailLoader emits `ClusteringQuality: Low` so frontend renders `CommitMultiSelectPicker`); coefficients in config; sorts by `committedDate` (refreshed by `--amend`/rebase, more reliable than `authoredDate`). The four future multipliers (message keywords, diff size, review events, branch activity) are documented in `docs/spec/iteration-clustering-algorithm.md` but not implemented in S3.
 - Per-commit changed-files data for `FileJaccardMultiplier` is fetched via REST `GET /repos/{o}/{r}/commits/{sha}` fan-out (concurrency cap 8, matching S2's pattern). GraphQL's `Commit` type does not expose changed-file paths.
 - `j` / `k` (file nav), `v` (viewed toggle), `d` (diff-mode toggle) keyboard shortcuts on the Files tab.
 - Active-PR poller (`BackgroundService`) at 30 s cadence, paused when no subscribed PRs. Per-PR backoff state (a flaky PR doesn't starve healthy PRs).
@@ -52,7 +52,7 @@ End-to-end demo at slice completion:
 - Markdown rendering pipeline (`react-markdown` v9+, `remark-gfm`, Shiki, lazy-loaded Mermaid pinned to `securityLevel: 'strict'`) shared across PR description, comment bodies, and `.md` file rendering.
 - Markdown rendering for `.md` files in the diff with a toggle between rendered and raw-diff views.
 - Diff content fetched via two GitHub REST endpoints in tandem: `pulls/{n}/files` for the file list (paginated to GitHub's 3000-file ceiling) and `pulls/{n}` for the `changed_files` integer count. **Truncation is derived**: `truncated = (pull.changed_files > assembled files.length)` — the `compare` endpoint's truncation behavior is documented only in prose and the response carries no `truncated` field; deriving from the count is the correctness-preserving signal. Frontend renders a `DiffTruncationBanner` deep-linking to github.com when truncated.
-- API surface (Section 8): `GET /api/pr/{ref}`, `GET /api/pr/{ref}/diff?range=`, `GET /api/pr/{ref}/file?path=&sha=` (with authz check that the path is in the PR's diff and a 5 MB size cap), `POST /api/pr/{ref}/mark-viewed`, `POST /api/pr/{ref}/files/viewed` (path in body), `POST /api/events/subscriptions`, `DELETE /api/events/subscriptions` (subscriberId + prRef in request body, not query string). `GET /api/events` extends to emit `subscriber-assigned` as the first event.
+- API surface (Section 8): `GET /api/pr/{ref}`, `GET /api/pr/{ref}/diff?range=`, `GET /api/pr/{ref}/file?path=&sha=` (with authz check that the path is in the PR's diff and a 5 MB size cap), `POST /api/pr/{ref}/mark-viewed`, `POST /api/pr/{ref}/files/viewed` (path in body), `POST /api/events/subscriptions { prRef }` (subscriberId derived from cookie session), `DELETE /api/events/subscriptions?prRef=...` (subscriberId derived from cookie session). `GET /api/events` extends to emit `subscriber-assigned` as the first event.
 - All mutating endpoints (POST/DELETE) enforce the spec-mandated `X-PRism-Session` token header (per `docs/spec/02-architecture.md` § "Cross-origin defense for the localhost API"). The middleware lands in S3; the contract is specified in § 8 (constant-time comparison, 401 problem-slug `/auth/session-stale`, frontend force-reload on 401, cookie re-stamped on every HTML response). `OriginCheckMiddleware` is also tightened to **reject empty/missing Origin on POST/PUT/PATCH/DELETE** (currently accepts empty) — both layers ship in S3.
 - AI seam wiring: existing `IPrSummarizer`, `IFileFocusRanker`, `IHunkAnnotator` interfaces (already defined in `PRism.AI.Contracts/Seams/`) are wired into three frontend slots — `<AiSummaryCard>` (Overview), `<AiFileFocusBadges>` (file tree column), `<AiHunkAnnotation>` (diff inline; never inserted in PoC). DI binds either `Noop*` or `Placeholder*` based on `ui.aiPreview`.
 - `IReviewService` grows new methods (`GetPrDetailAsync`, `GetDiffAsync(prRef, range)`, `GetFileContentAsync`, `GetTimelineAsync`). The capability split per ADR-S5-1 remains gated to S5; S3 keeps a single growing interface for one slice.
@@ -93,7 +93,7 @@ End-to-end demo at slice completion:
 |---|---|---|---|
 | AI summary slot position | Spec § 3 places `<AiSummarySlot>` "between the sticky header and the sticky iteration tabs." | Card on the Overview tab; iteration tabs only render on the Files tab. | Roadmap S3 row mentions "Overview-tab AI summary card"; handoff layout. |
 | File tree shape | Spec § 3 says "Files grouped by directory; directories collapsible." Handoff prototype renders a flat list. | Collapsible directory tree with smart compaction. | User override of the handoff's flat list, restoring the spec's grouped intent and adding smart compaction + per-directory viewed rollups. |
-| Iteration clustering | Spec § 3 describes a 60-second time-gap policy with force-push as a hard boundary, configurable via `iterations.clusterGapSeconds`. | Weighted-distance algorithm with two live multipliers (file Jaccard, force-push); force-push reframed as a soft signal (long-gap multiplier); MAD threshold; degenerate-case fallback to one-tab-per-commit; coefficients in `iterations.clusteringCoefficients`. | The user-authored algorithm doc, canonicalized in S3 to `docs/spec/iteration-clustering-algorithm.md`. |
+| Iteration clustering | Spec § 3 describes a 60-second time-gap policy with force-push as a hard boundary, configurable via `iterations.clusterGapSeconds`. | Weighted-distance algorithm with two live multipliers (file Jaccard, force-push); force-push reframed as a soft signal (long-gap multiplier); MAD threshold; per-PR degenerate-case detector returns null → frontend renders `CommitMultiSelectPicker`; coefficients in `iterations.clusteringCoefficients`. | The user-authored algorithm doc, canonicalized in S3 to `docs/spec/iteration-clustering-algorithm.md`. |
 | Reload semantics for unread bookkeeping | Spec § 3 / § 8 are silent on whether Reload writes `lastViewedHeadSha` / `lastSeenCommentId`. | Reload does NOT write these. Writes only happen on the *first* PR-detail mount; re-mount after navigation writes again. | Q2 brainstorming decision. |
 | PR-root conversation rendering | Spec § 3 excludes the chronological PR conversation feed from PoC. | PR-root *issue-level* comments render read-only on the Overview tab; the chronological feed (commits + comments + reviews + status updates + force-pushes in time order) remains out of scope. | Q4 brainstorming decision: the spec's exclusion targeted the merged feed; the issue-comments alone are a single API call and a single read-only list. |
 
@@ -109,9 +109,8 @@ PRism.Core/
 │   └── AppStateStore.cs                ← MODIFIED: adds private MigrateV1ToV2 helper; LoadAsync calls it before Deserialize
 ├── IReviewService.cs                   ← MODIFIED: adds GetPrDetailAsync, GetDiffAsync(range), GetFileContentAsync, GetTimelineAsync
 ├── Iterations/                         ← NEW namespace
-│   ├── IIterationClusteringStrategy.cs ← interface earns its keep: WeightedDistance + OneTabPerCommit are both shipped impls
+│   ├── IIterationClusteringStrategy.cs ← single shipped impl (WeightedDistance); interface earns its keep when v2 adds calibrated impls
 │   ├── WeightedDistanceClusteringStrategy.cs
-│   ├── OneTabPerCommitClusteringStrategy.cs ← discipline-check fallback (§ 11.5); registered in DI when calibration fails
 │   ├── IterationClusteringCoefficients.cs
 │   ├── IDistanceMultiplier.cs
 │   ├── FileJaccardMultiplier.cs        ← LIVE
@@ -178,6 +177,7 @@ frontend/src/
 │   │   │   ├── FilesTab.tsx
 │   │   │   ├── IterationTabStrip.tsx
 │   │   │   ├── ComparePicker.tsx
+│   │   │   ├── CommitMultiSelectPicker.tsx ← rendered when ClusteringQuality === "low" (≤1 commit, per-PR degenerate, or global config flag)
 │   │   │   ├── FileTree/
 │   │   │   │   ├── FileTree.tsx
 │   │   │   │   ├── DirectoryNode.tsx
@@ -209,7 +209,7 @@ tests/
 │   ├── State/
 │   │   └── AppStateStoreMigrationTests.cs    ← tested through public LoadAsync/SaveAsync boundary (no `InternalsVisibleTo` needed); v1 → v2; idempotency on re-applied v2; missing-version throws (matches existing behavior); future-version → read-only-mode flag set; saves blocked while in read-only mode
 │   ├── Iterations/
-│   │   ├── WeightedDistanceClusteringStrategyTests.cs ← incl. degenerate-fallback tab cap (max 20) + occurredAt clamp test
+│   │   ├── WeightedDistanceClusteringStrategyTests.cs ← incl. degenerate-detector returns null + occurredAt clamp test
 │   │   ├── FileJaccardMultiplierTests.cs
 │   │   ├── ForcePushMultiplierTests.cs
 │   │   ├── MadThresholdComputerTests.cs
@@ -257,9 +257,9 @@ GET /api/pr/{owner}/{repo}/{number}                  → PrDetailLoader.LoadAsyn
 IReviewService.GetPrDetailAsync(prRef)
   → initial GraphQL round-trip with `first: 100` on every connection (timeline, root comments, review threads).
     For each connection where pageInfo.hasNextPage is true, follow up with cursor-paginated fetches up to
-    `iterations.maxTimelinePages` (default 5; configurable). When the cap is hit on any connection, log a
-    `/timeline/cap-hit` warning and surface a soft banner to the user ("Some history beyond N pages was not
-    loaded"). A "single round-trip" is the happy path; the loop is the bounded fallback.
+    `MaxTimelinePages` (private const = 10). On cap-hit, log `/timeline/cap-hit` and emit `TimelineCapHit: true`
+    on the PrDetailDto so the frontend renders an explicit banner ("Some history beyond N pages was not loaded").
+    A "single round-trip" is the happy path; the loop is the bounded fallback.
      PR meta (title, body, author, head/base, mergeability, ciSummary, isMerged/isClosed, openedAt)
      PullRequestTimelineItems
      PR-root issue-level comments (read-only)
@@ -271,9 +271,10 @@ IReviewService.GetTimelineAsync(prRef)
     is also computed and passed forward so the clustering input is composed once.
   ↓
 WeightedDistanceClusteringStrategy.Cluster(ClusteringInput, coefficients)
-  → IterationCluster[] (numbered, with before/after SHAs and commit lists)
+  → IterationCluster[] | null   (null when degenerate detector fires; or skipped entirely
+                                  when iterations.clusteringDisabled or input.Commits.Length <= 1)
   ↓
-PrDetailSnapshot { Pr, Iterations, RootComments, ReviewComments } cached per (prRef, headSha)
+PrDetailSnapshot { Pr, ClusteringQuality, Iterations?, Commits, RootComments, ReviewComments, TimelineCapHit } cached per (prRef, headSha)
   → returned as PrDetailDto
 ```
 
@@ -302,10 +303,18 @@ EventsEndpoints
                                                  invisible to browser EventSource onmessage and
                                                  cannot drive the frontend silence-watcher)
                                               subscriberId is in-memory only, lifetime = SSE connection
-  POST   /api/events/subscriptions         body: { subscriberId, prRef }   (subscriberId in body, NEVER query string)
-                                            → ActivePrSubscriberRegistry.Add(subscriberId, prRef)
-  DELETE /api/events/subscriptions         body: { subscriberId, prRef }
-                                            → ActivePrSubscriberRegistry.Remove(subscriberId, prRef)
+  POST   /api/events/subscriptions         body: { prRef }   (subscriberId derived from cookie session)
+                                            → ActivePrSubscriberRegistry.Add(currentSubscriberId, prRef)
+                                            → 403 if no active SSE connection exists for the requesting cookie
+  DELETE /api/events/subscriptions?prRef=... (no body; subscriberId derived from cookie session)
+                                            → ActivePrSubscriberRegistry.Remove(currentSubscriberId, prRef)
+                                            → 204 always (idempotent)
+
+  // **SubscriberId is server-issued and bound to the SSE connection.** SseChannel maintains
+  // `{cookieSessionId → subscriberId}` mapping; the POST/DELETE endpoints derive subscriberId
+  // from the requesting cookie's session, NEVER from request bodies. This closes the cross-tab
+  // forge-subscriberId attack: an authenticated tab cannot subscribe ANY subscriberId to ANY PR
+  // — it can only operate on its own SSE connection's subscriberId.
 
 ActivePrPoller (BackgroundService)
   loop every config.polling.activePrSeconds (default 30):
@@ -338,18 +347,19 @@ idle-eviction loop (separate timer, 60 s tick):
   // unobserved is GC'd within 15 min.
 
 cache-invalidation on coefficient hot-reload:
-  IterationClusteringCoefficients is hot-reloaded via FileSystemWatcher (S0+S1 pattern).
-  PrDetailSnapshot is cached per (prRef, headSha, coefficientsGeneration). When the
-  coefficients change, `coefficientsGeneration` increments; the next snapshot lookup
-  misses and recomputes. Without this, a 60-commit PR clustered under
-  `skipJaccardAboveCommitCount = 50` would keep showing the Jaccard-skipped clustering
-  even after the user raises the cap to 100.
+  IterationClusteringCoefficients is hot-reloaded via FileSystemWatcher (S0+S1 pattern;
+  ConfigStore exposes a `Changed` event). PrDetailSnapshot is cached per (prRef, headSha,
+  generation). PrDetailLoader subscribes to `ConfigStore.Changed` at startup and calls
+  `InvalidateAll()` (which increments `_generation` and clears the cache) on every change.
+  Without this, a 60-commit PR clustered under `skipJaccardAboveCommitCount = 100` would
+  keep showing the Jaccard-skipped clustering even after the user raises the cap.
 
-  Frontend deep-link handling: when the page is mounted at `/pr/.../files?iter=N`
-  and `coefficientsGeneration` increments mid-view, iteration numbering can shift
-  (what was iter=3 may now be iter=2 or out of bounds). On detect, the page surfaces
-  a brief banner ("Iteration boundaries refreshed — selection may have moved"), clamps
-  iter=N to the nearest valid iteration, and updates the URL via `history.replaceState`.
+  Frontend deep-link handling: when the page is mounted at `/pr/.../files?iter=N` AND
+  the response's `clusteringQuality` flips Low (e.g., coefficient hot-reload triggers
+  re-cluster, new degenerate detector fires), the page surfaces a brief banner
+  ("Iteration boundaries refreshed — selection may have moved"), drops the `iter` URL
+  parameter via `history.replaceState`, and renders the CommitMultiSelectPicker.
+  Similarly, when ClusteringQuality flips Ok → Low or back, the URL is clamped.
 ```
 
 Three design notes worth pinning:
@@ -517,16 +527,33 @@ IReviewService.GetTimelineAsync(prRef)
     Implementation note: per-commit changedFiles is fetched via REST GET /repos/{o}/{r}/commits/{sha}
     fan-out (concurrency cap 8, with a 100ms inter-batch pace). GraphQL's Commit type does not expose
     changed-file paths. A single PR with N commits costs N additional REST calls. The fan-out is
-    bounded by `iterations.skipJaccardAboveCommitCount` (default 50; lowered from 100 to defend
-    against GitHub's secondary rate limits, which fire well below the 5000 req/hr primary limit at
-    around 100 concurrent same-endpoint requests on a single repo). Above the cap, Jaccard returns
-    1.0 (neutral) and per-PR commit-files fan-out is skipped entirely. On 403 with secondary-rate-limit
-    headers (`x-ratelimit-resource: secondary`), the poller pauses fan-out for `Retry-After`,
-    surfaces a banner, and degrades remaining commits to neutral Jaccard for the rest of the session.
+    bounded by `iterations.skipJaccardAboveCommitCount` (default 100). Above the cap, Jaccard returns
+    1.0 (neutral) and per-PR commit-files fan-out is skipped entirely. The 100ms inter-batch pace
+    plus the concurrency-8 cap together stay well under GitHub's secondary rate limit thresholds in
+    practice; on any 403/4xx response from the fan-out, mark the offending commit's `ChangedFiles`
+    as null, mark the session as degraded (subsequent commits also skip the fan-out and use neutral
+    Jaccard), log a single warning, and continue. No dedicated `x-ratelimit-resource` header parsing
+    or `Retry-After` timing — the simpler shape handles all 4xx/5xx classes uniformly without
+    betting on contract details GitHub doesn't formally promise.
+
+PrDetailLoader.LoadAsync(prRef)
+  if input.Commits.Length <= 1:
+      // 1-commit (or empty-beyond-base) PRs have no iteration boundaries.
+      // Frontend renders CommitMultiSelectPicker for these PRs (consistent with degenerate-detector fallback).
+      return PrDetailSnapshot { ClusteringQuality = Low, Iterations = null, Commits = input.Commits, ... }
+  if config.iterations.clusteringDisabled:
+      // Global calibration-failure escape hatch. Set when discipline-check (§ 11.5) fails to reach 70% agreement
+      // after the documented tuning rounds.
+      return PrDetailSnapshot { ClusteringQuality = Low, Iterations = null, Commits = input.Commits, ... }
+  
+  // Otherwise run WeightedDistanceClusteringStrategy
+  clusters = WeightedDistanceClusteringStrategy.Cluster(input, coefficients)
+  if clusters is null:   // strategy returned null on degenerate detector trigger
+      return PrDetailSnapshot { ClusteringQuality = Low, Iterations = null, Commits = input.Commits, ... }
+  return PrDetailSnapshot { ClusteringQuality = Ok, Iterations = clusters, Commits = input.Commits, ... }
 
 WeightedDistanceClusteringStrategy.Cluster(input, coefficients)
-  if input.Commits.Length <= 1:
-      return single iteration   (short-circuit)
+  // (assumes input.Commits.Length >= 2; PrDetailLoader handles ≤1 case above)
   
   sort commits by committedDate
     // committedDate (not authoredDate) — refreshed by --amend / rebase, more reliable
@@ -543,24 +570,19 @@ WeightedDistanceClusteringStrategy.Cluster(input, coefficients)
     weighted_d[i] = max(HARD_FLOOR_5MIN, min(HARD_CEILING_3DAYS, Δt × multiplier))
   
   // Degenerate-case detector: if > 50% of weighted_d are clamped to HARD_FLOOR_5MIN,
-  // the algorithm has insufficient signal — fall back. But:
-  //   (a) cap the fallback at `iterations.maxFallbackTabs` (default 20): the
-  //       IterationTabStrip is sized for "Last 3 inline + dropdown," not 100.
-  //   (b) GATE the fallback by `weighted_d.Length >= MadK * 2` so small-N tight-
-  //       amend cases (3-5 commits with sub-floor gaps) don't spuriously trigger
-  //       fallback; the MAD path produces a single cluster correctly when all
-  //       weighted distances are equal (no edge exceeds median + 1).
+  // the algorithm has insufficient signal — strategy returns null. PrDetailLoader
+  // emits ClusteringQuality: Low; frontend renders CommitMultiSelectPicker.
+  // GATE the fallback by `weighted_d.Length >= MadK * 2` so small-N tight-amend
+  // cases (3-5 commits with sub-floor gaps) don't spuriously trigger fallback;
+  // the MAD path produces a single cluster correctly when all weighted distances
+  // are equal (no edge exceeds median + 1).
   if (weighted_d.Length >= coefficients.MadK * 2
       AND count(d == HARD_FLOOR_5MIN for d in weighted_d) > 0.5 × weighted_d.Length):
-      if commits.Length <= coefficients.MaxFallbackTabs:
-          return one cluster per commit
-      else:
-          // Surface the fallback to the user — the IterationTabStrip renders a banner:
-          //   "Iterations could not be reconstructed (algorithm signal too low for >N
-          //    commits). Showing all changes; commit-by-commit is not available."
-          // Without this, a 50-commit refactor silently collapses to a single tab and
-          // the user has no model for why their iteration navigation disappeared.
-          return single "inconclusive" cluster covering all commits with banner=true
+      // Per-PR degenerate fallback: clustering signal is too weak for THIS PR.
+      // Strategy returns null; PrDetailLoader emits ClusteringQuality: Low on the snapshot.
+      // Frontend renders CommitMultiSelectPicker instead of IterationTabStrip — same
+      // fallback UX as the 1-commit case and the global calibration-failure case.
+      return null
   
   threshold = MadThresholdComputer.Compute(weighted_d, k = coefficients.MadK)
   
@@ -579,17 +601,37 @@ WeightedDistanceClusteringStrategy.Cluster(input, coefficients)
 ```csharp
 public interface IDistanceMultiplier
 {
-    // Pair-local: receives the consecutive commit pair plus the force-push events
-    // bracketed by that pair. Whole-input access is intentionally NOT exposed —
-    // the four documented future multipliers (message keywords, diff size, review
-    // events, branch activity) are all pair-local.
-    double Multiply(Commit before, Commit after, IReadOnlyList<ForcePushEvent> forcePushesInGap);
+    /// <summary>Returns the multiplier in (0, ∞) for the gap between the two consecutive commits.</summary>
+    /// Whole-input access is exposed (via `ClusteringInput input`) so multipliers can read
+    /// PR-level signals like commit count for cap gates. The four documented future
+    /// multipliers (message keywords, diff size, review events, branch activity) are all
+    /// pair-local and ignore the wider input — but the signature does not enforce this.
+    double For(
+        ClusteringCommit prev,
+        ClusteringCommit next,
+        ClusteringInput input,
+        IterationClusteringCoefficients coefficients);
 }
 ```
 
-Adding the four future multipliers is purely additive: drop a new class into the namespace, register it in DI, no change to `WeightedDistanceClusteringStrategy`. A future multiplier needing whole-input context (e.g., a base-branch-activity-vs-PR-gap signal) is a separate design call that requires extending the interface.
+Adding the four future multipliers is purely additive: drop a new class into the namespace, register it in DI, no change to `WeightedDistanceClusteringStrategy`. A future multiplier needing whole-input context (e.g., a base-branch-activity-vs-PR-gap signal) is already supported by the `ClusteringInput input` parameter on `IDistanceMultiplier.For`.
 
-**OneTabPerCommitClusteringStrategy** is the discipline-check fallback (§ 11.5). It implements `IIterationClusteringStrategy` and emits one `IterationCluster` per commit, sorted by `committedDate`. When the calibration corpus fails to reach the discipline-check agreement threshold after the documented tuning rounds, S3 ships with `OneTabPerCommitClusteringStrategy` registered as the DI binding for `IIterationClusteringStrategy` instead of `WeightedDistanceClusteringStrategy`. This keeps the read-side feature shippable with a deterministic, low-signal fallback while the algorithm matures in P0+ calibration.
+```csharp
+public enum ClusteringQuality { Ok, Low }
+// Wire format: kebab-case lowercase ("ok" | "low") via JsonStringEnumConverter
+
+// PrDetailSnapshot grows the field:
+public sealed record PrDetailSnapshot(
+    PrDto Pr,
+    ClusteringQuality ClusteringQuality,
+    IReadOnlyList<IterationCluster>? Iterations,    // null when ClusteringQuality is Low
+    IReadOnlyList<ClusteringCommit> Commits,        // always populated; picker reads this when Low
+    IReadOnlyList<IssueCommentDto> RootComments,
+    IReadOnlyList<ReviewThreadDto> ReviewComments,
+    bool TimelineCapHit);
+```
+
+**Calibration-failure fallback.** When the discipline-check (§ 11.5) fails to reach 70% agreement after the documented tuning rounds, set `iterations.clusteringDisabled = true` in production config. PrDetailLoader honors this flag and emits `ClusteringQuality: Low` for every PR; the frontend renders `CommitMultiSelectPicker` instead of `IterationTabStrip`. Same UX as per-PR degenerate cases and 1-commit PRs — the user sees a GitHub-style commit picker instead of iteration tabs. WeightedDistance ships disabled until P0+ calibration produces a corpus large enough to validate.
 
 Coefficients (`IterationClusteringCoefficients`) come from config:
 
@@ -602,11 +644,9 @@ Coefficients (`IterationClusteringCoefficients`) come from config:
     "mad-k": 3,
     "hard-floor-seconds": 300,
     "hard-ceiling-seconds": 259200,
-    "skip-jaccard-above-commit-count": 50,
-    "degenerate-floor-fraction": 0.5,
-    "max-fallback-tabs": 20
-  },
-  "max-timeline-pages": 5
+    "skip-jaccard-above-commit-count": 100,
+    "degenerate-floor-fraction": 0.5
+  }
 }
 ```
 
@@ -621,9 +661,9 @@ PrDetailPage (route /pr/:owner/:repo/:number)
   ├─ on mount:
   │   1. usePrDetail({ prRef })                      — fetches /api/pr/{ref}; renders skeleton while pending
   │   2. on success: POST /api/pr/{ref}/mark-viewed { headSha, maxCommentId }   (with X-PRism-Session header)
-  │   3. POST /api/events/subscriptions { subscriberId, prRef }                  (awaits subscriber-assigned ready gate)
+  │   3. POST /api/events/subscriptions { prRef }                                (awaits subscriber-assigned ready gate; subscriberId derived from cookie session)
   ├─ on unmount:
-  │   DELETE /api/events/subscriptions { subscriberId, prRef }
+  │   DELETE /api/events/subscriptions?prRef=...                                  (subscriberId derived from cookie session)
   ├─ PrHeader            (title, branch, mergeability chip, CI chip, VerdictPicker disabled, Submit disabled)
   ├─ PrSubTabStrip       (Overview / Files / Drafts; Drafts greyed disabled — `aria-disabled="true"`, hover tooltip "Drafts arrive in S4"; keyboard Tab skips it)
   ├─ BannerRefresh       (visible iff useActivePrUpdates() reports an update for this prRef since last load; renders sticky below PrSubTabStrip — overlay (does not push content), animated slide-down on appearance using `--t-med` ease-out token, dismissible via a Close button next to the Reload button. At <1180px the banner z-index sits above the file-tree sheet/scrim. Multiple `pr-updated` events between Reloads aggregate: `headShaChanged` latches a "Iter N+1 available" flag derived from `newHeadSha` against the loaded snapshot; `commentCountChanged` increments a delta. On Reload, the new GET /api/pr/{ref} response becomes the baseline and banner state clears.)
@@ -667,8 +707,8 @@ FilesTab
 
 **File-viewed semantics.** Two modes depending on whether per-commit `changedFiles` data is available:
 
-- **Default mode (PR ≤ `iterations.skipJaccardAboveCommitCount`, default 50 commits):** A file is viewed iff `ViewedFiles[path]` exists AND **every commit in the PR's commit graph between `ViewedFiles[path]` and `prDetail.headSha` has known `changedFiles` AND none of them touched this path**. The lookup walks the full PR commit graph, not just clustered iterations — merge commits, rebases-onto-main, and any commit excluded from clustering are still considered. For commits with unknown `changedFiles` (rare; truncation), the rule treats the path as **possibly touched** — the checkbox resets. This errs on "not-viewed when uncertain," matching truthful-by-default.
-- **Skipped-Jaccard mode (PR > 50 commits, where the per-commit REST fan-out is bypassed):** A file is viewed iff `ViewedFiles[path] == prDetail.headSha` — exact-SHA match only. **No graph walk.** This avoids the failure mode where every viewed mark resets every page load on huge PRs because every commit's `changedFiles` is unknown. The cost: any new iteration on a >50-commit PR resets every viewed mark, even on files the new iteration didn't touch. Documented trade-off; surface area for huge PRs is rare in dogfooding and the alternative (per-commit fan-out on every viewed-check) violates the cap's rate-limit defense.
+- **Default mode (PR ≤ `iterations.skipJaccardAboveCommitCount`, default 100 commits):** A file is viewed iff `ViewedFiles[path]` exists AND **every commit in the PR's commit graph between `ViewedFiles[path]` and `prDetail.headSha` has known `changedFiles` AND none of them touched this path**. The lookup walks the full PR commit graph, not just clustered iterations — merge commits, rebases-onto-main, and any commit excluded from clustering are still considered. For commits with unknown `changedFiles` (rare; truncation), the rule treats the path as **possibly touched** — the checkbox resets. This errs on "not-viewed when uncertain," matching truthful-by-default.
+- **Skipped-Jaccard mode (PR > 100 commits, where the per-commit REST fan-out is bypassed):** A file is viewed iff `ViewedFiles[path] == prDetail.headSha` — exact-SHA match only. **No graph walk.** This avoids the failure mode where every viewed mark resets every page load on huge PRs because every commit's `changedFiles` is unknown. The cost: any new iteration on a >100-commit PR resets every viewed mark, even on files the new iteration didn't touch. Documented trade-off; surface area for huge PRs is rare in dogfooding and the alternative (per-commit fan-out on every viewed-check) violates the cap's rate-limit defense.
 
 When a file flips from viewed → not-viewed because of a new iteration, the row animates a brief reset using the design system's `--t-med` token (150 ms ease-out fade on the checkmark — matches the handoff's `--t-med` declaration; the earlier 200 ms value was outside the token scale). The directory rollup re-counts synchronously. No banner; the row's visual state is the signal.
 
@@ -677,6 +717,35 @@ When a file flips from viewed → not-viewed because of a new iteration, the row
 **Inline toast spec.** Position: right-aligned within the file row (does not overlay the file path text). Duration: 4 seconds, auto-dismiss; click-to-dismiss is also supported. Accessibility: `role="status"` + `aria-live="polite"` so screen readers announce without focus-stealing. Stacking: most-recent toast replaces older toast on the same row; toasts on different rows stack vertically. Animation in/out uses `--t-med` ease-out (matches the design system's standard transition token).
 
 **AI focus dot column accessibility.** The 16 px column (reserved even when `aiPreview` is off, to avoid layout shift on toggle) renders a small dot when `aiPreview === true` and the file has an AI focus rating. Each dot has `role="img"` + `aria-label="AI focus: <high|medium|low>"`; rows without a dot still render an `aria-hidden="true"` placeholder span at the same width. Screen readers announce the focus rating after the file path; muted rows (viewed) keep their normal label. **When the focus rating comes from `PlaceholderFileFocusRanker` (PoC default with `aiPreview` on), the aria-label is suffixed with " (preview)"** — e.g., `aria-label="AI focus: high (preview)"`. This protects future-AI trust by labeling sample data as sample data, aligning with truthful-by-default.
+
+#### 7.2.1 `CommitMultiSelectPicker` (fallback when `clusteringQuality === "low"`)
+
+When `PrDetailDto.clusteringQuality === "low"` (≤1 commit, per-PR degenerate detector fired, or global `iterations:clusteringDisabled = true`), the Files tab does NOT render IterationTabStrip or ComparePicker. Instead it renders `<CommitMultiSelectPicker>`, mirroring GitHub's commit-picker UX on its Files Changed tab.
+
+**Layout:**
+- Trigger: a dropdown button at the top of the Files tab labeled "Showing changes from N of M commits" (M = total). On click, expands a multi-select list.
+- List: one row per commit, sorted by `committedDate` descending. Each row shows commit message (truncated to 1 line), author, relative timestamp, and a checkbox.
+- Top option: "Show all" (default state). Checking individual commits unchecks "Show all"; unchecking all reverts to "Show all" by default.
+- Empty state (no commits selected, no "Show all" — should not occur in normal flow): copy "Select one or more commits to view changes."
+
+**Selected diff fetch:**
+- Selected commits are URL-encoded in the route: `/pr/{ref}/files?commits=sha1,sha2,sha3` (or omitted when "Show all" is selected).
+- Frontend fetches `GET /api/pr/{ref}/diff?commits=sha1,sha2,sha3` (or `?range=base..head` when "Show all" is selected).
+- Backend `?commits=...` param computes the union diff via GitHub's compare API (3-dot semantics) for the parent of the earliest selected commit through the latest. For non-contiguous selections, the diff includes ALL changes in the range — same as GitHub's behavior.
+- For 1-commit PRs, "Show all" is the single commit's diff; selecting the commit explicitly is a no-op.
+
+**Keyboard model:**
+- Dropdown trigger has `role="combobox"`, `aria-expanded`, `aria-controls` pointing to listbox id.
+- Listbox has `role="listbox"`, `aria-multiselectable="true"`. Each row is `role="option"` with `aria-selected`.
+- ↓/↑ navigate; Space toggles selection on focused option; Enter closes the dropdown; Escape closes without commit; Home/End jump to first/last.
+- Dropdown trap focus while open; close returns focus to trigger.
+
+**Interaction with FileTree and DiffPane:**
+- Same FileTree + DiffPane layout as the Ok case. Picker replaces the iteration strip only.
+- Selection changes trigger a new `useDiff` fetch with the appropriate `?commits=` or `?range=` URL.
+- ViewedFiles checkbox semantics same as before; `headSha` reference for stale-check is `prDetail.pr.headSha`.
+
+**Loading / empty / error states:** picker dropdown shows a delayed-skeleton (matches `useDelayedLoading`); diff pane uses the same loading-states matrix as the Ok case (§ 7.6).
 
 ### 7.3 Overview tab
 
@@ -733,6 +802,7 @@ New routes (S3):
 /pr/:owner/:repo/:number/files                  → PrDetailPage (Files tab active)
 /pr/:owner/:repo/:number/drafts                 → PrDetailPage (DraftsTabDisabled active)
 /pr/:owner/:repo/:number/files/*?iter=N         → Files tab with the named file selected at iter N (filePath via wildcard route to support nested paths)
+/pr/:owner/:repo/:number/files/*?commits=<sha1>,<sha2>,...   → Files tab with CommitMultiSelectPicker; selected commits drive the diff
 ```
 
 A deep link to a specific file/iter survives reload. URL paste from S2's escape hatch lands directly on these routes.
@@ -752,8 +822,8 @@ Every fetched surface declares loading / empty / error / partial states.
 | Mermaid block | "Loading diagram…" placeholder while the lazy module imports. | n/a. | "Mermaid render failed" indicator + raw fenced code block. | n/a. |
 | `AiSummaryCard` (placeholder) | n/a (synchronous in PoC). | n/a (when off: card not rendered). | n/a. | n/a. |
 | Compare picker (`GET /diff?range=` triggered by picker change) | Picker shows pending-state spinner inside the active selector chip; diff pane delayed-skeletons separately. | Same-iter empty state mirrors the diff-range row. | Inline error chip on the picker; previously-rendered diff stays visible until user clicks again. | n/a. |
+| `CommitMultiSelectPicker` selection change (`GET /diff?commits=...` triggered) | Dropdown shows pending-state spinner inside the trigger; diff pane delayed-skeletons separately. | "Show all" with no commits is impossible (the PR has commits or it would be EmptyPrPlaceholder territory). | Inline error chip on the picker; previously-rendered diff stays visible until user clicks again. | n/a. |
 | Per-file viewed-checkbox toggle | Optimistic UI flip; checkbox `aria-busy="true"` while POST in flight; suppressed hover/focus (no double-click compounding). | n/a. | Visual rollback on 422/409; brief inline toast on the row ("can't mark — try Reload" / "viewed limit reached"). Directory rollup re-counts after rollback. | n/a. |
-| IterationTabStrip when degenerate-fallback fires (>50% floor-clamped + commits > maxFallbackTabs) | n/a (synchronous). | n/a. | Inline banner above the strip: *"Iterations could not be reconstructed (algorithm signal too low for this PR's commit cadence). Showing All changes; commit-by-commit is unavailable."* | n/a. |
 
 ### 7.7 Breakpoint convention
 
@@ -762,6 +832,8 @@ PR detail uses one breakpoint, analogous to the inbox's 1180px convention:
 - **≥ 1180px**: Overview tab is two-column (description + conversation in wide; stats tile column on narrow side). Files tab is two-pane (file tree 280px + diff pane fills). IterationTabStrip renders fully (All changes + last 3 inline + "All iterations ▾" + Compare picker).
 - **< 1180px**: Overview tab is single-column (vertical stack). Files tab keeps two-pane but the file tree becomes a **collapsible left sheet (overlay, not push-content)**: chevron toggle in the Files header opens the sheet from the left edge with a translucent scrim over the diff pane; **selecting a file auto-collapses the sheet** so the diff regains full width; the chevron remains visible for re-opening. Focus traps inside the sheet while it's open (Esc closes; Tab cycles tree items). The diff pane fills the full width whenever the sheet is closed. **IterationTabStrip collapses to**: "All changes | Iter N (active) | More ▾" — other inline iterations and the Compare picker move into the More menu. The "active" iteration is the highest-numbered iteration in the current `range=`; for a Compare range, the higher of the two endpoints.
 - **< 900px**: side-by-side diff mode is **suppressed**: the diff renders unified regardless of the user's `d` toggle, and pressing `d` shows a tooltip "side-by-side requires ≥ 900px". The user's persisted `UiPreferences.DiffMode` is unchanged — when the viewport widens past 900px the persisted preference reapplies. **IterationTabStrip collapses further to**: only the active iteration label and the More menu render.
+
+When ClusteringQuality is Low, `CommitMultiSelectPicker` follows the same narrow-viewport rules — at <900px the dropdown trigger label shortens to "N of M ▾".
 
 ### 7.8 Keyboard / focus management
 
@@ -779,10 +851,13 @@ PR detail uses one breakpoint, analogous to the inbox's 1180px convention:
 ```
 GET    /api/pr/{owner}/{repo}/{number}                                       [requires X-PRism-Session]
        → 200  PrDetailDto {
-                pr:              { ref, title, body, author, branches, mergeability, ciSummary, state, headSha, baseSha, isMerged, isClosed, openedAt },
-                iterations:      IterationDto[],          // numbered, with beforeSha/afterSha/commits/range/hasResolvableRange
-                rootComments:    IssueCommentDto[],       // read-only
-                reviewComments:  ReviewThreadDto[]        // read-only
+                pr:                 { ref, title, body, author, branches, mergeability, ciSummary, state, headSha, baseSha, isMerged, isClosed, openedAt },
+                clusteringQuality:  "ok" | "low",          // NEW (Q5): "low" when ≤1 commit, per-PR degenerate detector fired, or global iterations.clusteringDisabled
+                iterations:         IterationDto[] | null, // NEW: null when clusteringQuality is "low"
+                commits:            CommitDto[],            // NEW: always populated; picker reads this when low
+                rootComments:       IssueCommentDto[],
+                reviewComments:     ReviewThreadDto[],
+                timelineCapHit:     bool                    // NEW (Q2): true if MaxTimelinePages reached on any connection
               }
        → 404  { type: "/pr/not-found", prRef }
        → 401  { type: "/auth/expired" }
@@ -830,7 +905,8 @@ POST   /api/pr/{owner}/{repo}/{number}/files/viewed                         [req
         a backslash (defense-in-depth on Windows), or whose UTF-8 byte length differs from its NFC-
         canonical UTF-8 byte length (catches paths that arrive non-NFC and would only match the diff
         entry post-normalization). Comparison is exact UTF-8 byte equality with one of
-        DiffDto.files[].path after these rejections.)
+        DiffDto.files[].path after these rejections. The 7 rules apply post-URL-decode (ASP.NET
+        decodes %2E etc. before model binding); RawTarget is not consulted.)
 
 GET    /api/events                                                          [requires X-PRism-Session via cookie — EventSource cannot send custom headers]
        → 200  text/event-stream
@@ -839,13 +915,13 @@ GET    /api/events                                                          [req
               heartbeats:    event: heartbeat\ndata: {}\n\n   (every 25 s — NAMED event so the EventSource silence-watcher fires; comment lines starting with `:` are invisible to browser EventSource onmessage and cannot drive the silence-watcher)
 
 POST   /api/events/subscriptions                                            [requires X-PRism-Session]
-       body: { subscriberId, prRef }                                         (16 KiB body cap)
-       → 204  registers (subscriberId, prRef)
-       → 404  { type: "/events/subscriber-unknown" }
+       body: { prRef }                                                       ([RequestSizeLimit(16384)] body cap; subscriberId derived from cookie session)
+       → 204  registers (currentSubscriberId, prRef)
+       → 403  { type: "/events/no-active-sse" }            (no active SSE connection for the requesting cookie)
        → 409  { type: "/events/already-subscribed" }      (idempotent)
 
-DELETE /api/events/subscriptions                                            [requires X-PRism-Session]
-       body: { subscriberId, prRef }                                         (16 KiB body cap)
+DELETE /api/events/subscriptions?prRef=...                                  [requires X-PRism-Session]
+       no body; subscriberId derived from cookie session
        → 204  always (idempotent)
 ```
 
@@ -854,7 +930,7 @@ All JSON is kebab-case-lowercase via the application's `JsonSerializerOptions` +
 **Cross-origin defense.** All non-asset endpoints (GET, POST, PUT, PATCH, DELETE) pass through two middleware layers, in this order:
 
 1. **`OriginCheckMiddleware`** — MODIFIED in S3 to **reject empty/missing Origin** on POST/PUT/PATCH/DELETE (the existing implementation short-circuits to next on empty Origin; that exemption is removed). GET requests with empty Origin remain allowed (browsers don't send Origin on top-level navigations). Origin (when present) must be one of the configured loopback patterns; otherwise 403 `{ type: "/auth/bad-origin" }`. Localhost dev (Vite at `:5173`) sends a non-empty Origin so legitimate dev traffic still flows.
-2. **`SessionTokenMiddleware`** — NEW in S3. Enforces on **all non-asset endpoints**, not just mutating verbs. For mutating verbs and GETs other than `/api/events`, the middleware reads `X-PRism-Session` from the request header. For `GET /api/events` (where EventSource cannot send custom headers), the middleware reads the same token from the `prism-session` cookie. Compares against the per-launch token in memory using `CryptographicOperations.FixedTimeEquals` (constant-time, no early-out on mismatch); emits 401 `{ type: "/auth/session-stale" }` on mismatch or absence. The frontend's `useEventSource` 401-handler does a full-page reload to re-fetch the index and rotate the cookie. The cookie is re-stamped on **every HTML response** (not only the first), so the index reload always picks up the current launch's token.
+2. **`SessionTokenMiddleware`** — NEW in S3. Enforces on **all non-asset endpoints**, not just mutating verbs. For mutating verbs and GETs other than `/api/events`, the middleware reads `X-PRism-Session` from the request header. For `GET /api/events` (where EventSource cannot send custom headers), the middleware reads the same token from the `prism-session` cookie. SessionTokenMiddleware uses a fixed-length comparison — pads/truncates the actual buffer to the expected length, calls `CryptographicOperations.FixedTimeEquals` on equal-length buffers, then ANDs in `actual.Length == _expectedToken.Length` via bitwise `&` (NOT short-circuiting `&&`). Defeats timing-based length disclosure. Emits 401 `{ type: "/auth/session-stale" }` on mismatch or absence. The frontend's `useEventSource` 401-handler does a full-page reload to re-fetch the index and rotate the cookie. The cookie is re-stamped on **every HTML response** (not only the first), so the index reload always picks up the current launch's token.
 
 The two layers are complementary: Origin defends against cross-origin POSTs from arbitrary same-machine browser tabs; SessionToken defends against same-origin attempts from a stale tab whose cookie is from a previous launch and against sibling-process replay (a sibling can spoof Origin but cannot read another process's per-launch token from in-memory).
 
@@ -862,15 +938,15 @@ The two layers are complementary: Origin defends against cross-origin POSTs from
 
 ```
 ExceptionHandler
-  → BodySizeLimit (cheap; rejects > 16 KiB on mutating endpoints; > 0 on GETs)
   → OriginCheck (cheap; header read)
   → SessionToken (cheap; FixedTimeEquals on a fixed-length byte array)
   → Routing
-  → ModelBinding
+  → ModelBinding (per-endpoint [RequestSizeLimit(16384)] attribute on the four mutating routes
+                  caps body size pre-binding via Kestrel's built-in mechanism)
   → endpoint
 ```
 
-BodySizeLimit must run BEFORE SessionToken so unauthenticated requests with multi-MiB bodies are rejected before the deserializer is exercised. SessionToken's FixedTimeEquals is only constant-time when both inputs are fixed-length byte arrays — the cookie/header value is base64-decoded to 32 bytes before comparison; mismatched-length tokens fail at the decode step (which is constant-time per length but not across lengths — acceptable since length disclosure is not the threat).
+BodySizeLimitMiddleware is dropped in favor of `[RequestSizeLimit(16384)]` endpoint metadata on the four mutating routes — Kestrel's built-in mechanism handles chunked-encoding correctly without bespoke middleware. SessionToken's FixedTimeEquals is only constant-time when both inputs are fixed-length byte arrays — the cookie/header value is base64-decoded to 32 bytes before comparison; mismatched-length tokens fail at the decode step (which is constant-time per length but not across lengths — acceptable since length disclosure is not the threat).
 
 **Backend-restart resilience.** If the backend restarts while a frontend tab is open: (a) EventSource reconnects natively; the frontend gets a fresh `subscriber-assigned` event; the ready-state Promise defers subscribe POSTs until then. (b) Mutating POST/DELETE attempts in flight at restart land against a backend that no longer recognizes the old session token — they get 401 `/auth/session-stale`, which triggers the full-page reload. The reload re-fetches the index, the new cookie is stamped, the frontend re-renders, and pending intent is lost (the user is back at the inbox; URL preserves their PR detail context). This is the documented contract; tests in `SessionTokenMiddlewareTests` cover it.
 
@@ -952,18 +1028,20 @@ The two "new backlog item" rows above are net-new additions to `docs/backlog/`; 
 | 404 / 422 on diff range (unreachable SHA) | `GET /api/pr/{ref}/diff` → `{ type: "/diff/range-unreachable", range }` | Diff pane shows: *"This iteration's commits are no longer available on GitHub."* The iteration tab stays clickable; only the diff body shows the message. |
 | 5xx from GitHub | `IReviewService` retries with exponential backoff up to 30 s; then returns `{ type: "/github/unavailable" }` | Banner: *"GitHub is unreachable. Retrying…"* with manual Retry. Already-loaded data stays visible. |
 | Rate limit (`x-ratelimit-remaining: 0`) | Honor `x-ratelimit-reset`; queue background polls until then; user-initiated requests return `{ type: "/github/rate-limited", resetAt }` | Banner: *"GitHub rate limit reached. Resumes at HH:MM."* Active-PR poller pauses globally (the rate limit is account-scoped). |
+| 403/4xx from per-commit fan-out | Mark commit's `ChangedFiles = null`; mark session as degraded; log warning; remaining commits use neutral Jaccard; continue. | n/a — clustering still produces results from time-distance + force-push signals. |
 
 ### 10.2 Iteration clustering failures
 
 | Failure | Behavior |
 |---|---|
 | `ClusteringInput.Commits.Length == 0` | Return zero iterations; emit "All changes" tab only; file tree renders the empty-PR placeholder. |
-| `ClusteringInput.Commits.Length == 1` | Short-circuit to a single iteration containing that commit. |
-| MAD threshold hits a degenerate case (all weighted distances equal) | Fall back to one-tab-per-commit; log a warning. |
-| > 50% of weighted distances clamped to hard floor | Algorithm has insufficient signal; fall back to one-tab-per-commit; log a warning. |
+| `ClusteringInput.Commits.Length == 1` | PrDetailLoader short-circuits to `ClusteringQuality: Low`; frontend renders `CommitMultiSelectPicker`. |
+| MAD threshold hits a degenerate case (all weighted distances equal) | Strategy treats this as a single cluster (no edge exceeds median); not a fallback path. |
+| > 50% of weighted distances clamped to hard floor | Strategy returns null; PrDetailLoader emits `ClusteringQuality: Low`; frontend renders `CommitMultiSelectPicker`. |
+| `iterations.clusteringDisabled = true` (calibration-failure escape hatch) | PrDetailLoader emits `ClusteringQuality: Low` for every PR; frontend renders `CommitMultiSelectPicker`. |
 | GitHub returns a malformed timeline event | Drop that event from `ClusteringInput`; log; continue. Don't fail the page load. |
-| A commit's `changedFiles` REST fan-out fails or returns nothing | Treat that commit's file set as unknown; `FileJaccardMultiplier` returns `1.0` (neutral). The commit still participates in the timeline. |
-| PR has > `iterations.skipJaccardAboveCommitCount` (default 50) commits | Skip the per-commit fan-out entirely for this PR; `FileJaccardMultiplier` returns `1.0` for every pair. Bounds primary AND secondary rate-limit consumption on large PRs. |
+| A commit's `changedFiles` REST fan-out fails or returns nothing | Treat that commit's file set as unknown; `FileJaccardMultiplier` returns `1.0` (neutral). The commit still participates in the timeline. Mark the session as degraded; subsequent commits also skip fan-out. |
+| PR has > `iterations.skipJaccardAboveCommitCount` (default 100) commits | Skip the per-commit fan-out entirely for this PR; `FileJaccardMultiplier` returns `1.0` for every pair. Bounds rate-limit consumption on large PRs. |
 | `HeadRefForcePushedEvent.beforeCommit` / `afterCommit` is null (GitHub GC) | Position the force-push by `occurredAt` timestamp. `ForcePushMultiplier` still applies. |
 
 ### 10.3 SSE / subscription failures
@@ -1007,7 +1085,7 @@ PR descriptions and comment bodies are author-controlled and frequently contain 
 | GraphQL deserialization failures | Log a field-path summary (e.g., `pullRequest.body: expected string, got null`); never the failing field's value. |
 | Markdown-renderer crashes | Catch in error boundary; log component name + byte-length of source; never the source. |
 | SSE flush errors | Log `prRef`, sha, and event type; never the event payload (which today only contains shas + counts; future event types may carry more). |
-| Application telemetry | The application-wide `ILogger` configuration includes a destructuring policy / log-filter that scrubs any field literally named `subscriberId`, `pat`, `token`, `body`, or `content` (case-insensitive) before emission. |
+| Application telemetry | The application-wide `ILogger` configuration includes a destructuring policy / log-filter that scrubs any field literally named `subscriberId`, `pat`, or `token` (case-insensitive). Drop `body`/`content` from the blocklist — those are too generic and would over-redact PR descriptions, comment text, file content, and request bodies that are non-secret. Payload-size containment is handled separately via destructuring truncation: any string property longer than 1024 chars is truncated to 1024 chars + a `[truncated, original-length: N]` suffix in log output. |
 
 A test in § 11.2's adversarial corpus asserts that no PR-body substring appears in captured log output across error paths.
 
@@ -1017,7 +1095,7 @@ A test in § 11.2's adversarial corpus asserts that no PR-body substring appears
 - **Closed / merged PR while user is viewing it.** Header banner per spec § 3; submit disabled (already disabled). When the PR re-opens via poll, banner clears.
 - **PR > 100 files (file list).** `pulls/{n}/files` paginates; backend collects all pages; frontend renders the full set.
 - **PR > 300 files of diff content.** GitHub `compare` returns truncated; backend surfaces `truncated: true`; frontend renders `DiffTruncationBanner` with a deep link to github.com.
-- **PR > 50 commits.** Per-commit `changedFiles` fan-out is skipped (config: `iterations.skipJaccardAboveCommitCount`); clustering relies on time gap + force-push only.
+- **PR > 100 commits.** Per-commit `changedFiles` fan-out is skipped (config: `iterations.skipJaccardAboveCommitCount`); clustering relies on time gap + force-push only.
 
 ## 11. Testing strategy
 
@@ -1046,7 +1124,7 @@ The discipline from CLAUDE.md and S2 precedent: TDD throughout, no mocks of the 
 
 | Subject | Lives in | Test count | Why |
 |---|---|---|---|
-| `WeightedDistanceClusteringStrategy` | `PRism.Core.Tests/Iterations/` | ~16 | Single-commit short-circuit; force-push as multiplier; Jaccard at extremes (0, 1); MAD threshold against synthetic gap distributions; hard floor; hard ceiling; degenerate all-equal case → fallback; > 50% floor-clamped → fallback; **fallback caps at `maxFallbackTabs` (default 20) — > 20 commits → single "inconclusive" cluster, not 100 tabs**; coefficient changes flip clustering decisions deterministically; sort uses `committedDate`; negative-Δt clamps to zero; **occurredAt for null-SHA force-push clamps `max(0, occurredAt - prev.committedDate)`**. |
+| `WeightedDistanceClusteringStrategy` | `PRism.Core.Tests/Iterations/` | ~14 | Force-push as multiplier; Jaccard at extremes (0, 1); MAD threshold against synthetic gap distributions; hard floor; hard ceiling; degenerate all-equal case → single cluster (no edge exceeds median); > 50% floor-clamped → strategy returns null; coefficient changes flip clustering decisions deterministically; sort uses `committedDate`; negative-Δt clamps to zero; **occurredAt for null-SHA force-push clamps `max(0, occurredAt - prev.committedDate)`**. The 1-commit short-circuit lives on `PrDetailLoader`, not the strategy. |
 | `FileJaccardMultiplier` | same | ~5 | Disjoint files; full overlap; partial overlap; empty file-set handling; unknown-changedFiles signal returns neutral `1.0`. |
 | `ForcePushMultiplier` | same | ~5 | No force push → `1.0`; force push within short gap → `1.0`; force push after long gap → `1.5`; multiple force-pushes in a window; force-push with null beforeSha/afterSha positioned by occurredAt. |
 | `MadThresholdComputer` | same | ~4 | Bimodal distribution; single-mode distribution; single-element collection; constant-distance collection (degenerate). |
@@ -1057,6 +1135,15 @@ The discipline from CLAUDE.md and S2 precedent: TDD throughout, no mocks of the 
 | `MarkdownRenderer` (sanitization) | frontend vitest | ~14 | Adversarial-input corpus, sourced from OWASP HTML5 cheat sheet + Cure53 DOMPurify fixtures + `rehype-sanitize` regression tests. Categories: `<script>` rendered as escaped; `javascript:` autolink stripped; reference-style link `[x]: javascript:...` stripped; HTML-entity-obfuscated autolink (`&#106;avascript:`) stripped; `data:` URL in `<img>` stripped; `vbscript:` URL stripped; `<iframe>` stripped; `<object>` stripped; inline SVG with `<use href=>` / `<foreignObject>` / `<animate attributeName='href'>` stripped; `<style>` block + `style=` attribute (CSS injection vectors) stripped; MathML with `href` / event handlers stripped; `<base href=>` stripped; `<form action=>` stripped; raw-HTML allowlist verified empty. |
 | Mermaid sanitization | frontend vitest | ~3 | Smoke-tests over the hardened-mode wiring; **the primary defense is version-pin + Renovate manual-approval label on majors** (see § 5). Tests: behavioral feed of an adversarial flow with a `click ... javascript:...` directive, assert rendered SVG has no actionable JS; assert raw `<script>` in node label renders as text; assert `mermaid.initialize` was called with `securityLevel: 'strict'` (sanity check). The spec deliberately does NOT exhaustively re-test Mermaid's hardened-mode behavior — that's the upstream library's job; PRism's defense is keeping the pin tight. |
 | `PrDetailLoader` orchestration | `PRism.Core.Tests/PrDetail/` | ~10 | Each loader step calls expected `IReviewService` methods in expected order; failure of any step bubbles cleanly; cache hit/miss logic. |
+| `PrDetailLoader` emits `ClusteringQuality: "low"` for ≤1 commit | `PRism.Core.Tests/PrDetail/` | 1 | Verifies the 1-commit short-circuit path. |
+| `PrDetailLoader` emits `ClusteringQuality: "low"` when degenerate detector fires | `PRism.Core.Tests/PrDetail/` | 1 | Strategy returns null → loader sets Low. |
+| `PrDetailLoader` emits `ClusteringQuality: "low"` when `iterations.clusteringDisabled = true` | `PRism.Core.Tests/PrDetail/` | 1 | Calibration-failure escape hatch. |
+| `PrDetailLoader` emits `ClusteringQuality: "ok"` for healthy multi-commit PRs | `PRism.Core.Tests/PrDetail/` | 1 | Happy path. |
+| `PrDetailDto.iterations` is null when ClusteringQuality is Low | `PRism.Web.Tests` | 1 | DTO shape contract. |
+| `PrDetailDto.commits` always populated regardless of ClusteringQuality | `PRism.Web.Tests` | 1 | Picker reads from this. |
+| `PrDetailDto.timelineCapHit: true` when MaxTimelinePages reached on any connection | `PRism.Web.Tests` | 1 | Q2 cap-hit signal. |
+| `GET /diff?commits=sha1,sha2,sha3` returns union diff via GitHub compare | `PRism.Web.Tests` | 1 | Backend compare API integration. |
+| `CommitMultiSelectPicker` renders when `clusteringQuality === "low"` | frontend vitest | 4 | 1-commit; multi-commit-degenerate; global-disabled-flag; selection updates URL. |
 | React components (header, sub-tab strip, file-tree row, banner, stats tiles, PR-root conversation, AI summary card, diff truncation banner, focus-on-mount) | frontend vitest | ~15 | Capability-flag-gated rendering; disabled-tab click is no-op; viewed-checkbox toggle; banner appearance / dismiss; AI off vs preview-on rendering; focus management. |
 
 Total unit tests: ~75.
@@ -1081,22 +1168,26 @@ Total unit tests: ~75.
 | `GET /api/pr/{ref}/file` 413 when file > 5 MB | 1 |
 | `POST /api/pr/{ref}/mark-viewed` | 3 (happy; idempotent re-call; 409 stale-headSha) |
 | `POST /api/pr/{ref}/files/viewed` (path-in-body) | 5 (toggle on; toggle off; 422 path-not-in-diff; 422 cap-exceeded; 409 stale-headSha) |
-| Body path canonicalization | 7 (rejects `..` segment, `.` segment, leading `/`, trailing `/`, NUL byte, C0/C1 control char, backslash; rejects non-NFC paths) |
-| Body size cap on mutating endpoints | 4 (16 KiB cap on each of mark-viewed / files/viewed / events/subscriptions POST + DELETE; oversize → 413; cap enforced before model binding) |
+| Body path canonicalization | 9 (8 InlineData entries: rejects `..` segment, `.` segment, leading `/`, trailing `/`, empty path, NUL byte, C0/C1 control char, backslash; + 1 NFC fact: rejects non-NFC paths) |
+| Body size cap on mutating endpoints via `[RequestSizeLimit(16384)]` | 1 (oversize request rejected pre-binding by Kestrel) |
 | `X-PRism-Session` enforcement on POST/DELETE | 4 (happy; rejected without header; rejected with stale-launch token; constant-time-comparison sanity) |
 | `X-PRism-Session` enforcement on GET endpoints | 5 (GET /api/pr/{ref} requires header; GET /diff requires header; GET /file requires header; GET /api/events accepts cookie; stale-launch token rejected on all) |
 | `OriginCheckMiddleware` empty-Origin rejection | 2 (POST with empty Origin → 403 `/auth/bad-origin`; GET with empty Origin still allowed) |
 | `423 /state/read-only` on mutating endpoints when state is in read-only mode | 1 |
 | `GET /api/events` first-event contract | 1 (`subscriber-assigned` delivered first) |
-| `POST /api/events/subscriptions` | 3 (happy; 404 on unknown subscriber; 409 on already-subscribed) |
-| `DELETE /api/events/subscriptions` | 2 (happy; idempotent on already-removed) |
+| `POST /api/events/subscriptions` derives subscriberId from cookie | 1 |
+| `POST /api/events/subscriptions` 403 when no active SSE connection for cookie | 1 |
+| `POST /api/events/subscriptions` 409 on already-subscribed (idempotent) | 1 |
+| `DELETE /api/events/subscriptions?prRef=...` derives subscriberId from cookie | 1 |
+| `DELETE /api/events/subscriptions` idempotent on already-removed | 1 |
+| Cross-tab forge-subscriberId attack rejected | 1 |
 | Active-PR poll → `pr-updated` event end-to-end | 2 (head changed; comment count changed) |
 | Active-PR poll: zero subscribers → poller idles | 1 |
 | Active-PR poll: per-PR backoff isolation | 1 (PR A flapping; PR B continues to receive updates) |
 | Active-PR poll: per-subscriber fanout | 1 (A & B subscribed to PR X get the event; C subscribed to PR Y doesn't) |
 | State migration on cold-start | 6 (v1 file migrated; v2 file unchanged; future-version → read-only mode + saves blocked; missing-version → quarantine; future-version → ResetToDefaultAsync round-trip; malformed-JSON → quarantine + IsReadOnlyMode stays false) |
 | Logging discipline | 1 (assert no PR-body / comment-body / file-content substring appears in captured log output across an error-path corpus exercising react-diff-view crash, GitHub 5xx, GraphQL deserialize-fail, Markdown-renderer crash) |
-| Iteration deep-link `?iter=N` clamps on coefficient hot-reload | 1 (PR detail mounted with iter=3; coefficientsGeneration increments and reduces iteration count to 2; URL clamps to iter=2 + banner appears) |
+| Iteration deep-link `?iter=N` clamps on coefficient hot-reload | 1 (PR detail mounted with iter=3; ConfigStore.Changed fires → InvalidateAll() → re-cluster reduces iteration count to 2; URL clamps to iter=2 + banner appears. Also covers the case where the re-cluster flips ClusteringQuality to Low — the iter param is dropped and CommitMultiSelectPicker renders.) |
 
 Total: ~30.
 
@@ -1125,8 +1216,8 @@ A manual measurement run **before** the slice's clustering-dependent PRs land (c
 5. **Tuning protocol with concrete bounds:**
    - Round 1: Run with default coefficients. If aggregate agreement ≥ 70%, lock coefficients and proceed.
    - Rounds 2–3: If < 70%, adjust coefficients informed by per-PR mismatches; re-run.
-   - **After round 3:** if still < 70%, ship S3 with `OneTabPerCommitClusteringStrategy` registered as the DI binding for `IIterationClusteringStrategy` instead of `WeightedDistanceClusteringStrategy`. Record the negative result in § 12 with the final coefficients tried and the decision to disable. WeightedDistance ships disabled until P0+ calibration produces a corpus large enough to validate.
-6. Document results in this slice spec under "Iteration clustering — discipline-check observations" with date, PR set, final coefficient values, and the decision (retain default WeightedDistance / tune to X / fall back to OneTabPerCommit).
+   - **After round 3:** if still < 70%, ship S3 with `iterations.clusteringDisabled = true` in production config — PrDetailLoader emits `ClusteringQuality: Low` for every PR and the frontend renders `CommitMultiSelectPicker` instead of `IterationTabStrip`. Record the negative result in § 12 with the final coefficients tried and the decision to disable. WeightedDistance ships disabled until P0+ calibration produces a corpus large enough to validate.
+6. Document results in this slice spec under "Iteration clustering — discipline-check observations" with date, PR set, final coefficient values, and the decision (retain default WeightedDistance / tune to X / set `iterations.clusteringDisabled = true`).
 
 `mindbody-pos` and `Express Android` (under `C:\src\`) are reserved for later fine-tuning.
 
@@ -1143,12 +1234,12 @@ Strawman PR sequence inside the S3 slice. The plan-writing step refines this; th
 | PR | Concern | Tests landed | Implementation landed |
 |---|---|---|---|
 | 1 | State migration | `AppStateStoreMigrationTests` (through public boundary) | Adds `ViewedFiles` to `ReviewSessionState`; private `MigrateV1ToV2` + `IsReadOnlyMode` flag on `AppStateStore`; LoadAsync wires it in; SaveAsync respects the flag |
-| 2 | Iteration clustering core (incl. discipline-check harness + fallback strategy) | `WeightedDistance...Tests` (incl. fallback-tab-cap + occurredAt clamp + IDistanceMultiplier signature contract) + `FileJaccardMultiplierTests` + `ForcePushMultiplierTests` + `MadThresholdComputerTests` + `OneTabPerCommitClusteringStrategyTests` + `ClusteringDisciplineCheck` (`[SkippableFact]`) | `IIterationClusteringStrategy` + `WeightedDistanceClusteringStrategy` + `OneTabPerCommitClusteringStrategy` + 2 multipliers + threshold + degenerate-case detector + fallback-tab-cap + IterationTabStrip degenerate-fallback banner. Discipline check folds in here (one file, one skipped fact); the gate runs at the end of PR2 and either retains `WeightedDistance` as the DI binding or switches to `OneTabPerCommit`; results recorded in § 12. |
+| 2 | Iteration clustering core (incl. discipline-check harness) | `WeightedDistance...Tests` (incl. occurredAt clamp + IDistanceMultiplier signature contract) + `FileJaccardMultiplierTests` + `ForcePushMultiplierTests` + `MadThresholdComputerTests` + `ClusteringDisciplineCheck` (`[SkippableFact]`) | `IIterationClusteringStrategy` + `WeightedDistanceClusteringStrategy` + 2 multipliers + threshold + degenerate-case detector returning null. Discipline check folds in here (one file, one skipped fact); the gate runs at the end of PR2 and either retains `WeightedDistance` as the DI binding or sets `iterations.clusteringDisabled = true`; results recorded in § 12. **Task 2 follow-up adds**: ConfigStore.Changed → InvalidateAll wiring; ClusteringQuality: Low signal emitted by PrDetailLoader for ≤1 commit, degenerate-detector, or global config flag; per-PR degenerate detector returns null instead of fake clusters. |
 | 3 | `IReviewService` extensions | `GitHubReviewServiceTests` | New methods on `GitHubReviewService` (single GraphQL round-trip; dual-endpoint diff via `pulls/{n}/files` + `pulls/{n}` `changed_files`; per-commit fan-out for Jaccard; file content with size cap) |
-| 4 | PR detail backend assembly | `PrDetailLoaderTests` (concrete class, no interface; tests substitute `IReviewService`) + `PrDetailEndpointsTests` (incl. body-shape POST /viewed, 422 path-not-in-diff vs truncation-window, 409 stale-headSha, 423 read-only, path canonicalization 7-rule + body-size cap, X-PRism-Session enforcement on GET endpoints incl. cookie-based on /api/events) | `PrDetailLoader` (concrete) + endpoints + GET-endpoint session-token enforcement |
-| 5 | SSE + active-PR poller + middleware | `ActivePrSubscriberRegistryTests` + `ActivePrPollerBackoffTests` + `ActivePrPollerSecondaryRateLimitTests` (403 secondary-limit pause + neutral-Jaccard degrade) + `EventsSubscriptionsEndpointTests` + `OriginCheckMiddlewareTests` (empty-Origin rejection on POST/DELETE) + `SessionTokenMiddlewareTests` (header path + cookie path for /api/events; pipeline ordering: BodySize → Origin → SessionToken → Routing → ModelBinding) + `BodySizeLimitTests` (16 KiB cap on each mutating endpoint) + `LoggingDisciplineTests` | `ActivePrSubscriberRegistry` + `ActivePrPoller` (per-PR backoff + secondary-rate-limit handling + 100ms inter-batch pace) + `SseChannel` mods (named heartbeat event) + `OriginCheckMiddleware` mods + `SessionTokenMiddleware` (constant-time comparison, 401 problem-slug, cookie re-stamping on every HTML response, header+cookie auth modes) + `BodySizeLimitMiddleware` (configured before SessionToken) + ILogger destructuring policy (subscriberId / pat / token / body / content scrub) |
+| 4 | PR detail backend assembly | `PrDetailLoaderTests` (concrete class, no interface; tests substitute `IReviewService`) + `PrDetailEndpointsTests` (incl. body-shape POST /viewed, 422 path-not-in-diff vs truncation-window, 409 stale-headSha, 423 read-only, path canonicalization 9-rule + `[RequestSizeLimit]` body cap, X-PRism-Session enforcement on GET endpoints incl. cookie-based on /api/events, `?commits=sha1,sha2,sha3` union-diff via GitHub compare, ClusteringQuality + Iterations + Commits + TimelineCapHit fields on PrDetailDto) | `PrDetailLoader` (concrete) + endpoints + `?commits=` query param on /diff (union via GitHub compare) + ClusteringQuality + Iterations + Commits + TimelineCapHit fields + GET-endpoint session-token enforcement |
+| 5 | SSE + active-PR poller + middleware | `ActivePrSubscriberRegistryTests` + `ActivePrPollerBackoffTests` + `EventsSubscriptionsEndpointTests` (subscriber-binding via cookie; cross-tab forge attack rejected) + `OriginCheckMiddlewareTests` (empty-Origin rejection on POST/DELETE) + `SessionTokenMiddlewareTests` (header path + cookie path for /api/events; fixed-length comparison defeats timing-length disclosure) + `[RequestSizeLimit(16384)]` test (oversize → rejected pre-binding) + `LoggingDisciplineTests` | `ActivePrSubscriberRegistry` + `ActivePrPoller` (per-PR backoff + 4xx-degrade-to-neutral-Jaccard + 100ms inter-batch pace) + `SseChannel` mods (named heartbeat event; cookie→subscriberId mapping for POST/DELETE binding) + `OriginCheckMiddleware` mods + `SessionTokenMiddleware` (fixed-length comparison, 401 problem-slug, cookie re-stamping on every HTML response, header+cookie auth modes) + `[RequestSizeLimit(16384)]` attribute on the four mutating routes + ILogger destructuring policy (subscriberId/pat/token scrub + 1024-char truncation) |
 | 6 | Frontend PR detail shell | vitest tests for header / sub-tab strip / banner / focus-on-mount / 401-recovery-via-page-reload / OS-suspend AbortController behavior | `PrDetailPage` + routing replacement + `useEventSource` (named-heartbeat watcher, AbortController on subscribe) |
-| 7 | Files tab — file tree | vitest for `treeBuilder.ts` + components + sub-1180px sheet open/close/focus-trap + AI focus dot aria-label + viewed-checkbox optimistic+rollback + keyboard input-eating-keys guard | `FileTree` + `treeBuilder` + `FilesTab` plumbing + breakpoint behavior + sheet component |
+| 7 | Files tab — file tree | vitest for `treeBuilder.ts` + components + sub-1180px sheet open/close/focus-trap + AI focus dot aria-label + viewed-checkbox optimistic+rollback + keyboard input-eating-keys guard + `CommitMultiSelectPicker` rendering when `clusteringQuality === "low"` (4 vitest cases) | `FileTree` + `treeBuilder` + `FilesTab` plumbing + breakpoint behavior + sheet component + `CommitMultiSelectPicker` component |
 | 8 | Files tab — diff pane | vitest for `DiffPane`, `WordDiffOverlay`, `MarkdownRenderer` (14-input adversarial corpus), behavioral Mermaid sanitization | `DiffPane` + `react-diff-view` wiring + `jsdiff` overlay + Markdown pipeline |
 | 9 | Overview tab | vitest for `OverviewTab` and children, including `overview-card-hero-no-ai` modifier | `OverviewTab` + `PrDescription` non-AI hero + `PrRootConversation` (read-only) + `StatsTiles` + AI placeholders |
 | 10 | Doc updates | n/a (docs-only) | spec / roadmap / arch-readiness updates per § 9 |
@@ -1158,4 +1249,4 @@ Strawman PR sequence inside the S3 slice. The plan-writing step refines this; th
 
 *To be filled in at slice completion. Template:*
 
-> Tested against [N] PRs from `mindbody/Mindbody.BizApp.Bff` and `mindbody/Mindbody.Mobile.BusinessGateway` on [date]. Coefficients used: [final values]. Aggregate agreement with hand-labeled boundaries: [%]. Decision: [retain WeightedDistance defaults / tune to X / fall back to OneTabPerCommit (DI binding for IIterationClusteringStrategy switched at registration time)].
+> Tested against [N] PRs from `mindbody/Mindbody.BizApp.Bff` and `mindbody/Mindbody.Mobile.BusinessGateway` on [date]. Coefficients used: [final values]. Aggregate agreement with hand-labeled boundaries: [%]. Decision: [retain WeightedDistance defaults / tune to X / set `iterations.clusteringDisabled = true` (PrDetailLoader emits ClusteringQuality: Low for every PR)].
