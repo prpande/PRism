@@ -19,7 +19,7 @@ internal static class ServiceCollectionExtensions
     /// </summary>
     /// <remarks>
     /// The "AddPrismAi belongs in Web" carve-out is documented in
-    /// <c>docs/superpowers/specs/2026-05-06-architectural-readiness-design.md</c> § PR 2:
+    /// <c>docs/specs/2026-05-06-architectural-readiness-design.md</c> § PR 2:
     /// the principle "each project owns its own <c>AddPrism*</c>" applies cleanly when a
     /// project has one canonical impl set. For AI, two parallel impl sets are selected at
     /// runtime by environment (config flag), not by contract — so composition lives in Web,
