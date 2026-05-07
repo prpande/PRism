@@ -204,7 +204,55 @@ public sealed class GitHubReviewService : IReviewService
     public Task<ExistingComment[]> GetCommentsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Replaced by IssueCommentDto/ReviewThreadDto inside PrDetailDto in S3.");
 
     // S3 PR detail surface — implementations land in this same PR (Task 3.4 onward).
-    public Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("PR detail lands in S3 PR3 Step 3.4+.");
+    public async Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+
+        // Single GraphQL round-trip with `first:100` on every connection. PoC ships the
+        // first-page-only shape: TimelineCapHit reflects whether any connection's
+        // pageInfo.hasNextPage is true, so the frontend can render a "Some history beyond
+        // N pages was not loaded" banner. Cursor pagination up to MaxTimelinePages = 10
+        // is a follow-up (spec § 6.1; Q2 cap detection); the cap-hit signal is the
+        // user-visible contract that matters today.
+        const string query = "query($owner:String!,$repo:String!,$number:Int!){" +
+            "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+            "title body url state isDraft mergeable mergeStateStatus " +
+            "headRefName baseRefName headRefOid baseRefOid " +
+            "author{login} createdAt closedAt mergedAt changedFiles " +
+            "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login} createdAt body}}" +
+            "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
+            "comments(first:100){nodes{id author{login} createdAt body lastEditedAt}}}}" +
+            "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
+            "pageInfo{hasNextPage endCursor} nodes{__typename " +
+            "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
+            "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
+            "... on PullRequestReview{submittedAt}" +
+            "}}" +
+            "}}}";
+        var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
+        if (raw is null) return null;
+
+        using var doc = JsonDocument.Parse(raw);
+        var pull = doc.RootElement.GetProperty("data").GetProperty("repository").GetProperty("pullRequest");
+        if (pull.ValueKind == JsonValueKind.Null) return null;
+
+        var pr = ParsePr(pull, reference);
+        var rootComments = ParseRootComments(pull);
+        var reviewComments = ParseReviewThreads(pull);
+        var timelineCapHit = HasAnyNextPage(pull);
+
+        // ClusteringQuality, Iterations, and Commits are populated by PrDetailLoader
+        // (Task 4) when it composes PrDetailSnapshot. The IReviewService caller returns
+        // the GitHub-side facts only; placeholders here are overwritten downstream.
+        return new PrDetailDto(
+            pr,
+            ClusteringQuality: ClusteringQuality.Ok,
+            Iterations: Array.Empty<IterationDto>(),
+            Commits: Array.Empty<CommitDto>(),
+            RootComments: rootComments,
+            ReviewComments: reviewComments,
+            TimelineCapHit: timelineCapHit);
+    }
 
     public async Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct)
     {
@@ -556,6 +604,124 @@ public sealed class GitHubReviewService : IReviewService
     {
         if (!node.TryGetProperty("__typename", out var tn)) return false;
         return string.Equals(tn.GetString(), expected, StringComparison.Ordinal);
+    }
+
+    private static Pr ParsePr(JsonElement pull, PrReference reference)
+    {
+        string GetStr(string name) =>
+            pull.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String
+                ? el.GetString() ?? "" : "";
+        DateTimeOffset GetDate(string name) =>
+            pull.TryGetProperty(name, out var el) && el.ValueKind != JsonValueKind.Null
+                ? el.GetDateTimeOffset() : default;
+        string Author()
+        {
+            if (!pull.TryGetProperty("author", out var a) || a.ValueKind != JsonValueKind.Object) return "";
+            return a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
+        }
+
+        // GitHub returns "MERGEABLE" | "CONFLICTING" | "UNKNOWN" — pass through as-is.
+        // mergeStateStatus is a finer-grained signal ("BEHIND", "DIRTY", etc.); we collapse
+        // both into a single `Mergeability` field for the Pr record. Spec § 6.1.
+        var mergeability = GetStr("mergeable");
+        var ciSummary = "";   // computed by PrDetailLoader (or by an upstream enrichment); placeholder here.
+
+        var state = GetStr("state");
+        var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal) ||
+                       (pull.TryGetProperty("mergedAt", out var ma) && ma.ValueKind != JsonValueKind.Null);
+        var isClosed = string.Equals(state, "CLOSED", StringComparison.Ordinal) || isMerged;
+
+        return new Pr(
+            reference,
+            Title: GetStr("title"),
+            Body: GetStr("body"),
+            Author: Author(),
+            State: state,
+            HeadSha: GetStr("headRefOid"),
+            BaseSha: GetStr("baseRefOid"),
+            HeadBranch: GetStr("headRefName"),
+            BaseBranch: GetStr("baseRefName"),
+            Mergeability: mergeability,
+            CiSummary: ciSummary,
+            IsMerged: isMerged,
+            IsClosed: isClosed,
+            OpenedAt: GetDate("createdAt"));
+    }
+
+    private static List<IssueCommentDto> ParseRootComments(JsonElement pull)
+    {
+        var result = new List<IssueCommentDto>();
+        if (!pull.TryGetProperty("comments", out var c) ||
+            !c.TryGetProperty("nodes", out var nodes) ||
+            nodes.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var node in nodes.EnumerateArray())
+        {
+            var id = node.TryGetProperty("databaseId", out var db) ? db.GetInt64() : 0L;
+            var author = node.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object
+                ? (a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "")
+                : "";
+            var ts = node.TryGetProperty("createdAt", out var ca) ? ca.GetDateTimeOffset() : default;
+            var body = node.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
+            result.Add(new IssueCommentDto(id, author, ts, body));
+        }
+        return result;
+    }
+
+    private static List<ReviewThreadDto> ParseReviewThreads(JsonElement pull)
+    {
+        var result = new List<ReviewThreadDto>();
+        if (!pull.TryGetProperty("reviewThreads", out var rt) ||
+            !rt.TryGetProperty("nodes", out var threadNodes) ||
+            threadNodes.ValueKind != JsonValueKind.Array)
+            return result;
+
+        foreach (var t in threadNodes.EnumerateArray())
+        {
+            var threadId = t.TryGetProperty("id", out var ti) ? ti.GetString() ?? "" : "";
+            var path = t.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "";
+            var line = t.TryGetProperty("line", out var ln) && ln.ValueKind == JsonValueKind.Number ? ln.GetInt32() : 0;
+            var resolved = t.TryGetProperty("isResolved", out var ir) && ir.ValueKind == JsonValueKind.True;
+            var comments = new List<ReviewCommentDto>();
+            if (t.TryGetProperty("comments", out var cs) &&
+                cs.TryGetProperty("nodes", out var cnodes) &&
+                cnodes.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var cn in cnodes.EnumerateArray())
+                {
+                    var cid = cn.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
+                    var cauthor = cn.TryGetProperty("author", out var ca) && ca.ValueKind == JsonValueKind.Object
+                        ? (ca.TryGetProperty("login", out var cl) ? cl.GetString() ?? "" : "")
+                        : "";
+                    var cts = cn.TryGetProperty("createdAt", out var cca) ? cca.GetDateTimeOffset() : default;
+                    var cbody = cn.TryGetProperty("body", out var cb) ? cb.GetString() ?? "" : "";
+                    DateTimeOffset? edited = null;
+                    if (cn.TryGetProperty("lastEditedAt", out var le) && le.ValueKind != JsonValueKind.Null)
+                        edited = le.GetDateTimeOffset();
+                    comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited));
+                }
+            }
+            // anchor SHA isn't returned by reviewThreads in this query; thread-anchor
+            // resolution against the PR diff is a PrDetailLoader concern in Task 4.
+            // Use HeadSha placeholder here; the loader can refine.
+            result.Add(new ReviewThreadDto(threadId, path, line, AnchorSha: "", IsResolved: resolved, Comments: comments));
+        }
+        return result;
+    }
+
+    private static bool HasAnyNextPage(JsonElement pull)
+    {
+        return ConnectionHasNext(pull, "comments")
+            || ConnectionHasNext(pull, "reviewThreads")
+            || ConnectionHasNext(pull, "timelineItems");
+    }
+
+    private static bool ConnectionHasNext(JsonElement pull, string connection)
+    {
+        if (!pull.TryGetProperty(connection, out var conn)) return false;
+        if (!conn.TryGetProperty("pageInfo", out var pi)) return false;
+        return pi.TryGetProperty("hasNextPage", out var hnp) && hnp.ValueKind == JsonValueKind.True;
     }
 
     private async Task<IReadOnlyList<ClusteringCommit>> FetchPerCommitChangedFilesAsync(
