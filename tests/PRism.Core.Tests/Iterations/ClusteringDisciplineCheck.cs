@@ -1,11 +1,15 @@
-using PRism.Core.Iterations;
 using Xunit;
-using Xunit.Sdk;
 
 namespace PRism.Core.Tests.Iterations;
 
 public class ClusteringDisciplineCheck
 {
+    // Two skip guards are intentional and serve different purposes:
+    //   1. Env-var guard (line below): the permanent dispatch shape — the harness only
+    //      runs when PRISM_DISCIPLINE_PR_REFS is set. This is the steady-state contract.
+    //   2. Unconditional skip: temporary, until Task 3 (IReviewService.GetTimelineAsync)
+    //      lands. Keeps the harness compilable and pinned without forcing a NotImpl throw
+    //      that would surface as a test failure when the env var is set.
     [SkippableFact]
     public void Manual_discipline_check_against_real_pr_set()
     {

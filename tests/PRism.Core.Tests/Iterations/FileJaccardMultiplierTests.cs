@@ -8,8 +8,11 @@ public class FileJaccardMultiplierTests
 {
     private static readonly IterationClusteringCoefficients Defaults = new();
 
+    // ChangedFiles uses the actual array (possibly empty) so callers exercise the empty-list
+    // branch in FileJaccardMultiplier; the "unknown" (null) case is constructed explicitly
+    // in the dedicated test below.
     private static ClusteringCommit Commit(string sha, params string[] files) =>
-        new(sha, DateTimeOffset.UtcNow, "msg", 1, 0, files.Length == 0 ? null : files);
+        new(sha, DateTimeOffset.UtcNow, "msg", 1, 0, files);
 
     private static ClusteringInput Input(params ClusteringCommit[] commits) =>
         new(commits, Array.Empty<ClusteringForcePush>(), Array.Empty<ClusteringReviewEvent>(),

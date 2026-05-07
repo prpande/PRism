@@ -145,4 +145,72 @@ public class WeightedDistanceClusteringStrategyTests
         clusters.Should().HaveCount(1);
         clusters[0].CommitShas.Should().HaveCount(25);
     }
+
+    [Fact]
+    public void Gap_wider_than_hard_ceiling_is_clamped_and_still_splits()
+    {
+        // Spec § 11.2 requires a hard-ceiling case: gaps wider than HardCeilingSeconds (3 days)
+        // must clamp to the ceiling so the weighted distance doesn't grow unbounded, while still
+        // exceeding the MAD threshold and producing a cluster boundary.
+        var t0 = DateTimeOffset.UtcNow;
+        var commits = new[]
+        {
+            Commit("c0", t0,                              "src/A.cs"),
+            Commit("c1", t0.AddSeconds(60),               "src/A.cs"),
+            Commit("c2", t0.AddDays(5),                   "src/B.cs"),  // > 3-day ceiling
+            Commit("c3", t0.AddDays(5).AddSeconds(60),    "src/B.cs"),
+        };
+        var clusters = NewStrategy().Cluster(Input(commits), Defaults);
+        clusters.Should().HaveCount(2);
+        clusters[0].CommitShas.Should().BeEquivalentTo(new[] { "c0", "c1" });
+        clusters[1].CommitShas.Should().BeEquivalentTo(new[] { "c2", "c3" });
+    }
+
+    [Fact]
+    public void Lowering_mad_k_flips_borderline_gap_into_a_split()
+    {
+        // Spec § 11.2 requires a "coefficient changes flip clustering decisions deterministically" case.
+        // 6 commits with one borderline gap between c2 and c3. With MadK=3 the gap stays inside the
+        // band → 1 cluster. With MadK=1 the gap exceeds median + 1*MAD → 2 clusters.
+        var t0 = DateTimeOffset.UtcNow;
+        var commits = new[]
+        {
+            Commit("c0", t0,                       "src/A.cs"),
+            Commit("c1", t0.AddSeconds(60),        "src/A.cs"),
+            Commit("c2", t0.AddSeconds(120),       "src/A.cs"),
+            Commit("c3", t0.AddSeconds(900),       "src/B.cs"),
+            Commit("c4", t0.AddSeconds(960),       "src/B.cs"),
+            Commit("c5", t0.AddSeconds(1020),      "src/B.cs"),
+        };
+        var withMadK3 = NewStrategy().Cluster(Input(commits), Defaults with { MadK = 3 });
+        var withMadK1 = NewStrategy().Cluster(Input(commits), Defaults with { MadK = 1 });
+
+        withMadK1.Count.Should().BeGreaterThan(withMadK3.Count,
+            because: "lowering MadK tightens the threshold, so a borderline gap should produce more cluster boundaries");
+    }
+
+    [Fact]
+    public void Cluster_throws_when_floor_exceeds_ceiling()
+    {
+        var commits = new[] { Commit("c0", DateTimeOffset.UtcNow, "src/A.cs") };
+        var bad = Defaults with { HardFloorSeconds = 1000, HardCeilingSeconds = 100 };
+        var act = () => NewStrategy().Cluster(Input(commits), bad);
+        act.Should().Throw<ArgumentException>().WithMessage("*HardFloorSeconds*");
+    }
+
+    [Fact]
+    public void Cluster_throws_when_mad_k_is_zero_or_negative()
+    {
+        var commits = new[] { Commit("c0", DateTimeOffset.UtcNow, "src/A.cs") };
+        var act = () => NewStrategy().Cluster(Input(commits), Defaults with { MadK = 0 });
+        act.Should().Throw<ArgumentException>().WithMessage("*MadK*");
+    }
+
+    [Fact]
+    public void Cluster_throws_when_file_jaccard_weight_would_zero_the_multiplier()
+    {
+        var commits = new[] { Commit("c0", DateTimeOffset.UtcNow, "src/A.cs") };
+        var act = () => NewStrategy().Cluster(Input(commits), Defaults with { FileJaccardWeight = 1.0 });
+        act.Should().Throw<ArgumentException>().WithMessage("*FileJaccardWeight*");
+    }
 }

@@ -16,6 +16,7 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(coefficients);
+        coefficients.Validate();
 
         if (input.Commits.Count == 0) return Array.Empty<IterationCluster>();
 
