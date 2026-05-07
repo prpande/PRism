@@ -205,10 +205,150 @@ public sealed class GitHubReviewService : IReviewService
 
     // S3 PR detail surface — implementations land in this same PR (Task 3.4 onward).
     public Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("PR detail lands in S3 PR3 Step 3.4+.");
-    public Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct) => throw new NotImplementedException("Diff lands in S3 PR3 Step 3.4+.");
+
+    public async Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentNullException.ThrowIfNull(range);
+
+        // Step 1: fetch /pulls/{n} for the canonical base..head SHAs and changed_files count.
+        // The caller's range may either match pull.base..pull.head (canonical PR diff) or be a
+        // cross-iteration slice — we route differently below.
+        var pull = await FetchPullMetaAsync(reference, ct).ConfigureAwait(false);
+
+        IReadOnlyList<FileChange> files;
+        bool truncated;
+        if (string.Equals(range.BaseSha, pull.BaseSha, StringComparison.Ordinal)
+            && string.Equals(range.HeadSha, pull.HeadSha, StringComparison.Ordinal))
+        {
+            // Canonical PR diff: paginate pulls/{n}/files. Truncation is derived from
+            // pull.changed_files > assembled-count, which catches both 30-page-cap and
+            // server-side soft truncation. Spec § 6.1.
+            files = await PaginatePullsFilesAsync(reference, ct).ConfigureAwait(false);
+            truncated = pull.ChangedFiles > files.Count;
+        }
+        else
+        {
+            // Cross-iteration: 3-dot compare endpoint. GC'd SHAs surface as RangeUnreachableException.
+            files = await FetchCompareFilesAsync(reference, range, ct).ConfigureAwait(false);
+            truncated = false;   // compare endpoint's truncation signal is undocumented; only pulls/{n}/files truncates.
+        }
+
+        return new DiffDto($"{range.BaseSha}..{range.HeadSha}", files, truncated);
+    }
+
     public Task<ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Timeline lands in S3 PR3 Step 3.4+.");
     public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException("File content lands in S3 PR3 Step 3.4+.");
     public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Active-PR poll lands in S3 PR5 (ActivePrPoller wiring).");
 
     public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException("Submit lands in S5.");
+
+    private async Task<PullMeta> FetchPullMetaAsync(PrReference reference, CancellationToken ct)
+    {
+        var url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}";
+        using var http = _httpFactory.CreateClient("github");
+        using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        var changedFiles = root.TryGetProperty("changed_files", out var cf) ? cf.GetInt32() : 0;
+        var baseSha = root.GetProperty("base").GetProperty("sha").GetString() ?? "";
+        var headSha = root.GetProperty("head").GetProperty("sha").GetString() ?? "";
+        return new PullMeta(baseSha, headSha, changedFiles);
+    }
+
+    private async Task<IReadOnlyList<FileChange>> PaginatePullsFilesAsync(PrReference reference, CancellationToken ct)
+    {
+        const int MaxPages = 30;   // GitHub's documented cap; pulls/{n}/files truncates beyond this.
+        var collected = new List<FileChange>();
+        var url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}/files?per_page=100";
+        var pageCount = 0;
+        using var http = _httpFactory.CreateClient("github");
+        while (url is not null && pageCount < MaxPages)
+        {
+            using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+            resp.EnsureSuccessStatusCode();
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(body);
+            collected.AddRange(ParseFileChanges(doc.RootElement));
+
+            url = ExtractNextLink(resp);
+            pageCount++;
+        }
+        return collected;
+    }
+
+    private async Task<IReadOnlyList<FileChange>> FetchCompareFilesAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct)
+    {
+        var url = $"repos/{reference.Owner}/{reference.Repo}/compare/{Uri.EscapeDataString(range.BaseSha)}...{Uri.EscapeDataString(range.HeadSha)}";
+        using var http = _httpFactory.CreateClient("github");
+        using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+        if (resp.StatusCode == HttpStatusCode.NotFound)
+            throw new RangeUnreachableException(range.BaseSha, range.HeadSha);
+        resp.EnsureSuccessStatusCode();
+
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("files", out var filesEl) || filesEl.ValueKind != JsonValueKind.Array)
+            return Array.Empty<FileChange>();
+        return ParseFileChanges(filesEl);
+    }
+
+    private static IReadOnlyList<FileChange> ParseFileChanges(JsonElement filesArray)
+    {
+        if (filesArray.ValueKind != JsonValueKind.Array) return Array.Empty<FileChange>();
+        var result = new List<FileChange>(filesArray.GetArrayLength());
+        foreach (var f in filesArray.EnumerateArray())
+        {
+            var path = f.TryGetProperty("filename", out var fn) ? fn.GetString() ?? "" : "";
+            var statusStr = f.TryGetProperty("status", out var st) ? st.GetString() ?? "modified" : "modified";
+            var status = statusStr switch
+            {
+                "added" => FileChangeStatus.Added,
+                "removed" or "deleted" => FileChangeStatus.Deleted,
+                "renamed" => FileChangeStatus.Renamed,
+                _ => FileChangeStatus.Modified,
+            };
+            // PoC: hunks aren't parsed from the patch text in this slice; the diff pane
+            // re-fetches the file content and runs jsdiff. The patch field is preserved
+            // server-side but FileChange.Hunks is intentionally empty here. See spec § 6.1.
+            result.Add(new FileChange(path, status, Array.Empty<DiffHunk>()));
+        }
+        return result;
+    }
+
+    private static string? ExtractNextLink(HttpResponseMessage resp)
+    {
+        if (!resp.Headers.TryGetValues("Link", out var values)) return null;
+        // Link: <https://api.github.com/...>; rel="next", <...>; rel="last"
+        foreach (var raw in values)
+        {
+            foreach (var part in raw.Split(','))
+            {
+                var trimmed = part.Trim();
+                if (!trimmed.Contains("rel=\"next\"", StringComparison.Ordinal)) continue;
+                var lt = trimmed.IndexOf('<', StringComparison.Ordinal);
+                var gt = trimmed.IndexOf('>', StringComparison.Ordinal);
+                if (lt < 0 || gt <= lt) continue;
+                var absolute = trimmed[(lt + 1)..gt];
+                // Strip the leading scheme+host so the HttpClient.BaseAddress prefix is reused.
+                if (Uri.TryCreate(absolute, UriKind.Absolute, out var u))
+                    return u.PathAndQuery.TrimStart('/');
+                return absolute;
+            }
+        }
+        return null;
+    }
+
+    private static async Task<HttpResponseMessage> SendGitHubAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(method, url);
+        req.Headers.UserAgent.ParseAdd("PRism/0.1");
+        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+        return await http.SendAsync(req, ct).ConfigureAwait(false);
+    }
+
+    private sealed record PullMeta(string BaseSha, string HeadSha, int ChangedFiles);
 }
