@@ -42,10 +42,19 @@ internal sealed class PaginatedFakeHandler : HttpMessageHandler
         });
 
         if (rule.Index >= rule.Pages.Count)
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            // Over-call: returning an empty 200 here would mask pagination bugs (e.g.,
+            // a caller that ignores Link rel="next" exhaustion and keeps requesting
+            // would silently see []). 500 makes the bug loud at test time. If a test
+            // genuinely needs "infinite empty pages," it should script enough explicit
+            // pages or call ResetIndices() between phases.
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
             {
-                Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json"),
+                Content = new StringContent(
+                    $"{{\"error\":\"PaginatedFakeHandler: route '{rule.PathPrefix}' has no more scripted pages (index {rule.Index} >= {rule.Pages.Count}).\"}}",
+                    System.Text.Encoding.UTF8, "application/json"),
             });
+        }
 
         var (status, body) = rule.Pages[rule.Index];
         var hasNext = rule.Index + 1 < rule.Pages.Count && status == HttpStatusCode.OK;

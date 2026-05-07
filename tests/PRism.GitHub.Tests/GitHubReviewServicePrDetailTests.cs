@@ -152,4 +152,91 @@ public class GitHubReviewServicePrDetailTests
 
         dto.Should().BeNull();
     }
+
+    [Fact]
+    public async Task GetPrDetailAsync_throws_GitHubGraphQLException_on_errors_without_data()
+    {
+        // GraphQL responses are HTTP 200 even on execution errors; the errors[] array
+        // carries them. When data is absent (or null) and errors[] is non-empty, that's
+        // a fatal execution failure — surface as an exception so the caller doesn't
+        // mistake it for "PR not found."
+        var body = "{\"errors\":[{\"message\":\"rate limit exceeded\",\"type\":\"RATE_LIMITED\"}]}";
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = body };
+
+        await NewService(handler).Invoking(s =>
+                s.GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None))
+            .Should().ThrowAsync<GitHubGraphQLException>();
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_returns_null_when_data_repository_is_null_with_errors()
+    {
+        // Permission-denied shape: data.repository:null + errors[]. The pullRequest
+        // path is unreachable but data is technically present, so this is "PR not
+        // found / not accessible" semantics — return null (do NOT throw).
+        var body = "{\"data\":{\"repository\":null},\"errors\":[{\"message\":\"Could not resolve to a Repository\"}]}";
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = body };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 999), CancellationToken.None);
+
+        dto.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("OPEN",   null,                   false, false)]
+    [InlineData("CLOSED", null,                   true,  false)]
+    [InlineData("MERGED", "2026-02-01T00:00:00Z", false, true)]
+    public async Task GetPrDetailAsync_isClosed_excludes_merged_prs(string state, string? mergedAt, bool expectedClosed, bool expectedMerged)
+    {
+        // IsClosed means "closed WITHOUT merging." MERGED PRs report IsMerged=true and
+        // IsClosed=false; CLOSED-without-merge PRs report IsClosed=true. Consumers asking
+        // "is this PR no longer open?" must check `IsMerged || IsClosed`.
+        var mergedAtJson = mergedAt is null ? "null" : $"\"{mergedAt}\"";
+        var body = $$"""
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "title": "x", "body": "", "url": "https://github.com/o/r/pull/1",
+                "state": "{{state}}", "isDraft": false,
+                "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "headRefName": "h", "baseRefName": "main",
+                "headRefOid": "h", "baseRefOid": "b",
+                "author": { "login": "a" },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "closedAt": null,
+                "mergedAt": {{mergedAtJson}},
+                "changedFiles": 0,
+                "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+              }
+            }
+          }
+        }
+        """;
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = body };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        dto!.Pr.IsClosed.Should().Be(expectedClosed);
+        dto.Pr.IsMerged.Should().Be(expectedMerged);
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_default_clustering_quality_is_low_until_loader_overwrites()
+    {
+        // ClusteringQuality.Ok would imply "trustworthy iteration boundaries exist."
+        // Iterations is null here (PrDetailLoader fills both fields later). Defaulting
+        // to Low keeps the DTO internally consistent — Ok+null Iterations would
+        // contradict the contract. Spec § 6.4 + Q5 redesign.
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailGraphQLBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 42), CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        dto!.ClusteringQuality.Should().Be(ClusteringQuality.Low);
+        dto.Iterations.Should().BeNull();
+    }
 }

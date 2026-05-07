@@ -1,25 +1,33 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
 
 namespace PRism.GitHub;
 
-public sealed class GitHubReviewService : IReviewService
+public sealed partial class GitHubReviewService : IReviewService
 {
     private static readonly string[] RequiredScopes = ["repo", "read:user", "read:org"];
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly string _host;
+    private readonly ILogger<GitHubReviewService> _log;
 
-    public GitHubReviewService(IHttpClientFactory httpFactory, Func<Task<string?>> readToken, string host)
+    public GitHubReviewService(
+        IHttpClientFactory httpFactory,
+        Func<Task<string?>> readToken,
+        string host,
+        ILogger<GitHubReviewService>? log = null)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
         _host = host;
+        _log = log ?? NullLogger<GitHubReviewService>.Instance;
     }
 
     public async Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct)
@@ -232,11 +240,16 @@ public sealed class GitHubReviewService : IReviewService
         var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
-        // GraphQL error responses can omit `data` entirely or set `data.repository` /
-        // `data.repository.pullRequest` to JSON null (e.g., permission errors return
-        // `{"data": {"repository": null}, "errors": [...]}`). Walk the path defensively
-        // and return null for any of those shapes — semantically "PR not found / not
-        // accessible." Throwing would conflate transport failures with permission denials.
+        // GraphQL responses are HTTP 200 even on execution errors — the `errors` array
+        // carries them. Surface "errors with no usable data" as an exception so the
+        // caller can distinguish it from "data:null because PR doesn't exist." Partial
+        // data with non-empty errors is delivered to the parser (per GraphQL spec); we
+        // log the errors but continue.
+        ThrowIfGraphQLErrorsWithoutData(doc.RootElement);
+
+        // For "no usable data" shapes (data missing entirely, or data.repository:null,
+        // or data.repository.pullRequest:null), return null — semantically "PR not
+        // found / not accessible."
         if (!TryGetPath(doc.RootElement, out var pull, "data", "repository", "pullRequest")) return null;
         if (pull.ValueKind == JsonValueKind.Null) return null;
 
@@ -244,14 +257,19 @@ public sealed class GitHubReviewService : IReviewService
         var rootComments = ParseRootComments(pull);
         var reviewComments = ParseReviewThreads(pull);
         var timelineCapHit = HasAnyNextPage(pull);
+        if (timelineCapHit) Log.TimelineCapHit(_log, reference.Owner, reference.Repo, reference.Number);
 
-        // ClusteringQuality, Iterations, and Commits are populated by PrDetailLoader
-        // (Task 4) when it composes PrDetailSnapshot. The IReviewService caller returns
-        // the GitHub-side facts only; placeholders here are overwritten downstream.
+        // Clustering is performed by PrDetailLoader (Task 4); IReviewService returns the
+        // GitHub-side facts only and the loader overwrites these fields. Default to
+        // ClusteringQuality.Low + Iterations:null so the DTO is internally consistent
+        // before the loader runs (Ok would imply trustworthy iteration boundaries —
+        // contradicting Iterations being empty). Commits is empty here because the
+        // commit list comes from GetTimelineAsync's per-commit data, which the loader
+        // composes separately.
         return new PrDetailDto(
             pr,
-            ClusteringQuality: ClusteringQuality.Ok,
-            Iterations: Array.Empty<IterationDto>(),
+            ClusteringQuality: ClusteringQuality.Low,
+            Iterations: null,
             Commits: Array.Empty<CommitDto>(),
             RootComments: rootComments,
             ReviewComments: reviewComments,
@@ -309,6 +327,11 @@ public sealed class GitHubReviewService : IReviewService
         var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
+        // Surface execution-level GraphQL errors as an exception when no usable data
+        // came back (see GetPrDetailAsync for the rationale). Partial data with errors
+        // continues into the parser.
+        ThrowIfGraphQLErrorsWithoutData(doc.RootElement);
+
         // Defensive path-walk — see GetPrDetailAsync for the GraphQL-error rationale. An
         // empty timeline maps to an empty ClusteringInput (callers treat it as "no
         // signal"); the strategy returns an empty cluster list in that case.
@@ -352,11 +375,16 @@ public sealed class GitHubReviewService : IReviewService
         // which makes any subdirectoried file return 404. Split, escape, rejoin.
         var encodedPath = string.Join("/", path.Split('/').Select(Uri.EscapeDataString));
         var url = $"repos/{reference.Owner}/{reference.Repo}/contents/{encodedPath}?ref={Uri.EscapeDataString(sha)}";
+
+        var token = await _readToken().ConfigureAwait(false);
         using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        if (!string.IsNullOrEmpty(token))
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         // The raw media type returns the file body directly rather than a JSON envelope —
-        // matches what the diff pane needs for word-diff and markdown rendering.
+        // matches what the diff pane needs for word-diff and markdown rendering. Note that
+        // the standard +json Accept does NOT apply here (we want the file body verbatim).
         req.Headers.Accept.ParseAdd("application/vnd.github.raw");
 
         using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
@@ -511,6 +539,7 @@ public sealed class GitHubReviewService : IReviewService
         var collected = new List<FileChange>();
         var url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}/files?per_page=100";
         var pageCount = 0;
+        var moreAvailable = false;
         using var http = _httpFactory.CreateClient("github");
         while (url is not null && pageCount < MaxPages)
         {
@@ -520,9 +549,16 @@ public sealed class GitHubReviewService : IReviewService
             using var doc = JsonDocument.Parse(body);
             collected.AddRange(ParseFileChanges(doc.RootElement));
 
-            url = ExtractNextLink(resp);
+            var nextUrl = ExtractNextLink(resp);
             pageCount++;
+            // If we hit the page cap and GitHub still has a Link rel=next, log so
+            // operators can distinguish "page-cap truncation" from "server-side soft
+            // truncation" during dogfooding. The user-visible signal is still the
+            // single `DiffDto.Truncated` bool — the conflation is intentional.
+            if (pageCount == MaxPages && nextUrl is not null) moreAvailable = true;
+            url = nextUrl;
         }
+        if (moreAvailable) Log.DiffPagesCapped(_log, reference.Owner, reference.Repo, reference.Number);
         return collected;
     }
 
@@ -589,9 +625,18 @@ public sealed class GitHubReviewService : IReviewService
         return null;
     }
 
-    private static async Task<HttpResponseMessage> SendGitHubAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct)
+    // Instance-level helper that attaches the Bearer token alongside the standard
+    // headers — without this, every REST call goes out anonymously, which 404s on
+    // private repos and burns through the 60/hr unauthenticated rate limit on public
+    // repos. Mirrors the pattern used by GitHubSectionQueryRunner and GitHubPrEnricher
+    // (the named "github" HttpClient does not carry a default Authorization header,
+    // so every caller is responsible for attaching one per request).
+    private async Task<HttpResponseMessage> SendGitHubAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct)
     {
+        var token = await _readToken().ConfigureAwait(false);
         using var req = new HttpRequestMessage(method, url);
+        if (!string.IsNullOrEmpty(token))
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
         return await http.SendAsync(req, ct).ConfigureAwait(false);
@@ -602,6 +647,18 @@ public sealed class GitHubReviewService : IReviewService
     // Inter-batch pace between concurrent per-commit fan-out batches. Transport-layer
     // concern (rate-limit defense), not a clustering coefficient. Spec § 6.4.
     private const int InterBatchPaceMs = 100;
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Per-commit fan-out hit a 4xx response on PR {Owner}/{Repo}#{Number}; remaining commits will be skipped (session degraded). ChangedFiles will be null for those commits and FileJaccardMultiplier returns neutral (1.0).")]
+        internal static partial void FanOutDegraded(ILogger logger, string owner, string repo, int number);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Timeline page cap reached on PR {Owner}/{Repo}#{Number}; some history was not loaded. Frontend renders the explicit cap-hit banner.")]
+        internal static partial void TimelineCapHit(ILogger logger, string owner, string repo, int number);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Diff pagination hit the 30-page cap on PR {Owner}/{Repo}#{Number}; truncated diff will surface to the user via DiffDto.Truncated.")]
+        internal static partial void DiffPagesCapped(ILogger logger, string owner, string repo, int number);
+    }
 
     private async Task<string> PostGraphQLAsync(string query, object variables, CancellationToken ct)
     {
@@ -720,6 +777,25 @@ public sealed class GitHubReviewService : IReviewService
         return string.Equals(tn.GetString(), expected, StringComparison.Ordinal);
     }
 
+    // GraphQL is "200 with errors" rather than HTTP-error-coded; the `errors` array
+    // carries execution failures. Throw only when errors are present AND there is no
+    // usable data (data missing entirely, or data:null). Per GraphQL spec, partial
+    // data is legitimately delivered alongside non-fatal field errors — we let those
+    // through and the per-field parsers fall back to empty/default.
+    private static void ThrowIfGraphQLErrorsWithoutData(JsonElement root)
+    {
+        if (!root.TryGetProperty("errors", out var errors)) return;
+        if (errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() == 0) return;
+
+        var hasUsableData = root.TryGetProperty("data", out var data)
+            && data.ValueKind == JsonValueKind.Object;
+        if (hasUsableData) return;
+
+        throw new GitHubGraphQLException(
+            $"GitHub GraphQL request returned {errors.GetArrayLength()} error(s) and no data.",
+            errors.GetRawText());
+    }
+
     // Walks a chain of property names defensively. Returns false on any missing key,
     // any non-object intermediate, or short-circuits at the first JSON null.
     private static bool TryGetPath(JsonElement root, out JsonElement leaf, params string[] path)
@@ -761,7 +837,11 @@ public sealed class GitHubReviewService : IReviewService
         var state = GetStr("state");
         var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal) ||
                        (pull.TryGetProperty("mergedAt", out var ma) && ma.ValueKind != JsonValueKind.Null);
-        var isClosed = string.Equals(state, "CLOSED", StringComparison.Ordinal) || isMerged;
+        // IsClosed means "closed without merging" — a separate state from merged.
+        // Consumers that want "no longer open" should spell `IsMerged || IsClosed`.
+        // Treating MERGED as IsClosed=true forced the inverse spelling on every
+        // consumer and was a footgun (PR #19 review).
+        var isClosed = string.Equals(state, "CLOSED", StringComparison.Ordinal) && !isMerged;
 
         return new Pr(
             reference,
@@ -842,11 +922,17 @@ public sealed class GitHubReviewService : IReviewService
         return result;
     }
 
+    // The three GraphQL connections inside `pullRequest` that the spec § 6.1 cap-hit
+    // banner cares about. Single source of truth so HasAnyNextPage stays in lock-step
+    // with whatever the GetPrDetailAsync query asks for; if the query renames a
+    // connection, this list updates with it.
+    private static readonly string[] PagedConnections = ["comments", "reviewThreads", "timelineItems"];
+
     private static bool HasAnyNextPage(JsonElement pull)
     {
-        return ConnectionHasNext(pull, "comments")
-            || ConnectionHasNext(pull, "reviewThreads")
-            || ConnectionHasNext(pull, "timelineItems");
+        foreach (var name in PagedConnections)
+            if (ConnectionHasNext(pull, name)) return true;
+        return false;
     }
 
     private static bool ConnectionHasNext(JsonElement pull, string connection)
@@ -892,7 +978,11 @@ public sealed class GitHubReviewService : IReviewService
             foreach (var (idx, commit, got4xx) in batchResults)
             {
                 result[idx] = commit;
-                if (got4xx) degraded = true;
+                if (got4xx && !degraded)
+                {
+                    degraded = true;
+                    Log.FanOutDegraded(_log, reference.Owner, reference.Repo, reference.Number);
+                }
             }
         }
         return result;

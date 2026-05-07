@@ -98,11 +98,15 @@ public class GitHubReviewServiceTimelineTests
     }
 
     [Fact]
-    public async Task Per_commit_fanout_4xx_marks_session_degraded()
+    public async Task Per_commit_fanout_4xx_ratchets_session_degraded_and_skips_remaining()
     {
         // 4xx on any per-commit fetch: that commit's ChangedFiles = null, session marked
-        // degraded (subsequent commits also get null), single warning logged. Spec § 6.4 + § 10.1.
-        // We force the 5th per-commit response to 403; remaining commits' fan-out is skipped.
+        // degraded, ALL remaining batches resolve commits to null without issuing requests.
+        // Spec § 6.4 + § 10.1. We force the 5th per-commit response to 403.
+        // With concurrency cap 8, the 5th call lands inside batch 1 (commits 0..7).
+        // Batch 1 still completes its 8 in-flight calls (we can't cancel mid-batch);
+        // batches 2 and 3 (commits 8..15, 16..23, 24..29) are skipped entirely.
+        // Expected: PerCommitFetchCount == 8 (batch 1 only); commits 8..29 are all null.
         var calls = 0;
         var handler = new GraphQLPlusRestHandler
         {
@@ -119,9 +123,10 @@ public class GitHubReviewServiceTimelineTests
             new PrReference("o", "r", 1), CancellationToken.None);
 
         input.Commits.Should().HaveCount(30);
-        // At least one commit (the 403'd one + any remaining after degrade) has null ChangedFiles.
-        input.Commits.Count(c => c.ChangedFiles is null).Should().BeGreaterThan(0,
-            because: "a 4xx in the fan-out marks that commit + the rest as degraded");
+        handler.PerCommitFetchCount.Should().Be(8,
+            because: "the 4xx ratchets degraded after batch 1's 8 in-flight calls; batches 2 and 3 are skipped");
+        input.Commits.Skip(8).Should().AllSatisfy(c => c.ChangedFiles.Should().BeNull(
+            because: "every commit beyond the failure point is degraded (no fan-out issued)"));
     }
 
     [Fact]
