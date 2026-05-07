@@ -51,6 +51,25 @@ internal sealed class SessionTokenMiddleware
             return;
         }
 
+        // Loopback-different-port accommodation: the Vite dev server (5173) proxies
+        // /api to the backend (5180). Vite serves the SPA's HTML, so the cookie-
+        // stamping middleware never runs against that response — the browser never
+        // gets a prism-session cookie for the 5173 origin. This branch lets dev
+        // traffic flow without auth, mirroring OriginCheckMiddleware's existing
+        // accommodation for the same scenario. Production deploys (where Host is
+        // not loopback) are unaffected. Same-machine sibling-process probes at
+        // other localhost ports without the cookie are accepted as part of the
+        // documented threat model (spec § 6.2 last paragraph).
+        var origin = ctx.Request.Headers["Origin"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(origin)
+            && IsLoopback(origin)
+            && IsLoopback(ctx.Request.Host.Host)
+            && !string.Equals(origin, $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(ctx).ConfigureAwait(false);
+            return;
+        }
+
         // Accept EITHER the X-PRism-Session header OR the prism-session cookie. The
         // cookie is per-process random, SameSite=Strict, and same-origin only — so a
         // cross-origin attacker cannot get it sent. Combined with OriginCheckMiddleware
@@ -96,6 +115,20 @@ internal sealed class SessionTokenMiddleware
 
     private static bool IsLivenessEndpoint(PathString path) =>
         path.HasValue && string.Equals(path.Value, "/api/health", StringComparison.Ordinal);
+
+    // Mirrors OriginCheckMiddleware.IsLoopback — kept duplicated rather than shared so
+    // each middleware can be reasoned about in isolation. Both end up identical because
+    // they encode the same architectural invariant (loopback-port = legitimate dev).
+    private static bool IsLoopback(string hostOrOrigin)
+    {
+        if (string.IsNullOrEmpty(hostOrOrigin)) return false;
+        var host = hostOrOrigin;
+        if (Uri.TryCreate(hostOrOrigin, UriKind.Absolute, out var u)) host = u.Host;
+        return string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || host == "127.0.0.1"
+            || host == "[::1]"
+            || host == "::1";
+    }
 }
 
 // Singleton; Current is captured once per process. Backend restart = new process =

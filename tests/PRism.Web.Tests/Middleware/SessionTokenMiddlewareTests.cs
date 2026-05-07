@@ -110,6 +110,28 @@ public class SessionTokenMiddlewareTests
     }
 
     [Fact]
+    public async Task Skips_auth_for_loopback_different_port_origin()
+    {
+        // Vite dev server at :5173 proxies /api to backend at :5180. Vite serves
+        // the SPA's HTML, so cookie stamping never runs against the page → the
+        // browser never has a prism-session cookie for the 5173 origin. The
+        // middleware mirrors OriginCheckMiddleware's existing accommodation:
+        // both sides loopback (different ports) = legitimate dev traffic. Spec
+        // § 8 (post-PR5 edit). Production deploys (Host not loopback) hit the
+        // strict cookie-OR-header path.
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateUnauthenticatedClient();
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/api/capabilities");
+        req.Headers.Add("Origin", "http://localhost:5173");
+        // No X-PRism-Session header, no prism-session cookie — only the loopback
+        // Origin proves "this is dev traffic from a sibling localhost port."
+        var resp = await client.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
     public async Task Allows_request_when_only_prism_session_cookie_is_set()
     {
         // The SPA's existing apiClient does not echo X-PRism-Session as a header — same-
