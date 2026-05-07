@@ -7,16 +7,23 @@ status: open
 
 # Deferrals — S3 PR-detail (read) plan
 
-Tradeoffs surfaced during the plan-rigor pass on 2026-05-07. Source: `compound-engineering:ce-doc-review` 7-persona pass on the synced plan, followed by an in-conversation rigor pass that labeled each finding Apply / Defer / Skip.
+Records deferred / skipped items affecting the S3 plan, regardless of source. The
+original (and largest) batch comes from the `compound-engineering:ce-doc-review`
+7-persona rigor pass on 2026-05-07. Subsequent rounds — implementation
+follow-ups carried over from a shipped PR, post-merge realizations, etc. — are
+appended below using the same schema; each entry's `Source:` field names the
+session.
 
-The Apply items (~30 individual edits across Tasks 1-11) landed in commit applying Q1-Q6 + plan-rigor decisions. The 3 Defer + 5 Skip items below are the rejections.
+The Apply items from the original ce-doc-review pass (~30 individual edits across
+Tasks 1-11) landed in the commit applying Q1-Q6 + plan-rigor decisions. The
+remaining Defer / Skip items from that pass are recorded below.
 
 The companion spec deferrals sidecar (`docs/specs/2026-05-06-s3-pr-detail-read-deferrals.md`) records:
 - The original spec-rigor pass's Defer/Skip items (4 + 6)
 - 5 meta-process Skip items about the deferrals tracking system itself
 - 5 `[Superseded]` items where spec-rigor Apply decisions got reversed by this plan-rigor pass
 
-This sidecar covers the remainder: plan-specific Defer/Skip items that don't touch the spec.
+This sidecar covers the remainder: plan-affecting items that don't touch the spec.
 
 ## [Defer] PrDetailLoader 3-round-trip perf budget
 
@@ -85,3 +92,32 @@ This sidecar covers the remainder: plan-specific Defer/Skip items that don't tou
 - **Date:** 2026-05-07
 - **Reason:** Adversarial reviewer challenged the plan's 3882-line length as process-padding. Reviewer's own counter-test on the same finding showed the bulk is load-bearing (Tasks 4, 5, 7, 8 contain non-trivial implementation detail not in the spec). Length itself isn't a flaw; specific over-spec'd sub-items were challenged separately under other findings. Skip: not actionable.
 - **Revisit when:** N/A — not a finding to apply.
+
+---
+
+## [Defer] Cursor pagination on `GetPrDetailAsync` GraphQL connections (`MaxTimelinePages = 10`)
+
+- **Source:** PR #19 implementation — Task 3.4 (GraphQL impl) shipped single-page-with-cap-detection instead of the spec'd cursor loop
+- **Severity:** P2
+- **Date:** 2026-05-07
+- **Reason:** Spec § 6.1 calls for cursor-paginated fetches up to `MaxTimelinePages = 10` on every connection where `pageInfo.hasNextPage` is true. PR #19 ships a simpler shape: single page with `TimelineCapHit` derived from `pageInfo.hasNextPage` on any of the three connections (`comments`, `reviewThreads`, `timelineItems`). The user-visible cap-hit signal — the explicit "Some history beyond N pages was not loaded" banner the frontend will render — works correctly with the simpler shape. Cursor pagination would close the gap for PRs with > 100 comments / threads / timeline items, but adds non-trivial code (cursor extraction + per-connection loop + reassembly) that the user-visible UX doesn't yet exercise. Defer until either (a) PrDetailLoader (Task 4) actually consumes the field and the cap is felt in practice, or (b) dogfooding produces a PR where the missing history is user-blocking.
+- **Revisit when:** PrDetailLoader is implementing the snapshot-composition path AND a Task 4 / S3 dogfooding case shows the cap-hit banner firing on PRs the user wants to act on. Default decision at that point: implement the cursor loop (the spec's design). Backstop: even without cursor pagination, `TimelineCapHit` keeps the user honest.
+- **Original finding evidence:** `GetPrDetailAsync` code comment in `PRism.GitHub/GitHubReviewService.cs`: "Cursor pagination up to MaxTimelinePages = 10 is a follow-up (spec § 6.1; Q2 cap detection); the cap-hit signal is the user-visible contract that matters today." PR #19 body § Spec alignment notes.
+
+## [Defer] `PaginatedFakeHandler.Reset()` for repeat-route tests
+
+- **Source:** PR #19 review — reply to Copilot inline comment 3202327866 promised a future Reset() for tests that need to call the same route across phases
+- **Severity:** P3
+- **Date:** 2026-05-07
+- **Reason:** PR #19's hardening of `PaginatedFakeHandler` made over-call return HTTP 500 (was empty 200) so pagination bugs surface loudly. A consequence: tests that legitimately want to call a route across multiple phases (e.g., re-fetch verification, retry tests) currently have to script enough explicit pages or re-construct the handler. A `Reset()` method that clears `Rule.Index` would let tests do this cleanly. No such test exists in S3 today; defer until a Task 4+ test needs this shape.
+- **Revisit when:** A test in Task 4-11 wants to assert behavior across two calls to the same route (e.g., "PrDetailLoader caches the response — second call is served from cache, not the handler"). At that point, add `Reset()` (and maybe a `RouteReplay()` variant that loops pages indefinitely) and document the choice.
+- **Original finding evidence:** PR #19 reply to comment 3202327866: "Tests that need 'infinite empty pages' must script enough explicit pages or call a future `Reset()`."
+
+## [Defer] Doc-maintenance debt from PR #19 (roadmap / README § Status / specs index)
+
+- **Source:** PR #19 implementation — `CLAUDE.md` § Documentation maintenance requires slice-progress events to update `docs/roadmap.md` slice row + `README.md` § Status + `docs/specs/README.md` spec status group **in the same PR**. PR #19 didn't.
+- **Severity:** P2
+- **Date:** 2026-05-07
+- **Reason:** This is process-debt, not architectural. Three small markdown edits got missed at PR #19 merge time. The deferral lets the next PR (typically PR4 / Task 4) bundle the doc updates with that PR's own slice-progress edits, since both surfaces need updating then anyway. Surfaced as a `[Defer]` rather than `[Skip]` because the project's own policy says these MUST be updated — they're owed, not optional.
+- **Revisit when:** Opening any subsequent S3 PR (Task 4+) — bundle the doc updates with that PR's status changes. If two more PRs land before this is addressed, treat it as a process drift signal and update CLAUDE.md to enforce more loudly (e.g., a pre-merge CI check that scans the PR for status-affecting code paths and fails if the matching doc rows aren't touched).
+- **Original finding evidence:** `CLAUDE.md` § Documentation maintenance table row "Slice PR merged (or partial slice progress)"; PR #19 didn't include those edits.

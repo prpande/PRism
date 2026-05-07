@@ -135,7 +135,7 @@ The skill is `compound-engineering:ce-doc-review`. If it is not installed in a f
 
 **How "automatic" this is:** Claude is the executor. The trigger is the PR diff: when drafting commits that change any of the items above, scan the matching doc *before* opening the PR and include the doc edit in the same PR. PRs that ship code without the matching doc update are incomplete — flag and fix before merge.
 
-**Deferrals sidecar schema.** Each entry in a `<source>-deferrals.md` follows this shape — the first sidecar to land (`docs/specs/2026-05-06-s3-pr-detail-read-deferrals.md`) is the canonical reference:
+**Deferrals sidecar schema.** A `<source>-deferrals.md` records deferred / skipped items affecting the source doc, regardless of which session surfaced them — ce-doc-review rigor passes, post-merge implementation follow-ups, persona reviews, dogfooding observations. The `Source:` field on each entry names the session. The first sidecar to land (`docs/specs/2026-05-06-s3-pr-detail-read-deferrals.md`) is the canonical reference for the schema:
 
 ```markdown
 ---
