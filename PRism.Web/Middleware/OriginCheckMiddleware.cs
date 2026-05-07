@@ -24,8 +24,21 @@ internal sealed class OriginCheckMiddleware
 
         var origin = ctx.Request.Headers["Origin"].FirstOrDefault();
         var expected = $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}";
-        if (string.IsNullOrEmpty(origin)
-            || string.Equals(origin, expected, StringComparison.OrdinalIgnoreCase)
+
+        // S3 PR5: empty Origin on a mutating method → reject. Pre-S3 the middleware
+        // allowed empty Origin (carve-out for non-browser tools without an Origin
+        // header). That exemption is retired because spec § 8 mandates X-PRism-Session
+        // enforcement on mutating requests, and CSRF defense relies on Origin being
+        // present-and-correct. GETs with empty Origin remain allowed (top-level
+        // navigations and direct deep-links don't send Origin).
+        if (string.IsNullOrEmpty(origin))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await ctx.Response.WriteAsync("Cross-origin request rejected (missing Origin).").ConfigureAwait(false);
+            return;
+        }
+
+        if (string.Equals(origin, expected, StringComparison.OrdinalIgnoreCase)
             || (IsLoopback(origin) && IsLoopback(ctx.Request.Host.Host)))
         {
             await _next(ctx).ConfigureAwait(false);

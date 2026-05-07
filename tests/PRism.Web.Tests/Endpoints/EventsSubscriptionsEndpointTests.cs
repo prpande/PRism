@@ -17,7 +17,8 @@ public class EventsSubscriptionsEndpointTests
     {
         // Endpoint's own no-cookie defense (middleware would also 401 if X-PRism-Session
         // were missing). Use an unauthenticated client + manual X-PRism-Session header
-        // so middleware passes — the test isolates the endpoint's no-cookie branch.
+        // + a same-origin Origin header so SessionToken AND OriginCheck middleware pass
+        // — the test isolates the endpoint's no-cookie branch.
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateUnauthenticatedClient();
 
@@ -26,6 +27,7 @@ public class EventsSubscriptionsEndpointTests
             Content = JsonContent.Create(new { prRef = new { owner = "o", repo = "r", number = 1 } }),
         };
         req.Headers.Add("X-PRism-Session", factory.SessionToken);
+        req.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
         // No Cookie header — the endpoint must reject with 401.
         var resp = await client.SendAsync(req);
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -150,8 +152,10 @@ public class EventsSubscriptionsEndpointTests
 
         using var req = new HttpRequestMessage(HttpMethod.Delete, "/api/events/subscriptions?prRef=o/r/1");
         req.Headers.Add("X-PRism-Session", factory.SessionToken);
+        req.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
         // No cookie → idempotent 204 (endpoint logic; without the X-PRism-Session
-        // header the middleware would have returned 401 before reaching the endpoint).
+        // header the middleware would have returned 401, and without Origin the
+        // OriginCheckMiddleware would have returned 403).
         var resp = await client.SendAsync(req);
 
         resp.StatusCode.Should().Be(HttpStatusCode.NoContent);

@@ -68,9 +68,12 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
         });
     }
 
-    // Default test client carries auto-injected session-token credentials so existing
-    // tests don't have to know about the SessionTokenMiddleware. Tests asserting 401
-    // paths use CreateUnauthenticatedClient instead.
+    // Default test client carries auto-injected session-token credentials AND a
+    // same-origin Origin header so existing tests don't have to know about the
+    // SessionTokenMiddleware or the post-S3 OriginCheckMiddleware tightening (which
+    // rejects empty Origin on POST/PUT/PATCH/DELETE). Tests asserting 401 / 403
+    // paths use CreateUnauthenticatedClient instead, and OriginCheckMiddlewareTests
+    // remove the default Origin before setting their own per-test value.
     protected override void ConfigureClient(System.Net.Http.HttpClient client)
     {
         ArgumentNullException.ThrowIfNull(client);
@@ -78,6 +81,9 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
         var token = SessionToken;
         client.DefaultRequestHeaders.Add("X-PRism-Session", token);
         client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
+        var sameOrigin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
+        if (!string.IsNullOrEmpty(sameOrigin))
+            client.DefaultRequestHeaders.Add("Origin", sameOrigin);
     }
 
     // For tests that need to exercise the 401 path (no token / wrong token). Uses
