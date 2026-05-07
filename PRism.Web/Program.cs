@@ -15,6 +15,7 @@ builder.Services.AddPrismCore(dataDir);
 builder.Services.AddPrismGitHub();
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
+builder.Services.AddSingleton<SessionTokenProvider>();
 
 var app = builder.Build();
 
@@ -60,6 +61,33 @@ app.UseMiddleware<RequestIdMiddleware>();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseMiddleware<OriginCheckMiddleware>();
+app.UseMiddleware<SessionTokenMiddleware>();
+
+// Stamp the prism-session cookie on every text/html response (the SPA's index.html
+// load path) so the SPA can read it and echo as X-PRism-Session on subsequent
+// fetches. Response.OnStarting fires before the first body byte writes, which
+// works with static-file + minimal-API + fallback-to-file paths alike. Predicate
+// excludes SSE responses (text/event-stream) so EventSource doesn't get the cookie
+// twice — it already arrived with the HTML page.
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.OnStarting(() =>
+    {
+        if (ctx.Response.ContentType?.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var token = ctx.RequestServices.GetRequiredService<SessionTokenProvider>().Current;
+            ctx.Response.Cookies.Append("prism-session", token, new CookieOptions
+            {
+                HttpOnly = false,
+                SameSite = SameSiteMode.Strict,
+                Secure = false,
+                Path = "/",
+            });
+        }
+        return Task.CompletedTask;
+    });
+    await next().ConfigureAwait(false);
+});
 
 app.MapStaticAssets();
 

@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
+using PRism.Web.Middleware;
 
 namespace PRism.Web.Tests.TestHelpers;
 
@@ -14,6 +15,11 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
     public Func<Task<AuthValidationResult>>? ValidateOverride { get; set; }
     public FakeInboxRefreshOrchestrator? FakeOrchestrator { get; set; }
     public IReviewService? ReviewServiceOverride { get; set; }
+
+    // Lazily resolved per-process session token (the SessionTokenMiddleware checks
+    // X-PRism-Session header / prism-session cookie against this value). Tests that
+    // need to assert against the token (e.g. cookie integration) use this property.
+    public string SessionToken => Services.GetRequiredService<SessionTokenProvider>().Current;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -60,6 +66,28 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
                 services.AddSingleton<IInboxRefreshOrchestrator>(FakeOrchestrator);
             }
         });
+    }
+
+    // Default test client carries auto-injected session-token credentials so existing
+    // tests don't have to know about the SessionTokenMiddleware. Tests asserting 401
+    // paths use CreateUnauthenticatedClient instead.
+    protected override void ConfigureClient(System.Net.Http.HttpClient client)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        base.ConfigureClient(client);
+        var token = SessionToken;
+        client.DefaultRequestHeaders.Add("X-PRism-Session", token);
+        client.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
+    }
+
+    // For tests that need to exercise the 401 path (no token / wrong token). Uses
+    // Server.CreateClient() directly so ConfigureClient (which auto-injects auth) is
+    // bypassed — CreateDefaultClient ALSO runs ConfigureClient, so it can't be used.
+    public System.Net.Http.HttpClient CreateUnauthenticatedClient()
+    {
+        var client = Server.CreateClient();
+        client.BaseAddress = ClientOptions.BaseAddress;
+        return client;
     }
 
     protected override void Dispose(bool disposing)

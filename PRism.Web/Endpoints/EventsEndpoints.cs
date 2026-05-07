@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
+using PRism.Web.Middleware;
 using PRism.Web.Sse;
 
 namespace PRism.Web.Endpoints;
@@ -31,7 +32,7 @@ internal static class EventsEndpoints
         app.MapGet("/api/events/ping", () => Results.Ok());
 
         app.MapPost("/api/events/subscriptions", SubscribeAsync)
-            .WithMetadata(new RequestSizeLimitAttribute(SubscribeBodyCapBytes));
+            .AddEndpointFilter(new RequestBodyCapFilter(SubscribeBodyCapBytes));
 
         app.MapDelete("/api/events/subscriptions", UnsubscribeAsync);
 
