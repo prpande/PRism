@@ -379,7 +379,9 @@ git commit -m "feat(state): add ViewedFiles + v1->v2 migration + read-only-on-fu
 
 ## Follow-up needed (post-PR #14)
 
-PR #14 shipped Steps 1.1–1.11 above. The spec's `ce-doc-review` pass (commit `6c2a487`) added items that didn't land in PR #14 and need a separate follow-up commit on this same `feat/s3-doc-review` branch:
+PR #14 shipped Steps 1.1–1.11 above (state migration v1→v2 with `ViewedFiles`). The spec's `ce-doc-review` pass (commit `6c2a487`) added items that didn't land in PR #14 and need a separate follow-up commit on this same `feat/s3-doc-review` branch.
+
+**P2.16 — UiPreferences migration scope clarification:** PR #14 was state migration only; the follow-up below is what introduces `UiPreferences` and updates `MigrateV1ToV2` to write `ui-preferences: { "diff-mode": "side-by-side" }` at the top level when missing (idempotent — re-running the migration is safe).
 
 - [ ] **Add `UiPreferences { DiffMode }` record to `AppState`** — new top-level field on `AppState`. JSON name `ui-preferences`; `DiffMode` defaults to `side-by-side` (kebab-case lowercase via `JsonStringEnumConverter`). Spec § 6.3.
 
@@ -415,6 +417,8 @@ PR #14 shipped Steps 1.1–1.11 above. The spec's `ce-doc-review` pass (commit `
 
 - [ ] **Add `ResetToDefaultAsync()` API on `AppStateStore`** — bypasses `IsReadOnlyMode`, deletes `state.json` directly via `File.Delete`, and signals process restart to the caller. Setup is the only call site; the future-version → "reset to defaults" recovery path needs this. Spec § 6.3 + § 10.4.
 
+  P2.20 — wrap `File.Delete(_path)` in try/catch and translate to `StateResetFailedException` so the caller can document the recovery path:
+
   ```csharp
   public async Task ResetToDefaultAsync(CancellationToken ct)
   {
@@ -424,7 +428,16 @@ PR #14 shipped Steps 1.1–1.11 above. The spec's `ce-doc-review` pass (commit `
       await _gate.WaitAsync(ct).ConfigureAwait(false);
       try
       {
-          if (File.Exists(_path)) File.Delete(_path);
+          try
+          {
+              if (File.Exists(_path)) File.Delete(_path);
+          }
+          catch (IOException ex)
+          {
+              // P2.20 — surface a domain exception so Setup can show recovery copy.
+              throw new StateResetFailedException(
+                  "Failed to delete state.json. Another process may have it open. Close PRism and retry.", ex);
+          }
           IsReadOnlyMode = false;
           // Caller is responsible for triggering a process restart so the
           // next launch loads AppState.Default from a clean slate.
@@ -436,13 +449,46 @@ PR #14 shipped Steps 1.1–1.11 above. The spec's `ce-doc-review` pass (commit `
   }
   ```
 
+- [ ] **Add Setup `POST /api/setup/reset` endpoint** (P1.9). Goes through `SessionTokenMiddleware` + `OriginCheckMiddleware` (mutating endpoint). Body `{ confirm: true }`; happy path: deletes `state.json` → 204 → process-restart signal.
+
+  ```csharp
+  app.MapPost("/api/setup/reset",
+      async (ResetRequest body, AppStateStore store, IHostApplicationLifetime lifetime, CancellationToken ct) =>
+      {
+          if (!body.Confirm) return Results.Problem(type: "/setup/confirm-required", statusCode: 400);
+          await store.ResetToDefaultAsync(ct);
+          // Signal restart to the host (the run.ps1 wrapper or systemd-equivalent restarts the process).
+          lifetime.StopApplication();
+          return Results.NoContent();
+      }).WithMetadata(new RequestSizeLimitAttribute(16384));
+
+  public sealed record ResetRequest(bool Confirm);
+  ```
+
+  Tests:
+  - `Reset_returns_401_when_session_header_missing` (P1.9 — middleware enforcement).
+  - `Reset_returns_403_when_origin_missing` (P1.9 — OriginCheck enforcement on mutating).
+  - `Reset_happy_path_deletes_state_json_and_returns_204` (P1.9 — confirm: true → state.json gone → 204 → process-restart signaled).
+
 - [ ] **Add migration tests for the new behavior:**
 
   ```csharp
   [Fact]
+  public async Task UiPreferences_default_round_trips_with_side_by_side()
+  {
+      // Construct AppState.Default. Save. Load. Assert state.UiPreferences.DiffMode == DiffMode.SideBySide.
+  }
+
+  [Fact]
   public async Task LoadAsync_migrates_v1_state_file_adds_ui_preferences_with_side_by_side_default()
   {
       // Write v1 state with no ui-preferences. Load. Assert state.UiPreferences.DiffMode == DiffMode.SideBySide.
+  }
+
+  [Fact]
+  public async Task ResetToDefaultAsync_round_trips_clean_state()
+  {
+      // Save a non-default state. Call ResetToDefaultAsync. Re-load. Assert state == AppState.Default.
   }
 
   [Fact]
@@ -459,9 +505,16 @@ PR #14 shipped Steps 1.1–1.11 above. The spec's `ce-doc-review` pass (commit `
       // Write `{not json`. Load. Assert state == AppState.Default;
       // store.IsReadOnlyMode == false; state.json.corrupt-* exists.
   }
+
+  [Fact]
+  public async Task ResetToDefaultAsync_throws_StateResetFailedException_when_File_Delete_fails()
+  {
+      // P2.20 — open a FileStream on state.json with read-share-deny mode (locks the file),
+      // call ResetToDefaultAsync, assert StateResetFailedException is thrown.
+  }
   ```
 
-  Test count for this task moves from **5** (state above) to **6** (1.x next-launch path is implicitly covered by `ResetToDefaultAsync` test). Spec § 11.3 mirrors this.
+  P1.8 — Test count for this task moves from **5** (Step 1.10 above) to **8** (3 new tests added: UiPreferences default round-trip, ResetToDefaultAsync round-trip, malformed-JSON quarantine + IsReadOnlyMode stays false). Spec § 11.3 mirrors this.
 
 - [ ] **Commit the follow-up:**
 
@@ -1221,68 +1274,39 @@ git commit -m "feat(iterations): weighted-distance clustering with 2 multipliers
 
 PR #15 shipped Steps 2.1–2.18 above. The spec's `ce-doc-review` pass (commit `6c2a487`) added items that didn't land in PR #15 and need a separate follow-up commit on this same `feat/s3-doc-review` branch:
 
-- [ ] **Add `OneTabPerCommitClusteringStrategy`** implementing `IIterationClusteringStrategy`. Emits one `IterationCluster` per commit, sorted by `committedDate`. The DI fallback target when the discipline-check protocol fails to reach 70% agreement after the tuning rounds (§ 11.5). Spec § 6.4.
+- [ ] **Add `ClusteringQuality` enum to `PRism.Core.Iterations`** — emitted by `PrDetailLoader` to signal whether the iteration tabs are valid or whether the frontend should fall back to `CommitMultiSelectPicker`. Spec § 6.4.
 
   ```csharp
-  // PRism.Core/Iterations/OneTabPerCommitClusteringStrategy.cs
+  // PRism.Core/Iterations/ClusteringQuality.cs
   namespace PRism.Core.Iterations;
 
-  public sealed class OneTabPerCommitClusteringStrategy : IIterationClusteringStrategy
+  public enum ClusteringQuality { Ok, Low }
+  ```
+
+- [ ] **`WeightedDistanceClusteringStrategy` short-circuit changes (Q5).** Spec § 6.4.
+  - DROP the `if input.Commits.Length <= 1: return single iteration` short-circuit. The ≤1-commit case now lives in `PrDetailLoader` (which sets `ClusteringQuality = Low` and returns `Iterations = null`).
+  - When the degenerate-detector branch fires (>50% of weighted distances clamped to hard floor), `Cluster` now returns `null` (instead of returning fake one-per-commit clusters or a single inconclusive cluster). `PrDetailLoader` translates the null into `ClusteringQuality = Low`.
+
+  ```csharp
+  // WeightedDistanceClusteringStrategy.Cluster: signature becomes nullable.
+  public IReadOnlyList<IterationCluster>? Cluster(
+      ClusteringInput input,
+      IterationClusteringCoefficients coefficients);
+  // ...
+  // Degenerate-case path now returns null:
+  if (weighted.Length >= coefficients.MadK * 2 &&
+      floorClampedFraction > coefficients.DegenerateFloorFraction)
   {
-      public IReadOnlyList<IterationCluster> Cluster(
-          ClusteringInput input,
-          IterationClusteringCoefficients coefficients)
-      {
-          if (input.Commits.Count == 0) return Array.Empty<IterationCluster>();
-          var sorted = input.Commits.OrderBy(c => c.CommittedDate).ToArray();
-          return sorted.Select((c, i) =>
-              new IterationCluster(i + 1, c.Sha, c.Sha, new[] { c.Sha })).ToArray();
-      }
+      return null;   // PrDetailLoader emits ClusteringQuality.Low.
   }
   ```
 
-  Tests:
+  Also: `IIterationClusteringStrategy.Cluster` signature becomes `IReadOnlyList<IterationCluster>?` (nullable return).
+
+- [ ] **DROP `MaxFallbackTabs` field** from `IterationClusteringCoefficients` — the degenerate-fallback path no longer caps the cluster count because it no longer emits clusters. Spec § 6.4.
 
   ```csharp
-  [Fact]
-  public void Empty_commits_returns_no_clusters() { /* ... */ }
-
-  [Fact]
-  public void N_commits_returns_N_clusters_sorted_by_committed_date() { /* ... */ }
-
-  [Fact]
-  public void Each_cluster_has_single_commit_sha() { /* ... */ }
-  ```
-
-- [ ] **DI registration logic** for the strategy choice. Bind `WeightedDistanceClusteringStrategy` by default; switch to `OneTabPerCommitClusteringStrategy` when the discipline-check protocol failed to reach 70% agreement after the tuning rounds (the protocol outcome is recorded in spec § 12 and surfaces as a config flag). Spec § 6.4 + § 11.5.
-
-  ```csharp
-  // In PRism.Web/Program.cs, replace the unconditional WeightedDistance binding with:
-  builder.Services.AddSingleton<IIterationClusteringStrategy>(sp =>
-  {
-      var fallback = sp.GetRequiredService<IConfiguration>()
-          .GetValue<bool>("iterations:useOneTabPerCommitFallback");
-      if (fallback) return new OneTabPerCommitClusteringStrategy();
-      return new WeightedDistanceClusteringStrategy(sp.GetServices<IDistanceMultiplier>());
-  });
-  ```
-
-- [ ] **IterationTabStrip degenerate-fallback banner.** When the degenerate-detector fires AND the input has more commits than `MaxFallbackTabs`, the strip renders a banner instead of tabs. Copy: *"Iterations could not be reconstructed (algorithm signal too low for this PR's commit cadence). Showing All changes; commit-by-commit is unavailable."* Spec § 6.4 + § 7.6.
-
-  Frontend test (lands in Task 7's frontend cycle, but recorded here for traceability):
-
-  ```tsx
-  it('renders degenerate-fallback banner when single inconclusive cluster covers > maxFallbackTabs commits', () => {
-    // PrDetailDto with iterations.length === 1 AND iterations[0].commits.length > 20.
-    render(<IterationTabStrip iterations={iterations} {...rest} />);
-    expect(screen.getByText(/Iterations could not be reconstructed/i)).toBeInTheDocument();
-  });
-  ```
-
-- [ ] **Lower `SkipJaccardAboveCommitCount` default 100 → 50** + add 100ms inter-batch pace between fan-out batches. Spec § 6.4.
-
-  ```csharp
-  // IterationClusteringCoefficients.cs:
+  // IterationClusteringCoefficients.cs (post-update):
   public sealed record IterationClusteringCoefficients(
       double FileJaccardWeight = 0.5,
       double ForcePushAfterLongGap = 1.5,
@@ -1290,84 +1314,59 @@ PR #15 shipped Steps 2.1–2.18 above. The spec's `ce-doc-review` pass (commit `
       int MadK = 3,
       int HardFloorSeconds = 300,
       int HardCeilingSeconds = 259200,
-      int SkipJaccardAboveCommitCount = 50,        // ← was 100
-      double DegenerateFloorFraction = 0.5,
-      int MaxFallbackTabs = 20,
-      int InterBatchPaceMs = 100);                 // ← new
-
-  // GitHubReviewService.GetTimelineAsync per-commit fan-out:
-  // After each batch of ConcurrencyCap completes, await Task.Delay(coefficients.InterBatchPaceMs, ct).
+      int SkipJaccardAboveCommitCount = 100,         // reverted to on-main default
+      double DegenerateFloorFraction = 0.5);
   ```
 
-- [ ] **403 secondary-rate-limit handling** in the per-commit fan-out. Detect the response header `x-ratelimit-resource: secondary` on a 403; pause fan-out until `Retry-After`; degrade remaining commits to `ChangedFiles = null` (which the `FileJaccardMultiplier` treats as neutral 1.0) for the rest of the session. Spec § 6.4.
+  `InterBatchPaceMs` is **NOT** added to coefficients — it's a transport concern. Define it as a `private const int InterBatchPaceMs = 100;` inside `GitHubReviewService` (per spec § 6.4).
+
+- [ ] **Wire `ConfigStore.Changed` → `PrDetailLoader.InvalidateAll`.** When PRism's runtime config (specifically `IterationClusteringCoefficients` or `iterations.clusteringDisabled`) changes during the process lifetime, every cached snapshot must be invalidated so the next `LoadAsync` re-clusters with the new inputs. Spec § 6.4.
 
   ```csharp
-  // Inside FetchPerCommitChangedFiles, when SendAsync returns 403:
-  if ((int)resp.StatusCode == 403 &&
-      resp.Headers.TryGetValues("x-ratelimit-resource", out var resource) &&
-      resource.Contains("secondary"))
+  // In PrDetailLoader's constructor:
+  public PrDetailLoader(IReviewService review, IIterationClusteringStrategy clusterer,
+      IterationClusteringCoefficients coefficients, IConfigStore configStore)
   {
-      var retryAfter = resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(60);
-      await Task.Delay(retryAfter, ct);
-      // After the pause, return null ChangedFiles for the remaining commits in this session.
-      // Practical: set a session-scoped flag so subsequent fan-out batches short-circuit.
-      _secondaryRateLimitTripped = true;
+      _review = review; _clusterer = clusterer; _coefficients = coefficients;
+      configStore.Changed += (_, _) => InvalidateAll();
   }
   ```
 
-- [ ] **`IDistanceMultiplier` interface signature change.** Spec § 6.4 commits to a pair-local signature: `double Multiply(Commit before, Commit after, IReadOnlyList<ForcePushEvent> forcePushesInGap)`. Whole-input access is intentionally NOT exposed. Update both `IDistanceMultiplier` and the two existing implementations.
+- [ ] **Per-commit fan-out 403/4xx handling (simplified).** Any 403/4xx response in the fan-out marks that commit's `ChangedFiles = null`, marks the session degraded (skip remaining fan-out, emit neutral Jaccard for unfetched commits), and logs a single warning. **No dedicated `x-ratelimit-resource: secondary` header parsing**, **no `_secondaryRateLimitTripped` flag**, **no `Retry-After` timing logic.** The 100ms inter-batch pace + concurrency-8 cap are the actual defense. Spec § 6.4 + § 10.1.
 
   ```csharp
-  // PRism.Core/Iterations/IDistanceMultiplier.cs — REPLACE the existing 4-param shape:
-  public interface IDistanceMultiplier
+  // Inside FetchPerCommitChangedFiles, when SendAsync returns any non-2xx in the 4xx range:
+  if (!resp.IsSuccessStatusCode)
   {
-      /// <summary>
-      /// Returns the multiplier in (0, ∞) for the gap between two consecutive commits.
-      /// Pair-local: receives the two commits and the force-pushes that fall in the gap.
-      /// Whole-input access is intentionally NOT exposed.
-      /// </summary>
-      double Multiply(
-          ClusteringCommit before,
-          ClusteringCommit after,
-          IReadOnlyList<ClusteringForcePush> forcePushesInGap);
+      _logger.LogWarning("Per-commit changed-files fetch failed: {Status} for {Sha}; degrading session",
+          resp.StatusCode, sha);
+      // ChangedFiles for this commit + every commit not yet fetched stays null.
+      // FileJaccardMultiplier treats null as unknown and returns neutral 1.0.
+      _sessionDegraded = true;
+      return null;
   }
   ```
 
-  Add a contract test:
-
-  ```csharp
-  // tests/PRism.Core.Tests/Iterations/DistanceMultiplierContractTests.cs
-  [Fact]
-  public void IDistanceMultiplier_signature_is_pair_local_not_whole_input()
-  {
-      // Reflection check: Multiply has exactly 3 params; no overload accepts ClusteringInput.
-      var method = typeof(IDistanceMultiplier).GetMethod("Multiply")!;
-      method.GetParameters().Length.Should().Be(3);
-      typeof(IDistanceMultiplier).GetMethods()
-          .Should().NotContain(m => m.GetParameters().Any(p => p.ParameterType == typeof(ClusteringInput)));
-  }
-  ```
-
-  Update `FileJaccardMultiplier` and `ForcePushMultiplier` to the new signature; the strategy filters force-pushes into the gap window before passing them.
-
-- [ ] **§ 11.5 discipline-check tuning protocol** is now concrete: max **3 tuning rounds**; if still <70% after round 3, ship with `OneTabPerCommitClusteringStrategy` registered as the DI binding (`iterations:useOneTabPerCommitFallback = true` in production config). Spec § 11.5.
+- [ ] **§ 11.5 discipline-check tuning protocol** is now concrete: max **3 tuning rounds**; if still <70% after round 3, ship with `iterations.clusteringDisabled = true` in production config. `PrDetailLoader` emits `ClusteringQuality: Low` for every PR and the frontend renders `CommitMultiSelectPicker` instead of `IterationTabStrip`. Spec § 11.5.
 
 - [ ] **Tests landing in this follow-up:**
-  - `IDistanceMultiplier` signature contract test (above).
-  - `OneTabPerCommitClusteringStrategy` tests (3 cases above).
-  - Secondary-rate-limit tests on the per-commit fan-out (`Frozen_pr_secondary_rate_limit_does_not_block_clustering`-style smoke).
-  - Banner-on-fallback test on `IterationTabStrip` (frontend; lands with Task 7 work).
+  - `WeightedDistanceClusteringStrategy.Cluster` returns null on degenerate-detector fire (replaces the prior MaxFallbackTabs-capped tests — DROP both old degenerate test rows; the strategy's contract is now "ok or null").
+  - `Per_commit_fanout_4xx_marks_session_degraded` (single test on `GitHubReviewService` covering the simplified 4xx → ChangedFiles=null path).
+  - `ConfigStore_change_invalidates_loader_cache` (covers the InvalidateAll wiring; physically lives in Task 4's PrDetailLoader test file but its dependency lands here).
+  - DROP: `OneTabPerCommitClusteringStrategy` unit tests, `IDistanceMultiplier` signature contract test, dedicated `x-ratelimit-resource` parsing test.
 
 - [ ] **Commit the follow-up:**
 
   ```powershell
   git add PRism.Core/Iterations PRism.GitHub/GitHubReviewService.cs PRism.Web/Program.cs tests/PRism.Core.Tests/Iterations
-  git commit -m "feat(iterations): OneTabPerCommit fallback + pair-local IDistanceMultiplier + secondary-rate-limit handling + 50/100ms pace defaults (S3 follow-up to PR #15)"
+  git commit -m "feat(iterations): ClusteringQuality enum + WeightedDistance returns null on degenerate + drop MaxFallbackTabs/InterBatchPaceMs from coefficients + ConfigStore invalidation + simplified 4xx fan-out handling (S3 follow-up to PR #15)"
   ```
 
 ---
 
 ## Task 3: `IReviewService` Extensions — PR detail fetch + dual-endpoint diff + file content + timeline
+
+**P1.15 — PR3 packaging.** PR3's branch contains Task 1 follow-up commits, Task 2 follow-up commits, then Task 3's own commits. All merge atomically as a single PR. Tasks 1 and 2 already shipped via PR #14 / PR #15; their *follow-up* edits (per spec ce-doc-review) bundle into PR3 alongside Task 3's primary work to avoid sprouting two more single-commit PRs.
 
 **Files:**
 - Modify: `PRism.Core/IReviewService.cs`
@@ -1411,13 +1410,18 @@ public sealed record Pr(
 - [ ] Create `PRism.Core.Contracts/PrDetailDto.cs`:
 
 ```csharp
+using PRism.Core.Iterations;
+
 namespace PRism.Core.Contracts;
 
 public sealed record PrDetailDto(
     Pr Pr,
-    IReadOnlyList<IterationDto> Iterations,
+    ClusteringQuality ClusteringQuality,                // NEW (Q5): "ok" | "low"
+    IReadOnlyList<IterationDto>? Iterations,            // null when ClusteringQuality is Low (Q5)
+    IReadOnlyList<CommitDto> Commits,                   // NEW (Q5): always populated; CommitMultiSelectPicker reads this
     IReadOnlyList<IssueCommentDto> RootComments,
-    IReadOnlyList<ReviewThreadDto> ReviewComments);
+    IReadOnlyList<ReviewThreadDto> ReviewComments,
+    bool TimelineCapHit);                               // NEW (Q2): true if MaxTimelinePages reached on any connection
 ```
 
 - [ ] Create `PRism.Core.Contracts/IterationDto.cs`:
@@ -1747,10 +1751,11 @@ public async Task<PrDetailDto?> GetPrDetailAsync(PrReference prRef, Cancellation
 {
     // Initial GraphQL round-trip for PR meta + timeline + comments + review threads, with
     // `first: 100` on every connection. After the initial response, loop with cursor pagination
-    // up to `iterations.maxTimelinePages` (default 5) on every connection where
-    // `pageInfo.hasNextPage` is true. On cap-hit, log `/timeline/cap-hit` and surface a
-    // soft banner to the UI (the frontend reads the cap-hit signal off `PrDetailDto`).
-    // Use the existing _httpClient + GraphQL POST pattern from S2's GitHubSectionQueryRunner.
+    // up to `MaxTimelinePages` (private const = 10) on every connection where
+    // `pageInfo.hasNextPage` is true. On cap-hit, log `/timeline/cap-hit` and emit
+    // `TimelineCapHit: true` on the resulting PrDetailDto (the frontend renders an explicit banner).
+    // Use the existing IHttpClientFactory CreateClient("github") + GraphQL POST pattern from
+    // S2's GitHubSectionQueryRunner. Spec § 6.1 + § 7.2.
     var query = """
     query($owner: String!, $repo: String!, $number: Int!) {
       repository(owner: $owner, name: $repo) {
@@ -1788,12 +1793,23 @@ public async Task<PrDetailDto?> GetPrDetailAsync(PrReference prRef, Cancellation
     if (raw is null) return null;
 
     var pull = raw.GetProperty("data").GetProperty("repository").GetProperty("pullRequest");
-    var iterations = ComputeIterations(pull, prRef);
+    // PrDetailLoader (Task 4) determines ClusteringQuality + Iterations + Commits — this method
+    // returns the GitHub-side facts only. The loader composes the final DTO with quality fields.
     var rootComments = ParseRootComments(pull);
     var reviewComments = ParseReviewThreads(pull);
     var pr = ParsePr(pull, prRef);
+    var timelineCapHit = WasTimelineCapHit(pull);   // true if any connection's pageInfo.hasNextPage == true at the cap
 
-    return new PrDetailDto(pr, iterations, rootComments, reviewComments);
+    // Iterations / Commits / ClusteringQuality are filled in by PrDetailLoader.
+    // GitHubReviewService returns a partial DTO; the loader is the only caller.
+    return new PrDetailDto(
+        pr,
+        ClusteringQuality: ClusteringQuality.Ok,         // placeholder; loader overrides
+        Iterations: Array.Empty<IterationDto>(),         // placeholder; loader overrides
+        Commits: Array.Empty<CommitDto>(),               // placeholder; loader overrides
+        RootComments: rootComments,
+        ReviewComments: reviewComments,
+        TimelineCapHit: timelineCapHit);
 }
 
 public async Task<DiffDto> GetDiffAsync(PrReference prRef, DiffRangeRequest range, CancellationToken ct)
@@ -1829,7 +1845,8 @@ public async Task<DiffDto> GetDiffAsync(PrReference prRef, DiffRangeRequest rang
 private async Task<DiffDto> GetCrossIterationDiffAsync(PrReference prRef, DiffRangeRequest range, CancellationToken ct)
 {
     var url = $"/repos/{prRef.Owner}/{prRef.Repo}/compare/{Uri.EscapeDataString(range.BaseSha)}...{Uri.EscapeDataString(range.HeadSha)}";
-    using var resp = await _httpClient.GetAsync(url, ct);
+    using var http = _httpFactory.CreateClient("github");   // P1.7: match the on-main IHttpClientFactory pattern.
+    using var resp = await http.GetAsync(url, ct);
     if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
         throw new RangeUnreachableException(range.BaseSha, range.HeadSha);
     // Parse compare response; assemble FileChange[] from `files`. Truncation here is signalled
@@ -1844,7 +1861,8 @@ public async Task<FileContentResult> GetFileContentAsync(PrReference prRef, stri
     var url = $"/repos/{prRef.Owner}/{prRef.Repo}/contents/{Uri.EscapeDataString(path)}?ref={sha}";
     using var req = new HttpRequestMessage(HttpMethod.Get, url);
     req.Headers.Accept.Add(new("application/vnd.github.raw"));
-    using var resp = await _httpClient.SendAsync(req, ct);
+    using var http = _httpFactory.CreateClient("github");   // P1.7: match the on-main IHttpClientFactory pattern.
+    using var resp = await http.SendAsync(req, ct);
 
     if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
         return new FileContentResult(FileContentStatus.NotFound, null, 0);
@@ -1900,15 +1918,16 @@ public async Task<ClusteringInput> GetTimelineAsync(PrReference prRef, Cancellat
     // explicitly here because IReviewService doesn't have a coefficients dependency.
     //
     // Inter-batch pace: after each batch of ConcurrencyCap completes, await
-    // Task.Delay(InterBatchPaceMs, ct) before kicking off the next batch (default 100ms).
-    // Spec § 6.4.
+    // Task.Delay(InterBatchPaceMs, ct) before kicking off the next batch. InterBatchPaceMs
+    // is a private const (= 100) inside GitHubReviewService — transport concern, not
+    // clustering coefficient. Spec § 6.4.
     //
-    // 403 secondary-rate-limit handling: when SendAsync returns 403 with header
-    // `x-ratelimit-resource: secondary`, pause for `Retry-After` and degrade the
-    // remainder of the session to ChangedFiles=null (FileJaccardMultiplier returns
-    // neutral 1.0 for null). Implementation lives inside FetchPerCommitChangedFiles.
-    // Spec § 6.4 + § 10.1.
-    const int SkipAbove = 50;      // matches IterationClusteringCoefficients.SkipJaccardAboveCommitCount default (lowered 100 → 50, spec § 6.4)
+    // 4xx fan-out handling (simplified per Q6): any non-2xx response in the 4xx range
+    // marks the commit's ChangedFiles = null, marks the session degraded (skip remaining
+    // fan-out), logs a single warning. No dedicated x-ratelimit-resource parsing, no
+    // Retry-After backoff, no _secondaryRateLimitTripped flag. The 100ms pace + concurrency
+    // cap of 8 are the actual defense. Spec § 6.4 + § 10.1.
+    const int SkipAbove = 100;     // matches IterationClusteringCoefficients.SkipJaccardAboveCommitCount default (spec § 6.4)
     const int ConcurrencyCap = 8;
     var commits = rawCommits.Count > SkipAbove
         ? rawCommits.ToArray()      // ChangedFiles stays null
@@ -1951,8 +1970,8 @@ Expected: **2 passing**.
 [Fact]
 public async Task GetTimelineAsync_skips_per_commit_fanout_above_cap()
 {
-    // Default cap is 50 (lowered from 100 per spec § 6.4). 75 > 50 → fan-out skipped.
-    var commits = Enumerable.Range(0, 75)
+    // Default cap is 100 (on-main). 150 > 100 → fan-out skipped.
+    var commits = Enumerable.Range(0, 150)
         .Select(i => new { Sha = $"c{i:D3}", Date = DateTimeOffset.UtcNow.AddSeconds(i * 60) })
         .ToArray();
     var fake = new FakeGitHubServer()
@@ -1961,9 +1980,9 @@ public async Task GetTimelineAsync_skips_per_commit_fanout_above_cap()
     var sut = NewService(fake);
     var input = await sut.GetTimelineAsync(new PrReference("o","r",1), CancellationToken.None);
 
-    input.Commits.Should().HaveCount(75);
+    input.Commits.Should().HaveCount(150);
     input.Commits.Should().AllSatisfy(c => c.ChangedFiles.Should().BeNull(),
-        because: "above 50 commits, the per-commit REST fan-out is skipped (spec § 6.4 default)");
+        because: "above 100 commits, the per-commit REST fan-out is skipped (spec § 6.4 default)");
     fake.PerCommitFetchCount.Should().Be(0);
 }
 
@@ -1972,7 +1991,7 @@ public async Task GetTimelineAsync_paces_inter_batch_with_100ms_delay()
 {
     // After each batch of ConcurrencyCap (8) completes, the fan-out awaits InterBatchPaceMs (100ms).
     // For 24 commits with batch size 8 → 3 batches → 2 inter-batch pauses → ≥200ms total pace cost.
-    // Spec § 6.4.
+    // InterBatchPaceMs is a private const inside GitHubReviewService (transport concern). Spec § 6.4.
     var commits = Enumerable.Range(0, 24)
         .Select(i => new { Sha = $"c{i:D3}", Date = DateTimeOffset.UtcNow.AddSeconds(i * 60) })
         .ToArray();
@@ -1988,17 +2007,18 @@ public async Task GetTimelineAsync_paces_inter_batch_with_100ms_delay()
 }
 
 [Fact]
-public async Task GetTimelineAsync_handles_secondary_rate_limit_403_by_pausing_and_degrading_remainder()
+public async Task Per_commit_fanout_4xx_marks_session_degraded()
 {
-    // 403 with `x-ratelimit-resource: secondary` header triggers Retry-After pause and
-    // degrades the rest of the session to ChangedFiles=null. Spec § 6.4 + § 10.1.
+    // Any 4xx in the per-commit fan-out: that commit's ChangedFiles = null, session marked
+    // degraded (skip remaining fan-out), single warning logged. No dedicated x-ratelimit
+    // parsing, no Retry-After. Spec § 6.4 + § 10.1.
     var fake = new FakeGitHubServer()
         .WithPullRequestTimeline(commits: 30 /* fan-out below cap */)
-        .WithSecondaryRateLimitOnCommit(commitIndex: 5, retryAfterSeconds: 1);
+        .With4xxOnCommit(commitIndex: 5, statusCode: 403);
 
     var input = await NewService(fake).GetTimelineAsync(new PrReference("o","r",1), CancellationToken.None);
 
-    // Commits 0..4 have changed-files; from index 5 onward, ChangedFiles is null.
+    // Commits 0..4 have changed-files; from index 5 onward, ChangedFiles is null (degraded session).
     input.Commits.Take(5).Should().AllSatisfy(c => c.ChangedFiles.Should().NotBeNull());
     input.Commits.Skip(5).Should().AllSatisfy(c => c.ChangedFiles.Should().BeNull());
 }
@@ -2091,7 +2111,8 @@ public class PrDetailLoaderTests
         var calls = new List<string>();
         var fake = new FakeReviewService(calls);
         var clusterer = new RecordingClusterer(calls);
-        var loader = new PrDetailLoader(fake, clusterer, new IterationClusteringCoefficients());
+        var configStore = new FakeConfigStore();
+        var loader = new PrDetailLoader(fake, clusterer, new IterationClusteringCoefficients(), configStore);
 
         await loader.LoadAsync(new PrReference("o","r",1), CancellationToken.None);
 
@@ -2102,8 +2123,9 @@ public class PrDetailLoaderTests
     public async Task LoadAsync_caches_by_prRef_and_headSha()
     {
         var fake = new FakeReviewService();
+        var configStore = new FakeConfigStore();
         var loader = new PrDetailLoader(fake, new WeightedDistanceClusteringStrategy(Array.Empty<IDistanceMultiplier>()),
-                                        new IterationClusteringCoefficients());
+                                        new IterationClusteringCoefficients(), configStore);
 
         var s1 = await loader.LoadAsync(new PrReference("o","r",1), CancellationToken.None);
         var s2 = await loader.LoadAsync(new PrReference("o","r",1), CancellationToken.None);
@@ -2116,14 +2138,46 @@ public class PrDetailLoaderTests
     public async Task InvalidateAll_forces_reload()
     {
         var fake = new FakeReviewService();
+        var configStore = new FakeConfigStore();
         var loader = new PrDetailLoader(fake, new WeightedDistanceClusteringStrategy(Array.Empty<IDistanceMultiplier>()),
-                                        new IterationClusteringCoefficients());
+                                        new IterationClusteringCoefficients(), configStore);
 
         await loader.LoadAsync(new PrReference("o","r",1), CancellationToken.None);
         loader.InvalidateAll();
         await loader.LoadAsync(new PrReference("o","r",1), CancellationToken.None);
 
         fake.GetPrDetailCallCount.Should().Be(2);
+    }
+
+    // Q5 — ClusteringQuality determination tests:
+
+    [Fact]
+    public async Task LoadAsync_returns_ClusteringQuality_Low_when_timeline_has_one_commit() { /* ... */ }
+
+    [Fact]
+    public async Task LoadAsync_returns_ClusteringQuality_Low_when_strategy_returns_null() { /* degenerate-detector path */ }
+
+    [Fact]
+    public async Task LoadAsync_returns_ClusteringQuality_Low_when_clusteringDisabled_config_flag_set() { /* ... */ }
+
+    [Fact]
+    public async Task LoadAsync_returns_ClusteringQuality_Ok_for_healthy_multi_commit_pr() { /* happy path */ }
+
+    // P1.4 — bounded LRU eviction:
+
+    [Fact]
+    public async Task Cache_evicts_oldest_entry_when_50_entry_limit_reached()
+    {
+        // Load 51 distinct PRs; assert the 1st one is evicted (re-fetch on next access).
+    }
+
+    // P2.29 — ConfigStore.Changed wiring:
+
+    [Fact]
+    public async Task ConfigStore_change_invalidates_loader_cache()
+    {
+        // Load PR #1, then raise ConfigStore.Changed event, then re-load PR #1.
+        // Assert GetPrDetail was called twice (cache was invalidated).
     }
 }
 
@@ -2135,8 +2189,14 @@ internal class RecordingClusterer : IIterationClusteringStrategy
 {
     private readonly List<string> _calls;
     public RecordingClusterer(List<string> calls) => _calls = calls;
-    public IReadOnlyList<IterationCluster> Cluster(ClusteringInput _, IterationClusteringCoefficients __)
+    public IReadOnlyList<IterationCluster>? Cluster(ClusteringInput _, IterationClusteringCoefficients __)
     { _calls.Add("Cluster"); return Array.Empty<IterationCluster>(); }
+}
+internal class FakeConfigStore : IConfigStore
+{
+    public PrismConfig Current { get; set; } = new();
+    public event EventHandler? Changed;
+    public void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
 }
 ```
 
@@ -2145,18 +2205,24 @@ Implement `FakeReviewService` minimally — for each `IReviewService` method, re
 ### Step 4.3: Implement `PrDetailLoader`
 
 The loader's responsibilities:
-1. Probe the cache by `(prRef, headSha, generation)`. If the headSha is unknown to the caller (new mount), call `IReviewService.PollActivePrAsync(prRef, ct)` first — that's a 3-call REST probe (cheap) that returns the current `HeadSha`. Then probe the cache.
+1. Probe the cache by `(prRef, headSha, generation)` (P2.29: `_generation` stays in the cache key, bumped on `InvalidateAll`). If the headSha is unknown to the caller (new mount), call `IReviewService.PollActivePrAsync(prRef, ct)` first — that's a 3-call REST probe (cheap) that returns the current `HeadSha`. Then probe the cache.
 2. On cache miss, fetch `GetPrDetailAsync` (one heavy GraphQL round-trip) AND `GetTimelineAsync` (independent — no recursion through `GetPrDetailAsync`; see Step 3.5 implementation note).
-3. Cluster the timeline via `_clusterer.Cluster(...)`.
+3. Determine `ClusteringQuality` (Q5):
+   - If `timeline.Commits.Length <= 1`: `ClusteringQuality = Low`, `Iterations = null`, `Commits` populated from timeline.
+   - If `config.iterations.clusteringDisabled == true` (calibration-failure escape hatch): same — `Low`, `Iterations = null`, `Commits` populated.
+   - Otherwise call `_clusterer.Cluster(timeline, _coefficients)`. If it returns `null` (degenerate-detector fired): `Low`, `Iterations = null`, `Commits` populated.
+   - Else: `Ok` with `Iterations` populated from clusters.
 4. Compose the snapshot's iterations by looking up each cluster's commit SHAs in a dictionary built from the timeline's commits (so we get full `CommitDto` shape including message and dates).
-5. Cache and return.
+5. Subscribe to `ConfigStore.Changed` in the constructor → call `InvalidateAll()` (P2.29; spec § 6.4 ConfigStore wiring).
+6. Cache (MemoryCache: `SizeLimit = 50` entries, `SlidingExpiration = 1h`; P1.4) and return.
 
 - [ ] Create `PRism.Core/PrDetail/PrDetailLoader.cs`:
 
 ```csharp
-using System.Collections.Concurrent;
+using Microsoft.Extensions.Caching.Memory;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
+using PRism.Core.Configuration;
 
 namespace PRism.Core.PrDetail;
 
@@ -2165,17 +2231,23 @@ public sealed class PrDetailLoader
     private readonly IReviewService _review;
     private readonly IIterationClusteringStrategy _clusterer;
     private readonly IterationClusteringCoefficients _coefficients;
-    private readonly ConcurrentDictionary<string, PrDetailSnapshot> _cache = new();
+    private readonly IConfigStore _configStore;
+    // P1.4: bounded LRU. SizeLimit = 50 entries; SlidingExpiration = 1h.
+    private readonly MemoryCache _cache = new(new MemoryCacheOptions { SizeLimit = 50 });
     private int _generation;
 
     public PrDetailLoader(
         IReviewService review,
         IIterationClusteringStrategy clusterer,
-        IterationClusteringCoefficients coefficients)
+        IterationClusteringCoefficients coefficients,
+        IConfigStore configStore)
     {
         _review = review;
         _clusterer = clusterer;
         _coefficients = coefficients;
+        _configStore = configStore;
+        // P2.29: InvalidateAll on any config change so coefficient hot-reloads re-cluster.
+        _configStore.Changed += (_, _) => InvalidateAll();
     }
 
     public async Task<PrDetailSnapshot?> LoadAsync(PrReference prRef, CancellationToken ct)
@@ -2183,7 +2255,7 @@ public sealed class PrDetailLoader
         // Probe current headSha cheaply before deciding whether the cache is valid.
         var pollSnapshot = await _review.PollActivePrAsync(prRef, ct);
         var key = CacheKey(prRef, pollSnapshot.HeadSha, _generation);
-        if (_cache.TryGetValue(key, out var cached)) return cached;
+        if (_cache.TryGetValue(key, out PrDetailSnapshot? cached) && cached is not null) return cached;
 
         var detail = await _review.GetPrDetailAsync(prRef, ct);
         if (detail is null) return null;
@@ -2194,56 +2266,93 @@ public sealed class PrDetailLoader
             key = CacheKey(prRef, detail.Pr.HeadSha, _generation);
 
         var timeline = await _review.GetTimelineAsync(prRef, ct);
-        var clusters = _clusterer.Cluster(timeline, _coefficients);
 
-        // Build a SHA → commit-meta lookup from the timeline once; reuse for every cluster.
+        // Build a SHA → commit-meta lookup from the timeline once; reuse for clusters.
         var commitBySha = timeline.Commits.ToDictionary(c => c.Sha, c => c);
-
-        var iterations = clusters.Select(c => new IterationDto(
-            c.IterationNumber,
-            c.BeforeSha,
-            c.AfterSha,
-            c.CommitShas
-                .Where(sha => commitBySha.ContainsKey(sha))
-                .Select(sha =>
-                {
-                    var ci = commitBySha[sha];
-                    return new CommitDto(ci.Sha, ci.Message, ci.CommittedDate, ci.Additions, ci.Deletions);
-                })
-                .ToArray(),
-            // HasResolvableRange = both endpoints are present in the timeline's commit set.
-            // GC'd SHAs (rare; happens on aggressive force-pushes that prune the old objects)
-            // produce false; UI renders "Iter N (snapshot lost)" and ComparePicker disables
-            // selection. Spec § 6.1 + § 7.2.
-            HasResolvableRange:
-                commitBySha.ContainsKey(c.BeforeSha) && commitBySha.ContainsKey(c.AfterSha)))
+        var commitDtos = timeline.Commits
+            .Select(ci => new CommitDto(ci.Sha, ci.Message, ci.CommittedDate, ci.Additions, ci.Deletions))
             .ToArray();
 
-        var snapshot = new PrDetailSnapshot(
-            detail with { Iterations = iterations },
-            detail.Pr.HeadSha,
-            _generation);
-        _cache[key] = snapshot;
+        // Q5: ClusteringQuality determination.
+        ClusteringQuality quality;
+        IReadOnlyList<IterationDto>? iterations;
+
+        if (timeline.Commits.Count <= 1)
+        {
+            quality = ClusteringQuality.Low;
+            iterations = null;
+        }
+        else if (_configStore.Current.IterationsClusteringDisabled)
+        {
+            // Calibration-failure escape hatch — frontend renders CommitMultiSelectPicker.
+            quality = ClusteringQuality.Low;
+            iterations = null;
+        }
+        else
+        {
+            var clusters = _clusterer.Cluster(timeline, _coefficients);
+            if (clusters is null)
+            {
+                // Degenerate-detector fired in WeightedDistanceClusteringStrategy.
+                quality = ClusteringQuality.Low;
+                iterations = null;
+            }
+            else
+            {
+                quality = ClusteringQuality.Ok;
+                iterations = clusters.Select(c => new IterationDto(
+                    c.IterationNumber,
+                    c.BeforeSha,
+                    c.AfterSha,
+                    c.CommitShas
+                        .Where(sha => commitBySha.ContainsKey(sha))
+                        .Select(sha =>
+                        {
+                            var ci = commitBySha[sha];
+                            return new CommitDto(ci.Sha, ci.Message, ci.CommittedDate, ci.Additions, ci.Deletions);
+                        })
+                        .ToArray(),
+                    // HasResolvableRange = both endpoints are present in the timeline's commit set.
+                    // GC'd SHAs (rare; aggressive force-pushes prune the old objects) produce false;
+                    // UI renders "Iter N (snapshot lost)" and ComparePicker disables selection.
+                    // Spec § 6.1 + § 7.2.
+                    HasResolvableRange:
+                        commitBySha.ContainsKey(c.BeforeSha) && commitBySha.ContainsKey(c.AfterSha)))
+                    .ToArray();
+            }
+        }
+
+        var finalDetail = detail with
+        {
+            ClusteringQuality = quality,
+            Iterations = iterations,
+            Commits = commitDtos,
+        };
+        var snapshot = new PrDetailSnapshot(finalDetail, detail.Pr.HeadSha, _generation);
+
+        // P1.4: bounded LRU; each entry costs Size = 1 against SizeLimit = 50.
+        _cache.Set(key, snapshot, new MemoryCacheEntryOptions
+        {
+            Size = 1,
+            SlidingExpiration = TimeSpan.FromHours(1),
+        });
         return snapshot;
     }
 
     public Task<PrDetailSnapshot?> TryGetCachedAsync(PrReference prRef)
     {
-        // Without re-polling we don't know the current head. Return any matching key
-        // for this (prRef, generation) — caller is responsible for accepting potential
-        // staleness (the file-content endpoint uses this for in-diff authz; if the
-        // snapshot was evicted, the endpoint surfaces /file/snapshot-evicted).
-        var prefix = $"{prRef.Owner}/{prRef.Repo}/{prRef.Number}@";
-        var match = _cache.FirstOrDefault(kv =>
-            kv.Key.StartsWith(prefix, StringComparison.Ordinal) &&
-            kv.Key.EndsWith($"#{_generation}", StringComparison.Ordinal));
-        return Task.FromResult(match.Value);
+        // MemoryCache doesn't expose enumeration. Maintain a sidecar prefix→key index, or
+        // accept the simpler design where the file-content endpoint re-keys by polling
+        // current head. Implementation: keep a small ConcurrentDictionary<string, string>
+        // mapping `{owner}/{repo}/{number}` → most-recent CacheKey, written alongside Set.
+        // (Implementation detail; the public contract is unchanged.)
+        // ...
     }
 
     public void InvalidateAll()
     {
         Interlocked.Increment(ref _generation);
-        _cache.Clear();
+        _cache.Compact(1.0);   // evict everything
     }
 
     private static string CacheKey(PrReference prRef, string headSha, int generation) =>
@@ -2282,6 +2391,7 @@ public sealed record FileViewedRequest(string Path, string HeadSha, bool Viewed)
 
 ```csharp
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;             // F14 — ProblemDetails
 using Microsoft.AspNetCore.Mvc.Testing;
 using Xunit;
 
@@ -2361,7 +2471,7 @@ public class PrDetailEndpointsTests : IClassFixture<WebApplicationFactory<Progra
     [Fact]
     public async Task Mark_viewed_rejects_request_body_over_16_KiB()
     {
-        // 16 KiB body cap on mark-viewed. Spec § 8 + BodySizeLimitMiddleware (Task 5).
+        // 16 KiB body cap on mark-viewed via [RequestSizeLimit(16384)] endpoint metadata (P2.3). Spec § 8.
         // Client posts a 17 KiB body (e.g., 17000-char maxCommentId) — middleware rejects with 413
         // before model binding. Spec § 8.
         // ...
@@ -2401,8 +2511,69 @@ public class PrDetailEndpointsTests : IClassFixture<WebApplicationFactory<Progra
     [Fact]
     public async Task Files_viewed_rejects_request_body_over_16_KiB()
     {
-        // 16 KiB body cap on files/viewed. Spec § 8.
+        // 16 KiB body cap on files/viewed (now via [RequestSizeLimit(16384)] endpoint metadata; P2.3). Spec § 8.
         // ...
+    }
+
+    // Q5 — ClusteringQuality endpoint propagation (4 new tests):
+
+    [Fact]
+    public async Task Get_pr_detail_returns_ClusteringQuality_Low_for_one_commit_pr() { /* ... */ }
+
+    [Fact]
+    public async Task Get_pr_detail_returns_ClusteringQuality_Low_for_degenerate_detector_pr() { /* ... */ }
+
+    [Fact]
+    public async Task Get_pr_detail_returns_ClusteringQuality_Low_when_clusteringDisabled_config_flag_set() { /* ... */ }
+
+    [Fact]
+    public async Task Get_pr_detail_returns_ClusteringQuality_Ok_for_healthy_multi_commit_pr() { /* ... */ }
+
+    // Q5 — `?commits=` union diff:
+
+    [Fact]
+    public async Task Get_diff_with_commits_query_param_returns_union_diff()
+    {
+        // GET /api/pr/o/r/1/diff?commits=sha1,sha2,sha3 → backend computes union diff via
+        // the GitHub compare endpoint with 3-dot semantics (earliest-selected commit's
+        // parent through latest-selected commit's HEAD). Spec § 6.1 + § 7.2.1.
+    }
+
+    // Q2 — TimelineCapHit propagation:
+
+    [Fact]
+    public async Task Get_pr_detail_returns_TimelineCapHit_true_when_MaxTimelinePages_reached()
+    {
+        // Fake 11 pages on the timeline connection → MaxTimelinePages (= 10) hit → DTO carries TimelineCapHit: true.
+    }
+
+    // P2.7 — sha query-param validation:
+
+    [Fact]
+    public async Task Get_diff_returns_422_for_non_git_oid_sha()
+    {
+        // GET /api/pr/o/r/1/diff?range=../../etc/passwd..head → 422 /sha/invalid
+        var resp = await client.GetAsync("/api/pr/o/r/1/diff?range=../../etc/passwd..head");
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.UnprocessableEntity);
+    }
+
+    // P2.6 — path canonicalization regression test:
+
+    [Fact]
+    public async Task Files_viewed_rejects_url_encoded_dot_dot_segment()
+    {
+        // path="src/%2E%2E/etc/passwd" → ASP.NET decodes to "src/../etc/passwd" before model binding,
+        // which has a `..` segment → 422. Spec § 8.
+    }
+
+    // P1.3 — concurrent mark-viewed:
+
+    [Fact]
+    public async Task Concurrent_mark_viewed_from_two_tabs_preserves_both_writes()
+    {
+        // Two parallel POST /mark-viewed (different headSha values from two tabs);
+        // both writes preserved (or last-write-wins documented + asserted). Uses the new
+        // IAppStateStore.UpdateAsync(transform) API to gate load+transform+save under one lock.
     }
 }
 ```
@@ -2435,7 +2606,8 @@ public static class PrDetailEndpoints
             });
 
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/diff",
-            async (string owner, string repo, int number, [FromQuery] string range,
+            async (string owner, string repo, int number,
+                   [FromQuery] string? range, [FromQuery] string? commits,
                    IReviewService review, CancellationToken ct) =>
             {
                 // `range=` is two SHAs joined by `..` (URL-encoded). For cross-iteration
@@ -2443,7 +2615,30 @@ public static class PrDetailEndpoints
                 // 3-dot compare (`/repos/{o}/{r}/compare/{base}...{head}`). GC'd SHAs
                 // surface as RangeUnreachableException → ProblemDetails type
                 // `/diff/range-unreachable`. Spec § 6.1 + § 8.
+                //
+                // Q5: `commits=sha1,sha2,sha3` query param — backend computes union diff via
+                // the GitHub compare endpoint (3-dot semantics from earliest-selected commit's
+                // parent through latest-selected commit's HEAD). CommitMultiSelectPicker uses
+                // this when ClusteringQuality is Low. Spec § 7.2.1.
+                if (!string.IsNullOrEmpty(commits))
+                {
+                    var commitShas = commits.Split(',', StringSplitOptions.RemoveEmptyEntries);
+                    // P2.7: validate every sha is a Git OID before fetching.
+                    if (commitShas.Any(s => !IsValidGitOid(s)))
+                        return Results.Problem(type: "/sha/invalid", statusCode: 422);
+                    var unionDiff = await review.GetUnionDiffAsync(
+                        new PrReference(owner, repo, number), commitShas, ct);
+                    return Results.Ok(unionDiff);
+                }
+
+                if (string.IsNullOrEmpty(range))
+                    return Results.Problem(type: "/diff/missing-range", statusCode: 422);
+
                 var (baseSha, headSha) = ParseRange(range);
+                // P2.7: validate both SHAs are Git OIDs (40 hex sha-1 or 64 hex sha-256).
+                if (!IsValidGitOid(baseSha) || !IsValidGitOid(headSha))
+                    return Results.Problem(type: "/sha/invalid", statusCode: 422);
+
                 try
                 {
                     var diff = await review.GetDiffAsync(new PrReference(owner, repo, number),
@@ -2490,9 +2685,11 @@ public static class PrDetailEndpoints
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
             async (string owner, string repo, int number, MarkViewedRequest body,
-                   PrDetailLoader loader, IAppStateStore stateStore, AppStateStore concreteStore, CancellationToken ct) =>
+                   PrDetailLoader loader, IAppStateStore stateStore, CancellationToken ct) =>
             {
-                if (concreteStore.IsReadOnlyMode)
+                // P1.6: single store — IAppStateStore is the canonical interface; the concrete
+                // AppStateStore is registered once and exposed via the interface (no dual-injection).
+                if (stateStore.IsReadOnlyMode)
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
 
                 var snapshot = await loader.TryGetCachedAsync(new PrReference(owner, repo, number));
@@ -2500,23 +2697,29 @@ public static class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/stale-head-sha", statusCode: 409);
 
                 var key = $"{owner}/{repo}/{number}";
-                var state = await stateStore.LoadAsync(ct);
-                var session = state.ReviewSessions.GetValueOrDefault(key) ??
-                              new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
-                var updated = session with { LastViewedHeadSha = body.HeadSha, LastSeenCommentId = body.MaxCommentId };
 
-                var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
-                sessions[key] = updated;
-                await stateStore.SaveAsync(state with { ReviewSessions = sessions }, ct);
+                // P1.3: gate Load+transform+Save under a single store-internal lock via UpdateAsync.
+                // Defends against two concurrent tabs racing on mark-viewed (one tab's Save would
+                // otherwise stomp the other's new ViewedFiles entries).
+                await stateStore.UpdateAsync(state =>
+                {
+                    var session = state.ReviewSessions.GetValueOrDefault(key) ??
+                                  new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
+                    var updated = session with { LastViewedHeadSha = body.HeadSha, LastSeenCommentId = body.MaxCommentId };
+                    var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                    sessions[key] = updated;
+                    return state with { ReviewSessions = sessions };
+                }, ct);
 
                 return Results.NoContent();
-            });
+            }).WithMetadata(new RequestSizeLimitAttribute(16384));   // P2.3 — capped via [RequestSizeLimit] (was BodySizeLimitMiddleware)
 
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/files/viewed",
             async (string owner, string repo, int number, FileViewedRequest body,
-                   PrDetailLoader loader, AppStateStore concreteStore, CancellationToken ct) =>
+                   PrDetailLoader loader, IAppStateStore stateStore, CancellationToken ct) =>
             {
-                if (concreteStore.IsReadOnlyMode)
+                // P1.6: single store via the interface.
+                if (stateStore.IsReadOnlyMode)
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
 
                 if (string.IsNullOrEmpty(body.Path) || body.Path.Length > 4096)
@@ -2534,28 +2737,36 @@ public static class PrDetailEndpoints
                     return Results.Problem(type: "/viewed/path-not-in-diff", statusCode: 422);
 
                 var key = $"{owner}/{repo}/{number}";
-                var state = await concreteStore.LoadAsync(ct);
-                var session = state.ReviewSessions.GetValueOrDefault(key) ??
-                              new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
-                var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
 
-                if (body.Viewed)
+                // P1.3: gate transactional update via UpdateAsync (concurrent two-tab safe).
+                IResult? capExceededShortCircuit = null;
+                await stateStore.UpdateAsync(state =>
                 {
-                    if (viewedFiles.Count >= 10000 && !viewedFiles.ContainsKey(canonical))
-                        return Results.Problem(type: "/viewed/cap-exceeded", statusCode: 422);
-                    viewedFiles[canonical] = body.HeadSha;
-                }
-                else
-                {
-                    viewedFiles.Remove(canonical);
-                }
+                    var session = state.ReviewSessions.GetValueOrDefault(key) ??
+                                  new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
+                    var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
 
-                var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
-                sessions[key] = session with { ViewedFiles = viewedFiles };
-                await concreteStore.SaveAsync(state with { ReviewSessions = sessions }, ct);
+                    if (body.Viewed)
+                    {
+                        if (viewedFiles.Count >= 10000 && !viewedFiles.ContainsKey(canonical))
+                        {
+                            capExceededShortCircuit = Results.Problem(type: "/viewed/cap-exceeded", statusCode: 422);
+                            return state;   // no mutation
+                        }
+                        viewedFiles[canonical] = body.HeadSha;
+                    }
+                    else
+                    {
+                        viewedFiles.Remove(canonical);
+                    }
 
-                return Results.NoContent();
-            });
+                    var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                    sessions[key] = session with { ViewedFiles = viewedFiles };
+                    return state with { ReviewSessions = sessions };
+                }, ct);
+
+                return capExceededShortCircuit ?? Results.NoContent();
+            }).WithMetadata(new RequestSizeLimitAttribute(16384));   // P2.3 — capped via [RequestSizeLimit]
 
         return app;
     }
@@ -2567,8 +2778,16 @@ public static class PrDetailEndpoints
         return (parts[0], parts[1]);
     }
 
+    private static bool IsValidGitOid(string s) =>
+        // P2.7 — accept SHA-1 (40 hex) or SHA-256 (64 hex). Anything else is rejected with 422 /sha/invalid.
+        System.Text.RegularExpressions.Regex.IsMatch(s, "^[0-9a-fA-F]{40}$") ||
+        System.Text.RegularExpressions.Regex.IsMatch(s, "^[0-9a-fA-F]{64}$");
+
     private static string? CanonicalizePath(string path)
     {
+        // P2.6 — Inputs arrive post-URL-decode (ASP.NET decodes %2E etc. before model binding).
+        // Rules apply to the decoded form. RawTarget is not consulted.
+        //
         // 7-rule canonicalization (spec § 8 — expanded from the original 4-rule shape during
         // the spec's ce-doc-review pass; the 7th rule below — NFC byte-length mismatch — is a
         // dedicated check on top of the existing 6 character-level rules):
@@ -2603,14 +2822,15 @@ public static class PrDetailEndpoints
 
 ### Step 4.8: Wire endpoints + DI in `Program.cs`
 
-- [ ] In `PRism.Web/Program.cs`, register the loader as a concrete singleton (no interface):
+- [ ] In `PRism.Web/Program.cs`, register the loader as a concrete singleton (no interface).
+  P2.1: do NOT re-register `IIterationClusteringStrategy` here — that registration belongs to Task 2's follow-up exclusively.
+  P1.6: `AppStateStore` is registered once and exposed via the interface so there is exactly one gate-bearing instance:
 
 ```csharp
+builder.Services.AddSingleton<AppStateStore>();
+builder.Services.AddSingleton<IAppStateStore>(sp => sp.GetRequiredService<AppStateStore>());
+
 builder.Services.AddSingleton<PrDetailLoader>();
-builder.Services.AddSingleton<IIterationClusteringStrategy>(sp =>
-    new WeightedDistanceClusteringStrategy(sp.GetServices<IDistanceMultiplier>()));
-builder.Services.AddSingleton<IDistanceMultiplier, FileJaccardMultiplier>();
-builder.Services.AddSingleton<IDistanceMultiplier, ForcePushMultiplier>();
 builder.Services.AddSingleton<IterationClusteringCoefficients>(sp =>
     sp.GetRequiredService<IConfiguration>().GetSection("iterations:clusteringCoefficients").Get<IterationClusteringCoefficients>()
     ?? new IterationClusteringCoefficients());
@@ -2630,7 +2850,7 @@ app.MapPrDetailEndpoints();
 dotnet test tests\PRism.Web.Tests --filter "FullyQualifiedName~PrDetailEndpointsTests"
 ```
 
-Expected: all passing. Test count includes the `Theory` for the 7-rule canonicalization (8 inline cases) plus the named tests for happy paths, /file/not-in-diff vs /file/truncation-window split, NFC mismatch, body-size caps, and stale-head-sha 409s. Spec § 11.3.
+Expected: ~26 passing. Includes the `Theory` for the 7-rule canonicalization (8 inline cases) + named NFC-mismatch test (1) + happy paths + /file/not-in-diff vs /file/truncation-window split + stale-head-sha 409s + 4 new ClusteringQuality tests + `?commits=` union diff + TimelineCapHit propagation + sha validation 422 + url-encoded `..` segment regression + concurrent-mark-viewed two-tab test (P1.3). Spec § 11.3.
 
 ### Step 4.10: Commit
 
@@ -2651,23 +2871,30 @@ PR4 expanded scope per spec § 11.7:
 
 ## Task 5: SSE per-PR fanout + active-PR poller + middleware tightening
 
+**P1.14 — PR5 packaging.** Task 5 lands as a single PR with 4 distinct commits internally for review-by-commit:
+1. SSE per-PR fanout + ActivePrSubscriberRegistry + ActivePrPoller (BackgroundService + per-PR backoff).
+2. SessionTokenMiddleware (header for all non-asset endpoints + cookie path for /api/events) + GET /api/events/ping (P1.5).
+3. OriginCheckMiddleware modification (reject empty Origin on POST/PUT/PATCH/DELETE).
+4. ILogger destructuring policy (scrub `subscriberId`, `pat`, `token` only; 1024-char string truncation; P2.8).
+
+Reviewers can scroll commit-by-commit; the PR merges atomically. P2.3: `BodySizeLimitMiddleware` is **dropped** in favor of `[RequestSizeLimit(16384)]` endpoint metadata on the four mutating routes — Kestrel's built-in mechanism handles chunked-encoding correctly without bespoke middleware.
+
 **Files:**
 - Create: `PRism.Core/PrDetail/ActivePrSubscriberRegistry.cs`
 - Create: `PRism.Core/PrDetail/ActivePrPoller.cs`
 - Create: `PRism.Core/PrDetail/ActivePrPollerState.cs`
-- Modify: `PRism.Web/Sse/SseChannel.cs` — per-PR fanout, named heartbeat, write-timeout, idle-eviction
-- Modify: `PRism.Web/Endpoints/EventsEndpoints.cs` — subscriber-assigned event, subscribe/unsubscribe REST, cookie-based session-token on `GET /api/events`
+- Modify: `PRism.Web/Sse/SseChannel.cs` — per-PR fanout, named heartbeat, write-timeout, idle-eviction; maintains `{cookieSessionId → subscriberId}` mapping (P0.1)
+- Modify: `PRism.Web/Endpoints/EventsEndpoints.cs` — subscriber-assigned event, subscribe/unsubscribe REST (subscriberId derived from cookie session — P0.1), cookie-based session-token on `GET /api/events`, `GET /api/events/ping` (P1.5)
 - Modify: `PRism.Web/Middleware/OriginCheckMiddleware.cs` — reject empty Origin on POST/PUT/PATCH/DELETE only (GETs with empty Origin remain allowed for top-level navigations)
-- Create: `PRism.Web/Middleware/SessionTokenMiddleware.cs` — extends to ALL non-asset endpoints (header for most, cookie for `/api/events`)
-- Create: `PRism.Web/Middleware/BodySizeLimitMiddleware.cs` — 16 KiB cap on the four mutating endpoints (`mark-viewed`, `files/viewed`, `events/subscriptions` POST + DELETE)
-- Create: `PRism.Web/Logging/SensitiveFieldScrubber.cs` — ILogger destructuring policy that scrubs fields named `subscriberId`, `pat`, `token`, `body`, `content` (case-insensitive)
+- Create: `PRism.Web/Middleware/SessionTokenMiddleware.cs` — extends to ALL non-asset endpoints (header for most, cookie for `/api/events`); fixed-length FixedTimeEquals (P2.4)
+- Create: `PRism.Web/Logging/SensitiveFieldScrubber.cs` — ILogger destructuring policy: scrubs `subscriberId`, `pat`, `token` only (P2.8 — `body`/`content` removed); 1024-char truncation
 - Test: `tests/PRism.Core.Tests/PrDetail/ActivePrSubscriberRegistryTests.cs`
 - Test: `tests/PRism.Core.Tests/PrDetail/ActivePrPollerBackoffTests.cs`
 - Test: `tests/PRism.Web.Tests/EventsSubscriptionsEndpointTests.cs`
 - Test: `tests/PRism.Web.Tests/OriginCheckMiddlewareTests.cs`
 - Test: `tests/PRism.Web.Tests/SessionTokenMiddlewareTests.cs`
-- Test: `tests/PRism.Web.Tests/BodySizeLimitMiddlewareTests.cs`
 - Test: `tests/PRism.Web.Tests/SensitiveFieldScrubberTests.cs`
+- Test: `tests/PRism.Web.Tests/EventSourceCookieIntegrationTests.cs` (P2.18)
 
 ### Step 5.1: Subscriber registry tests
 
@@ -2929,11 +3156,10 @@ public sealed class ActivePrPoller : BackgroundService
 
     private static void ApplyBackoff(ActivePrPollerState state, DateTimeOffset now)
     {
-        // Standard exponential backoff for transient errors. The 403/secondary-rate-limit
-        // case is handled separately at the IReviewService boundary — when the GitHub
-        // response carries `x-ratelimit-resource: secondary`, the per-PR backoff respects
-        // `Retry-After` directly instead of the 2^n formula, and the per-commit fan-out
-        // degrades the remainder of the session to ChangedFiles=null. Spec § 10.1.
+        // Standard exponential backoff for transient errors. Q6: no dedicated secondary-rate-limit
+        // handling — any 4xx in the per-commit fan-out marks the session degraded (see spec § 6.4
+        // and GitHubReviewService implementation in Task 3); the poller falls back to plain backoff
+        // for any non-success response.
         state.ConsecutiveErrors++;
         var seconds = Math.Min(Math.Pow(2, state.ConsecutiveErrors) * 30, 300);
         state.NextRetryAt = now.AddSeconds(seconds);
@@ -2960,12 +3186,12 @@ public sealed record ActivePrUpdated(
     int? NewCommentCount);
 ```
 
-- [ ] Create `PRism.Core.Contracts/SubscriptionRequest.cs` (used by both POST and DELETE on `/api/events/subscriptions` per Step 5.7):
+- [ ] Create `PRism.Core.Contracts/SubscribeRequest.cs` (POST body for `/api/events/subscriptions` per Step 5.7). P0.1: SubscriberId is **derived from the cookie session** server-side — not in the body. DELETE uses query string per P2.21, so no DELETE body shape needed.
 
 ```csharp
 namespace PRism.Core.Contracts;
 
-public sealed record SubscriptionRequest(string SubscriberId, PrReference PrRef);
+public sealed record SubscribeRequest(PrReference PrRef);
 ```
 
 ### Step 5.6: Update `SseChannel` for per-PR fanout + named heartbeat
@@ -3016,29 +3242,49 @@ public async Task PublishPrUpdated(ActivePrUpdated evt)
 
 (Integrate with `SseChannel`'s existing scaffolding. Honor the existing disposal-in-finally invariant.)
 
-### Step 5.7: Add subscribe/unsubscribe endpoints
+### Step 5.7: Add subscribe/unsubscribe endpoints + ping
 
-- [ ] Modify `PRism.Web/Endpoints/EventsEndpoints.cs`:
+- [ ] Modify `PRism.Web/Endpoints/EventsEndpoints.cs`. P0.1: `subscriberId` is derived from the cookie session (NOT request body); the body shape drops the `SubscriberId` field. P2.21: DELETE uses query string (no body).
 
 ```csharp
+// POST /api/events/subscriptions — body: { prRef }; subscriberId derived from cookie session.
 app.MapPost("/api/events/subscriptions",
-    async (SubscriptionRequest body, ActivePrSubscriberRegistry registry) =>
+    async (SubscribeRequest body, HttpContext ctx, SseChannel sse, ActivePrSubscriberRegistry registry) =>
     {
-        if (string.IsNullOrEmpty(body.SubscriberId))
-            return Results.Problem(type: "/events/subscriber-unknown", statusCode: 404);
-        registry.Add(body.SubscriberId, body.PrRef);
+        var cookieSessionId = ctx.Request.Cookies["prism-session"];
+        if (string.IsNullOrEmpty(cookieSessionId))
+            return Results.Problem(type: "/events/no-session", statusCode: 401);
+        var subscriberId = sse.SubscriberIdForCookieSession(cookieSessionId);
+        if (subscriberId is null)
+            return Results.Problem(type: "/events/no-active-sse", statusCode: 403);
+        registry.Add(subscriberId, body.PrRef);
+        return Results.NoContent();
+    }).WithMetadata(new RequestSizeLimitAttribute(16384));   // P2.3 — capped via [RequestSizeLimit]
+
+// DELETE /api/events/subscriptions?prRef=owner/repo/number — no body; subscriberId from cookie session.
+app.MapDelete("/api/events/subscriptions",
+    async ([FromQuery] string prRef, HttpContext ctx, SseChannel sse, ActivePrSubscriberRegistry registry) =>
+    {
+        var cookieSessionId = ctx.Request.Cookies["prism-session"];
+        if (string.IsNullOrEmpty(cookieSessionId))
+            return Results.NoContent();   // idempotent — no session → noop
+        var subscriberId = sse.SubscriberIdForCookieSession(cookieSessionId);
+        if (subscriberId is null)
+            return Results.NoContent();   // idempotent — no SSE → noop
+        var parsed = PrReference.Parse(prRef);
+        registry.Remove(subscriberId, parsed);
         return Results.NoContent();
     });
 
-app.MapDelete("/api/events/subscriptions",
-    async (SubscriptionRequest body, ActivePrSubscriberRegistry registry) =>
-    {
-        registry.Remove(body.SubscriberId, body.PrRef);
-        return Results.NoContent();
-    });
+// P1.5: GET /api/events/ping — sentinel for the EventSource silent-401 detection on the frontend.
+// Goes through SessionTokenMiddleware. Returns 200 if cookie token is valid, 401 if not.
+app.MapGet("/api/events/ping", () => Results.Ok());
+
+// SubscribeRequest now has only PrRef (P0.1):
+public sealed record SubscribeRequest(PrReference PrRef);
 ```
 
-(Body-binding for DELETE uses `[FromBody]`; verify in Program.cs that `KestrelServerOptions.AllowDeleteWithBody = true` if needed.)
+(P0.1: `SseChannel.SubscriberIdForCookieSession(cookieSessionId)` returns the subscriberId for the active SSE connection on that cookie session, or null if none. The mapping is maintained inside SseChannel as cookie-sessions connect / disconnect.)
 
 ### Step 5.8: Tighten `OriginCheckMiddleware` — preserve loopback-port accommodation
 
@@ -3046,12 +3292,19 @@ The existing middleware (`PRism.Web/Middleware/OriginCheckMiddleware.cs`) has a 
 
 The only change S3 makes: **reject empty Origin on mutating methods only**. GETs with empty Origin remain allowed (top-level navigations don't send an Origin header — rejecting GETs without Origin would break direct URL navigation and any deep-link). POST/PUT/PATCH/DELETE with empty Origin → 403. The existing `IsLoopback(origin) && IsLoopback(host)` and `string.Equals(origin, expected, ...)` branches stay. Spec § 8.
 
-- [ ] Modify the body of `InvokeAsync` (currently lines 12-37). Replace it with:
+- [ ] Modify `InvokeAsync` (currently lines 12-37 in `OriginCheckMiddleware.cs`; on-main file is 55 lines including comment block). Show `internal sealed` + `[SuppressMessage]` decorations in the snippet. Replace the body with:
 
 ```csharp
-public async Task InvokeAsync(HttpContext ctx)
+[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes",
+    Justification = "Middleware is instantiated by ASP.NET Core via UseMiddleware<>.")]
+internal sealed class OriginCheckMiddleware
 {
-    ArgumentNullException.ThrowIfNull(ctx);
+    private readonly RequestDelegate _next;
+    public OriginCheckMiddleware(RequestDelegate next) => _next = next;
+
+    public async Task InvokeAsync(HttpContext ctx)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
 
     var isMutating =
         HttpMethods.IsPost(ctx.Request.Method) ||
@@ -3089,8 +3342,11 @@ public async Task InvokeAsync(HttpContext ctx)
         return;
     }
 
-    ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
-    await ctx.Response.WriteAsync("Cross-origin request rejected.").ConfigureAwait(false);
+        ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        await ctx.Response.WriteAsync("Cross-origin request rejected.").ConfigureAwait(false);
+    }
+
+    private static bool IsLoopback(string host) { /* existing implementation — unchanged from on-main */ }
 }
 ```
 
@@ -3156,11 +3412,15 @@ public sealed class SessionTokenMiddleware
 
         var actual = Encoding.UTF8.GetBytes(headerOrCookieValue);
 
-        // Length precondition for FixedTimeEquals (which throws on length mismatch).
-        // Token is always 44 chars (Base64 of 32 random bytes) so legitimate clients
-        // always hit the equal-length path. Documented in § 8.
-        var ok = actual.Length == _expectedToken.Length
-              && CryptographicOperations.FixedTimeEquals(actual, _expectedToken);
+        // P2.4 — fixed-length comparison. Pad/truncate `actual` to `_expectedToken.Length`,
+        // then call FixedTimeEquals on equal-length buffers. AND in `actual.Length == expected.Length`
+        // via bitwise `&` (NOT short-circuiting `&&`) so timing of the length check cannot be
+        // inferred from runtime variance. Documented in § 8.
+        var paddedActual = new byte[_expectedToken.Length];
+        var copyLen = Math.Min(actual.Length, paddedActual.Length);
+        actual.AsSpan(0, copyLen).CopyTo(paddedActual);
+        var equalContent = CryptographicOperations.FixedTimeEquals(paddedActual, _expectedToken);
+        var ok = equalContent & (actual.Length == _expectedToken.Length);
 
         if (!ok)
         {
@@ -3171,7 +3431,7 @@ public sealed class SessionTokenMiddleware
                 Type = "/auth/session-stale",
                 Status = StatusCodes.Status401Unauthorized,
                 Title = "Session token mismatch",
-                Detail = "The X-PRism-Session header (or prism-session cookie for /api/events) does not match the per-launch token. Reload the page to refresh the cookie."
+                Detail = "Session token mismatch — reload the page to refresh."   // S9 — trimmed
             }).ConfigureAwait(false);
             return;
         }
@@ -3192,13 +3452,16 @@ public sealed class SessionTokenProvider
 {
     public string Current { get; }
 
-    public SessionTokenProvider(IHostEnvironment env, IConfiguration config)
+    public SessionTokenProvider(IHostEnvironment env)
     {
+        // P2.30 — read PRISM_DEV_FIXED_TOKEN ONLY from Environment.GetEnvironmentVariable
+        // (NOT IConfiguration). Eliminates a path where appsettings.json could leak a fixed
+        // token into a non-Development host.
+        //
         // Dev-mode bypass: `dotnet watch run` rotates the process token on every save,
-        // forcing a SPA reload per save. Override with PRISM_DEV_FIXED_TOKEN to keep
-        // the dev loop quiet. Production / non-Development: always-random.
-        var devOverride = config["PRISM_DEV_FIXED_TOKEN"]
-            ?? Environment.GetEnvironmentVariable("PRISM_DEV_FIXED_TOKEN");
+        // forcing a SPA reload per save. Override with PRISM_DEV_FIXED_TOKEN (env var only) to keep
+        // the dev loop quiet. Production / non-Development: always-random; the override is ignored.
+        var devOverride = Environment.GetEnvironmentVariable("PRISM_DEV_FIXED_TOKEN");
         if (env.IsDevelopment() && !string.IsNullOrEmpty(devOverride))
         {
             Current = devOverride;
@@ -3209,25 +3472,24 @@ public sealed class SessionTokenProvider
 }
 ```
 
-Register all three middlewares in `Program.cs`. Spec § 8 commits to the pipeline ordering:
-`ExceptionHandler → BodySizeLimit → OriginCheck → SessionToken → Routing → ModelBinding → endpoint`.
+Register the two middlewares in `Program.cs`. Spec § 8 commits to the pipeline ordering:
+`ExceptionHandler → OriginCheck → SessionToken → Routing → ModelBinding (per-endpoint [RequestSizeLimit(16384)]) → endpoint`.
+
+P2.2: pipeline-ordering (Origin before SessionToken before ModelBinding) is a deliberate tradeoff — DoS defense ahead of auth (cheap header read), accepted because the threat model is localhost + same-machine-sibling-process probes leak only the static set of capped routes. Documented in spec § 8.
+
+P2.3: `BodySizeLimitMiddleware` is **dropped** in favor of `[RequestSizeLimit(16384)]` endpoint metadata on each of the four mutating route declarations (`mark-viewed`, `files/viewed`, `events/subscriptions` POST + DELETE). Kestrel's built-in mechanism handles chunked-encoding correctly without bespoke middleware.
 
 ```csharp
 builder.Services.AddSingleton<SessionTokenProvider>();
 
 // Pipeline ordering per spec § 8:
 //   1. ExceptionHandler — catches anything below.
-//   2. BodySizeLimitMiddleware — 16 KiB cap on the four mutating endpoints; rejects oversized
-//      bodies BEFORE model binding so unauthenticated bodies don't reach binders. Configured
-//      via Kestrel's MaxRequestBodySize for these routes + a defense-in-depth middleware
-//      check that reads Content-Length and short-circuits on > 16 KiB.
-//   3. OriginCheckMiddleware — reject empty Origin on POST/PUT/PATCH/DELETE.
-//   4. SessionTokenMiddleware — header for all non-asset endpoints; cookie for /api/events.
-//   5. Routing.
-//   6. Model binding.
-//   7. Endpoint.
+//   2. OriginCheckMiddleware — reject empty Origin on POST/PUT/PATCH/DELETE (cheap header read).
+//   3. SessionTokenMiddleware — header for all non-asset endpoints; cookie for /api/events.
+//   4. Routing.
+//   5. Model binding (per-endpoint [RequestSizeLimit(16384)] caps body size pre-binding).
+//   6. Endpoint.
 app.UseExceptionHandler();
-app.UseMiddleware<BodySizeLimitMiddleware>();
 app.UseMiddleware<OriginCheckMiddleware>();
 app.UseMiddleware<SessionTokenMiddleware>();
 app.UseRouting();
@@ -3253,6 +3515,8 @@ app.Use(async (ctx, next) =>
                 SameSite = SameSiteMode.Strict,
                 Secure = false,                   // localhost
                 Path = "/"                        // spec § 8 requires explicit Path=/
+                // S5: No MaxAge/Expires => session cookie; cleared on browser close. Per-launch
+                // token freshness handled by SessionTokenProvider.Current rotating on each process start.
             });
         }
         return Task.CompletedTask;
@@ -3263,101 +3527,62 @@ app.Use(async (ctx, next) =>
 
 The `OnStarting` callback fires before the first byte of the response body is written — works correctly with static-file middleware, with minimal-API JSON responses, and with the SSE endpoint (whose Content-Type is `text/event-stream`, so the predicate is false and no cookie is appended on SSE responses, which is intentional — the SPA gets its cookie from the HTML index).
 
-### Step 5.10b: Implement `BodySizeLimitMiddleware`
+### Step 5.10b: Body-size cap via `[RequestSizeLimit]` endpoint metadata (P2.3)
 
-Spec § 8 commits to a 16 KiB body cap on the four mutating endpoints (`mark-viewed`, `files/viewed`, `events/subscriptions` POST, `events/subscriptions` DELETE). The cap is enforced via a Kestrel + middleware combination so unauthenticated bodies never reach model binding:
+Spec § 8 commits to a 16 KiB body cap on the four mutating endpoints (`mark-viewed`, `files/viewed`, `events/subscriptions` POST + DELETE). Per P2.3, this is implemented via `[RequestSizeLimit(16384)]` endpoint metadata on the four route declarations (Task 4 + Task 5 endpoint blocks already show the `.WithMetadata(new RequestSizeLimitAttribute(16384))` calls). Kestrel rejects oversize requests pre-binding; no bespoke middleware needed.
 
-- [ ] Create `PRism.Web/Middleware/BodySizeLimitMiddleware.cs`:
-
-```csharp
-namespace PRism.Web.Middleware;
-
-public sealed class BodySizeLimitMiddleware
-{
-    private const long MaxMutatingBodyBytes = 16 * 1024;   // 16 KiB
-
-    private static readonly string[] CappedRoutes =
-    {
-        "/api/pr/", "/api/events/subscriptions"
-        // Path predicate matches any /api/pr/{owner}/{repo}/{n}/mark-viewed,
-        // /api/pr/{owner}/{repo}/{n}/files/viewed, and /api/events/subscriptions.
-    };
-
-    private readonly RequestDelegate _next;
-
-    public BodySizeLimitMiddleware(RequestDelegate next) => _next = next;
-
-    public async Task InvokeAsync(HttpContext ctx)
-    {
-        var path = ctx.Request.Path.Value ?? string.Empty;
-        var method = ctx.Request.Method;
-        var isMutating = HttpMethods.IsPost(method) || HttpMethods.IsPut(method)
-                      || HttpMethods.IsPatch(method) || HttpMethods.IsDelete(method);
-
-        var isCapped = isMutating &&
-            (path.Contains("/mark-viewed", StringComparison.Ordinal)
-             || path.Contains("/files/viewed", StringComparison.Ordinal)
-             || path.StartsWith("/api/events/subscriptions", StringComparison.Ordinal));
-
-        if (isCapped)
-        {
-            // Defense-in-depth: read Content-Length first; if absent or oversized, 413.
-            var contentLength = ctx.Request.ContentLength;
-            if (contentLength is null || contentLength > MaxMutatingBodyBytes)
-            {
-                ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
-                await ctx.Response.WriteAsJsonAsync(new ProblemDetails
-                {
-                    Type = "/body/too-large",
-                    Status = 413,
-                    Title = "Request body exceeds 16 KiB cap",
-                });
-                return;
-            }
-        }
-
-        await _next(ctx).ConfigureAwait(false);
-    }
-}
-```
-
-Also configure Kestrel's per-route `MaxRequestBodySize` (via `RequestSizeLimit` attribute or endpoint metadata) on the four routes so chunked-encoding requests without Content-Length still hit the cap before model binding.
-
-Tests in `tests/PRism.Web.Tests/BodySizeLimitMiddlewareTests.cs`:
-- 17 KiB POST to `/mark-viewed` → 413
-- 17 KiB POST to `/files/viewed` → 413
-- 17 KiB POST to `/api/events/subscriptions` → 413
-- 17 KiB DELETE to `/api/events/subscriptions` → 413
+Test in `tests/PRism.Web.Tests/RequestSizeLimitTests.cs`:
+- 17 KiB POST to `/mark-viewed`, `/files/viewed`, and `/api/events/subscriptions` → 413 (1 test, parameterized over the four routes; framework-tested smoke check that the attribute is wired).
 
 ### Step 5.10c: Implement the ILogger destructuring policy
 
-Spec § 6.2 + § 10.6 commit to scrubbing fields named `subscriberId`, `pat`, `token`, `body`, `content` (case-insensitive) from any log destructured object. This blocks accidental leakage of GitHub-content payloads (long markdown comment bodies, file contents) into log output:
+P2.8 — narrow the blocklist. Spec § 6.2 + § 10.6 commit to scrubbing fields named **`subscriberId`, `pat`, `token` only** (case-insensitive) — `body` and `content` are intentionally **NOT** blocked because they're load-bearing for debuggability of `mark-viewed` / `files/viewed` failures. To cap blast radius without losing the useful fields, the policy also truncates any string property longer than 1024 chars with a `[truncated, original-length: N]` suffix.
 
-- [ ] Create `PRism.Web/Logging/SensitiveFieldScrubber.cs` implementing `Serilog.Core.IDestructuringPolicy` (or the equivalent for whichever logger is in use; PRism currently uses Microsoft.Extensions.Logging — adapt to its `JsonConsoleFormatterOptions` or wrap a `LoggerProvider`).
+PRism uses `Microsoft.Extensions.Logging` which doesn't have a Serilog-equivalent `IDestructuringPolicy`. Implement as a custom `ILogger`-wrapping decorator that scrubs request-body / state-bag KVPs + truncates strings before forwarding.
+
+- [ ] Create `PRism.Web/Logging/SensitiveFieldScrubber.cs`:
 
   ```csharp
-  public sealed class SensitiveFieldScrubber : IDestructuringPolicy
+  public sealed class SensitiveFieldScrubber
   {
+      private const int MaxStringLength = 1024;
       private static readonly string[] BlockedFieldNames =
-          { "subscriberId", "pat", "token", "body", "content" };
+          { "subscriberId", "pat", "token" };   // P2.8: NOT body, NOT content
 
-      public bool TryDestructure(object value, ILogEventPropertyValueFactory factory, out LogEventPropertyValue result)
+      public object? Scrub(string fieldName, object? value)
       {
-          // Walk the object's properties. For any field whose name matches BlockedFieldNames
-          // (case-insensitive), substitute "[REDACTED]" instead of the actual value.
-          // ...
+          if (BlockedFieldNames.Any(b => string.Equals(b, fieldName, StringComparison.OrdinalIgnoreCase)))
+              return "[REDACTED]";
+          if (value is string s && s.Length > MaxStringLength)
+              return $"{s[..MaxStringLength]}[truncated, original-length: {s.Length}]";
+          return value;
       }
   }
   ```
 
-  Tests in `tests/PRism.Web.Tests/SensitiveFieldScrubberTests.cs`: log a structured payload `{ subscriberId, headSha }` and assert the captured log line shows `[REDACTED]` for `subscriberId` and the literal SHA for `headSha`.
+  Wire as a `ILogger`-wrapping decorator (or via `IConfigureOptions<LoggerFilterOptions>`) so every structured log scope passes through `Scrub` before the underlying provider serializes the event.
+
+  Tests in `tests/PRism.Web.Tests/SensitiveFieldScrubberTests.cs`:
+  - `Logger_redacts_subscriberId_and_pat_but_keeps_pr_body` — log a payload `{ subscriberId, pat, body, headSha }`; assert `subscriberId`/`pat` show `[REDACTED]` and `body`/`headSha` show their literal values.
+  - `Logger_truncates_strings_longer_than_1024_chars` — log a 2 KiB string property; assert truncation suffix.
 
 ### Step 5.11: Run the SSE / middleware tests
 
 - [ ] Add concrete test bodies to:
-  - `tests/PRism.Web.Tests/EventsSubscriptionsEndpointTests.cs` — subscribe happy path, 404 on unknown subscriber, 409 already-subscribed.
+  - `tests/PRism.Web.Tests/EventsSubscriptionsEndpointTests.cs` — P0.1: 4 new tests:
+    - `Subscribe_derives_subscriberId_from_cookie_session` (POST happy path; subscriberId NOT in body).
+    - `Subscribe_returns_403_when_no_active_sse_connection_for_cookie` (POST without an SSE connection on the requesting cookie).
+    - `Unsubscribe_uses_query_string_prRef_and_cookie_derived_subscriberId` (DELETE with `?prRef=...`).
+    - `Subscribe_rejects_forged_subscriberId_from_request_body_cross_tab` (any body field named `subscriberId` is ignored).
   - `tests/PRism.Web.Tests/OriginCheckMiddlewareTests.cs` — empty-Origin POST → 403; empty-Origin GET → 200.
-  - `tests/PRism.Web.Tests/SessionTokenMiddlewareTests.cs` — happy path; 401 without header; 401 on tampered token; constant-time-comparison sanity (use a stopwatch to confirm timing variance is small).
+  - `tests/PRism.Web.Tests/SessionTokenMiddlewareTests.cs` — happy path; 401 without header; 401 on tampered token; **P2.4**: same-length-wrong-bytes vs shorter-token timing assertion (assert both fail with similar elapsed time within tolerance — fixed-length comparison is the contract).
+  - `tests/PRism.Web.Tests/SessionTokenProviderTests.cs` — **P2.30**: `SessionTokenProvider_in_production_env_ignores_PRISM_DEV_FIXED_TOKEN`.
+  - `tests/PRism.Web.Tests/EventSourcePingTests.cs` — **P1.5**: 2 tests:
+    - `Ping_returns_401_when_cookie_token_invalid` (covers the silent-401 detection — the frontend uses ping to escalate from EventSource onerror to a force-reload).
+    - `Ping_returns_200_when_cookie_token_valid_and_5xx_path_does_not_force_reload` (sentinel for retryable transport errors).
+  - `tests/PRism.Web.Tests/EventSourceCookieIntegrationTests.cs` — **P2.18**: integration test that loads `/index.html` (receives Set-Cookie), then opens `/api/events` from the same WebApplicationFactory client (preserves cookie state) and asserts the connection succeeds.
+  - `tests/PRism.Web.Tests/HtmlResponseCookieTests.cs` — **S12**: GET `/` → response includes Set-Cookie header for `prism-session`.
+  - `tests/PRism.Web.Tests/RequestSizeLimitTests.cs` — P2.3: parameterized test asserting `[RequestSizeLimit]` rejects a 17 KiB body on each of the four mutating routes.
 
 (Implement each test body. Do not leave placeholders.)
 
@@ -3374,19 +3599,62 @@ Expected: all passing.
 ```powershell
 git checkout -b feat/s3-pr5-sse-poller-middleware
 git add PRism.Core/PrDetail/ PRism.Web/Sse/ PRism.Web/Endpoints/EventsEndpoints.cs PRism.Web/Middleware/ PRism.Web/Logging/ PRism.Web/Program.cs tests/
-git commit -m "feat(sse): per-PR fanout + active-PR poller (100ms inter-batch pace + secondary-rate-limit handling) + tightened OriginCheck + SessionTokenMiddleware (header + cookie on /api/events) + BodySizeLimitMiddleware (16 KiB) + ILogger destructuring policy (S3 PR5)"
+git commit -m "feat(sse): per-PR fanout + active-PR poller (100ms inter-batch pace) + tightened OriginCheck + SessionTokenMiddleware (header + cookie on /api/events; fixed-length FixedTimeEquals) + [RequestSizeLimit(16384)] on mutating routes + ILogger destructuring policy (subscriberId/pat/token + 1024-char string truncation) + GET /api/events/ping (S3 PR5)"
 ```
 
 PR5 expanded scope per spec § 11.7:
 - Cookie-based session-token enforcement on `GET /api/events` (header path covers all other non-asset endpoints).
-- New `BodySizeLimitMiddleware` (16 KiB cap on the four mutating endpoints; configured before model binding).
-- ILogger destructuring policy (scrubs `subscriberId`, `pat`, `token`, `body`, `content` case-insensitive).
-- 100ms inter-batch pace between fan-out batches.
-- 403 secondary-rate-limit handling (pause on `x-ratelimit-resource: secondary` header; respect `Retry-After`; degrade remainder to neutral Jaccard).
+- `[RequestSizeLimit(16384)]` on the four mutating routes (was `BodySizeLimitMiddleware`; P2.3).
+- ILogger destructuring policy: scrubs `subscriberId`, `pat`, `token` case-insensitive (P2.8 — `body`/`content` removed); 1024-char string truncation.
+- 100ms inter-batch pace between fan-out batches (private const inside GitHubReviewService).
+- Simplified 4xx fan-out handling (any non-success → ChangedFiles=null, session degraded; no dedicated x-ratelimit-resource parsing).
+- `GET /api/events/ping` for EventSource silent-401 detection (P1.5).
+- Subscribe/unsubscribe: subscriberId derived from cookie session (P0.1); DELETE uses query string (P2.21).
 
 ---
 
 ## Task 6: Frontend PR Detail Shell — Page, Routing, Sub-tabs, Banner
+
+**Pre-Task — Frontend file structure validation against handoff (P2.13).** Read `design/handoff/` component tree. If it diverges from the planned `PrDetail/` structure below, the handoff wins (per CLAUDE.md design/handoff invariant). Reconcile and update file paths in Tasks 6-9 before writing tests.
+
+**Pre-Task — Skeleton timing rule (P1.12).** Every fetched surface that uses `useDelayedLoading` honors a 100ms wait + ≥300ms hold. Surfaces in S3:
+
+- `usePrDetail` (Task 6) — primary PR detail GET.
+- `useFileDiff` (Task 8) — `GET /diff` per file selection.
+- `useFileContent` (Task 8) — `GET /file?path=&sha=` for `.md` rendered view + word-diff.
+- `useUnionDiff` (Task 7) — `GET /diff?commits=...` for CommitMultiSelectPicker selection.
+
+Tasks 7, 8, 9 reference this list rather than restating the rule per surface.
+
+**Pre-Task — Keyboard handler lifecycle (P2.11).** Per-page keyboard handlers register on mount via `useEffect` and unregister on unmount. Tab-scoped handlers (Files-only `j`/`k`/`v`/`d`) live in FilesTab; switching tabs unmounts the FilesTab subtree and removes its listeners. Page-scoped handlers (PrDetailPage tab-cycling) live on the page. Single source of truth: `useKeybindings` hook with scope param. Tasks 6, 7, 8, 9 reuse this contract.
+
+**User flow (P2.15).** Happy-path narrative for the PR detail page — referenced by every Task 6-9 component test as the integration mental model:
+
+1. Route mounts → `PrHeader` renders immediately from cached PR list data.
+2. `usePrDetail` fetch begins → 100ms guard → skeleton.
+3. Detail arrives → sub-tabs interactive, default Overview tab.
+4. User clicks Files → `FilesTab` loads, file tree from cached detail, diff fetches on first file selection.
+5. `ReviewFilesCta` on Overview deep-links to FilesTab + first file.
+6. Banner appears on SSE update; user clicks Reload → re-fetch, banner clears.
+7. Bad `?iter=N` clamps to nearest valid + `replaceState`.
+8. `clusteringQuality === "low"` → `CommitMultiSelectPicker` renders instead of `IterationTabStrip` + `ComparePicker` (Q5).
+
+**Per-component state matrix (P1.11).** Each component below references spec § 7.6 row-by-row for its loading / empty / error / partial states. Components covered (loading-pre-skeleton-100ms / loading-skeleton / empty / error / partial — spec § 7.6 is the canonical source):
+
+- `PrHeader` — see spec § 7.6 row 1
+- `AiSummaryCard` — see spec § 7.6 row 2
+- `PrDescription` — see spec § 7.6 row 3 (P2.9 — empty body shows muted "No description provided" in `--text-secondary`)
+- `StatsTiles` — see spec § 7.6 row 4
+- `PrRootConversation` — see spec § 7.6 row 5
+- `ReviewFilesCta` — see spec § 7.6 row 6 (P2.9 — disabled-state tooltip is `"No files to review yet"`)
+- `FileTree` — see spec § 7.6 row 7
+- `DiffPane` — see spec § 7.6 row 8
+- `DiffTruncationBanner` — see spec § 7.6 row 9
+- `IterationTabStrip` — see spec § 7.6 row 10
+- `ComparePicker` — see spec § 7.6 row 11
+- `CommitMultiSelectPicker` — see spec § 7.6 row 12 (Q5 — fallback when ClusteringQuality is Low)
+- `MarkdownFileView` — see spec § 7.6 row 13
+- `BannerRefresh` — see spec § 7.6 row 14
 
 **Files:**
 - Create: `frontend/src/pages/PrDetailPage.tsx` (replaces S2's `S3StubPrPage.tsx`)
@@ -3423,9 +3691,18 @@ For each component, follow this rhythm (the same TDD shape as the backend tasks)
   - Below the 1180px breakpoint, z-index sits **above** the file-tree sheet/scrim (so a banner that fires while the sheet is open remains visible).
 - [ ] **BannerRefresh aggregation behavior (spec § 7.4):** between two Reload presses, multiple `pr-updated` SSE events aggregate. `headShaChanged` latches a "Iter N+1 available" flag (boolean — no double-count); `commentCountChanged` increments a delta counter. On Reload, the GET response becomes the new baseline and the banner clears. Test 4 cases: single head change, single comment delta, multiple events of each type aggregating, mixed.
 - [ ] **Deep-link `?iter=N` clamp on coefficient hot-reload (spec § 6.2 + § 7.5):** when the mounted page detects a `coefficientsGeneration` increment between the initial load and a banner-driven reload, briefly render "Iteration boundaries refreshed — selection may have moved", clamp `iter=N` to the nearest valid iteration (or All-changes), and update the URL via `history.replaceState` so back-button history isn't polluted. Test asserts URL update happens via replaceState (not pushState).
+- [ ] **`?iter=N` drop on ClusteringQuality Ok→Low transition (Q5):** when the re-cluster flips quality from Ok to Low (e.g., calibration disabled mid-launch, or boundaries collapsed away), the `iter` query param is dropped from the URL via `replaceState`. The page then renders `CommitMultiSelectPicker` instead of `IterationTabStrip`.
 - [ ] usePrDetail hook (delayed-loading + delayed-spinner): test that skeleton renders only after 100ms pending, holds for 300ms minimum.
-- [ ] useEventSource hook: test ready-state Promise, AbortController on reconnect, 401 force-reload, named-heartbeat watcher reset at 35s.
+- [ ] useEventSource hook: test ready-state Promise, AbortController on reconnect, named-heartbeat watcher reset at 35s.
+- [ ] **useEventSource 401-detect-via-ping (P1.5):** on EventSource `onerror`, fire sentinel `fetch('/api/events/ping')` — if 401, force `window.location.reload()`; else reconnect with backoff.
+  - Test: `Ping_returns_401_forces_window_location_reload` — mock the fetch to return 401; assert `window.location.reload` called.
+  - Test: `Ping_returns_5xx_triggers_reconnect_with_backoff` — mock the fetch to return 503; assert reconnect path runs and no reload.
 - [ ] useActivePrUpdates hook: subscribe on mount, unsubscribe on unmount, banner-firing on `pr-updated` event.
+- [ ] **BannerRefresh aggregation copy (P2.12).** Specify exact copy:
+  - Head-only: `"Iteration N+1 available — Reload to view"`
+  - Comments-only: `"N new comments — Reload to view"`
+  - Mixed: `"Iteration N+1 + N new comments — Reload to view"`
+  - Single comment: `"1 new comment — Reload to view"`
 
 ### Step 6.last: Commit
 
@@ -3443,13 +3720,17 @@ git commit -m "feat(frontend): PR detail shell — page, routing, hooks, sub-tab
 - Create: `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx`
 - Create: `frontend/src/components/PrDetail/FilesTab/IterationTabStrip.tsx`
 - Create: `frontend/src/components/PrDetail/FilesTab/ComparePicker.tsx`
+- Create: `frontend/src/components/PrDetail/FilesTab/CommitMultiSelectPicker.tsx` (Q5 — fallback when `clusteringQuality === "low"`)
 - Create: `frontend/src/components/PrDetail/FilesTab/FileTree/FileTree.tsx`
 - Create: `frontend/src/components/PrDetail/FilesTab/FileTree/DirectoryNode.tsx`
 - Create: `frontend/src/components/PrDetail/FilesTab/FileTree/FileNode.tsx`
 - Create: `frontend/src/components/PrDetail/FilesTab/FileTree/treeBuilder.ts` (pure)
+- Create: `frontend/src/components/PrDetail/FilesTab/FileTreeSheet.tsx` (sub-1180px sheet wrapper; P1.13)
 - Create: `frontend/src/hooks/useFileTreeState.ts`
 - Create: `frontend/src/hooks/useFilesTabShortcuts.ts` (j/k/v/d with input-eating-keys guard)
+- Create: `frontend/src/hooks/useViewportBreakpoint.ts`
 - Test: `frontend/src/components/PrDetail/FilesTab/FileTree/__tests__/treeBuilder.test.ts`
+- Test: `frontend/src/components/PrDetail/FilesTab/__tests__/CommitMultiSelectPicker.test.tsx` (Q5 — 4 vitest cases)
 - Test: `frontend/src/hooks/__tests__/useFilesTabShortcuts.test.tsx`
 
 ### Step 7.1: `treeBuilder` tests
@@ -3511,13 +3792,21 @@ Expected: all passing.
 - [ ] `FileNode.tsx`, `DirectoryNode.tsx`, `FileTree.tsx`. Apply per-directory rollup `viewed N/M`.
 - [ ] **Filter icon HIDDEN until S6 (spec § 7.2).** Do not render a clickable stub with a tooltip. The icon is simply absent from the file tree header in S3; S6 is when filtering ships.
 - [ ] **AI focus dot column (spec § 7.2):** when `aiPreview === true` and the focus is backed by `PlaceholderFileFocusRanker` (the PoC noop ranker), suffix the `aria-label` with " (preview)". Final shape: `aria-label="AI focus: high (preview)"`. When `aiPreview === false`, render an `aria-hidden` placeholder span (no dot, no label). When a real (non-Noop, non-Placeholder) ranker ships in v2, the suffix drops away.
+- [ ] **P2.33 — Focus dot width-stability:** the `aria-hidden` placeholder span (rendered when `aiPreview === false`) MUST reserve the same width and column position as the visible dot, so toggling `aiPreview` does not produce horizontal layout shift on file rows.
 - [ ] **Inline toast for viewed-checkbox rollback (spec § 7.2).** When `POST /files/viewed` 4xxs and the optimistic-update reverts, render an inline toast with these properties:
-  - **Position:** right-aligned within the file row (does NOT overlay the path text — sits to the right of the row, in the column where the viewed checkbox lives).
+  - **Position:** right-aligned within the file row (does NOT overlay the path text — sits to the right of the row, in the column where the viewed checkbox lives). **D7:** anchored to the file row and scrolls with the FileTree.
   - **Duration:** 4 seconds auto-dismiss; click-to-dismiss supported.
   - **A11y:** `role="status"`, `aria-live="polite"`.
-  - **Stacking:** if a second toast fires on the same row before the first dismisses, the most-recent toast *replaces* the older one (single-toast-per-row). Toasts on different rows stack vertically.
+  - **Stacking (D7):** maximum 3 visible at once; older toasts auto-dismiss early when the count exceeds 3. If a row scrolls out of view, its toast is dismissed. Per-row replacement still applies (a second toast on the same row replaces the first).
   - **Animation:** `--t-med` ease-out (matches BannerRefresh).
 - [ ] **Null-SHA iteration UI (spec § 7.2):** iterations with `HasResolvableRange === false` render as "Iter N (snapshot lost)" in the IterationTabStrip; ComparePicker disables selection of these iterations (renders them in a disabled-style row with a tooltip "Snapshot lost — base or head SHA was garbage-collected").
+- [ ] **Q5 — `CommitMultiSelectPicker` (new step group; spec § 7.2.1):**
+  - Frontend chooses between `IterationTabStrip` and `CommitMultiSelectPicker` based on `prDetailDto.clusteringQuality === "ok" ? <IterationTabStrip /> : <CommitMultiSelectPicker />`.
+  - Layout: dropdown trigger labeled `"Showing changes from N of M commits"`; click opens a multi-select list with checkboxes; "Show all" is the default (no `?commits=` query param in the URL).
+  - Selected commits drive the URL: `?commits=sha1,sha2,sha3` (omitted entirely for "Show all"). Diff fetch goes to `GET /api/pr/{ref}/diff?commits=...` (Q5 backend endpoint in Task 4).
+  - WAI-ARIA combobox keyboard model: `↓`/`↑` navigate (wrap), `Enter`/`Space` activate-and-close (single-select shape) OR multi-select via `Space` (toggle the highlighted option), `Home`/`End` jump first/last, `Esc` closes; focus returns to the dropdown trigger on close.
+  - Tests (4 vitest cases): 1-commit PR (single checkbox; "Show all" implicit); multi-commit-degenerate PR (per-PR detector fired); global-disabled-flag PR (`iterations.clusteringDisabled = true`); selection updates URL via `replaceState` (no history pollution).
+  - **Note:** the prior `IterationTabStrip` degenerate-fallback banner has been DROPPED — the strip simply isn't rendered when quality is Low. No `MaxFallbackTabs` cap, no banner copy, no "Iterations could not be reconstructed" string in the codebase.
 
 ### Step 7.7: Implement `IterationTabStrip` + `ComparePicker`
 
@@ -3525,6 +3814,11 @@ Expected: all passing.
 - [ ] **Narrow-viewport behavior for IterationTabStrip (spec § 7.7):**
   - At viewports < 1180px: collapse to "All changes | Iter N (active) | More ▾" with the rest of the iterations in the More dropdown.
   - At viewports < 900px: only show the active iteration label + More (drop the "All changes" label as well).
+- [ ] **P2.10 — `IterationTabStrip` "More" menu:**
+  - Opens on **click** (not hover).
+  - Shares the `ComparePicker` WAI-ARIA combobox keyboard model: `↓`/`↑` navigate (wrap), `Enter`/`Space` activate-and-close, `Home`/`End` jump first/last, digit-jump (typing a digit jumps to that iteration number).
+  - Contents: the iterations not visible inline + "All changes" tab when <900px.
+  - Selecting an iteration closes the menu + returns focus to the More button.
 - [ ] **ComparePicker WAI-ARIA combobox keyboard model (spec § 7.8):**
   - `↓` / `↑` navigate options with wrap-around at the ends.
   - `Enter` and `Space` activate the highlighted option AND close the listbox.
@@ -3534,7 +3828,14 @@ Expected: all passing.
 
 ### Step 7.8: Implement responsive sheet behavior (< 1180px)
 
-- [ ] When viewport < 1180px, file tree becomes an overlay sheet with focus trap + auto-collapse on file selection. Use a small `useViewportBreakpoint` hook + a `<FileTreeSheet>` wrapper.
+- [ ] **P1.13 — Sub-1180px file-tree sheet contract:**
+  - **Chevron toggle location:** in the file-tree column header inside the FilesTab toolbar.
+  - **Esc closes** the sheet.
+  - **Scrim click closes** the sheet.
+  - **Body scroll-locked** while the sheet is open (prevents background scroll bleed).
+  - **Focus return** on close: focus returns to the chevron toggle.
+  - **Viewport-widen-while-open:** if the viewport widens above 1180px while the sheet is open, the sheet auto-collapses but tree state (expanded/collapsed nodes, selected file) persists into the docked tree.
+  - Implementation: `useViewportBreakpoint` hook + `<FileTreeSheet>` wrapper component.
 
 ### Step 7.9: Run frontend tests
 
@@ -3631,6 +3932,20 @@ Spec § 5 + § 11.2 commit to a **3-test smoke check** for Mermaid hardening. Th
 ### Step 8.5: Implement `MermaidBlock`
 
 - [ ] Lazy-import Mermaid; initialize with `{ securityLevel: 'strict', htmlLabels: false, flowchart: { htmlLabels: false } }` exactly once.
+- [ ] **P2.22 — Mermaid Vitest mock recipe.** Add `frontend/test-setup/mermaid-mock.ts`:
+
+  ```typescript
+  import { vi } from 'vitest';
+
+  vi.mock('mermaid', () => ({
+    default: {
+      initialize: vi.fn(),
+      render: vi.fn().mockResolvedValue({ svg: '<svg></svg>' }),
+    },
+  }));
+  ```
+
+  Reference in `vitest.config.ts` `setupFiles`. The adversarial behavioral test asserts `mermaid.render` was called with `securityLevel: 'strict'` (a call-shape assertion, not internal sanitization — that's the upstream library's job, defended by the version pin).
 
 ### Step 8.6: Implement `DiffPane` + supporting components
 
@@ -3673,6 +3988,9 @@ git commit -m "feat(frontend): diff pane + word overlay + markdown pipeline + me
 ### Step 9.1–9.N: Test-first cycle for each component
 
 - [ ] Write tests, implement components, run tests, commit. Match § 7.3 exactly: PrDescription uses `overview-card-hero-no-ai` modifier when `aiPreview === false`; AiSummaryCard renders only when `useCapabilities()['ai.summary']` is true and `aiPreview === true`; PrRootConversation has no Reply button (S4 lights it up); ReviewFilesCta footer renders the keyboard hints.
+- [ ] **P2.9 — Empty-PR Overview state:**
+  - When `pr.body` is empty/whitespace-only, `PrDescription` renders a muted placeholder line `"No description provided"` styled with `--text-secondary`.
+  - The "Review files" CTA's disabled-state tooltip is `"No files to review yet"` (not generic "disabled"). Triggers when the PR has zero files in the diff.
 - [ ] **AiSummaryCard "Preview" chip (spec § 7.3).** When `aiPreview === true` AND the summary is backed by `PlaceholderPrSummarizer` (the PoC noop), prepend a muted "Preview" chip with copy *"AI preview — sample content, not generated from this PR"*. The chip persists until a non-Noop / non-Placeholder summarizer is registered (i.e., real AI ships in v2). Implementation: read the `aiSummaryProvider` capability flag — when its value is `placeholder`, render the chip; when `real`, drop it.
 - [ ] **PrRootConversation rendering contract (spec § 7.3):**
   - Each comment widget renders author + timestamp + body via `MarkdownRenderer` (the shared sanitizing pipeline from Task 8).
@@ -3692,6 +4010,8 @@ git commit -m "feat(frontend): overview tab — AI summary placeholder + PR desc
 ---
 
 ## Task 10: Documentation Updates
+
+**PL5 — Test-first exemption.** Task 10 is doc-only and exempt from the test-first ritual. Task 11 IS the tests.
 
 **Files:**
 - Create: `docs/spec/iteration-clustering-algorithm.md`
@@ -3729,6 +4049,7 @@ If the source no longer exists (e.g., wiped Downloads folder), the canonical ver
 - [ ] **Truncation banner copy** (used by `DiffTruncationBanner` in Task 8): *"PRism shows GitHub's first N files of this diff. Full-diff support is on the roadmap. Open on github.com."* Make sure this exact copy lands in the doc and matches the component literal.
 - [ ] **Deferred-items list mirrors spec § 9.5 additions:** "Multi-window single-instance enforcement → architectural-readiness backlog item; named-mutex/flock + IPC focus signal."
 - [ ] **New § 10.6 "Logging discipline for GitHub-content payloads"** lands as part of the spec sync. The plan references it from this doc-updates list — the spec edit lives in `docs/specs/2026-05-06-s3-pr-detail-read-design.md` (already in commit `6c2a487`); no separate doc-task action beyond confirming downstream specs cross-reference it.
+- [ ] **P2.32 — README addition:** add a Development workflow note in `README.md`: *"Set `PRISM_DEV_FIXED_TOKEN` env var via user-secrets for stable token across `dotnet watch run` reloads. Without this, every restart rotates the token and forces SPA reload."*
 
 ### Step 10.last: Commit
 
@@ -3765,28 +4086,21 @@ dotnet add tests\PRism.GitHub.Tests.Integration reference PRism.GitHub\PRism.Git
 
 Add a `runsettings` file at repo root that filters out `Category=Integration` from the default `dotnet test` run.
 
-### Step 11.3: Write the 5 contract tests + GraphQL-shape-drift + secondary-rate-limit smoke
+### Step 11.3: Write the contract tests + GraphQL-shape-drift + ClusteringQuality sanity check
 
 - [ ] Implement each per spec § 11.4. Pin to commit-SHAs in a config record (don't read branch HEAD). The shape-drift test produces a structured field-by-field diff on failure (use `JsonDiffPatch` or hand-roll a small differ).
-- [ ] **Verify the existing 5-test count still holds.** The iteration-clustering algorithm itself didn't change — only DEFAULTS changed (`SkipJaccardAboveCommitCount` 100→50, `InterBatchPaceMs` introduced). The frozen-PR's expected boundaries should land at the same commit SHAs because the test PR was authored to fall well below the 50-commit cap, where the per-commit Jaccard fan-out runs to completion regardless of the pace knob. If a test diverges, treat as a regression to investigate before adjusting expectations.
-- [ ] **Add `Frozen_pr_secondary_rate_limit_does_not_block_clustering`** — a smoke check on the 403/secondary handling. The test only fires meaningfully if the per-commit fan-out hits the secondary rate limit during the test run; in steady state this is **typically skipped** because the frozen PR is small and well under any rate-limit threshold. Implementation:
+- [ ] **Verify the existing 5-test count still holds.** The iteration-clustering algorithm itself didn't change — only DEFAULTS changed (added inter-batch pace inside GitHubReviewService). The frozen-PR's expected boundaries should land at the same commit SHAs because the test PR was authored to fall well below the 100-commit cap, where the per-commit Jaccard fan-out runs to completion regardless of the pace knob. If a test diverges, treat as a regression to investigate before adjusting expectations.
+- [ ] **Q5 — Add `Frozen_pr_returns_clustering_quality_ok`.** Sanity check that the frozen PR is a healthy multi-commit PR (the `CommitMultiSelectPicker` fallback isn't accidentally triggered).
 
   ```csharp
-  [SkippableFact]
-  public async Task Frozen_pr_secondary_rate_limit_does_not_block_clustering()
+  [Fact]
+  public async Task Frozen_pr_returns_clustering_quality_ok()
   {
-      // The smoke check exists to prove the 403/secondary handling doesn't
-      // hard-fail clustering. It triggers only when GitHub's response actually
-      // carries `x-ratelimit-resource: secondary` during the test run.
-      // Production hardening for the path is in unit tests on GitHubReviewService;
-      // this is the integration-side tripwire.
-      Skip.IfNot(Environment.GetEnvironmentVariable("PRISM_INTEGRATION_RATE_LIMIT_REPRO") == "1",
-          "Set PRISM_INTEGRATION_RATE_LIMIT_REPRO=1 to repro a secondary rate-limit (requires saturating fan-out).");
-      // ... assert clustering still produces a non-empty IterationCluster set even after
-      // the rate-limit hit, with neutral-Jaccard for the degraded commits.
+      // Asserts the frozen api-codex PR's PrDetailDto carries clusteringQuality === "ok"
+      // — frozen PR has 6+ commits with healthy cadence; degenerate detector should not fire.
+      // Spec § 11.4.
   }
   ```
-  Spec § 11.4.
 
 ### Step 11.4: Update CI workflow
 
@@ -3808,7 +4122,7 @@ Expected: 5 pinned-SHA tests pass; `Frozen_pr_graphql_shape_unchanged` passes.
 ```powershell
 git checkout -b feat/s3-pr11-contract-tests
 git add tests/PRism.GitHub.Tests.Integration/ PRism.sln .github/workflows/
-git commit -m "test(integration): frozen api-codex PR contract tests + GraphQL shape-drift detector + secondary-rate-limit smoke (S3 PR11)"
+git commit -m "test(integration): frozen api-codex PR contract tests + GraphQL shape-drift detector + ClusteringQuality=Ok sanity check (S3 PR11)"
 ```
 
 ### Step 11.7: Test row updates throughout the plan (mirrors spec § 11.3)
@@ -3819,12 +4133,18 @@ The spec's `ce-doc-review` pass updated multiple test rows. The plan tasks above
 |---|---|---|
 | Diff truncation derivation | "GET /api/pr/{ref}/diff propagates `truncated: true` from `compare`" | "GET /api/pr/{ref}/diff derives `truncated: true` from `pull.changed_files` count mismatch" |
 | /file 422 split | single `/file/not-in-diff` row | `/file/not-in-diff` row + new `/file/truncation-window` row |
-| Body path canonicalization | 4 tests | 7 tests (rules: `..`, `.`, empty, leading `/`, trailing `/`, NUL, control char, backslash, NFC byte-length) |
-| Body size cap | (not in earlier draft) | 4 tests (one per mutating endpoint) |
-| X-PRism-Session enforcement | (only mutating verbs in earlier draft) | 5 tests covering GET enforcement (header for most, cookie for /api/events) |
-| State migration | 4 tests | 6 tests (added `UiPreferences` migration + `ResetToDefaultAsync` + malformed-JSON-no-read-only) |
-| Logging discipline | (not in earlier draft) | 1 test (subscriberId / pat / token / body / content scrub) |
-| Iteration deep-link | (not in earlier draft) | 1 test (`?iter=N` clamps on coefficient hot-reload via `history.replaceState`) |
+| Body path canonicalization | 4 tests | **9 tests** (P1.8): 8 InlineData entries (rules: `..`, `.`, empty, leading `/`, trailing `/`, NUL, control char, backslash) + 1 separate `Fact` for NFC byte-length mismatch. P2.6 regression: `?path=src/%2E%2E/etc/passwd` → 422. |
+| Body size cap | (not in earlier draft) | 1 parameterized test asserting `[RequestSizeLimit(16384)]` rejects oversize on each of the four routes (P2.3 — was 4 BodySizeLimitMiddleware tests). |
+| X-PRism-Session enforcement | (only mutating verbs in earlier draft) | 5 tests covering GET enforcement (header for most, cookie for /api/events) + P2.4 fixed-length FixedTimeEquals test. |
+| State migration | 4 tests | **8 tests** (P1.8): added `UiPreferences` default round-trip + `ResetToDefaultAsync` round-trip + malformed-JSON-no-read-only + `StateResetFailedException` simulation (P2.20). |
+| Logging discipline | (not in earlier draft) | 2 tests (P2.8): `subscriberId`/`pat` redacted; `body`/`headSha` kept; 1024-char string truncation. |
+| Iteration deep-link | (not in earlier draft) | 1 test (`?iter=N` clamps on coefficient hot-reload via `history.replaceState`); plus Q5 drop-iter-on-Ok→Low test. |
+| ClusteringQuality (Q5) | (not in earlier draft) | 4 endpoint tests (≤1 commit, degenerate, config-flag, healthy multi-commit) + 4 PrDetailLoader tests + 4 frontend `CommitMultiSelectPicker` tests + 1 frozen-PR sanity test (Quality === Ok) + 1 union-diff endpoint test (`?commits=`). |
+| TimelineCapHit (Q2) | (not in earlier draft) | 1 endpoint test (`MaxTimelinePages` reached → DTO carries `TimelineCapHit: true`). |
+| Subscribe / unsubscribe (P0.1) | body-bound subscriberId | 4 new tests (subscriber-from-cookie POST, 403 no-active-SSE, DELETE via query string, forge-subscriberId rejected). |
+| EventSource ping (P1.5) | (not in earlier draft) | 2 tests (`401 → force-reload`, `5xx → reconnect-with-backoff`). |
+| EventSource cookie integration (P2.18) | (not in earlier draft) | 1 integration test (load index.html → SSE on same client). |
+| Setup reset (P1.9) | (not in earlier draft) | 3 tests (401 no-session-header, 403 no-origin, happy-path). |
 
 ---
 
