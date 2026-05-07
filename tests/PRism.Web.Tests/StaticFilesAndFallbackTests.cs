@@ -8,27 +8,38 @@ namespace PRism.Web.Tests;
 public class StaticFilesAndFallbackTests
 {
     [Fact]
-    public async Task GET_root_does_not_404_due_to_missing_SPA_fallback()
+    public async Task GET_root_serves_SPA_index_html()
     {
-        // This test would have caught the T30-implementation gap: missing UseStaticFiles +
-        // MapFallbackToFile means any unmatched non-API route returns 404 instead of the
-        // React app's index.html.
-        //
-        // We can't assert on actual content (wwwroot may be empty in CI before npm run build),
-        // but we can assert that the fallback is REGISTERED — which means we get either a 200
-        // (file served) or a different non-404 status, NOT a generic API-routing 404.
+        // The SPA fallback (or MapStaticAssets, depending on which has a manifest entry)
+        // must serve an HTML response for GET /. We don't assert on the body here because
+        // GET / can be served by either the static-asset manifest (real wwwroot index.html
+        // when the frontend has been built) or by MapFallbackToFile (the test-factory stub).
+        // The body marker check belongs on /inbox-shell, where only MapFallbackToFile can match.
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateClient();
-        _ = await client.GetAsync(new Uri("/", UriKind.Relative));
 
-        // If wwwroot/index.html exists, we get 200. If wwwroot is empty (no frontend build yet),
-        // we get 404 BUT it's the static-files / fallback 404, not the routing 404 — distinguishable
-        // by the absence of a ProblemDetails JSON body.
-        // The crucial assertion is that the SPA fallback is registered: an arbitrary client-side
-        // route should not return a ProblemDetails error.
-        var clientSideResp = await client.GetAsync(new Uri("/inbox-shell", UriKind.Relative));
-        clientSideResp.Content.Headers.ContentType?.MediaType.Should().NotBe("application/problem+json",
-            because: "client-side routes must hit the SPA fallback, not the API routing 404");
+        var resp = await client.GetAsync(new Uri("/", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        resp.Content.Headers.ContentType?.MediaType.Should().Be("text/html");
+    }
+
+    [Fact]
+    public async Task Client_side_route_falls_back_to_SPA_index_html()
+    {
+        // /inbox-shell is not in the static-asset manifest and not an API route, so the only
+        // path that can serve a 200 text/html response is MapFallbackToFile("index.html").
+        // Asserting the stub marker proves the SPA fallback ran and read the file from the
+        // overridden web root.
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/inbox-shell", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        resp.Content.Headers.ContentType?.MediaType.Should().Be("text/html");
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain("PRism test stub");
     }
 
     [Fact]
