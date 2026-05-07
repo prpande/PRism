@@ -23,18 +23,25 @@ public class WeightedDistanceClusteringStrategyTests
             Array.Empty<ClusteringAuthorComment>());
 
     [Fact]
-    public void Empty_commits_returns_no_clusters()
+    public void Empty_commits_returns_empty_array()
     {
-        NewStrategy().Cluster(Input(), Defaults).Should().BeEmpty();
+        // Defensive: PrDetailLoader is the canonical pre-check (spec § 6.4 routes ≤1-commit
+        // PRs to ClusteringQuality:Low before calling Cluster). Empty input from an upstream
+        // bug should still produce a stable, non-null, no-iterations result rather than
+        // surfacing as a NullReferenceException downstream.
+        NewStrategy().Cluster(Input(), Defaults).Should().NotBeNull().And.BeEmpty();
     }
 
     [Fact]
     public void Single_commit_returns_one_cluster()
     {
+        // Defensive: see Empty_commits_returns_empty_array. PrDetailLoader handles the
+        // 1-commit case via ClusteringQuality:Low; this test pins the strategy's fallback
+        // shape if the loader's check is bypassed.
         var c = Commit("a", DateTimeOffset.UtcNow);
         var clusters = NewStrategy().Cluster(Input(c), Defaults);
-        clusters.Should().HaveCount(1);
-        clusters[0].CommitShas.Should().ContainSingle().Which.Should().Be("a");
+        clusters.Should().NotBeNull().And.HaveCount(1);
+        clusters![0].CommitShas.Should().ContainSingle().Which.Should().Be("a");
     }
 
     [Fact]
@@ -45,7 +52,7 @@ public class WeightedDistanceClusteringStrategyTests
             .Select(i => Commit($"c{i}", t0.AddSeconds(i * 30), "src/A.cs"))
             .ToArray();
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(1);
+        clusters.Should().NotBeNull().And.HaveCount(1);
     }
 
     [Fact]
@@ -60,8 +67,8 @@ public class WeightedDistanceClusteringStrategyTests
             Commit("c3", t0.AddHours(4).AddSeconds(60), "src/B.cs"),
         };
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(2);
-        clusters[0].CommitShas.Should().BeEquivalentTo(new[] { "c0", "c1" });
+        clusters.Should().NotBeNull().And.HaveCount(2);
+        clusters![0].CommitShas.Should().BeEquivalentTo(new[] { "c0", "c1" });
         clusters[1].CommitShas.Should().BeEquivalentTo(new[] { "c2", "c3" });
     }
 
@@ -76,7 +83,7 @@ public class WeightedDistanceClusteringStrategyTests
             Commit("c2", t0.AddMilliseconds(100),       "src/A.cs"),
         };
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(1);
+        clusters.Should().NotBeNull().And.HaveCount(1);
     }
 
     [Fact]
@@ -89,8 +96,8 @@ public class WeightedDistanceClusteringStrategyTests
             Commit("c0", t0,                "src/A.cs"),
         };
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(1);
-        clusters[0].CommitShas.Should().BeEquivalentTo(new[] { "c0", "c1" }, opts => opts.WithStrictOrdering());
+        clusters.Should().NotBeNull().And.HaveCount(1);
+        clusters![0].CommitShas.Should().BeEquivalentTo(new[] { "c0", "c1" }, opts => opts.WithStrictOrdering());
     }
 
     [Fact]
@@ -104,8 +111,8 @@ public class WeightedDistanceClusteringStrategyTests
             Commit("c2", t0.AddSeconds(60),         "src/A.cs"),
         };
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(1);
-        clusters[0].CommitShas.Should().BeEquivalentTo(new[] { "c1", "c0", "c2" }, opts => opts.WithStrictOrdering());
+        clusters.Should().NotBeNull().And.HaveCount(1);
+        clusters![0].CommitShas.Should().BeEquivalentTo(new[] { "c1", "c0", "c2" }, opts => opts.WithStrictOrdering());
     }
 
     [Fact]
@@ -120,30 +127,36 @@ public class WeightedDistanceClusteringStrategyTests
             .Select(i => Commit($"c{i}", t0.AddSeconds(i * 601), "src/A.cs"))
             .ToArray();
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(1);
+        clusters.Should().NotBeNull().And.HaveCount(1);
     }
 
     [Fact]
-    public void Degenerate_floor_clamped_majority_falls_back_to_one_per_commit()
+    public void Degenerate_floor_clamped_majority_returns_null()
     {
+        // Spec § 6.4: when > DegenerateFloorFraction of weighted distances are clamped to the
+        // hard floor AND we have ≥ MadK*2 edges, the strategy returns null. PrDetailLoader
+        // translates this to ClusteringQuality:Low and the frontend renders CommitMultiSelectPicker.
+        // Replaces the prior tab-per-commit / single-tab materialized fallback (Q5 redesign).
         var t0 = DateTimeOffset.UtcNow;
         var commits = Enumerable.Range(0, 8)
             .Select(i => Commit($"c{i}", t0.AddSeconds(i * 10), "src/A.cs"))
             .ToArray();
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(8);
+        clusters.Should().BeNull();
     }
 
     [Fact]
-    public void Degenerate_fallback_above_max_tabs_returns_single_inconclusive_cluster()
+    public void Degenerate_returns_null_regardless_of_commit_count()
     {
+        // Pre-Q5 the behavior diverged at MaxFallbackTabs (≤20 commits → tab-per-commit;
+        // >20 → single inconclusive cluster). Post-Q5: null in all degenerate cases — the
+        // commit-count branch and MaxFallbackTabs both go away.
         var t0 = DateTimeOffset.UtcNow;
         var commits = Enumerable.Range(0, 25)
             .Select(i => Commit($"c{i}", t0.AddSeconds(i * 10), "src/A.cs"))
             .ToArray();
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(1);
-        clusters[0].CommitShas.Should().HaveCount(25);
+        clusters.Should().BeNull();
     }
 
     [Fact]
@@ -161,8 +174,8 @@ public class WeightedDistanceClusteringStrategyTests
             Commit("c3", t0.AddDays(5).AddSeconds(60),    "src/B.cs"),
         };
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
-        clusters.Should().HaveCount(2);
-        clusters[0].CommitShas.Should().BeEquivalentTo(new[] { "c0", "c1" });
+        clusters.Should().NotBeNull().And.HaveCount(2);
+        clusters![0].CommitShas.Should().BeEquivalentTo(new[] { "c0", "c1" });
         clusters[1].CommitShas.Should().BeEquivalentTo(new[] { "c2", "c3" });
     }
 
@@ -176,7 +189,8 @@ public class WeightedDistanceClusteringStrategyTests
         // With MadK=3, the degenerate gate `weighted.Length >= MadK*2` is 5 >= 6 → false → MAD path
         //              runs (median=300, MAD=0 → threshold=301), only the 780 edge exceeds → 2 clusters.
         // With MadK=1, the gate is 5 >= 2 → true, and floor-clamped fraction 4/5 > 0.5 → degenerate
-        //              fallback fires → one cluster per commit (6 clusters, since 6 ≤ MaxFallbackTabs).
+        //              fallback fires → strategy returns null (post-Q5: PrDetailLoader emits
+        //              ClusteringQuality:Low; frontend renders CommitMultiSelectPicker).
         // Both arms test the spec requirement: changing a coefficient deterministically flips the
         // decision. The mechanism here is the degenerate gate flipping, NOT the MAD threshold itself.
         var t0 = DateTimeOffset.UtcNow;
@@ -192,8 +206,9 @@ public class WeightedDistanceClusteringStrategyTests
         var withMadK3 = NewStrategy().Cluster(Input(commits), Defaults with { MadK = 3 });
         var withMadK1 = NewStrategy().Cluster(Input(commits), Defaults with { MadK = 1 });
 
-        withMadK3.Should().HaveCount(2, because: "MadK=3 fails the degenerate gate, so the MAD path runs and only the cross-file 780s edge crosses median+1");
-        withMadK1.Should().HaveCount(6, because: "MadK=1 lets the degenerate gate fire (5 ≥ 2) on a floor-heavy weighted array, returning one cluster per commit");
+        withMadK3.Should().NotBeNull(because: "MadK=3 fails the degenerate gate, so the MAD path runs");
+        withMadK3!.Should().HaveCount(2, because: "MAD path: median=300, MAD=0 → threshold=301, only the 780s edge exceeds");
+        withMadK1.Should().BeNull(because: "MadK=1 lets the degenerate gate fire (5 ≥ 2) on a floor-heavy weighted array; strategy returns null for ClusteringQuality:Low");
     }
 
     [Fact]
