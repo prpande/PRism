@@ -88,6 +88,36 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         }
     }
 
+    public async Task ResetToDefaultAsync(CancellationToken ct)
+    {
+        // Setup-bypass: this path intentionally does NOT honor IsReadOnlyMode — the
+        // whole point is to recover from a future-version state.json that put the
+        // store into read-only mode in the first place. Caller is responsible for
+        // triggering a process restart so the next launch loads AppState.Default.
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            try
+            {
+                if (File.Exists(_path)) File.Delete(_path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // P2.20: surface a domain exception so Setup can render recovery copy
+                // ("close PRism in any other window and retry") instead of crashing
+                // the request with a raw IOException.
+                throw new StateResetFailedException(
+                    "Failed to delete state.json. Another process may have it open. Close PRism and retry.",
+                    ex);
+            }
+            IsReadOnlyMode = false;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task SaveCoreAsync(AppState state, CancellationToken ct)
     {
         var temp = $"{_path}.tmp-{Guid.NewGuid():N}";
@@ -187,7 +217,13 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         if (stored > CurrentVersion)
         {
             IsReadOnlyMode = true;
-            return root;     // load best-effort; SaveAsync will refuse
+            // Best-effort load: still backfill known v2-shape defaults so the deserializer
+            // doesn't trip on optional fields a future-version file might also lack
+            // (e.g., ui-preferences). Without this, a missing optional field cascades into
+            // the JsonException quarantine path, which would clear IsReadOnlyMode and
+            // delete the file — defeating the read-only intent.
+            EnsureV2Shape(root);
+            return root;
         }
 
         // Only versions in [1, CurrentVersion] are recognized. Version 0 / negative
@@ -196,6 +232,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             throw new JsonException($"state.json has unsupported version {stored}");
 
         if (stored == 1) root = MigrateV1ToV2(root);
+        EnsureV2Shape(root);
         IsReadOnlyMode = false;
         return root;
     }
@@ -218,5 +255,18 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         }
         root["version"] = 2;
         return root;
+    }
+
+    // Forward-fixup for v2 top-level fields added after the initial v2 cut shipped.
+    // PR #14's v2 wrote files lacking `ui-preferences`; this step runs on every read
+    // that reaches the deserializer (v1→v2 path, plain v2 path, and the future-version
+    // best-effort path) and backfills the defaulted shape. The next SaveAsync persists
+    // the result on the v1/v2 paths; the future-version path stays read-only and only
+    // uses the in-memory backfill to keep deserialization from tripping on optional
+    // missing fields. Idempotent — repeated runs are no-ops. Spec § 6.3.
+    private static void EnsureV2Shape(JsonNode root)
+    {
+        if (root["ui-preferences"] is null)
+            root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
     }
 }

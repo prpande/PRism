@@ -37,7 +37,11 @@ public static class ServiceCollectionExtensions
             var config = sp.GetRequiredService<IConfigStore>();
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            return new GitHubReviewService(factory, () => tokens.ReadAsync(CancellationToken.None), config.Current.Github.Host);
+            return new GitHubReviewService(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                config.Current.Github.Host,
+                sp.GetRequiredService<ILogger<GitHubReviewService>>());
         });
 
         services.AddSingleton<ISectionQueryRunner>(sp =>

@@ -10,7 +10,7 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
         _multipliers = multipliers.ToList();
     }
 
-    public IReadOnlyList<IterationCluster> Cluster(
+    public IReadOnlyList<IterationCluster>? Cluster(
         ClusteringInput input,
         IterationClusteringCoefficients coefficients)
     {
@@ -37,7 +37,11 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
             weighted[i] = Math.Clamp(dt * multiplier, floor, ceiling);
         }
 
-        // Degenerate-case: > DegenerateFloorFraction at hard floor → fallback.
+        // Degenerate-case: > DegenerateFloorFraction at hard floor → return null so the
+        // caller (PrDetailLoader) emits ClusteringQuality:Low on the snapshot. The frontend
+        // renders CommitMultiSelectPicker — a GitHub-style commit picker — instead of fake
+        // iteration tabs.
+        //
         // Gated by `weighted.Length >= MadK * 2` so small-N tight-amend cases naturally
         // fall through to the MAD path (which produces a single cluster when all weighted
         // distances are equal, since no edge exceeds median + 1). Below this threshold,
@@ -45,13 +49,16 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
         // Math.Clamp guarantees w >= floor, so `w <= floor` is exactly equivalent to
         // `w == floor` and avoids a tolerance band that would misclassify naturally-small
         // gaps just above the floor as floor-clamped.
+        //
+        // The earlier materialized fallback (tab-per-commit when ≤ MaxFallbackTabs, single
+        // inconclusive tab otherwise) was dropped per the Q5 redesign: surfacing fake
+        // structure was less useful than telling the user "we couldn't cluster — pick the
+        // commits yourself" via the picker.
         var floorClampedFraction = (double)weighted.Count(w => w <= floor) / weighted.Length;
         if (weighted.Length >= coefficients.MadK * 2 &&
             floorClampedFraction > coefficients.DegenerateFloorFraction)
         {
-            if (sorted.Length <= coefficients.MaxFallbackTabs)
-                return sorted.Select((c, i) => new IterationCluster(i + 1, c.Sha, c.Sha, new[] { c.Sha })).ToArray();
-            return new[] { new IterationCluster(1, sorted[0].Sha, sorted[^1].Sha, sorted.Select(c => c.Sha).ToArray()) };
+            return null;
         }
 
         var threshold = MadThresholdComputer.Compute(weighted, coefficients.MadK);

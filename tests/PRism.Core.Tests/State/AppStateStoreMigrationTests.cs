@@ -270,6 +270,198 @@ public class AppStateStoreMigrationTests
     }
 
     [Fact]
+    public async Task SaveAsync_then_LoadAsync_round_trips_default_ui_preferences()
+    {
+        // AppState.Default carries UiPreferences { DiffMode: SideBySide }. A round-trip
+        // through SaveAsync + LoadAsync must preserve it (and persist it to disk).
+        using var dir = new TempDataDir();
+        using (var writeStore = new AppStateStore(dir.Path))
+        {
+            var initial = await writeStore.LoadAsync(CancellationToken.None);
+            await writeStore.SaveAsync(initial, CancellationToken.None);
+        }
+
+        using var readStore = new AppStateStore(dir.Path);
+        var state = await readStore.LoadAsync(CancellationToken.None);
+
+        state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
+
+        // Verify the kebab-case wire format actually landed on disk.
+        var raw = await File.ReadAllTextAsync(Path.Combine(dir.Path, "state.json"));
+        raw.Should().Contain("\"ui-preferences\"")
+           .And.Contain("\"diff-mode\":\"side-by-side\"");
+    }
+
+    [Fact]
+    public async Task LoadAsync_migrates_v1_state_file_adds_ui_preferences_with_side_by_side_default()
+    {
+        // Spec § 6.3: v1 → v2 migration inserts `ui-preferences: { "diff-mode": "side-by-side" }`
+        // at the top level via the EnsureV2Shape forward-fixup step.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 1,
+          "review-sessions": {},
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Version.Should().Be(2);
+        state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
+    }
+
+    [Fact]
+    public async Task LoadAsync_forward_fixes_v2_state_without_ui_preferences()
+    {
+        // The smoking-gun case: PR #14 shipped v2 without `ui-preferences`. Pure v2 → v2
+        // reads on those files would skip MigrateV1ToV2 entirely. Spec § 6.3 EnsureV2Shape
+        // backfills the key on every v2 read regardless of stored version. Idempotent.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 2,
+          "review-sessions": {
+            "owner/repo/1": {
+              "last-viewed-head-sha": null,
+              "last-seen-comment-id": null,
+              "pending-review-id": null,
+              "pending-review-commit-oid": null,
+              "viewed-files": {}
+            }
+          },
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
+
+        // The backfilled key persists on the next save, so a future implementer of the
+        // EnsureV2Shape helper can choose either approach (in-place mutation or post-load
+        // wrap with `state with`) and the wire format still ends up correct.
+        await store.SaveAsync(state, CancellationToken.None);
+        var raw = await File.ReadAllTextAsync(Path.Combine(dir.Path, "state.json"));
+        raw.Should().Contain("\"diff-mode\":\"side-by-side\"");
+    }
+
+    [Fact]
+    public async Task LoadAsync_future_version_without_ui_preferences_stays_read_only_with_defaults_filled()
+    {
+        // Future-version state.json missing `ui-preferences` must (a) NOT trip the
+        // JsonException quarantine path (which would clear IsReadOnlyMode and delete the
+        // user's data), and (b) still leave the store in IsReadOnlyMode=true so SaveAsync
+        // refuses writes from the older binary. EnsureV2Shape backfills the in-memory
+        // shape on the future-version path; nothing is persisted because saves are blocked.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 99,
+          "review-sessions": {},
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        store.IsReadOnlyMode.Should().BeTrue();
+        state.UiPreferences.Should().NotBeNull();
+        state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
+
+        // Quarantine file was not created (the file is preserved for future-binary use).
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().BeEmpty();
+        File.Exists(Path.Combine(dir.Path, "state.json")).Should().BeTrue();
+
+        // SaveAsync still refuses (read-only invariant intact).
+        var save = async () => await store.SaveAsync(state, CancellationToken.None);
+        await save.Should().ThrowAsync<InvalidOperationException>().WithMessage("*read-only mode*");
+    }
+
+    [Fact]
+    public async Task ResetToDefaultAsync_round_trips_clean_state()
+    {
+        // Save a non-default state, reset, re-load → must equal AppState.Default.
+        // Spec § 6.3 Setup-reset bypass.
+        using var dir = new TempDataDir();
+        using (var writeStore = new AppStateStore(dir.Path))
+        {
+            var initial = await writeStore.LoadAsync(CancellationToken.None);
+            var sessions = new Dictionary<string, ReviewSessionState>
+            {
+                ["owner/repo/1"] = new ReviewSessionState(
+                    LastViewedHeadSha: "abc",
+                    LastSeenCommentId: null,
+                    PendingReviewId: null,
+                    PendingReviewCommitOid: null,
+                    ViewedFiles: new Dictionary<string, string>())
+            };
+            await writeStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
+            await writeStore.ResetToDefaultAsync(CancellationToken.None);
+        }
+
+        using var readStore = new AppStateStore(dir.Path);
+        var state = await readStore.LoadAsync(CancellationToken.None);
+
+        state.Should().BeEquivalentTo(AppState.Default);
+    }
+
+    [Fact]
+    public async Task ResetToDefaultAsync_clears_read_only_mode_after_future_version_load()
+    {
+        // The whole point of ResetToDefaultAsync is recovery from a future-version state.json
+        // that put the store into IsReadOnlyMode. Setup is the only caller; it bypasses
+        // SaveAsync's read-only guard, deletes state.json, and clears the flag.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 99,
+          "review-sessions": {},
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        _ = await store.LoadAsync(CancellationToken.None);
+        store.IsReadOnlyMode.Should().BeTrue();
+
+        await store.ResetToDefaultAsync(CancellationToken.None);
+
+        store.IsReadOnlyMode.Should().BeFalse();
+        File.Exists(Path.Combine(dir.Path, "state.json")).Should().BeFalse();
+
+        // The next SaveAsync now succeeds (read-only guard cleared).
+        var act = async () => await store.SaveAsync(AppState.Default, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ResetToDefaultAsync_throws_StateResetFailedException_when_File_Delete_fails()
+    {
+        // P2.20: surface a domain exception so Setup can show a recovery message.
+        // Hold an exclusive read-lock on state.json so File.Delete fails with IOException,
+        // which the implementation translates into StateResetFailedException.
+        using var dir = new TempDataDir();
+        using var initStore = new AppStateStore(dir.Path);
+        _ = await initStore.LoadAsync(CancellationToken.None);   // creates the file
+
+        var statePath = Path.Combine(dir.Path, "state.json");
+        using var locker = new FileStream(statePath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        using var store = new AppStateStore(dir.Path);
+        var act = async () => await store.ResetToDefaultAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<StateResetFailedException>();
+    }
+
+    [Fact]
     public async Task LoadAsync_quarantines_state_with_unsupported_low_version()
     {
         using var dir = new TempDataDir();

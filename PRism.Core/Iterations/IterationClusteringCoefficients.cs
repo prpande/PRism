@@ -8,8 +8,7 @@ public sealed record IterationClusteringCoefficients(
     int HardFloorSeconds = 300,
     int HardCeilingSeconds = 259200,
     int SkipJaccardAboveCommitCount = 100,
-    double DegenerateFloorFraction = 0.5,
-    int MaxFallbackTabs = 20)
+    double DegenerateFloorFraction = 0.5)
 {
     public void Validate()
     {
@@ -26,7 +25,5 @@ public sealed record IterationClusteringCoefficients(
             throw new ArgumentException($"{nameof(FileJaccardWeight)} must be in [0, 1); got {FileJaccardWeight}.");
         if (DegenerateFloorFraction <= 0 || DegenerateFloorFraction > 1)
             throw new ArgumentException($"{nameof(DegenerateFloorFraction)} must be in (0, 1]; got {DegenerateFloorFraction}.");
-        if (MaxFallbackTabs <= 0)
-            throw new ArgumentException($"{nameof(MaxFallbackTabs)} must be positive; got {MaxFallbackTabs}.");
     }
 }
