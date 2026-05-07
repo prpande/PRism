@@ -163,7 +163,7 @@ If any run still fails:
 dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --nologo -v quiet
 ```
 
-Expected: `Passed! - Failed: 0, Passed: 82, Skipped: 0, Total: 82`.
+Expected: `Passed!` with `Failed: 0` (exact pass count will reflect the suite size at execution time; the assertion is that the run is green).
 
 If any test that previously passed now fails, the change is the suspect — investigate before committing.
 
@@ -183,9 +183,7 @@ Then:
 dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --nologo -v quiet
 ```
 
-Expected:
-- `PRism.Web.Tests`: 28 passed / 0 failed.
-- `PRism.GitHub.Tests`: 17 passed / 0 failed.
+Expected: all tests pass / 0 failed in both projects (exact counts will drift as the suites grow; the assertion is that nothing previously green is now red).
 
 ### Step 1.6: Commit
 

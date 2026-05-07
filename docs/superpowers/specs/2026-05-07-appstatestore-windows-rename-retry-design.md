@@ -125,7 +125,7 @@ A direct test would need a fake file system or `IFileSystem` abstraction injecte
 
 After the change:
 - Run `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~SaveAsync_serializes_concurrent_writes"` 10 times — expect 10/10 pass.
-- Run the full `PRism.Core.Tests` suite — expect 82/82 pass.
+- Run the full `PRism.Core.Tests` suite — expect all tests to pass.
 - Run `PRism.Web.Tests` and `PRism.GitHub.Tests` — expect no regressions (neither depends on `AppStateStore`'s rename behavior).
 
 ## Out of scope
