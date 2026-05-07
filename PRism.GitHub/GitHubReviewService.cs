@@ -238,7 +238,46 @@ public sealed class GitHubReviewService : IReviewService
     }
 
     public Task<ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Timeline lands in S3 PR3 Step 3.4+.");
-    public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException("File content lands in S3 PR3 Step 3.4+.");
+
+    public async Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentNullException.ThrowIfNull(path);
+        ArgumentNullException.ThrowIfNull(sha);
+
+        const long MaxBytes = 5L * 1024 * 1024;
+        var url = $"repos/{reference.Owner}/{reference.Repo}/contents/{Uri.EscapeDataString(path)}?ref={Uri.EscapeDataString(sha)}";
+        using var http = _httpFactory.CreateClient("github");
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.UserAgent.ParseAdd("PRism/0.1");
+        // The raw media type returns the file body directly rather than a JSON envelope —
+        // matches what the diff pane needs for word-diff and markdown rendering.
+        req.Headers.Accept.ParseAdd("application/vnd.github.raw");
+
+        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        if (resp.StatusCode == HttpStatusCode.NotFound)
+            return new FileContentResult(FileContentStatus.NotFound, null, 0);
+        resp.EnsureSuccessStatusCode();
+
+        var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        if (bytes.LongLength > MaxBytes)
+            return new FileContentResult(FileContentStatus.TooLarge, null, bytes.LongLength);
+        if (LooksBinary(bytes))
+            return new FileContentResult(FileContentStatus.Binary, null, bytes.LongLength);
+        return new FileContentResult(FileContentStatus.Ok, System.Text.Encoding.UTF8.GetString(bytes), bytes.LongLength);
+    }
+
+    // Heuristic: any null byte in the first 8 KiB. A real binary detector would also look
+    // for non-UTF-8 sequences, but for PoC the diff pane just needs a "skip text rendering"
+    // signal and null-byte presence is the cheapest reliable check.
+    private static bool LooksBinary(byte[] bytes)
+    {
+        var n = Math.Min(bytes.Length, 8192);
+        for (var i = 0; i < n; i++)
+            if (bytes[i] == 0) return true;
+        return false;
+    }
+
     public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Active-PR poll lands in S3 PR5 (ActivePrPoller wiring).");
 
     public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException("Submit lands in S5.");
