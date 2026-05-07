@@ -352,6 +352,82 @@ public class AppStateStoreMigrationTests
     }
 
     [Fact]
+    public async Task ResetToDefaultAsync_round_trips_clean_state()
+    {
+        // Save a non-default state, reset, re-load → must equal AppState.Default.
+        // Spec § 6.3 Setup-reset bypass.
+        using var dir = new TempDataDir();
+        using (var writeStore = new AppStateStore(dir.Path))
+        {
+            var initial = await writeStore.LoadAsync(CancellationToken.None);
+            var sessions = new Dictionary<string, ReviewSessionState>
+            {
+                ["owner/repo/1"] = new ReviewSessionState(
+                    LastViewedHeadSha: "abc",
+                    LastSeenCommentId: null,
+                    PendingReviewId: null,
+                    PendingReviewCommitOid: null,
+                    ViewedFiles: new Dictionary<string, string>())
+            };
+            await writeStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
+            await writeStore.ResetToDefaultAsync(CancellationToken.None);
+        }
+
+        using var readStore = new AppStateStore(dir.Path);
+        var state = await readStore.LoadAsync(CancellationToken.None);
+
+        state.Should().BeEquivalentTo(AppState.Default);
+    }
+
+    [Fact]
+    public async Task ResetToDefaultAsync_clears_read_only_mode_after_future_version_load()
+    {
+        // The whole point of ResetToDefaultAsync is recovery from a future-version state.json
+        // that put the store into IsReadOnlyMode. Setup is the only caller; it bypasses
+        // SaveAsync's read-only guard, deletes state.json, and clears the flag.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 99,
+          "review-sessions": {},
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        _ = await store.LoadAsync(CancellationToken.None);
+        store.IsReadOnlyMode.Should().BeTrue();
+
+        await store.ResetToDefaultAsync(CancellationToken.None);
+
+        store.IsReadOnlyMode.Should().BeFalse();
+        File.Exists(Path.Combine(dir.Path, "state.json")).Should().BeFalse();
+
+        // The next SaveAsync now succeeds (read-only guard cleared).
+        var act = async () => await store.SaveAsync(AppState.Default, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ResetToDefaultAsync_throws_StateResetFailedException_when_File_Delete_fails()
+    {
+        // P2.20: surface a domain exception so Setup can show a recovery message.
+        // Hold an exclusive read-lock on state.json so File.Delete fails with IOException,
+        // which the implementation translates into StateResetFailedException.
+        using var dir = new TempDataDir();
+        using var initStore = new AppStateStore(dir.Path);
+        _ = await initStore.LoadAsync(CancellationToken.None);   // creates the file
+
+        var statePath = Path.Combine(dir.Path, "state.json");
+        using var locker = new FileStream(statePath, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        using var store = new AppStateStore(dir.Path);
+        var act = async () => await store.ResetToDefaultAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<StateResetFailedException>();
+    }
+
+    [Fact]
     public async Task LoadAsync_quarantines_state_with_unsupported_low_version()
     {
         using var dir = new TempDataDir();

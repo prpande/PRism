@@ -88,6 +88,36 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         }
     }
 
+    public async Task ResetToDefaultAsync(CancellationToken ct)
+    {
+        // Setup-bypass: this path intentionally does NOT honor IsReadOnlyMode — the
+        // whole point is to recover from a future-version state.json that put the
+        // store into read-only mode in the first place. Caller is responsible for
+        // triggering a process restart so the next launch loads AppState.Default.
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            try
+            {
+                if (File.Exists(_path)) File.Delete(_path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // P2.20: surface a domain exception so Setup can render recovery copy
+                // ("close PRism in any other window and retry") instead of crashing
+                // the request with a raw IOException.
+                throw new StateResetFailedException(
+                    "Failed to delete state.json. Another process may have it open. Close PRism and retry.",
+                    ex);
+            }
+            IsReadOnlyMode = false;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     private async Task SaveCoreAsync(AppState state, CancellationToken ct)
     {
         var temp = $"{_path}.tmp-{Guid.NewGuid():N}";
