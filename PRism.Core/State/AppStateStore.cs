@@ -93,7 +93,32 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         var temp = $"{_path}.tmp-{Guid.NewGuid():N}";
         var json = JsonSerializer.Serialize(state, JsonSerializerOptionsFactory.Storage);
         await File.WriteAllTextAsync(temp, json, ct).ConfigureAwait(false);
-        File.Move(temp, _path, overwrite: true);
+        await MoveWithRetryAsync(temp, _path, ct).ConfigureAwait(false);
+    }
+
+    // On Windows, a previous File.Move can leave a transient handle on the destination
+    // (Defender real-time scanner, Search Indexer, FileSystemWatcher) that races a
+    // follow-up File.Move and causes UnauthorizedAccessException or sharing-violation
+    // IOException. Retry with exponential backoff capped near 200ms; total budget
+    // ~1.1s across 9 retries before the exception propagates on attempt 10.
+    // On Linux/macOS the first attempt always succeeds (no AV race), so this is zero-cost.
+    private static async Task MoveWithRetryAsync(string source, string destination, CancellationToken ct)
+    {
+        const int maxAttempts = 10;
+        var delay = TimeSpan.FromMilliseconds(10);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                File.Move(source, destination, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when ((ex is UnauthorizedAccessException || ex is IOException) && attempt < maxAttempts)
+            {
+                await Task.Delay(delay, ct).ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 200));
+            }
+        }
     }
 
     private JsonNode MigrateIfNeeded(JsonNode root)
