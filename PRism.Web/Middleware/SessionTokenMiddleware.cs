@@ -20,17 +20,38 @@ internal sealed class SessionTokenMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly byte[] _expectedToken;
+    private readonly bool _enforced;
 
-    public SessionTokenMiddleware(RequestDelegate next, SessionTokenProvider provider)
+    public SessionTokenMiddleware(RequestDelegate next, SessionTokenProvider provider, IHostEnvironment env)
     {
         ArgumentNullException.ThrowIfNull(provider);
+        ArgumentNullException.ThrowIfNull(env);
         _next = next;
         _expectedToken = Encoding.UTF8.GetBytes(provider.Current);
+        // Auth enforcement applies in Production AND in Test (so unit tests
+        // continue to exercise the full security pipeline). Bypassed in
+        // Development because the Vite dev server (`npm run dev` at :5173)
+        // serves the SPA's HTML, so the cookie-stamping middleware never runs
+        // against that response — the browser has no prism-session cookie for
+        // the 5173 origin, and Chrome omits Origin on same-origin GETs so the
+        // loopback-port branch can't reliably fire either. Dogfooding and CI
+        // e2e (both use `dotnet run` → Development per launchSettings.json) are
+        // local-only same-machine sessions per the spec § 6.2 threat model;
+        // accepting unauthenticated /api/* in that environment matches the
+        // documented trust boundary. Production deploys (Environment=Production
+        // by convention) get full auth.
+        _enforced = !env.IsDevelopment();
     }
 
     public async Task InvokeAsync(HttpContext ctx)
     {
         ArgumentNullException.ThrowIfNull(ctx);
+
+        if (!_enforced)
+        {
+            await _next(ctx).ConfigureAwait(false);
+            return;
+        }
 
         // Asset / SPA / non-API paths are skipped so the SPA can load its HTML
         // (which is what stamps the cookie in the first place). Auth applies to

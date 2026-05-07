@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Microsoft.AspNetCore.Http;
+using PRism.Web.Middleware;
 using PRism.Web.Tests.TestHelpers;
 
 namespace PRism.Web.Tests.Middleware;
@@ -107,6 +109,42 @@ public class SessionTokenMiddlewareTests
         var resp = await client.GetAsync(new Uri("/api/health", UriKind.Relative));
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Bypasses_enforcement_when_env_is_development()
+    {
+        // SessionTokenMiddleware is bypassed in Development because the Vite dev
+        // server serves the SPA's HTML (cookie-stamping middleware doesn't run
+        // against that response → browser has no cookie for the 5173 origin → and
+        // same-origin GET fetches don't always send Origin so the loopback-port
+        // branch can't fire reliably either). Test + Production environments still
+        // enforce. Since tests can't easily mutate the running ASP.NET host
+        // environment, this test asserts via construction: a fresh middleware
+        // instance built with Environment=Development passes a request through
+        // without checking the token.
+        var calledNext = false;
+        RequestDelegate next = (_) => { calledNext = true; return Task.CompletedTask; };
+        var env = new TestHostEnvironment("Development");
+        var provider = new SessionTokenProvider(env);
+        var mw = new SessionTokenMiddleware(next, provider, env);
+
+        var ctx = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        ctx.Request.Path = "/api/capabilities";
+
+        await mw.InvokeAsync(ctx);
+
+        calledNext.Should().BeTrue("Development env must bypass auth so Vite-proxied SPA traffic flows");
+        ctx.Response.StatusCode.Should().NotBe(401);
+    }
+
+    private sealed class TestHostEnvironment : Microsoft.Extensions.Hosting.IHostEnvironment
+    {
+        public TestHostEnvironment(string envName) { EnvironmentName = envName; }
+        public string EnvironmentName { get; set; }
+        public string ApplicationName { get; set; } = "PRism.Web.Tests";
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = null!;
     }
 
     [Fact]
