@@ -119,6 +119,34 @@ public class PrDetailLoaderTests
     }
 
     [Fact]
+    public async Task LoadAsync_returns_existing_realKey_snapshot_when_pollKey_lags_real_head()
+    {
+        // Establishes a snapshot under realKey="head-fresh" via accurate initial poll, then
+        // forces the poll to return an older head SHA. The loader must re-probe the cache by
+        // realKey (computed from the detail's actual head) before paying for timeline +
+        // clustering — a stale-poller race must reuse the existing snapshot.
+        var review = new FakePrDetailReviewService();
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head-fresh", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head-fresh");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var loader = MakeLoader(review);
+
+        var first = await loader.LoadAsync(Pr1, CancellationToken.None);
+        review.GetTimelineCallCount.Should().Be(1, because: "initial cold-load fetched timeline");
+
+        // Now force the poller into the stale-lag state: poll returns "head-old", detail
+        // still says "head-fresh".
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head-old", "MERGEABLE", "OPEN", 0, 0);
+
+        var second = await loader.LoadAsync(Pr1, CancellationToken.None);
+
+        second.Should().BeSameAs(first,
+            because: "realKey re-probe must reuse the existing snapshot rather than re-cluster");
+        review.GetTimelineCallCount.Should().Be(1,
+            because: "timeline + clustering must be skipped on the realKey hit");
+    }
+
+    [Fact]
     public async Task InvalidateAll_forces_reload_on_next_LoadAsync()
     {
         var review = new FakePrDetailReviewService();

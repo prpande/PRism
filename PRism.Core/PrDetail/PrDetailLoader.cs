@@ -77,9 +77,17 @@ public sealed class PrDetailLoader
         var detail = await _review.GetPrDetailAsync(prRef, ct).ConfigureAwait(false);
         if (detail is null) return null;
 
-        // Defensive: head can race-advance between PollActivePr and GetPrDetail. Re-key
-        // on the detail's actual head so the cache reflects the freshest data.
+        // Defensive: head can race-advance between PollActivePr and GetPrDetail (the poll
+        // can also persistently lag the detail's head if the active-PR poller is stale).
+        // Re-key on the detail's actual head and probe the cache a second time before
+        // paying for a timeline + clustering round-trip — a stale-poller race must hit
+        // an existing realKey snapshot rather than re-fetch.
         var realKey = CacheKey(prRef, detail.Pr.HeadSha, generation);
+        if (!string.Equals(realKey, pollKey, StringComparison.Ordinal)
+            && _snapshots.TryGetValue(realKey, out var existing))
+        {
+            return existing;
+        }
 
         var timeline = await _review.GetTimelineAsync(prRef, ct).ConfigureAwait(false);
 
@@ -98,9 +106,14 @@ public sealed class PrDetailLoader
         };
         var snapshot = new PrDetailSnapshot(finalDetail, detail.Pr.HeadSha, generation);
 
-        _snapshots[realKey] = snapshot;
+        // GetOrAdd collapses concurrent cold-load races to a single winner: two parallel
+        // calls for the same prRef both finish their fetch+cluster work, but only the
+        // first add becomes the canonical snapshot — both callers then return that one.
+        // (The losing call's GetPrDetail/GetTimeline work is wasted; bounding that race
+        // to one fetch via a per-key Lazy gate is a follow-up if dogfooding shows it.)
+        var canonical = _snapshots.GetOrAdd(realKey, snapshot);
         _snapshotKeyByPrRef[prRef] = realKey;
-        return snapshot;
+        return canonical;
     }
 
     /// <summary>

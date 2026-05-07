@@ -88,7 +88,9 @@ internal static partial class PrDetailEndpoints
 
                 var prRef = new PrReference(owner, repo, number);
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
-                if (snapshot is null || !string.Equals(snapshot.Detail.Pr.HeadSha, body.HeadSha, StringComparison.Ordinal))
+                if (snapshot is null)
+                    return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);
+                if (!string.Equals(snapshot.Detail.Pr.HeadSha, body.HeadSha, StringComparison.Ordinal))
                     return Results.Problem(type: "/viewed/stale-head-sha", statusCode: 409);
 
                 var key = $"{owner}/{repo}/{number}";
@@ -116,8 +118,12 @@ internal static partial class PrDetailEndpoints
                 if (stateStore.IsReadOnlyMode)
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
 
-                if (string.IsNullOrEmpty(body.Path) || body.Path.Length > 4096)
+                // Spec § 8: "path > 4096 bytes" — UTF-8 byte count, not C# char count, so
+                // a 4096-char string of multi-byte CJK characters can't bypass the cap.
+                if (string.IsNullOrEmpty(body.Path))
                     return Results.Problem(type: "/viewed/path-invalid", statusCode: 422);
+                if (Encoding.UTF8.GetByteCount(body.Path) > 4096)
+                    return Results.Problem(type: "/viewed/path-too-long", statusCode: 422);
 
                 var canonical = CanonicalizePath(body.Path);
                 if (canonical is null)
@@ -125,7 +131,9 @@ internal static partial class PrDetailEndpoints
 
                 var prRef = new PrReference(owner, repo, number);
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
-                if (snapshot is null || !string.Equals(snapshot.Detail.Pr.HeadSha, body.HeadSha, StringComparison.Ordinal))
+                if (snapshot is null)
+                    return Results.Problem(type: "/viewed/snapshot-evicted", statusCode: 422);
+                if (!string.Equals(snapshot.Detail.Pr.HeadSha, body.HeadSha, StringComparison.Ordinal))
                     return Results.Problem(type: "/viewed/stale-head-sha", statusCode: 409);
 
                 if (!loader.IsPathInAnyCachedDiff(prRef, canonical))

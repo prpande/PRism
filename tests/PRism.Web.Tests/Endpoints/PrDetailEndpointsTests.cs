@@ -279,6 +279,22 @@ public class PrDetailEndpointsTests
     }
 
     [Fact]
+    public async Task Post_mark_viewed_returns_422_snapshot_evicted_when_snapshot_not_loaded()
+    {
+        // No prior GET /api/pr/{ref} call — loader has no cached snapshot. Spec § 8 distinguishes
+        // /viewed/snapshot-evicted (refetch the PR first) from /viewed/stale-head-sha (head advanced).
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+
+        var resp = await factory.CreateClient().PostAsJsonAsync(
+            new Uri("/api/pr/octo/repo/1/mark-viewed", UriKind.Relative),
+            new { headSha = "head1", maxCommentId = (string?)null });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/snapshot-evicted");
+    }
+
+    [Fact]
     public async Task Post_mark_viewed_returns_409_when_headSha_does_not_match_current_snapshot()
     {
         var (factory, _) = MakeFactory();
@@ -339,6 +355,26 @@ public class PrDetailEndpointsTests
             new { path, headSha = "head1", viewed = true });
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
+    public async Task Post_files_viewed_returns_422_path_too_long_for_path_over_4096_utf8_bytes()
+    {
+        // Spec § 8: "path > 4096 bytes" (UTF-8 byte count, not C# char count). 2000 CJK chars
+        // (3 bytes each in UTF-8) → ~6000 bytes, well over the cap; would have slipped past a
+        // naive `body.Path.Length > 4096` check that uses C# UTF-16 code-unit count.
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+
+        var longPath = new string('長', 2000);
+        var resp = await client.PostAsJsonAsync(
+            new Uri("/api/pr/octo/repo/1/files/viewed", UriKind.Relative),
+            new { path = longPath, headSha = "head1", viewed = true });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/path-too-long");
     }
 
     [Fact]
