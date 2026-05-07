@@ -449,7 +449,7 @@ S3 (v2):
 }
 ```
 
-The `MigrateV1ToV2` helper adds `viewed-files: {}` to every existing session and inserts `ui-preferences: { "diff-mode": "side-by-side" }` at the top level when missing.
+The `MigrateV1ToV2` helper adds `viewed-files: {}` to every existing session. A separate **`EnsureV2Shape` forward-fixup step** runs on every v2 read (regardless of `stored` version, including pure v2 → v2 reads) and inserts `ui-preferences: { "diff-mode": "side-by-side" }` at the top level when missing. This split exists because intermediate v2 builds (initial v2 cut shipped in PR #14 with only `viewed-files`; `ui-preferences` was added later in the S3 slice) wrote v2 files without `ui-preferences` — the fixup backfills the default. Both steps are idempotent.
 
 #### Migration helper
 
@@ -485,6 +485,7 @@ private JsonNode MigrateIfNeeded(JsonNode root)
     }
 
     if (stored < 2) root = MigrateV1ToV2(root);
+    EnsureV2Shape(root);   // idempotent forward-fixup; backfills v2 fields added late in v2's lifetime
     IsReadOnlyMode = false;
     return root;
 }
@@ -503,13 +504,23 @@ private static JsonNode MigrateV1ToV2(JsonNode root)
     root["version"] = 2;
     return root;
 }
+
+private static void EnsureV2Shape(JsonNode root)
+{
+    // Forward-fixup for v2 top-level fields added after the initial v2 cut shipped.
+    // Required because PR #14's v2 wrote files lacking `ui-preferences`; the next
+    // SaveAsync persists the defaulted shape. Idempotent — repeated runs are no-ops
+    // once the key is present.
+    if (root["ui-preferences"] is null)
+        root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
+}
 ```
 
 `AppStateStore.LoadAsync` parses the file to `JsonNode`, calls `MigrateIfNeeded(root)`, then `root.Deserialize<AppState>(jsonOptions)`. **`SaveAsync` checks `IsReadOnlyMode` first**: if true, it returns without writing and the caller surfaces the read-only banner (the user can read state but cannot mutate it until the binary is upgraded). Otherwise, `SaveAsync` always writes at `CurrentVersion`.
 
 **Setup-reset bypass.** The user's "(b) explicitly re-initialize state via Setup" recovery path does NOT route through `SaveAsync` (which is blocked in read-only mode). Setup invokes a separate `AppStateStore.ResetToDefaultAsync()` API that (1) deletes `state.json` directly via `File.Delete`, (2) flips `IsReadOnlyMode = false`, (3) signals the host to restart the process. The next launch initializes from `AppState.Default`. This is the only `SaveAsync` bypass; surface a confirmation dialog (data loss) before invocation. Test coverage in `AppStateStoreMigrationTests` includes a future-version → ResetToDefaultAsync → next-launch round-trip.
 
-Tests are scoped to the public `LoadAsync` / `SaveAsync` / `ResetToDefaultAsync` boundary; no `InternalsVisibleTo` is needed. Test cases: legacy → v2, v2 → unchanged, missing-version throws (matches existing `AppStateStore` behavior), future-version → load succeeds + save fails + banner triggered, future-version → ResetToDefaultAsync → next-launch loads Default, idempotent re-migration, malformed JSON → quarantine + default + IsReadOnlyMode stays false.
+Tests are scoped to the public `LoadAsync` / `SaveAsync` / `ResetToDefaultAsync` boundary; no `InternalsVisibleTo` is needed. Test cases: legacy → v2, v2-with-ui-preferences → unchanged, **v2-without-ui-preferences → v2-with-defaulted-ui-preferences (forward-fixup)**, missing-version throws (matches existing `AppStateStore` behavior), future-version → load succeeds + save fails + banner triggered, future-version → ResetToDefaultAsync → next-launch loads Default, idempotent re-migration (running migration twice yields the same shape), malformed JSON → quarantine + default + IsReadOnlyMode stays false.
 
 When S4 introduces migration #2, the `if (stored < 2) ...` chain extracts into the framework per ADR-S4-2.
 
@@ -1233,7 +1244,7 @@ Strawman PR sequence inside the S3 slice. The plan-writing step refines this; th
 
 | PR | Concern | Tests landed | Implementation landed |
 |---|---|---|---|
-| 1 | State migration | `AppStateStoreMigrationTests` (through public boundary) | Adds `ViewedFiles` to `ReviewSessionState`; private `MigrateV1ToV2` + `IsReadOnlyMode` flag on `AppStateStore`; LoadAsync wires it in; SaveAsync respects the flag |
+| 1 | State migration | `AppStateStoreMigrationTests` (through public boundary) | Adds `ViewedFiles` to `ReviewSessionState`; private `MigrateV1ToV2` + `IsReadOnlyMode` flag on `AppStateStore`; LoadAsync wires it in; SaveAsync respects the flag. **Task 1 follow-up adds**: `UiPreferences { DiffMode }` top-level field; `EnsureV2Shape` forward-fixup helper that backfills `ui-preferences` on every v2 read (covers PR #14's v2 files written without the key); `ResetToDefaultAsync` Setup-bypass API. |
 | 2 | Iteration clustering core (incl. discipline-check harness) | `WeightedDistance...Tests` (incl. occurredAt clamp + IDistanceMultiplier signature contract) + `FileJaccardMultiplierTests` + `ForcePushMultiplierTests` + `MadThresholdComputerTests` + `ClusteringDisciplineCheck` (`[SkippableFact]`) | `IIterationClusteringStrategy` + `WeightedDistanceClusteringStrategy` + 2 multipliers + threshold + degenerate-case detector returning null. Discipline check folds in here (one file, one skipped fact); the gate runs at the end of PR2 and either retains `WeightedDistance` as the DI binding or sets `iterations.clusteringDisabled = true`; results recorded in § 12. **Task 2 follow-up adds**: ConfigStore.Changed → InvalidateAll wiring; ClusteringQuality: Low signal emitted by PrDetailLoader for ≤1 commit, degenerate-detector, or global config flag; per-PR degenerate detector returns null instead of fake clusters. |
 | 3 | `IReviewService` extensions | `GitHubReviewServiceTests` | New methods on `GitHubReviewService` (single GraphQL round-trip; dual-endpoint diff via `pulls/{n}/files` + `pulls/{n}` `changed_files`; per-commit fan-out for Jaccard; file content with size cap) |
 | 4 | PR detail backend assembly | `PrDetailLoaderTests` (concrete class, no interface; tests substitute `IReviewService`) + `PrDetailEndpointsTests` (incl. body-shape POST /viewed, 422 path-not-in-diff vs truncation-window, 409 stale-headSha, 423 read-only, path canonicalization 9-rule + `[RequestSizeLimit]` body cap, X-PRism-Session enforcement on GET endpoints incl. cookie-based on /api/events, `?commits=sha1,sha2,sha3` union-diff via GitHub compare, ClusteringQuality + Iterations + Commits + TimelineCapHit fields on PrDetailDto) | `PrDetailLoader` (concrete) + endpoints + `?commits=` query param on /diff (union via GitHub compare) + ClusteringQuality + Iterations + Commits + TimelineCapHit fields + GET-endpoint session-token enforcement |

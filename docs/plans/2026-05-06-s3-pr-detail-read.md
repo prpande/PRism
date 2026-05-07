@@ -174,6 +174,7 @@ private JsonNode? MigrateIfNeeded(JsonNode root)
     }
 
     if (stored < 2) root = MigrateV1ToV2(root);
+    EnsureV2Shape(root);   // idempotent forward-fixup; backfills v2 fields added late in v2's lifetime
     IsReadOnlyMode = false;
     return root;
 }
@@ -191,6 +192,15 @@ private static JsonNode MigrateV1ToV2(JsonNode root)
     }
     root["version"] = 2;
     return root;
+}
+
+private static void EnsureV2Shape(JsonNode root)
+{
+    // Forward-fixup for v2 top-level fields added after the initial v2 cut shipped
+    // (PR #14 wrote v2 files lacking ui-preferences). Idempotent — runs on every v2
+    // read regardless of stored version. The next SaveAsync persists the defaulted shape.
+    if (root["ui-preferences"] is null)
+        root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
 }
 ```
 
@@ -407,12 +417,19 @@ PR #14 shipped Steps 1.1–1.11 above (state migration v1→v2 with `ViewedFiles
   }
   ```
 
-- [ ] **`MigrateV1ToV2` writes `ui-preferences` at the top level when missing** (idempotent). Spec § 6.3.
+- [ ] **Introduce `EnsureV2Shape` forward-fixup step** invoked by `MigrateIfNeeded` on every v2 read (regardless of `stored` version). Inserts `ui-preferences: { "diff-mode": "side-by-side" }` when missing. Required because PR #14's v2 wrote files without this key — the v1 → v2 path alone never re-fires on those files. Idempotent. Spec § 6.3.
 
   ```csharp
-  // Inside MigrateV1ToV2, after the review-sessions loop:
-  if (root["ui-preferences"] is null)
-      root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
+  // In MigrateIfNeeded, after the v1→v2 step:
+  if (stored < 2) root = MigrateV1ToV2(root);
+  EnsureV2Shape(root);   // runs every read; cheap and idempotent
+
+  // New helper alongside MigrateV1ToV2:
+  private static void EnsureV2Shape(JsonNode root)
+  {
+      if (root["ui-preferences"] is null)
+          root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
+  }
   ```
 
 - [ ] **Add `ResetToDefaultAsync()` API on `AppStateStore`** — bypasses `IsReadOnlyMode`, deletes `state.json` directly via `File.Delete`, and signals process restart to the caller. Setup is the only call site; the future-version → "reset to defaults" recovery path needs this. Spec § 6.3 + § 10.4.
@@ -486,6 +503,14 @@ PR #14 shipped Steps 1.1–1.11 above (state migration v1→v2 with `ViewedFiles
   }
 
   [Fact]
+  public async Task LoadAsync_forward_fixes_v2_state_without_ui_preferences()
+  {
+      // Write v2 state {"version":2, ...} with NO ui-preferences key (PR #14 shape).
+      // Load. Assert state.UiPreferences.DiffMode == DiffMode.SideBySide.
+      // Save. Re-read raw JSON; assert ui-preferences.diff-mode == "side-by-side" was persisted.
+  }
+
+  [Fact]
   public async Task ResetToDefaultAsync_round_trips_clean_state()
   {
       // Save a non-default state. Call ResetToDefaultAsync. Re-load. Assert state == AppState.Default.
@@ -514,7 +539,7 @@ PR #14 shipped Steps 1.1–1.11 above (state migration v1→v2 with `ViewedFiles
   }
   ```
 
-  P1.8 — Test count for this task moves from **5** (Step 1.10 above) to **8** (3 new tests added: UiPreferences default round-trip, ResetToDefaultAsync round-trip, malformed-JSON quarantine + IsReadOnlyMode stays false). Spec § 11.3 mirrors this.
+  P1.8 — Test count for this task moves from **5** (Step 1.10 above) to **9** (4 new tests added: UiPreferences default round-trip, v2-without-ui-preferences forward-fixup, ResetToDefaultAsync round-trip, malformed-JSON quarantine + IsReadOnlyMode stays false). Spec § 11.3 mirrors this.
 
 - [ ] **Commit the follow-up:**
 
