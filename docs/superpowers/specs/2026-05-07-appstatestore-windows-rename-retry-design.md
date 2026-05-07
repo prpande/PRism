@@ -35,7 +35,7 @@ Two alternatives were considered and rejected:
 
 ## Change
 
-In `PRism.Core/State/AppStateStore.cs`, replace the bare `File.Move` at the tail of `SaveCoreAsync` with a call to a new private static `MoveWithRetryAsync`:
+In `PRism.Core/State/AppStateStore.cs`, replace the bare `File.Move` at the tail of `SaveCoreAsync` with a call to a new private static `MoveWithRetryAsync`, plus a `IsTransientMoveError` predicate that narrows the catch:
 
 ```csharp
 private async Task SaveCoreAsync(AppState state, CancellationToken ct)
@@ -48,27 +48,64 @@ private async Task SaveCoreAsync(AppState state, CancellationToken ct)
 
 // On Windows, a previous File.Move can leave a transient handle on the destination
 // (Defender real-time scanner, Search Indexer, FileSystemWatcher) that races a
-// follow-up File.Move and causes UnauthorizedAccessException or sharing-violation
-// IOException. Retry with exponential backoff capped near 200ms; total budget
-// ~1.1s across 9 retries before the exception propagates on attempt 10.
-// On Linux/macOS the first attempt always succeeds (no AV race), so this is zero-cost.
+// follow-up File.Move and causes UnauthorizedAccessException or a sharing-/lock-
+// violation IOException. Retry only those two transient classes with exponential
+// backoff capped near 200ms; total budget ~1.1s across 9 retries before the
+// exception propagates on attempt 10. On final exhaustion the temp file is
+// best-effort-deleted so it does not orphan in the data directory. The Windows
+// AV/indexer race does not exist on Linux/macOS, so the first attempt typically
+// succeeds there with no measurable overhead.
 private static async Task MoveWithRetryAsync(string source, string destination, CancellationToken ct)
 {
     const int maxAttempts = 10;
     var delay = TimeSpan.FromMilliseconds(10);
-    for (var attempt = 1; ; attempt++)
+    try
     {
-        try
+        for (var attempt = 1; ; attempt++)
         {
-            File.Move(source, destination, overwrite: true);
-            return;
-        }
-        catch (Exception ex) when ((ex is UnauthorizedAccessException || ex is IOException) && attempt < maxAttempts)
-        {
-            await Task.Delay(delay, ct).ConfigureAwait(false);
-            delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 200));
+            try
+            {
+                File.Move(source, destination, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (IsTransientMoveError(ex) && attempt < maxAttempts)
+            {
+                await Task.Delay(delay, ct).ConfigureAwait(false);
+                delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 200));
+            }
         }
     }
+    finally
+    {
+        // On success this is a no-op (File.Move consumed the source); on exhaustion
+        // or any non-retried exception, best-effort cleanup of the orphaned temp.
+        try { if (File.Exists(source)) File.Delete(source); }
+#pragma warning disable CA1031 // best-effort cleanup; the original move-failure exception is what matters.
+        catch { }
+#pragma warning restore CA1031
+    }
+}
+
+// ERROR_SHARING_VIOLATION = 0x80070020 and ERROR_LOCK_VIOLATION = 0x80070021 are the
+// two HRESULTs that signal "another handle has the file" — exactly the AV/indexer race
+// we want to retry. UnauthorizedAccessException covers the related ACCESS_DENIED case
+// that File.Move's overwrite path raises when DELETE access on the destination is
+// briefly held. Other IOException subtypes (DirectoryNotFoundException,
+// PathTooLongException, FileNotFoundException, DriveNotFoundException) are not
+// transient and propagate immediately.
+private static bool IsTransientMoveError(Exception ex)
+{
+    if (ex is UnauthorizedAccessException) return true;
+    if (ex is IOException
+        && ex is not DirectoryNotFoundException
+        && ex is not PathTooLongException
+        && ex is not FileNotFoundException
+        && ex is not DriveNotFoundException)
+    {
+        var hr = ex.HResult & 0xFFFF;
+        return hr == 0x20 || hr == 0x21;
+    }
+    return false;
 }
 ```
 
@@ -76,7 +113,9 @@ private static async Task MoveWithRetryAsync(string source, string destination, 
 
 **Cancellation:** `Task.Delay(delay, ct)` honors the caller's `CancellationToken`.
 
-**Exception filter:** only `UnauthorizedAccessException` and `IOException` are retried. Other exception types (`ArgumentException`, `NotSupportedException`, `PathTooLongException`, etc.) propagate immediately on the first attempt.
+**Exception filter:** only `UnauthorizedAccessException` and `IOException` whose `HResult & 0xFFFF` equals `0x20` (`ERROR_SHARING_VIOLATION`) or `0x21` (`ERROR_LOCK_VIOLATION`) are retried. Other `IOException` subtypes (`DirectoryNotFoundException`, `PathTooLongException`, `FileNotFoundException`, `DriveNotFoundException`) and unrelated exception types propagate immediately on the first attempt — there's no point burning the retry budget on conditions that won't clear.
+
+**Temp-file cleanup:** the retry loop is wrapped in `try/finally`. On success the `finally` is a no-op (`File.Move` consumed the source). On exhaustion or any non-retried exception, the temp file is best-effort-deleted so it doesn't orphan in the data directory.
 
 ## Why not add a unit test for the retry?
 
