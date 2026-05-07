@@ -157,6 +157,35 @@ public class AppStateStoreMigrationTests
     }
 
     [Fact]
+    public async Task LoadAsync_resets_read_only_when_future_version_body_quarantined()
+    {
+        using var dir = new TempDataDir();
+        var statePath = Path.Combine(dir.Path, "state.json");
+        // version=99 trips the future-version branch (IsReadOnlyMode=true), but the
+        // structurally-incompatible body (review-sessions as a string) makes Deserialize
+        // throw JsonException — the catch quarantines and writes a fresh v2 default.
+        // After that, the on-disk file IS v2 and saves must work again.
+        await File.WriteAllTextAsync(statePath, """
+        {
+          "version": 99,
+          "review-sessions": "not-a-dict",
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Should().BeEquivalentTo(AppState.Default);
+        Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().NotBeEmpty();
+        store.IsReadOnlyMode.Should().BeFalse();
+
+        var act = async () => await store.SaveAsync(state, CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
     public async Task LoadAsync_quarantines_state_with_malformed_version_value()
     {
         using var dir = new TempDataDir();

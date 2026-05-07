@@ -52,6 +52,10 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             }
             catch (JsonException)
             {
+                // The future-version branch in MigrateIfNeeded may have stamped IsReadOnlyMode=true
+                // before deserialization failed. Quarantine replaces state.json with a fresh v2
+                // default, so the read-only condition no longer holds.
+                IsReadOnlyMode = false;
                 var quarantine = $"{_path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
                 File.Move(_path, quarantine, overwrite: false);
                 await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
