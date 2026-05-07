@@ -6,6 +6,8 @@ using PRism.Core.Auth;
 using PRism.Core.Config;
 using PRism.Core.Events;
 using PRism.Core.Inbox;
+using PRism.Core.Iterations;
+using PRism.Core.PrDetail;
 using PRism.Core.State;
 
 namespace PRism.Core;
@@ -92,6 +94,17 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<InboxSubscriberCount>(),
                 sp.GetRequiredService<IConfigStore>(),
                 sp.GetRequiredService<ILogger<InboxPoller>>()));
+
+        // S3 PR4 — iteration clustering + PrDetailLoader. Coefficients default to the values
+        // recorded in IterationClusteringCoefficients's record-init defaults. Calibration
+        // hot-reload via config is post-PoC scope; today the coefficients are constant
+        // per process lifetime.
+        services.AddSingleton<IDistanceMultiplier, FileJaccardMultiplier>();
+        services.AddSingleton<IDistanceMultiplier, ForcePushMultiplier>();
+        services.AddSingleton<IIterationClusteringStrategy>(sp =>
+            new WeightedDistanceClusteringStrategy(sp.GetServices<IDistanceMultiplier>()));
+        services.AddSingleton(new IterationClusteringCoefficients());
+        services.AddSingleton<PrDetailLoader>();
 
         return services;
     }

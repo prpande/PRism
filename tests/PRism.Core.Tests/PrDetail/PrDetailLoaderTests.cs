@@ -274,15 +274,15 @@ public class PrDetailLoaderTests
         var loader = MakeLoader(review);
 
         var range = new DiffRangeRequest("base1", "head1");
-        var d1 = await loader.GetOrFetchDiffAsync(Pr1, "head1", range, CancellationToken.None);
-        var d2 = await loader.GetOrFetchDiffAsync(Pr1, "head1", range, CancellationToken.None);
+        var d1 = await loader.GetOrFetchDiffAsync(Pr1, range, CancellationToken.None);
+        var d2 = await loader.GetOrFetchDiffAsync(Pr1, range, CancellationToken.None);
 
         d1.Should().BeSameAs(d2);
         review.GetDiffCallCount.Should().Be(1);
     }
 
     [Fact]
-    public async Task IsPathInAnyCachedDiff_true_when_path_present_in_any_cached_range()
+    public async Task IsPathInAnyCachedDiff_true_when_path_present_in_any_cached_diff_for_pr()
     {
         var review = new FakePrDetailReviewService();
         review.DefaultDetailResponse = MakeDetail();
@@ -290,12 +290,12 @@ public class PrDetailLoaderTests
         // Default DiffFactory yields one file at "src/Foo.cs" — see FakePrDetailReviewService.
         var loader = MakeLoader(review);
 
-        await loader.GetOrFetchDiffAsync(Pr1, "head1", new DiffRangeRequest("base1", "head1"), CancellationToken.None);
+        await loader.GetOrFetchDiffAsync(Pr1, new DiffRangeRequest("base1", "head1"), CancellationToken.None);
 
-        loader.IsPathInAnyCachedDiff(Pr1, "head1", "src/Foo.cs").Should().BeTrue();
-        loader.IsPathInAnyCachedDiff(Pr1, "head1", "src/Bar.cs").Should().BeFalse();
-        loader.IsPathInAnyCachedDiff(Pr1, "different-head", "src/Foo.cs").Should().BeFalse(
-            because: "path lookup is keyed by (prRef, headSha)");
+        loader.IsPathInAnyCachedDiff(Pr1, "src/Foo.cs").Should().BeTrue();
+        loader.IsPathInAnyCachedDiff(Pr1, "src/Bar.cs").Should().BeFalse();
+        loader.IsPathInAnyCachedDiff(new PrReference("o","r",999), "src/Foo.cs").Should().BeFalse(
+            because: "path lookup is scoped to prRef so cross-PR contamination is blocked");
     }
 
     [Fact]

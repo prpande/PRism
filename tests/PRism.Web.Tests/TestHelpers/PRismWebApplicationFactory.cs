@@ -13,6 +13,7 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
     public string DataDir { get; } = Path.Combine(Path.GetTempPath(), $"PRism-test-{Guid.NewGuid():N}");
     public Func<Task<AuthValidationResult>>? ValidateOverride { get; set; }
     public FakeInboxRefreshOrchestrator? FakeOrchestrator { get; set; }
+    public IReviewService? ReviewServiceOverride { get; set; }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -35,8 +36,16 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
-            // Replace IReviewService with a stub when ValidateOverride is set.
-            if (ValidateOverride is not null)
+            // Replace IReviewService with a fully-scripted fake when ReviewServiceOverride
+            // is set (PR-detail tests). Falls through to the validate-only stub branch when
+            // ValidateOverride is set instead. ReviewServiceOverride takes precedence.
+            if (ReviewServiceOverride is not null)
+            {
+                var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IReviewService));
+                if (existing is not null) services.Remove(existing);
+                services.AddSingleton(ReviewServiceOverride);
+            }
+            else if (ValidateOverride is not null)
             {
                 var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IReviewService));
                 if (existing is not null) services.Remove(existing);

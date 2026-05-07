@@ -115,20 +115,19 @@ public sealed class PrDetailLoader
     }
 
     /// <summary>
-    /// Memoized diff fetch keyed by <c>(prRef, headSha, range)</c>. Both <c>/diff</c> and
+    /// Memoized diff fetch keyed by <c>(prRef, range)</c>. Both <c>/diff</c> and
     /// <c>/file</c> endpoints consult this so the diff is fetched at most once per range
-    /// per page session (Option B per the PR4 design discussion).
+    /// per process lifetime (Option B per the PR4 design discussion). The range itself
+    /// encodes the head/base SHAs, so head-advances naturally key into fresh entries.
     /// </summary>
     public async Task<DiffDto> GetOrFetchDiffAsync(
         PrReference prRef,
-        string headSha,
         DiffRangeRequest range,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(prRef);
-        ArgumentNullException.ThrowIfNull(headSha);
         ArgumentNullException.ThrowIfNull(range);
-        var key = new DiffMemoKey(prRef, headSha, range.BaseSha, range.HeadSha);
+        var key = new DiffMemoKey(prRef, range.BaseSha, range.HeadSha);
         if (_diffs.TryGetValue(key, out var cached)) return cached;
 
         var fresh = await _review.GetDiffAsync(prRef, range, ct).ConfigureAwait(false);
@@ -138,18 +137,16 @@ public sealed class PrDetailLoader
     }
 
     /// <summary>
-    /// True if any cached diff for <c>(prRef, headSha)</c> contains <paramref name="path"/>.
+    /// True if any cached diff for <paramref name="prRef"/> contains <paramref name="path"/>.
     /// Used by the <c>/file</c> endpoint's authz check (path-in-PR-diff). No GitHub call.
     /// </summary>
-    public bool IsPathInAnyCachedDiff(PrReference prRef, string headSha, string path)
+    public bool IsPathInAnyCachedDiff(PrReference prRef, string path)
     {
         ArgumentNullException.ThrowIfNull(prRef);
-        ArgumentNullException.ThrowIfNull(headSha);
         ArgumentNullException.ThrowIfNull(path);
         foreach (var kv in _diffs)
         {
-            var k = kv.Key;
-            if (!k.PrRef.Equals(prRef) || !string.Equals(k.HeadSha, headSha, StringComparison.Ordinal)) continue;
+            if (!kv.Key.PrRef.Equals(prRef)) continue;
             if (kv.Value.Files.Any(f => string.Equals(f.Path, path, StringComparison.Ordinal))) return true;
         }
         return false;
@@ -212,5 +209,5 @@ public sealed class PrDetailLoader
     private static string CacheKey(PrReference prRef, string headSha, int generation) =>
         $"{prRef.Owner}/{prRef.Repo}/{prRef.Number}@{headSha}#{generation}";
 
-    private readonly record struct DiffMemoKey(PrReference PrRef, string HeadSha, string BaseSha, string HeadShaRange);
+    private readonly record struct DiffMemoKey(PrReference PrRef, string BaseSha, string HeadSha);
 }
