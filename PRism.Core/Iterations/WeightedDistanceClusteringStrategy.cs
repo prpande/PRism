@@ -41,7 +41,10 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
         // fall through to the MAD path (which produces a single cluster when all weighted
         // distances are equal, since no edge exceeds median + 1). Below this threshold,
         // we don't have enough data points to declare "insufficient signal" reliably.
-        var floorClampedFraction = (double)weighted.Count(w => Math.Abs(w - floor) < 1.0) / weighted.Length;
+        // Math.Clamp guarantees w >= floor, so `w <= floor` is exactly equivalent to
+        // `w == floor` and avoids a tolerance band that would misclassify naturally-small
+        // gaps just above the floor as floor-clamped.
+        var floorClampedFraction = (double)weighted.Count(w => w <= floor) / weighted.Length;
         if (weighted.Length >= coefficients.MadK * 2 &&
             floorClampedFraction > coefficients.DegenerateFloorFraction)
         {

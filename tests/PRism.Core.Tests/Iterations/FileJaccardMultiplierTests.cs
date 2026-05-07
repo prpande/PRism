@@ -60,4 +60,19 @@ public class FileJaccardMultiplierTests
         var m = new FileJaccardMultiplier();
         m.For(prev, next, Input(prev, next), Defaults).Should().BeApproximately(1.0, 0.001);
     }
+
+    [Fact]
+    public void Returns_neutral_when_input_commit_count_exceeds_skip_threshold()
+    {
+        // Spec § 6.4 / § 10.2: PR > SkipJaccardAboveCommitCount commits -> Jaccard returns 1.0
+        // for every pair (skip per-commit fan-out to bound rate-limit consumption). Defense-in-depth:
+        // even if upstream populates ChangedFiles, the multiplier honors the cap.
+        var coefficients = new IterationClusteringCoefficients(SkipJaccardAboveCommitCount: 2);
+        var prev = Commit("a", "src/A.cs");
+        var next = Commit("b", "src/A.cs");  // full overlap -> would normally yield 0.5
+        var extras = Enumerable.Range(0, 5).Select(i => Commit($"e{i}", "src/A.cs")).ToArray();
+        var m = new FileJaccardMultiplier();
+        m.For(prev, next, Input(new[] { prev, next }.Concat(extras).ToArray()), coefficients)
+            .Should().BeApproximately(1.0, 0.001);
+    }
 }

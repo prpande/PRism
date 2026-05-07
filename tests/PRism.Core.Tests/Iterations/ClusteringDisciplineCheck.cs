@@ -15,10 +15,6 @@ public class ClusteringDisciplineCheck
         // Implementation: for each PR ref, fetch the timeline via IReviewService.GetTimelineAsync,
         // run WeightedDistanceClusteringStrategy.Cluster, print boundaries to stdout for hand-comparison.
         // Test author records results in the spec's § 12 "Discipline-check observations" section.
-        // The skipped test is the harness; the recording is manual.
-
-        throw new NotImplementedException(
-            "Wire this to IReviewService.GetTimelineAsync once Task 3 lands; until then, the skipped " +
-            "fact pins the env-var-gated dispatch shape.");
+        Skip.If(true, "Discipline check awaits Task 3 (IReviewService.GetTimelineAsync); the env-var dispatch shape is pinned, but execution will land with that task.");
     }
 }

@@ -103,8 +103,24 @@ public class WeightedDistanceClusteringStrategyTests
             Commit("c1", t0.AddSeconds(-1),         "src/A.cs"),
             Commit("c2", t0.AddSeconds(60),         "src/A.cs"),
         };
-        var act = () => NewStrategy().Cluster(Input(commits), Defaults);
-        act.Should().NotThrow();
+        var clusters = NewStrategy().Cluster(Input(commits), Defaults);
+        clusters.Should().HaveCount(1);
+        clusters[0].CommitShas.Should().BeEquivalentTo(new[] { "c1", "c0", "c2" }, opts => opts.WithStrictOrdering());
+    }
+
+    [Fact]
+    public void Natural_gaps_just_above_floor_should_not_trigger_degenerate_fallback()
+    {
+        // 8 commits, 601s apart, full file overlap -> FileJaccardMultiplier = 0.5
+        // -> weighted gap = 601 * 0.5 = 300.5s, just above the 300s floor (passes Math.Clamp through).
+        // The degenerate detector must NOT count these as floor-clamped: they were not clamped.
+        // MAD path: all distances equal -> MAD=0 -> threshold = median+1 = 301.5; no edge exceeds -> single cluster.
+        var t0 = DateTimeOffset.UtcNow;
+        var commits = Enumerable.Range(0, 8)
+            .Select(i => Commit($"c{i}", t0.AddSeconds(i * 601), "src/A.cs"))
+            .ToArray();
+        var clusters = NewStrategy().Cluster(Input(commits), Defaults);
+        clusters.Should().HaveCount(1);
     }
 
     [Fact]
