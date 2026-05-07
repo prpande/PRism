@@ -1023,8 +1023,13 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
         }
 
         // Degenerate-case: > DegenerateFloorFraction at hard floor → fallback.
+        // Gate the degenerate fallback by `weighted.Length >= MadK * 2` so small-N
+        // tight-amend cases (3-5 commits with sub-floor gaps) don't spuriously trigger
+        // fallback. Below this threshold, the MAD path correctly returns a single
+        // cluster when all weighted values are equal (no edge exceeds median + 1).
         var floorClampedFraction = (double)weighted.Count(w => Math.Abs(w - floor) < 1.0) / weighted.Length;
-        if (floorClampedFraction > coefficients.DegenerateFloorFraction)
+        if (weighted.Length >= coefficients.MadK * 2 &&
+            floorClampedFraction > coefficients.DegenerateFloorFraction)
         {
             if (sorted.Length <= coefficients.MaxFallbackTabs)
                 return sorted.Select((c, i) => new IterationCluster(i + 1, c.Sha, c.Sha, new[] { c.Sha })).ToArray();
