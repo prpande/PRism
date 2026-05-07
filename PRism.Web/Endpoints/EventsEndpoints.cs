@@ -3,15 +3,12 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
-using PRism.Web.Middleware;
 using PRism.Web.Sse;
 
 namespace PRism.Web.Endpoints;
 
 internal static class EventsEndpoints
 {
-    private const int SubscribeBodyCapBytes = 16384;
-
     public static IEndpointRouteBuilder MapEvents(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -26,14 +23,12 @@ internal static class EventsEndpoints
         });
 
         // P1.5 — sentinel for the EventSource silent-401 detection on the frontend.
-        // Goes through SessionTokenMiddleware (added in PR5 commit 2): returns 200 if the
-        // cookie token is valid, 401 if not. Frontend uses this to escalate from
-        // EventSource onerror to a force-reload.
+        // Goes through SessionTokenMiddleware: returns 200 if the cookie/header token
+        // is valid, 401 if not. Frontend uses this to escalate from EventSource onerror
+        // to a force-reload.
         app.MapGet("/api/events/ping", () => Results.Ok());
 
-        app.MapPost("/api/events/subscriptions", SubscribeAsync)
-            .AddEndpointFilter(new RequestBodyCapFilter(SubscribeBodyCapBytes));
-
+        app.MapPost("/api/events/subscriptions", SubscribeAsync);
         app.MapDelete("/api/events/subscriptions", UnsubscribeAsync);
 
         return app;
@@ -62,8 +57,11 @@ internal static class EventsEndpoints
                 statusCode: StatusCodes.Status401Unauthorized);
         }
 
-        var subscriberId = sse.LatestSubscriberIdForCookieSession(cookieSessionId);
-        if (subscriberId is null)
+        // SseChannel resolves the cookie's most-recent still-connected subscriberId AND
+        // adds the registry entry under its internal _cookieGate. This atomicity closes
+        // the TOCTOU window where a concurrent SSE disconnect could leave an orphan
+        // (subscriberId, prRef) entry in the registry that the poller never cleans up.
+        if (!sse.TrySubscribe(cookieSessionId, body.PrRef, registry))
         {
             return TypedResults.Problem(
                 detail: "No active SSE connection for this cookie session — open /api/events first.",
@@ -71,7 +69,6 @@ internal static class EventsEndpoints
                 statusCode: StatusCodes.Status403Forbidden);
         }
 
-        registry.Add(subscriberId, body.PrRef);
         return TypedResults.NoContent();
     }
 
@@ -85,13 +82,10 @@ internal static class EventsEndpoints
         var cookieSessionId = ctx.Request.Cookies["prism-session"];
         if (string.IsNullOrEmpty(cookieSessionId)) return TypedResults.NoContent();
 
-        var subscriberId = sse.LatestSubscriberIdForCookieSession(cookieSessionId);
-        if (subscriberId is null) return TypedResults.NoContent();
-
         if (!PrReferenceParser.TryParse(prRef, out var parsed) || parsed is null)
             return TypedResults.NoContent();
 
-        registry.Remove(subscriberId, parsed);
+        sse.TryUnsubscribe(cookieSessionId, parsed, registry);
         return TypedResults.NoContent();
     }
 }

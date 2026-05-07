@@ -63,6 +63,32 @@ app.UseStatusCodePages();
 app.UseMiddleware<OriginCheckMiddleware>();
 app.UseMiddleware<SessionTokenMiddleware>();
 
+// Body-size cap for the four mutating endpoints (spec § 8 + plan Step 5.10b: 16 KiB).
+// Registered as middleware (NOT as an IEndpointFilter on the route) because endpoint
+// filters in minimal APIs run AFTER parameter binding — by the time the filter runs,
+// the JSON body has already been read into the deserializer and IHttpMaxRequestBodySizeFeature
+// is read-only. Placing the cap as middleware before routing means MaxRequestBodySize
+// is set before the body is read, AND a Content-Length pre-check rejects oversized
+// honest clients without buffering. Chunked/no-Content-Length attackers fall through
+// to the framework-native MaxRequestBodySize cap (Kestrel honors it; TestServer doesn't,
+// but the Content-Length pre-check is the unit-testable defense). Adversarial
+// reviewer ADV-PR5-003.
+app.UseWhen(
+    static ctx => HttpMethods.IsPost(ctx.Request.Method)
+        && ctx.Request.Path.StartsWithSegments("/api/events/subscriptions", StringComparison.Ordinal),
+    branch => branch.Use(async (ctx, next) =>
+    {
+        const long Cap = 16 * 1024;
+        var feat = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+        if (feat is not null && !feat.IsReadOnly) feat.MaxRequestBodySize = Cap;
+        if (ctx.Request.ContentLength is { } cl && cl > Cap)
+        {
+            ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
+        await next().ConfigureAwait(false);
+    }));
+
 // Stamp the prism-session cookie on every text/html response (the SPA's index.html
 // load path) so the SPA can read it and echo as X-PRism-Session on subsequent
 // fetches. Response.OnStarting fires before the first body byte writes, which
