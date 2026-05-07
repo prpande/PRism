@@ -380,7 +380,110 @@ public sealed class GitHubReviewService : IReviewService
         return false;
     }
 
-    public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException("Active-PR poll lands in S3 PR5 (ActivePrPoller wiring).");
+    public async Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+
+        // Three cheap REST calls, parallelized:
+        //   pulls/{n}              → head SHA, mergeable_state, state
+        //   pulls/{n}/comments?per_page=1 → first item + Link rel="last" → total count
+        //   pulls/{n}/reviews?per_page=1  → ditto
+        // Spec § 6.2.
+        var pullTask = FetchPullJsonAsync(reference, ct);
+        var commentsTask = FetchPagedCountAsync($"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}/comments?per_page=1", ct);
+        var reviewsTask = FetchPagedCountAsync($"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}/reviews?per_page=1", ct);
+
+        var pull = await pullTask.ConfigureAwait(false);
+        var commentCount = await commentsTask.ConfigureAwait(false);
+        var reviewCount = await reviewsTask.ConfigureAwait(false);
+
+        return new ActivePrPollSnapshot(
+            HeadSha: pull.HeadSha,
+            Mergeability: pull.Mergeability,
+            PrState: pull.State,
+            CommentCount: commentCount,
+            ReviewCount: reviewCount);
+    }
+
+    private async Task<PollPullMeta> FetchPullJsonAsync(PrReference reference, CancellationToken ct)
+    {
+        var url = $"repos/{reference.Owner}/{reference.Repo}/pulls/{reference.Number}";
+        using var http = _httpFactory.CreateClient("github");
+        using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+        var head = root.TryGetProperty("head", out var h) && h.TryGetProperty("sha", out var hs)
+            ? hs.GetString() ?? "" : "";
+        var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "" : "";
+        var mergeable = root.TryGetProperty("mergeable_state", out var ms) ? ms.GetString() ?? "" : "";
+        return new PollPullMeta(head, state, mergeable);
+    }
+
+    private async Task<int> FetchPagedCountAsync(string url, CancellationToken ct)
+    {
+        // GitHub pagination: with per_page=1, the response array is the first item and
+        // the Link header carries a rel="last" URL whose &page=N parameter is the total
+        // count. When the result fits in one page, no Link header is present and the
+        // array length is the count.
+        using var http = _httpFactory.CreateClient("github");
+        using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        if (TryParseLastPage(resp, out var lastPage))
+            return lastPage;
+
+        // Fall back to counting the array elements (0 or 1 with per_page=1).
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == JsonValueKind.Array
+                ? doc.RootElement.GetArrayLength()
+                : 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
+    private static bool TryParseLastPage(HttpResponseMessage resp, out int lastPage)
+    {
+        lastPage = 0;
+        if (!resp.Headers.TryGetValues("Link", out var values)) return false;
+        foreach (var raw in values)
+        {
+            foreach (var part in raw.Split(','))
+            {
+                var trimmed = part.Trim();
+                if (!trimmed.Contains("rel=\"last\"", StringComparison.Ordinal)) continue;
+                var lt = trimmed.IndexOf('<', StringComparison.Ordinal);
+                var gt = trimmed.IndexOf('>', StringComparison.Ordinal);
+                if (lt < 0 || gt <= lt) continue;
+                var absolute = trimmed[(lt + 1)..gt];
+                if (!Uri.TryCreate(absolute, UriKind.Absolute, out var u)) continue;
+                var query = u.Query.TrimStart('?');
+                foreach (var kv in query.Split('&'))
+                {
+                    var eq = kv.IndexOf('=', StringComparison.Ordinal);
+                    if (eq <= 0) continue;
+                    var key = kv[..eq];
+                    var value = kv[(eq + 1)..];
+                    if (string.Equals(key, "page", StringComparison.Ordinal) &&
+                        int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var n))
+                    {
+                        lastPage = n;
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private sealed record PollPullMeta(string HeadSha, string State, string Mergeability);
 
     public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException("Submit lands in S5.");
 
