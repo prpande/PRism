@@ -4,20 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repo state
 
-PRism is **pre-implementation**. The repo currently contains only:
+PRism is **mid-implementation**. The repo's main contents:
 
+- `PRism.sln` and six backend projects: `PRism.Core`, `PRism.Core.Contracts`, `PRism.GitHub`, `PRism.Web`, `PRism.AI.Contracts`, `PRism.AI.Placeholder`
+- `tests/` — `PRism.Core.Tests`, `PRism.GitHub.Tests`, `PRism.Web.Tests`
+- `frontend/` — React + Vite + TS app (per S0+S1)
+- `validation-harness/` — manual / scripted validation harness
+- Build infra: `Directory.Build.props`, `Directory.Packages.props`, `BannedSymbols.txt`, `NuGet.config`, `.editorconfig`, `.gitattributes`
+- `run.ps1` — orchestrates dev workflow (PowerShell host)
 - `docs/spec/` — the authoritative PoC specification (read in numerical order)
 - `docs/backlog/` — prioritized v2 backlog (P0 / P1 / P2 / P4; P3 was dropped)
-- `docs/roadmap.md` — implementation slice plan (S0+S1 → S6); the cycle picks one slice, brainstorms it, plans it, builds it
-- `docs/specs/` — per-slice implementation design docs (output of brainstorming)
+- `docs/roadmap.md` — implementation slice plan (S0+S1 → S6) with live slice statuses
+- `docs/specs/` — per-slice / per-task design docs (output of brainstorming); see `docs/specs/README.md` for the status-grouped index
+- `docs/plans/` — step-by-step implementation plans (output of writing-plans)
 - `docs/solutions/` — documented solutions to past problems (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`)
 - `design/handoff/` — visual/interaction design as a self-contained HTML+JSX prototype (reference, **not** production code)
 - `assets/icons/` — app icons (`PRism{16,32,48,64,256,512}.ico` + `PRismOG.png`)
-- `.github/workflows/` — two `@claude` GitHub Actions (`claude.yml` for `@claude` mentions, `claude-code-review.yml` for auto-review on every PR)
+- `.github/workflows/` — `ci.yml`, `claude.yml` (`@claude` mention handler), `claude-code-review.yml` (auto-review on every PR)
 
-There is no `PRism.sln`, no `PRism.Core` / `PRism.Web` / `PRism.GitHub` projects, no `frontend/`, no build, no tests. The spec describes them; implementation hasn't begun. **Treat the docs as the source of truth and the only thing to keep in sync until source code lands.**
+Implementation is in progress. `docs/spec/` remains the source of truth for the *full* PoC contract — including parts not yet shipped. `docs/roadmap.md` (slice-keyed) and `docs/specs/README.md` (spec-keyed) track shipped state. `docs/README.md` is the document map; start there.
 
-`docs/README.md` is the document map. Start there. `docs/spec/00-verification-notes.md` falsifies several easy assumptions about GitHub's API surface — it's load-bearing for the rest of the spec.
+`docs/spec/00-verification-notes.md` falsifies several easy assumptions about GitHub's API surface — it's load-bearing for the rest of the spec.
 
 ## Development process
 
@@ -38,12 +45,12 @@ A few practical implications:
 
 ## Commands
 
-No build/test/lint commands exist yet. When the .NET projects land, the spec's intended publish commands are:
+Canonical build / test / dev / publish commands live in [`README.md`](README.md) § Development workflow. Don't duplicate them here.
 
-```
-dotnet publish -r win-x64   --self-contained -p:PublishSingleFile=true
-dotnet publish -r osx-arm64 --self-contained -p:PublishSingleFile=true
-```
+The publish targets are an architectural commitment, not just a command:
+
+- `dotnet publish -r win-x64   --self-contained -p:PublishSingleFile=true`
+- `dotnet publish -r osx-arm64 --self-contained -p:PublishSingleFile=true`
 
 `osx-x64` (Intel Mac) is **explicitly out of scope** for the PoC — do not add it as a publish target without a documented test path.
 
@@ -79,6 +86,52 @@ These are decisions already made and adversarially reviewed. Don't relitigate th
 - Most edits at this stage will be to spec or backlog markdown. When a spec change has cross-cutting consequences, search the corpus for the affected term — many spec sections reference each other and `docs/spec/00-verification-notes.md` cross-links throughout.
 - `docs/spec-review.md` is transient working notes from adversarial review passes; findings get absorbed into the spec proper. Don't edit it as if it were canonical.
 - The two `.github/workflows/*.yml` workflows mention `@claude` and run on every PR. Be aware that opening a PR triggers an automated Claude code review.
+
+### Spec and plan locations
+
+- Per-slice / per-task design docs (output of brainstorming): `docs/specs/YYYY-MM-DD-<topic>-design.md`
+- Per-slice / per-task implementation plans (output of writing-plans): `docs/plans/YYYY-MM-DD-<topic>.md`
+
+These paths override the default `docs/superpowers/specs/` and `docs/superpowers/plans/` locations baked into the superpowers skills. The `docs/superpowers/` subtree no longer exists. Specs and plans live flat under `docs/` so other AI tools and contributors find them without traversing a tooling-specific subdirectory.
+
+## Documentation maintenance
+
+Docs and code drift if you don't keep them in lockstep. Every PR that changes one of the items below MUST update the matching doc(s) in the **same PR**. If unsure, grep the doc corpus for the affected term — many sections cross-reference each other.
+
+**Why three views of project status?** Three sync surfaces — `README.md` § Status, `docs/roadmap.md`, and `docs/specs/README.md` — exist on purpose, each at a different abstraction level:
+
+- `README.md` § Status is the high-level *"where are we?"* answer for someone landing on the repo for the first time. No nuance.
+- `docs/roadmap.md` tracks slice-level scope: what each slice means, what's shipped, what's remaining. A slice often contains multiple specs.
+- `docs/specs/README.md` is spec-keyed. It also covers specs that **don't map to any roadmap slice** — bug fixes, follow-ups, and ad-hoc work (e.g., `2026-05-07-appstatestore-windows-rename-retry-design.md`, `2026-05-07-flaky-spa-fallback-test-fix-design.md`). The roadmap can't track these because they aren't slices; the spec index is the only place they have a home.
+
+The three views are not redundant — they cover different audiences (casual reader / planner / spec author) and different scopes (project / slice / individual spec). The cost is updating multiple surfaces on slice-progress events; the table below names exactly what to update for each change type so the cost is bounded and explicit.
+
+| Change type | Doc(s) to update |
+|---|---|
+| Slice PR merged (or partial slice progress) | `docs/roadmap.md` slice row + `README.md` § Status + `docs/specs/README.md` spec status group |
+| New top-level project / directory / build infra file | `CLAUDE.md` § Repo state |
+| New / changed build, test, run, or publish command | `README.md` (canonical) + `CLAUDE.md` § Commands if it touches an architectural invariant |
+| New architectural invariant or change to existing one | `CLAUDE.md` § Architectural invariants + relevant `docs/spec/` section + cross-refs |
+| New design handoff non-negotiable | `CLAUDE.md` § Design handoff usage + `design/handoff/README.md` |
+| New solution recipe (bug, best practice, workflow pattern) | new file under `docs/solutions/<category>/` with YAML frontmatter |
+| New per-slice / per-task design doc | `docs/specs/YYYY-MM-DD-<topic>-design.md` + entry in `docs/specs/README.md` (under "Not started" initially, then promoted as work ships) |
+| New per-slice / per-task plan | `docs/plans/YYYY-MM-DD-<topic>.md` |
+| Spec status change (Not started → In progress → Implemented) | `docs/specs/README.md` group + cross-link to the PR(s) that moved it |
+| New `.github/workflows/` file or major workflow change | `CLAUDE.md` § Repo state if visible to contributors |
+
+**Out of scope for this rule:**
+- `docs/spec/` describes the full PoC target — it is a forward-looking design contract, not a status board. Don't rewrite it to match shipped state. The roadmap, README Status, and spec index track shipped state.
+- `docs/spec-review.md` is transient working notes (per existing guidance) — no maintenance obligation.
+
+**Auto-review of new specs and plans.** When a new spec or plan is written under `docs/specs/` or `docs/plans/` (typically as the final step of `superpowers:brainstorming` or `superpowers:writing-plans`), invoke `compound-engineering:ce-doc-review` on the freshly written file *before* pinging the user for the human-review pass. Apply the suggestions that hold up to scrutiny — judged with `superpowers:receiving-code-review` rigor (don't accept blindly; push back when warranted). Then ask the user to review the cleaned-up doc. The handoff to writing-plans / executing-plans waits on the user pass, not the machine pass.
+
+The skill is `compound-engineering:ce-doc-review`. If it is not installed in a future session, fall back to the spec's existing self-review pass (placeholders / consistency / scope / ambiguity) and surface the gap to the user.
+
+**One pass, no silent iteration.** Run `ce-doc-review` once on each freshly written doc. If applying suggestions would produce a substantively different doc that warrants re-review, only run a second pass at the user's explicit request — never iterate silently. Iteration without an exit criterion can converge on "the auto-reviewer always reports clean," which is the failure mode this rule prevents.
+
+**Visible rejections.** When handing the cleaned-up doc to the user for the human-review pass, surface every finding `ce-doc-review` raised along with the action taken (Applied / Deferred / Skipped) and a one-line reason for non-applies. The user must be able to spot-check filtering — silent suppression of uncomfortable findings (e.g., premise challenges) under the banner of "didn't hold up to scrutiny" is the failure mode this rule prevents. Practical shape: a brief synthesis block (Coverage table + per-finding action list) printed to the conversation when handing off, not buried in the spec file itself.
+
+**How "automatic" this is:** Claude is the executor. The trigger is the PR diff: when drafting commits that change any of the items above, scan the matching doc *before* opening the PR and include the doc edit in the same PR. PRs that ship code without the matching doc update are incomplete — flag and fix before merge.
 
 ## General behavioral guidelines
 
