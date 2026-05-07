@@ -167,11 +167,18 @@ public class WeightedDistanceClusteringStrategyTests
     }
 
     [Fact]
-    public void Lowering_mad_k_flips_borderline_gap_into_a_split()
+    public void Lowering_mad_k_flips_clustering_via_degenerate_gate()
     {
         // Spec § 11.2 requires a "coefficient changes flip clustering decisions deterministically" case.
-        // 6 commits with one borderline gap between c2 and c3. With MadK=3 the gap stays inside the
-        // band → 1 cluster. With MadK=1 the gap exceeds median + 1*MAD → 2 clusters.
+        // Mechanism: 6 commits → 5 weighted edges; tight 60s gaps (full overlap → multiplier 0.5)
+        // clamp to the 300s floor, but the c2→c3 cross-file 780s gap passes through. Resulting
+        // weighted = [300, 300, 780, 300, 300] (4 floor-clamped of 5).
+        // With MadK=3, the degenerate gate `weighted.Length >= MadK*2` is 5 >= 6 → false → MAD path
+        //              runs (median=300, MAD=0 → threshold=301), only the 780 edge exceeds → 2 clusters.
+        // With MadK=1, the gate is 5 >= 2 → true, and floor-clamped fraction 4/5 > 0.5 → degenerate
+        //              fallback fires → one cluster per commit (6 clusters, since 6 ≤ MaxFallbackTabs).
+        // Both arms test the spec requirement: changing a coefficient deterministically flips the
+        // decision. The mechanism here is the degenerate gate flipping, NOT the MAD threshold itself.
         var t0 = DateTimeOffset.UtcNow;
         var commits = new[]
         {
@@ -185,8 +192,8 @@ public class WeightedDistanceClusteringStrategyTests
         var withMadK3 = NewStrategy().Cluster(Input(commits), Defaults with { MadK = 3 });
         var withMadK1 = NewStrategy().Cluster(Input(commits), Defaults with { MadK = 1 });
 
-        withMadK1.Count.Should().BeGreaterThan(withMadK3.Count,
-            because: "lowering MadK tightens the threshold, so a borderline gap should produce more cluster boundaries");
+        withMadK3.Should().HaveCount(2, because: "MadK=3 fails the degenerate gate, so the MAD path runs and only the cross-file 780s edge crosses median+1");
+        withMadK1.Should().HaveCount(6, because: "MadK=1 lets the degenerate gate fire (5 ≥ 2) on a floor-heavy weighted array, returning one cluster per commit");
     }
 
     [Fact]
