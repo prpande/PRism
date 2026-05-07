@@ -218,6 +218,7 @@ This is the only PR of the three where TDD produces a permanent suite test. The 
 - **When.** Before S4 (drafts) starts. S4 is the first slice where state mutations originate inside the app — fixing the shape under the slice that introduces the heaviest writes is much cheaper than retrofitting later.
 - **Non-decisions.** The exact field assignment to each sub-record. Done at slice time against actual code.
 - **Pointers.** `docs/spec/02-architecture.md` § "State schema (PoC)"; `PRism.Core/State/AppState.cs`.
+- **Status (2026-05-06):** Considered for S3 pull-forward and rejected. S3 only adds `ViewedFiles` to `ReviewSessionState` (serves S3's per-file viewed-checkbox demo bullet); the wrap rename remains gated to S4 so it lands alongside S4's drafts/replies/reconciliation field additions in a single migration. Two consecutive renames in two slices is more expensive than one combined rename in S4. See PR #13's document-review record for the rejection rationale.
 
 ### ADR-S4-2: Schema-versioned migration support in `AppStateStore`
 
@@ -226,6 +227,7 @@ This is the only PR of the three where TDD produces a permanent suite test. The 
 - **When.** Before S4. S4 is the first slice that materially evolves `state.json`'s shape; landing migration support here lets every subsequent slice's state changes ride a known migration path.
 - **Non-decisions.** Migration step shape (function vs. visitor vs. pipeline of steps). Picked at slice time.
 - **Pointers.** `PRism.Core/State/UnsupportedStateVersionException.cs`; `PRism.Core/State/AppStateStore.cs`.
+- **Status (2026-05-06):** S3 ships a single inline `MigrateV1ToV2` helper method on `AppStateStore` (the v1 → v2 step that adds `viewed-files` to each session). The migration framework — ordered chain of `(toVersion, transform)` steps, version-negotiation registry, future-version forward-compat read-only mode — remains gated to S4. Extraction happens when S4 introduces migration #2, motivated by S4's drafts/replies/reconciliation schema additions. Note: S3's helper does NOT throw on `version > CurrentVersion`; it returns the file unchanged so deserialize can run in best-effort read-only mode (see `superpowers/specs/2026-05-06-s3-pr-detail-read-design.md` § 10.4).
 
 ## Before S5 — ADR entries
 
