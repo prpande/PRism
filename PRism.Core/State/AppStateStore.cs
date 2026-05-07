@@ -24,43 +24,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (!File.Exists(_path))
-            {
-                await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
-                return AppState.Default;
-            }
-
-            string raw;
-            using (var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read))
-            using (var reader = new StreamReader(fs))
-                raw = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
-
-            try
-            {
-                var node = JsonNode.Parse(raw, documentOptions: new JsonDocumentOptions
-                {
-                    AllowTrailingCommas = true,
-                    CommentHandling = JsonCommentHandling.Skip
-                });
-                if (node is null) throw new JsonException("state.json parsed to null");
-
-                node = MigrateIfNeeded(node);   // throws UnsupportedStateVersionException(0) on missing version
-
-                var state = node.Deserialize<AppState>(JsonSerializerOptionsFactory.Storage)
-                    ?? AppState.Default;
-                return state;
-            }
-            catch (JsonException)
-            {
-                // The future-version branch in MigrateIfNeeded may have stamped IsReadOnlyMode=true
-                // before deserialization failed. Quarantine replaces state.json with a fresh v2
-                // default, so the read-only condition no longer holds.
-                IsReadOnlyMode = false;
-                var quarantine = $"{_path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
-                File.Move(_path, quarantine, overwrite: false);
-                await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
-                return AppState.Default;
-            }
+            return await LoadCoreAsync(ct).ConfigureAwait(false);
         }
         finally
         {
@@ -85,6 +49,76 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         finally
         {
             _gate.Release();
+        }
+    }
+
+    public async Task UpdateAsync(Func<AppState, AppState> transform, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(transform);
+
+        // Hold the gate across load → transform → save so concurrent callers each observe
+        // prior callers' persisted writes (P1.3: two-tab mark-viewed safety).
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var current = await LoadCoreAsync(ct).ConfigureAwait(false);
+
+            // Read-only check happens AFTER the load so future-version state.json detection
+            // (which sets IsReadOnlyMode inside MigrateIfNeeded) takes effect on this call.
+            if (IsReadOnlyMode)
+                throw new InvalidOperationException(
+                    "AppStateStore is in read-only mode (state.json was written by a newer PRism version). " +
+                    "Saves are blocked until the binary is upgraded.");
+
+            var updated = transform(current);
+            await SaveCoreAsync(updated, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    // Inner load body without gate acquisition; callers must already hold _gate. Shared
+    // between LoadAsync (public, takes the gate) and UpdateAsync (already inside the gate).
+    private async Task<AppState> LoadCoreAsync(CancellationToken ct)
+    {
+        if (!File.Exists(_path))
+        {
+            await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
+            return AppState.Default;
+        }
+
+        string raw;
+        using (var fs = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        using (var reader = new StreamReader(fs))
+            raw = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            var node = JsonNode.Parse(raw, documentOptions: new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+            if (node is null) throw new JsonException("state.json parsed to null");
+
+            node = MigrateIfNeeded(node);   // throws UnsupportedStateVersionException(0) on missing version
+
+            var state = node.Deserialize<AppState>(JsonSerializerOptionsFactory.Storage)
+                ?? AppState.Default;
+            return state;
+        }
+        catch (JsonException)
+        {
+            // The future-version branch in MigrateIfNeeded may have stamped IsReadOnlyMode=true
+            // before deserialization failed. Quarantine replaces state.json with a fresh v2
+            // default, so the read-only condition no longer holds.
+            IsReadOnlyMode = false;
+            var quarantine = $"{_path}.corrupt-{DateTime.UtcNow:yyyyMMddHHmmss}";
+            File.Move(_path, quarantine, overwrite: false);
+            await SaveCoreAsync(AppState.Default, ct).ConfigureAwait(false);
+            return AppState.Default;
         }
     }
 
