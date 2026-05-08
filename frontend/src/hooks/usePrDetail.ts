@@ -19,6 +19,9 @@ export function usePrDetail(prRef: PrReference): UsePrDetailResult {
 
   useEffect(() => {
     let cancelled = false;
+    // Clear stale data so React Router instance reuse on PR navigation doesn't
+    // briefly render the previous PR's fields under the new URL.
+    setData(null);
     setIsLoading(true);
     setError(null);
     getPrDetail(prRef)

@@ -106,6 +106,46 @@ describe('usePrDetail', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/pr/foo/bar/99');
   });
 
+  it('clears stale data while the next fetch is in flight when prRef changes', async () => {
+    // Regression: React Router reuses the same PrDetailPage instance when
+    // navigating between PRs, so without an explicit setData(null) on prRef
+    // change, users briefly see the previous PR's title/author under the new
+    // URL until the new fetch resolves.
+    let resolveSecond!: (resp: Response) => void;
+    let callCount = 0;
+    globalThis.fetch = vi.fn().mockImplementation(() => {
+      callCount += 1;
+      if (callCount === 1) return Promise.resolve(jsonResponse(minimalDto));
+      return new Promise<Response>((resolve) => {
+        resolveSecond = resolve;
+      });
+    }) as typeof fetch;
+
+    const { result, rerender } = renderHook(
+      (props: { prRef: PrReference }) => usePrDetail(props.prRef),
+      { initialProps: { prRef: ref } },
+    );
+    await waitFor(() => expect(result.current.data).not.toBeNull());
+
+    rerender({ prRef: { owner: 'foo', repo: 'bar', number: 99 } });
+    expect(result.current.data).toBeNull();
+    expect(result.current.isLoading).toBe(true);
+
+    act(() =>
+      resolveSecond(
+        jsonResponse({
+          ...minimalDto,
+          pr: {
+            ...minimalDto.pr,
+            title: 'Second PR',
+            reference: { owner: 'foo', repo: 'bar', number: 99 },
+          },
+        }),
+      ),
+    );
+    await waitFor(() => expect(result.current.data?.pr.title).toBe('Second PR'));
+  });
+
   it('skeleton timing: showSkeleton=false within first 100ms of loading', () => {
     vi.useFakeTimers();
     try {

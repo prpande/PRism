@@ -19,6 +19,11 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
 
   useEffect(() => {
     if (!stream) return;
+    // Reset aggregated state when prRef changes so banners don't leak across
+    // PR navigations. useState(initial) only fires on first mount; without
+    // this, navigating from PR A (with hasUpdate=true) to PR B inherits A's
+    // banner until a new event arrives or clear() is called.
+    setState(initial);
     let cancelled = false;
 
     const unsubscribe = stream.on('pr-updated', (event) => {

@@ -199,6 +199,32 @@ describe('useActivePrUpdates', () => {
     });
   });
 
+  it('resets aggregated state when prRef changes (no banner leak across PRs)', async () => {
+    // Regression: useState(initial) only fires on first mount. When
+    // PrDetailPage's prRef param changes, the same hook instance was leaving
+    // hasUpdate/headShaChanged/commentCountDelta set from the previous PR,
+    // showing a stale banner under the new URL until clear() or a new event.
+    globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(jsonOk())) as typeof fetch;
+    const { result, rerender } = renderHook(
+      (props: { prRef: PrReference }) => useActivePrUpdates(props.prRef),
+      { wrapper, initialProps: { prRef: ref } },
+    );
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() =>
+      FakeEventSource.instance.dispatch('pr-updated', {
+        prRef: refStr,
+        headShaChanged: true,
+        commentCountDelta: 4,
+      }),
+    );
+    expect(result.current.hasUpdate).toBe(true);
+
+    rerender({ prRef: { owner: 'foo', repo: 'bar', number: 99 } });
+    expect(result.current.hasUpdate).toBe(false);
+    expect(result.current.headShaChanged).toBe(false);
+    expect(result.current.commentCountDelta).toBe(0);
+  });
+
   it('clear() resets aggregated state', async () => {
     globalThis.fetch = vi.fn().mockImplementation(() => Promise.resolve(jsonOk())) as typeof fetch;
     const { result } = renderHook(() => useActivePrUpdates(ref), { wrapper });
