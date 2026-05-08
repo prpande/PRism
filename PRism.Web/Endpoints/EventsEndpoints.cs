@@ -37,8 +37,7 @@ internal static class EventsEndpoints
     private static Results<NoContent, ProblemHttpResult> SubscribeAsync(
         SubscribeRequest body,
         HttpContext ctx,
-        SseChannel sse,
-        ActivePrSubscriberRegistry registry)
+        SseChannel sse)
     {
         if (body is null || body.PrRef is null)
         {
@@ -61,7 +60,10 @@ internal static class EventsEndpoints
         // adds the registry entry under its internal _cookieGate. This atomicity closes
         // the TOCTOU window where a concurrent SSE disconnect could leave an orphan
         // (subscriberId, prRef) entry in the registry that the poller never cleans up.
-        if (!sse.TrySubscribe(cookieSessionId, body.PrRef, registry))
+        // The registry instance is owned by SseChannel itself (no caller-supplied
+        // registry parameter) so a future caller can't accidentally register against a
+        // different ActivePrSubscriberRegistry the fanout path doesn't read.
+        if (!sse.TrySubscribe(cookieSessionId, body.PrRef))
         {
             return TypedResults.Problem(
                 detail: "No active SSE connection for this cookie session — open /api/events first.",
@@ -75,8 +77,7 @@ internal static class EventsEndpoints
     private static NoContent UnsubscribeAsync(
         [FromQuery] string? prRef,
         HttpContext ctx,
-        SseChannel sse,
-        ActivePrSubscriberRegistry registry)
+        SseChannel sse)
     {
         // DELETE is idempotent: missing cookie / no SSE / unparseable prRef → 204 noop.
         var cookieSessionId = ctx.Request.Cookies["prism-session"];
@@ -85,7 +86,7 @@ internal static class EventsEndpoints
         if (!PrReferenceParser.TryParse(prRef, out var parsed) || parsed is null)
             return TypedResults.NoContent();
 
-        sse.TryUnsubscribe(cookieSessionId, parsed, registry);
+        sse.TryUnsubscribe(cookieSessionId, parsed);
         return TypedResults.NoContent();
     }
 }

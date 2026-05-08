@@ -63,7 +63,12 @@ app.UseStatusCodePages();
 app.UseMiddleware<OriginCheckMiddleware>();
 app.UseMiddleware<SessionTokenMiddleware>();
 
-// Body-size cap for the four mutating endpoints (spec § 8 + plan Step 5.10b: 16 KiB).
+// Body-size cap for POST /api/events/subscriptions (spec § 8 + plan Step 5.10b: 16 KiB).
+// Spec § 8 names four mutating endpoints with body caps; only this one is wired up in
+// PR5 because PR4's mark-viewed/files/viewed routes pre-date this branch and haven't
+// been migrated yet (recorded in plan deferrals — extend to PR4 endpoints in a follow-up).
+// DELETE /api/events/subscriptions has no body so no cap is needed.
+//
 // Registered as middleware (NOT as an IEndpointFilter on the route) because endpoint
 // filters in minimal APIs run AFTER parameter binding — by the time the filter runs,
 // the JSON body has already been read into the deserializer and IHttpMaxRequestBodySizeFeature

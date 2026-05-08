@@ -115,7 +115,11 @@ public sealed class ActivePrPoller : BackgroundService
     {
         // min(2^errors * 30, 300) seconds. Q6 (deferrals sidecar): no Retry-After respect, no
         // dedicated secondary-rate-limit handling — plain exponential backoff for any failure.
-        state.ConsecutiveErrors++;
+        // Counter clamped at 32 to prevent int overflow at 2^31 failures: without the clamp,
+        // ConsecutiveErrors would wrap to a large negative integer, making `Math.Pow(2, neg)`
+        // approach zero and effectively removing the backoff. Backoff hits the 300s ceiling
+        // at N≥4, so 32 is well above the point where observable behaviour stops changing.
+        state.ConsecutiveErrors = Math.Min(state.ConsecutiveErrors + 1, 32);
         var seconds = Math.Min(Math.Pow(2, state.ConsecutiveErrors) * 30, 300);
         state.NextRetryAt = now.AddSeconds(seconds);
     }

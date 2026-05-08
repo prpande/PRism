@@ -8,9 +8,13 @@ namespace PRism.Web.Tests.Endpoints;
 
 public class RequestSizeLimitTests
 {
-    // P2.3 — bespoke BodySizeLimitMiddleware was dropped in favor of
-    // [RequestSizeLimit(16384)] endpoint metadata. Kestrel rejects oversized requests
-    // pre-binding with 413. Spec § 8 + plan Step 5.10b.
+    // P2.3 — bespoke BodySizeLimitMiddleware was dropped in favor of a pre-routing
+    // `app.UseWhen(...)` middleware in Program.cs (the `[RequestSizeLimit(16384)]`
+    // attribute path the original plan called for doesn't fire pre-binding for
+    // minimal-API endpoints — see plan deferrals sidecar [Superseded] entry for the
+    // body-cap implementation shift). The middleware sets MaxRequestBodySize on the
+    // feature AND rejects honest oversized clients via a Content-Length pre-check.
+    // Spec § 8 + plan Step 5.10b.
     [Theory]
     [InlineData("/api/events/subscriptions")]
     public async Task POST_with_oversize_body_returns_413(string path)

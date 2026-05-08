@@ -47,11 +47,13 @@ internal sealed class SseChannel : IDisposable
     }
 
     // Returns the most-recent subscriberId for the given cookieSessionId, or null if no
-    // active SSE connection exists for that cookie. Used by tests to assert multimap
-    // behavior. Endpoint code uses TrySubscribe / TryUnsubscribe instead — those run the
-    // registry mutation under _cookieGate so a concurrent SSE disconnect cannot race
-    // between the lookup and the Add (closes the orphan-registry-entry TOCTOU).
-    public string? LatestSubscriberIdForCookieSession(string? cookieSessionId)
+    // active SSE connection exists for that cookie. Test-only — endpoint code uses
+    // TrySubscribe / TryUnsubscribe (which run the registry mutation under _cookieGate
+    // so a concurrent SSE disconnect cannot race between the lookup and the Add and
+    // leave an orphan registry entry the poller polls forever). Marked `internal` rather
+    // than `public` because the class is `internal sealed` and this method is not part
+    // of the production API surface.
+    internal string? LatestSubscriberIdForCookieSession(string? cookieSessionId)
     {
         if (string.IsNullOrEmpty(cookieSessionId)) return null;
         lock (_cookieGate)
@@ -68,10 +70,13 @@ internal sealed class SseChannel : IDisposable
     // _cookieToSubs — so disconnect's "remove from cookie list" + "registry.RemoveSubscriber"
     // sequence cannot interleave with this method's "lookup + Add" between them, closing
     // the TOCTOU window where orphan entries could end up in the registry indefinitely.
-    public bool TrySubscribe(string? cookieSessionId, PrReference prRef, ActivePrSubscriberRegistry registry)
+    // The registry is the same `_activeRegistry` instance the fanout path
+    // (`OnActivePrUpdated`) uses — taking it as a constructor dependency rather than a
+    // method parameter prevents a future caller from accidentally registering against a
+    // different instance whose entries the fanout would silently miss.
+    public bool TrySubscribe(string? cookieSessionId, PrReference prRef)
     {
         ArgumentNullException.ThrowIfNull(prRef);
-        ArgumentNullException.ThrowIfNull(registry);
         if (string.IsNullOrEmpty(cookieSessionId)) return false;
         lock (_cookieGate)
         {
@@ -81,7 +86,7 @@ internal sealed class SseChannel : IDisposable
                 var subscriberId = list[i];
                 if (_subscribers.ContainsKey(subscriberId))
                 {
-                    registry.Add(subscriberId, prRef);
+                    _activeRegistry.Add(subscriberId, prRef);
                     return true;
                 }
             }
@@ -89,10 +94,9 @@ internal sealed class SseChannel : IDisposable
         }
     }
 
-    public bool TryUnsubscribe(string? cookieSessionId, PrReference prRef, ActivePrSubscriberRegistry registry)
+    public bool TryUnsubscribe(string? cookieSessionId, PrReference prRef)
     {
         ArgumentNullException.ThrowIfNull(prRef);
-        ArgumentNullException.ThrowIfNull(registry);
         if (string.IsNullOrEmpty(cookieSessionId)) return false;
         lock (_cookieGate)
         {
@@ -102,7 +106,7 @@ internal sealed class SseChannel : IDisposable
                 var subscriberId = list[i];
                 if (_subscribers.ContainsKey(subscriberId))
                 {
-                    registry.Remove(subscriberId, prRef);
+                    _activeRegistry.Remove(subscriberId, prRef);
                     return true;
                 }
             }

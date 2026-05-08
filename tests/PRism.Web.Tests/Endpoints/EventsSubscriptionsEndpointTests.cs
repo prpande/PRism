@@ -145,6 +145,25 @@ public class EventsSubscriptionsEndpointTests
     }
 
     [Fact]
+    public async Task Unsubscribe_returns_204_when_prRef_is_unparseable()
+    {
+        // The endpoint accepts a malformed query-string prRef as a noop per the
+        // idempotent-DELETE contract — the alternative would be 400 Bad Request,
+        // but that contradicts "missing/garbage → 204 noop" which the cookie/SSE
+        // branches both honor. Empty-string + "not/a/ref" + reserved chars all fall
+        // through PrReferenceParser.TryParse and return 204.
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var resp = await client.DeleteAsync(
+            new Uri("/api/events/subscriptions?prRef=not-a-real-ref", UriKind.Relative),
+            cts.Token);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    }
+
+    [Fact]
     public async Task Unsubscribe_is_idempotent_when_no_cookie_session()
     {
         using var factory = new PRismWebApplicationFactory();
