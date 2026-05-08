@@ -22,7 +22,7 @@ The decomposition is dependency-ordered. Don't reorder without a reason.
 
 ## Process: TDD throughout
 
-**Every slice ships test-first, red → green → refactor.** No production code lands without a failing test that proved the need. See [`CLAUDE.md`](../CLAUDE.md) § Development process for the full rule and practical implications. The DoD in [`spec/01-vision-and-acceptance.md`](./spec/01-vision-and-acceptance.md) enumerates *which* tests must exist by the end of the PoC; TDD is how every test (including the ones the DoD doesn't enumerate) comes into existence.
+**Every slice ships test-first, red → green → refactor.** No production code lands without a failing test that proved the need. See [`.ai/docs/development-process.md`](../.ai/docs/development-process.md) for the full rule and practical implications. The DoD in [`spec/01-vision-and-acceptance.md`](./spec/01-vision-and-acceptance.md) enumerates *which* tests must exist by the end of the PoC; TDD is how every test (including the ones the DoD doesn't enumerate) comes into existence.
 
 ## What was dropped from the design handoff's Tweaks panel
 

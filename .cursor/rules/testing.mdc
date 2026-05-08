@@ -1,0 +1,7 @@
+---
+description: TDD and verification expectations for test code
+globs: ["tests/**/*", "**/*.test.*", "**/*.spec.*"]
+alwaysApply: false
+---
+
+See [development-process.md](mdc:../../.ai/docs/development-process.md)

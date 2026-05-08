@@ -1,0 +1,14 @@
+---
+description: Core always-applied rules — repo overview, TDD/process, invariants, behavior, operating context
+alwaysApply: true
+---
+
+See [repo-overview.md](mdc:../../.ai/docs/repo-overview.md)
+
+See [development-process.md](mdc:../../.ai/docs/development-process.md)
+
+See [architectural-invariants.md](mdc:../../.ai/docs/architectural-invariants.md)
+
+See [behavioral-guidelines.md](mdc:../../.ai/docs/behavioral-guidelines.md)
+
+See [operating-context.md](mdc:../../.ai/docs/operating-context.md)
