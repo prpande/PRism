@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getPrDetail } from '../api/prDetail';
 import type { PrDetailDto, PrReference } from '../api/types';
 import { useDelayedLoading } from './useDelayedLoading';
@@ -16,12 +16,20 @@ export function usePrDetail(prRef: PrReference): UsePrDetailResult {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [reloadCounter, setReloadCounter] = useState(0);
+  const prevKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    // Clear stale data so React Router instance reuse on PR navigation doesn't
-    // briefly render the previous PR's fields under the new URL.
-    setData(null);
+    // Clear stale data on PR navigation only — React Router reuses this
+    // component instance across PR routes, so data from the previous PR would
+    // briefly render under the new URL. On reload (same prRef), keep the
+    // existing data visible so the page doesn't flash empty UI before the
+    // skeleton appears.
+    const prKey = `${prRef.owner}/${prRef.repo}/${prRef.number}`;
+    if (prevKeyRef.current !== null && prevKeyRef.current !== prKey) {
+      setData(null);
+    }
+    prevKeyRef.current = prKey;
     setIsLoading(true);
     setError(null);
     getPrDetail(prRef)

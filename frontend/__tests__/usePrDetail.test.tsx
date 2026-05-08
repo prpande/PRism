@@ -146,6 +146,41 @@ describe('usePrDetail', () => {
     await waitFor(() => expect(result.current.data?.pr.title).toBe('Second PR'));
   });
 
+  it('preserves existing data while reload() is in flight (same prRef)', async () => {
+    // Regression: clicking Reload should not blank the header/title/author.
+    // Prior implementation cleared `data` on every effect run (including
+    // reloadCounter changes), causing a brief empty-UI flash before the
+    // skeleton appeared. Stale data should only be cleared on PR navigation.
+    let resolveSecond!: (resp: Response) => void;
+    let callCount = 0;
+    globalThis.fetch = vi.fn().mockImplementation(() => {
+      callCount += 1;
+      if (callCount === 1) return Promise.resolve(jsonResponse(minimalDto));
+      return new Promise<Response>((resolve) => {
+        resolveSecond = resolve;
+      });
+    }) as typeof fetch;
+
+    const { result } = renderHook(() => usePrDetail(ref));
+    await waitFor(() => expect(result.current.data).not.toBeNull());
+    const firstData = result.current.data;
+
+    act(() => result.current.reload());
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.data).toBe(firstData);
+    expect(result.current.error).toBeNull();
+
+    act(() =>
+      resolveSecond(
+        jsonResponse({
+          ...minimalDto,
+          pr: { ...minimalDto.pr, title: 'Refreshed' },
+        }),
+      ),
+    );
+    await waitFor(() => expect(result.current.data?.pr.title).toBe('Refreshed'));
+  });
+
   it('skeleton timing: showSkeleton=false within first 100ms of loading', () => {
     vi.useFakeTimers();
     try {
