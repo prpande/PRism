@@ -8,7 +8,8 @@ export function getDiff(prRef: PrReference, range: string): Promise<DiffDto> {
 }
 
 export function getDiffByCommits(prRef: PrReference, commits: string[]): Promise<DiffDto> {
+  const encoded = commits.map((c) => encodeURIComponent(c)).join(',');
   return apiClient.get<DiffDto>(
-    `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/diff?commits=${commits.join(',')}`,
+    `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/diff?commits=${encoded}`,
   );
 }

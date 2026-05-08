@@ -12,7 +12,7 @@ const INPUT_TAG_NAMES = new Set(['TEXTAREA', 'INPUT', 'SELECT']);
 function isInputTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (INPUT_TAG_NAMES.has(target.tagName)) return true;
-  if (target.getAttribute('contenteditable') === 'true') return true;
+  if (target.closest('[contenteditable="true"]')) return true;
   return false;
 }
 

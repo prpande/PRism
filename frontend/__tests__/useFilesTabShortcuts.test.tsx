@@ -116,6 +116,27 @@ describe('useFilesTabShortcuts', () => {
     expect(handlers.onNextFile).not.toHaveBeenCalled();
   });
 
+  it('ignores keys when target is a child of a contenteditable ancestor', () => {
+    const handlers = {
+      onNextFile: vi.fn(),
+      onPrevFile: vi.fn(),
+      onToggleViewed: vi.fn(),
+      onToggleDiffMode: vi.fn(),
+    };
+    renderHook(() => useFilesTabShortcuts(handlers));
+    const container = document.createElement('div');
+    container.setAttribute('contenteditable', 'true');
+    const child = document.createElement('span');
+    container.appendChild(child);
+    document.body.appendChild(container);
+    try {
+      fireKey('j', child);
+      expect(handlers.onNextFile).not.toHaveBeenCalled();
+    } finally {
+      document.body.removeChild(container);
+    }
+  });
+
   it('unregisters handler on unmount', () => {
     const handlers = {
       onNextFile: vi.fn(),

@@ -8,27 +8,31 @@ export interface ComparePickerProps {
 }
 
 export function ComparePicker({ iterations, fromIter, toIter, onCompare }: ComparePickerProps) {
+  const firstNum = iterations[0]?.number ?? 0;
+  const lastNum = iterations[iterations.length - 1]?.number ?? 0;
+
+  const effectiveFrom = fromIter ?? firstNum;
+  const effectiveTo = toIter ?? lastNum;
+
   const handleFromChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newFrom = Number(e.target.value);
-    const currentTo = toIter ?? iterations[iterations.length - 1]?.number ?? 0;
-    if (newFrom > currentTo) {
-      onCompare(currentTo, newFrom);
+    if (newFrom > effectiveTo) {
+      onCompare(effectiveTo, newFrom);
     } else {
-      onCompare(newFrom, currentTo);
+      onCompare(newFrom, effectiveTo);
     }
   };
 
   const handleToChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newTo = Number(e.target.value);
-    const currentFrom = fromIter ?? iterations[0]?.number ?? 0;
-    if (currentFrom > newTo) {
-      onCompare(newTo, currentFrom);
+    if (effectiveFrom > newTo) {
+      onCompare(newTo, effectiveFrom);
     } else {
-      onCompare(currentFrom, newTo);
+      onCompare(effectiveFrom, newTo);
     }
   };
 
-  const isSameIter = fromIter !== null && toIter !== null && fromIter === toIter;
+  const isSameIter = effectiveFrom === effectiveTo;
 
   return (
     <div className="compare-picker">
@@ -36,7 +40,7 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
         <span className="compare-picker-label-text">Compare</span>
         <select
           aria-label="From iteration"
-          value={fromIter ?? ''}
+          value={effectiveFrom}
           onChange={handleFromChange}
           className="compare-picker-select"
         >
@@ -55,7 +59,7 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
       <label className="compare-picker-label">
         <select
           aria-label="To iteration"
-          value={toIter ?? ''}
+          value={effectiveTo}
           onChange={handleToChange}
           className="compare-picker-select"
         >
@@ -71,7 +75,7 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
 
       {isSameIter && (
         <span className="compare-picker-empty" role="status">
-          No changes between Iter {fromIter} and Iter {toIter}.
+          No changes between Iter {effectiveFrom} and Iter {effectiveTo}.
         </span>
       )}
     </div>
