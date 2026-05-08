@@ -86,9 +86,7 @@ describe('BannerRefresh', () => {
         onDismiss={vi.fn()}
       />,
     );
-    expect(
-      screen.getByText(/Iteration 4 \+ 2 new comments — Reload to view/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Iteration 4 \+ 2 new comments — Reload to view/i)).toBeInTheDocument();
   });
 
   it('renders mixed copy with singular comment', () => {

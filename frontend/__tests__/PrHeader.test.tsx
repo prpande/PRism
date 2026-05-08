@@ -32,10 +32,7 @@ describe('PrHeader', () => {
 
   it('renders branch info when provided', () => {
     render(
-      <PrHeader
-        {...baseProps}
-        branchInfo={{ headBranch: 'amelia/work', baseBranch: 'main' }}
-      />,
+      <PrHeader {...baseProps} branchInfo={{ headBranch: 'amelia/work', baseBranch: 'main' }} />,
     );
     expect(screen.getByText(/amelia\/work/i)).toBeInTheDocument();
     expect(screen.getByText(/main/i)).toBeInTheDocument();

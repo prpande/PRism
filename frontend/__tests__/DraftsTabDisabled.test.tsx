@@ -10,8 +10,6 @@ describe('DraftsTabDisabled', () => {
 
   it('explains why the tab is disabled', () => {
     render(<DraftsTabDisabled />);
-    expect(
-      screen.getByText(/comment composer/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/comment composer/i)).toBeInTheDocument();
   });
 });

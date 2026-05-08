@@ -67,7 +67,9 @@ describe('usePrDetail', () => {
   it('returns error on fetch failure', async () => {
     globalThis.fetch = vi
       .fn()
-      .mockImplementation(() => Promise.resolve(jsonResponse({ error: 'not found' }, 404))) as typeof fetch;
+      .mockImplementation(() =>
+        Promise.resolve(jsonResponse({ error: 'not found' }, 404)),
+      ) as typeof fetch;
     const { result } = renderHook(() => usePrDetail(ref));
     await waitFor(() => expect(result.current.error).not.toBeNull());
     expect(result.current.data).toBeNull();

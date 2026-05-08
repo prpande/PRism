@@ -23,10 +23,7 @@ describe('PrSubTabStrip', () => {
       'false',
     );
     expect(screen.getByRole('tab', { name: /files/i })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: /drafts/i })).toHaveAttribute(
-      'aria-selected',
-      'false',
-    );
+    expect(screen.getByRole('tab', { name: /drafts/i })).toHaveAttribute('aria-selected', 'false');
   });
 
   it('Drafts tab is aria-disabled with tabIndex=-1 (skipped from Tab cycle)', () => {

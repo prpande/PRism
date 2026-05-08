@@ -31,7 +31,9 @@ export function PrHeader({
       <div className="pr-header-top">
         <div className="pr-meta col gap-1">
           <div className="row gap-2 muted-2 pr-meta-repo">
-            <span>{reference.owner}/{reference.repo}</span>
+            <span>
+              {reference.owner}/{reference.repo}
+            </span>
             <span aria-hidden="true">·</span>
             <span>#{reference.number}</span>
           </div>
@@ -43,9 +45,7 @@ export function PrHeader({
                 {branchInfo.headBranch} → {branchInfo.baseBranch}
               </span>
             )}
-            {ciSummary && (
-              <span className={`chip chip-ci chip-ci-${ciSummary}`}>{ciSummary}</span>
-            )}
+            {ciSummary && <span className={`chip chip-ci chip-ci-${ciSummary}`}>{ciSummary}</span>}
             {mergeability && (
               <span className={`chip chip-mergeability chip-mergeability-${mergeability}`}>
                 {mergeability}

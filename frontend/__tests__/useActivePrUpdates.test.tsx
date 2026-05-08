@@ -70,14 +70,18 @@ describe('useActivePrUpdates', () => {
     act(() => FakeEventSource.instance.dispatch('subscriber-assigned', { subscriberId: 'sub-1' }));
     await waitFor(() => {
       const subscribeCall = fetchMock.mock.calls.find(
-        (c: unknown[]) => c[0] === '/api/events/subscriptions' && (c[1] as RequestInit)?.method === 'POST',
+        (c: unknown[]) =>
+          c[0] === '/api/events/subscriptions' && (c[1] as RequestInit)?.method === 'POST',
       );
       expect(subscribeCall).toBeDefined();
     });
     const subscribeCall = fetchMock.mock.calls.find(
-      (c: unknown[]) => c[0] === '/api/events/subscriptions' && (c[1] as RequestInit)?.method === 'POST',
+      (c: unknown[]) =>
+        c[0] === '/api/events/subscriptions' && (c[1] as RequestInit)?.method === 'POST',
     );
-    expect(JSON.parse((subscribeCall![1] as RequestInit).body as string)).toEqual({ prRef: refStr });
+    expect(JSON.parse((subscribeCall![1] as RequestInit).body as string)).toEqual({
+      prRef: refStr,
+    });
   });
 
   it('DELETEs /api/events/subscriptions?prRef=... on unmount', async () => {

@@ -70,9 +70,9 @@ describe('apiClient', () => {
   });
 
   it('DELETE returns undefined on 204', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue(
-      new Response(null, { status: 204 }),
-    ) as unknown as typeof fetch;
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 })) as unknown as typeof fetch;
     const result = await apiClient.delete('/api/events/subscriptions?prRef=foo/bar/1');
     expect(result).toBeUndefined();
     const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
@@ -103,9 +103,11 @@ describe('apiClient — X-PRism-Session header echo', () => {
 
   it('echoes prism-session cookie value as X-PRism-Session header on GET', async () => {
     mockCookie('prism-session=tok-abc; theme=dark');
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await apiClient.get('/api/inbox');
@@ -116,9 +118,7 @@ describe('apiClient — X-PRism-Session header echo', () => {
 
   it('echoes session cookie on POST as well', async () => {
     mockCookie('prism-session=tok-xyz');
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(null, { status: 204 }),
-    );
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await apiClient.post('/api/pr/foo/bar/1/mark-viewed', { headSha: 'abc' });
@@ -129,9 +129,7 @@ describe('apiClient — X-PRism-Session header echo', () => {
 
   it('echoes session cookie on DELETE as well', async () => {
     mockCookie('prism-session=tok-del');
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(null, { status: 204 }),
-    );
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await apiClient.delete('/api/events/subscriptions?prRef=foo/bar/1');
@@ -142,9 +140,11 @@ describe('apiClient — X-PRism-Session header echo', () => {
 
   it('omits X-PRism-Session header when prism-session cookie is absent', async () => {
     mockCookie('theme=dark; accent=indigo');
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await apiClient.get('/api/inbox');
@@ -155,11 +155,13 @@ describe('apiClient — X-PRism-Session header echo', () => {
 
   it('reads cookie fresh per request (handles cookie rotation)', async () => {
     const cookieSpy = vi.spyOn(document, 'cookie', 'get').mockReturnValue('prism-session=v1');
-    const fetchMock = vi.fn().mockImplementation(() =>
-      Promise.resolve(
-        new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-      ),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(
+          new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+        ),
+      );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await apiClient.get('/api/inbox');
@@ -174,9 +176,11 @@ describe('apiClient — X-PRism-Session header echo', () => {
 
   it('correctly extracts prism-session value when cookie is URL-encoded', async () => {
     mockCookie('prism-session=tok%2Bsigned%3Dvalue; other=foo');
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     await apiClient.get('/api/inbox');

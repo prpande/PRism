@@ -11,7 +11,12 @@ const DRAFTS_TOOLTIP = 'Drafts arrive in S4 — comment composer ships in the ne
 export function PrSubTabStrip({ activeTab, onTabChange, fileCount }: PrSubTabStripProps) {
   return (
     <div role="tablist" className="pr-tabs">
-      <Tab id="overview" label="Overview" active={activeTab === 'overview'} onSelect={onTabChange} />
+      <Tab
+        id="overview"
+        label="Overview"
+        active={activeTab === 'overview'}
+        onSelect={onTabChange}
+      />
       <Tab
         id="files"
         label="Files"
@@ -19,7 +24,13 @@ export function PrSubTabStrip({ activeTab, onTabChange, fileCount }: PrSubTabStr
         onSelect={onTabChange}
         count={fileCount}
       />
-      <Tab id="drafts" label="Drafts" active={activeTab === 'drafts'} onSelect={onTabChange} disabled />
+      <Tab
+        id="drafts"
+        label="Drafts"
+        active={activeTab === 'drafts'}
+        onSelect={onTabChange}
+        disabled
+      />
     </div>
   );
 }

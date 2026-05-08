@@ -7,7 +7,11 @@ import { useActivePrUpdates } from '../hooks/useActivePrUpdates';
 import type { PrReference } from '../api/types';
 
 export function PrDetailPage() {
-  const { owner, repo, number: numberStr } = useParams<{
+  const {
+    owner,
+    repo,
+    number: numberStr,
+  } = useParams<{
     owner: string;
     repo: string;
     number: string;
@@ -27,7 +31,9 @@ export function PrDetailPage() {
   const basePath = `/pr/${owner}/${repo}/${number}`;
   const activeTab = tabFromPath(location.pathname, basePath);
 
-  return <PrDetailPageInner ref={ref} basePath={basePath} activeTab={activeTab} navigate={navigate} />;
+  return (
+    <PrDetailPageInner ref={ref} basePath={basePath} activeTab={activeTab} navigate={navigate} />
+  );
 }
 
 function PrDetailPageInner({
