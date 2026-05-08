@@ -4,7 +4,7 @@ Local-first PR review tool that runs on the reviewer's own machine. See [`docs/s
 
 ## Status
 
-Implementation in progress. S0+S1 (foundations) and S2 (inbox read) have shipped; S3 (PR detail read) is mid-flight with PR1 (state migration), PR2 (iteration clustering), and PR3 (`IReviewService` extensions) merged, and PR4 (`PrDetailLoader` + backend endpoints) in review. See [`docs/roadmap.md`](docs/roadmap.md) for the live slice table and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
+Implementation in progress. S0+S1 (foundations) and S2 (inbox read) have shipped; S3 (PR detail read) is on its final backend slice with PR1 (state migration), PR2 (iteration clustering), PR3 (`IReviewService` extensions), PR4 (`PrDetailLoader` + backend endpoints), and PR5 (SSE per-PR fanout + active-PR poller + `SessionTokenMiddleware`) all merged. Task 6 — frontend PR-detail shell — is the remaining S3 work. See [`docs/roadmap.md`](docs/roadmap.md) for the live slice table and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
 
 ## Development workflow
 
