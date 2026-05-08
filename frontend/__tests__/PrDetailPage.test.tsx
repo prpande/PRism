@@ -170,6 +170,36 @@ describe('PrDetailPage', () => {
     );
   });
 
+  it('does not match the Files tab on lookalike paths like /files-extra', async () => {
+    // Regression: tabFromPath() previously used startsWith('/files'), which
+    // treated /files-extra (and any /files<X>) as a Files-tab match even
+    // though the nested router wouldn't render Files for that path. The tab
+    // strip would highlight Files while the Outlet rendered Overview (or 404).
+    // Match must require either exact '/files' or a '/files/' path prefix.
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path === '/api/pr/octocat/hello/42') return Promise.resolve(jsonResponse(sampleDto));
+      return Promise.resolve(jsonResponse({}, 204));
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    render(
+      <MemoryRouter initialEntries={['/pr/octocat/hello/42/files-extra']}>
+        <EventStreamProvider>
+          <Routes>
+            <Route path="/pr/:owner/:repo/:number" element={<PrDetailPage />}>
+              <Route index element={<div data-testid="overview-content">OVERVIEW</div>} />
+              <Route path="files/*" element={<div data-testid="files-content">FILES</div>} />
+              <Route path="drafts" element={<div data-testid="drafts-content">DRAFTS</div>} />
+              <Route path="*" element={<div data-testid="nomatch">NOMATCH</div>} />
+            </Route>
+          </Routes>
+        </EventStreamProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByText('Refactor the renewal worker');
+    expect(screen.getByRole('tab', { name: /files/i })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: /overview/i })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('Reload click triggers a re-fetch and clears the banner', async () => {
     const fetchMock = vi.fn().mockImplementation((path: string) => {
       if (path === '/api/pr/octocat/hello/42') return Promise.resolve(jsonResponse(sampleDto));

@@ -102,8 +102,11 @@ function PrDetailPageInner({
 
 function tabFromPath(pathname: string, basePath: string): PrTabId {
   const sub = pathname.startsWith(basePath) ? pathname.slice(basePath.length) : '';
-  if (sub.startsWith('/files')) return 'files';
-  if (sub.startsWith('/drafts')) return 'drafts';
+  // Match exact segment or trailing-slash form so lookalike paths like
+  // /files-extra don't desync the tab strip from what the nested router
+  // actually renders.
+  if (sub === '/files' || sub.startsWith('/files/')) return 'files';
+  if (sub === '/drafts' || sub.startsWith('/drafts/')) return 'drafts';
   return 'overview';
 }
 
