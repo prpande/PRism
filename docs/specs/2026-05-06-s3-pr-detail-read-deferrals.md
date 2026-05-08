@@ -1,10 +1,11 @@
 ---
 source-doc: docs/specs/2026-05-06-s3-pr-detail-read-design.md
 created: 2026-05-07
-last-updated: 2026-05-07
+last-updated: 2026-05-08
 status: open
 revisions:
   - 2026-05-07: PR5-design — recorded multimap chosen over (a) last-SSE-wins / (b) reject-second-SSE for `{cookieSessionId → Set<subscriberId>}`
+  - 2026-05-08: PR6 implementation — recorded AbortController-keyed-to-Promise-generation defer for useActivePrUpdates subscribe POST
 ---
 
 # Deferrals — S3 PR-detail (read) spec
@@ -204,6 +205,16 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Reason:** Original spec § 8 prescribed cookie-only on `/api/events` (because EventSource can't set custom headers) and header-only everywhere else (defending against same-origin cookie replay from a stale tab). In practice the SPA shipped in earlier slices does NOT read `document.cookie` and echo as `X-PRism-Session` — it relies on the browser's automatic cookie attachment for same-origin fetches. The strict header-only policy on non-SSE `/api/*` would have required a frontend update to land in the same PR, which is out of S3 PR5's backend-only scope. Widening to cookie-OR-header preserves the security model: cookie is per-process random, `SameSite=Strict` (cross-origin attackers cannot get it sent), and `OriginCheckMiddleware` rejects empty Origin on mutating verbs. Cookie-only auth on /api/* is equivalent proof of session because all three protections compose. `/api/health` is exempted entirely (liveness probe convention; no sensitive data).
 - **Revisit when:** N/A — cookie-OR-header is the long-term policy. The frontend can still echo the header for clients that prefer that style; both forms work. Only revisit if a future threat surfaces that distinguishes cookie from header (none currently in the spec § 6.2 threat model).
 - **Original finding evidence:** Spec § 8 (line 956 pre-edit) "For mutating verbs and GETs other than `/api/events`, the middleware reads `X-PRism-Session` from the request header. For `GET /api/events` ..., the middleware reads the same token from the `prism-session` cookie." Now superseded — § 8 reads "accepts EITHER the `X-PRism-Session` request header OR the `prism-session` cookie value."
+
+## [Defer] AbortController.signal keyed to Promise generation on subscribe POST
+
+- **Source:** PR6 implementation — useActivePrUpdates design choice; surfaced while deciding whether to extend apiClient with optional `{ signal }` opts
+- **Severity:** P2 (defensive correctness; no observable user impact in PoC)
+- **Date:** 2026-05-08
+- **Reason:** Spec § 7.4 prescribes that `POST /api/events/subscriptions` calls run with an `AbortController.signal` returned by `EventStreamHandle.reconnectSignal()`, "keyed to the current Promise generation; on reconnect (Promise re-resets), all in-flight POSTs are aborted before new ones fire against the new subscriberId." `useActivePrUpdates` ships in PR6 *without* this wiring — it simply awaits `stream.subscriberId()` and POSTs once, with no abort on reconnect. The defense is sound but unnecessary in PoC because the backend's `TrySubscribe(cookieSessionId, prRef)` resolves to the *most recent* `subscriberId` for the cookie (per the multimap design — same deferrals doc, the `[Skip] Singular {cookieSessionId → subscriberId} map` entry below). Even an in-flight POST landing post-reconnect routes to the new `subscriberId`, so correctness holds. The abort signal protects against wasted work during reconnect storms and against future server-side semantics changes that might tighten the cookie/subscriber pairing. `apiClient.post/get/delete` remains signal-less in PR6; extending it lands with this defer.
+- **Revisit when:** Dogfooding shows visible latency from queued in-flight subscribe POSTs during SSE reconnect storms, OR a security review tightens the cookie/subscriber pairing semantics so an in-flight POST under a stale `subscriberId` is no longer routed correctly.
+- **Original finding evidence:** Spec § 7.4 — "Subscribe POSTs are issued with an `AbortController.signal` keyed to the current Promise generation; on reconnect (Promise re-resets), all in-flight POSTs are aborted before new ones fire against the new subscriberId."
+- **Where the gap lives in code:** `frontend/src/hooks/useActivePrUpdates.ts:21-37` (the `apiClient.post(...)` call has no `signal` option); `frontend/src/api/client.ts` (apiClient.get/post/delete signatures don't accept `{ signal }` yet).
 
 ## [Skip] Singular `{cookieSessionId → subscriberId}` map (last-SSE-wins or reject-second-SSE)
 
