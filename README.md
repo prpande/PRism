@@ -54,6 +54,34 @@ dotnet test --collect:"XPlat Code Coverage"
 reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 ```
 
+### Pre-push checklist
+
+Run steps 1–4 locally before every `git push`. They mirror `.github/workflows/ci.yml` step-for-step so anything CI catches, you catch first. CI is fail-fast — a regression in a later step stays invisible until something earlier passes, so "the last CI was green" is not a substitute for running these steps. Step 5 (Playwright) is conditional — see the comment on that step for when it's required.
+
+```
+# 1. Frontend lint (eslint + prettier --check)
+cd frontend && npm run lint
+
+# 2. Frontend build (tsc -b is stricter than --noEmit; required, not --noEmit)
+npm run build
+
+# 3. Frontend unit tests (vitest)
+npm test
+
+# 4. Backend build + tests
+cd .. && dotnet build --configuration Release
+dotnet test --no-build --configuration Release
+
+# 5. Frontend e2e (Playwright) — required if you touched any of:
+#    - frontend/src/pages/, frontend/src/App.tsx, route bindings
+#    - any UI surface referenced by frontend/e2e/*.spec.ts
+#    - PRism.Web/Endpoints/, middleware, or response shapes the SPA reads
+#    Otherwise the prior CI signal is sufficient.
+cd frontend && npx playwright test
+```
+
+If `tsc -b` reports a generic-narrowing or project-reference error that `tsc --noEmit` would miss, fix it locally — CI runs `tsc -b` (via `npm run build`) and will fail on the same error.
+
 ## Process
 
 All production code is written test-first (red → green → refactor). See [`CLAUDE.md`](CLAUDE.md) § Development process.

@@ -11,10 +11,31 @@ export class ApiError extends Error {
   }
 }
 
+function readSessionCookie(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)prism-session=([^;]*)/);
+  if (!match) return null;
+  // ASP.NET's Response.Cookies.Append URL-encodes the cookie value (so base64
+  // `+`/`/`/`=` arrive in document.cookie as `%2B`/`%2F`/`%3D`).
+  // SessionTokenMiddleware compares X-PRism-Session bytes directly against the
+  // raw token, so we decode before echoing — otherwise tokens with escapable
+  // chars 401 on the header path. Fall back to the raw value if decodeURIComponent
+  // throws on a malformed escape sequence.
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  const session = readSessionCookie();
+  if (session !== null) headers['X-PRism-Session'] = session;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
   const resp = await fetch(path, {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const requestId = resp.headers.get('X-Request-Id');
@@ -38,4 +59,5 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const apiClient = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
+  delete: <T>(path: string) => request<T>('DELETE', path),
 };

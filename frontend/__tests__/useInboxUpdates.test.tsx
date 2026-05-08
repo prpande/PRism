@@ -1,13 +1,20 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach } from 'vitest';
+import type { ReactNode } from 'react';
 import { useInboxUpdates } from '../src/hooks/useInboxUpdates';
+import { EventStreamProvider } from '../src/hooks/useEventSource';
 
 class FakeEventSource {
-  static instance: FakeEventSource;
+  static instances: FakeEventSource[] = [];
+  static get instance(): FakeEventSource {
+    return FakeEventSource.instances[FakeEventSource.instances.length - 1]!;
+  }
   listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
   closed = false;
-  constructor() {
-    FakeEventSource.instance = this;
+  url: string;
+  constructor(url: string) {
+    this.url = url;
+    FakeEventSource.instances.push(this);
   }
   addEventListener(type: string, cb: (e: MessageEvent) => void) {
     (this.listeners[type] ??= []).push(cb);
@@ -21,12 +28,18 @@ class FakeEventSource {
 }
 
 beforeEach(() => {
+  FakeEventSource.instances = [];
   (globalThis as unknown as { EventSource: unknown }).EventSource = FakeEventSource;
 });
 
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <EventStreamProvider>{children}</EventStreamProvider>
+);
+
 describe('useInboxUpdates', () => {
   it('shows banner on inbox-updated event', async () => {
-    const { result } = renderHook(() => useInboxUpdates());
+    const { result } = renderHook(() => useInboxUpdates(), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     expect(result.current.hasUpdate).toBe(false);
     act(() =>
       FakeEventSource.instance.dispatch('inbox-updated', {
@@ -39,7 +52,8 @@ describe('useInboxUpdates', () => {
   });
 
   it('dismiss clears banner', async () => {
-    const { result } = renderHook(() => useInboxUpdates());
+    const { result } = renderHook(() => useInboxUpdates(), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() =>
       FakeEventSource.instance.dispatch('inbox-updated', {
         changedSectionIds: [],
@@ -53,7 +67,8 @@ describe('useInboxUpdates', () => {
   });
 
   it('uses singular form when newOrUpdatedPrCount is 1', async () => {
-    const { result } = renderHook(() => useInboxUpdates());
+    const { result } = renderHook(() => useInboxUpdates(), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() =>
       FakeEventSource.instance.dispatch('inbox-updated', {
         changedSectionIds: [],

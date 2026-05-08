@@ -16,6 +16,10 @@ vi.mock('../src/hooks/useInbox', () => ({
 vi.mock('../src/hooks/useInboxUpdates', () => ({
   useInboxUpdates: vi.fn(() => ({ hasUpdate: false, summary: '', dismiss: vi.fn() })),
 }));
+vi.mock('../src/hooks/useEventSource', () => ({
+  EventStreamProvider: ({ children }: { children: React.ReactNode }) => children,
+  useEventSource: vi.fn(() => null),
+}));
 vi.mock('../src/hooks/useCapabilities', () => ({
   useCapabilities: vi.fn(() => ({
     capabilities: { inboxEnrichment: false },
