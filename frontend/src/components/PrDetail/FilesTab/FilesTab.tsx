@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import type { PrDetailDto, PrReference } from '../../../api/types';
 import { postFileViewed } from '../../../api/fileViewed';
@@ -7,12 +7,25 @@ import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
 import { FileTree } from './FileTree';
 import { DiffPane } from './DiffPane';
+import type { DiffMode } from './DiffPane';
 import { IterationTabStrip } from './IterationTabStrip';
 import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
 import { buildTree, flattenPaths } from './treeBuilder';
 
 interface FilesTabContext {
   prDetail: PrDetailDto;
+}
+
+function useViewportWidth() {
+  const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+
+  useEffect(() => {
+    const handler = () => setWidth(window.innerWidth);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  return width;
 }
 
 export function FilesTab() {
@@ -37,6 +50,10 @@ export function FilesTab() {
   const [activeRange, setActiveRange] = useState<string>('all');
   const [selectedCommits, setSelectedCommits] = useState<string[] | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [diffMode, setDiffMode] = useState<DiffMode>('side-by-side');
+
+  const viewportWidth = useViewportWidth();
+  const effectiveDiffMode: DiffMode = viewportWidth < 900 ? 'unified' : diffMode;
 
   const handleRangeChange = useCallback((range: string) => {
     setActiveRange(range);
@@ -57,13 +74,8 @@ export function FilesTab() {
     return activeRange;
   }, [isLowQuality, activeRange, allRange]);
 
-  // For OK quality: fetch by range (iteration-based)
   const rangeDiff = useFileDiff(prRef, isLowQuality ? null : iterationRange);
-
-  // For low quality + "show all": also fetch by range
   const lowAllDiff = useFileDiff(prRef, isLowQuality && selectedCommits === null ? allRange : null);
-
-  // For low quality + specific commits selected
   const commitsDiff = useUnionDiff(
     prRef,
     isLowQuality && selectedCommits !== null ? selectedCommits : null,
@@ -74,6 +86,18 @@ export function FilesTab() {
   const files = useMemo(() => diff.data?.files ?? [], [diff.data]);
   const tree = useMemo(() => buildTree(files), [files]);
   const fileList = useMemo(() => flattenPaths(tree), [tree]);
+
+  const selectedFile = useMemo(
+    () => (selectedPath ? (files.find((f) => f.path === selectedPath) ?? null) : null),
+    [files, selectedPath],
+  );
+
+  const fileThreads = useMemo(
+    () => (selectedPath ? prDetail.reviewComments.filter((t) => t.filePath === selectedPath) : []),
+    [prDetail.reviewComments, selectedPath],
+  );
+
+  const prUrl = `https://github.com/${owner}/${repo}/pull/${numberStr}`;
 
   const handleToggleViewed = useCallback(
     (path: string) => {
@@ -120,8 +144,9 @@ export function FilesTab() {
   }, [fileList, selectedPath]);
 
   const handleToggleDiffMode = useCallback(() => {
-    // Diff mode toggle will be wired in Task 8
-  }, []);
+    if (viewportWidth < 900) return;
+    setDiffMode((prev) => (prev === 'side-by-side' ? 'unified' : 'side-by-side'));
+  }, [viewportWidth]);
 
   useFilesTabShortcuts({
     onNextFile: handleNextFile,
@@ -176,7 +201,14 @@ export function FilesTab() {
           )}
         </div>
         <div className="files-tab-diff">
-          <DiffPane selectedPath={selectedPath} />
+          <DiffPane
+            selectedPath={selectedPath}
+            file={selectedFile}
+            diffMode={effectiveDiffMode}
+            truncated={diff.data?.truncated ?? false}
+            reviewThreads={fileThreads}
+            prUrl={prUrl}
+          />
         </div>
       </div>
     </div>

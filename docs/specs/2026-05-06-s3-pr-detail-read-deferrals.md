@@ -367,3 +367,39 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Reason:** Spec § 7.2 defines two viewed modes: (a) default mode walks the full PR commit graph between ViewedFiles[path] and headSha checking changedFiles, (b) skipped-Jaccard mode uses exact-SHA match. PR7 implements client-side viewed state as a simple Set<string> toggle without either graph walk or SHA comparison — viewed is purely a client-side UI toggle with optimistic POST. The backend POST persists the viewed mark; the graph-walk or SHA-match logic that determines whether a file is *still* viewed after new iterations is a read-path concern that requires `PrDetailDto.viewedFiles` data (not yet surfaced in the DTO). This is by design: PR7 focuses on the file-tree layout and diff-fetching infrastructure; viewed-semantics accuracy depends on backend data that lands with full state-management polish.
 - **Revisit when:** Backend surfaces `ViewedFiles` in PrDetailDto and commit `changedFiles` data, enabling the frontend to compute accurate viewed status. Likely S4 or S5.
 - **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx:38` — `viewedPaths` is `useState<Set<string>>(new Set())` with no initialisation from backend data.
+
+## [Defer] Shiki syntax highlighting in DiffPane (spec § 7.2 line 718)
+
+- **Source:** PR8 preflight — correctness reviewer
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** Spec requires DiffPane lines to be syntax-highlighted via the shared Shiki instance. PR8 ships the shikiInstance module with lazy initialization and uses it in MarkdownRenderer code blocks, but DiffPane currently renders plain-text diff lines without Shiki tokenization. Integrating Shiki into the per-line rendering requires mapping file extensions to language IDs and handling the async highlighter load state within the diff table — non-trivial but visual-only polish.
+- **Revisit when:** S5 or S6 polish round addresses syntax coloring across the diff surface.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx` — `renderContent()` returns plain `<span>` without Shiki token spans.
+
+## [Defer] react-diff-view integration (spec § 7.2 line 716)
+
+- **Source:** PR8 preflight — architecture reviewer
+- **Severity:** P3
+- **Date:** 2026-05-08
+- **Reason:** Spec calls for react-diff-view to render side-by-side/unified views. PR8 implements a custom lightweight diff table parser (parseHunkLines) that handles the core unified diff format correctly, with side-by-side/unified layout switching. The react-diff-view library was installed but not used — the custom implementation is simpler to test, understand, and extend for the PoC. react-diff-view would provide richer features (fold/expand context, scroll sync in split view) that can be adopted later.
+- **Revisit when:** Dogfooding reveals need for advanced diff UX features (context expansion, scroll-sync in split view), or the custom parser hits edge cases with complex merge diffs.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx` — uses custom `parseHunkLines` instead of react-diff-view's `parseDiff`/`Diff`/`Hunk` components.
+
+## [Defer] Diff-mode persistence to state.json (spec § 6.3 + § 7.2)
+
+- **Source:** PR8 preflight — correctness reviewer
+- **Severity:** P3
+- **Date:** 2026-05-08
+- **Reason:** Spec § 6.3 specifies DiffMode persistence via AppState.UiPreferences.DiffMode, with the endpoint landing in S4 settings. PR8 implements in-memory diffMode state (useState in FilesTab) as the plan prescribes for S3 — persistence wires up when the S4 settings endpoint ships.
+- **Revisit when:** S4 settings surface ships `AppState.UiPreferences.DiffMode` endpoint.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx` — `diffMode` is `useState<DiffMode>('side-by-side')` with no persistence layer.
+
+## [Defer] d-key tooltip "side-by-side requires ≥ 900px" (spec § 7.7)
+
+- **Source:** PR8 preflight — reliability reviewer
+- **Severity:** P3
+- **Date:** 2026-05-08
+- **Reason:** Spec says pressing d below 900px shows a tooltip informing the user that side-by-side requires a wider viewport. PR8 suppresses the toggle (no-op below 900px) but doesn't show a tooltip. The suppression itself is correct; the tooltip is polish.
+- **Revisit when:** S6 polish round or design system tooltip component lands.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx:handleToggleDiffMode` — returns early without tooltip.
