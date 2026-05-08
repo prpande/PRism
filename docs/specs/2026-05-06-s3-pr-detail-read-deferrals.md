@@ -7,6 +7,7 @@ revisions:
   - 2026-05-07: PR5-design — recorded multimap chosen over (a) last-SSE-wins / (b) reject-second-SSE for `{cookieSessionId → Set<subscriberId>}`
   - 2026-05-08: PR6 implementation — recorded AbortController-keyed-to-Promise-generation defer for useActivePrUpdates subscribe POST
   - 2026-05-08: PR6 preflight reviewer pass — recorded reconnect-storm-no-backoff, ping-fetch-no-timeout, malformed-handshake-recovery, commentCountDelta-dedup, multi-tab-coordination, owner/repo route-param validation, useDelayedLoading 2nd-cycle race, PR-number permissive validation, no-degraded-UX-signal, reload-loop-tombstone, DELETE-before-POST race
+  - 2026-05-08: PR6 review-loop pass — recorded empty-PrHeader-during-cold-load defer
 ---
 
 # Deferrals — S3 PR-detail (read) spec
@@ -306,6 +307,16 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Revisit when:** Dogfooding shows visible latency from queued in-flight subscribe POSTs during SSE reconnect storms, OR a security review tightens the cookie/subscriber pairing semantics so an in-flight POST under a stale `subscriberId` is no longer routed correctly.
 - **Original finding evidence:** Spec § 7.4 — "Subscribe POSTs are issued with an `AbortController.signal` keyed to the current Promise generation; on reconnect (Promise re-resets), all in-flight POSTs are aborted before new ones fire against the new subscriberId."
 - **Where the gap lives in code:** `frontend/src/hooks/useActivePrUpdates.ts:21-37` (the `apiClient.post(...)` call has no `signal` option); `frontend/src/api/client.ts` (apiClient.get/post/delete signatures don't accept `{ signal }` yet).
+
+## [Defer] Empty `<h1>` and author span in `PrHeader` during cold-load window
+
+- **Source:** PR6 review-loop pass — Copilot inline review on commit `fbf9890` (comment 3207130646)
+- **Severity:** P3 (a11y polish; no correctness impact, contained to first fetch / PR-navigation window after `usePrDetail` reload-flash fix)
+- **Date:** 2026-05-08
+- **Reason:** `PrDetailPage` renders `PrHeader` unconditionally and passes `data?.pr.title ?? ''` / `data?.pr.author ?? ''` while the detail fetch is in flight, producing a literally empty `<h1 class="pr-title" />` and empty `<span class="pr-subtitle-author" />` until `data` resolves. Spec § 7.6 (line 838) calls for a *delayed* skeleton on the loading state ("header bar + 3-tab strip + body grid placeholder, renders only if pending > 100 ms; holds ≥ 300 ms"); the current implementation only skeletonises the body grid (`{showSkeleton ? <PrDetailSkeleton /> : <Outlet />}`) and leaves the header bar in its real DOM with empty fields. Two prior reviewer passes (Copilot + claude-review) classified the PR as merge-ready before this finding surfaced. The cleanest spec-aligned fix is non-trivial — either a header-skeleton component (new CSS shimmer placeholders for title/author + skeletonised tab strip) gated on `showSkeleton`, or restructuring `PrHeader` to take an optional `data` prop and render placeholder bars internally. Both options touch design-system tokens (`design/handoff/tokens.css`) and exceed the scope of "address open review comments". The owner/repo/`#number` chrome derived from URL params *does* render correctly during cold-load, so users still get orientation. After the f6be600 + fbf9890 fixes, the empty-fields window is bounded to (a) initial cold mount until the first fetch resolves, and (b) PR navigation between different PRs — never on Reload anymore.
+- **Revisit when:** S6 polish work explicitly addresses skeleton-timing micro-UX, OR an a11y review flags the empty `<h1>` as a release blocker, OR design-handoff lands a header-skeleton spec. Fix candidates: (1) gate `<h1>` and author span rendering on `title` / `author` being non-empty (drops them from the DOM during loading — fewer a11y signals but no empty elements); (2) introduce a `pr-header-skeleton` shimmer placeholder bound to `showSkeleton`; (3) move `PrHeader` *inside* the `showSkeleton ? <PrDetailSkeleton /> : ...` branch so loading shows a full-page skeleton (closest to spec § 7.6 wording).
+- **Original finding evidence:** "`PrHeader` is rendered even while `usePrDetail` is still loading, but `title`/`author` are passed as empty strings when `data` is null. This creates an empty `<h1>` (and empty author text) during slow loads, which is confusing and not great for accessibility/screen readers."
+- **Where the gap lives in code:** `frontend/src/pages/PrDetailPage.tsx:73-84` (the `PrHeader` invocation with `?? ''` fallbacks); `frontend/src/components/PrDetail/PrHeader.tsx:40-42` (the unconditional `<h1>` and author `<span>`).
 
 ## [Skip] Singular `{cookieSessionId → subscriberId}` map (last-SSE-wins or reject-second-SSE)
 
