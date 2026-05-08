@@ -1,20 +1,19 @@
 import { useEffect, useState } from 'react';
-import { openEventStream } from '../api/events';
+import { useEventSource } from './useEventSource';
 
 export function useInboxUpdates() {
+  const stream = useEventSource();
   const [hasUpdate, setHasUpdate] = useState(false);
   const [summary, setSummary] = useState('');
 
   useEffect(() => {
-    const close = openEventStream({
-      onInboxUpdated: (e) => {
-        setHasUpdate(true);
-        const n = e.newOrUpdatedPrCount;
-        setSummary(`${n} new ${n === 1 ? 'update' : 'updates'}`);
-      },
+    if (!stream) return;
+    return stream.on('inbox-updated', (e) => {
+      setHasUpdate(true);
+      const n = e.newOrUpdatedPrCount;
+      setSummary(`${n} new ${n === 1 ? 'update' : 'updates'}`);
     });
-    return close;
-  }, []);
+  }, [stream]);
 
   const dismiss = () => {
     setHasUpdate(false);

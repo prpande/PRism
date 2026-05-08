@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Header } from './components/Header/Header';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -8,6 +8,7 @@ import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
 import { S3StubPrPage } from './pages/S3StubPrPage';
 import { useAuth } from './hooks/useAuth';
+import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
 
 export function App() {
@@ -48,20 +49,26 @@ export function App() {
 
   const isAuthed = authState.hasToken && !authInvalidated;
 
+  const tree: ReactNode = (
+    <>
+      <Header />
+      <Routes>
+        <Route path="/setup" element={<SetupPage />} />
+        <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
+        <Route
+          path="/pr/:owner/:repo/:number"
+          element={isAuthed ? <S3StubPrPage /> : <Navigate to="/setup" replace />}
+        />
+        <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
+      </Routes>
+      <ToastContainer />
+    </>
+  );
+
   return (
     <ErrorBoundary>
       <ToastProvider>
-        <Header />
-        <Routes>
-          <Route path="/setup" element={<SetupPage />} />
-          <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
-          <Route
-            path="/pr/:owner/:repo/:number"
-            element={isAuthed ? <S3StubPrPage /> : <Navigate to="/setup" replace />}
-          />
-          <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
-        </Routes>
-        <ToastContainer />
+        {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
       </ToastProvider>
     </ErrorBoundary>
   );
