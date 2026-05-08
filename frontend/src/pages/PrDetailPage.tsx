@@ -28,7 +28,12 @@ export function PrDetailPage() {
   }
 
   const ref: PrReference = { owner, repo, number };
-  const basePath = `/pr/${owner}/${repo}/${number}`;
+  // basePath uses the raw route segment so tabFromPath() matches against the
+  // user's actual pathname (a leading-zero or whitespace-equivalent value
+  // like /pr/o/r/042 must not be normalized to /pr/o/r/42, which would break
+  // tab selection and rewrite the URL on tab clicks). The numeric `number` is
+  // only for API calls.
+  const basePath = `/pr/${owner}/${repo}/${numberStr}`;
   const activeTab = tabFromPath(location.pathname, basePath);
 
   return (

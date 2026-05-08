@@ -151,6 +151,25 @@ describe('PrDetailPage', () => {
     expect(await screen.findByText(/Iteration 3 available/i)).toBeInTheDocument();
   });
 
+  it('keeps tab selection in sync with the raw route segment (no parse-rewrite)', async () => {
+    // Regression: basePath was built from the parsed numeric value (e.g. 42),
+    // so for /pr/o/r/042/files the pathname ('/pr/o/r/042/files') no longer
+    // started with basePath ('/pr/o/r/42'), and tabFromPath fell back to
+    // 'overview' even though the rendered Outlet was Files. The Files tab
+    // would not show as selected. basePath must keep the raw route segment.
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path === '/api/pr/octocat/hello/42') return Promise.resolve(jsonResponse(sampleDto));
+      return Promise.resolve(jsonResponse({}, 204));
+    });
+    render(mountAt('/pr/octocat/hello/042/files', fetchMock as typeof fetch));
+    await screen.findByTestId('files-content');
+    expect(screen.getByRole('tab', { name: /files/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: /overview/i })).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
+  });
+
   it('Reload click triggers a re-fetch and clears the banner', async () => {
     const fetchMock = vi.fn().mockImplementation((path: string) => {
       if (path === '/api/pr/octocat/hello/42') return Promise.resolve(jsonResponse(sampleDto));
