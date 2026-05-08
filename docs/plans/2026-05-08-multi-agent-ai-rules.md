@@ -63,8 +63,8 @@
 
 ## Task 6: Spec index entry
 
-- [ ] Add this spec under **Not started** in [`docs/specs/README.md`](../../docs/specs/README.md) with link to plan.
-- [ ] After PR merges implementation, move entry to **Implemented** and add PR number (human follow-up).
+- [ ] Add this spec under **In progress** in [`docs/specs/README.md`](../../docs/specs/README.md) with link to plan.
+- [ ] After PR merges implementation, move entry to **Implemented** and add PR number.
 
 ---
 
