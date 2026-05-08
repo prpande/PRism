@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import type { PrDetailDto, PrReference } from '../../../api/types';
 import { postFileViewed } from '../../../api/fileViewed';
@@ -19,12 +19,11 @@ interface FilesTabContext {
 function useViewportWidth() {
   const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
 
-  useState(() => {
-    if (typeof window === 'undefined') return;
+  useEffect(() => {
     const handler = () => setWidth(window.innerWidth);
     window.addEventListener('resize', handler);
     return () => window.removeEventListener('resize', handler);
-  });
+  }, []);
 
   return width;
 }
