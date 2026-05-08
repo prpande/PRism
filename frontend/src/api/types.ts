@@ -94,3 +94,72 @@ export interface InboxUpdatedEvent {
   changedSectionIds: string[];
   newOrUpdatedPrCount: number;
 }
+
+export interface PrDetailPr {
+  reference: PrReference;
+  title: string;
+  body: string;
+  author: string;
+  state: string;
+  headSha: string;
+  baseSha: string;
+  headBranch: string;
+  baseBranch: string;
+  mergeability: string;
+  ciSummary: string;
+  isMerged: boolean;
+  isClosed: boolean;
+  openedAt: string;
+}
+
+export type ClusteringQuality = 'ok' | 'low';
+
+export interface CommitDto {
+  sha: string;
+  message: string;
+  committedDate: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface IterationDto {
+  number: number;
+  beforeSha: string;
+  afterSha: string;
+  commits: CommitDto[];
+  hasResolvableRange: boolean;
+}
+
+export interface IssueCommentDto {
+  id: number;
+  author: string;
+  createdAt: string;
+  body: string;
+}
+
+export interface ReviewCommentDto {
+  commentId: string;
+  author: string;
+  createdAt: string;
+  body: string;
+  editedAt: string | null;
+}
+
+export interface ReviewThreadDto {
+  threadId: string;
+  filePath: string;
+  lineNumber: number;
+  anchorSha: string;
+  isResolved: boolean;
+  comments: ReviewCommentDto[];
+}
+
+export interface PrDetailDto {
+  pr: PrDetailPr;
+  clusteringQuality: ClusteringQuality;
+  iterations: IterationDto[] | null;
+  commits: CommitDto[];
+  rootComments: IssueCommentDto[];
+  reviewComments: ReviewThreadDto[];
+  timelineCapHit: boolean;
+}
