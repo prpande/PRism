@@ -9,6 +9,7 @@ import { FileTree } from './FileTree';
 import { DiffPane } from './DiffPane';
 import { IterationTabStrip } from './IterationTabStrip';
 import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
+import { buildTree, flattenPaths } from './treeBuilder';
 
 interface FilesTabContext {
   prDetail: PrDetailDto;
@@ -36,6 +37,16 @@ export function FilesTab() {
   const [activeRange, setActiveRange] = useState<string>('all');
   const [selectedCommits, setSelectedCommits] = useState<string[] | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+
+  const handleRangeChange = useCallback((range: string) => {
+    setActiveRange(range);
+    setSelectedPath(null);
+  }, []);
+
+  const handleCommitsChange = useCallback((shas: string[] | null) => {
+    setSelectedCommits(shas);
+    setSelectedPath(null);
+  }, []);
   const [viewedPaths, setViewedPaths] = useState<Set<string>>(new Set());
 
   const allRange = `${prDetail.pr.baseSha}..${prDetail.pr.headSha}`;
@@ -61,7 +72,8 @@ export function FilesTab() {
   const diff = isLowQuality ? (selectedCommits === null ? lowAllDiff : commitsDiff) : rangeDiff;
 
   const files = diff.data?.files ?? [];
-  const fileList = useMemo(() => files.map((f) => f.path), [files]);
+  const tree = useMemo(() => buildTree(files), [files]);
+  const fileList = useMemo(() => flattenPaths(tree), [tree]);
 
   const handleToggleViewed = useCallback(
     (path: string) => {
@@ -125,15 +137,13 @@ export function FilesTab() {
           <CommitMultiSelectPicker
             commits={prDetail.commits}
             selectedShas={selectedCommits}
-            onSelectionChange={setSelectedCommits}
+            onSelectionChange={handleCommitsChange}
           />
         ) : prDetail.iterations && prDetail.iterations.length > 0 ? (
           <IterationTabStrip
             iterations={prDetail.iterations}
             activeRange={activeRange}
-            baseSha={prDetail.pr.baseSha}
-            headSha={prDetail.pr.headSha}
-            onRangeChange={setActiveRange}
+            onRangeChange={handleRangeChange}
           />
         ) : null}
       </div>

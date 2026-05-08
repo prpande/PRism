@@ -95,7 +95,7 @@ function PrDetailPageInner({
           Couldn't load PR — {error.message}
         </div>
       )}
-      {showSkeleton ? <PrDetailSkeleton /> : <Outlet context={{ prDetail: data }} />}
+      {showSkeleton ? <PrDetailSkeleton /> : data ? <Outlet context={{ prDetail: data }} /> : null}
     </div>
   );
 }

@@ -74,3 +74,15 @@ function collapse(dir: IntermediateDir, prefix = ''): TreeNode[] {
 
   return [...result, ...fileNodes];
 }
+
+export function flattenPaths(nodes: TreeNode[]): string[] {
+  const result: string[] = [];
+  for (const node of nodes) {
+    if (node.kind === 'file') {
+      result.push(node.path);
+    } else {
+      result.push(...flattenPaths(node.children));
+    }
+  }
+  return result;
+}

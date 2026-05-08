@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import type { FileChange } from '../../../api/types';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 
@@ -24,7 +24,7 @@ export function FileTree({
   viewedPaths,
   onToggleViewed,
 }: FileTreeProps) {
-  const tree = buildTree(files);
+  const tree = useMemo(() => buildTree(files), [files]);
   const viewedCount = files.filter((f) => viewedPaths.has(f.path)).length;
 
   if (files.length === 0) {

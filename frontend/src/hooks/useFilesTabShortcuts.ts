@@ -23,6 +23,7 @@ export function useFilesTabShortcuts(handlers: FilesTabShortcutHandlers): void {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (isInputTarget(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       switch (e.key) {
         case 'j':
