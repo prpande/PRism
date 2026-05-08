@@ -106,6 +106,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(new IterationClusteringCoefficients());
         services.AddSingleton<PrDetailLoader>();
 
+        // S3 PR5 — active-PR subscription registry + per-PR poller. Registry is a
+        // simple in-memory map; the poller is a BackgroundService that ticks every 30s
+        // and publishes ActivePrUpdated to the bus when head SHA or comment count
+        // changes. Per-PR backoff isolates flaky PRs from healthy ones (spec § 6.2).
+        services.AddSingleton<ActivePrSubscriberRegistry>();
+        services.AddHostedService<ActivePrPoller>();
+
         return services;
     }
 

@@ -15,6 +15,7 @@ builder.Services.AddPrismCore(dataDir);
 builder.Services.AddPrismGitHub();
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
+builder.Services.AddSingleton<SessionTokenProvider>();
 
 var app = builder.Build();
 
@@ -60,6 +61,64 @@ app.UseMiddleware<RequestIdMiddleware>();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 app.UseMiddleware<OriginCheckMiddleware>();
+app.UseMiddleware<SessionTokenMiddleware>();
+
+// Body-size cap for POST /api/events/subscriptions (spec § 8 + plan Step 5.10b: 16 KiB).
+// Spec § 8 names four mutating endpoints with body caps; only this one is wired up in
+// PR5 because PR4's mark-viewed/files/viewed routes pre-date this branch and haven't
+// been migrated yet (recorded in plan deferrals — extend to PR4 endpoints in a follow-up).
+// DELETE /api/events/subscriptions has no body so no cap is needed.
+//
+// Registered as middleware (NOT as an IEndpointFilter on the route) because endpoint
+// filters in minimal APIs run AFTER parameter binding — by the time the filter runs,
+// the JSON body has already been read into the deserializer and IHttpMaxRequestBodySizeFeature
+// is read-only. Placing the cap as middleware before routing means MaxRequestBodySize
+// is set before the body is read, AND a Content-Length pre-check rejects oversized
+// honest clients without buffering. Chunked/no-Content-Length attackers fall through
+// to the framework-native MaxRequestBodySize cap (Kestrel honors it; TestServer doesn't,
+// but the Content-Length pre-check is the unit-testable defense). Adversarial
+// reviewer ADV-PR5-003.
+app.UseWhen(
+    static ctx => HttpMethods.IsPost(ctx.Request.Method)
+        && ctx.Request.Path.StartsWithSegments("/api/events/subscriptions", StringComparison.Ordinal),
+    branch => branch.Use(async (ctx, next) =>
+    {
+        const long Cap = 16 * 1024;
+        var feat = ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+        if (feat is not null && !feat.IsReadOnly) feat.MaxRequestBodySize = Cap;
+        if (ctx.Request.ContentLength is { } cl && cl > Cap)
+        {
+            ctx.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+            return;
+        }
+        await next().ConfigureAwait(false);
+    }));
+
+// Stamp the prism-session cookie on every text/html response (the SPA's index.html
+// load path) so the SPA can read it and echo as X-PRism-Session on subsequent
+// fetches. Response.OnStarting fires before the first body byte writes, which
+// works with static-file + minimal-API + fallback-to-file paths alike. Predicate
+// excludes SSE responses (text/event-stream) so EventSource doesn't get the cookie
+// twice — it already arrived with the HTML page.
+app.Use(async (ctx, next) =>
+{
+    ctx.Response.OnStarting(() =>
+    {
+        if (ctx.Response.ContentType?.StartsWith("text/html", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var token = ctx.RequestServices.GetRequiredService<SessionTokenProvider>().Current;
+            ctx.Response.Cookies.Append("prism-session", token, new CookieOptions
+            {
+                HttpOnly = false,
+                SameSite = SameSiteMode.Strict,
+                Secure = false,
+                Path = "/",
+            });
+        }
+        return Task.CompletedTask;
+    });
+    await next().ConfigureAwait(false);
+});
 
 app.MapStaticAssets();
 

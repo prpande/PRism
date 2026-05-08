@@ -28,11 +28,30 @@ public class OriginCheckMiddlewareTests : IClassFixture<PRismWebApplicationFacto
     public async Task POST_with_cross_origin_is_rejected()
     {
         var client = _factory.CreateClient();
+        // Drop the factory's default same-origin Origin so the request-level Origin
+        // is the only one OriginCheckMiddleware sees.
+        client.DefaultRequestHeaders.Remove("Origin");
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
         {
             Content = new StringContent("{\"theme\":\"dark\"}", System.Text.Encoding.UTF8, "application/json"),
         };
         req.Headers.Add("Origin", "https://evil.example.com");
+        var resp = await client.SendAsync(req);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task POST_with_empty_Origin_header_is_rejected()
+    {
+        // S3 PR5: pre-S3 the middleware allowed empty Origin (carve-out for non-
+        // browser tools). Retired because spec § 8 mandates X-PRism-Session +
+        // present-and-correct Origin together as CSRF defense.
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Remove("Origin");
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = new StringContent("{\"theme\":\"dark\"}", System.Text.Encoding.UTF8, "application/json"),
+        };
         var resp = await client.SendAsync(req);
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
@@ -56,6 +75,9 @@ public class OriginCheckMiddlewareTests : IClassFixture<PRismWebApplicationFacto
         // port than the backend host. For a localhost-only desktop app this is legitimate
         // same-machine traffic, not a CSRF vector — accept it.
         var client = _factory.CreateClient();
+        // Drop the factory's same-origin default so the test's loopback-port value
+        // is the only Origin the middleware sees.
+        client.DefaultRequestHeaders.Remove("Origin");
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
         {
             Content = new StringContent("{\"theme\":\"dark\"}", System.Text.Encoding.UTF8, "application/json"),

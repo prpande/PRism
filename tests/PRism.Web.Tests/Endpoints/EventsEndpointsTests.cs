@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Events;
 using PRism.Core.Inbox;
+using PRism.Core.PrDetail;
 using PRism.Web.Sse;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
@@ -33,8 +34,12 @@ public class EventsEndpointsTests
     }
 
     [Fact]
-    public async Task Sse_endpoint_writes_initial_heartbeat()
+    public async Task Sse_endpoint_writes_subscriber_assigned_as_first_event()
     {
+        // Spec § 6.2: the first SSE message after connect is `event: subscriber-assigned`
+        // carrying a 128-bit subscriber id (Guid.NewGuid as 32-char hex). This replaces
+        // the prior `:heartbeat` SSE comment — comments are invisible to browser
+        // EventSource onmessage and cannot drive the frontend silence-watcher.
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateClient();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -47,9 +52,12 @@ public class EventsEndpointsTests
         using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        var firstLine = await reader.ReadLineAsync(cts.Token);
+        var eventLine = await reader.ReadLineAsync(cts.Token);
+        var dataLine = await reader.ReadLineAsync(cts.Token);
 
-        firstLine.Should().StartWith(":heartbeat");
+        eventLine.Should().Be("event: subscriber-assigned");
+        dataLine.Should().StartWith("data: ");
+        dataLine.Should().Contain("\"subscriberId\":\"");
     }
 
     [Fact]
@@ -68,10 +76,10 @@ public class EventsEndpointsTests
             HttpCompletionOption.ResponseHeadersRead,
             cts.Token);
 
-        // Read the initial heartbeat to confirm the subscription is established.
+        // Read the initial subscriber-assigned event to confirm the subscription is established.
         using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
         using var reader = new StreamReader(stream, Encoding.UTF8);
-        await reader.ReadLineAsync(cts.Token); // ":heartbeat"
+        await reader.ReadLineAsync(cts.Token); // "event: subscriber-assigned"
 
         subs.Current.Should().Be(1);
     }
@@ -92,7 +100,7 @@ public class EventsEndpointsTests
 
         using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
         using var reader = new StreamReader(stream, Encoding.UTF8);
-        await reader.ReadLineAsync(cts.Token); // wait for initial heartbeat → subscription established
+        await reader.ReadLineAsync(cts.Token); // "event: subscriber-assigned" → subscription established
 
         subs.Current.Should().Be(1);
 
@@ -113,7 +121,11 @@ public class EventsEndpointsTests
         var bus = factory.Services.GetRequiredService<IReviewEventBus>();
 
         var client = factory.CreateClient();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // 15s deadline (was 5s) — when the full solution test pool is hot, the
+        // SSE write→read round-trip after bus.Publish can take longer than 5s under
+        // CPU contention. The test logic itself is sub-second, so a longer ceiling
+        // costs nothing on a fast run and prevents flakes under load.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         using var resp = await client.GetAsync(
             new Uri("/api/events", UriKind.Relative),
@@ -123,9 +135,10 @@ public class EventsEndpointsTests
         using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
         using var reader = new StreamReader(stream, Encoding.UTF8);
 
-        // Consume the initial heartbeat first.
-        await reader.ReadLineAsync(cts.Token); // ":heartbeat"
-        await reader.ReadLineAsync(cts.Token); // ""  (blank line after heartbeat)
+        // Consume the subscriber-assigned event first (3 lines: event, data, blank).
+        await reader.ReadLineAsync(cts.Token); // "event: subscriber-assigned"
+        await reader.ReadLineAsync(cts.Token); // "data: { ... }"
+        await reader.ReadLineAsync(cts.Token); // "" (blank line terminating the frame)
 
         // Publish an event from the bus.
         bus.Publish(new InboxUpdated(new[] { "review-requested" }, 1));
@@ -155,14 +168,15 @@ public class EventsEndpointsTests
         // max-concurrent must be exactly 1.
         var bus = new ReviewEventBus();
         var subs = new InboxSubscriberCount();
-        using var channel = new SseChannel(bus, subs, NullLogger<SseChannel>.Instance);
+        var registry = new ActivePrSubscriberRegistry();
+        using var channel = new SseChannel(bus, subs, registry, NullLogger<SseChannel>.Instance);
 
         var trackingBody = new ConcurrencyTrackingStream(perWriteDelayMs: 25);
         var ctx = new DefaultHttpContext { Response = { Body = trackingBody } };
 
         using var ctsRun = new CancellationTokenSource();
         // Start the subscriber loop. The initial heartbeat write happens inside this Task.
-        var runTask = channel.RunSubscriberAsync(ctx.Response, ctsRun.Token);
+        var runTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: null, ctsRun.Token);
 
         // Wait until the subscriber is registered so events will reach it.
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -209,13 +223,14 @@ public class EventsEndpointsTests
         // the request-aborted token we passed into RunSubscriberAsync.
         var bus = new ReviewEventBus();
         var subs = new InboxSubscriberCount();
-        using var channel = new SseChannel(bus, subs, NullLogger<SseChannel>.Instance);
+        var registry = new ActivePrSubscriberRegistry();
+        using var channel = new SseChannel(bus, subs, registry, NullLogger<SseChannel>.Instance);
 
         var capturingBody = new TokenCapturingStream();
         var ctx = new DefaultHttpContext { Response = { Body = capturingBody } };
 
         using var ctsRun = new CancellationTokenSource();
-        var runTask = channel.RunSubscriberAsync(ctx.Response, ctsRun.Token);
+        var runTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: null, ctsRun.Token);
 
         // Wait until the subscriber is registered (initial heartbeat completed).
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -239,14 +254,12 @@ public class EventsEndpointsTests
         capturingBody.LastWriteToken.Should().NotBeNull(
             "event-write must reach the response stream");
         capturingBody.LastWriteToken!.Value.CanBeCanceled.Should().BeTrue(
-            "publisher path must thread a cancellable token, not CancellationToken.None");
+            "publisher path must thread a cancellable token, not CancellationToken.None — " +
+            "the linked CTS in WriteAndEvictOnFailureAsync wraps RequestAborted with a 5s " +
+            "write timeout (spec § 6.2), so stalled clients evict either when RequestAborted " +
+            "fires or when the 5s budget elapses");
 
-        // Cancel the request-aborted token. The captured token should observe it.
         await ctsRun.CancelAsync();
-        capturingBody.LastWriteToken!.Value.IsCancellationRequested.Should().BeTrue(
-            "the token threaded into WriteAsync must be the same request-aborted token " +
-            "passed to RunSubscriberAsync (so stalled clients evict promptly)");
-
         try { await runTask; } catch (OperationCanceledException) { } catch (IOException) { }
     }
 
@@ -261,7 +274,8 @@ public class EventsEndpointsTests
         // failure, evicts the subscriber from _writers and decrements _subs.
         var bus = new ReviewEventBus();
         var subs = new InboxSubscriberCount();
-        using var channel = new SseChannel(bus, subs, NullLogger<SseChannel>.Instance);
+        var registry = new ActivePrSubscriberRegistry();
+        using var channel = new SseChannel(bus, subs, registry, NullLogger<SseChannel>.Instance);
 
         // Stream that succeeds on the initial heartbeat write but throws on the
         // first event-write triggered by OnInboxUpdated. We allow the heartbeat
@@ -270,7 +284,7 @@ public class EventsEndpointsTests
         var ctx = new DefaultHttpContext { Response = { Body = failingBody } };
 
         using var ctsRun = new CancellationTokenSource();
-        var runTask = channel.RunSubscriberAsync(ctx.Response, ctsRun.Token);
+        var runTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: null, ctsRun.Token);
 
         // Wait until the subscriber is registered (initial heartbeat completed).
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -304,98 +318,69 @@ public class EventsEndpointsTests
     }
 
     [Fact]
-    public async Task Sse_subscriber_failed_publisher_write_then_heartbeat_does_not_throw_ObjectDisposedException()
+    public async Task Sse_publisher_eviction_signals_heartbeat_loop_to_exit_cleanly()
     {
-        // Regression test: PR #4 review feedback (Copilot, line 61 of SseChannel.cs).
-        // SseSubscriber could be disposed from the publisher path
-        // (WriteAndEvictOnFailureAsync) while RunSubscriberAsync was still running
-        // its heartbeat loop. After eviction, the next heartbeat write would throw
-        // ObjectDisposedException from the semaphore — uncaught (only
-        // OperationCanceledException is caught), it surfaced as an unhandled request
-        // exception.
+        // Regression test (rewritten in S3 PR5): the previous bug was that the
+        // publisher path could dispose the SseSubscriber while the heartbeat loop
+        // in RunSubscriberAsync was still running, throwing ObjectDisposedException
+        // on the next heartbeat write. The PR5 fix uses a per-subscriber lifecycle
+        // CancellationTokenSource: EvictSubscriber calls RequestEviction (which
+        // cancels the lifecycle CTS), the heartbeat loop's `Task.Delay(25s, lifecycleToken)`
+        // observes cancellation, the loop exits via OperationCanceledException, and
+        // RunSubscriberAsync's finally runs as the single disposal site. The race
+        // is now structurally impossible — the heartbeat cannot fire post-eviction
+        // because lifecycle cancellation propagates synchronously to its in-flight
+        // await.
         //
-        // Fix (Option A): centralize SseSubscriber.Dispose() in RunSubscriberAsync's
-        // finally block. The publisher's eviction path only Removes from _writers
-        // and decrements _subs; it does NOT dispose. RunSubscriberAsync's finally
-        // is the single disposal site, guaranteed to fire when the request ends.
-        //
-        // To exercise the race deterministically without waiting for the 25s
-        // heartbeat timer, we use reflection (InternalsVisibleTo is configured) to
-        // grab the SseSubscriber out of _writers before eviction and then invoke
-        // its WriteAsync directly after eviction completes. This simulates the
-        // heartbeat-loop's "next write" attempt. With the bug present, the
-        // semaphore inside the subscriber would already be disposed, so the call
-        // throws ObjectDisposedException. With the fix, the semaphore stays alive
-        // until RunSubscriberAsync's finally runs.
+        // Test shape: simulate a publisher-side write failure (FailOnNthWriteStream
+        // throws on the 2nd write — the 1st write is the subscriber-assigned
+        // handshake), assert that runTask completes promptly afterwards (within a
+        // few seconds, NOT the full 25s heartbeat interval), and assert no
+        // ObjectDisposedException leaks through to the awaiter.
         var bus = new ReviewEventBus();
         var subs = new InboxSubscriberCount();
-        using var channel = new SseChannel(bus, subs, NullLogger<SseChannel>.Instance);
+        var registry = new ActivePrSubscriberRegistry();
+        using var channel = new SseChannel(bus, subs, registry, NullLogger<SseChannel>.Instance);
 
-        // First write (initial heartbeat) succeeds; second write (publisher event)
-        // throws — triggering eviction.
+        // Write 1 (subscriber-assigned handshake) succeeds; write 2 (the publisher's
+        // inbox-updated frame) throws. With the new code, handshake-before-register
+        // means the failed publish triggers eviction → lifecycle cancel → heartbeat
+        // exits → finally disposes.
         var failingBody = new FailOnNthWriteStream(failOnWriteOrdinal: 2);
         var ctx = new DefaultHttpContext { Response = { Body = failingBody } };
 
         using var ctsRun = new CancellationTokenSource();
-        var runTask = channel.RunSubscriberAsync(ctx.Response, ctsRun.Token);
+        var runTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: null, ctsRun.Token);
 
-        // Wait until the subscriber is registered (initial heartbeat completed).
+        // Wait until the subscriber is registered (handshake completed and
+        // _subs.Increment has run).
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (subs.Current == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(5, CancellationToken.None);
         subs.Current.Should().Be(1, "subscriber should be registered before publishing");
 
-        // Grab the subscriber reference out of _writers before eviction removes it.
-        // We need this to simulate the heartbeat-loop's deferred write attempt.
-        var writersField = typeof(SseChannel).GetField(
-            "_writers", BindingFlags.NonPublic | BindingFlags.Instance);
-        writersField.Should().NotBeNull("test relies on InternalsVisibleTo + reflection to grab the subscriber");
-        var writersList = writersField!.GetValue(channel) as System.Collections.IList;
-        writersList.Should().NotBeNull();
-        writersList!.Count.Should().Be(1);
-        var subscriber = writersList[0];
-        subscriber.Should().NotBeNull();
-
-        // Publish — triggers WriteAndEvictOnFailureAsync; the second write throws,
-        // and the eviction path Removes (and, in the buggy code, Disposed the
-        // subscriber's SemaphoreSlim).
         bus.Publish(new InboxUpdated(new[] { "review-requested" }, 1));
 
-        // Wait for the eviction to complete.
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (subs.Current != 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(10, CancellationToken.None);
-        subs.Current.Should().Be(0, "eviction must complete before we simulate the heartbeat write");
+        // The eviction signal cancels the lifecycle token, which makes the heartbeat
+        // loop's `Task.Delay(..., lifecycleToken)` observe cancellation immediately
+        // and the loop exit via OCE → finally → dispose. runTask should complete
+        // within a few seconds (NOT the 25s heartbeat interval, which is the proof
+        // that the lifecycle cancellation actually propagated).
+        var completed = await Task.WhenAny(runTask, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.Should().BeSameAs(runTask,
+            "publisher eviction must signal the heartbeat loop to exit promptly via lifecycle CTS — " +
+            "if this times out, the lifecycle-cancellation plumbing has regressed and a stalled " +
+            "publisher-evicted subscriber would leak its request thread until Kestrel tears it down");
 
-        // Simulate the heartbeat-loop's next write attempt against the (still-
-        // referenced) subscriber. With the bug, the SemaphoreSlim inside is
-        // disposed and WaitAsync throws ObjectDisposedException. With the fix,
-        // the semaphore is still alive — the call may fail with a stream-level
-        // exception (the underlying FailOnNthWriteStream keeps throwing IOException
-        // on every write past the first), but it must NOT throw ObjectDisposedException.
-        var writeAsync = subscriber!.GetType().GetMethod(
-            "WriteAsync",
-            BindingFlags.Public | BindingFlags.Instance,
-            new[] { typeof(string), typeof(CancellationToken) });
-        writeAsync.Should().NotBeNull("test relies on calling SseSubscriber.WriteAsync via reflection");
+        // Awaiting runTask must not throw ObjectDisposedException (the original bug);
+        // OCE / IOException are the expected normal-disconnect throw types and are
+        // caught inside RunSubscriberAsync.
+        Func<Task> awaitRun = async () => await runTask;
+        await awaitRun.Should().NotThrowAsync<ObjectDisposedException>(
+            "the lifecycle-CTS-driven heartbeat exit must not race with disposal — finally is the " +
+            "single disposal site and runs after the heartbeat loop has fully unwound");
 
-        Func<Task> simulatedHeartbeat = async () =>
-        {
-            var task = (Task)writeAsync!.Invoke(subscriber, new object[] { ":heartbeat\n\n", CancellationToken.None })!;
-            try { await task; }
-            catch (TargetInvocationException tie) when (tie.InnerException is not null)
-            {
-                throw tie.InnerException;
-            }
-        };
-
-        await simulatedHeartbeat.Should().NotThrowAsync<ObjectDisposedException>(
-            "publisher path must not dispose the SseSubscriber while RunSubscriberAsync's heartbeat " +
-            "loop is still alive — disposal is the heartbeat loop's finally responsibility");
-
-        // Stop the subscriber loop cleanly.
-        await ctsRun.CancelAsync();
-        try { await runTask; } catch (OperationCanceledException) { } catch (IOException) { }
+        subs.Current.Should().Be(0, "eviction's Decrement must take subs to 0; finally's TryRemove returns false (already removed) so no double-decrement");
     }
 
     /// <summary>

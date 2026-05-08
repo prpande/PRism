@@ -1,7 +1,7 @@
 ---
 source-doc: docs/plans/2026-05-06-s3-pr-detail-read.md
 created: 2026-05-07
-last-updated: 2026-05-08 (PR #21 review round)
+last-updated: 2026-05-08 (PR5 implementation — SensitiveFieldScrubber wire-up deferred)
 status: open
 ---
 
@@ -164,3 +164,21 @@ This sidecar covers the remainder: plan-affecting items that don't touch the spe
 - **Date:** 2026-05-08
 - **Reason:** All five PR4 endpoints use `{owner}` / `{repo}` route segments without constraints, so anything URL-safe lands at the endpoint and goes to GitHub. `{number:int}` accepts negative integers. GitHub-side validation rejects bad values, but explicit route constraints (`{owner:regex([A-Za-z0-9_.-]+)}` and a positive-int constraint on `{number}`) would short-circuit malformed inputs at the routing layer instead of paying for an unnecessary `IReviewService` call. PoC scope; cosmetic at the security level (no bypass). Bundle into a follow-up routing-hygiene PR that touches the inbox endpoints too for consistency.
 - **Revisit when:** A second consumer of `{owner}` / `{repo}` — either S4 endpoints or a future security-review pass — surfaces the same finding. Bundle the constraints across all PR-shaped routes in one PR.
+
+## [Defer] Wire `SensitiveFieldScrubber` into the live `ILogger` pipeline as a decorator
+
+- **Source:** PR5 implementation — Step 5.10c plan said "wire as a `ILogger`-wrapping decorator (or via `IConfigureOptions<LoggerFilterOptions>`)" but stopped short of specifying the wiring. Implementation chose to ship the scrubber + comprehensive unit tests now and defer the live-pipeline integration.
+- **Severity:** P3
+- **Date:** 2026-05-08
+- **Reason:** No current ILogger call site in `PRism.Core`, `PRism.GitHub`, or `PRism.Web` emits a blocked field name (`subscriberId` / `pat` / `token`) as a structured-log argument — the scrubber is forward-looking. `Microsoft.Extensions.Logging` doesn't ship a Serilog-style `IDestructuringPolicy` pipeline, so wiring the scrubber means either (a) replacing `ILoggerFactory` with a wrapping factory that proxies every `BeginScope` and `Log<TState>` call through the scrubber (substantial surface area, tricky to keep `LoggerMessage.Define` source-generator output flowing correctly), or (b) writing a custom `ILoggerProvider` and routing through it. Both paths are non-trivial and would expand PR5 well past its 4-commit budget. Shipping the scrubber + unit tests now means: (i) the policy is encoded and tested; (ii) any new code that wants to redact at the call site can invoke `Scrub` directly; (iii) the wire-up lands in a focused follow-up PR that also adds an integration test against a TestLoggerProvider proving the round-trip.
+- **Revisit when:** Either (i) a new log call site introduces a structured-log argument named `subscriberId`/`pat`/`token` (becomes blocking), or (ii) S4's drafts work introduces token-handling code paths that log credential-like fields, or (iii) v2 AI integration adds telemetry that may include sensitive fields.
+- **Original finding evidence:** Plan Step 5.10c — "Wire as a `ILogger`-wrapping decorator (or via `IConfigureOptions<LoggerFilterOptions>`) so every structured log scope passes through `Scrub` before the underlying provider serializes the event."
+
+## [Superseded] `[RequestSizeLimit(16384)]` endpoint metadata as the body-cap mechanism
+
+- **Source:** Originally `[Apply]` from the spec-rigor → plan-rigor reversal (P2.3, recorded in the spec deferrals sidecar). Reversed by PR5 implementation — the 4-reviewer adversarial preflight pass surfaced ADV-PR5-003: minimal-API endpoint filters (and `WithMetadata(new RequestSizeLimitAttribute(...))`) run AFTER parameter binding, so the JSON body has already been deserialized into the handler argument by the time the size cap is consulted.
+- **Severity:** P1 (security — body cap was meant to be pre-binding)
+- **Date:** 2026-05-08
+- **Reason:** ASP.NET Core's `[RequestSizeLimit]` attribute is a Microsoft.AspNetCore.Mvc filter that does not run for minimal-API routes. `IEndpointFilter` (which `RequestBodyCapFilter` initially was) DOES run for minimal-API routes, but it runs after the framework has bound `[FromBody]` parameters — the body has already been read into the deserializer, and `IHttpMaxRequestBodySizeFeature.IsReadOnly` is true. Honest Content-Length-bearing requests would still be caught by a proactive Content-Length check, but a chunked-encoding attacker (no Content-Length, body streamed in chunks) bypassed both the framework cap (because the filter set it too late) and the proactive check (because Content-Length was null). Replaced with a conditional `app.UseWhen(...)` middleware in `Program.cs` that runs BEFORE routing and parameter binding: it sets `IHttpMaxRequestBodySizeFeature.MaxRequestBodySize = 16 KiB` early (Kestrel honors it; TestServer doesn't), AND rejects honest oversized requests with 413 via the Content-Length pre-check. Same 16 KiB cap, same coverage on POST `/api/events/subscriptions`, framework-native at the right layer.
+- **Revisit when:** N/A — UseWhen-middleware pattern is the documented Microsoft answer for pre-binding body caps on minimal APIs. Only revisit if a future ASP.NET Core release adds an `IEndpointFilter` ordering hook that lets filters run pre-binding.
+- **New decision lives in:** `PRism.Web/Program.cs` (the new UseWhen middleware), `PRism.Web/Endpoints/EventsEndpoints.cs` (no longer carries `.AddEndpointFilter(new RequestBodyCapFilter(...))`); `PRism.Web/Middleware/RequestBodyCapFilter.cs` was deleted.

@@ -311,10 +311,19 @@ EventsEndpoints
                                             → 204 always (idempotent)
 
   // **SubscriberId is server-issued and bound to the SSE connection.** SseChannel maintains
-  // `{cookieSessionId → subscriberId}` mapping; the POST/DELETE endpoints derive subscriberId
-  // from the requesting cookie's session, NEVER from request bodies. This closes the cross-tab
-  // forge-subscriberId attack: an authenticated tab cannot subscribe ANY subscriberId to ANY PR
-  // — it can only operate on its own SSE connection's subscriberId.
+  // `{cookieSessionId → ordered Set<subscriberId>}` mapping (most-recent SSE connection at
+  // the tail); the POST/DELETE endpoints derive subscriberId from the requesting cookie's
+  // session — specifically the *most-recent* subscriberId for that cookie — NEVER from
+  // request bodies. The multimap shape exists because the `prism-session` cookie is
+  // per-process, so every tab in the same browser carries the same cookie value; multiple
+  // simultaneous SSE connections (one per tab) coexist under the same key, and older
+  // subscribers continue receiving event fanout for the prRefs they previously registered.
+  // This closes the cross-*origin* forge-subscriberId attack (a malicious page on another
+  // origin cannot send the cookie at all), while accepting that two tabs in the *same*
+  // browser session share a trust boundary per the threat model below — they could equally
+  // call the API directly. See deferrals sidecar `[Skip] Singular {cookieSessionId →
+  // subscriberId} map` for the (a) last-SSE-wins / (b) reject-second-SSE alternatives
+  // weighed and skipped.
 
 ActivePrPoller (BackgroundService)
   loop every config.polling.activePrSeconds (default 30):
@@ -944,7 +953,9 @@ All JSON is kebab-case-lowercase via the application's `JsonSerializerOptions` +
 **Cross-origin defense.** All non-asset endpoints (GET, POST, PUT, PATCH, DELETE) pass through two middleware layers, in this order:
 
 1. **`OriginCheckMiddleware`** — MODIFIED in S3 to **reject empty/missing Origin** on POST/PUT/PATCH/DELETE (the existing implementation short-circuits to next on empty Origin; that exemption is removed). GET requests with empty Origin remain allowed (browsers don't send Origin on top-level navigations). Origin (when present) must be one of the configured loopback patterns; otherwise 403 `{ type: "/auth/bad-origin" }`. Localhost dev (Vite at `:5173`) sends a non-empty Origin so legitimate dev traffic still flows.
-2. **`SessionTokenMiddleware`** — NEW in S3. Enforces on **all non-asset endpoints**, not just mutating verbs. For mutating verbs and GETs other than `/api/events`, the middleware reads `X-PRism-Session` from the request header. For `GET /api/events` (where EventSource cannot send custom headers), the middleware reads the same token from the `prism-session` cookie. SessionTokenMiddleware uses a fixed-length comparison — pads/truncates the actual buffer to the expected length, calls `CryptographicOperations.FixedTimeEquals` on equal-length buffers, then ANDs in `actual.Length == _expectedToken.Length` via bitwise `&` (NOT short-circuiting `&&`). Defeats timing-based length disclosure. Emits 401 `{ type: "/auth/session-stale" }` on mismatch or absence. The frontend's `useEventSource` 401-handler does a full-page reload to re-fetch the index and rotate the cookie. The cookie is re-stamped on **every HTML response** (not only the first), so the index reload always picks up the current launch's token.
+2. **`SessionTokenMiddleware`** — NEW in S3. Enforces on **all non-asset endpoints** EXCEPT `/api/health` (a liveness probe by convention; carries only port + version). On every other `/api/*` path the middleware accepts EITHER the `X-PRism-Session` request header OR the `prism-session` cookie value — whichever matches the per-process token. The cookie is mandatory for `GET /api/events` (EventSource cannot set custom headers) and is the load-bearing path for the existing SPA's `apiClient` (which doesn't echo the header — same-origin fetch carries the cookie automatically; that's enough proof of session). The header path remains supported for clients that prefer to echo the cookie value out-of-band. Both forms run through the same fixed-length comparison: pad/truncate the actual buffer to the expected length, call `CryptographicOperations.FixedTimeEquals` on equal-length buffers, then AND in `actual.Length == _expectedToken.Length` via bitwise `&` (NOT short-circuiting `&&`) so timing-based length disclosure is defeated. Emits 401 `{ type: "/auth/session-stale" }` on mismatch or absence (when neither header nor cookie matches). The frontend's `useEventSource` 401-handler does a full-page reload to re-fetch the index and rotate the cookie. The cookie is re-stamped on **every HTML response** (not only the first), so the index reload always picks up the current launch's token.
+
+The cookie-OR-header acceptance (a deliberate widening from the cookie-only-on-/api/events / header-only-elsewhere design that earlier drafts of this spec called for) is recorded in the deferrals sidecar `[Apply] Cookie-OR-header acceptance on /api/* (existing SPA does not echo X-PRism-Session)`. Cookie-only auth is equivalent proof of session for /api/* paths because the cookie is per-process random, `SameSite=Strict` (cross-origin attackers cannot get it sent), and `OriginCheckMiddleware` rejects empty Origin on mutating verbs (closes the residual cross-origin-POST window).
 
 The two layers are complementary: Origin defends against cross-origin POSTs from arbitrary same-machine browser tabs; SessionToken defends against same-origin attempts from a stale tab whose cookie is from a previous launch and against sibling-process replay (a sibling can spoof Origin but cannot read another process's per-launch token from in-memory).
 

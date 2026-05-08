@@ -1,0 +1,177 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.AspNetCore.Mvc;
+
+namespace PRism.Web.Middleware;
+
+// Per-process session token enforcement. Spec § 8: SPA reads the token from the
+// `prism-session` cookie (stamped by Program.cs onto every text/html response),
+// echoes it as the X-PRism-Session header on every fetch (which reaches every
+// non-asset endpoint), and the EventSource implicitly carries the cookie on
+// GET /api/events (EventSource cannot set custom request headers).
+//
+// Backend restart rotates the token, so an old SPA's stale cookie 401s and the
+// SPA force-reloads to get the freshly-stamped one. This is the per-launch
+// freshness invariant the threat model relies on.
+[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes",
+    Justification = "Activated by UseMiddleware<T>() via reflection.")]
+internal sealed class SessionTokenMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly byte[] _expectedToken;
+    private readonly bool _enforced;
+
+    public SessionTokenMiddleware(RequestDelegate next, SessionTokenProvider provider, IHostEnvironment env)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        ArgumentNullException.ThrowIfNull(env);
+        _next = next;
+        _expectedToken = Encoding.UTF8.GetBytes(provider.Current);
+        // Auth enforcement applies in Production AND in Test (so unit tests
+        // continue to exercise the full security pipeline). Bypassed in
+        // Development because the Vite dev server (`npm run dev` at :5173)
+        // serves the SPA's HTML, so the cookie-stamping middleware never runs
+        // against that response — the browser has no prism-session cookie for
+        // the 5173 origin, and Chrome omits Origin on same-origin GETs so the
+        // loopback-port branch can't reliably fire either. Dogfooding and CI
+        // e2e (both use `dotnet run` → Development per launchSettings.json) are
+        // local-only same-machine sessions per the spec § 6.2 threat model;
+        // accepting unauthenticated /api/* in that environment matches the
+        // documented trust boundary. Production deploys (Environment=Production
+        // by convention) get full auth.
+        _enforced = !env.IsDevelopment();
+    }
+
+    public async Task InvokeAsync(HttpContext ctx)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
+
+        if (!_enforced)
+        {
+            await _next(ctx).ConfigureAwait(false);
+            return;
+        }
+
+        // Asset / SPA / non-API paths are skipped so the SPA can load its HTML
+        // (which is what stamps the cookie in the first place). Auth applies to
+        // /api/* only; SPA routing serves index.html via MapFallbackToFile.
+        if (!ctx.Request.Path.StartsWithSegments("/api", StringComparison.Ordinal))
+        {
+            await _next(ctx).ConfigureAwait(false);
+            return;
+        }
+
+        // /api/health is a liveness probe by convention (also used by the e2e harness
+        // via Playwright's request.newContext which has no browser cookie). Skipping
+        // auth here matches health-endpoint conventions and doesn't expose anything
+        // sensitive — health bodies carry only port + version.
+        if (IsLivenessEndpoint(ctx.Request.Path))
+        {
+            await _next(ctx).ConfigureAwait(false);
+            return;
+        }
+
+        // Loopback-different-port accommodation: the Vite dev server (5173) proxies
+        // /api to the backend (5180). Vite serves the SPA's HTML, so the cookie-
+        // stamping middleware never runs against that response — the browser never
+        // gets a prism-session cookie for the 5173 origin. This branch lets dev
+        // traffic flow without auth, mirroring OriginCheckMiddleware's existing
+        // accommodation for the same scenario. Production deploys (where Host is
+        // not loopback) are unaffected. Same-machine sibling-process probes at
+        // other localhost ports without the cookie are accepted as part of the
+        // documented threat model (spec § 6.2 last paragraph).
+        var origin = ctx.Request.Headers["Origin"].FirstOrDefault();
+        if (!string.IsNullOrEmpty(origin)
+            && IsLoopback(origin)
+            && IsLoopback(ctx.Request.Host.Host)
+            && !string.Equals(origin, $"{ctx.Request.Scheme}://{ctx.Request.Host.Value}", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(ctx).ConfigureAwait(false);
+            return;
+        }
+
+        // Accept EITHER the X-PRism-Session header OR the prism-session cookie. The
+        // cookie is per-process random, SameSite=Strict, and same-origin only — so a
+        // cross-origin attacker cannot get it sent. Combined with OriginCheckMiddleware
+        // rejecting empty Origin on mutating verbs, cookie-only auth is equivalent
+        // proof of session for /api/* paths. The header path exists for clients (e.g.
+        // future fetch wrappers) that prefer to echo the cookie value out-of-band, and
+        // is the ONLY option for /api/events from EventSource (which can't set custom
+        // headers — cookie is what EventSource carries).
+        if (FixedTimeMatches(ctx.Request.Headers["X-PRism-Session"].ToString())
+            || FixedTimeMatches(ctx.Request.Cookies["prism-session"] ?? string.Empty))
+        {
+            await _next(ctx).ConfigureAwait(false);
+            return;
+        }
+
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        // Pass `options: null` + the explicit contentType so the response carries
+        // application/problem+json (the no-options overload defaults to application/json).
+        await ctx.Response.WriteAsJsonAsync(
+            new ProblemDetails
+            {
+                Type = "/auth/session-stale",
+                Status = StatusCodes.Status401Unauthorized,
+                Title = "Session token mismatch",
+                Detail = "Session token mismatch — reload the page to refresh.",
+            },
+            options: null,
+            contentType: "application/problem+json").ConfigureAwait(false);
+    }
+
+    private bool FixedTimeMatches(string actualValue)
+    {
+        // P2.4: pad/truncate `actual` to `_expectedToken.Length`, run FixedTimeEquals
+        // on equal-length buffers, then AND in the length-equality check via bitwise `&`
+        // (NOT short-circuiting `&&`) so the length check itself doesn't leak timing.
+        var actual = Encoding.UTF8.GetBytes(actualValue);
+        var padded = new byte[_expectedToken.Length];
+        var copyLen = Math.Min(actual.Length, padded.Length);
+        actual.AsSpan(0, copyLen).CopyTo(padded);
+        var equalContent = CryptographicOperations.FixedTimeEquals(padded, _expectedToken);
+        return equalContent & (actual.Length == _expectedToken.Length);
+    }
+
+    private static bool IsLivenessEndpoint(PathString path) =>
+        path.HasValue && string.Equals(path.Value, "/api/health", StringComparison.Ordinal);
+
+    // Mirrors OriginCheckMiddleware.IsLoopback — kept duplicated rather than shared so
+    // each middleware can be reasoned about in isolation. Both end up identical because
+    // they encode the same architectural invariant (loopback-port = legitimate dev).
+    private static bool IsLoopback(string hostOrOrigin)
+    {
+        if (string.IsNullOrEmpty(hostOrOrigin)) return false;
+        var host = hostOrOrigin;
+        if (Uri.TryCreate(hostOrOrigin, UriKind.Absolute, out var u)) host = u.Host;
+        return string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || host == "127.0.0.1"
+            || host == "[::1]"
+            || host == "::1";
+    }
+}
+
+// Singleton; Current is captured once per process. Backend restart = new process =
+// new token, which is the per-launch freshness invariant. Internal — tests reach it
+// via InternalsVisibleTo and PRism.Web/Program.cs registers it via DI.
+internal sealed class SessionTokenProvider
+{
+    public string Current { get; }
+
+    public SessionTokenProvider(IHostEnvironment env)
+    {
+        ArgumentNullException.ThrowIfNull(env);
+
+        // P2.30: PRISM_DEV_FIXED_TOKEN read from Environment.GetEnvironmentVariable ONLY
+        // (not IConfiguration) to eliminate a path where appsettings.json could leak a
+        // fixed token into a non-Development host. Override only honored in Development.
+        var devOverride = Environment.GetEnvironmentVariable("PRISM_DEV_FIXED_TOKEN");
+        if (env.IsDevelopment() && !string.IsNullOrEmpty(devOverride))
+        {
+            Current = devOverride;
+            return;
+        }
+        Current = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    }
+}
