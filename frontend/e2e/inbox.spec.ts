@@ -141,7 +141,7 @@ test('inbox loads with rows after auth', async ({ page }) => {
 
 // ---------------------------------------------------------------------------
 
-test('URL paste with valid PR URL navigates to S3 stub', async ({ page }) => {
+test('URL paste with valid PR URL navigates to PR detail page', async ({ page }) => {
   await setupBaseMocks(page);
   await page.route('**/api/inbox', (route: Route) =>
     route.fulfill({
@@ -163,6 +163,36 @@ test('URL paste with valid PR URL navigates to S3 stub', async ({ page }) => {
       }),
     }),
   );
+  await page.route('**/api/pr/foo/bar/9', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        pr: {
+          reference: { owner: 'foo', repo: 'bar', number: 9 },
+          title: 'Sample PR for navigation test',
+          body: '',
+          author: 'octocat',
+          state: 'open',
+          headSha: 'abc',
+          baseSha: 'def',
+          headBranch: 'feature/x',
+          baseBranch: 'main',
+          mergeability: 'mergeable',
+          ciSummary: 'success',
+          isMerged: false,
+          isClosed: false,
+          openedAt: new Date().toISOString(),
+        },
+        clusteringQuality: 'ok',
+        iterations: [],
+        commits: [],
+        rootComments: [],
+        reviewComments: [],
+        timelineCapHit: false,
+      }),
+    }),
+  );
 
   await page.goto('/');
   // Wait for the inbox to load before trying to interact with the toolbar.
@@ -171,8 +201,9 @@ test('URL paste with valid PR URL navigates to S3 stub', async ({ page }) => {
   await page.getByPlaceholder(/paste a pr url/i).fill('https://github.com/foo/bar/pull/9');
   await page.keyboard.press('Enter');
 
-  await expect(page.getByRole('heading', { name: /PR detail lands in S3/i })).toBeVisible();
-  await expect(page.getByText('foo/bar#9')).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Sample PR for navigation test/i })).toBeVisible();
+  await expect(page.getByText('foo/bar', { exact: true })).toBeVisible();
+  await expect(page.getByText('#9', { exact: true })).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
