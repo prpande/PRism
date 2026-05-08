@@ -13,7 +13,18 @@ export class ApiError extends Error {
 
 function readSessionCookie(): string | null {
   const match = document.cookie.match(/(?:^|;\s*)prism-session=([^;]*)/);
-  return match ? match[1] : null;
+  if (!match) return null;
+  // ASP.NET's Response.Cookies.Append URL-encodes the cookie value (so base64
+  // `+`/`/`/`=` arrive in document.cookie as `%2B`/`%2F`/`%3D`).
+  // SessionTokenMiddleware compares X-PRism-Session bytes directly against the
+  // raw token, so we decode before echoing — otherwise tokens with escapable
+  // chars 401 on the header path. Fall back to the raw value if decodeURIComponent
+  // throws on a malformed escape sequence.
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {

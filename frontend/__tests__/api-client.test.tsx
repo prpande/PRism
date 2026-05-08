@@ -174,7 +174,13 @@ describe('apiClient — X-PRism-Session header echo', () => {
     expect(new Headers(init2.headers).get('X-PRism-Session')).toBe('v2');
   });
 
-  it('correctly extracts prism-session value when cookie is URL-encoded', async () => {
+  it('URL-decodes the prism-session cookie value before echoing as X-PRism-Session', async () => {
+    // ASP.NET's Response.Cookies.Append URL-encodes the value when it writes
+    // Set-Cookie, so document.cookie surfaces the encoded form (e.g. base64 `+/=`
+    // appear as `%2B`/`%2F`/`%3D`). SessionTokenMiddleware compares the header
+    // bytes directly against the raw token, so the frontend must decode before
+    // echoing — otherwise tokens containing escapable chars 401 on the header
+    // path. (Cookie path still works because Request.Cookies decodes server-side.)
     mockCookie('prism-session=tok%2Bsigned%3Dvalue; other=foo');
     const fetchMock = vi
       .fn()
@@ -186,7 +192,24 @@ describe('apiClient — X-PRism-Session header echo', () => {
     await apiClient.get('/api/inbox');
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const headers = new Headers(init.headers);
-    // Header value carries the cookie's raw (URL-encoded) value verbatim.
-    expect(headers.get('X-PRism-Session')).toBe('tok%2Bsigned%3Dvalue');
+    expect(headers.get('X-PRism-Session')).toBe('tok+signed=value');
+  });
+
+  it('falls back to the raw cookie value if decodeURIComponent throws', async () => {
+    // decodeURIComponent throws on malformed escape sequences (e.g. lone `%`).
+    // Falling back to the raw value is the conservative behavior — at worst
+    // the cookie path takes over server-side; at best the raw value matches.
+    mockCookie('prism-session=tok%ZZbad');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await apiClient.get('/api/inbox');
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = new Headers(init.headers);
+    expect(headers.get('X-PRism-Session')).toBe('tok%ZZbad');
   });
 });
