@@ -127,7 +127,10 @@ export function openEventStream(): EventStreamHandle {
     subscriberId: () => idPromise,
     reconnectSignal: () => abortController.signal,
     on(type, callback) {
-      const set = (listeners[type] ??= new Set()) as Set<typeof callback>;
+      const existing = listeners[type] as Set<(p: EventPayloadByType[typeof type]) => void> | undefined;
+      const set =
+        existing ?? (new Set<(p: EventPayloadByType[typeof type]) => void>());
+      (listeners as Record<string, Set<(p: unknown) => void>>)[type] = set as Set<(p: unknown) => void>;
       set.add(callback);
       return () => {
         set.delete(callback);
