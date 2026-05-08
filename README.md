@@ -39,6 +39,21 @@ Run a single frontend test:
 cd frontend && npx vitest run __tests__/setup.test.tsx
 ```
 
+Generate frontend coverage:
+
+```
+cd frontend
+npm test -- --coverage
+```
+
+Generate backend coverage and an HTML report:
+
+```
+dotnet tool install -g dotnet-reportgenerator-globaltool
+dotnet test --collect:"XPlat Code Coverage"
+reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
+```
+
 ## Process
 
 All production code is written test-first (red → green → refactor). See [`CLAUDE.md`](CLAUDE.md) § Development process.

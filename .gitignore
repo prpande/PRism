@@ -83,3 +83,6 @@ Thumbs.db
 
 # pr-autopilot ephemeral state (not versioned)
 .pr-autopilot/
+
+# Code coverage reports
+coveragereport/
