@@ -6,7 +6,10 @@ import { ToastProvider, ToastContainer } from './components/Toast';
 import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
-import { S3StubPrPage } from './pages/S3StubPrPage';
+import { PrDetailPage } from './pages/PrDetailPage';
+import { OverviewTabPlaceholder } from './components/PrDetail/OverviewTab/OverviewTabPlaceholder';
+import { FilesTabPlaceholder } from './components/PrDetail/FilesTab/FilesTabPlaceholder';
+import { DraftsTabDisabled } from './components/PrDetail/DraftsTab/DraftsTabDisabled';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
@@ -57,8 +60,12 @@ export function App() {
         <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
         <Route
           path="/pr/:owner/:repo/:number"
-          element={isAuthed ? <S3StubPrPage /> : <Navigate to="/setup" replace />}
-        />
+          element={isAuthed ? <PrDetailPage /> : <Navigate to="/setup" replace />}
+        >
+          <Route index element={<OverviewTabPlaceholder />} />
+          <Route path="files/*" element={<FilesTabPlaceholder />} />
+          <Route path="drafts" element={<DraftsTabDisabled />} />
+        </Route>
         <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
       </Routes>
       <ToastContainer />
