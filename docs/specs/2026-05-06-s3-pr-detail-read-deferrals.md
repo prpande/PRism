@@ -1,13 +1,14 @@
 ---
 source-doc: docs/specs/2026-05-06-s3-pr-detail-read-design.md
 created: 2026-05-07
-last-updated: 2026-05-08
+last-updated: 2026-05-09
 status: open
 revisions:
   - 2026-05-07: PR5-design — recorded multimap chosen over (a) last-SSE-wins / (b) reject-second-SSE for `{cookieSessionId → Set<subscriberId>}`
   - 2026-05-08: PR6 implementation — recorded AbortController-keyed-to-Promise-generation defer for useActivePrUpdates subscribe POST
   - 2026-05-08: PR6 preflight reviewer pass — recorded reconnect-storm-no-backoff, ping-fetch-no-timeout, malformed-handshake-recovery, commentCountDelta-dedup, multi-tab-coordination, owner/repo route-param validation, useDelayedLoading 2nd-cycle race, PR-number permissive validation, no-degraded-UX-signal, reload-loop-tombstone, DELETE-before-POST race
   - 2026-05-08: PR6 review-loop pass — recorded empty-PrHeader-during-cold-load defer
+  - 2026-05-08: PR7 preflight — recorded responsive-sheet, AI-focus-dot, inline-toast, viewed-semantics-graph-walk deferrals
 ---
 
 # Deferrals — S3 PR-detail (read) spec
@@ -330,3 +331,39 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
   Chosen: (c). (a) and (b) skipped.
 - **Revisit when:** N/A. (c) preserves the spec's stated security property ("an authenticated tab can only operate on its own SSE connection's subscriberId" — generalized: only on a subscriberId belonging to *its own browser session*) and matches the dominant dogfood path. Revisit only if dogfooding surfaces an attack from same-cookie tab boundary, which would invalidate the underlying same-browser-trust premise rather than the multimap itself.
 - **Original finding evidence:** Spec § 6.2 line 313-317 says "SseChannel maintains `{cookieSessionId → subscriberId}` mapping" (singular), but lines 315-317 simultaneously imply per-tab subscriber semantics ("an authenticated tab can only operate on its own SSE connection's subscriberId"). Spec internally inconsistent on multiplicity; this entry resolves the inconsistency to (c).
+
+## [Defer] Sub-1180px responsive sheet for file tree (P1.13)
+
+- **Source:** PR7 preflight — adversarial + reliability reviewers
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** Spec § 7.7 prescribes collapsible left sheet overlay at <1180px with focus trap, Esc-close, scrim-click-close, body-scroll-lock, and viewport-widen auto-collapse. PR7 ships the file tree as a static left pane at all widths. The responsive sheet wrapper (`FileTreeSheet.tsx`) plus `useViewportBreakpoint` hook are deferred to avoid coupling tree-building correctness to viewport-resize behaviour in the same PR. Tree logic, viewed semantics, and keyboard shortcuts are independently testable without the responsive wrapper.
+- **Revisit when:** S6 polish work addresses narrow-viewport ergonomics, OR dogfooding on a <1180px display surfaces "file tree covers the diff" complaints.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx` — the `files-tab-content` div uses a static two-pane layout; no `useViewportBreakpoint` hook exists yet.
+
+## [Defer] AI focus dot column in FileTree (spec § 7.2 line 710)
+
+- **Source:** PR7 preflight — correctness reviewer
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** Spec requires a 16px column reserved for AI focus dots even when `aiPreview` is off, with `aria-label` suffixed "(preview)" when backed by `PlaceholderFileFocusRanker`. PR7 ships file tree rows without this column because `useCapabilities()['ai.fileFocus']` returns `false` in PoC and the dot is purely visual filler. The 16px reservation prevents layout shift on `aiPreview` toggle, but since `aiPreview` defaults to off and the toggle doesn't exist in S3, the shift is unobservable.
+- **Revisit when:** v2 lights up `ai.fileFocus` capability and ships a real `FileFocusRanker`, OR S6 adds the `aiPreview` toggle in the settings panel.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FileTree.tsx` — `FileNodeComponent` has no focus-dot span.
+
+## [Defer] Inline toast for viewed-checkbox rollback (spec § 7.2 line 737)
+
+- **Source:** PR7 preflight — reliability reviewer
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** Spec prescribes inline toast with role=status, aria-live=polite, 4s auto-dismiss, click-to-dismiss, --t-med animation on 422/409 rollback from POST /files/viewed. PR7 rolls back silently (the viewed checkbox reverts, but no toast appears). The rollback itself is implemented — only the visual feedback toast is missing.
+- **Revisit when:** Dogfooding encounters 422 cap-exceeded or 409 stale-head-sha failures frequently enough to warrant user-visible feedback, OR S6 polish work formalizes toast patterns.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx:handleToggleViewed` catch block — rolls back state but does not render a toast.
+
+## [Defer] File-viewed graph-walk semantics (spec § 7.2 line 730)
+
+- **Source:** PR7 preflight — correctness reviewer
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** Spec § 7.2 defines two viewed modes: (a) default mode walks the full PR commit graph between ViewedFiles[path] and headSha checking changedFiles, (b) skipped-Jaccard mode uses exact-SHA match. PR7 implements client-side viewed state as a simple Set<string> toggle without either graph walk or SHA comparison — viewed is purely a client-side UI toggle with optimistic POST. The backend POST persists the viewed mark; the graph-walk or SHA-match logic that determines whether a file is *still* viewed after new iterations is a read-path concern that requires `PrDetailDto.viewedFiles` data (not yet surfaced in the DTO). This is by design: PR7 focuses on the file-tree layout and diff-fetching infrastructure; viewed-semantics accuracy depends on backend data that lands with full state-management polish.
+- **Revisit when:** Backend surfaces `ViewedFiles` in PrDetailDto and commit `changedFiles` data, enabling the frontend to compute accurate viewed status. Likely S4 or S5.
+- **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx:38` — `viewedPaths` is `useState<Set<string>>(new Set())` with no initialisation from backend data.
