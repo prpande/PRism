@@ -17,9 +17,7 @@ interface FilesTabContext {
 }
 
 function useViewportWidth() {
-  const [width, setWidth] = useState(
-    typeof window !== 'undefined' ? window.innerWidth : 1200,
-  );
+  const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
 
   useState(() => {
     if (typeof window === 'undefined') return;
@@ -56,8 +54,7 @@ export function FilesTab() {
   const [diffMode, setDiffMode] = useState<DiffMode>('side-by-side');
 
   const viewportWidth = useViewportWidth();
-  const effectiveDiffMode: DiffMode =
-    viewportWidth < 900 ? 'unified' : diffMode;
+  const effectiveDiffMode: DiffMode = viewportWidth < 900 ? 'unified' : diffMode;
 
   const handleRangeChange = useCallback((range: string) => {
     setActiveRange(range);
@@ -92,15 +89,12 @@ export function FilesTab() {
   const fileList = useMemo(() => flattenPaths(tree), [tree]);
 
   const selectedFile = useMemo(
-    () => (selectedPath ? files.find((f) => f.path === selectedPath) ?? null : null),
+    () => (selectedPath ? (files.find((f) => f.path === selectedPath) ?? null) : null),
     [files, selectedPath],
   );
 
   const fileThreads = useMemo(
-    () =>
-      selectedPath
-        ? prDetail.reviewComments.filter((t) => t.filePath === selectedPath)
-        : [],
+    () => (selectedPath ? prDetail.reviewComments.filter((t) => t.filePath === selectedPath) : []),
     [prDetail.reviewComments, selectedPath],
   );
 

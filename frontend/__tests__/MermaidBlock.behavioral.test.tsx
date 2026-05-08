@@ -10,9 +10,11 @@ beforeEach(() => {
 
 describe('MermaidBlock behavioral security', () => {
   it('does not emit SVG with javascript: hrefs from click-callback injection', async () => {
-    const maliciousSvg =
-      '<svg><a href="javascript:alert(1)"><text>click me</text></a></svg>';
-    vi.mocked(mermaidMock.render).mockResolvedValueOnce({ svg: maliciousSvg });
+    const maliciousSvg = '<svg><a href="javascript:alert(1)"><text>click me</text></a></svg>';
+    vi.mocked(mermaidMock.render).mockResolvedValueOnce({
+      svg: maliciousSvg,
+      diagramType: 'flowchart',
+    });
 
     const { container } = render(
       <MermaidBlock code={'graph TD\n  A-->B\n  click A callback "javascript:alert(1)"'} />,
@@ -31,13 +33,13 @@ describe('MermaidBlock behavioral security', () => {
   });
 
   it('rejects onclick event handlers in rendered SVG', async () => {
-    const maliciousSvg =
-      '<svg><rect onclick="alert(1)" width="100" height="100"/></svg>';
-    vi.mocked(mermaidMock.render).mockResolvedValueOnce({ svg: maliciousSvg });
+    const maliciousSvg = '<svg><rect onclick="alert(1)" width="100" height="100"/></svg>';
+    vi.mocked(mermaidMock.render).mockResolvedValueOnce({
+      svg: maliciousSvg,
+      diagramType: 'flowchart',
+    });
 
-    const { container } = render(
-      <MermaidBlock code={'graph TD\n  A[onclick handler test]'} />,
-    );
+    const { container } = render(<MermaidBlock code={'graph TD\n  A[onclick handler test]'} />);
 
     await waitFor(() => {
       expect(container.querySelector('.mermaid-diagram')).not.toBeNull();
@@ -48,13 +50,13 @@ describe('MermaidBlock behavioral security', () => {
   });
 
   it('rejects inline JS in SVG script elements', async () => {
-    const maliciousSvg =
-      '<svg><script>alert(1)</script><rect width="100" height="100"/></svg>';
-    vi.mocked(mermaidMock.render).mockResolvedValueOnce({ svg: maliciousSvg });
+    const maliciousSvg = '<svg><script>alert(1)</script><rect width="100" height="100"/></svg>';
+    vi.mocked(mermaidMock.render).mockResolvedValueOnce({
+      svg: maliciousSvg,
+      diagramType: 'flowchart',
+    });
 
-    const { container } = render(
-      <MermaidBlock code={'graph TD\n  A-->B'} />,
-    );
+    const { container } = render(<MermaidBlock code={'graph TD\n  A-->B'} />);
 
     await waitFor(() => {
       expect(container.querySelector('.mermaid-diagram')).not.toBeNull();

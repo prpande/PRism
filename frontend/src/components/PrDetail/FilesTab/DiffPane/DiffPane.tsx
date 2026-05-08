@@ -42,7 +42,12 @@ function parseHunkLines(body: string): DiffLine[] {
       lines.push({ type: 'delete', content: raw.slice(1), oldLineNum: oldLine, newLineNum: null });
       oldLine++;
     } else if (raw.startsWith(' ')) {
-      lines.push({ type: 'context', content: raw.slice(1), oldLineNum: oldLine, newLineNum: newLine });
+      lines.push({
+        type: 'context',
+        content: raw.slice(1),
+        oldLineNum: oldLine,
+        newLineNum: newLine,
+      });
       oldLine++;
       newLine++;
     }
@@ -157,13 +162,7 @@ function DiffLineRow({ line, pair, threadsAtLine, isSplit }: DiffLineRowProps) {
     if ((line.type === 'insert' || line.type === 'delete') && pair) {
       const oldText = line.type === 'delete' ? line.content : pair.content;
       const newText = line.type === 'insert' ? line.content : pair.content;
-      return (
-        <WordDiffOverlay
-          oldText={oldText}
-          newText={newText}
-          type={line.type}
-        />
-      );
+      return <WordDiffOverlay oldText={oldText} newText={newText} type={line.type} />;
     }
 
     return <span>{line.content}</span>;
@@ -174,21 +173,13 @@ function DiffLineRow({ line, pair, threadsAtLine, isSplit }: DiffLineRowProps) {
       <tr className={rowClass}>
         {isSplit ? (
           <>
-            <td className="diff-gutter diff-gutter--old">
-              {line.oldLineNum ?? ''}
-            </td>
-            <td className="diff-gutter diff-gutter--new">
-              {line.newLineNum ?? ''}
-            </td>
+            <td className="diff-gutter diff-gutter--old">{line.oldLineNum ?? ''}</td>
+            <td className="diff-gutter diff-gutter--new">{line.newLineNum ?? ''}</td>
           </>
         ) : (
           <>
-            <td className="diff-gutter diff-gutter--old">
-              {line.oldLineNum ?? ''}
-            </td>
-            <td className="diff-gutter diff-gutter--new">
-              {line.newLineNum ?? ''}
-            </td>
+            <td className="diff-gutter diff-gutter--old">{line.oldLineNum ?? ''}</td>
+            <td className="diff-gutter diff-gutter--new">{line.newLineNum ?? ''}</td>
           </>
         )}
         <td className="diff-content">{renderContent()}</td>

@@ -30,9 +30,7 @@ describe('MarkdownRenderer sanitization', () => {
   });
 
   it('strips data: URI in img src', () => {
-    render(
-      <MarkdownRenderer source={'![x](data:text/html,<script>alert(1)</script>)'} />,
-    );
+    render(<MarkdownRenderer source={'![x](data:text/html,<script>alert(1)</script>)'} />);
     const img = document.querySelector('img');
     if (img) {
       const src = img.getAttribute('src') ?? '';
@@ -46,16 +44,12 @@ describe('MarkdownRenderer sanitization', () => {
   });
 
   it('does not render <iframe> element', () => {
-    render(
-      <MarkdownRenderer source={'<iframe src="https://evil.com"></iframe>'} />,
-    );
+    render(<MarkdownRenderer source={'<iframe src="https://evil.com"></iframe>'} />);
     expect(document.querySelector('iframe')).toBeNull();
   });
 
   it('does not render <object> element', () => {
-    render(
-      <MarkdownRenderer source={'<object data="https://evil.com"></object>'} />,
-    );
+    render(<MarkdownRenderer source={'<object data="https://evil.com"></object>'} />);
     expect(document.querySelector('object')).toBeNull();
   });
 
@@ -82,7 +76,9 @@ describe('MarkdownRenderer sanitization', () => {
   it('strips MathML with href', () => {
     render(
       <MarkdownRenderer
-        source={'<math><maction actiontype="statusline" href="javascript:alert(1)"><mtext>XSS</mtext></maction></math>'}
+        source={
+          '<math><maction actiontype="statusline" href="javascript:alert(1)"><mtext>XSS</mtext></maction></math>'
+        }
       />,
     );
     expect(document.querySelector('math')).toBeNull();
@@ -105,9 +101,7 @@ describe('MarkdownRenderer sanitization', () => {
   });
 
   it('does not render any raw HTML (rehype-raw not enabled)', () => {
-    render(
-      <MarkdownRenderer source={'<div class="custom"><span>raw</span></div>'} />,
-    );
+    render(<MarkdownRenderer source={'<div class="custom"><span>raw</span></div>'} />);
     expect(document.querySelector('div.custom')).toBeNull();
     expect(document.querySelector('span')).toBeNull();
   });

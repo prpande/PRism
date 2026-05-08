@@ -8,6 +8,7 @@ export interface AiHunkAnnotationProps {
   annotation: string;
 }
 
-export function AiHunkAnnotation(_props: AiHunkAnnotationProps) {
+export function AiHunkAnnotation(_props: AiHunkAnnotationProps): null {
+  void _props;
   return null;
 }

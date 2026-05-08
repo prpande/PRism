@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { DiffPane } from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane';
 import type { FileChange, ReviewThreadDto } from '../src/api/types';
@@ -106,9 +106,7 @@ describe('DiffPane', () => {
     );
     expect(screen.getByText(/open on github\.com/i)).toBeInTheDocument();
     const link = screen.getByRole('link', { name: /open on github\.com/i });
-    expect(link.getAttribute('href')).toBe(
-      'https://github.com/octocat/hello/pull/42',
-    );
+    expect(link.getAttribute('href')).toBe('https://github.com/octocat/hello/pull/42');
   });
 
   it('does not render truncation banner when not truncated', () => {

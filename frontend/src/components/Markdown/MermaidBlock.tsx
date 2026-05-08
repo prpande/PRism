@@ -49,7 +49,9 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
     return (
       <div className="mermaid-error">
         <p className="muted">Mermaid render failed</p>
-        <pre><code>{code}</code></pre>
+        <pre>
+          <code>{code}</code>
+        </pre>
       </div>
     );
   }
@@ -59,10 +61,6 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="mermaid-diagram"
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <div ref={containerRef} className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} />
   );
 }
