@@ -8,7 +8,7 @@ import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
 import { PrDetailPage } from './pages/PrDetailPage';
 import { OverviewTabPlaceholder } from './components/PrDetail/OverviewTab/OverviewTabPlaceholder';
-import { FilesTabPlaceholder } from './components/PrDetail/FilesTab/FilesTabPlaceholder';
+import { FilesTab } from './components/PrDetail/FilesTab/FilesTab';
 import { DraftsTabDisabled } from './components/PrDetail/DraftsTab/DraftsTabDisabled';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
@@ -63,7 +63,7 @@ export function App() {
           element={isAuthed ? <PrDetailPage /> : <Navigate to="/setup" replace />}
         >
           <Route index element={<OverviewTabPlaceholder />} />
-          <Route path="files/*" element={<FilesTabPlaceholder />} />
+          <Route path="files/*" element={<FilesTab />} />
           <Route path="drafts" element={<DraftsTabDisabled />} />
         </Route>
         <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />

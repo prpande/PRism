@@ -163,3 +163,25 @@ export interface PrDetailDto {
   reviewComments: ReviewThreadDto[];
   timelineCapHit: boolean;
 }
+
+export type FileChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed';
+
+export interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  body: string;
+}
+
+export interface FileChange {
+  path: string;
+  status: FileChangeStatus;
+  hunks: DiffHunk[];
+}
+
+export interface DiffDto {
+  range: string;
+  files: FileChange[];
+  truncated: boolean;
+}
