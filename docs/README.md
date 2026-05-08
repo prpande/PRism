@@ -40,6 +40,10 @@ Read [`00-priority-methodology.md`](backlog/00-priority-methodology.md) first to
 
 Documented solutions to past problems (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`).
 
+### AI coding assistants (`/.ai/`, `/CLAUDE.md`, `/.cursor/rules/`)
+
+Tool-agnostic guidance lives under [`.ai/docs/`](../.ai/docs/) (see [`.ai/README.md`](../.ai/README.md)). [Claude Code](../CLAUDE.md) loads a short entry file that links there; [Cursor](../.cursor/rules/) project rules use the same files via `mdc:` includes.
+
 ### Design
 
 - [`claude-design-prompt.md`](claude-design-prompt.md) — the prompt to feed to Claude Design (or any visual-design agent) to generate the UI/UX styling.

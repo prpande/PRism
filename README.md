@@ -84,4 +84,4 @@ If `tsc -b` reports a generic-narrowing or project-reference error that `tsc --n
 
 ## Process
 
-All production code is written test-first (red → green → refactor). See [`CLAUDE.md`](CLAUDE.md) § Development process.
+All production code is written test-first (red → green → refactor). See [`.ai/docs/development-process.md`](.ai/docs/development-process.md).

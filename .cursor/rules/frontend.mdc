@@ -1,0 +1,9 @@
+---
+description: Design handoff non-negotiables and production frontend conventions
+globs: ["frontend/**/*"]
+alwaysApply: false
+---
+
+See [design-handoff.md](mdc:../../.ai/docs/design-handoff.md)
+
+See [frontend-conventions.md](mdc:../../.ai/docs/frontend-conventions.md)

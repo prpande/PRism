@@ -2,7 +2,7 @@
 
 Per-slice / per-task design docs. New specs land at `docs/specs/YYYY-MM-DD-<topic>-design.md` (output of the brainstorming skill). Each entry below names its matching plan under `docs/plans/`, the PR(s) that landed it, and — when present — the matching deferrals sidecar (`<source>-deferrals.md`) that records rejected/deferred alternatives from any planning or architectural decision-making session on the spec.
 
-When a spec's status changes, move its entry to the right group and add the PR reference. Per `CLAUDE.md` § Documentation maintenance, this update lands in the same PR that ships the implementation.
+When a spec's status changes, move its entry to the right group and add the PR reference. Per [`.ai/docs/documentation-maintenance.md`](../../.ai/docs/documentation-maintenance.md) (and [`CLAUDE.md`](../../CLAUDE.md) for Claude-only auto-review workflow), this update lands in the same PR that ships the implementation.
 
 ## Implemented
 
@@ -19,6 +19,7 @@ When a spec's status changes, move its entry to the right group and add the PR r
 
 - [`2026-05-06-s3-pr-detail-read-design.md`](2026-05-06-s3-pr-detail-read-design.md) — S3 PR detail (read); plan: [`../plans/2026-05-06-s3-pr-detail-read.md`](../plans/2026-05-06-s3-pr-detail-read.md); deferrals: spec [`2026-05-06-s3-pr-detail-read-deferrals.md`](2026-05-06-s3-pr-detail-read-deferrals.md) (4 Defer + 7 Skip + 5 meta-process Skip + 6 Superseded — extended in PR5 with `[Skip]` multimap-vs-(a)/(b) + `[Superseded]` cookie-only-vs-cookie-OR-header), plan [`../plans/2026-05-06-s3-pr-detail-read-deferrals.md`](../plans/2026-05-06-s3-pr-detail-read-deferrals.md) (entries from plan rigor pass + post-merge implementation deferrals — extended in PR5 with `[Defer]` SensitiveFieldScrubber pipeline wire-up + `[Superseded]` body-cap implementation shift). All five backend PRs shipped: PR1 state migration (PR #14), PR2 iteration clustering (PR #15), PR3 `IReviewService` extensions (PR #19), PR4 `PrDetailLoader` + backend endpoints (PR #21), PR5 SSE per-PR fanout + active-PR poller + `SessionTokenMiddleware` + cookie stamping + Origin tightening + `SensitiveFieldScrubber` (PR #22). Task 6 — frontend PR-detail shell — is the remaining S3 work.
 - [`2026-05-06-architectural-readiness-design.md`](2026-05-06-architectural-readiness-design.md) — Cross-cutting structural items gated to slices. Mixed status: *Now*-gate items (banned-API analyzer, DI extension methods) shipped per `docs/roadmap.md` § Architectural readiness; named-records item still TBD; S3 / S4 / S5 / P0+ items remain open.
+- [`2026-05-08-multi-agent-ai-rules-design.md`](2026-05-08-multi-agent-ai-rules-design.md) — Shared `.ai/docs/` SSOT + slim `CLAUDE.md` + Cursor rules; plan: [`../plans/2026-05-08-multi-agent-ai-rules.md`](../plans/2026-05-08-multi-agent-ai-rules.md). In progress.
 
 ## Not started
 
