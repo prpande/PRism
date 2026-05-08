@@ -241,8 +241,10 @@ test('URL paste with host mismatch shows inline error', async ({ page }) => {
   // The error message is: "This PR is on ghe.acme.com, but PRism is configured for https://github.com."
   await expect(page.getByRole('alert')).toContainText(/configured for https:\/\/github\.com/i);
 
-  // No navigation — the S3 stub heading must NOT appear.
-  await expect(page.getByRole('heading', { name: /PR detail lands in S3/i })).not.toBeVisible();
+  // No navigation occurred — URL must still be the inbox root, not /pr/...
+  // (Earlier this asserted on the absence of the now-deleted S3 stub heading,
+  // which was tautological and would silently miss a real navigation regression.)
+  await expect(page).toHaveURL(/\/$/);
 });
 
 // ---------------------------------------------------------------------------
