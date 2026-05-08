@@ -18,6 +18,20 @@ describe('BannerRefresh', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('renders nothing when hasUpdate=true but neither headSha nor comments moved', () => {
+    const { container } = render(
+      <BannerRefresh
+        hasUpdate
+        headShaChanged={false}
+        commentCountDelta={0}
+        currentIterationNumber={3}
+        onReload={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it('renders head-only copy', () => {
     render(
       <BannerRefresh

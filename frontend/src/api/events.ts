@@ -65,14 +65,20 @@ export function openEventStream(): EventStreamHandle {
 
   function connect() {
     es = new EventSource('/api/events');
+    const myEs = es;
     let probed = false;
 
     es.onerror = () => {
       if (probed || closed) return;
+      // Captured-self guard: a watchdog-driven reconnect closes the previous EventSource
+      // and creates a new one. Browsers can still deliver buffered onerror events on
+      // the closed (now-superseded) instance afterwards. Ignore them — this closure
+      // belongs to a stale EventSource and must not trigger another reconnect.
+      if (myEs !== es) return;
       probed = true;
       void fetch('/api/events/ping')
         .then((resp) => {
-          if (closed) return;
+          if (closed || myEs !== es) return;
           if (resp.status === 401) {
             window.location.reload();
             return;

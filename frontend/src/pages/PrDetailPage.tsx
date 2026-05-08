@@ -70,7 +70,6 @@ function PrDetailPageInner({
         ciSummary={data?.pr.ciSummary}
         activeTab={activeTab}
         onTabChange={handleTabChange}
-        fileCount={data?.commits.length}
       />
       <BannerRefresh
         hasUpdate={updates.hasUpdate}

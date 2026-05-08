@@ -299,6 +299,31 @@ describe('openEventStream — onerror probe via /api/events/ping', () => {
     }
   });
 
+  it('OLD EventSource onerror fired after a watchdog reconnect does NOT trigger another reconnect (captured-self guard)', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockImplementation(() => Promise.resolve(new Response('', { status: 503 })));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const stream = openEventStream();
+      try {
+        vi.advanceTimersByTime(35_001);
+        expect(FakeEventSource.instances).toHaveLength(2);
+
+        FakeEventSource.instances[0].fireError();
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+
+        expect(FakeEventSource.instances).toHaveLength(2);
+        expect(fetchMock).not.toHaveBeenCalled();
+      } finally {
+        stream.close();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('probes /api/events/ping at most once per EventSource instance across rapid errors', async () => {
     globalThis.fetch = vi
       .fn()

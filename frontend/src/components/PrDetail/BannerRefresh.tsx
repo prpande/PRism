@@ -18,6 +18,7 @@ export function BannerRefresh({
   if (!hasUpdate) return null;
 
   const message = formatMessage(headShaChanged, commentCountDelta, currentIterationNumber);
+  if (!message) return null;
 
   return (
     <div role="status" aria-live="polite" className="banner-refresh">

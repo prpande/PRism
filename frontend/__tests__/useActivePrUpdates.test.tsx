@@ -16,6 +16,7 @@ class FakeEventSource {
   listeners: Record<string, ((e: MessageEvent) => void)[]> = {};
   closed = false;
   url: string;
+  onerror: ((e: Event) => void) | null = null;
   constructor(url: string) {
     this.url = url;
     FakeEventSource.instances.push(this);
@@ -28,6 +29,9 @@ class FakeEventSource {
   }
   dispatch(type: string, data: unknown) {
     this.listeners[type]?.forEach((cb) => cb({ data: JSON.stringify(data) } as MessageEvent));
+  }
+  fireError() {
+    this.onerror?.(new Event('error'));
   }
 }
 
@@ -152,6 +156,43 @@ describe('useActivePrUpdates', () => {
     );
     expect(result.current.headShaChanged).toBe(true);
     expect(result.current.commentCountDelta).toBe(5);
+  });
+
+  it('re-subscribes (new POST) after the SSE stream reconnects', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === '/api/events/ping') {
+        return Promise.resolve(new Response('', { status: 503 }));
+      }
+      return Promise.resolve(jsonOk());
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+    renderHook(() => useActivePrUpdates(ref), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    act(() =>
+      FakeEventSource.instances[0].dispatch('subscriber-assigned', { subscriberId: 'sub-1' }),
+    );
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === '/api/events/subscriptions' && (c[1] as RequestInit)?.method === 'POST',
+      );
+      expect(posts).toHaveLength(1);
+    });
+
+    act(() => FakeEventSource.instances[0].fireError());
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+
+    act(() =>
+      FakeEventSource.instances[1].dispatch('subscriber-assigned', { subscriberId: 'sub-2' }),
+    );
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(
+        (c: unknown[]) =>
+          c[0] === '/api/events/subscriptions' && (c[1] as RequestInit)?.method === 'POST',
+      );
+      expect(posts).toHaveLength(2);
+    });
   });
 
   it('clear() resets aggregated state', async () => {

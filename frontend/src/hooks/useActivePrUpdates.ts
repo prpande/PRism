@@ -30,13 +30,28 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
       }));
     });
 
-    void stream.subscriberId().then(() => {
-      if (cancelled) return;
-      void apiClient.post('/api/events/subscriptions', { prRef: refStr }).catch(() => {
-        // Subscribe failure is non-fatal: cookie-keyed routing on the server still
-        // delivers events. Silent — no observable impact in PoC scope.
-      });
-    });
+    // Re-subscribes on every reconnect per spec § 7.4: the loop awaits the next
+    // handshake, POSTs the subscription, then sleeps until the current
+    // reconnect-signal aborts (watchdog stall or onerror-via-ping path).
+    async function subscribeLoop() {
+      while (!cancelled && stream) {
+        try {
+          await stream.subscriberId();
+          if (cancelled) return;
+          await apiClient.post('/api/events/subscriptions', { prRef: refStr });
+        } catch {
+          // Subscribe failure is non-fatal: cookie-keyed routing on the server still
+          // delivers events. Silent — no observable impact in PoC scope.
+        }
+
+        const signal = stream.reconnectSignal();
+        if (signal.aborted) continue;
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+      }
+    }
+    void subscribeLoop();
 
     return () => {
       cancelled = true;

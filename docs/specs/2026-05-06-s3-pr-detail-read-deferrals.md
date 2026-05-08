@@ -6,6 +6,7 @@ status: open
 revisions:
   - 2026-05-07: PR5-design — recorded multimap chosen over (a) last-SSE-wins / (b) reject-second-SSE for `{cookieSessionId → Set<subscriberId>}`
   - 2026-05-08: PR6 implementation — recorded AbortController-keyed-to-Promise-generation defer for useActivePrUpdates subscribe POST
+  - 2026-05-08: PR6 preflight reviewer pass — recorded reconnect-storm-no-backoff, ping-fetch-no-timeout, malformed-handshake-recovery, commentCountDelta-dedup, multi-tab-coordination, owner/repo route-param validation, useDelayedLoading 2nd-cycle race, PR-number permissive validation, no-degraded-UX-signal, reload-loop-tombstone, DELETE-before-POST race
 ---
 
 # Deferrals — S3 PR-detail (read) spec
@@ -205,6 +206,96 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Reason:** Original spec § 8 prescribed cookie-only on `/api/events` (because EventSource can't set custom headers) and header-only everywhere else (defending against same-origin cookie replay from a stale tab). In practice the SPA shipped in earlier slices does NOT read `document.cookie` and echo as `X-PRism-Session` — it relies on the browser's automatic cookie attachment for same-origin fetches. The strict header-only policy on non-SSE `/api/*` would have required a frontend update to land in the same PR, which is out of S3 PR5's backend-only scope. Widening to cookie-OR-header preserves the security model: cookie is per-process random, `SameSite=Strict` (cross-origin attackers cannot get it sent), and `OriginCheckMiddleware` rejects empty Origin on mutating verbs. Cookie-only auth on /api/* is equivalent proof of session because all three protections compose. `/api/health` is exempted entirely (liveness probe convention; no sensitive data).
 - **Revisit when:** N/A — cookie-OR-header is the long-term policy. The frontend can still echo the header for clients that prefer that style; both forms work. Only revisit if a future threat surfaces that distinguishes cookie from header (none currently in the spec § 6.2 threat model).
 - **Original finding evidence:** Spec § 8 (line 956 pre-edit) "For mutating verbs and GETs other than `/api/events`, the middleware reads `X-PRism-Session` from the request header. For `GET /api/events` ..., the middleware reads the same token from the `prism-session` cookie." Now superseded — § 8 reads "accepts EITHER the `X-PRism-Session` request header OR the `prism-session` cookie value."
+
+## [Defer] Reconnect storm — no backoff or jitter on watchdog/onerror reconnect
+
+- **Source:** PR6 preflight — reliability reviewer (P2)
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** `events.ts:reconnect()` unconditionally calls `connect()` to open a fresh EventSource. If the server is flapping (5xx during a deploy, LB returning RST, captive-portal interception), each new connection fires `onerror` almost immediately, hits the ping path, and triggers another reconnect. No exponential backoff, no jitter, no soft cap. PR6 inherits the simpler "reconnect immediately" model from the spec § 7.4 prose, which only specifies *what* to reconnect on, not *with what timing discipline*. Native browser EventSource retry is suppressed by our explicit `es.close() + new EventSource()` pattern, so we lose its built-in 3–5s baseline. Real-world impact bounded by ping-path-once-per-instance (events.ts:88) + the captured-self guard (events.ts:80) which prevent duplicate reconnects from a single failure event, but a *persistent* server-side flap would still produce a tight loop.
+- **Revisit when:** Dogfooding produces a connection-flap incident OR a load test of the local backend during deploy reveals the storm. Plan for the fix: 1s → 2s → 4s → 8s → 16s → 30s capped exponential backoff with ±25% jitter, reset on `subscriber-assigned` arrival.
+- **Original finding evidence:** "Reconnect storm under flapping network — no backoff, no jitter, no max attempts. … Tight loop bounded only by ping latency."
+
+## [Defer] /api/events/ping probe has no timeout — hung probe stalls reconnect indefinitely
+
+- **Source:** PR6 preflight — reliability reviewer (P2)
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** `events.ts:onerror → fetch('/api/events/ping')` has no `AbortSignal.timeout()` wrapper. If the backend is partitioned mid-request (TCP black hole — LB dropped the connection but kernel hasn't reset), the fetch hangs for the browser default (often 60–300s). During that window `probed=true` so subsequent `onerror` fires no-op and the watchdog isn't running (no events arriving means no watchdog reset, but it also doesn't fire — only set on connection open). Stream wedges silently until OS-level fetch timeout. The captured-self guard added in PR6 doesn't help: it gates against superseded EventSources, not against a hung probe on the *current* one.
+- **Revisit when:** Dogfooding observes a "page unresponsive on bad network" symptom OR the reconnect-storm fix lands (likely paired). Suggested fix: `fetch('/api/events/ping', { signal: AbortSignal.timeout(5000) })` + AbortError → reconnect.
+- **Original finding evidence:** "If the backend is partitioned mid-request … this fetch hangs for the browser default (often 60–300s) … stream wedges silently until OS-level fetch timeout."
+
+## [Defer] Malformed `subscriber-assigned` handshake leaves idPromise pending forever
+
+- **Source:** PR6 preflight — reliability reviewer (P2) + adversarial (P2)
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** `events.ts` subscriber-assigned handler wraps `JSON.parse` in try/catch; on parse failure, swallows and resets the watchdog. `idPromise` stays pending. `useActivePrUpdates`'s loop awaits `stream.subscriberId()` and never proceeds — no subscribe POST fires for the lifetime of this stream. Probability is low (server is trusted same-origin), but the failure is silent and persistent until the user navigates away or the watchdog stalls (which only fires after 35s of no events — heartbeats from the same stream still reset it, so the dead-handshake state can persist for the full session). Captured-self guard doesn't help here.
+- **Revisit when:** Dogfooding produces "banner never fires for this PR" reports OR a proxy/load-balancer in deploy injects a malformed subscriber-assigned event. Suggested fix: on parse failure of `subscriber-assigned`, call `reconnect()` instead of just resetting the watchdog. Alternative: expose an `onError` callback on the stream so consumers can surface the broken state in UI.
+- **Original finding evidence:** "subscriber-assigned listener wraps JSON.parse in try/catch; on parse failure, swallows and just resetsWatchdog(). idPromise stays pending."
+
+## [Defer] commentCountDelta accumulates across SSE reconnects without dedup
+
+- **Source:** PR6 preflight — reliability reviewer (P2)
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** `useActivePrUpdates` aggregates `commentCountDelta` additively for the lifetime of the hook (only reset by `clear()`). On SSE reconnect (watchdog or onerror path), the server may resend the same `pr-updated` events from a buffered queue — there is no event-id resume protocol in the current SSE design. The same delta could be counted twice. `headShaChanged` is boolean OR so re-delivery is harmless there. The banner copy "N new comments" could overcount.
+- **Revisit when:** SSE protocol gains an event-id resume header (Last-Event-ID per spec) AND the backend implements at-most-once delivery, OR dogfooding shows visible count drift. Suggested fix: assign a server-side event id to each `pr-updated`, dedup client-side. Or: coerce `commentCountDelta` to a boolean "has-new-comments" indicator until the resume protocol is defined.
+- **Original finding evidence:** "If the SSE stream reconnects mid-session, the server may resend events … the same delta can be counted twice."
+
+## [Defer] Multi-tab coordination — every tab opens its own EventSource and runs independent reload-on-401
+
+- **Source:** PR6 preflight — adversarial reviewer (P2)
+- **Severity:** P2
+- **Date:** 2026-05-08
+- **Reason:** `EventStreamProvider` mounts once per tab (no SharedWorker / BroadcastChannel coordination). With 5 PRism tabs open, a session-rotation event fires `onerror` on all 5 EventSources simultaneously, each pings, each receives 401, each reloads. 5× navigation burst, 5× /api/auth/state during reload race. Some tabs route to /setup, others to /, others retry — inconsistent state across tabs. Same applies to subscribe POST: each tab subscribes independently to the same prRef, leaving N entries on the server side for one user-visible PR. The cookie-keyed multimap design (deferrals entry below) accommodates this server-side, but the client-side fanout is still wasteful.
+- **Revisit when:** Multi-tab dogfooding produces a "tabs in different states" symptom OR a load test of the auth-rotation path shows the burst. Long-term fix: SharedWorker for SSE. Short-term fix: `BroadcastChannel('prism-auth')` so only the first tab to detect 401 fires the reload; others observe the broadcast and route to /setup via the existing `prism-auth-rejected` event.
+- **Original finding evidence:** "Every PRism tab opens its own EventSource and runs independent reload-on-401 logic. … Network burst of >50 requests against the local backend."
+
+## [Defer] Reload-on-401 tombstone — defense-in-depth against reload loop
+
+- **Source:** PR6 preflight — adversarial reviewer (P1, but mitigated by EventStreamProvider gating); security reviewer concurred path is safe
+- **Severity:** P2 (defensive — the current path is sound *if* `useAuth` correctly transitions `isAuthed` to false on cookie rotation; tombstone protects against future regressions)
+- **Date:** 2026-05-08
+- **Reason:** `events.ts` `onerror → fetch('/api/events/ping')` returns 401 → `window.location.reload()`. After reload, `App.tsx:78` only mounts `EventStreamProvider` when `isAuthed`, which derives from `useAuth().authState.hasToken`. If `/api/auth/state` correctly returns `hasToken: false` on cookie rotation, no SSE re-opens and no loop occurs. Path is safe. But: a future refactor that mounts `EventStreamProvider` unconditionally, or a session bug where `useAuth` reports `hasToken: true` despite a stale cookie, would create a tab-bound infinite reload loop. Adversarial reviewer cited 0.82 confidence; security reviewer cited the gating mitigation.
+- **Revisit when:** Either of the trigger conditions surfaces (refactor of `EventStreamProvider` mounting, or a `useAuth`/cookie-rotation timing bug). Suggested defense: `sessionStorage.setItem('prism-auth-reload', Date.now())` before reload; on next mount check the timestamp and if a reload happened within e.g. 10s, suppress and dispatch `prism-auth-rejected` instead of reloading again. Plus: add a regression test asserting `EventStreamProvider` does not mount on `/setup`.
+- **Original finding evidence:** "Trigger: SessionTokenMiddleware rejects … the browser still has a stale cookie. … Indefinite reload loop until user closes the tab."
+
+## [Defer] DELETE-before-POST ordering race on rapid mount-unmount
+
+- **Source:** PR6 preflight — reliability reviewer (P1) + correctness reviewer (P2) + adversarial reviewer (P2 race-on-Outlet-remount)
+- **Severity:** P2 (server-side state drift; user-visible failure is "banner stops firing" until next session)
+- **Date:** 2026-05-08
+- **Reason:** `useActivePrUpdates` cleanup fires `apiClient.delete(...)` synchronously on unmount. If unmount happens between `await stream.subscriberId()` and the POST landing on the server, network reordering can deliver DELETE before POST. Server idempotency on DELETE for unknown prRef = 204 noop, but POST after DELETE leaves a *dangling* subscription. Subsequent dogfooding when the user revisits the same PR → POST adds a second entry; cookie-keyed multimap accommodates, but server-side load grows without cleanup. Also relevant for React StrictMode dev double-mount: mount → POST queued → unmount → DELETE → mount → POST → DELETE-before-POST possible. The deferred AbortController-on-subscribe (entry below) addresses the in-flight cancellation; this entry adds the *server-side ordering-resilience* angle.
+- **Revisit when:** Same trigger as the AbortController defer — if dogfood SSE reconnect storms or rapid mount-unmount cycles produce visible subscription leakage. Fix candidates: (a) sequence-numbered subscribe/unsubscribe with server-side discard of stale DELETEs, (b) await the POST in cleanup using `navigator.sendBeacon` for unmount-during-unload paths, (c) hook the AbortController fix to also synchronize the cleanup DELETE to fire only after the POST resolves.
+- **Original finding evidence:** "DELETE may arrive at the server before the POST. With idempotent server semantics this is benign … but a subscription leak across many sessions accumulates."
+
+## [Defer] No user-visible signal when SSE is permanently broken
+
+- **Source:** PR6 preflight — reliability reviewer (P1)
+- **Severity:** P2 (degradation UX, not correctness)
+- **Date:** 2026-05-08
+- **Reason:** All SSE error paths swallow silently — subscribe POST failures, ping failures, malformed handshake. The only user-visible contract is `BannerRefresh` (rendered iff `hasUpdate`). If SSE is broken, the user sees a static page with no indication that updates won't arrive. Spec § 7.4 implicitly treats SSE as "best-effort" but the implementation doesn't surface degradation. Out of PR6 scope (not in spec § 7.4 explicitly), but worth tracking.
+- **Revisit when:** Dogfooding produces "I didn't see the banner update" complaints, OR a future spec slice formalizes a streamHealthy boolean. Suggested fix: track a `streamHealthy` boolean inside the EventStreamHandle (true after first successful subscriber-assigned, flips to false on N consecutive errors); surface a subtle "Updates paused — Reload to refresh" indicator in the header when false for >30s.
+- **Original finding evidence:** "Every error path is a silent .catch(() => {}) … the user sees a static page with no indication that updates won't arrive."
+
+## [Defer] Owner/repo route-param validation in PrDetailPage
+
+- **Source:** PR6 preflight — security reviewer (P3) + adversarial reviewer (P3 PR-number permissive)
+- **Severity:** P3
+- **Date:** 2026-05-08
+- **Reason:** `PrDetailPage` parses `:owner`, `:repo`, `:number` from route params. `number` is guarded via `Number.isNaN`, but: (a) `Number('-1')`, `Number('0')`, `Number('1.5')`, `Number('1e3')`, `Number('  42  ')` all pass the guard; (b) `owner` and `repo` are not validated against GitHub's repo-name grammar (alnum + `-`, `_`, `.`). Adversarial values like `..` or `%2e%2e` are constrained server-side by route-binding (`{number:int}`), so the worst case is a wasted GitHub API call with `owner=".."`. Server validates all three before dispatching to GitHub APIs. JSX auto-escapes when these values render in PrHeader. Risk is bounded to wasted upstream calls and noisy 4xx logs — not exploitable.
+- **Revisit when:** Dogfooding shows users hitting the page with malformed deep-links, OR a future security review tightens the input-validation perimeter. Fix: validate at the boundary with `^[A-Za-z0-9._-]+$` for owner/repo and `^[1-9]\d*$` for number; render the same `Invalid PR reference` alert path that's already in place for missing/non-numeric `number`.
+- **Original finding evidence:** "Owner and repo are not validated against GitHub's repo-name grammar … `Number('1e3')` passes the NaN guard."
+
+## [Defer] useDelayedLoading second-loading-cycle race — showStartedAt not re-stamped
+
+- **Source:** PR6 preflight — adversarial reviewer (P3)
+- **Severity:** P3
+- **Date:** 2026-05-08
+- **Reason:** If a second loading cycle starts while `show` is still `true` from the previous cycle's hold window, `showStartedAt` is never re-stamped. When the second cycle completes, `remaining = HOLD_MS - (Date.now() - showStartedAt)` may be negative (skeleton clears immediately), defeating the anti-flicker contract for back-to-back rapid reload clicks. User-visible impact: rapid Reload→Reload causes the second cycle's spinner to flash off too soon. Edge case (requires sub-100ms-spaced reload clicks); the existing tests don't cover this scenario. The fix is small (track `actualIsLoading` via ref and re-stamp `showStartedAt` on each false→true edge of `actualIsLoading` even when `show` is already `true`).
+- **Revisit when:** A user reports "skeleton flickers when I click Reload twice fast", OR S6 polish work explicitly addresses skeleton-timing micro-UX.
+- **Original finding evidence:** "useDelayedLoading race when actualIsLoading toggles within 100ms WAIT_MS — stale showStartedAt yields HOLD past completion."
 
 ## [Defer] AbortController.signal keyed to Promise generation on subscribe POST
 
