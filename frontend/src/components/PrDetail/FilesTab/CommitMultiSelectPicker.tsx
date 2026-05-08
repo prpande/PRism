@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, useId } from 'react';
 import type { CommitDto } from '../../../api/types';
 
 export interface CommitMultiSelectPickerProps {
@@ -17,8 +17,12 @@ export function CommitMultiSelectPicker({
   const listboxRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  const sorted = [...commits].sort(
-    (a, b) => new Date(b.committedDate).getTime() - new Date(a.committedDate).getTime(),
+  const sorted = useMemo(
+    () =>
+      [...commits].sort(
+        (a, b) => new Date(b.committedDate).getTime() - new Date(a.committedDate).getTime(),
+      ),
+    [commits],
   );
 
   const isShowAll = selectedShas === null;
@@ -90,7 +94,8 @@ export function CommitMultiSelectPicker({
     listboxRef.current?.focus();
   }, [open]);
 
-  const listboxId = 'commit-picker-listbox';
+  const instanceId = useId();
+  const listboxId = `${instanceId}-commit-picker-listbox`;
 
   return (
     <div className="commit-multi-select-picker">
@@ -116,11 +121,13 @@ export function CommitMultiSelectPicker({
           role="listbox"
           aria-multiselectable="true"
           aria-label="Select commits"
+          aria-activedescendant={focusIndex >= 0 ? `${instanceId}-option-${focusIndex}` : undefined}
           tabIndex={-1}
           className="commit-picker-listbox"
           onKeyDown={handleKeyDown}
         >
           <div
+            id={`${instanceId}-option-0`}
             role="option"
             aria-selected={isShowAll}
             className={`commit-picker-option${focusIndex === 0 ? ' commit-picker-option--focused' : ''}`}
@@ -133,6 +140,7 @@ export function CommitMultiSelectPicker({
             return (
               <div
                 key={c.sha}
+                id={`${instanceId}-option-${i + 1}`}
                 role="option"
                 aria-selected={isSelected}
                 className={`commit-picker-option${focusIndex === i + 1 ? ' commit-picker-option--focused' : ''}`}

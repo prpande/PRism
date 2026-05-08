@@ -71,26 +71,25 @@ export function FilesTab() {
 
   const diff = isLowQuality ? (selectedCommits === null ? lowAllDiff : commitsDiff) : rangeDiff;
 
-  const files = diff.data?.files ?? [];
+  const files = useMemo(() => diff.data?.files ?? [], [diff.data]);
   const tree = useMemo(() => buildTree(files), [files]);
   const fileList = useMemo(() => flattenPaths(tree), [tree]);
 
   const handleToggleViewed = useCallback(
     (path: string) => {
-      const wasViewed = viewedPaths.has(path);
-      const newViewed = !wasViewed;
-
+      let wasViewed = false;
       setViewedPaths((prev) => {
+        wasViewed = prev.has(path);
         const next = new Set(prev);
-        if (newViewed) next.add(path);
-        else next.delete(path);
+        if (wasViewed) next.delete(path);
+        else next.add(path);
         return next;
       });
 
       postFileViewed(prRef, {
         path,
         headSha: prDetail.pr.headSha,
-        viewed: newViewed,
+        viewed: !wasViewed,
       }).catch(() => {
         setViewedPaths((prev) => {
           const next = new Set(prev);
@@ -100,7 +99,7 @@ export function FilesTab() {
         });
       });
     },
-    [prRef, prDetail.pr.headSha, viewedPaths],
+    [prRef, prDetail.pr.headSha],
   );
 
   const handleNextFile = useCallback(() => {
@@ -112,9 +111,12 @@ export function FilesTab() {
 
   const handlePrevFile = useCallback(() => {
     if (fileList.length === 0) return;
-    const idx = selectedPath ? fileList.indexOf(selectedPath) : 0;
-    const prev = (idx - 1 + fileList.length) % fileList.length;
-    setSelectedPath(fileList[prev]);
+    const idx = selectedPath ? fileList.indexOf(selectedPath) : -1;
+    if (idx <= 0) {
+      setSelectedPath(fileList[fileList.length - 1]);
+    } else {
+      setSelectedPath(fileList[idx - 1]);
+    }
   }, [fileList, selectedPath]);
 
   const handleToggleDiffMode = useCallback(() => {
@@ -169,6 +171,7 @@ export function FilesTab() {
               onSelectFile={setSelectedPath}
               viewedPaths={viewedPaths}
               onToggleViewed={handleToggleViewed}
+              isLoading={diff.isLoading}
             />
           )}
         </div>

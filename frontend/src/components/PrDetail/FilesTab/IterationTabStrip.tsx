@@ -4,8 +4,6 @@ import type { IterationDto } from '../../../api/types';
 export interface IterationTabStripProps {
   iterations: IterationDto[];
   activeRange: string;
-  baseSha?: string;
-  headSha?: string;
   onRangeChange: (range: string) => void;
 }
 

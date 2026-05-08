@@ -8,6 +8,7 @@ export interface FileTreeProps {
   onSelectFile: (path: string) => void;
   viewedPaths: Set<string>;
   onToggleViewed: (path: string) => void;
+  isLoading?: boolean;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -23,11 +24,13 @@ export function FileTree({
   onSelectFile,
   viewedPaths,
   onToggleViewed,
+  isLoading = false,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
   const viewedCount = files.filter((f) => viewedPaths.has(f.path)).length;
 
   if (files.length === 0) {
+    if (isLoading) return null;
     return (
       <div className="file-tree">
         <div className="file-tree-header">Files</div>
@@ -145,7 +148,7 @@ function FileNodeComponent({
       <input
         type="checkbox"
         checked={isViewed}
-        onChange={() => {}} // controlled via click handler
+        readOnly
         onClick={handleCheckboxClick}
         aria-label={`Viewed ${node.name}`}
         className="file-tree-viewed-checkbox"
@@ -172,13 +175,12 @@ function DirectoryNodeComponent({
   const [expanded, setExpanded] = useState(true);
 
   return (
-    <div className="file-tree-dir" role="group">
+    <div className="file-tree-dir" role="treeitem" aria-expanded={expanded}>
       <div className="file-tree-dir-header" style={{ paddingLeft: `${depth * 16}px` }}>
         <button
           className="file-tree-dir-toggle"
           onClick={() => setExpanded((e) => !e)}
           aria-label={`Toggle ${node.name}`}
-          aria-expanded={expanded}
         >
           <span className={`file-tree-chevron${expanded ? ' file-tree-chevron--open' : ''}`}>
             ▸
@@ -186,18 +188,21 @@ function DirectoryNodeComponent({
         </button>
         <span className="file-tree-dir-name">{node.name}</span>
       </div>
-      {expanded &&
-        node.children.map((child) => (
-          <TreeNodeComponent
-            key={nodeKey(child)}
-            node={child}
-            selectedPath={selectedPath}
-            onSelectFile={onSelectFile}
-            viewedPaths={viewedPaths}
-            onToggleViewed={onToggleViewed}
-            depth={depth + 1}
-          />
-        ))}
+      {expanded && (
+        <div role="group">
+          {node.children.map((child) => (
+            <TreeNodeComponent
+              key={nodeKey(child)}
+              node={child}
+              selectedPath={selectedPath}
+              onSelectFile={onSelectFile}
+              viewedPaths={viewedPaths}
+              onToggleViewed={onToggleViewed}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
