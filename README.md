@@ -84,7 +84,7 @@ If `tsc -b` reports a generic-narrowing or project-reference error that `tsc --n
 
 ### Stable session token across `dotnet watch run` reloads (Development only)
 
-The backend rotates the `X-PRism-Session` token on every startup (see [`docs/spec/02-architecture.md`](docs/spec/02-architecture.md) § "Cross-origin defense for the localhost API"). Under `dotnet watch run` this means every save-triggered restart issues a new token and forces a full SPA reload to pick it up. To keep one token alive across reloads while developing, export `PRISM_DEV_FIXED_TOKEN` as a real environment variable in the shell that runs `dotnet watch run`:
+The backend rotates the per-launch session token on every startup (see [`docs/spec/02-architecture.md`](docs/spec/02-architecture.md) § "Cross-origin defense for the localhost API" — the token travels as the `prism-session` cookie and is echoed in the `X-PRism-Session` header). Under `dotnet watch run` this means every save-triggered restart issues a new token and forces a full SPA reload to pick it up. To keep one token alive across reloads while developing, export `PRISM_DEV_FIXED_TOKEN` as a real environment variable in the shell that runs `dotnet watch run`:
 
 ```
 # PowerShell (set for the current shell session)
