@@ -142,6 +142,42 @@ public class PrDetailEndpointsTests
     }
 
     [Fact]
+    public async Task Get_diff_serializes_DiffHunk_with_camelCase_and_body_starts_with_at_at()
+    {
+        // Pin the wire contract that DiffPane.parseHunkLines depends on:
+        //   - hunks[] is non-empty when the backend has a parsed patch
+        //   - oldStart/oldLines/newStart/newLines/body are camelCase
+        //   - body INCLUDES the @@ header (parseHunkLines reads line numbers from body,
+        //     not from oldStart/newStart). A future field rename or contract drift
+        //     would compile clean but break the frontend's diff rendering silently.
+        var (factory, review) = MakeFactory();
+        using var _f = factory;
+        var hunkBody = "@@ -1,3 +1,4 @@\n line1\n+inserted\n line2\n line3";
+        review.DiffFactory = (_, r) => new DiffDto(
+            Range: $"{r.BaseSha}..{r.HeadSha}",
+            Files: new[] {
+                new FileChange("src/Foo.cs", FileChangeStatus.Modified,
+                    new[] { new DiffHunk(1, 3, 1, 4, hunkBody) })
+            },
+            Truncated: false);
+
+        var validBase = new string('a', 40);
+        var validHead = new string('b', 40);
+        var resp = await factory.CreateClient().GetAsync(
+            new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        var hunk = body.GetProperty("files")[0].GetProperty("hunks")[0];
+        hunk.GetProperty("oldStart").GetInt32().Should().Be(1);
+        hunk.GetProperty("oldLines").GetInt32().Should().Be(3);
+        hunk.GetProperty("newStart").GetInt32().Should().Be(1);
+        hunk.GetProperty("newLines").GetInt32().Should().Be(4);
+        hunk.GetProperty("body").GetString().Should().StartWith("@@ -1,3 +1,4 @@");
+        hunk.GetProperty("body").GetString().Should().Contain("+inserted");
+    }
+
+    [Fact]
     public async Task Get_diff_returns_422_diff_missing_range_when_query_param_absent()
     {
         var (factory, _) = MakeFactory();

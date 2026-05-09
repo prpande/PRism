@@ -608,7 +608,23 @@ public sealed partial class GitHubReviewService : IReviewService
             var patch = f.TryGetProperty("patch", out var p) && p.ValueKind == JsonValueKind.String
                 ? p.GetString()
                 : null;
-            result.Add(new FileChange(path, status, PatchParser.Parse(patch)));
+            IReadOnlyList<DiffHunk> hunks;
+            try
+            {
+                hunks = PatchParser.Parse(patch);
+            }
+#pragma warning disable CA1031 // Per-file fault isolation: one bad file's parse must
+            // not abort the entire pulls/{n}/files response and discard already-parsed
+            // entries from earlier pagination pages. PatchParser is defensive (TryParse
+            // on every numeric group, malformed-header skip), so reaching this catch
+            // implies an unforeseen exception in future parser changes; surface as
+            // empty hunks (same wire shape as binary/>3MB files) and keep iterating.
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                hunks = Array.Empty<DiffHunk>();
+            }
+            result.Add(new FileChange(path, status, hunks));
         }
         return result;
     }

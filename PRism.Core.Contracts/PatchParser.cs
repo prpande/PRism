@@ -24,8 +24,12 @@ public static partial class PatchParser
         var bodyLines = new List<string>();
         var insideHunk = false;
 
-        foreach (var line in patch.Split('\n'))
+        foreach (var rawLine in patch.Split('\n'))
         {
+            // CRLF defense: GitHub's REST API returns LF-terminated patch text, but
+            // a GHES proxy or content-rewrite middleware could inject \r\n. Strip
+            // trailing \r so it does not pollute Body content the frontend renders.
+            var line = rawLine.TrimEnd('\r');
             if (line.StartsWith("@@", StringComparison.Ordinal))
             {
                 if (insideHunk)
@@ -35,22 +39,21 @@ public static partial class PatchParser
                 }
 
                 var match = HunkHeaderPattern().Match(line);
-                if (!match.Success)
+                if (!match.Success ||
+                    !TryParseGroup(match.Groups[1], 0, out oldStart) ||
+                    !TryParseGroup(match.Groups[2], 1, out oldLines) ||
+                    !TryParseGroup(match.Groups[3], 0, out newStart) ||
+                    !TryParseGroup(match.Groups[4], 1, out newLines))
                 {
-                    // Malformed header — drop this block and resume at the next valid one.
+                    // Malformed header (regex miss) or out-of-range numeric capture
+                    // (\d+ has no upper bound; values > Int32.MaxValue would otherwise
+                    // throw OverflowException and abort the entire diff response).
+                    // Drop this block and resume at the next valid header.
                     insideHunk = false;
                     bodyLines.Clear();
                     continue;
                 }
 
-                oldStart = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-                oldLines = match.Groups[2].Success
-                    ? int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture)
-                    : 1;
-                newStart = int.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
-                newLines = match.Groups[4].Success
-                    ? int.Parse(match.Groups[4].Value, CultureInfo.InvariantCulture)
-                    : 1;
                 bodyLines.Clear();
                 bodyLines.Add(line);
                 insideHunk = true;
@@ -69,5 +72,15 @@ public static partial class PatchParser
         }
 
         return hunks;
+    }
+
+    // Optional capture groups (the line-count slots) default to the supplied value
+    // when not matched — unified-diff convention is "1" for omitted counts. Required
+    // groups (start positions) pass defaultIfMissing=0 but the regex guarantees they
+    // match, so the default is unreachable on a successful Match.
+    private static bool TryParseGroup(Group g, int defaultIfMissing, out int value)
+    {
+        if (!g.Success) { value = defaultIfMissing; return true; }
+        return int.TryParse(g.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
     }
 }

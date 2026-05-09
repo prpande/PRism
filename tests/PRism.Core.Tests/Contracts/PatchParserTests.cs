@@ -73,6 +73,11 @@ public class PatchParserTests
         hunks[0].OldLines.Should().Be(0);
         hunks[0].NewStart.Should().Be(1);
         hunks[0].NewLines.Should().Be(3);
+        // Pin Body content too — a field-swap bug in the parser would otherwise
+        // pass with only the four numeric assertions above.
+        hunks[0].Body.Should().StartWith("@@ -0,0 +1,3 @@");
+        hunks[0].Body.Should().Contain("+a");
+        hunks[0].Body.Should().Contain("+c");
     }
 
     [Fact]
@@ -82,8 +87,13 @@ public class PatchParserTests
         var hunks = PatchParser.Parse(patch);
 
         hunks.Should().HaveCount(1);
+        hunks[0].OldStart.Should().Be(1);
         hunks[0].OldLines.Should().Be(3);
+        hunks[0].NewStart.Should().Be(0);
         hunks[0].NewLines.Should().Be(0);
+        hunks[0].Body.Should().StartWith("@@ -1,3 +0,0 @@");
+        hunks[0].Body.Should().Contain("-a");
+        hunks[0].Body.Should().Contain("-c");
     }
 
     [Fact]
@@ -110,8 +120,10 @@ public class PatchParserTests
     public void Parse_preserves_no_newline_at_end_of_file_marker()
     {
         // git emits `\ No newline at end of file` after a + or - line when
-        // the file lacks a trailing newline. This is metadata, not content,
-        // and must round-trip in Body so the frontend can render it.
+        // the file lacks a trailing newline. The parser must round-trip this
+        // metadata line in Body unchanged. Note: DiffPane.parseHunkLines
+        // currently drops `\` marker lines silently — this test pins the
+        // parser's wire contract, not the rendered output.
         const string patch = "@@ -1,1 +1,1 @@\n-old\n+new\n\\ No newline at end of file";
         var hunks = PatchParser.Parse(patch);
 
@@ -159,5 +171,40 @@ public class PatchParserTests
 
         hunks.Should().HaveCount(1);
         hunks[0].Body.Should().Contain("+ // marker @@ inside string");
+    }
+
+    [Fact]
+    public void Parse_strips_trailing_carriage_returns_from_body_lines()
+    {
+        // Defensive: GitHub's REST API returns LF-terminated patch text, but a
+        // GHES proxy or content-rewrite middleware could inject \r\n. Trailing
+        // \r in Body would render as a literal carriage return per row in
+        // DiffPane's parseHunkLines (it splits on '\n' and slices content).
+        const string patch = "@@ -1,2 +1,2 @@\r\n line1\r\n+inserted\r\n line2";
+        var hunks = PatchParser.Parse(patch);
+
+        hunks.Should().HaveCount(1);
+        // Header line and every body line must have no embedded \r.
+        hunks[0].Body.Should().NotContain("\r");
+        hunks[0].Body.Should().StartWith("@@ -1,2 +1,2 @@");
+        hunks[0].Body.Should().Contain("+inserted");
+    }
+
+    [Fact]
+    public void Parse_recovers_from_numeric_overflow_in_header_via_malformed_skip()
+    {
+        // Defensive: \d+ in the regex has no upper bound. A capture > Int32.MaxValue
+        // would throw OverflowException without TryParse, unwinding ParseFileChanges
+        // and aborting the entire diff response (a feature-denial vector for any
+        // PR author). TryParse routes overflow to the same malformed-header skip
+        // path as a regex miss; the next valid hunk still parses.
+        const string patch =
+            "@@ -2147483648,1 +1,1 @@\n-old\n+new\n" +
+            "@@ -10,1 +10,1 @@\n-x\n+y";
+        var hunks = PatchParser.Parse(patch);
+
+        hunks.Should().HaveCount(1);
+        hunks[0].OldStart.Should().Be(10);
+        hunks[0].Body.Should().StartWith("@@ -10,1 +10,1 @@");
     }
 }
