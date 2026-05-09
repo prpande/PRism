@@ -47,7 +47,7 @@ GitHub GraphQL API is the cleanest single round-trip for this.
 
 ### Step 2: Sort commits chronologically
 
-Order by author timestamp. Tie-breaking by commit position in the parent chain when timestamps collide (which happens with rebases).
+Order by author timestamp. Tie-breaking by commit position in the parent chain when timestamps collide (which happens with rebases). **(S3 overrides this to `committedDate`; see § "S3 implementation > Time field: `committedDate`, not author date" for the rationale and the tradeoff.)**
 
 ### Step 3: Compute weighted distance for each consecutive pair
 
@@ -120,12 +120,12 @@ If the author pushed to *other* branches during the gap, the idle time on this P
 
 ```
 multiplier = 1.0
-           × (1 - 0.5 × files_jaccard)             // overlap shrinks (down to 0.5x)
-           × (1 - 0.3 × message_continuity_score)  // continuity shrinks (down to 0.7x)
-           × (1.5 if force_push_after_long_gap else 1.0)
-           × (0.4 if tiny_followup_commit else 1.0)
-           × (1.3 if review_event_in_between else 1.0)
-           × (1.2 if branch_activity_elsewhere else 1.0)
+           × (1 - 0.5 × files_jaccard)             // overlap shrinks (down to 0.5x)              [LIVE in S3 as FileJaccardMultiplier]
+           × (1 - 0.3 × message_continuity_score)  // continuity shrinks (down to 0.7x)           [DEFERRED — see S3 impl § Commit message semantics]
+           × (1.5 if force_push_after_long_gap else 1.0)                                          // [LIVE in S3 as ForcePushMultiplier]
+           × (0.4 if tiny_followup_commit else 1.0)                                               // [DEFERRED — see S3 impl § Diff size / churn]
+           × (1.3 if review_event_in_between else 1.0)                                            // [DEFERRED — see S3 impl § Review events]
+           × (1.2 if branch_activity_elsewhere else 1.0)                                          // [DEFERRED — see S3 impl § Branch activity gaps]
 ```
 
 Coefficients are starting points. They are interpretable enough to sanity-check by hand and can be tuned on 10-15 manually labeled PRs — no large training set needed.

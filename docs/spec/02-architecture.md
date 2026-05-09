@@ -459,10 +459,16 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
     // calibration), this is the JSON shape it will read. Today, writing this block to
     // `config.json` is a no-op (unknown fields are ignored on deserialize). See
     // `iteration-clustering-algorithm.md` § "Coefficient surface" for the full story.
-    "cluster-gap-seconds": 60,                     // Bound today but **inert** — `WeightedDistanceClusteringStrategy` reads coefficients from `IterationClusteringCoefficients`, not from this field; setting it has no behavior change. Legacy field on `IterationsConfig`, originally the only iteration-clustering knob; kept on the record for v1-config-file backward-compat (no warning is emitted on unknown changes). Slated for removal alongside the future `IOptionsMonitor<IterationClusteringCoefficients>` binding.
+    "cluster-gap-seconds": 60,                     // Bound today but **inert** — `WeightedDistanceClusteringStrategy` reads coefficients from `IterationClusteringCoefficients`, not from this field; setting it has no behavior change. Legacy field on `IterationsConfig`, originally the only iteration-clustering knob; kept on the record for v1-config-file backward-compat (no warning is emitted on unknown changes). **Slated for removal in S4** (alongside S4's drafts/replies/reconciliation field additions and migration #2; remove the field from `IterationsConfig` in the same migration that wraps `AppState` per ADR-S4-1).
     "clustering-disabled": false,                  // Live today. Calibration-failure escape hatch — set true to disable WeightedDistance globally and force every PR onto `CommitMultiSelectPicker`. Default ships `false` (algorithm runs on every PR); flip to `true` if discipline-check agreement on a real corpus is unsatisfactory. See `iteration-clustering-algorithm.md` § "Calibration-failure escape hatch."
 
-    // --- planned future binding (P0-9 era), not yet wired ---
+    // ⚠ The `clustering-coefficients` block below is **NOT BOUND today** — writing it to
+    // `config.json` is a silent no-op (no warning is emitted on the unknown field). Coefficients
+    // are constants per process lifetime; tuning requires a code edit to
+    // `IterationClusteringCoefficients`'s record-init defaults and a rebuild. The shape is shown
+    // here so the future `IOptionsMonitor<IterationClusteringCoefficients>` binding (P0-9 era)
+    // has a published target. **DO NOT copy this block into `config.json` expecting it to take
+    // effect.** See `iteration-clustering-algorithm.md` § "Coefficient surface" for the full story.
     "clustering-coefficients": {
       "file-jaccard-weight":              0.5,    // FileJaccardMultiplier signal weight. 0 = ignore; values approaching 1 reduce distance toward zero (validator enforces strictly < 1).
       "force-push-after-long-gap":        1.5,    // ForcePushMultiplier value when both conditions are met.
@@ -506,6 +512,8 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
 
 ## State schema (PoC)
 
+> **Casing note.** The example below uses **camelCase** keys for readability and to match the C# property names, but `state.json` on disk uses **kebab-case** for every property: `JsonSerializerOptionsFactory.Storage` applies `KebabCaseJsonNamingPolicy` to all property names (e.g. `LastViewedHeadSha` C# → `last-viewed-head-sha` JSON; `ReviewSessions` → `review-sessions`; `ViewedFiles` → `viewed-files`; etc.). Dictionary *keys* are intentionally NOT kebab-cased (file paths, repo identifiers must round-trip identically). When extending the schema, name the C# property in PascalCase as usual; the policy converts at write-time. When hand-editing `state.json` (rarely supported — see "Hand-edits" note below), use the kebab-case form.
+
 ```jsonc
 {
   "version": 2,                                  // S3 ships v1 → v2: adds `viewed-files` per session. v1 files are migrated on first load via `MigrateV1ToV2` in `AppStateStore`. Files already at v2 are loaded as-is. See § "Schema migration policy" below.
@@ -540,7 +548,7 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
           "status": "draft"
         }
       ],
-      "viewed-files": {                       // S3-shipped per-session map of filePath → headShaAtTimeOfMark, populated by the per-file "Viewed" checkbox on the Files tab. The lookup walks the full PR commit graph (not just clustered iterations) to decide whether a file has been touched since the mark — see `03-poc-features.md` § 3 "Viewed checkbox semantics" for the truthful-by-default-on-unknown-changedFiles rule. C# field: `ViewedFiles` on `ReviewSessionState`.
+      "viewedFiles": {                        // S3-shipped per-session map of filePath → headShaAtTimeOfMark, populated by the per-file "Viewed" checkbox on the Files tab. The lookup walks the full PR commit graph (not just clustered iterations) to decide whether a file has been touched since the mark — see `03-poc-features.md` § 3 "Viewed checkbox semantics" for the truthful-by-default-on-unknown-changedFiles rule. C# field: `ViewedFiles` on `ReviewSessionState`. On disk, the kebab policy writes this as `viewed-files`.
         "src/Foo.cs": "abc...",
         "src/Bar.cs": "abc..."
       },
