@@ -582,7 +582,7 @@ public sealed partial class GitHubReviewService : IReviewService
         return ParseFileChanges(filesEl);
     }
 
-    private static IReadOnlyList<FileChange> ParseFileChanges(JsonElement filesArray)
+    private IReadOnlyList<FileChange> ParseFileChanges(JsonElement filesArray)
     {
         if (filesArray.ValueKind != JsonValueKind.Array) return Array.Empty<FileChange>();
         var result = new List<FileChange>(filesArray.GetArrayLength());
@@ -618,10 +618,12 @@ public sealed partial class GitHubReviewService : IReviewService
             // entries from earlier pagination pages. PatchParser is defensive (TryParse
             // on every numeric group, malformed-header skip), so reaching this catch
             // implies an unforeseen exception in future parser changes; surface as
-            // empty hunks (same wire shape as binary/>3MB files) and keep iterating.
-            catch (Exception)
+            // empty hunks (same wire shape as binary/>3MB files), log at Warning so
+            // the regression is diagnosable, and keep iterating.
+            catch (Exception ex)
 #pragma warning restore CA1031
             {
+                Log.PatchParseFailed(_log, path, ex);
                 hunks = Array.Empty<DiffHunk>();
             }
             result.Add(new FileChange(path, status, hunks));
@@ -685,6 +687,9 @@ public sealed partial class GitHubReviewService : IReviewService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Diff pagination hit the 30-page cap on PR {Owner}/{Repo}#{Number}; truncated diff will surface to the user via DiffDto.Truncated.")]
         internal static partial void DiffPagesCapped(ILogger logger, string owner, string repo, int number);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "PatchParser threw on file {Path}; surfacing empty hunks for that file (Files tab will show the \"Empty file\" placeholder). Per-file fault isolation kept the rest of the response intact. Inspect the patch shape if seen repeatedly.")]
+        internal static partial void PatchParseFailed(ILogger logger, string path, Exception ex);
     }
 
     private async Task<string> PostGraphQLAsync(string query, object variables, CancellationToken ct)
