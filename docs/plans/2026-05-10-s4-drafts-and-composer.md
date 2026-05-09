@@ -1988,7 +1988,7 @@ git commit -m "test(s4-pr2): override-stale propagation + force-push override-ig
 - Create: `tests/PRism.Core.Tests/Reconciliation/WhitespaceTests.cs`
 - Create: `tests/PRism.Core.Tests/Reconciliation/RenameTests.cs`
 - Create: `tests/PRism.Core.Tests/Reconciliation/DeleteTests.cs`
-- Create: `tests/PRism.Core.Tests/Reconciliation/ReplyTests.cs`
+- ~~Create: `tests/PRism.Core.Tests/Reconciliation/ReplyTests.cs`~~ — DEFERRED to PR3 (Task 30 region) where the endpoint passes `existingThreadIds` to the pipeline; PR2's reply tests would be tautological pass-through.
 - Create: `tests/PRism.Core.Tests/Reconciliation/VerdictReconfirmTests.cs`
 
 - [ ] **Step 1: Write `ForcePushFallbackTests.cs`**
@@ -2363,6 +2363,12 @@ git push origin docs/s4-drafts-and-composer-spec
 
 **PR title:** `feat(s4-pr3): PUT/GET /draft + POST /reload + bus events + SSE wiring + spec/02 update`
 
+**Optional split for review-load.** PR3 lands ~18 files across six review concerns (HTTP endpoint design, event bus contract, SSE wire format, GitHub API addition, middleware policy, spec doc edit). At reviewer's discretion, split as:
+- **PR3a** (Tasks 22-24a + 27-28): events + SSE projection + `IActivePrCache` + `IReviewService.GetCommitAsync` + `ReviewServiceFileContentSource`. Pure infrastructure; no endpoints.
+- **PR3b** (Tasks 25-26 + 29-32): `PUT/GET /draft` + `POST /reload` + middleware + spec/02 doc edit + tests.
+
+If shipping as single PR3, the description should call out the review-attention split: (1) endpoint validation rules, (2) SSE projection wire shape, (3) middleware predicate, (4) `GetCommitAsync` signature on `IReviewService`, (5) `IActivePrCache` design, (6) spec/02 doc edit.
+
 **Spec sections:** § 4 (entire), § 4.5 (SSE), § 4.6 (concurrency), § 4.7 (markAllRead semantics), § 4.8 (spec/02 update obligation), § 5.5 (overrideStale endpoint behavior).
 
 **Files touched:**
@@ -2422,8 +2428,11 @@ using PRism.Core.Contracts;
 
 namespace PRism.Core.Events;
 
-// Declared in S4 for forward-compat; published in S5 (no producer in S4).
-public sealed record DraftSubmitted(PrReference Pr, string? SourceTabId) : IReviewEvent;
+// Declared in S4 for forward-compat per spec § 4.4; published in S5 (no producer in S4).
+// Note: NO SourceTabId field. The spec's wire-shape table only enumerates state-changed,
+// draft-saved, draft-discarded — DraftSubmitted has no S4 wire shape; S5 will decide
+// whether to add SourceTabId when it adds the publication path.
+public sealed record DraftSubmitted(PrReference Pr) : IReviewEvent;
 ```
 
 - [ ] **Step 5: Create `StateChanged.cs`**
@@ -2489,9 +2498,32 @@ internal static class SseEventProjection
 }
 ```
 
-- [ ] **Step 3: Wire the projection into `SseChannel`**
+- [ ] **Step 3: Wire the projection into `SseChannel`** (explicit per-event-type subscription)
 
-In `PRism.Web/Sse/SseChannel.cs`, find where IReviewEvent is consumed for SSE write. Extend the dispatch to use `SseEventProjection.Project` for the four new event names. The exact integration depends on the existing dispatch pattern — preserve existing `inbox-updated` / `pr-updated` paths verbatim.
+`SseChannel` today (verified at `PRism.Web/Sse/SseChannel.cs:45-46`) uses **per-event-type subscription** (not a wildcard dispatcher):
+
+```csharp
+_busInbox = bus.Subscribe<InboxUpdated>(OnInboxUpdated);
+_busActivePr = bus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
+```
+
+Add three more parallel subscriptions in the constructor:
+
+```csharp
+_busStateChanged = bus.Subscribe<StateChanged>(OnStateChanged);
+_busDraftSaved = bus.Subscribe<DraftSaved>(OnDraftSaved);
+_busDraftDiscarded = bus.Subscribe<DraftDiscarded>(OnDraftDiscarded);
+// NOTE: DraftSubmitted intentionally NOT subscribed in S4 (no producer; S5 wires it).
+```
+
+Add three corresponding `OnXxx(IReviewEvent)` handler methods that:
+1. Filter fanout: only push to subscribers registered for `evt.Pr` (per-PR fanout, mirroring `OnActivePrUpdated`'s pattern). Cross-PR information leakage if you broadcast.
+2. Use `SseEventProjection.Project(evt)` to compute the wire shape + event name.
+3. Serialize via `JsonSerializerOptionsFactory.Api` and write `event: <name>\ndata: <json>\n\n` per the existing channel framing.
+
+Add three `IDisposable` fields and call `Dispose()` on each in the existing `Dispose()` method.
+
+**Crucially:** `SseEventProjection.Project` is called from inside the new handler methods only. `OnInboxUpdated` and `OnActivePrUpdated` retain their inline framing — they do NOT route through `Project` (whose default arm throws). The projection is only for the three new event types; the throw arm signals "this event type was added without updating the projection switch" and is correct as-is.
 
 - [ ] **Step 4: Verify build + tests**
 
@@ -2593,6 +2625,92 @@ Expected: PASS.
 ```bash
 git add PRism.Web/Endpoints/PrDraftDtos.cs
 git commit -m "feat(s4-pr3): PrDraftDtos (ReviewSessionDto + ReviewSessionPatch discriminated shape)"
+```
+
+---
+
+### Task 24a: Introduce `IActivePrCache` (S4-internal, not S3 — correction)
+
+**Files:**
+- Create: `PRism.Core/PrDetail/IActivePrCache.cs`
+- Create: `PRism.Core/PrDetail/ActivePrCache.cs`
+- Modify: `PRism.Core/PrDetail/ActivePrPoller.cs` (publish into cache after each successful poll)
+- Modify: `PRism.Core/PrDetail/ServiceCollectionExtensions.cs` (or wherever `ActivePrPoller` is registered) — register the cache as a singleton
+
+**Why this task exists.** The earlier draft of the plan referenced "IActivePrCache (S3 dependency)" — that was wrong. S3 ships `ActivePrPoller` with private state; no public-facing cache surface exists. Tasks 25 (`markAllRead`) and 29 (`POST /reload` head-shift detection) both need to read "current head SHA per active PR" and "highest issue-comment id per active PR." This task introduces the minimal cache surface they need.
+
+- [ ] **Step 1: Create the interface + record**
+
+```csharp
+using PRism.Core.Contracts;
+
+namespace PRism.Core.PrDetail;
+
+public interface IActivePrCache
+{
+    bool IsSubscribed(PrReference prRef);                    // any tab subscribed?
+    ActivePrSnapshot? GetCurrent(PrReference prRef);         // null if not subscribed or no poll completed yet
+    void Update(PrReference prRef, ActivePrSnapshot snapshot);
+}
+
+public sealed record ActivePrSnapshot(
+    string HeadSha,
+    long? HighestIssueCommentId,                              // null if no issue comments observed
+    DateTimeOffset ObservedAt);
+```
+
+- [ ] **Step 2: Create the in-memory impl**
+
+```csharp
+using System.Collections.Concurrent;
+using PRism.Core.Contracts;
+
+namespace PRism.Core.PrDetail;
+
+public sealed class ActivePrCache : IActivePrCache
+{
+    private readonly ActivePrSubscriberRegistry _subscribers;
+    private readonly ConcurrentDictionary<PrReference, ActivePrSnapshot> _snapshots = new();
+
+    public ActivePrCache(ActivePrSubscriberRegistry subscribers) { _subscribers = subscribers; }
+
+    public bool IsSubscribed(PrReference prRef) => _subscribers.AnySubscribers(prRef);
+
+    public ActivePrSnapshot? GetCurrent(PrReference prRef)
+        => _snapshots.TryGetValue(prRef, out var snap) ? snap : null;
+
+    public void Update(PrReference prRef, ActivePrSnapshot snapshot)
+        => _snapshots[prRef] = snapshot;
+}
+```
+
+(If `ActivePrSubscriberRegistry` doesn't expose `AnySubscribers(PrReference)` today, add it as a small read method in the same task.)
+
+- [ ] **Step 3: Wire `ActivePrPoller` to publish into the cache**
+
+In `ActivePrPoller.cs`, after each successful per-PR poll cycle, call `_cache.Update(prRef, new ActivePrSnapshot(currentHeadSha, highestIssueCommentId, DateTimeOffset.UtcNow))`. The `highestIssueCommentId` is computed by the same path that builds `ActivePrUpdated` events.
+
+- [ ] **Step 4: DI registration**
+
+Register `IActivePrCache` → `ActivePrCache` as `Singleton` in the service composition root (alongside `ActivePrSubscriberRegistry`). Inject into `ActivePrPoller`.
+
+- [ ] **Step 5: Tests**
+
+Create `tests/PRism.Core.Tests/PrDetail/ActivePrCacheTests.cs`:
+- `Empty_GetCurrent_ReturnsNull`
+- `Update_Then_GetCurrent_ReturnsSnapshot`
+- `IsSubscribed_DelegatesToRegistry`
+
+- [ ] **Step 6: Verify build + existing S3 tests stay green**
+
+Run: `dotnet build && dotnet test`
+Expected: ALL PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add PRism.Core/PrDetail/IActivePrCache.cs PRism.Core/PrDetail/ActivePrCache.cs PRism.Core/PrDetail/ActivePrPoller.cs PRism.Core/PrDetail/ServiceCollectionExtensions.cs tests/PRism.Core.Tests/PrDetail/ActivePrCacheTests.cs
+git commit -m "feat(s4-pr3): IActivePrCache exposes per-PR head SHA + highest comment id; populated by ActivePrPoller"
 ```
 
 ---
@@ -2971,7 +3089,17 @@ public static class PrDraftEndpoints
         }
 
         // — draftVerdict —
-        if (patch.DraftVerdict is { } verdictStr || patch.DraftVerdict is null && false)   // also handles null clear
+        // Discriminator: "is this the verdict patch?" — driven by EnumerateSetFields detecting
+        // it via the explicit "draftVerdict" name. Because the wire is "exactly one field set,"
+        // by the time ApplyPatch runs we know which kind it is from EnumerateSetFields.
+        // The verdict patch is the only one whose value can legitimately be `null` (clears the
+        // verdict), so a presence check on `patch.DraftVerdict is not null` is wrong (it would
+        // miss the explicit-null-clear case). Instead, we pass the discriminator kind alongside
+        // the patch and dispatch in this method by kind, not by value-presence. Simpler shape:
+        // EnumerateSetFields returns the kind name; ApplyPatch switches on it directly. See
+        // refactor in Step 3a below.
+        // For now, the verdict arm is reached when EnumerateSetFields returned "draftVerdict":
+        if (/* dispatch reached the verdict arm */ false /* placeholder; see refactor */)
         {
             var verdict = patch.DraftVerdict switch
             {
@@ -3139,20 +3267,160 @@ public static class PrDraftEndpoints
 }
 ```
 
+- [ ] **Step 3a: REFACTOR `ApplyPatch` to dispatch on the kind discriminator (fixes draftVerdict null-clear bug + markAllRead no-op + reduces tuple-shape coupling)**
+
+The Step 3 code is a sketch. Before commit, restructure as follows. The `EnumerateSetFields` already determines which patch kind is set; pass that string into a switch. This eliminates the buggy `is { } verdictStr || patch.DraftVerdict is null && false` condition (which never fired the verdict arm for null-clear) and forces every kind to be explicitly handled.
+
+Replace `ApplyPatch` with a `(string kind, ReviewSessionPatch patch, ReviewSessionState session, IActivePrCache cache) -> PatchOutcome` shape:
+
+```csharp
+internal abstract record PatchOutcome
+{
+    public sealed record Applied(
+        ReviewSessionState Updated,
+        string? AssignedId,
+        string? EventDraftId,
+        bool PublishSaved,
+        bool PublishDiscarded,
+        IReadOnlyList<string> FieldsTouched) : PatchOutcome;
+
+    public sealed record DraftNotFound : PatchOutcome;
+    public sealed record NotStale : PatchOutcome;
+    public sealed record FileNotInDiff : PatchOutcome;
+    public sealed record NotSubscribed : PatchOutcome;
+    public sealed record NoOp : PatchOutcome;   // confirmVerdict-when-already-draft, markAllRead-when-cache-empty
+}
+
+private static PatchOutcome ApplyPatch(
+    string kind,
+    ReviewSessionPatch patch,
+    ReviewSessionState session,
+    IActivePrCache cache,
+    PrReference prRef)
+{
+    switch (kind)
+    {
+        case "draftVerdict":
+            // Note: DraftVerdict CAN be null (clears the verdict). Only this arm handles null.
+            var verdict = patch.DraftVerdict switch
+            {
+                "approve" => (DraftVerdict?)DraftVerdict.Approve,
+                "requestChanges" => (DraftVerdict?)DraftVerdict.RequestChanges,
+                "comment" => (DraftVerdict?)DraftVerdict.Comment,
+                null => null,
+                _ => throw new ArgumentException($"unknown verdict: {patch.DraftVerdict}")
+            };
+            return new PatchOutcome.Applied(
+                session with { DraftVerdict = verdict },
+                AssignedId: null, EventDraftId: null,
+                PublishSaved: false, PublishDiscarded: false,
+                FieldsTouched: new[] { "draft-verdict" });
+
+        case "draftSummaryMarkdown":
+            return new PatchOutcome.Applied(
+                session with { DraftSummaryMarkdown = patch.DraftSummaryMarkdown },
+                null, null, false, false, new[] { "draft-summary" });
+
+        case "newDraftComment":
+            // ... (same as Step 3 code, returning PatchOutcome.Applied)
+
+        case "newPrRootDraftComment":
+            // ... (same)
+
+        case "updateDraftComment":
+            // ... (same — return PatchOutcome.DraftNotFound on missing id)
+
+        case "deleteDraftComment":
+            // ... (same — return PatchOutcome.DraftNotFound on missing id)
+
+        case "newDraftReply":
+        case "updateDraftReply":
+        case "deleteDraftReply":
+            // ... (same patterns)
+
+        case "confirmVerdict":
+            if (session.DraftVerdictStatus == DraftVerdictStatus.Draft)
+                return new PatchOutcome.NoOp();
+            return new PatchOutcome.Applied(
+                session with { DraftVerdictStatus = DraftVerdictStatus.Draft },
+                null, null, false, false, new[] { "draft-verdict-status" });
+
+        case "markAllRead":
+            // SECURITY: closes the drive-by-tab vector per spec § 4.7.
+            if (!cache.IsSubscribed(prRef))
+                return new PatchOutcome.NotSubscribed();
+            var snapshot = cache.GetCurrent(prRef);
+            if (snapshot is null || snapshot.HighestIssueCommentId is null)
+                return new PatchOutcome.NoOp();   // cache cold or no issue comments
+            var newId = snapshot.HighestIssueCommentId.Value.ToString();
+            if (session.LastSeenCommentId == newId)
+                return new PatchOutcome.NoOp();
+            return new PatchOutcome.Applied(
+                session with { LastSeenCommentId = newId },
+                null, null, false, false, new[] { "last-seen-comment-id" });
+
+        case "overrideStale":
+            // ... (same as Step 3 code)
+
+        default:
+            throw new InvalidOperationException($"unhandled patch kind: {kind}");
+    }
+}
+```
+
+The `PutDraft` endpoint then handles the `PatchOutcome` cases:
+```csharp
+return outcome switch
+{
+    PatchOutcome.Applied a when a.AssignedId is not null => Results.Ok(new AssignedIdResponse(a.AssignedId)),
+    PatchOutcome.Applied => Results.Ok(),
+    PatchOutcome.NoOp => Results.Ok(),
+    PatchOutcome.DraftNotFound => Results.NotFound(new { error = "draft-not-found" }),
+    PatchOutcome.NotStale => Results.BadRequest(new { error = "not-stale" }),
+    PatchOutcome.FileNotInDiff => Results.UnprocessableEntity(new { error = "draft-file-not-in-diff" }),
+    PatchOutcome.NotSubscribed => Results.NotFound(new { error = "not-subscribed" }),
+    _ => throw new InvalidOperationException($"unhandled outcome: {outcome}")
+};
+```
+
+Event publication (outside `_gate`):
+```csharp
+if (outcome is PatchOutcome.Applied applied)
+{
+    if (applied.PublishSaved && applied.EventDraftId is not null)
+        bus.Publish(new DraftSaved(prRef, applied.EventDraftId, sourceTabId));
+    if (applied.PublishDiscarded && applied.EventDraftId is not null)
+        bus.Publish(new DraftDiscarded(prRef, applied.EventDraftId, sourceTabId));
+    bus.Publish(new StateChanged(prRef, applied.FieldsTouched, sourceTabId));
+}
+// Crucially: NoOp / NotFound / NotStale / NotSubscribed / FileNotInDiff do NOT publish events.
+// This prevents the false-StateChanged-after-no-op bug (markAllRead on cold cache used to
+// publish a misleading event in the earlier sketch).
+```
+
 - [ ] **Step 4: Wire endpoint registration in `Program.cs`**
 
 Add `app.MapPrDraftEndpoints();` near the existing endpoint registrations (after the existing `MapPrDetailEndpoints()` etc.)
 
-- [ ] **Step 5: Run the endpoint tests to verify pass**
+- [ ] **Step 5: Update tests for refactored shape + add missing tests**
+
+Add to `PrDraftEndpointTests.cs`:
+- `MarkAllRead_NotSubscribed_404_NotSubscribed` (security defense from spec § 4.7).
+- `MarkAllRead_CacheEmpty_NoOp_NoEvent` (cold cache; should NOT publish StateChanged).
+- `MarkAllRead_Success_UpdatesLastSeenCommentId_PublishesStateChanged` (use a fake `IActivePrCache` injected via `WebApplicationFactory<Program>.WithWebHostBuilder`).
+- `DraftVerdictNullClear_PersistsNull_PublishesStateChanged` (covers the previously-buggy null-clear arm).
+- `ConfirmVerdictWhenAlreadyDraft_NoOp_NoEvent_NoStateChange` (verifies no-op truly does nothing, including no event).
+
+- [ ] **Step 6: Run the endpoint tests to verify pass**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~PrDraftEndpointTests"`
-Expected: PASS (7 tests).
+Expected: PASS (7 + 5 new = 12 tests).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add PRism.Web/Endpoints/PrDraftEndpoints.cs PRism.Web/Program.cs tests/PRism.Web.Tests/Endpoints/PrDraftEndpointTests.cs
-git commit -m "feat(s4-pr3): PUT/GET /api/pr/{ref}/draft single-funnel endpoint with all patch kinds + validation + events"
+git commit -m "feat(s4-pr3): PUT/GET /api/pr/{ref}/draft + PatchOutcome dispatch + markAllRead with cache + null-clear verdict fix"
 ```
 
 ---
@@ -3253,10 +3521,12 @@ git commit -m "feat(s4-pr3): IReviewService.GetCommitAsync + GitHub REST impl (n
 
 ---
 
-### Task 28: Add `ReviewServiceFileContentSource`
+### Task 28: Add `ReviewServiceFileContentSource` (with `FileContentResult` projection)
 
 **Files:**
 - Create: `PRism.Core/Reconciliation/Pipeline/ReviewServiceFileContentSource.cs`
+
+**IMPORTANT: API-shape correction from earlier draft.** `IReviewService.GetFileContentAsync` returns `Task<FileContentResult>` (verified at `PRism.Core/IReviewService.cs:30`), not `Task<string?>`. `FileContentResult` has `Status` (`Ok | NotFound | TooLarge | Binary | NotInDiff`) and nullable `Content`. The wrapper must project explicitly. Per spec § 3.3 "the file-deleted-vs-SHA-unreachable distinction" — `NotFound` here means "file absent at this SHA" (file deleted); `NotInDiff` is a programmer error inside reconciliation (the pipeline should never request a file outside the PR's diff after FileResolution); `TooLarge` and `Binary` are "we can't reconcile against this content" → treat as Stale-NoMatch.
 
 - [ ] **Step 1: Create the wrapper**
 
@@ -3278,8 +3548,19 @@ internal sealed class ReviewServiceFileContentSource : IFileContentSource
 
     public async Task<string?> GetAsync(string filePath, string sha, CancellationToken ct)
     {
-        // GetFileContentAsync returns null on 404 per the existing IReviewService contract
-        return await _inner.GetFileContentAsync(_pr, filePath, sha, ct);
+        var result = await _inner.GetFileContentAsync(_pr, filePath, sha, ct);
+        return result.Status switch
+        {
+            FileContentStatus.Ok => result.Content,
+            FileContentStatus.NotFound => null,                 // file gone at this SHA → caller treats as FileDeleted
+            FileContentStatus.TooLarge => null,                 // unreconcileable → caller falls through to NoMatch
+            FileContentStatus.Binary => null,                   // unreconcileable
+            FileContentStatus.NotInDiff =>                       // programmer error: FileResolution should have caught this
+                throw new InvalidOperationException(
+                    $"Reconciliation pipeline requested file '{filePath}' at SHA '{sha}' that is not in the PR diff. " +
+                    "FileResolution step should reject this earlier. This is a bug in the pipeline."),
+            _ => null
+        };
     }
 
     public async Task<bool> IsCommitReachableAsync(string sha, CancellationToken ct)
@@ -3289,6 +3570,8 @@ internal sealed class ReviewServiceFileContentSource : IFileContentSource
     }
 }
 ```
+
+**Note:** `FileContentStatus.TooLarge` and `Binary` produce `null` here, which the pipeline classifies as `Stale (NoMatch)` (per `Classifier.cs` row 7 — no exact, no whitespace-equiv = Stale). That's the correct behavior — we cannot do line-content reconciliation on binary or oversized files, so the user must re-anchor manually. A future enhancement could classify these as a distinct `StaleReason` (e.g., `FileBinary` / `FileTooLarge`) so the panel surfaces a more specific message; out of scope for S4.
 
 - [ ] **Step 2: Commit**
 
@@ -3388,18 +3671,26 @@ public static class PrReloadEndpoints
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/reload", PostReload).WithName("PostReload");
     }
 
+    private static readonly System.Text.RegularExpressions.Regex Sha40 = new(@"^[0-9a-f]{40}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex Sha64 = new(@"^[0-9a-f]{64}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private static async Task<IResult> PostReload(
         string owner, string repo, int number,
         ReloadRequest request,
         HttpContext httpContext,
         IAppStateStore store,
         IReviewService reviewService,
+        IActivePrCache activePrCache,
         IReviewEventBus bus,
         CancellationToken ct)
     {
         var prRef = new PrReference(owner, repo, number);
         var refKey = prRef.ToString();
         var sourceTabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+
+        // SECURITY: validate headSha format (mirrors PUT /draft anchoredSha validation per spec § 4.2)
+        if (!Sha40.IsMatch(request.HeadSha) && !Sha64.IsMatch(request.HeadSha))
+            return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
 
         var sem = PerPrSemaphores.GetOrAdd(refKey, _ => new SemaphoreSlim(1, 1));
         if (!await sem.WaitAsync(0, ct))
@@ -3428,12 +3719,16 @@ public static class PrReloadEndpoints
                 if (!state.Reviews.Sessions.TryGetValue(refKey, out var current))
                     return state;
 
-                // Head-shift detection (compared against cached active-PR head; placeholder
-                // — production uses IActivePrCache. For MVP: compare to LastViewedHeadSha.)
-                if (current.LastViewedHeadSha is not null && current.LastViewedHeadSha != request.HeadSha)
+                // Head-shift detection per spec § 3.3. Compare the request's headSha against
+                // the active-PR cache's current head (populated by ActivePrPoller — Task 24a).
+                // If they diverge, the poller has observed a newer head between Phase 1's read
+                // and this Phase 2 apply — return without persisting and surface 409 with the
+                // current sha so the frontend can auto-retry (Task 46).
+                var cached = activePrCache.GetCurrent(prRef);
+                if (cached is not null && cached.HeadSha != request.HeadSha)
                 {
-                    // No longer the latest known head; let the apply proceed but flag.
-                    // Real implementation queries IActivePrCache for the current head.
+                    currentHeadShaForRetry = cached.HeadSha;
+                    return state;   // no-op the apply
                 }
 
                 var updatedDrafts = result.Drafts.Select(r =>
@@ -3475,7 +3770,9 @@ public static class PrReloadEndpoints
             }, ct);
 
             if (currentHeadShaForRetry is not null)
-                return Results.Conflict(new ReloadStaleHeadResponse(currentHeadShaForRetry));
+                return Results.Json(
+                    new ReloadStaleHeadResponse(currentHeadShaForRetry),
+                    statusCode: StatusCodes.Status409Conflict);
 
             // Publish event (outside _gate)
             bus.Publish(new StateChanged(prRef, new[] { "draft-comments", "draft-replies", "draft-verdict-status" }, sourceTabId));
@@ -3491,7 +3788,13 @@ public static class PrReloadEndpoints
         }
     }
 
-    // Re-uses PrDraftEndpoints' DTO mapper. For brevity, inline a thin proxy here:
+    // Re-uses PrDraftEndpoints.MapToDto by promoting it to `internal static` (Task 25's
+    // private mapper becomes internal so this endpoint can call it without copy-paste).
+    // The duplicate inline mapper from the earlier sketch is REMOVED — call site:
+    //   var session2 = stateAfter.Reviews.Sessions[refKey];
+    //   return Results.Ok(PrDraftEndpoints.MapToDto(session2));
+    // (Step 6 of Task 25 includes the visibility change.)
+    // The block below is preserved only to document the mapper shape; delete before commit.
     private static ReviewSessionDto MapSessionToDto(ReviewSessionState s) => new(
         DraftVerdict: s.DraftVerdict?.ToString().ToLowerInvariant() switch
         {
@@ -3716,7 +4019,127 @@ git push origin docs/s4-drafts-and-composer-spec
 
 **PR title:** `feat(s4-pr4): draft client (useDraftSession + api/draft) + useComposerAutoSave + InlineCommentComposer`
 
-**Spec sections:** § 5.1 (component tree), § 5.2 (state architecture), § 5.3 (composer auto-save model), § 5.3a (composer Esc/Discard flow), § 5.7 (multi-tab subscriber), § 5.9 (TS types).
+**Spec sections:** § 5.1 (component tree), § 5.2 (state architecture), § 5.3 (composer auto-save model), § 5.3a (composer Esc/Discard flow), § 5.7 (multi-tab subscriber), § 5.8 (AI placeholder slots), § 5.9 (TS types).
+
+## Frontend implementation requirements addendum (applies to PR4-PR7)
+
+These requirements were surfaced by the design-lens review of the plan. The per-task descriptions in Phases 4-7 hit the load-bearing surfaces; these addenda fill in the spec-mandated details that weren't enumerated per-task. Apply during the relevant task; cross-reference here when a Vitest test file lands.
+
+### A1. AI placeholder slots (spec § 5.8) — wire in PR4 + PR6
+
+Three slot components, all rendering `null` when their capability flag is `false` (the PoC default; capability hook from S0+S1 is `useCapability(flag)` — verify exact name in `frontend/src/hooks/useCapability.ts` from S3):
+
+| Slot | Mounted at | Capability flag |
+|---|---|---|
+| `<AiComposerAssistant>` | Inside `InlineCommentComposer`, `ReplyComposer`, `PrRootReplyComposer` next to the Save button | `ai.composerAssist` |
+| `<AiDraftSuggestionsPanel>` | Top of `DraftsTab`, above the list (Task 43) | `ai.draftSuggestions` |
+| AI badge slot inside `StaleDraftRow` | Per stale draft in `UnresolvedPanel` (Task 44) | `ai.draftReconciliationAssist` |
+
+Per slot:
+- Create a stub `.tsx` file at `frontend/src/components/Ai/<Name>.tsx`. Component reads its capability via `useCapability('ai.<flag>')`; returns `null` when false; otherwise returns a placeholder div (whatever existing AI Placeholder pattern S2/S3 ships with; verify via existing `<AiSummarySlot>` from S3).
+- Add the slot mount point at the designated parent.
+- Add a Vitest test asserting renders-null when capability is false.
+
+The three new flag names must also be added to the `/api/capabilities` response shape on the backend per spec § 5.8 — done in PR4 alongside slot creation (or in a small backend follow-up PR if the capability dispatcher is closed for changes by PR3).
+
+### A2. "Click another line while composer is open" flow (spec § 5.3a) — Task 39 sub-step
+
+In Task 39 Step 5 (wire diff-line-click), before mounting `<InlineCommentComposer>` at the new anchor, check whether a composer is already mounted for a different anchor in the same tab:
+- If no existing composer mounted: mount the new one (current behavior).
+- If existing composer mounted AND has no `draftId` yet: close the existing composer (no PUT — nothing to discard server-side), mount the new one.
+- If existing composer mounted AND has a `draftId`: surface a `Modal` (Task 38 primitive) titled "You have a saved draft on line N. Discard or keep it as you switch to line M?" with two buttons:
+  - `Discard`: send `deleteDraftComment(draftId)`, close existing composer, mount new one.
+  - `Keep`: leave existing composer's draft saved (it remains visible in the Drafts tab and reappears if user navigates back to line N), close current composer panel, mount new one at line M.
+
+Tests:
+- `ClickAnotherLine_NoExistingDraft_OpensNewComposerImmediately`
+- `ClickAnotherLine_ExistingDraftSaved_ShowsModalWithDiscardOrKeep`
+- `ClickAnotherLine_DiscardBranch_FiresDeleteDraftComment`
+- `ClickAnotherLine_KeepBranch_LeavesDraftPersisted`
+
+### A3. Composer accessibility (spec § 5.5c) — Tasks 39 / 40 / 42 sub-step
+
+Every composer (`InlineCommentComposer`, `ReplyComposer`, `PrRootReplyComposer`) MUST:
+- Set `role="form"` on the outer container.
+- Set `aria-label` to the anchor description (e.g., `"Draft comment on src/Foo.cs line 42"` for inline; `"Reply to thread PRRT_..."` for reply; `"Reply to this PR"` for PR-root). Use a helper `composerAriaLabel(anchor)` to centralize.
+- `ComposerMarkdownPreview` (Task 39 Step 3) gets `tabIndex={0}` on its container so Tab from the textarea reaches the preview pane when toggled on. Without `tabIndex`, the focus skips it. Include a Vitest test `Tab_FromTextarea_ReachesPreview_WhenToggleOn`.
+- Save button: `aria-disabled={!body.trim()}` when body empty; tooltip "Type something to save."
+
+### A4. Modal `disableEscDismiss` prop (spec § 5.3 recovery modal) — Task 38 sub-step
+
+The 404-recovery modal (per spec § 5.3) explicitly says: "The modal is dismissable only by one of the two actions (no Esc-to-dismiss; the user must choose, otherwise the composer is in an inconsistent state)."
+
+Add an optional prop to the Modal primitive:
+```typescript
+export interface ModalProps {
+  // ... existing props ...
+  disableEscDismiss?: boolean;   // default false
+}
+```
+
+In the keydown handler: only call `onClose` on Esc when `!disableEscDismiss`. Add Vitest test `EscKey_Suppressed_WhenDisableEscDismissTrue`.
+
+Task 39 Step 4's recovery modal sets `disableEscDismiss={true}`.
+
+### A5. `VerdictReconfirmRow` implementation (spec § 5.5) — Task 44 sub-step
+
+Task 44's Step 4 lists `VerdictReconfirmRow_FiresConfirmVerdictPatch` as a test — but Step 1 doesn't create the row. Add to Step 1:
+
+```tsx
+// frontend/src/components/PrDetail/Reconciliation/VerdictReconfirmRow.tsx
+import { sendPatch } from '../../../api/draft';
+
+export function VerdictReconfirmRow({ prRef, sessionToken }: { prRef: string; sessionToken: string }) {
+  return (
+    <div role="group" aria-label="Verdict re-confirm">
+      <p>Verdict needs re-confirm because the PR head shifted. Click your verdict to confirm:</p>
+      <button onClick={() => sendPatch(prRef, { kind: 'confirmVerdict' }, sessionToken)}>Confirm</button>
+    </div>
+  );
+}
+```
+
+`UnresolvedPanel` mounts `<VerdictReconfirmRow>` when `session.draftVerdictStatus === 'needs-reconfirm'`, alongside (above) the per-stale-draft rows. The single "Confirm" button fires `confirmVerdict` patch — the user's existing verdict (Approve / RequestChanges / Comment) is preserved server-side; the click just flips `DraftVerdictStatus` from `NeedsReconfirm` back to `Draft`.
+
+(The spec's framing — "Single click on the verdict picker calls `confirmVerdict` patch" — is preserved with this minimal shape. If dogfooding shows users want to *change* the verdict at re-confirm time, a future task can extend the row with the three-button picker. Not S4 scope.)
+
+### A6. `MarkdownRendererSecurity.test.tsx` parameterization update — Tasks 43 + 44 sub-step
+
+Per spec § 5.6's reuse rule, every render site for `bodyMarkdown` (composer preview, `DraftListItem` body preview, `StaleDraftRow` body display, `DiscardAllStaleButton` confirm modal preview) must route through the shared `MarkdownRenderer`. The `MarkdownRendererSecurity.test.tsx` (Task 38) is parameterized over the consumer list; when Tasks 43 (DraftListItem, DraftListEmpty, DiscardAllStaleButton) and 44 (StaleDraftRow body) land, **append** to the parameterized fixture:
+
+```typescript
+// In MarkdownRendererSecurity.test.tsx
+const COMPONENTS = [
+  // PR4 (added in Task 38)
+  { name: 'ComposerMarkdownPreview', render: (md: string) => <ComposerMarkdownPreview body={md} /> },
+  // PR6 (added in Tasks 43 + 44)
+  { name: 'DraftListItem.preview', render: (md: string) => <DraftListItem ...preview={md} /> },
+  { name: 'StaleDraftRow.body', render: (md: string) => <StaleDraftRow ...body={md} /> },
+  { name: 'DiscardAllStaleButton.modalPreview', render: (md: string) => /* render the modal */ },
+];
+
+it.each(COMPONENTS)('$name renders javascript: URL as escaped text', ({ render }) => { /* ... */ });
+```
+
+Tasks 43 and 44 each include a step "extend `MarkdownRendererSecurity.test.tsx` with this component as a parameterized case" — without it, the spec § 5.6 enforcement is prose-only.
+
+### A7. `useStateChangedSubscriber` inbox-badge invalidation test — Task 39 Step 2 addition
+
+Add to Task 39 Step 2's test list:
+- `StateChanged_LastSeenCommentId_InvalidatesInboxBadge` (per spec § 5.10) — fire a fake `state-changed` event with `fieldsTouched: ['last-seen-comment-id']`; assert the inbox badge invalidation hook is called.
+
+### A8. Cross-tab "Switch to other tab" — sender-side test (Task 45 Step 4 addition)
+
+Add to Task 45 Step 4:
+- `SwitchToOtherTab_PostsRequestFocusMessage` — render the banner; click "Switch to other tab"; assert `BroadcastChannel.postMessage({ kind: "request-focus", tabId })` was called.
+
+### A9. `bool? ConfirmVerdict` / `bool? MarkAllRead` JSON binding — backend + TS client contract
+
+The backend `ReviewSessionPatch` uses `bool? ConfirmVerdict` / `bool? MarkAllRead`. `System.Text.Json` deserializes `false` to `false` (not `null`), so a wire payload `{"confirmVerdict": false}` would have `ConfirmVerdict = false` in the C# record. The `EnumerateSetFields` check `if (p.ConfirmVerdict == true)` correctly treats `false` as "not set" — but the multi-field guard would then reject the patch (zero fields set) with `400 invalid-patch-shape`.
+
+The TS client at `api/draft.ts` (Task 34) already handles this correctly: `serializePatch` for `kind: 'confirmVerdict'` returns `{ confirmVerdict: true }` (literal true; never serializes `false`). This must remain — a refactor that emits `false` for "absent" via `JSON.stringify` over an object with default values would break the contract.
+
+Add a Vitest test `serializePatch_ConfirmVerdict_AlwaysEmitsTrue_NeverFalse` in `api/draft.test.ts` (Task 34 Step 2).
 
 ---
 
@@ -3751,7 +4174,8 @@ git push origin docs/s4-drafts-and-composer-spec
 ### Task 36: Add `useDraftSession` with diff-and-prefer merge
 
 - [ ] **Step 1: Create `frontend/src/hooks/useDraftSession.ts`** — `useState<ReviewSessionDto | null>` + `useEffect` that fetches `getDraft` and merges via the diff-and-prefer rule:
-  - For each id present in both local and server: if `openComposers.has(id)`, keep local body but accept server `status` / `isOverriddenStale`; otherwise use server.
+  - **`registerOpenComposer` refcount semantics:** the registry is `Map<draftId, number>` (refcount), NOT `Set<draftId>`. Each call to `registerOpenComposer(id)` increments the count and returns a cleanup that decrements. The "is this id open" predicate is `count > 0`. This handles the case where two composers in the same tab open for the same draft id (e.g., `InlineCommentComposer` mounted in Files tab + user clicks `Edit` in Drafts tab without unmounting the first); the second composer's mount doesn't clobber the first composer's protection when the second unmounts. Merger uses `(registry.get(id) ?? 0) > 0` to decide protection.
+  - For each id present in both local and server: if `(registry.get(id) ?? 0) > 0`, keep local body but accept server `status` / `isOverriddenStale`; otherwise use server.
   - For each id present only server: add to local list.
   - For each id present only local: drop. (The composer's next save will hit 404 and trigger the recovery modal — Task 37.)
   - When the merger detects a remote body change for an id with no open composer: call `setOutOfBandToast({ draftId, filePath })`. Return `{ session, status, error, refetch, registerOpenComposer, outOfBandToast, clearOutOfBandToast }`.
@@ -3770,8 +4194,12 @@ git push origin docs/s4-drafts-and-composer-spec
 ### Task 37: Add `useComposerAutoSave` (threshold + in-flight-create promise + 404 recovery + retry)
 
 - [ ] **Step 1: Create `frontend/src/hooks/useComposerAutoSave.ts`**:
+  - **`prState` parameter** (per spec § 6 closed/merged handling): hook accepts `prState: 'open' | 'closed' | 'merged'`. When `prState !== 'open'`, the debounce body short-circuits before any PUT (no auto-save while PR is closed/merged); the composer renders a per-composer banner "PR closed — text not saved" — that's the composer's responsibility (Task 39).
   - 250 ms debounce via `setTimeout` cleared on body-state-change.
   - Threshold: `body.trim().length >= 3` (UTF-16 code units; `bodyMarkdown.trim().length` per spec § 5.3 emoji edge note). Sub-threshold debounces are no-ops *unless* `draftId !== null`.
+  - **Threshold gate on existing drafts (body shrinks below 3 chars after creation):** when `draftId !== null` AND `body.trim().length < 3`:
+    - If `body.trim().length === 0` → fire `deleteDraftComment` (or reply variant) and unmount the composer (per spec § 5.4 "When body is empty: no confirmation — instant delete (defensive against the rare zero-body draft that survived the threshold somehow)"). The "somehow" is THIS path.
+    - If `body.trim().length` is 1 or 2 → still fire `updateDraftComment` (the user is mid-edit; trust them). Persisting a 2-char body is acceptable; the threshold is for *creation* only.
   - In-flight create: a `Promise<assignedId> | null` ref. While non-null, subsequent debounces `await` it before deciding create-vs-update. Cleared on completion.
   - Status badge state: `'saved' | 'saving' | 'unsaved' | 'rejected'` driven by HTTP response.
   - 404 from `updateDraftComment` / `updateDraftReply`: clears local `draftId`, calls `onDraftDeleted` callback (composer surfaces recovery modal — Task 39).
@@ -4058,7 +4486,25 @@ export function MarkAllReadButton({ prRef, sessionToken }: { prRef: string; sess
 
 - [ ] **Step 2: Create `PRism.Web/TestHooks/TestEndpoints.cs`** (only registered when `ASPNETCORE_ENVIRONMENT=Test`):
   - `POST /test/advance-head?prRef=...&newHeadSha=...&fileChanges=...` mutates `FakeReviewService` state.
-  - `POST /test/seed-pr` accepts a JSON payload and creates the PR fixture.
+  - PR fixtures are loaded from `frontend/e2e/fixtures/<scenario>.json` at startup (no separate `POST /test/seed-pr` endpoint — fixtures are static-file-based, eliminating an endpoint with no current consumer).
+  - **Env-flag implementation (load-bearing for security per spec § 6 / security review):**
+    ```csharp
+    public static void MapTestEndpoints(this WebApplication app)
+    {
+        if (!app.Environment.IsEnvironment("Test")) return;   // hard guard at registration
+        app.MapPost("/test/advance-head", /* ... */);
+    }
+    ```
+  - **`SessionTokenMiddleware` interaction:** the existing middleware (`PRism.Web/Middleware/SessionTokenMiddleware.cs`) enforces auth in non-Development environments (`!env.IsDevelopment()`). Under `ASPNETCORE_ENVIRONMENT=Test`, the middleware is enforced. Either: (a) bypass the middleware for `/test/*` routes via `MapWhen` in `Program.cs`, or (b) Playwright supplies the `X-PRism-Session` header to `/test/*` calls (matching how it supplies it for the actual API calls). Pick (b) — keeps security behavior uniform.
+  - **Playwright env wiring** (`playwright.config.ts`):
+    ```typescript
+    webServer: {
+      command: 'dotnet run --project PRism.Web',
+      env: { ASPNETCORE_ENVIRONMENT: 'Test' },
+      // ...
+    }
+    ```
+  - Add a test: `TestEndpoints_NotRegisteredInProduction_404` (boots a `WebApplicationFactory` with `ASPNETCORE_ENVIRONMENT=Production`; asserts `POST /test/advance-head` returns 404).
 
 - [ ] **Step 3: Create `frontend/e2e/fixtures/`** with starter scenarios:
   - `pr-with-three-iterations.json`
