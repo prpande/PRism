@@ -82,6 +82,20 @@ cd frontend && npx playwright test
 
 If `tsc -b` reports a generic-narrowing or project-reference error that `tsc --noEmit` would miss, fix it locally — CI runs `tsc -b` (via `npm run build`) and will fail on the same error.
 
+### Stable session token across `dotnet watch run` reloads (Development only)
+
+The backend rotates the per-launch session token on every startup (see [`docs/spec/02-architecture.md`](docs/spec/02-architecture.md) § "Cross-origin defense for the localhost API" — the token travels as the `prism-session` cookie and is echoed in the `X-PRism-Session` header). Under `dotnet watch run` this means every save-triggered restart issues a new token and forces a full SPA reload to pick it up. To keep one token alive across reloads while developing, export `PRISM_DEV_FIXED_TOKEN` as a real environment variable in the shell that runs `dotnet watch run`:
+
+```
+# PowerShell (set for the current shell session)
+$env:PRISM_DEV_FIXED_TOKEN = "any-base64-string-you-like"
+
+# bash / zsh
+export PRISM_DEV_FIXED_TOKEN="any-base64-string-you-like"
+```
+
+`SessionTokenProvider` reads the override via `Environment.GetEnvironmentVariable` **only** — deliberately not via `IConfiguration` / `dotnet user-secrets`, to eliminate any path where `appsettings.json` (or a stray user-secrets entry) could leak a fixed token into a non-Development host. The override is honored **only when `ASPNETCORE_ENVIRONMENT == "Development"`** — production hosts ignore the env var entirely (`tests/PRism.Web.Tests/Middleware/SessionTokenProviderTests.cs` enforces this). Without the override, every `dotnet watch run` restart rotates the token and the SPA reloads to refresh the cookie. With it, the SPA stays alive across save-triggered restarts.
+
 ## Process
 
 All production code is written test-first (red → green → refactor). See [`.ai/docs/development-process.md`](.ai/docs/development-process.md).

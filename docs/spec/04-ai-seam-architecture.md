@@ -472,21 +472,17 @@ PoC ships `NoopRepoCloneService` returning empty results / null paths. v2 implem
 
 Every slot is a React component that exists in the component tree, capability-flag-gated. In PoC each renders `null`. The layout grid reserves space so v2 lighting up a slot doesn't cause re-layout shifts.
 
-### `<AiSummarySlot>` — PR header
+### `<AiSummarySlot>` — Overview tab hero card
 
-Position: in the PR header bar, between the title row and the iteration tabs.
+Position: hero card at the top of the **Overview** tab (one of three sub-tabs — Overview / Files / Drafts — under the PR header). Renders above the PR description, stats, and PR-root conversation.
 Capability flag: `ai.summary`
 PoC behavior: returns `null`.
 v2 behavior: renders a card with the AI-generated PR summary, expandable for a longer version, with a "stale" indicator if a new iteration arrived after generation.
 
-**Sticky-stack behavior.** The PR header (title row + verdict picker + submit button) and the iteration tabs are both sticky. The `<AiSummarySlot>` sits between them in the DOM. **The slot is *not* sticky**: it scrolls away when the user scrolls past the header. The iteration tabs stay glued to the top, which is what reviewers actually need to see while reading the diff. Reasons:
-- Stickying the summary too would consume valuable vertical space at the top of the viewport for a card that's read once and rarely needed again.
-- The "stale" indicator and "regenerate" affordance are best surfaced when the user scrolls back up to re-read the summary, not while they're reading line-level changes.
+**Overview-tab placement rationale.** Earlier drafts placed this slot between the sticky PR header and the (then-also-sticky) iteration tabs as a non-sticky band that scrolled away. That placement was discarded when the PR detail view gained the three-tab sub-strip (Overview / Files / Drafts) — putting the AI summary on the Overview tab makes it discoverable when the user lands on a PR (Overview is the default tab) and out of the way while reviewing diffs (which happen on the Files tab). The summary is read once on PR-open and rarely needed again; surfacing it on the same tab as the PR description, stats, and conversation is the natural reading order. The Files tab carries the iteration tabs and the file tree, both load-bearing for active reviewing — sharing that scarce vertical space with a summary the reviewer has already read would be a poor trade.
 
-DOM order: `header (sticky) → AiSummarySlot (non-sticky) → iteration tabs (sticky) → diff body`. The two sticky elements form a stack at the top of the viewport when the user scrolls.
-
-**Honest layout-reservation policy.** Earlier wording in this doc claimed the slot reserves "natural height" so v2 does not push the diff downward. The natural height of `null` is zero, so that claim is misleading. The real policy:
-- In PoC, the slot renders `null` and consumes 0px. When v2 lights up the slot, it will add vertical space to the page; the diff *will* move down by the slot's rendered height (typically 60–120px for a one-line summary card with margins).
+**Honest layout-reservation policy.** Earlier wording in this doc claimed the slot reserves "natural height" so v2 does not push the rest of the Overview tab downward. The natural height of `null` is zero, so that claim is misleading. The real policy:
+- In PoC, the slot renders `null` and consumes 0px. When v2 lights up the slot, it will add vertical space to the Overview tab; the rest of the Overview content *will* move down by the slot's rendered height (typically 60–120px for a one-line summary card with margins).
 - The PoC does not reserve a fixed placeholder height in the slot's container, because doing so wastes vertical space for users who never enable the AI summary feature (an explicit non-goal: PoC must be useful and uncompromised by v2's hypothetical layout footprint).
 - The "no layout shift on banner arrival" DoD criterion in `01-vision-and-acceptance.md` covers the only PoC-relevant case: remote state changes don't push content. v2 light-up is a configuration change the user opts into, not a remote event; it is fine for the page to reflow once at v2 light-up.
 

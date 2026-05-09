@@ -289,6 +289,14 @@ Decide and document where each P0+ project lands *before* its first implementati
 - **Non-decisions.** Whether `IHostedService` or another startup hook (e.g., `IStartupFilter`) is the right shape. Pick at implementation time.
 - **Pointers.** `PRism.Web/Program.cs` (`CreateConfigStore`); `PRism.Core/Config/ConfigStore.cs`.
 
+### ADR-P0-4: Single-instance enforcement (named mutex / flock + IPC focus signal)
+
+- **What.** Detect a second PRism launch on the same machine and route it to the existing window instead of spawning a parallel backend. Implementation: a process-wide named primitive (Win32 `CreateMutex` with a globally-scoped name; POSIX `flock` on `<dataDir>/state.json.lock`) acquired during startup. If acquisition fails, the new process emits an IPC focus signal (named pipe on Windows; Unix domain socket at `<dataDir>/.prism/focus.sock` on macOS/Linux) to the existing instance and exits. The existing instance brings its browser window to the foreground via the OS API.
+- **Why.** Without this, two PRism windows can run simultaneously and both write `state.json` last-write-wins. The lockfile already prevents accidental double-startup *of the backend*, but does not handle the user-launches-the-binary-twice case — currently the second launch's lockfile-detection failure simply errors out, with no UX recovery. The spec-mandated single-user posture does not survive a user double-clicking the icon.
+- **When.** Before P0+. Deferred from S3 because the fix is bigger than a spec edit and benefits from a separate brainstorm — the IPC channel, focus-API per OS, and the second-launch error UX (toast vs. silent vs. modal) are real design questions, not just plumbing. S3's lockfile + PID-liveness is sufficient for the single-launch case the slice exercises.
+- **Non-decisions.** Whether the IPC channel is a named pipe / socket / Unix domain socket vs. a localhost TCP probe. Picked at implementation time. Whether the second launch displays a toast on the existing window ("PRism is already running — focused the existing window") or focuses silently. Picked after a quick UX brainstorm.
+- **Pointers.** [`docs/spec/02-architecture.md`](../spec/02-architecture.md) § Lockfile cleanup on hard crash (the existing partial defense); slice spec § 9.5 deferred-from-S3 list.
+
 ## Convention to adopt
 
 ### Convention-1: State machines live in `<Feature>/Pipeline/` sub-folders

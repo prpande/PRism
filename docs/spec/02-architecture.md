@@ -323,7 +323,7 @@ Token storage is in the OS keychain via MSAL Extensions, NOT in the data directo
 
 `/api/pr/{ref}/draft` is the single funnel for all writes to a PR's review-session payload (drafts, replies, summary, verdict, iteration overrides). The wire shape:
 
-- **`GET /api/pr/{ref}/draft`** — returns the full review-session payload for that PR: `{ draftVerdict, draftVerdictStatus, draftSummaryMarkdown, draftComments[], draftReplies[], iterationOverrides[], pendingReviewId, pendingReviewCommitOid, fileViewState }`. Empty object if no session exists yet for the PR.
+- **`GET /api/pr/{ref}/draft`** — returns the full review-session payload for that PR: `{ draftVerdict, draftVerdictStatus, draftSummaryMarkdown, draftComments[], draftReplies[], iterationOverrides[], pendingReviewId, pendingReviewCommitOid, viewedFiles }`. Empty object if no session exists yet for the PR.
 
 - **`PUT /api/pr/{ref}/draft`** — body is a partial `ReviewSessionPatch` (a typed object with optional fields for each writable element):
   ```jsonc
@@ -451,7 +451,34 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
     "requireVerdictReconfirmOnNewIteration": true
   },
   "iterations": {
-    "clusterGapSeconds": 60                  // committer-date gap above which consecutive PullRequestCommit events open a new iteration. Force-push boundaries are unaffected; this only governs normal-push clustering. See `03-poc-features.md` § 3 "Iteration reconstruction" for the rationale.
+    // S3 ships only `cluster-gap-seconds` and `clustering-disabled` as live `IterationsConfig`
+    // fields. Coefficients are constant per process lifetime today (defaults live in
+    // `IterationClusteringCoefficients`'s record-init in `PRism.Core/Iterations/`). The
+    // `clustering-coefficients` shape below is the planned future binding — when the
+    // `IOptionsMonitor<IterationClusteringCoefficients>` wiring lands (alongside P0-9
+    // calibration), this is the JSON shape it will read. Today, writing this block to
+    // `config.json` is a no-op (unknown fields are ignored on deserialize). See
+    // `iteration-clustering-algorithm.md` § "Coefficient surface" for the full story.
+    "cluster-gap-seconds": 60,                     // Bound today but **inert** — `WeightedDistanceClusteringStrategy` reads coefficients from `IterationClusteringCoefficients`, not from this field; setting it has no behavior change. Legacy field on `IterationsConfig`, originally the only iteration-clustering knob; kept on the record for v1-config-file backward-compat (no warning is emitted on unknown changes). **Slated for removal in S4** (alongside S4's drafts/replies/reconciliation field additions and migration #2; remove the field from `IterationsConfig` in the same migration that wraps `AppState` per ADR-S4-1).
+    "clustering-disabled": false,                  // Live today. Calibration-failure escape hatch — set true to disable WeightedDistance globally and force every PR onto `CommitMultiSelectPicker`. Default ships `false` (algorithm runs on every PR); flip to `true` if discipline-check agreement on a real corpus is unsatisfactory. See `iteration-clustering-algorithm.md` § "Calibration-failure escape hatch."
+
+    // ⚠ The `clustering-coefficients` block below is **NOT BOUND today** — writing it to
+    // `config.json` is a silent no-op (no warning is emitted on the unknown field). Coefficients
+    // are constants per process lifetime; tuning requires a code edit to
+    // `IterationClusteringCoefficients`'s record-init defaults and a rebuild. The shape is shown
+    // here so the future `IOptionsMonitor<IterationClusteringCoefficients>` binding (P0-9 era)
+    // has a published target. **DO NOT copy this block into `config.json` expecting it to take
+    // effect.** See `iteration-clustering-algorithm.md` § "Coefficient surface" for the full story.
+    "clustering-coefficients": {
+      "file-jaccard-weight":              0.5,    // FileJaccardMultiplier signal weight. 0 = ignore; values approaching 1 reduce distance toward zero (validator enforces strictly < 1).
+      "force-push-after-long-gap":        1.5,    // ForcePushMultiplier value when both conditions are met.
+      "force-push-long-gap-seconds":      600,    // Below this gap, force-push is treated as a tight --amend (no expansion).
+      "mad-k":                            3,      // MAD threshold = median + mad-k × MAD.
+      "hard-floor-seconds":               300,    // Distance clamp floor.
+      "hard-ceiling-seconds":             259200, // Distance clamp ceiling (3 days).
+      "skip-jaccard-above-commit-count":  100,    // Above this commit count, skip the per-commit changedFiles fan-out.
+      "degenerate-floor-fraction":        0.5     // If more than this fraction of distances clamp to the floor, declare the PR's signal too weak.
+    }
   },
   "logging": {
     "level": "info",                         // "info" | "debug"; affects file logs in `<dataDir>/logs/`. No telemetry, no remote upload.
@@ -485,9 +512,11 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
 
 ## State schema (PoC)
 
+> **Casing note.** The example below uses **camelCase** keys for readability and to match the C# property names, but `state.json` on disk uses **kebab-case** for every property: `JsonSerializerOptionsFactory.Storage` applies `KebabCaseJsonNamingPolicy` to all property names (e.g. `LastViewedHeadSha` C# → `last-viewed-head-sha` JSON; `ReviewSessions` → `review-sessions`; `ViewedFiles` → `viewed-files`; etc.). Dictionary *keys* are intentionally NOT kebab-cased (file paths, repo identifiers must round-trip identically). When extending the schema, name the C# property in PascalCase as usual; the policy converts at write-time. When hand-editing `state.json` (rarely supported — see "Hand-edits" note below), use the kebab-case form.
+
 ```jsonc
 {
-  "version": 1,
+  "version": 2,                                  // S3 ships v1 → v2: adds `viewed-files` per session. v1 files are migrated on first load via `MigrateV1ToV2` in `AppStateStore`. Files already at v2 are loaded as-is. See § "Schema migration policy" below.
   "reviewSessions": {
     "owner/repo/123": {
       "lastViewedHeadSha": "abc...",
@@ -519,7 +548,7 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
           "status": "draft"
         }
       ],
-      "fileViewState": {
+      "viewedFiles": {                        // S3-shipped per-session map of filePath → headShaAtTimeOfMark, populated by the per-file "Viewed" checkbox on the Files tab. The lookup walks the full PR commit graph (not just clustered iterations) to decide whether a file has been touched since the mark — see `03-poc-features.md` § 3 "Viewed checkbox semantics" for the truthful-by-default-on-unknown-changedFiles rule. C# field: `ViewedFiles` on `ReviewSessionState`. On disk, the kebab policy writes this as `viewed-files`.
         "src/Foo.cs": "abc...",
         "src/Bar.cs": "abc..."
       },
@@ -558,15 +587,15 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
 
 - **Version equal to current**: load directly.
 - **Version less than current**: run a registered migration function `v{n} → v{n+1}` for each step until the schema reaches current. Each migration is a small, deterministic function in `PRism.Core` that maps the old shape to the new. The pre-migration file is copied to `state.json.v{n}.bak` so the user can recover by hand if a migration introduces a bug.
-- **Version greater than current**: refuse to load. Show a clear message: "this `state.json` is from a newer version of PRism (v*X*); please update the binary."
-- **Missing `version` field**: treat as v1 (the PoC schema). Useful for old PoC builds that pre-date the version field.
+- **Version greater than current** (forward-incompat): the app **loads in read-only mode** rather than refusing to start. The backend sets `IAppStateStore.IsReadOnlyMode = true` for the process lifetime. Endpoints that mutate state (`POST` / `PUT` / `PATCH` / `DELETE` for state-touching routes — e.g., `/api/pr/{ref}/mark-viewed`, `/api/pr/{ref}/files/viewed`) return `423 Locked` with the problem-slug `/state/read-only`. Reads continue to work — the user can browse the inbox and PR-detail surfaces, but cannot save drafts, mark files viewed, or submit. This replaces the earlier "refuse to load" wording: the app starts, the user can read, and only writes are blocked. (Frontend banner copy + the consumer of `/state/read-only` are spec-defined here; current S3 surfaces enforce the 423 server-side, with the user-facing banner UX gated to a follow-up alongside the rest of the read-only-mode UI polish.)
+- **Missing `version` field**: `MigrateIfNeeded` throws `UnsupportedStateVersionException(0)`, which propagates out of `LoadAsync` (the `catch (JsonException)` quarantine block does not catch it). The earlier "treat as v1" rule was retired because v1 files written by S0/S1/S2 builds always carry the field; a missing field signals a hand-edit-gone-wrong or a foreign-format file, neither of which should silently migrate. **Note for future reconciliation:** a malformed `version` value (e.g. `"1"` as a string, `1.5` as a float) is translated to `JsonException` and *does* hit the quarantine path — the asymmetry between "missing" (uncaught throw) and "malformed" (quarantined) is the current behavior; a follow-up should align them so missing also quarantines, since the user-recovery story is otherwise opaque ("app failed to start, no recovered file").
 
-PoC ships at `version: 1`. The first registered migration (`v1 → v2`) will land in v2 to add `aiState` substructure. The migration framework exists in PoC even though no migration runs.
+PoC ships at `version: 2` (S3's v1 → v2 migration adds `viewed-files` per session). v1 files written by earlier builds are migrated on first load via the inline `MigrateV1ToV2` helper on `AppStateStore`. The migration framework (ordered chain of `(toVersion, transform)` steps) is **not** abstracted in S3 — that extraction lands in S4 when migration #2 motivates it (see [`docs/specs/2026-05-06-architectural-readiness-design.md`](../specs/2026-05-06-architectural-readiness-design.md) § ADR-S4-2).
 
 **Unparseable `state.json` (corruption, truncated write, hand-edit-gone-wrong, encoding mismatch).** The backend tries to parse `state.json` on startup; if the parse fails:
 
 1. Copy the corrupt file to `state.json.<ISO8601-timestamp>.corrupt` (preserves the original bytes for forensic recovery; the user can hand-extract draft bodies from the `.corrupt` file even if no reload path uses it).
-2. Write a fresh empty `state.json` (`{ "version": 1, "reviewSessions": {}, "ui": {}, "installSalt": null, "lastConfiguredGithubHost": "<configured>", "aiState": {} }`).
+2. Write a fresh empty `state.json` (`{ "version": 2, "reviewSessions": {}, "ui": {}, "installSalt": null, "lastConfiguredGithubHost": "<configured>", "aiState": {} }`).
 3. Surface a loud, non-dismissable banner on the inbox: *"Your local state was unreadable on startup. The previous file is preserved at `state.json.<ts>.corrupt` for recovery; the app started fresh. Drafts from before this launch are not restored automatically — see the corrupt-file path or the forensic event log at `<dataDir>/state-events.jsonl` if `logging.stateEvents` was on."* The banner persists until the user explicitly dismisses it (so they cannot miss the data-loss event).
 4. Log the parse error verbatim to `<dataDir>/logs/`.
 
@@ -580,7 +609,7 @@ The forensic event log (separate file, not subject to the same corruption) is th
 
 The test does not commit to v2's *exact* schema (v2 may add fields beyond the six listed) — it commits to "the keys mentioned in this spec compile against the migration framework today." When v2 adds new `aiState` keys not listed here, the v1→v2 migration test is amended at the same time. This is the kind of forward-compat coverage that, without a written test, evaporates during the months between PoC ship and v2 first-light.
 
-**Version-field write lifecycle.** PoC writes `"version": 1` proactively into `state.json` on every save — including the first save that creates the file. This means a `state.json` produced by PoC always carries an explicit version. The "missing version field treated as v1" rule applies only to state files produced before this rule existed (none in practice for PoC, but kept as a safety net for state files hand-edited by users or imported from a future backup-restore feature). v2 writes `"version": 2` proactively in the same way after migration runs once. The lifecycle: read → migrate-if-needed → use → write-back-with-current-version. There is no scenario where a written file has a `version` lower than the writing binary's current version.
+**Version-field write lifecycle.** PoC writes `"version": <CurrentVersion>` proactively into `state.json` on every save — including the first save that creates the file. This means a `state.json` produced by PoC always carries an explicit version. With `CurrentVersion = 2` today, every save writes v2; v1 files originating from earlier builds are migrated on first load and the next save persists them as v2. The lifecycle: read → migrate-if-needed → use → write-back-with-current-version. There is no scenario where a written file has a `version` lower than the writing binary's current version.
 
 **Hand-edits to `state.json` while the app is running are not supported.** The `FileSystemWatcher` hot-reload mechanism applies only to `config.json` (per § 11 Settings). `state.json` has no watcher; the backend reads it once on startup and writes it on every state mutation. A user who hand-edits `state.json` while the app is running will have their edit silently overwritten on the next mutation (the in-memory copy is authoritative). Recovery: stop the app, edit, restart. Document this in the README — power users tempted to fix state by hand-edit need to know.
 
@@ -675,12 +704,19 @@ Keystroke-debounce auto-saves still write to `state.json` exactly as before — 
 
 Even though the backend listens on localhost only, **any browser tab the user has open can send fetches to it**. Without a defense, a malicious page could submit reviews under the user's GitHub identity (CORS does not block opaque-mode POSTs) or probe the inbox via tag-based requests. The backend therefore enforces two checks on every mutating endpoint (anything that's not a `GET`):
 
-1. **Origin / Referer check.** The request's `Origin` (or `Referer` if `Origin` is absent) must equal the backend's own origin (`http://localhost:<port>` chosen at startup). Requests with any other origin, or with no `Origin` header, are rejected with `403 Forbidden`. This blocks `<form>` posts and `fetch(..., {mode: 'no-cors'})` from arbitrary pages.
-2. **Per-launch session token.** On startup, the backend generates a 256-bit random token and writes it as a cookie (`PRism-Session=<token>; Path=/; SameSite=Strict; HttpOnly=false`) on the very first response that serves the React app. The frontend reads the cookie and echoes the value in an `X-PRism-Session` header on every mutating request. The backend rejects mutating requests whose header value does not match the in-memory token. The token is not persisted to disk and changes every launch.
+1. **Origin / Referer check (`OriginCheckMiddleware`).** The request's `Origin` (or `Referer` if `Origin` is absent) must equal the backend's own origin (`http://localhost:<port>` chosen at startup). On `POST` / `PUT` / `PATCH` / `DELETE`, the middleware **rejects empty or missing `Origin` outright** — the earlier "absent treated as same-origin" wording was tightened in S3. Requests with any other origin, or with no `Origin` header, are rejected with `403 Forbidden`. This blocks `<form>` posts and `fetch(..., {mode: 'no-cors'})` from arbitrary pages.
+2. **Per-launch session token (`SessionTokenMiddleware`).** On startup, `SessionTokenProvider` generates a 256-bit random token (`Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))`). The token is the *value*; it travels two ways — as the `prism-session` cookie (lowercase, written by `Program.cs`'s cookie-stamping middleware on every `text/html` response — `prism-session=<token>; Path=/; SameSite=Strict; HttpOnly=false`) and as the `X-PRism-Session` request header (mixed-case, set by the SPA from the cookie value). Re-stamping the cookie on every HTML response defends against the case where a backend restart rotates the token while the frontend tab is still open: the next full-page reload picks up the fresh cookie automatically. The SPA reads the cookie value and echoes it in the `X-PRism-Session` header on every mutating request; non-SPA callers may also satisfy auth with either the cookie or the header. Comparison is **constant-time** (`CryptographicOperations.FixedTimeEquals` on equal-length byte arrays) to keep token validation outside any timing-attack surface; mismatched-length inputs short-circuit to a fixed-time false. The backend rejects mismatching mutating requests with `401 Unauthorized` carrying the problem-slug `/auth/session-stale`. The token is not persisted to disk and changes every launch.
    - `SameSite=Strict` keeps cross-site requests from carrying the cookie; the explicit header check defends against same-site malicious pages that the browser might still ship the cookie to.
    - The cookie is intentionally not `HttpOnly` because the React app must read it. The blast radius of token leakage is limited to "while this backend instance is running on this machine," and the threat model is local-only.
+   - **`GET /api/events` (Server-Sent Events) is the one read carve-out** that authenticates via cookie alone (no `X-PRism-Session` header). Browsers' `EventSource` API does not let JS attach custom headers to the connection, so the cookie is the only path. This is acceptable because the SSE channel is read-only — it carries no state mutations.
+   - **Frontend recovery on 401.** The frontend's HTTP client (`frontend/src/api/client.ts`) treats any `401` response as a session-stale signal: it dispatches a `prism-auth-rejected` `CustomEvent` on `window`. `App.tsx` listens for that event and clears the in-memory auth flag, which causes the routing tree to redirect to `/setup` (the route is `<Navigate to="/setup" replace />`). The Setup page re-prompts for the PAT and the next page-level navigation picks up the freshly-stamped cookie. The Server-Sent Events ping/keepalive path in `events.ts` is the one place that does fall back to `window.location.reload()` (after a connection-level failure that the dispatch-and-route flow can't recover from on its own); mutating-endpoint 401s do not reload.
+   - **Development override.** When `ASPNETCORE_ENVIRONMENT == "Development"` *and* the `PRISM_DEV_FIXED_TOKEN` environment variable (read via `Environment.GetEnvironmentVariable` only — **not** via `IConfiguration` / `dotnet user-secrets`, deliberately, to eliminate any path where `appsettings.json` could leak a fixed token into a non-Development host) is non-empty, `SessionTokenProvider` uses that value instead of generating a fresh random token. This pins the cookie across `dotnet watch run` reloads so the SPA tab does not need to re-authenticate every backend restart. Production hosts ignore the env var entirely. See `README.md` § "Stable session token across `dotnet watch run` reloads (Development only)" for usage.
 
-`GET` endpoints carry the **Origin check** but not the session-token-header check — they're idempotent at the backend level, but `Origin`/`Referer` rejection is enough to keep arbitrary cross-origin pages from reading state through them. (`/api/capabilities` specifically discloses which `ai.*` flags are wired up; without the Origin check that tiny info-disclosure surface would be open to any local browser tab. The Origin check closes it cheaply.) Writes (`POST`, `PUT`, `DELETE`) require **both** the Origin check and the per-launch session token header.
+**Per-verb enforcement (matches the shipped middleware order).** `OriginCheckMiddleware` short-circuits early on non-mutating verbs — **GET requests are NOT origin-checked.** `SessionTokenMiddleware` runs on all `/api/*` paths regardless of verb, accepting **either** the `X-PRism-Session` header **or** the `prism-session` cookie (a `FixedTimeMatches` against either passes). For SPA-issued GETs the cookie satisfies the check; for server-side or non-cookie callers the header satisfies it. Writes (`POST` / `PUT` / `PATCH` / `DELETE`) carry **both** the tightened Origin check and the session-token check.
+
+The middleware skips `/api/health` (liveness probe by convention) and any non-`/api/*` path (so SPA HTML and assets can load — that's what stamps the cookie in the first place). There is also a development carve-out for the loopback-different-port case where Vite (5173) proxies `/api` to the backend (5180) and the SPA never receives a same-origin cookie for the dev server's port; that branch lets dev traffic flow without auth and is documented in the middleware comments.
+
+`/api/capabilities` is GET-only and therefore *not* gated by the Origin check, but is gated by the session-token check via the cookie (any browser tab attempting to probe it without the same-origin cookie hits 401). The earlier framing — "Origin check protects `/api/capabilities` from cross-origin disclosure" — was wrong; the session-token cookie is what closes that surface.
 
 CORS is otherwise wide open in PoC (only one origin matters; the Origin check is the actual defense).
 

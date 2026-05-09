@@ -19,6 +19,7 @@ Truth labels: **CONFIRMED** (claim survives), **FALSIFIED** (claim is wrong as s
 | M19 | Shiki bundle is small enough to ship every grammar                                                  | **FALSIFIED** | Commit to a language subset and document it; full bundle is ~1.2 MB gz. |
 | M20 | Self-contained .NET 10 + React assets fit in ~70 MB binary                                          | **UNDOCUMENTED** | Empirical measurement during initial scaffolding; ~70 MB likely requires AOT or aggressive trimming. |
 | M21 | Mermaid v11 lazy bundle is ~600 KB                                                                  | **FALSIFIED** | Mermaid v10 minified is ~2.7 MB; v11 has a "tiny" subset. Restate budget after picking the bundle variant. |
+| M22 | `react-markdown` v9 strict-mode sanitization is on by default and tight enough for untrusted PR content | **PARTIAL** (claim was wrong: posture is *escaping by default*, not sanitization; XSS surface is still closed but for the wrong reason) | Escaping regression test already shipped at `frontend/__tests__/MarkdownRenderer.sanitization.test.tsx` — pins the current posture. Remaining: document the `rehype-raw` + `rehype-sanitize` pairing rule as the prerequisite for any future raw-HTML feature, and consider a CI lint that rejects `rehype-raw` imports without a sibling `rehype-sanitize`. |
 | C5  | `--mcp-config` JSON shape uses `"type": "http"` discriminator                                       | **PENDING (empirical gate)** | Run as first task of P0-7. |
 | C6  | `AddPullRequestReviewThreadInput` accepts `pullRequestReviewId` for the pending-review case          | **PENDING (empirical gate)** | Run before submit-pipeline implementation. |
 | C7  | HTML-comment marker durability in `addPullRequestReviewThread` round-trips                          | **PENDING (empirical gate)** | Run before submit-pipeline lost-response retry path. Default scheme is the `<!-- prism:client-id:<id> -->` marker; client-side normalization is the documented fallback only if the marker fails. |
@@ -90,12 +91,9 @@ There is no GraphQL primitive for "this group of commits arrived in one push".
 
 ### Implication for Wave 2
 
-The PoC's iteration tabs as currently spec'd require inferring "which commits were pushed together". Two reasonable policies:
+The PoC's iteration tabs require inferring "which commits were pushed together." S3 ships **weighted-distance clustering** with two live multipliers (file Jaccard via per-commit REST fan-out, force-push as a soft signal scaled by gap), an MAD-based threshold, a degenerate-case detector, and four documented future multipliers. The full algorithm — including coefficient defaults, the calibration-failure escape hatch, edge-case handling, and the tuning workflow — is in [`docs/spec/iteration-clustering-algorithm.md`](./iteration-clustering-algorithm.md).
 
-1. **One iteration per `PullRequestCommit`** (per-commit tabs). Honest and simple; loses CodeFlow's grouping. Tab count grows with commit count.
-2. **Cluster `PullRequestCommit` events by author/committer date** (e.g., commits within 60s of each other belong to the same push). Best-effort approximation; will misgroup occasionally but matches CodeFlow UX better. `HeadRefForcePushedEvent` resets the cluster boundary explicitly.
-
-Recommend (2) with a disclosure: "iteration boundaries are approximate; force-pushes are detected exactly". Update `02-architecture.md:9` to cite `PullRequestCommit` + `HeadRefForcePushedEvent` instead of `synchronize`. Update `03-poc-features.md:172–173` to describe the clustering policy.
+The earlier "60-second clustering threshold + `iterations.clusterGapSeconds` knob" recommendation has been **superseded**: the knob is retired and tuning happens through `iterations.clustering-coefficients` instead. The new approach handles tight `--amend` chains, CI-amend cycles, and long-running PRs that the fixed-threshold policy got wrong. Disclosure language is preserved: iteration boundaries are still approximate for normal pushes; force-pushes are still detected exactly even though their iteration-boundary contribution is now soft. `02-architecture.md` § Stack and `03-poc-features.md` § 3 "Iteration reconstruction" both reference the algorithm doc instead of repeating its content inline.
 
 Historical note (provider abstraction has since been dropped): ADO has native iterations (`pull request iterations` API), GitLab has "versions" — both more first-class than GitHub's. The original spec drafted a provider abstraction partly motivated by this asymmetry; the abstraction is gone (`spec/01-vision-and-acceptance.md` Principle 6), but the observation is recorded here as context for why GitHub's iteration model is the one corner where the spec invests in a clustering-and-overrides UI. If a non-GitHub backend is ever pursued (~6–8 weeks of refactor work, not a feature in this backlog), iteration reconstruction is one of the surfaces that would need to be re-shaped per backend.
 
@@ -248,6 +246,27 @@ Update both spec files; remove the "~600KB" claim.
 
 ---
 
+## M22 — `react-markdown` v9 strict-mode sanitization
+
+### Claim under test
+
+`spec/02-architecture.md` § Stack (`react-markdown` row) and `03-poc-features.md` § 7 ("Markdown rendering for `.md` files") commit to rendering GitHub-flavored markdown (Mermaid + GFM) inside PR descriptions, comment bodies, and viewable `.md` files. The PR text content is **untrusted** — it comes from GitHub PRs the user did not author, and any reviewer-displayed markdown is an XSS attack surface unless the renderer's HTML allowlist is correct.
+
+### Findings
+
+- **`react-markdown` v9 escapes raw HTML by default; it does NOT use `rehype-sanitize` unless you pass it in `rehypePlugins`.** Per the official docs, `rehype-sanitize` is *recommended* but not applied automatically. To even feed HTML through a sanitizer, you also have to install `rehype-raw` so the parser surfaces HTML nodes (instead of escaping them as text). The XSS posture for the default configuration is therefore "all raw HTML in the markdown source becomes literal text in the DOM" — not "HTML is parsed and a sanitizer enforces an allowlist."
+- **The PoC's `MarkdownRenderer.tsx` ships with the default configuration** — `react-markdown` + `remark-gfm` only, no `rehype-raw` and no `rehype-sanitize`. So raw HTML in PR bodies, comment bodies, and viewable `.md` files is escaped to text, not rendered. The XSS surface today is closed *by escaping*, not by sanitization, and the earlier wording in this note had the rationale wrong.
+- Mermaid fences are dispatched by the custom `code` component renderer **before** any HTML processing — the dispatcher consumes the fence content as raw text and hands it to `mermaid` for SVG generation; the SVG is then inserted via React directly. Since no `rehype-sanitize` is in the pipeline, there is no sanitizer to bypass; the carve-out is real but the framing is "Mermaid produces its own SVG, which the React renderer trusts" — not "Mermaid bypasses the sanitizer."
+
+### Implication for Wave 2
+
+1. **Escaping regression test — already shipped at `frontend/__tests__/MarkdownRenderer.sanitization.test.tsx`.** The test asserts that `<script>` payloads render as escaped text (no real `<script>` element), `[text](javascript:...)` links are stripped by the explicit `urlTransform` allowlist (https?/mailto only) including HTML-entity-obfuscated variants, and reference-style `javascript:` links are also stripped. The test is the load-bearing trip-wire that guarantees a future "loosen rendering to support feature X" change cannot silently flip the posture from "escaped" to "parsed-but-not-sanitized." When extending the rendering pipeline (e.g., adding `rehype-raw`), the test must be amended to assert the new posture explicitly.
+2. **`rehype-raw` + `rehype-sanitize` pairing as the prerequisite for any future raw-HTML feature (still doc-only — not enforced in code).** Anyone wanting to support `<details>`/`<summary>` (or any other element teams' PR templates use) must add **both** `rehype-raw` (to surface HTML nodes) **and** `rehype-sanitize` (to filter them) in the same change. Adding only `rehype-raw` would parse arbitrary HTML and ship it to the DOM — an immediate XSS surface. The pairing rule lives in this verification note today; landing it in `MarkdownRenderer.tsx` as a comment-anchored invariant + a CI-enforced prohibition (e.g. an eslint rule rejecting `import 'rehype-raw'` without a sibling `import 'rehype-sanitize'`) is the next defense layer.
+
+The shipped escaping regression test pins the current posture; the pairing rule is the doc-side defense against silent posture changes. M22 records both so future contributors know the actual posture and the prerequisite for changing it.
+
+---
+
 ## C5 — `--mcp-config` JSON shape for HTTP MCP servers (UNDOCUMENTED-VERIFIED-EMPIRICALLY)
 
 ### Claim under test
@@ -355,7 +374,7 @@ Spec-level updates that flow from Wave 1's findings. Items checked here are the 
 - [x] Restate atomic-submit wedge in `01-vision-and-acceptance.md` (C1) — replaced "single API call" with reviewer-atomic + GraphQL pending-review framing.
 - [x] Switch GitHub provider's submit code path from REST to GraphQL pending-review pattern (C1) — `03-poc-features.md` § 6 documents the full pipeline; `PRism.GitHub` is the implementation site.
 - [x] Add "one pending review per user per PR" edge case to missing decisions (C1) — handled in `03-poc-features.md` § 6 step 1 via the foreign-pending-review prompt.
-- [x] Re-spec iteration reconstruction in `02-architecture.md` and `03-poc-features.md` (C2) — `PullRequestCommit` + `HeadRefForcePushedEvent` + 60s clustering; `iterations.clusterGapSeconds` knob exposed.
+- [x] Re-spec iteration reconstruction in `02-architecture.md` and `03-poc-features.md` (C2) — `PullRequestCommit` + `HeadRefForcePushedEvent` + weighted-distance clustering with two live multipliers (file Jaccard, force-push) + MAD threshold; algorithm canonicalized in `iteration-clustering-algorithm.md`. The earlier `iterations.clusterGapSeconds` knob is retired in favor of `iterations.clustering-coefficients`.
 - [x] Re-spec the AI repo-access path: drop MCP-resident filesystem tools entirely; use Claude Code's built-in `Read`/`Grep`/`Glob` scoped via `--add-dir`; lazy mid-session consent via the model calling `request_repo_access` (which takes no arguments — host-authored modal copy only); upgrade via fresh-session-with-injection (C3, C4 dangling-tool-use sidestepped) — `04-ai-seam-architecture.md` § "Repo access via lazy upgrade with fresh-session injection" describes the chosen design. **Note**: C4's *clean-end resume* sub-question is load-bearing for the cross-restart chat UX (W30); see C4 entry above.
 - [x] Add P0 task: "select or hand-roll a .NET MCP server library" (C3) — `backlog/01-P0-foundations.md` § P0-7.
 - [x] Commit to a Shiki language subset in `02-architecture.md` (M19) — 16 grammars listed; lazy-load for the rest.

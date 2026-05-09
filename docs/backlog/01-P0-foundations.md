@@ -278,3 +278,61 @@ Filesystem reads are **not** in this server. Earlier W29 drafts exposed `repo_re
 - Enables: P2-2 (PR chat).
 - **No longer depends on** P0-4 directly — the chat-bootstrap path uses P0-4 to prepare a worktree before launching Claude Code, but the MCP server itself doesn't touch the clone or worktree. The dependency edge moves to P2-2's chat-bootstrap, not P0-7's tool dispatcher.
 - Subject to: P0-5 (prompt-injection defenses) — `pr_diff_file` and `pr_existing_comments` return PR-derived content that flows into the model's context; the chat session's system prompt must wrap these responses in delimiter tags.
+
+---
+
+## P0-8: Flesh out remaining iteration-clustering multipliers
+
+- **Priority sub-rank**: 8 (after coefficient calibration converges; calibration first determines whether new multipliers are even needed).
+- **Direct dependencies**: P0-9 (calibration corpus must exist before adding multipliers — without ground truth, "did this multiplier help?" has no answer). S3 ships the strategy slot; P0-9 ships the corpus; P0-8 fills in the multipliers calibration shows are missing.
+- **Estimated effort**: M (each multiplier is a small `IDistanceMultiplier` impl + DI registration + unit tests; the cost is per-multiplier and additive).
+- **Capability flag**: none — multipliers are always-on once registered.
+- **Seam**: `IDistanceMultiplier` interface in `PRism.Core.Iterations`; new impls drop into the same namespace and register in `PRism.Core/ServiceCollectionExtensions.AddPrismCore`. `WeightedDistanceClusteringStrategy` does not change.
+
+**Description.** S3 ships two live multipliers: `FileJaccardMultiplier` (based on per-commit `changedFiles` overlap, fed by REST fan-out) and `ForcePushMultiplier` (force-push as a soft signal scaled by gap). Four future multipliers are documented in [`docs/spec/iteration-clustering-algorithm.md`](../spec/iteration-clustering-algorithm.md) but **not implemented**:
+
+1. **`MessageKeywordMultiplier`** — read `commit.message` for fixup/squash/wip/amend tokens; tokens shrink the distance.
+2. **`DiffSizeMultiplier`** — read `commit.additions + commit.deletions`; small commits shrink the distance.
+3. **`ReviewEventMultiplier`** — a reviewer's `submittedAt` between two commits expands the distance. Requires backend addition: `ClusteringInput.ReviewEvents` is documented but not yet populated; S3 fetches review threads and root comments only.
+4. **`BranchActivityMultiplier`** — base-branch advance between two commits expands the distance. Requires a separate REST call per PR.
+
+**Why P0+, not S3.** The strategy slot is purely additive and dropping a new multiplier in does not change `WeightedDistanceClusteringStrategy`. But adding multipliers without a calibration corpus is speculative — there is no signal to tell whether a new multiplier helps or hurts on real PRs. P0-9 builds the corpus; this item lights up the multipliers calibration says are missing. If calibration converges to ≥ 70% agreement on the two live multipliers alone, P0-8 may be deferred indefinitely.
+
+**Acceptance criteria sketch.**
+- For each multiplier added: a unit test exercising the documented edge cases (no-op case, full-effect case, neutral fallback when input data is missing).
+- After registration, `ClusteringDisciplineCheck` agreement on the corpus does not regress (any one multiplier that reduces aggregate agreement is rejected).
+- The strategy's per-pair multiplier product remains finite for all real-world inputs (no `0.0` zero-multiplier paths that would collapse all distances).
+
+**Connections.**
+- Depends on: P0-9 (corpus).
+- Required by: continued use of `WeightedDistanceClusteringStrategy` in production. If P0-9 reveals the live two-multiplier set isn't enough, this item becomes the unblocking work; otherwise it stays deferred.
+
+---
+
+## P0-9: Iteration-clustering coefficient tuning corpus + workflow
+
+- **Priority sub-rank**: 9 (precedes P0-8; both are post-S3 calibration work).
+- **Direct dependencies**: S3 (the algorithm + discipline-check harness must already exist). No new code — this is corpus-building work.
+- **Estimated effort**: L (the heavy lift is hand-labeling 30-50 real PR histories, not writing code).
+- **Capability flag**: none.
+- **Seam**: corpus lives at `tests/PRism.Core.Tests/Iterations/corpus/<owner>-<repo>-<pr>.json` (per-PR ground truth files); harness already exists in `tests/PRism.Core.Tests/Iterations/ClusteringDisciplineCheck.cs` (env-var-gated `[SkippableFact]`).
+
+**Description.** S3 ships `WeightedDistanceClusteringStrategy` **enabled by default** (`iterations.clustering-disabled = false`, the record-init default on `IterationsConfig`). The algorithm runs on every PR at first launch; calibration doesn't *unlock* a deferred default — it *validates* the existing default and gives the operator a defensible reason to either leave it on or flip the escape hatch. P0-9 builds the corpus and runs the loop:
+
+1. **Corpus selection.** Pick 30-50 real PRs from the author's recent reviewing experience, deliberately weighted toward the *messy* shapes the algorithm needs to survive: heavy `--amend` cycles, rebases, multi-day work with CI-amend pipelines, force-push chains, and one-or-two-commit PRs.
+2. **Hand-labeling.** For each PR, hand-mark the iteration boundaries the reviewer would expect (this is the ground truth). Format: a per-PR JSON file with `{ commits: [...], expectedBoundaryAfterCommitIndex: [2, 5, 7] }`.
+3. **Tuning loop.** Run `ClusteringDisciplineCheck` against the corpus with `PRISM_DISCIPLINE_PR_REFS` set. Aggregate agreement % is the dial. Tune `iterations.clustering-coefficients` (start with `mad-k`; raising it produces fewer/larger iterations) until aggregate agreement ≥ 70% on the corpus.
+4. **Convergence gate.** ≥ 70% → leave `clustering-disabled = false` (no change; the shipped default is now corpus-validated). < 70% after 3-5 tuning rounds → flip `clustering-disabled = true` in the shipped `appsettings.json` to opt every PR onto `CommitMultiSelectPicker`, then either (a) push to P0-8 to add multipliers and re-tune, or (b) accept `CommitMultiSelectPicker` as the universal fallback while a separate effort develops a better algorithm.
+
+**Why P0+, not S3.** S3's job is to ship the algorithm and the harness; calibrating against real PR histories is its own week of work and benefits from being decoupled from the slice that ships the code. A botched calibration in S3 would force a re-tune cycle inside the slice; isolating it here keeps S3 shippable on the algorithm shape alone. Shipping enabled-by-default lets the algorithm dogfood on real PRs immediately — failures are recoverable via the per-PR right-click merge/split UI and ultimately via the `clustering-disabled` flag — and produces the bug reports that inform calibration.
+
+**Acceptance criteria sketch.**
+- Corpus of 30-50 PR histories checked into `tests/PRism.Core.Tests/Iterations/corpus/`, each with hand-labeled boundaries.
+- `ClusteringDisciplineCheck` runs against the full corpus and reports aggregate agreement %.
+- Documented coefficient values that achieve ≥ 70% agreement, OR documented decision to flip `clustering-disabled = true` if convergence fails.
+- Per-PR diff output for the convergence run committed to the spec § 12 observations (slice spec § 11.5 mandates this).
+
+**Connections.**
+- Validates: `WeightedDistanceClusteringStrategy`'s shipped enabled-by-default state.
+- Enables: P0-8 (multiplier expansion driven by what calibration reveals is missing).
+- See: [`docs/spec/iteration-clustering-algorithm.md`](../spec/iteration-clustering-algorithm.md) § "Tuning approach"; slice spec § 11.5.
