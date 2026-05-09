@@ -31,7 +31,7 @@ The interactive prototype at [`design/handoff/`](./../design/handoff/) carries a
 | Tweak | Production status | Lands in slice |
 |---|---|---|
 | Theme (light / dark / system) | **Kept.** Production feature, controlled via `ui.theme` config field with `FileSystemWatcher` hot-reload. | S0+S1 |
-| Diff mode (side-by-side / unified) | **Kept.** Production feature, lives on the PR detail toolbar with `d` keyboard shortcut. | S3 |
+| Diff mode (side-by-side / unified) | **Kept.** Production feature, lives on the PR detail toolbar with `d` keyboard shortcut. | S3 (shipped) |
 | Density (Comfortable / Compact) | Dropped. Density tokens stay in `tokens.css` for design-time use; no user toggle ships. | — |
 | Accent (Indigo / Amber / Teal) | **Kept.** Production feature. The oklch hue parameterization (`--accent-h`, `--accent-c`) is exposed via `ui.accent` config field with `FileSystemWatcher` hot-reload; user can cycle between the three accents to tune their preference. | S0+S1 |
 | AI augmentation toggle | **Replaced.** The AI on/off semantics graduate to `ui.aiPreview` (config + UI toggle); see "AI placeholder behavior" below. | S0+S1 (architecture) |
@@ -51,6 +51,12 @@ S0+S1 lands the architecture; each subsequent slice plugs in placeholders as the
 
 **Toggle UX:** S0+S1 ships **inline header controls** — a small cluster in the header's right side (theme cycle, accent picker, AI preview toggle) for instant flip-and-feel comparison. The full **Settings page** lands in S6 and consolidates these same controls (plus all later preferences) into a single discoverable home. Header controls stay after S6 ships — quick-flip and the comprehensive surface coexist.
 
+**Per-slice rendering:**
+- **S0+S1** — architecture only (interfaces + `Noop*` / `Placeholder*` impls + `ui.aiPreview` flag + `/api/capabilities`); no host components yet, so flipping the toggle has no visible effect.
+- **S2** — inbox row category chips, freshness/unread badges (the badges are non-AI but landed in the same slice), and the activity rail. Flipping the toggle now produces visible category chips.
+- **S3** — three placeholder slots: the **Overview-tab AI summary card**, **file-tree focus dots** on the Files tab, and the **AI hunk annotation slot** (the slot is wired to `react-diff-view`'s widget API; the PoC never inserts an annotation, so the slot stays empty even with `aiPreview` on). Flipping the toggle now produces a visible AI summary on the Overview tab and visible focus dots in the file tree.
+- **S5** — submit-modal AI validator card and the Ask AI drawer with pre-baked messages.
+
 ## When a slice changes shape
 
 If implementation reveals a slice is too large or wrong-shaped, update this table and the relevant spec doc *before* re-planning. Don't let the cut drift silently.
@@ -66,7 +72,7 @@ Full design and rationale: [`specs/2026-05-06-architectural-readiness-design.md`
 | **Now** | Banned-API analyzer (no `Octokit.*` in `PRism.Core` / `PRism.Web` / `PRism.AI.*`) | Shipped — `BannedSymbols.txt` + `Microsoft.CodeAnalysis.BannedApiAnalyzers` ref in `Directory.Build.props` |
 | **Now** | DI extension methods per project (`AddPrismCore` / `AddPrismGitHub` / `AddPrismAi` / `AddPrismWeb`) | Shipped — see `PRism.Web/Composition/ServiceCollectionExtensions.cs` and parallel files |
 | **Now** | Named records for all wire shapes (replace inline `new { ok = ... }` in endpoint files) | Status TBD — verify against current `PRism.Web/` endpoint code before next PR |
-| **In S3** | `SessionTokenMiddleware` (enforces `X-PRism-Session` per `docs/spec/02-architecture.md` § Cross-origin defense) + tightened `OriginCheckMiddleware` (rejects empty Origin on POST/PUT/PATCH/DELETE). Closes the spec-mandated security baseline gap; lands alongside S3's first batch of state-mutating endpoints. | open — design in `specs/2026-05-06-s3-pr-detail-read-design.md` § 8 |
+| **Now → Shipped in S3** | `SessionTokenMiddleware` (enforces `X-PRism-Session` per `docs/spec/02-architecture.md` § Cross-origin defense) + tightened `OriginCheckMiddleware` (rejects empty Origin on POST/PUT/PATCH/DELETE). Closes the spec-mandated security baseline gap; landed in S3 alongside the first batch of state-mutating endpoints. | Shipped — `PRism.Web/Middleware/SessionTokenMiddleware.cs` + `PRism.Web/Middleware/OriginCheckMiddleware.cs` (S3 PR5 — PR #22). Design in `specs/2026-05-06-s3-pr-detail-read-design.md` § 8. |
 | **Before S4** | Decompose `AppState` into typed sub-records (`InboxState` / `PrSessionsState` / placeholder `AiState`) | open — considered for S3 pull-forward; rejected so the wrap rename can land alongside S4's drafts/replies/reconciliation field additions in a single migration |
 | **Before S4** | Schema-versioned migration support in `AppStateStore` | open — S3 ships a single inline `MigrateV1ToV2` helper; framework extracts when S4's migration #2 motivates it |
 | **Before S5** | Split `IReviewService` into capability sub-interfaces (`IReviewAuth` / `IPrDiscovery` / `IPrReader` / `IReviewSubmitter`) | open |
@@ -74,4 +80,5 @@ Full design and rationale: [`specs/2026-05-06-architectural-readiness-design.md`
 | **Before P0+** | Frontend types codegen for `frontend/src/types/api.ts` (NSwag or equivalent) | open |
 | **Before P0+** | Document homes for `PRism.Git.Clone`, `PRism.Mcp.Host`, `PRism.AI.Chat`, AI cache, prompt-injection sanitizer | open |
 | **Before P0+** | `IHostedService` for `ConfigStore` async init (replaces `GetAwaiter().GetResult()` pragma) | open |
+| **Before P0+** | Single-instance enforcement (named mutex / `flock` + IPC focus signal). Without this, two PRism windows write `state.json` last-write-wins. Deferred from S3 because the fix needs its own brainstorm (IPC channel choice, focus-API per OS, second-launch UX). | open — design in `specs/2026-05-06-architectural-readiness-design.md` § ADR-P0-4 |
 | **Convention** | State machines live in `<Feature>/Pipeline/` sub-folders with a single entry-point class | adopt before first machine lands (S4 stale-draft reconciliation) |
