@@ -317,22 +317,22 @@ Filesystem reads are **not** in this server. Earlier W29 drafts exposed `repo_re
 - **Capability flag**: none.
 - **Seam**: corpus lives at `tests/PRism.Core.Tests/Iterations/corpus/<owner>-<repo>-<pr>.json` (per-PR ground truth files); harness already exists in `tests/PRism.Core.Tests/Iterations/ClusteringDisciplineCheck.cs` (env-var-gated `[SkippableFact]`).
 
-**Description.** S3 ships `WeightedDistanceClusteringStrategy` **disabled by default in production** (`iterations.clustering-disabled = true`) until coefficient calibration validates the algorithm against a corpus large enough to mean something. P0-9 builds that corpus and runs the calibration loop:
+**Description.** S3 ships `WeightedDistanceClusteringStrategy` **enabled by default** (`iterations.clustering-disabled = false`, the record-init default on `IterationsConfig`). The algorithm runs on every PR at first launch; calibration doesn't *unlock* a deferred default — it *validates* the existing default and gives the operator a defensible reason to either leave it on or flip the escape hatch. P0-9 builds the corpus and runs the loop:
 
 1. **Corpus selection.** Pick 30-50 real PRs from the author's recent reviewing experience, deliberately weighted toward the *messy* shapes the algorithm needs to survive: heavy `--amend` cycles, rebases, multi-day work with CI-amend pipelines, force-push chains, and one-or-two-commit PRs.
 2. **Hand-labeling.** For each PR, hand-mark the iteration boundaries the reviewer would expect (this is the ground truth). Format: a per-PR JSON file with `{ commits: [...], expectedBoundaryAfterCommitIndex: [2, 5, 7] }`.
 3. **Tuning loop.** Run `ClusteringDisciplineCheck` against the corpus with `PRISM_DISCIPLINE_PR_REFS` set. Aggregate agreement % is the dial. Tune `iterations.clustering-coefficients` (start with `mad-k`; raising it produces fewer/larger iterations) until aggregate agreement ≥ 70% on the corpus.
-4. **Convergence gate.** ≥ 70% → flip `iterations.clustering-disabled = false` in the shipped `appsettings.json`. < 70% after 3-5 tuning rounds → keep `clustering-disabled = true` and either (a) push to P0-8 to add multipliers, or (b) accept `CommitMultiSelectPicker` as the universal fallback while a separate effort develops a better algorithm.
+4. **Convergence gate.** ≥ 70% → leave `clustering-disabled = false` (no change; the shipped default is now corpus-validated). < 70% after 3-5 tuning rounds → flip `clustering-disabled = true` in the shipped `appsettings.json` to opt every PR onto `CommitMultiSelectPicker`, then either (a) push to P0-8 to add multipliers and re-tune, or (b) accept `CommitMultiSelectPicker` as the universal fallback while a separate effort develops a better algorithm.
 
-**Why P0+, not S3.** S3's job is to ship the algorithm and the harness; calibrating against real PR histories is its own week of work and benefits from being decoupled from the slice that ships the code. A botched calibration in S3 would force a re-tune cycle inside the slice; isolating it here keeps S3 shippable on the algorithm shape alone.
+**Why P0+, not S3.** S3's job is to ship the algorithm and the harness; calibrating against real PR histories is its own week of work and benefits from being decoupled from the slice that ships the code. A botched calibration in S3 would force a re-tune cycle inside the slice; isolating it here keeps S3 shippable on the algorithm shape alone. Shipping enabled-by-default lets the algorithm dogfood on real PRs immediately — failures are recoverable via the per-PR right-click merge/split UI and ultimately via the `clustering-disabled` flag — and produces the bug reports that inform calibration.
 
 **Acceptance criteria sketch.**
 - Corpus of 30-50 PR histories checked into `tests/PRism.Core.Tests/Iterations/corpus/`, each with hand-labeled boundaries.
 - `ClusteringDisciplineCheck` runs against the full corpus and reports aggregate agreement %.
-- Documented coefficient values that achieve ≥ 70% agreement, OR documented decision to keep `clustering-disabled = true` if convergence fails.
+- Documented coefficient values that achieve ≥ 70% agreement, OR documented decision to flip `clustering-disabled = true` if convergence fails.
 - Per-PR diff output for the convergence run committed to the spec § 12 observations (slice spec § 11.5 mandates this).
 
 **Connections.**
-- Required by: `WeightedDistanceClusteringStrategy` shipping enabled in production.
+- Validates: `WeightedDistanceClusteringStrategy`'s shipped enabled-by-default state.
 - Enables: P0-8 (multiplier expansion driven by what calibration reveals is missing).
 - See: [`docs/spec/iteration-clustering-algorithm.md`](../spec/iteration-clustering-algorithm.md) § "Tuning approach"; slice spec § 11.5.

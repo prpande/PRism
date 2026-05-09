@@ -55,7 +55,7 @@ S0+S1 lands the architecture; each subsequent slice plugs in placeholders as the
 - **S0+S1** — architecture only (interfaces + `Noop*` / `Placeholder*` impls + `ui.aiPreview` flag + `/api/capabilities`); no host components yet, so flipping the toggle has no visible effect.
 - **S2** — inbox row category chips, freshness/unread badges (the badges are non-AI but landed in the same slice), and the activity rail. Flipping the toggle now produces visible category chips.
 - **S3** — three placeholder slots: the **Overview-tab AI summary card**, **file-tree focus dots** on the Files tab, and the **AI hunk annotation slot** (the slot is wired to `react-diff-view`'s widget API; the PoC never inserts an annotation, so the slot stays empty even with `aiPreview` on). Flipping the toggle now produces a visible AI summary on the Overview tab and visible focus dots in the file tree.
-- **S5** — submit-modal AI validator card and the Ask AI drawer with pre-baked messages.
+- **S5** — submit-modal AI validator card and the Ask AI drawer with pre-baked messages. Flipping the toggle now produces a visible AI validator alongside the verdict picker and a populated Ask AI drawer with seeded conversation.
 
 ## When a slice changes shape
 

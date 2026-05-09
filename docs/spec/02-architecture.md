@@ -459,7 +459,7 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
     // calibration), this is the JSON shape it will read. Today, writing this block to
     // `config.json` is a no-op (unknown fields are ignored on deserialize). See
     // `iteration-clustering-algorithm.md` § "Coefficient surface" for the full story.
-    "cluster-gap-seconds": 60,                     // Live today. Legacy field on `IterationsConfig`. Originally the only iteration-clustering knob; superseded in spirit by the weighted-distance algorithm but still bound and not yet removed from the record. Safe to leave at default.
+    "cluster-gap-seconds": 60,                     // Bound today but **inert** — `WeightedDistanceClusteringStrategy` reads coefficients from `IterationClusteringCoefficients`, not from this field; setting it has no behavior change. Legacy field on `IterationsConfig`, originally the only iteration-clustering knob; kept on the record for v1-config-file backward-compat (no warning is emitted on unknown changes). Slated for removal alongside the future `IOptionsMonitor<IterationClusteringCoefficients>` binding.
     "clustering-disabled": false,                  // Live today. Calibration-failure escape hatch — set true to disable WeightedDistance globally and force every PR onto `CommitMultiSelectPicker`. Default ships `false` (algorithm runs on every PR); flip to `true` if discipline-check agreement on a real corpus is unsatisfactory. See `iteration-clustering-algorithm.md` § "Calibration-failure escape hatch."
 
     // --- planned future binding (P0-9 era), not yet wired ---
