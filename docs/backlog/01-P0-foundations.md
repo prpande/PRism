@@ -287,7 +287,7 @@ Filesystem reads are **not** in this server. Earlier W29 drafts exposed `repo_re
 - **Direct dependencies**: P0-9 (calibration corpus must exist before adding multipliers — without ground truth, "did this multiplier help?" has no answer). S3 ships the strategy slot; P0-9 ships the corpus; P0-8 fills in the multipliers calibration shows are missing.
 - **Estimated effort**: M (each multiplier is a small `IDistanceMultiplier` impl + DI registration + unit tests; the cost is per-multiplier and additive).
 - **Capability flag**: none — multipliers are always-on once registered.
-- **Seam**: `IDistanceMultiplier` interface in `PRism.Core.Iteration`; new impls drop into the same namespace and register in `PRism.Core/Composition/ServiceCollectionExtensions.AddPrismCore`. `WeightedDistanceClusteringStrategy` does not change.
+- **Seam**: `IDistanceMultiplier` interface in `PRism.Core.Iterations`; new impls drop into the same namespace and register in `PRism.Core/ServiceCollectionExtensions.AddPrismCore`. `WeightedDistanceClusteringStrategy` does not change.
 
 **Description.** S3 ships two live multipliers: `FileJaccardMultiplier` (based on per-commit `changedFiles` overlap, fed by REST fan-out) and `ForcePushMultiplier` (force-push as a soft signal scaled by gap). Four future multipliers are documented in [`docs/spec/iteration-clustering-algorithm.md`](../spec/iteration-clustering-algorithm.md) but **not implemented**:
 
@@ -315,7 +315,7 @@ Filesystem reads are **not** in this server. Earlier W29 drafts exposed `repo_re
 - **Direct dependencies**: S3 (the algorithm + discipline-check harness must already exist). No new code — this is corpus-building work.
 - **Estimated effort**: L (the heavy lift is hand-labeling 30-50 real PR histories, not writing code).
 - **Capability flag**: none.
-- **Seam**: corpus lives at `tests/PRism.Core.Tests/Iteration/corpus/<owner>-<repo>-<pr>.json` (per-PR ground truth files); harness already exists in `tests/PRism.Core.Tests/Iteration/ClusteringDisciplineCheck.cs` (env-var-gated `[SkippableFact]`).
+- **Seam**: corpus lives at `tests/PRism.Core.Tests/Iterations/corpus/<owner>-<repo>-<pr>.json` (per-PR ground truth files); harness already exists in `tests/PRism.Core.Tests/Iterations/ClusteringDisciplineCheck.cs` (env-var-gated `[SkippableFact]`).
 
 **Description.** S3 ships `WeightedDistanceClusteringStrategy` **disabled by default in production** (`iterations.clustering-disabled = true`) until coefficient calibration validates the algorithm against a corpus large enough to mean something. P0-9 builds that corpus and runs the calibration loop:
 
@@ -327,7 +327,7 @@ Filesystem reads are **not** in this server. Earlier W29 drafts exposed `repo_re
 **Why P0+, not S3.** S3's job is to ship the algorithm and the harness; calibrating against real PR histories is its own week of work and benefits from being decoupled from the slice that ships the code. A botched calibration in S3 would force a re-tune cycle inside the slice; isolating it here keeps S3 shippable on the algorithm shape alone.
 
 **Acceptance criteria sketch.**
-- Corpus of 30-50 PR histories checked into `tests/PRism.Core.Tests/Iteration/corpus/`, each with hand-labeled boundaries.
+- Corpus of 30-50 PR histories checked into `tests/PRism.Core.Tests/Iterations/corpus/`, each with hand-labeled boundaries.
 - `ClusteringDisciplineCheck` runs against the full corpus and reports aggregate agreement %.
 - Documented coefficient values that achieve ≥ 70% agreement, OR documented decision to keep `clustering-disabled = true` if convergence fails.
 - Per-PR diff output for the convergence run committed to the spec § 12 observations (slice spec § 11.5 mandates this).

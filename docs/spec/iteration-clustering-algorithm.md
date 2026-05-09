@@ -246,7 +246,7 @@ What *is* hot-reloadable today: `iterations.clustering-disabled` lives in `confi
 The shipping defaults — recorded once in `IterationClusteringCoefficients`'s record-init and once here in the spec for ease-of-reference:
 
 ```text
-file-jaccard-weight:               0.5     // FileJaccardMultiplier signal weight. 0 = ignore; 1 = full overlap reduces distance to zero.
+file-jaccard-weight:               0.5     // FileJaccardMultiplier signal weight. 0 = ignore; values approaching 1 reduce distance toward zero (validator enforces strictly < 1 — see IterationClusteringCoefficients.Validate).
 force-push-after-long-gap:         1.5     // ForcePushMultiplier value when both conditions are met.
 force-push-long-gap-seconds:       600     // Below this gap, force-push is treated as a tight --amend (no expansion).
 mad-k:                             3       // MAD threshold = median + mad-k × MAD.
