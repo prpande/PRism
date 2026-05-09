@@ -7,7 +7,7 @@ import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
 import { PrDetailPage } from './pages/PrDetailPage';
-import { OverviewTabPlaceholder } from './components/PrDetail/OverviewTab/OverviewTabPlaceholder';
+import { OverviewTab } from './components/PrDetail/OverviewTab/OverviewTab';
 import { FilesTab } from './components/PrDetail/FilesTab/FilesTab';
 import { DraftsTabDisabled } from './components/PrDetail/DraftsTab/DraftsTabDisabled';
 import { useAuth } from './hooks/useAuth';
@@ -62,7 +62,7 @@ export function App() {
           path="/pr/:owner/:repo/:number"
           element={isAuthed ? <PrDetailPage /> : <Navigate to="/setup" replace />}
         >
-          <Route index element={<OverviewTabPlaceholder />} />
+          <Route index element={<OverviewTab />} />
           <Route path="files/*" element={<FilesTab />} />
           <Route path="drafts" element={<DraftsTabDisabled />} />
         </Route>
