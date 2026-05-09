@@ -10,6 +10,7 @@ import { DiffPane } from './DiffPane';
 import type { DiffMode } from './DiffPane';
 import { IterationTabStrip } from './IterationTabStrip';
 import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
+import { buildAllRange } from '../range';
 import { buildTree, flattenPaths } from './treeBuilder';
 
 interface FilesTabContext {
@@ -66,7 +67,7 @@ export function FilesTab() {
   }, []);
   const [viewedPaths, setViewedPaths] = useState<Set<string>>(new Set());
 
-  const allRange = `${prDetail.pr.baseSha}..${prDetail.pr.headSha}`;
+  const allRange = buildAllRange(prDetail.pr);
 
   const iterationRange = useMemo(() => {
     if (isLowQuality) return null;

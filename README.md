@@ -4,7 +4,7 @@ Local-first PR review tool that runs on the reviewer's own machine. See [`docs/s
 
 ## Status
 
-Implementation in progress. S0+S1 (foundations) and S2 (inbox read) have shipped; S3 (PR detail read) has its five backend PRs (PR1 state migration, PR2 iteration clustering, PR3 `IReviewService` extensions, PR4 `PrDetailLoader` + backend endpoints, PR5 SSE per-PR fanout + active-PR poller + `SessionTokenMiddleware`) and three frontend PRs (PR6 PR-detail shell, PR7 Files tab, PR8 Diff Pane + Markdown pipeline) all merged. Task 9 (Overview tab), Task 10 (documentation updates), and Task 11 (contract tests against the frozen `api-codex` PR) remain. See [`docs/roadmap.md`](docs/roadmap.md) for the live slice table and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
+Implementation in progress. S0+S1 (foundations) and S2 (inbox read) have shipped; S3 (PR detail read) has its five backend PRs (PR1 state migration, PR2 iteration clustering, PR3 `IReviewService` extensions, PR4 `PrDetailLoader` + backend endpoints, PR5 SSE per-PR fanout + active-PR poller + `SessionTokenMiddleware`) and four frontend PRs (PR6 PR-detail shell, PR7 Files tab, PR8 Diff Pane + Markdown pipeline, PR9 Overview tab + AI summary endpoint) all merged. Task 10 (documentation updates) and Task 11 (contract tests against the frozen `api-codex` PR) remain. See [`docs/roadmap.md`](docs/roadmap.md) for the live slice table and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
 
 ## Development workflow
 
