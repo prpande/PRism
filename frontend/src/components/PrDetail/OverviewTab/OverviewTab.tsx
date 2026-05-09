@@ -5,6 +5,7 @@ import { useCapabilities } from '../../../hooks/useCapabilities';
 import { usePreferences } from '../../../hooks/usePreferences';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
+import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
 import { PrDescription } from './PrDescription';
 import { StatsTiles } from './StatsTiles';
@@ -30,12 +31,19 @@ export function OverviewTab() {
   const aiPreview = preferences?.aiPreview ?? false;
   const aiOn = !!capabilities?.summary && aiPreview;
 
-  const allRange = `${prDetail.pr.baseSha}..${prDetail.pr.headSha}`;
-  const diff = useFileDiff(prRef, allRange);
+  const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
   const aiSummary = useAiSummary(prRef, aiOn);
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;
+
+  // hasFiles only goes false when the diff has loaded successfully AND
+  // contains zero files (truly empty PR). During loading or on error,
+  // keep the CTA enabled — the user proceeds to the Files tab where
+  // skeleton/error UX lives. This avoids the "No files to review yet"
+  // tooltip flashing during the load window or masking a fetch failure
+  // as an empty-PR state.
+  const hasFiles = !(diff.data !== null && diff.data.files.length === 0);
 
   const handleReviewFiles = () =>
     navigate(`/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/files`);
@@ -51,7 +59,7 @@ export function OverviewTab() {
         viewedCount={0}
       />
       <PrRootConversation comments={prDetail.rootComments} />
-      <ReviewFilesCta hasFiles={filesCount > 0} onReviewFiles={handleReviewFiles} />
+      <ReviewFilesCta hasFiles={hasFiles} onReviewFiles={handleReviewFiles} />
     </div>
   );
 }
