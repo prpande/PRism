@@ -4,7 +4,7 @@
 
 **Brainstorm output of:** 2026-05-09 brainstorming pass with the user.
 
-**Implementation cycle.** This document is the design (spec). The implementation plan lands separately at `docs/plans/2026-05-09-s4-drafts-and-composer.md` after this spec passes human review.
+**Implementation cycle.** This document is the design (spec). The implementation plan lands separately at `docs/plans/2026-05-10-s4-drafts-and-composer.md` after this spec passes human review.
 
 **Reference axes.** Spec references in this document use the form `spec/0X-name.md § N`. Roadmap-references use `roadmap.md`. ADR references use `specs/2026-05-06-architectural-readiness-design.md § ADR-S4-N`.
 
@@ -347,7 +347,7 @@ New endpoint **`POST /api/pr/{ref}/reload`**:
 
 **File-fetch concurrency + `_gate` discipline.** Reconciliation can fetch N files for a PR with many anchored drafts. To avoid holding `_gate` (which serializes all `state.json` writes) during multi-second GitHub fetches, `POST /reload` runs the pipeline in two phases:
 
-1. **Phase 1 (no gate held):** Build `IFileContentSource`. Call `pipeline.ReconcileAsync(session, headSha, fileContentSource, ct)` to compute the result. File fetches happen in parallel (cap: 8 concurrent — bounded `SemaphoreSlim` inside the pipeline) with a per-fetch timeout (10 s). The pre-loaded session snapshot is the input.
+1. **Phase 1 (no gate held):** Build `IFileContentSource`. Call `pipeline.ReconcileAsync(session, headSha, fileContentSource, ct)` to compute the result. **PoC ships sequential file fetches** — typical PRs have few anchored drafts and the reload is the user-perceived "wait moment" anyway, so a per-fetch concurrency cap and timeout are deferred to a future revision. (Earlier draft promised "8 concurrent + bounded SemaphoreSlim + 10s per-fetch timeout"; revisited below.) The pre-loaded session snapshot is the input.
 2. **Phase 2 (gate held briefly):** Call `appStateStore.UpdateAsync(s => ApplyResult(s, ref, result))` to atomically write the result. The transform body is pure — it does not call into the pipeline.
 
 **Head-shift detection between phases.** If the active-PR poller advances `headSha` between phase 1 and phase 2, the result is stale-relative-to-current-state. Phase 2's transform compares the request's `headSha` against the session's current head (read from the active-PR cache populated by S3) at apply time; if they diverge (rare — requires a poll-fired update during the reload window), the apply is rejected and the endpoint returns `409 reload-stale-head` with `{ "currentHeadSha": "<sha>" }` in the body. **Frontend behavior:** `useReconcile` auto-retries once with the returned `currentHeadSha` (transparent to the user; the user already clicked Reload, retrying the same intent is correct). If the auto-retry also returns `409 reload-stale-head` (head shifted twice within the reload window — extremely rare), surface a banner *"Head shifted while reloading; please click Reload again."* and stop retrying.
@@ -563,8 +563,8 @@ The new patch kinds `newPrRootDraftComment`, `confirmVerdict`, and `markAllRead`
 - `Reload_ReturnsFullReviewSessionDto`.
 - `Reload_DoubleClick_409_ReloadInProgress` (per-PR semaphore non-blocking try-acquire).
 - `Reload_HeadShiftBetweenPhases_409_ReloadStaleHead` (poller advances headSha mid-reload).
-- `Reload_FileFetchTimeout_AbortsAndLeavesStateUnchanged`.
-- `Reload_FileFetchConcurrencyCappedAt8`.
+- ~~`Reload_FileFetchTimeout_AbortsAndLeavesStateUnchanged`~~ — DEFERRED with the per-fetch timeout (PoC ships sequential fetches; no timeout to test).
+- ~~`Reload_FileFetchConcurrencyCappedAt8`~~ — DEFERRED with the concurrency cap (PoC ships sequential fetches).
 
 `tests/PRism.Web.Tests/Concurrency/DraftRaceTests.cs`:
 - `TwoParallelUpdateDraftComments_LastWriterWins_TwoEvents` — uses two `HttpClient`s against the same `WebApplicationFactory` and two `Task.Run` calls.
@@ -943,7 +943,7 @@ PR closure is detected by the active-PR poller (S3, returns `state` field). On `
 
 ## 9. PR sequencing (sketch — writing-plans owns the final cut)
 
-The brainstorming pass settled on **layer-up ordering** (architectural prerequisites first; backend before frontend) — matches S3's precedent. The `writing-plans` skill owns the final PR boundaries when it produces `docs/plans/2026-05-09-s4-drafts-and-composer.md`. Sketch:
+The brainstorming pass settled on **layer-up ordering** (architectural prerequisites first; backend before frontend) — matches S3's precedent. The `writing-plans` skill owns the final PR boundaries when it produces `docs/plans/2026-05-10-s4-drafts-and-composer.md`. Sketch:
 
 1. **PR1 — AppState wrap + migration framework + V2→V3 step + existing-consumer updates** (per § 2.5: rename + framework + draft-fields backfill + key normalization + every existing `state.ReviewSessions.X` consumer site rewritten to `state.Reviews.Sessions.X` (~6 production files + ~5 test files); all existing tests stay green). NOT "no feature consumers" — it's a cross-module touch that the brainstorm-output framing understated.
 2. **PR2 — Reconciliation pipeline** (`PRism.Core/Reconciliation/Pipeline/`; matrix tests; boundary-permutation tests; override tests; no UI; no endpoint).

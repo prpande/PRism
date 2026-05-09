@@ -1151,9 +1151,14 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class MatrixTests
 {
+    // Use realistic 40-char hex SHAs throughout reconciliation tests. The unit tests use
+    // FakeFileContentSource (no validation), so short placeholders would compile and pass —
+    // but using full SHAs (a) exercises the same shape that endpoint integration tests will
+    // see, (b) prevents accidental short-SHA propagation if a fixture moves to integration
+    // scope, and (c) matches what endpoint validation regex `^[0-9a-f]{40}$` requires.
     private const string PrRef = "acme/api/123";
-    private const string OldSha = "old-sha";
-    private const string NewSha = "new-sha";
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
 
     public static IEnumerable<object[]> MatrixRows()
     {
@@ -1353,7 +1358,11 @@ internal static class LineMatching
 
     private static string Normalize(string s)
     {
-        // Collapse runs of whitespace (but preserve content order).
+        // Strips ALL whitespace (not just leading/trailing or runs) so reformatted lines
+        // re-anchor correctly. Example: `"foo(x, y)"` and `"foo(x,y)"` are whitespace-
+        // equivalent under this normalization. Intentional for the PoC — auto-formatter
+        // changes shouldn't strand drafts. If a future change tightens this to "collapse
+        // runs only," update WhitespaceTests.cs accordingly.
         return string.Concat(
             s.Where(c => !char.IsWhiteSpace(c))
         );
@@ -1582,6 +1591,25 @@ public sealed class DraftReconciliationPipeline
         renames ??= new Dictionary<string, string>();
         deletedPaths ??= new HashSet<string>();
 
+        // Override-on-head-shift clearing per spec § 3.2 — "On head shift (any headSha change
+        // since the override was set), IsOverriddenStale is cleared by the apply-result step
+        // (Phase 2 of § 3.3) before the matrix runs." We implement it here at the top of the
+        // pipeline by stripping IsOverriddenStale from the input drafts whenever the session's
+        // last-known head differs from the new head being reloaded against.
+        bool headShifted = session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha;
+        if (headShifted)
+        {
+            session = session with
+            {
+                DraftComments = session.DraftComments
+                    .Select(d => d.IsOverriddenStale ? d with { IsOverriddenStale = false } : d)
+                    .ToList(),
+                DraftReplies = session.DraftReplies
+                    .Select(r => r.IsOverriddenStale ? r with { IsOverriddenStale = false } : r)
+                    .ToList(),
+            };
+        }
+
         var fileCache = new Dictionary<(string, string), string>();
         var reachabilityCache = new Dictionary<string, bool>();
 
@@ -1756,7 +1784,8 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class BoundaryPermutationTests
 {
-    private const string OldSha = "old", NewSha = "new";
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
 
     [Fact]
     public async Task Row4IntersectRow6_TwoExactPlusFiveWhitespaceEquiv_ExactWins_AlternateCountOne()
@@ -1883,7 +1912,8 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class OverrideStaleTests
 {
-    private const string OldSha = "old", NewSha = "new";
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
 
     [Fact]
     public async Task IsOverriddenStaleTrueAndAnchoredShaReachable_ClassifierShortCircuitsToDraft()
@@ -1920,6 +1950,25 @@ public class OverrideStaleTests
         var d = Assert.Single(result.Drafts);
         Assert.Equal(DraftStatus.Draft, d.Status);
         Assert.False(d.IsOverriddenStale);   // override no longer needed; cleared
+    }
+
+    [Fact]
+    public async Task HeadShiftBetweenReloads_ClearsOverride()
+    {
+        // Per spec § 3.2: "On head shift (any headSha change since the override was set),
+        // IsOverriddenStale is cleared by the apply-result step (Phase 2 of § 3.3) before
+        // the matrix runs." This test exercises that exact contract: the draft was overridden
+        // at OldSha; reloading against a DIFFERENT NewSha (head shifted) must strip the
+        // override BEFORE the classifier runs, so a stale-classifying content state once again
+        // produces Status=Stale (the user must explicitly Keep anyway again on the new head).
+        var content = "line X\nline Y\nline Z\n";   // no match at line 2
+        var draft = MakeDraft(isOverridden: true);
+        // session.LastViewedHeadSha = OldSha (set in SessionWith); newHeadSha = NewSha → shift
+        var result = await RunReachable(content, draft);
+
+        var d = Assert.Single(result.Drafts);
+        Assert.Equal(DraftStatus.Stale, d.Status);   // override stripped at top of pipeline
+        Assert.False(d.IsOverriddenStale);
     }
 
     private static async Task<ReconciliationResult> RunReachable(string content, DraftComment draft)
@@ -1988,7 +2037,7 @@ git commit -m "test(s4-pr2): override-stale propagation + force-push override-ig
 - Create: `tests/PRism.Core.Tests/Reconciliation/WhitespaceTests.cs`
 - Create: `tests/PRism.Core.Tests/Reconciliation/RenameTests.cs`
 - Create: `tests/PRism.Core.Tests/Reconciliation/DeleteTests.cs`
-- ~~Create: `tests/PRism.Core.Tests/Reconciliation/ReplyTests.cs`~~ — DEFERRED to PR3 (Task 30 region) where the endpoint passes `existingThreadIds` to the pipeline; PR2's reply tests would be tautological pass-through.
+- Create: `tests/PRism.Core.Tests/Reconciliation/ReplyTests.cs` — PR2 ships the trivial pass-through test (replies pass through unchanged when the pipeline has no `existingThreadIds`). PR3 extends with `Reply_ParentThreadDeletedOutOfBand_StaleParentThreadDeleted` once the endpoint passes `existingThreadIds` to the pipeline. Keeping the PR2 test prevents silent regression of the pass-through contract; the file is still committed in this phase.
 - Create: `tests/PRism.Core.Tests/Reconciliation/VerdictReconfirmTests.cs`
 
 - [ ] **Step 1: Write `ForcePushFallbackTests.cs`**
@@ -2003,7 +2052,8 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class ForcePushFallbackTests
 {
-    private const string OldSha = "old", NewSha = "new";
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
 
     [Fact]
     public async Task SingleExactMatch_Moved_WithFlagSet()
@@ -2075,27 +2125,34 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class WhitespaceTests
 {
-    private const string OldSha = "old", NewSha = "new";
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
 
     [Fact]
-    public async Task CrlfToLfFlip_TreatedAsExact()
+    public async Task CrlfToLfFlip_MatchesViaWhitespaceEquivalent()
     {
-        // anchored content has trailing CR; new content has trailing LF only.
-        // SplitLines TrimEnd('\r') normalizes both → exact match at original line.
+        // anchored content retains its trailing CR; new content has LF only.
+        // SplitLines TrimEnd('\r') normalizes the FILE's split lines but NOT the
+        // anchored content. Match goes through the WhitespaceEquiv path:
+        // Normalize("line B") == Normalize("line B\r") == "lineB" (the all-whitespace
+        // strip in LineMatching.Normalize removes the \r). Test name reflects the
+        // actual matcher tier; result is still Status=Draft at the original line.
         var fake = new FakeFileContentSource(
             files: new() { [("src/Foo.cs", NewSha)] = "line A\nline B\nline C\n" },
             reachableShas: new() { OldSha, NewSha });
 
         var draft = new DraftComment(
             Id: "d1", FilePath: "src/Foo.cs", LineNumber: 2, Side: "right",
-            AnchoredSha: OldSha, AnchoredLineContent: "line B\r",   // CR-suffixed
+            AnchoredSha: OldSha, AnchoredLineContent: "line B\r",   // CR-suffixed; retained
             BodyMarkdown: "body", Status: DraftStatus.Draft, IsOverriddenStale: false);
 
         var session = SessionWith(draft);
         var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
 
         var d = Assert.Single(result.Drafts);
-        // After TrimEnd('\r') on anchored content, normalized as "line B" → matches at line 2.
+        // WhitespaceEquiv match at line 2 (Row 5 of the matrix: no exact match because
+        // the file-line "line B" != anchored "line B\r" by exact-string compare; whitespace-
+        // equivalent match unique → Fresh / Draft).
         Assert.Equal(DraftStatus.Draft, d.Status);
         Assert.Equal(2, d.ResolvedLineNumber);
     }
@@ -2159,7 +2216,8 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class RenameTests
 {
-    private const string OldSha = "old", NewSha = "new";
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
 
     [Fact]
     public async Task RenamedFile_DraftFollowsRename()
@@ -2203,7 +2261,8 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class DeleteTests
 {
-    private const string OldSha = "old", NewSha = "new";
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
 
     [Fact]
     public async Task DeletedFile_StaleWithFileDeletedReason()
@@ -2247,12 +2306,19 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class ReplyTests
 {
+    // SHA convention: use 40-char hex placeholders matching the endpoint validation regex
+    // `^[0-9a-f]{40}$`. The pipeline tests use FakeFileContentSource (no validation), so
+    // short literals would compile, but using full SHAs keeps the fixture shape consistent
+    // with integration tests and prevents accidental short-SHA propagation.
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
+
     [Fact]
     public async Task Reply_PassesThroughUnchanged_PR2Scope()
     {
         // PR2 scope: replies pass-through. ParentThreadDeleted check is added in PR3
         // when the endpoint passes the existing-comments cache to the pipeline.
-        var fake = new FakeFileContentSource(reachableShas: new() { "old", "new" });
+        var fake = new FakeFileContentSource(reachableShas: new() { OldSha, NewSha });
 
         var reply = new DraftReply(
             Id: "r1", ParentThreadId: "PRRT_xxx",
@@ -2260,14 +2326,14 @@ public class ReplyTests
             Status: DraftStatus.Draft, IsOverriddenStale: false);
 
         var session = new ReviewSessionState(
-            LastViewedHeadSha: "old", LastSeenCommentId: null,
+            LastViewedHeadSha: OldSha, LastSeenCommentId: null,
             PendingReviewId: null, PendingReviewCommitOid: null,
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(), DraftReplies: new[] { reply },
             DraftSummaryMarkdown: null, DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 
-        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, "new", fake, CancellationToken.None);
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
 
         var r = Assert.Single(result.Replies);
         Assert.Equal(DraftStatus.Draft, r.Status);
@@ -2286,13 +2352,18 @@ namespace PRism.Core.Tests.Reconciliation;
 
 public class VerdictReconfirmTests
 {
+    // SHA convention: 40-char hex (see ReplyTests.cs comment).
+    private const string OldSha = "0000000000000000000000000000000000000001";
+    private const string NewSha = "0000000000000000000000000000000000000002";
+    private const string SameSha = "000000000000000000000000000000000000000a";
+
     [Fact]
     public async Task VerdictSetAndHeadShifted_NeedsReconfirm()
     {
-        var session = SessionWith("old", verdict: DraftVerdict.Approve);
-        var fake = new FakeFileContentSource(reachableShas: new() { "old", "new" });
+        var session = SessionWith(OldSha, verdict: DraftVerdict.Approve);
+        var fake = new FakeFileContentSource(reachableShas: new() { OldSha, NewSha });
 
-        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, "new", fake, CancellationToken.None);
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
 
         Assert.Equal(VerdictReconcileOutcome.NeedsReconfirm, result.VerdictOutcome);
     }
@@ -2300,10 +2371,10 @@ public class VerdictReconfirmTests
     [Fact]
     public async Task VerdictSetAndHeadUnchanged_Unchanged()
     {
-        var session = SessionWith("same", verdict: DraftVerdict.Approve);
-        var fake = new FakeFileContentSource(reachableShas: new() { "same" });
+        var session = SessionWith(SameSha, verdict: DraftVerdict.Approve);
+        var fake = new FakeFileContentSource(reachableShas: new() { SameSha });
 
-        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, "same", fake, CancellationToken.None);
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, SameSha, fake, CancellationToken.None);
 
         Assert.Equal(VerdictReconcileOutcome.Unchanged, result.VerdictOutcome);
     }
@@ -2311,10 +2382,10 @@ public class VerdictReconfirmTests
     [Fact]
     public async Task NoVerdictSet_HeadShifted_Unchanged()
     {
-        var session = SessionWith("old", verdict: null);
-        var fake = new FakeFileContentSource(reachableShas: new() { "old", "new" });
+        var session = SessionWith(OldSha, verdict: null);
+        var fake = new FakeFileContentSource(reachableShas: new() { OldSha, NewSha });
 
-        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, "new", fake, CancellationToken.None);
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
 
         Assert.Equal(VerdictReconcileOutcome.Unchanged, result.VerdictOutcome);
     }
@@ -2546,13 +2617,19 @@ git commit -m "feat(s4-pr3): SSE projection for draft + state-changed events (Pr
 
 - [ ] **Step 1: Create the DTO file**
 
+Use the typed enums from `PRism.Core.State` (`DraftVerdict`, `DraftVerdictStatus`, `DraftStatus`) directly on the wire — `JsonSerializerOptionsFactory.Api` already registers `JsonStringEnumConverter` with kebab-case naming (verify via `grep -n "JsonStringEnumConverter\|JsonNamingPolicy.KebabCaseLower" PRism.Core/Json/JsonSerializerOptionsFactory.cs`). This matches the repo's established serialization pattern (S2/S3 endpoints already serialize enums as kebab-case strings) and avoids the round-trip-via-string bug surface where the mapper might emit values that don't match TS literal-union expectations.
+
 ```csharp
+using PRism.Core.State;
+
 namespace PRism.Web.Endpoints;
 
-// GET /api/pr/{ref}/draft response shape.
+// GET /api/pr/{ref}/draft response shape. Enum fields serialize as kebab-case strings via
+// JsonStringEnumConverter on JsonSerializerOptionsFactory.Api (matches DraftStatus =
+// "draft" | "moved" | "stale" on the TS side per spec § 5.9).
 public sealed record ReviewSessionDto(
-    string? DraftVerdict,
-    string DraftVerdictStatus,
+    DraftVerdict? DraftVerdict,
+    DraftVerdictStatus DraftVerdictStatus,
     string? DraftSummaryMarkdown,
     IReadOnlyList<DraftCommentDto> DraftComments,
     IReadOnlyList<DraftReplyDto> DraftReplies,
@@ -2569,7 +2646,7 @@ public sealed record DraftCommentDto(
     string? AnchoredSha,
     string? AnchoredLineContent,
     string BodyMarkdown,
-    string Status,
+    DraftStatus Status,
     bool IsOverriddenStale);
 
 public sealed record DraftReplyDto(
@@ -2577,7 +2654,7 @@ public sealed record DraftReplyDto(
     string ParentThreadId,
     string? ReplyCommentId,
     string BodyMarkdown,
-    string Status,
+    DraftStatus Status,
     bool IsOverriddenStale);
 
 public sealed record IterationOverrideDto();   // empty in S4; S3 placeholder
@@ -2639,6 +2716,11 @@ git commit -m "feat(s4-pr3): PrDraftDtos (ReviewSessionDto + ReviewSessionPatch 
 
 **Why this task exists.** The earlier draft of the plan referenced "IActivePrCache (S3 dependency)" — that was wrong. S3 ships `ActivePrPoller` with private state; no public-facing cache surface exists. Tasks 25 (`markAllRead`) and 29 (`POST /reload` head-shift detection) both need to read "current head SHA per active PR" and "highest issue-comment id per active PR." This task introduces the minimal cache surface they need.
 
+- [ ] **Step 0: Verify `PrReference` has value equality** (load-bearing for the cache's `ConcurrentDictionary<PrReference, ...>` key behavior)
+
+Run: `grep -n "public.*record.*PrReference\|public.*class.*PrReference" PRism.Core.Contracts/PrReference.cs`
+Expected: declared as `public sealed record PrReference(...)` (records have built-in structural equality). If it's a class without `Equals`/`GetHashCode` overrides, two `PrReference("acme", "api", 123)` instances would NOT be equal and the cache would silently produce duplicates. Add equality overrides or convert to record before proceeding.
+
 - [ ] **Step 1: Create the interface + record**
 
 ```csharp
@@ -2670,6 +2752,8 @@ namespace PRism.Core.PrDetail;
 public sealed class ActivePrCache : IActivePrCache
 {
     private readonly ActivePrSubscriberRegistry _subscribers;
+    // PrReference must have value equality (record or class with overridden Equals/GetHashCode)
+    // to be usable as a ConcurrentDictionary key. Verified at PRism.Core.Contracts/PrReference.cs.
     private readonly ConcurrentDictionary<PrReference, ActivePrSnapshot> _snapshots = new();
 
     public ActivePrCache(ActivePrSubscriberRegistry subscribers) { _subscribers = subscribers; }
@@ -3233,15 +3317,11 @@ public static class PrDraftEndpoints
         return true;
     }
 
-    private static ReviewSessionDto MapToDto(ReviewSessionState s) => new(
-        DraftVerdict: s.DraftVerdict?.ToString().ToLowerInvariant() switch
-        {
-            "approve" => "approve",
-            "requestchanges" => "requestChanges",
-            "comment" => "comment",
-            _ => null
-        },
-        DraftVerdictStatus: s.DraftVerdictStatus == DraftVerdictStatus.Draft ? "draft" : "needs-reconfirm",
+    // Pass typed enums through directly — JsonStringEnumConverter handles wire serialization.
+    // PROMOTED to `internal static` (per Task 29 requirement) so PrReloadEndpoints can call without copy-paste.
+    internal static ReviewSessionDto MapToDto(ReviewSessionState s) => new(
+        DraftVerdict: s.DraftVerdict,
+        DraftVerdictStatus: s.DraftVerdictStatus,
         DraftSummaryMarkdown: s.DraftSummaryMarkdown,
         DraftComments: s.DraftComments.Select(MapDraft).ToList(),
         DraftReplies: s.DraftReplies.Select(MapReply).ToList(),
@@ -3252,14 +3332,14 @@ public static class PrDraftEndpoints
 
     private static DraftCommentDto MapDraft(DraftComment d) => new(
         d.Id, d.FilePath, d.LineNumber, d.Side, d.AnchoredSha, d.AnchoredLineContent,
-        d.BodyMarkdown, d.Status.ToString().ToLowerInvariant(), d.IsOverriddenStale);
+        d.BodyMarkdown, d.Status, d.IsOverriddenStale);
 
     private static DraftReplyDto MapReply(DraftReply r) => new(
         r.Id, r.ParentThreadId, r.ReplyCommentId, r.BodyMarkdown,
-        r.Status.ToString().ToLowerInvariant(), r.IsOverriddenStale);
+        r.Status, r.IsOverriddenStale);
 
     private static ReviewSessionDto EmptyReviewSessionDto() => new(
-        null, "draft", null,
+        null, DraftVerdictStatus.Draft, null,
         Array.Empty<DraftCommentDto>(), Array.Empty<DraftReplyDto>(),
         Array.Empty<IterationOverrideDto>(),
         null, null,
@@ -3401,6 +3481,10 @@ if (outcome is PatchOutcome.Applied applied)
 - [ ] **Step 4: Wire endpoint registration in `Program.cs`**
 
 Add `app.MapPrDraftEndpoints();` near the existing endpoint registrations (after the existing `MapPrDetailEndpoints()` etc.)
+
+- [ ] **Step 4a: Promote `MapToDto` to `internal static`** (load-bearing for Task 29)
+
+The Step 1 DTO sketch declared `MapToDto` as `internal static` (not `private static`). Verify the implementation file matches: `internal static ReviewSessionDto MapToDto(ReviewSessionState s)`. This is required for `PrReloadEndpoints.cs` (Task 29) to call it without copy-paste — without the visibility change, Task 29's call site `PrDraftEndpoints.MapToDto(session2)` produces a CS0122 inaccessibility error.
 
 - [ ] **Step 5: Update tests for refactored shape + add missing tests**
 
@@ -3661,6 +3745,9 @@ namespace PRism.Web.Endpoints;
 
 public static class PrReloadEndpoints
 {
+    // PoC scope: entries accumulate one per distinct prRef seen during the server lifetime
+    // and are never removed. For the single-user local app this is negligible (few unique PRs).
+    // For a hosted future, add a periodic eviction pass keyed on last-acquired timestamp.
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> PerPrSemaphores = new();
 
     public sealed record ReloadRequest(string HeadSha);
@@ -3780,7 +3867,7 @@ public static class PrReloadEndpoints
             // Return updated DTO (saves the frontend a round-trip)
             var stateAfter = await store.LoadAsync(ct);
             var session2 = stateAfter.Reviews.Sessions[refKey];
-            return Results.Ok(MapSessionToDto(session2));
+            return Results.Ok(PrDraftEndpoints.MapToDto(session2));
         }
         finally
         {
@@ -3788,33 +3875,9 @@ public static class PrReloadEndpoints
         }
     }
 
-    // Re-uses PrDraftEndpoints.MapToDto by promoting it to `internal static` (Task 25's
-    // private mapper becomes internal so this endpoint can call it without copy-paste).
-    // The duplicate inline mapper from the earlier sketch is REMOVED — call site:
+    // No inline mapper — Task 25's PrDraftEndpoints.MapToDto is internal static; call directly:
     //   var session2 = stateAfter.Reviews.Sessions[refKey];
     //   return Results.Ok(PrDraftEndpoints.MapToDto(session2));
-    // (Step 6 of Task 25 includes the visibility change.)
-    // The block below is preserved only to document the mapper shape; delete before commit.
-    private static ReviewSessionDto MapSessionToDto(ReviewSessionState s) => new(
-        DraftVerdict: s.DraftVerdict?.ToString().ToLowerInvariant() switch
-        {
-            "approve" => "approve",
-            "requestchanges" => "requestChanges",
-            "comment" => "comment",
-            _ => null
-        },
-        DraftVerdictStatus: s.DraftVerdictStatus == DraftVerdictStatus.Draft ? "draft" : "needs-reconfirm",
-        DraftSummaryMarkdown: s.DraftSummaryMarkdown,
-        DraftComments: s.DraftComments.Select(d => new DraftCommentDto(
-            d.Id, d.FilePath, d.LineNumber, d.Side, d.AnchoredSha, d.AnchoredLineContent,
-            d.BodyMarkdown, d.Status.ToString().ToLowerInvariant(), d.IsOverriddenStale)).ToList(),
-        DraftReplies: s.DraftReplies.Select(r => new DraftReplyDto(
-            r.Id, r.ParentThreadId, r.ReplyCommentId, r.BodyMarkdown,
-            r.Status.ToString().ToLowerInvariant(), r.IsOverriddenStale)).ToList(),
-        IterationOverrides: Array.Empty<IterationOverrideDto>(),
-        PendingReviewId: s.PendingReviewId,
-        PendingReviewCommitOid: s.PendingReviewCommitOid,
-        FileViewState: new FileViewStateDto(s.ViewedFiles));
 }
 ```
 
@@ -4522,6 +4585,8 @@ export function MarkAllReadButton({ prRef, sessionToken }: { prRef: string; sess
 - [ ] **Step 1: `frontend/e2e/s4-drafts-survive-restart.spec.ts`** — open PR → click line 42 → type "this needs work" → wait 300ms → close browser context → reopen at same URL → composer pre-filled with body at line 42.
 
 - [ ] **Step 2: `frontend/e2e/s4-reconciliation-fires.spec.ts`** — save draft on iter-3 → `POST /test/advance-head?prRef=acme/api/123&newHeadSha=...&fileChanges=...` → click Reload → assert each row of the matrix produces the expected classification badge.
+
+  **E2E matrix scope for S4 MVP:** Task 29's reload endpoint passes empty `renames` / `deletedPaths` maps to the pipeline (deferred extension — see Task 29 Step 3 implementation note). The E2E test therefore covers: matrix rows 1–7 (content-present cases — exact / ambiguous / whitespace-equiv / no-match), force-push fallback (via the fixture's `IsCommitReachable` toggle), and verdict re-confirm. **Out of scope for S4 E2E** (covered by unit tests in `RenameTests.cs` / `DeleteTests.cs`): rename row, file-deleted row. These two require the reload endpoint to derive `renames` / `deletedPaths` from the PR's file-changes list, which lands in a follow-up that wires `IPrDetailLoader.GetFiles()` into the reload handler.
 
 - [ ] **Step 3: `frontend/e2e/s4-multi-tab-consistency.spec.ts`** — open same PR in two browser contexts → both show cross-tab presence banner → save draft in tab A → tab B's draft list updates (after `state-changed` SSE) → open composer in tab B for *different* draft → tab A's update of *that* draft is held back from clobbering tab B's open composer.
 
