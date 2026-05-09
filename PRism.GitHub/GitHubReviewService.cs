@@ -597,10 +597,18 @@ public sealed partial class GitHubReviewService : IReviewService
                 "renamed" => FileChangeStatus.Renamed,
                 _ => FileChangeStatus.Modified,
             };
-            // PoC: hunks aren't parsed from the patch text in this slice; the diff pane
-            // re-fetches the file content and runs jsdiff. The patch field is preserved
-            // server-side but FileChange.Hunks is intentionally empty here. See spec § 6.1.
-            result.Add(new FileChange(path, status, Array.Empty<DiffHunk>()));
+            // Parse GitHub's per-file unified-diff `patch` field into structured hunks
+            // via PatchParser (PRism.Core.Contracts). The frontend's DiffPane consumes
+            // hunk Body INCLUDING the @@ header; the parser preserves that contract.
+            // GitHub omits the `patch` field for binary files and very large files
+            // (>~3MB), in which case Parse returns an empty list and the frontend
+            // renders an "Empty file" placeholder for that file — a follow-up should
+            // distinguish this from the truly-empty case with a "view on github.com"
+            // affordance.
+            var patch = f.TryGetProperty("patch", out var p) && p.ValueKind == JsonValueKind.String
+                ? p.GetString()
+                : null;
+            result.Add(new FileChange(path, status, PatchParser.Parse(patch)));
         }
         return result;
     }
