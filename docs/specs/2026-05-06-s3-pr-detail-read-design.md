@@ -360,7 +360,7 @@ cache-invalidation on coefficient hot-reload:
   ConfigStore exposes a `Changed` event). PrDetailSnapshot is cached per (prRef, headSha,
   generation). PrDetailLoader subscribes to `ConfigStore.Changed` at startup and calls
   `InvalidateAll()` (which increments `_generation` and clears the cache) on every change.
-  Without this, a 60-commit PR clustered under `skipJaccardAboveCommitCount = 100` would
+  Without this, a 60-commit PR clustered under `skip-jaccard-above-commit-count = 100` would
   keep showing the Jaccard-skipped clustering even after the user raises the cap.
 
   Frontend deep-link handling: when the page is mounted at `/pr/.../files?iter=N` AND
@@ -547,7 +547,7 @@ IReviewService.GetTimelineAsync(prRef)
     Implementation note: per-commit changedFiles is fetched via REST GET /repos/{o}/{r}/commits/{sha}
     fan-out (concurrency cap 8, with a 100ms inter-batch pace). GraphQL's Commit type does not expose
     changed-file paths. A single PR with N commits costs N additional REST calls. The fan-out is
-    bounded by `iterations.skipJaccardAboveCommitCount` (default 100). Above the cap, Jaccard returns
+    bounded by `iterations.skip-jaccard-above-commit-count` (default 100). Above the cap, Jaccard returns
     1.0 (neutral) and per-PR commit-files fan-out is skipped entirely. The 100ms inter-batch pace
     plus the concurrency-8 cap together stay well under GitHub's secondary rate limit thresholds in
     practice; on any 403/4xx response from the fan-out, mark the offending commit's `ChangedFiles`
@@ -727,7 +727,7 @@ FilesTab
 
 **File-viewed semantics.** Two modes depending on whether per-commit `changedFiles` data is available:
 
-- **Default mode (PR ≤ `iterations.skipJaccardAboveCommitCount`, default 100 commits):** A file is viewed iff `ViewedFiles[path]` exists AND **every commit in the PR's commit graph between `ViewedFiles[path]` and `prDetail.headSha` has known `changedFiles` AND none of them touched this path**. The lookup walks the full PR commit graph, not just clustered iterations — merge commits, rebases-onto-main, and any commit excluded from clustering are still considered. For commits with unknown `changedFiles` (rare; truncation), the rule treats the path as **possibly touched** — the checkbox resets. This errs on "not-viewed when uncertain," matching truthful-by-default.
+- **Default mode (PR ≤ `iterations.skip-jaccard-above-commit-count`, default 100 commits):** A file is viewed iff `ViewedFiles[path]` exists AND **every commit in the PR's commit graph between `ViewedFiles[path]` and `prDetail.headSha` has known `changedFiles` AND none of them touched this path**. The lookup walks the full PR commit graph, not just clustered iterations — merge commits, rebases-onto-main, and any commit excluded from clustering are still considered. For commits with unknown `changedFiles` (rare; truncation), the rule treats the path as **possibly touched** — the checkbox resets. This errs on "not-viewed when uncertain," matching truthful-by-default.
 - **Skipped-Jaccard mode (PR > 100 commits, where the per-commit REST fan-out is bypassed):** A file is viewed iff `ViewedFiles[path] == prDetail.headSha` — exact-SHA match only. **No graph walk.** This avoids the failure mode where every viewed mark resets every page load on huge PRs because every commit's `changedFiles` is unknown. The cost: any new iteration on a >100-commit PR resets every viewed mark, even on files the new iteration didn't touch. Documented trade-off; surface area for huge PRs is rare in dogfooding and the alternative (per-commit fan-out on every viewed-check) violates the cap's rate-limit defense.
 
 When a file flips from viewed → not-viewed because of a new iteration, the row animates a brief reset using the design system's `--t-med` token (150 ms ease-out fade on the checkmark — matches the handoff's `--t-med` declaration; the earlier 200 ms value was outside the token scale). The directory rollup re-counts synchronously. No banner; the row's visual state is the signal.
@@ -1066,7 +1066,7 @@ The two "new backlog item" rows above are net-new additions to `docs/backlog/`; 
 | `iterations.clusteringDisabled = true` (calibration-failure escape hatch) | PrDetailLoader emits `ClusteringQuality: Low` for every PR; frontend renders `CommitMultiSelectPicker`. |
 | GitHub returns a malformed timeline event | Drop that event from `ClusteringInput`; log; continue. Don't fail the page load. |
 | A commit's `changedFiles` REST fan-out fails or returns nothing | Treat that commit's file set as unknown; `FileJaccardMultiplier` returns `1.0` (neutral). The commit still participates in the timeline. Mark the session as degraded; subsequent commits also skip fan-out. |
-| PR has > `iterations.skipJaccardAboveCommitCount` (default 100) commits | Skip the per-commit fan-out entirely for this PR; `FileJaccardMultiplier` returns `1.0` for every pair. Bounds rate-limit consumption on large PRs. |
+| PR has > `iterations.skip-jaccard-above-commit-count` (default 100) commits | Skip the per-commit fan-out entirely for this PR; `FileJaccardMultiplier` returns `1.0` for every pair. Bounds rate-limit consumption on large PRs. |
 | `HeadRefForcePushedEvent.beforeCommit` / `afterCommit` is null (GitHub GC) | Position the force-push by `occurredAt` timestamp. `ForcePushMultiplier` still applies. |
 
 ### 10.3 SSE / subscription failures
@@ -1120,7 +1120,7 @@ A test in § 11.2's adversarial corpus asserts that no PR-body substring appears
 - **Closed / merged PR while user is viewing it.** Header banner per spec § 3; submit disabled (already disabled). When the PR re-opens via poll, banner clears.
 - **PR > 100 files (file list).** `pulls/{n}/files` paginates; backend collects all pages; frontend renders the full set.
 - **PR > 300 files of diff content.** GitHub `compare` returns truncated; backend surfaces `truncated: true`; frontend renders `DiffTruncationBanner` with a deep link to github.com.
-- **PR > 100 commits.** Per-commit `changedFiles` fan-out is skipped (config: `iterations.skipJaccardAboveCommitCount`); clustering relies on time gap + force-push only.
+- **PR > 100 commits.** Per-commit `changedFiles` fan-out is skipped (config: `iterations.skip-jaccard-above-commit-count`); clustering relies on time gap + force-push only.
 
 ## 11. Testing strategy
 

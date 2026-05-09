@@ -172,36 +172,45 @@ The main reviewing surface.
    - CI status summary ("3 checks passing, 1 failing")
    - Verdict picker (left-most action) — see "Submit flow"
    - Submit Review button — see "Submit flow"
-2. **AI summary slot** (`<AiSummarySlot>`, non-sticky) — sits between the sticky header and the sticky iteration tabs. Capability-flag-gated; renders `null` in PoC and consumes 0px. Scrolls away when the user scrolls past it (the iteration tabs stay glued to the top). See `04-ai-seam-architecture.md` § `<AiSummarySlot>` for the sticky-stack rationale.
-3. **Iteration tabs** (sticky below header)
-   - "All changes" tab (default selected)
-   - **Last 3** iteration tabs inline — i.e., the most recent three. For a 5-iteration PR: Iter 3, Iter 4, Iter 5 are inline; Iter 1, Iter 2 are in the "All iterations" dropdown. For a PR with ≤ 3 iterations all of them appear inline and the dropdown is hidden.
-   - Older iterations dropdown ("All iterations ▾")
-   - "Compare ⇄" picker for arbitrary-pair diffs
-4. **Two-pane main area**
-   - Left pane: **File tree** with always-visible files (collapsible directories), per-file "Viewed" checkbox, AI focus badge slot
-   - Right pane: **Diff for currently-selected file** (file-by-file, not continuous scroll)
-5. **Banner overlay** (when PR has been updated since last reload)
+2. **PR sub-tab strip** (sticky below header) — three tabs: **Overview** / **Files** / **Drafts**. Overview is the default landing tab on PR open. Drafts is rendered but disabled until S4 ships the composer.
+3. **Per-tab content area:**
+   - **Overview tab.** Hero card containing `<AiSummarySlot>` (capability-flag-gated; `null` in PoC, AI summary in v2). Below that: PR description, stats (changed files / additions / deletions / commit count), PR-root issue-level conversation rendered **read-only**, and a "Review files" CTA that switches to the Files tab. Reply composer + "Mark all read" lands in S4 alongside the inline-comment composer. See § "PR view scope" below.
+   - **Files tab.** The reviewing surface. Top of the tab carries the **iteration tabs** (described below); under them, a two-pane main area. Iteration tabs render *only* on the Files tab.
+     - **Iteration tabs** — "All changes" tab (default selected); **Last 3** iteration tabs inline (i.e., the most recent three — for a 5-iteration PR: Iter 3, 4, 5 are inline; Iter 1, 2 are in the dropdown; for a PR with ≤ 3 iterations all are inline and the dropdown is hidden); older-iterations dropdown ("All iterations ▾"); "Compare ⇄" picker for arbitrary-pair diffs.
+     - **Two-pane main area** — left pane: **File tree** (collapsible directories with smart compaction, per-file "Viewed" checkbox, AI focus badge slot); right pane: **Diff for currently-selected file** (file-by-file, not continuous scroll).
+   - **Drafts tab.** Disabled until S4. Surfaces the user's saved drafts on this PR plus the stale-draft reconciliation matrix.
+4. **Banner overlay** (when PR has been updated since last reload) — sticky just below the PR sub-tab strip.
+
+The `<AiSummarySlot>`'s position moved from "between sticky header and sticky iteration tabs" (the earlier sticky-stack design) to "Overview-tab hero card." See `04-ai-seam-architecture.md` § `<AiSummarySlot>` for the placement rationale.
 
 ### File tree
 
-- Files grouped by directory; directories collapsible.
+- **Collapsible directory tree.** Files grouped under their parent directories; each directory is a collapsible node. Single-child directory chains are **smart-compacted** into a single row (`src/components/diff/` instead of three nested nodes), which keeps long monorepo paths readable without forcing the user to expand four levels to see anything. Compaction stops at any directory that has more than one child or that contains files directly.
+- **Per-directory viewed-rollup.** Each directory row shows a small rollup of viewed status across its files: e.g., `3 / 7 viewed`. The rollup updates live as the user toggles per-file checkboxes inside it. Recursive: parent directories aggregate their children's rollups.
+- **Collapse-state resets on PR open.** Every PR-detail mount renders the tree fully expanded; the user's manual collapse/expand within a session is in-memory only and is discarded on the next PR open. This is deliberate — collapse-state persistence across reopens is a S6/v2 settings item; the in-session ergonomics are what S3 ships.
 - Each file row shows:
   - Status icon (added / modified / deleted / renamed)
-  - File path (truncated middle for long paths)
+  - File path (just the filename within its directory row; the full path is implicit from the parent directories)
   - Line counts ("+12 -3")
   - "Viewed" checkbox (right-aligned)
   - **AI focus badge slot** (`<AiFileFocusBadges>`) — capability-flag-gated; `null` in PoC
 - Selected file highlighted.
-- `j` / `k` keyboard shortcuts navigate next/prev file in tree.
+- `j` / `k` keyboard shortcuts navigate next/prev file in tree (skipping directory headers).
 
 ### "Viewed" checkbox semantics
 
+> **S3 ships a frontend stub.** What's described in this section is the *intended* full semantics; the **shipped S3 frontend implements only the optimistic-toggle slice of it.** Concretely, `FilesTab.tsx` (`useState<Set<string>>(new Set())` at mount) initializes `viewedPaths` empty on every PR open, toggles it locally on click, and POSTs the toggle to `/api/pr/{ref}/files/viewed`. There is **no GET on mount** to load existing `ViewedFiles` from `state.json`, **no head-SHA reconciliation**, and **no per-commit graph walk** today. The user-visible consequence: viewed marks persist *server-side* across reloads (the POST writes to `state.json.reviewSessions[ref].ViewedFiles`), but the SPA does not surface them on the next mount — every reopen looks like a fresh session. The full semantics below are the intended target; lighting them up is its own follow-up (frontend GET + backend graph-walk endpoint or DTO field on `PrDetailDto`). Until then, treat the checkbox as a per-session affordance.
+
+**Intended (target) semantics:**
+
 - Per-`(pr_ref, file_path, head_sha)` — same as GitHub.
-- If user marks file viewed at `head_sha = abc`, then PR receives a new iteration with `head_sha = def`:
-  - If the new iteration touches that file → checkbox resets, file appears unviewed.
-  - If the new iteration does NOT touch that file → checkbox persists, file remains viewed.
+- The lookup walks the **full PR commit graph**, not just the clustered iterations. When the user marks `src/Foo.cs` viewed at `head_sha = abc`, the backend scans every commit between `abc` and the current head looking at each commit's `changedFiles` to decide whether the file has been touched since the mark.
+  - If any commit since the mark touches that file → checkbox resets, file appears unviewed.
+  - If no commit since the mark touches that file → checkbox persists, file remains viewed.
+- **Truthful-by-default on unknown commit data.** Commits with unknown `changedFiles` (the per-commit REST fan-out failed or was skipped because the PR exceeded `iterations.skip-jaccard-above-commit-count`) cause the checkbox to reset rather than persist. The file *might* have been touched; without the data we can't be sure, and the safer default is "show the user the diff again" rather than "trust a stale checkmark." This matches GitHub's own conservative handling.
+- Storage: `state.json.reviewSessions[ref].viewedFiles[<filePath>] = <headShaAtTimeOfMark>` (C# field: `ReviewSessionState.ViewedFiles`; on-disk JSON key after the kebab policy applies: `viewed-files`) — see `02-architecture.md` § "State schema (PoC)." This part *is* shipped — the POST endpoint persists correctly.
 - Visual indicator on the file row: "Viewed" checkbox is checked, file path appears slightly muted.
+- **Known limitation on PRs above the per-commit fan-out cap (applies once the full semantics ship).** The post-mark scan needs each commit's `changedFiles`. On PRs that exceed `iterations.skip-jaccard-above-commit-count` (default 100 commits), the per-commit REST fan-out is skipped entirely and every commit's `changedFiles` is unknown. Combined with the truthful-by-default rule above, the viewed-checkbox would **reset on every reload** for files in PRs above the cap — the reviewer would lose progress tracking on exactly the large PRs where it would matter most. P0+ may add a coarser "viewed at PR head SHA" fallback that doesn't depend on per-commit data. Today this limitation is moot (S3 stub never loads stored state on mount, so every PR's checkboxes start empty regardless of size); it becomes load-bearing the moment the GET-on-mount + graph-walk lights up.
 
 ### Empty PR (no commits beyond base)
 
@@ -215,11 +224,12 @@ If `GetDiffAsync` returns an empty `FileChange[]` (PR opened with no commits, or
 - **Word-level highlighting** within changed lines, using `diff` (jsdiff) library.
 - **Whitespace shown as-is.** No filtering, no toggle. v2 AI categorizes; PoC is truthful.
 - **No expand-to-full-file in PoC.** Hunks only. No "show whole file" button. (The backend's `GET /api/pr/{ref}/file` endpoint exists for markdown rendering and *could* serve full file content to a UI affordance — the architectural cost is zero; the gate is purely UX. Adding the button is a P4 item, `P4-B8`, and is the smallest possible UI change once the demand is real.)
+- **Diff source and truncation.** Diff content is built from `pulls/{n}/files` (the file list, paginated to GitHub's 3000-file ceiling) plus the `pulls/{n}` `changed_files` integer cached alongside the rest of the PR object. Truncation is **derived** as `pull.changed_files > files.length` — there is no `compare`-endpoint round-trip. (GitHub's `compare` endpoint documents truncation behavior in prose only; the response body carries no `truncated` field, so probing it would tell us nothing the file-count derivation doesn't.) On truncation, the diff pane footer surfaces a banner with the exact copy: *"PRism shows GitHub's first N files of this diff. Full-diff support is on the roadmap. Open on github.com."* The banner copy is matched verbatim by the `DiffTruncationBanner` component.
 - **Click-to-comment:** clicking any line in the diff opens a comment composer anchored to that line. (See "Comments" section.)
 - **Existing GitHub comments** are rendered as inline widgets between code lines, **read-only** in PoC.
 - **AI hunk annotation slot** (`<AiHunkAnnotation>`) — uses the same widget API as comment threads; capability-flag-gated; never inserted in PoC.
 
-**PR view scope.** The PR view shows only the diff and comments; the **chronological PR conversation feed** (commits + comments + status updates + reviews + force-push events in time order) that github.com surfaces on the "Conversation" tab is **out of scope for PoC**. The iteration tabs (above) capture push history; the file tree captures file changes; threaded comments capture review discussion. A merged chronological feed is a P4 backlog item if reviewers report missing it. PoC's bias is "the things that matter for reviewing the code"; v2 may add the conversational view if dogfooding shows it's missed.
+**PR view scope.** The Files tab shows the diff and inline comments; the Overview tab renders **PR-root issue-level comments read-only** (the conversational thread that github.com shows under the PR description, separate from line-anchored review comments). The **chronological PR conversation feed** (commits + comments + reviews + status updates + force-push events in time order) that github.com surfaces on the "Conversation" tab is **out of scope for PoC**. The iteration tabs capture push history; the file tree captures file changes; threaded review comments capture line-anchored discussion; the Overview tab's read-only thread captures PR-level discussion. A merged chronological feed is a P4 backlog item if reviewers report missing it. PoC's bias is "the things that matter for reviewing the code"; v2 may add the conversational view if dogfooding shows it's missed.
 
 ### Iteration tabs
 
@@ -241,15 +251,15 @@ If `GetDiffAsync` returns an empty `FileChange[]` (PR opened with no commits, or
 - GraphQL has no `synchronize` event (that's a webhook-only name). The two relevant timeline types are:
   - `PullRequestCommit` — one event per commit on the PR. No native grouping into "this push".
   - `HeadRefForcePushedEvent` — fired only on force-pushes; carries `beforeCommit` and `afterCommit`.
-- **Iteration clustering policy:**
-  1. A `HeadRefForcePushedEvent` always declares an exact iteration boundary (with `beforeCommit` / `afterCommit` SHAs).
-  2. Otherwise, consecutive `PullRequestCommit` events are clustered into one iteration when their committer-date gap is ≤ 60 seconds; a gap > 60 seconds opens a new iteration.
-- Each iteration's range is `iter_N-1_head..iter_N_head` (the SHAs at the boundary points).
-- Iterations are numbered by chronological order: 1 = first iteration, 2 = second, etc.
-- Iteration boundaries are **approximate** for normal pushes (committer dates can lie, especially after `git commit --amend`). Force-pushes are detected exactly. The UI does not promise per-push fidelity for normal-push grouping; "iteration" is a reviewer convenience, not a git-truth claim.
-- **The 60-second clustering threshold is configurable** via `iterations.clusterGapSeconds` (default `60`). 60s is a reasonable default for git-push-then-tooling-pause cadences but breaks for long amend-and-force-push chains, CI-amend cycles, or commits authored with manually-edited committer dates. The threshold is exposed so the maintainer can tune it on observation; if a user reports "iteration tabs are showing too many tabs," the first thing to try is raising the threshold to 300s. Force-push boundaries are unaffected — they always declare an iteration regardless of the gap value.
-- **Recovering from a misclustered iteration.** A right-click on the iteration tab strip exposes "Merge with previous iteration" / "Split iteration here" — both UI-only operations on the locally-computed iteration list (no GitHub side-effect). The user's manual override is persisted in `state.json.reviewSessions[ref].iterationOverrides` so it survives reload. This makes the threshold's failure modes recoverable in-tool rather than requiring a config edit + restart.
-- **Pre-shipping discipline check.** Before committing to "60-second clustering threshold + manual-merge UI" as the headline iteration-tab story, run the algorithm against 5–10 real PR histories from the author's recent reviewing experience (heavy amend cycles, rebases, multi-day work, CI-amend pipelines). Document what fraction cluster correctly with the default threshold. **If <30% of those PRs cluster correctly, the right call is "one tab per `PullRequestCommit`" by default with a "merge consecutive commits" affordance** — the same right-click UI, but defaulted to per-commit instead of clustered. The wedge claim that iteration tabs are first-class deserves to be tested against the messy histories that are reality, not against the clean-push examples the spec naturally reaches for.
+- **Algorithm.** The full algorithm — weighted-distance clustering with two live multipliers (file Jaccard and force-push), MAD-based threshold, degenerate-case detector, and four documented future multipliers — lives in [`docs/spec/iteration-clustering-algorithm.md`](./iteration-clustering-algorithm.md). It supersedes the earlier "60-second `clusterGapSeconds` knob" policy. The earlier knob is **retired**; tuning is done through `iterations.clustering-coefficients` (file-jaccard-weight, force-push-after-long-gap, force-push-long-gap-seconds, mad-k, hard-floor-seconds, hard-ceiling-seconds, skip-jaccard-above-commit-count, degenerate-floor-fraction).
+- The algorithm reads `committedDate` (not `authoredDate`) for ordering — `--amend` and rebase refresh the committer date, but author date can lie about timeline position after history rewrites. This is a deliberate, load-bearing choice; the algorithm doc records the rationale.
+- Per-commit `changedFiles` (input to `FileJaccardMultiplier`) is fetched via REST `GET /repos/{o}/{r}/commits/{sha}` fan-out (concurrency cap 8, 100 ms inter-batch pace), bounded by `iterations.skip-jaccard-above-commit-count` (default 100). GraphQL's `Commit` type does not expose changed-file paths — the REST fan-out is the only path. On 4xx from the fan-out, mark the offending commit's file set as unknown, mark the session degraded (subsequent fan-outs skipped), log a single warning, and continue.
+- Each iteration's range is `iter_N-1_head..iter_N_head` (the SHAs at the boundary points). Iterations are numbered by chronological order: 1 = first iteration, 2 = second, etc.
+- **Force-push as a soft signal.** Earlier wording made every `HeadRefForcePushedEvent` a hard iteration boundary. The current algorithm treats force-push as a *multiplier* (the `ForcePushMultiplier`) whose strength scales with the surrounding time gap: a force-push within `force-push-long-gap-seconds` of the prior commit is treated as an `--amend` fixup (no expansion); a force-push after a long gap multiplies the distance by `force-push-after-long-gap` (default 1.5), making the boundary likely. This handles the common case of a tight `--amend` + force-push chain without exploding the tab count. See the algorithm doc for the full treatment, including positioning when `beforeCommit` / `afterCommit` are null after GitHub GC.
+- **Calibration-failure escape hatch.** When the discipline-check (slice spec § 11.5) fails to reach 70% agreement on hand-labeled corpora, set `iterations.clustering-disabled = true`. PrDetailLoader then emits `ClusteringQuality: Low` for every PR; the frontend renders `CommitMultiSelectPicker` instead of `IterationTabStrip` — same UX as the per-PR degenerate fallback and the 1-commit case.
+- Iteration boundaries are **approximate** for normal pushes (committer dates can lie, especially after `git commit --amend`). Force-pushes are *detected* exactly even though their iteration-boundary contribution is now soft. The UI does not promise per-push fidelity for normal-push grouping; "iteration" is a reviewer convenience, not a git-truth claim.
+- **Recovering from a misclustered iteration.** A right-click on the iteration tab strip exposes "Merge with previous iteration" / "Split iteration here" — both UI-only operations on the locally-computed iteration list (no GitHub side-effect). The user's manual override is persisted in `state.json.reviewSessions[ref].iterationOverrides` so it survives reload. This makes the algorithm's failure modes recoverable in-tool rather than requiring a config edit + restart.
+- **Pre-shipping discipline check.** Run the algorithm against 5–10 real PR histories from the author's recent reviewing experience (heavy amend cycles, rebases, multi-day work, CI-amend pipelines). Document what fraction cluster correctly. **If discipline-check agreement falls below 70% after the documented tuning rounds, set `iterations.clustering-disabled = true`** and ship `CommitMultiSelectPicker` as the universal fallback — the wedge is "iteration tabs are first-class when they work; the GitHub-style commit picker when they don't," not "always iteration tabs even when they're misleading."
 - **Iteration range after rebase-onto-main:** if an iteration's SHA range includes both the author's changes and a mainline catch-up (because the author rebased their feature branch onto a newer main), the diff `iter_N-1_head..iter_N_head` will show both. PoC does **not** try to filter out the mainline-catch-up portion (that would require git-merge-base reconstruction with the iteration's pre-rebase point, which we don't always have). Instead: **every iteration whose boundary is a `HeadRefForcePushedEvent`** carries a banner on the tab: *"This iteration includes a force-push; some changes may be upstream merges rather than author changes. Use the All changes tab if the per-iteration view is too noisy."* The banner fires unconditionally on force-push iterations — no diff-size heuristic. An earlier draft gated the banner on a "diff size > 2× the prior iteration's size" rule, which had bad failure modes (no banner on iteration 1 where reviewers most need it; false positives on small refactors followed by larger follow-ups; no banner on a force-push that pulled in a *small* mainline catch-up). The unconditional banner is louder than ideal but its failure mode is "the user dismisses it and moves on," which is recoverable; the heuristic's failure mode was "the user trusted the missing banner and reviewed mainline noise as if it were the author's change," which isn't. A precise diff-from-author's-prior-changes computation (via merge-base reconstruction) is a v2 refinement.
 - **Historical SHA unavailability:** if a historical SHA returns 404/422 from GitHub (rare; happens after long GH garbage collection), the affected iteration tab shows a graceful "this iteration's commits are no longer available" message.
 
@@ -262,6 +272,7 @@ See [verification-notes § C2](./00-verification-notes.md#c2) for the original `
 - If `head_sha` changed OR comment count changed: banner appears at top of PR view: *"PR updated — Iteration 4 available, 2 new comments — Reload."*
 - The banner is the **only** signal of change. The diff under the user's cursor never mutates.
 - Clicking Reload triggers full PR reload + draft reconciliation pass (see "Stale-draft reconciliation").
+- **Reload does NOT update `lastViewedHeadSha` / `lastSeenCommentId`.** Those two fields are the user's "I have seen this PR up to here" mark — they're only the user's opinion to update, not the system's. Both fields are written exactly once per PR-detail open: at PR-detail mount the backend stamps the current `head_sha` and the highest comment ID into `state.json.reviewSessions[ref]`. Subsequent in-session reloads (banner click, manual refresh) do not advance the marks. This means a user who clicks Reload to see "what changed since I last looked" but doesn't re-mount the page (e.g., they Reload, glance at the diff, navigate away without scrolling) keeps their unread/unseen counts intact for the next visit. The "Mark all read" affordance in the inbox row exists for the explicit case where the user wants to advance the marks without opening the PR.
 
 #### In-flight composer when the banner arrives
 
@@ -275,11 +286,11 @@ If the user has an open composer (inline comment, reply, or PR-level summary) wi
 If the composer is open but **empty** (or whitespace-only), Reload proceeds without prompting and the empty composer is closed. The user's intent is captured by what they typed, not by an open composer with no content.
 
 ### AI seam usage (PoC: no-op)
-- `<AiSummarySlot>` between sticky header and sticky iteration tabs (non-sticky) — `null` in PoC.
-- `<AiFileFocusBadges>` in file tree — `null` in PoC.
+- `<AiSummarySlot>` on the Overview tab (hero card) — `null` in PoC; v2 renders the AI-generated summary.
+- `<AiFileFocusBadges>` in the Files-tab file tree — `null` in PoC.
 - `<AiHunkAnnotation>` widgets — never inserted in PoC.
 - `<AiChatDrawer>` — never mounted in PoC.
-- Layout reserves space for these slots so v2 doesn't cause re-layout.
+- The Overview-tab hero card and the file-tree focus column reserve space for these slots so v2 light-up does not cause significant re-layout. (See `04-ai-seam-architecture.md` § `<AiSummarySlot>` for the honest layout-reservation policy: PoC consumes 0px and v2 light-up is treated as a configuration change the user opts into, not a remote event.)
 
 ---
 
@@ -563,10 +574,11 @@ When the user opens a markdown file in the file tree:
 ### Active PR view banner
 - Polls every 30s.
 - Triggers: new commits (`head_sha` changed), new comments (`comment_count` changed), CI state change.
-- Position: sticky just below the iteration tabs.
+- Position: sticky just below the PR sub-tab strip (Overview / Files / Drafts).
 - Contents: summary of changes ("1 new commit, 2 new comments") + "Reload" button.
 - Dismissible (X button) without reloading.
 - Only one banner at a time per PR view.
+- **Reload does NOT advance `lastViewedHeadSha` / `lastSeenCommentId`.** The two marks are written only on PR-detail mount. Reload re-fetches the PR contents and re-runs draft reconciliation, but it leaves the unread/unseen accounting alone — that's the user's mark to advance, not the banner's. See § 3 "Banner refresh on PR update" for the rationale.
 
 ### Inbox banner
 - Polls every 120s.
