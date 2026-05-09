@@ -39,10 +39,23 @@ internal static class EventsEndpoints
         HttpContext ctx,
         SseChannel sse)
     {
-        if (body is null || body.PrRef is null)
+        if (body is null || string.IsNullOrEmpty(body.PrRef))
         {
             return TypedResults.Problem(
                 detail: "PrRef is required.",
+                type: "/events/invalid-body",
+                statusCode: StatusCodes.Status400BadRequest);
+        }
+
+        // Symmetric with DELETE: PrRef is a slash-separated owner/repo/number string
+        // (the format the frontend's useActivePrUpdates sends and that pr-updated SSE
+        // events carry). Parse via PrReferenceParser; reject malformed strings with
+        // 400 — POST is not idempotent the way DELETE is, so silently dropping a bad
+        // ref would mask client bugs.
+        if (!PrReferenceParser.TryParse(body.PrRef, out var prRef) || prRef is null)
+        {
+            return TypedResults.Problem(
+                detail: "PrRef must be a slash-separated owner/repo/number string.",
                 type: "/events/invalid-body",
                 statusCode: StatusCodes.Status400BadRequest);
         }
@@ -63,7 +76,7 @@ internal static class EventsEndpoints
         // The registry instance is owned by SseChannel itself (no caller-supplied
         // registry parameter) so a future caller can't accidentally register against a
         // different ActivePrSubscriberRegistry the fanout path doesn't read.
-        if (!sse.TrySubscribe(cookieSessionId, body.PrRef))
+        if (!sse.TrySubscribe(cookieSessionId, prRef))
         {
             return TypedResults.Problem(
                 detail: "No active SSE connection for this cookie session — open /api/events first.",

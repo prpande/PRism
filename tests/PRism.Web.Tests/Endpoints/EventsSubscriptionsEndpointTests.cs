@@ -24,7 +24,7 @@ public class EventsSubscriptionsEndpointTests
 
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/subscriptions")
         {
-            Content = JsonContent.Create(new { prRef = new { owner = "o", repo = "r", number = 1 } }),
+            Content = JsonContent.Create(new { prRef = "o/r/1" }),
         };
         req.Headers.Add("X-PRism-Session", factory.SessionToken);
         req.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
@@ -43,7 +43,7 @@ public class EventsSubscriptionsEndpointTests
 
         using var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/subscriptions")
         {
-            Content = JsonContent.Create(new { prRef = new { owner = "o", repo = "r", number = 1 } }),
+            Content = JsonContent.Create(new { prRef = "o/r/1" }),
         };
         var resp = await client.SendAsync(req);
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
@@ -68,15 +68,44 @@ public class EventsSubscriptionsEndpointTests
 
         // POST with same auto-injected cookie → endpoint resolves subscriberId from
         // the cookie session via SseChannel. SubscriberId is NEVER read from the body.
+        // Wire shape: prRef as a slash-separated owner/repo/number string, matching
+        // what the frontend actually sends (see useActivePrUpdates.ts) and the
+        // DELETE side's query-string format. Pinning string format here is what
+        // catches the regression where prRef was typed as PrReference (object).
         var subResp = await client.PostAsJsonAsync(
             new Uri("/api/events/subscriptions", UriKind.Relative),
-            new { prRef = new { owner = "o", repo = "r", number = 7 } },
+            new { prRef = "o/r/7" },
             cts.Token);
 
         subResp.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         var registry = factory.Services.GetRequiredService<ActivePrSubscriberRegistry>();
         registry.UniquePrRefs().Should().Contain(new PrReference("o", "r", 7));
+    }
+
+    [Fact]
+    public async Task Subscribe_returns_400_when_prRef_string_is_unparseable()
+    {
+        // Body present and well-formed JSON, but prRef doesn't match the
+        // owner/repo/number regex (PrReferenceParser). Endpoint must reject
+        // with 400, not silently 204 — POST is not idempotent the way DELETE is.
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        using var sseResp = await client.GetAsync(new Uri("/api/events", UriKind.Relative),
+            HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        using var sseStream = await sseResp.Content.ReadAsStreamAsync(cts.Token);
+        using var reader = new StreamReader(sseStream, Encoding.UTF8);
+        await reader.ReadLineAsync(cts.Token);
+        await reader.ReadLineAsync(cts.Token);
+
+        var subResp = await client.PostAsJsonAsync(
+            new Uri("/api/events/subscriptions", UriKind.Relative),
+            new { prRef = "not-a-pr-ref" },
+            cts.Token);
+
+        subResp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
@@ -102,7 +131,7 @@ public class EventsSubscriptionsEndpointTests
             new Uri("/api/events/subscriptions", UriKind.Relative),
             new
             {
-                prRef = new { owner = "o", repo = "r", number = 9 },
+                prRef = "o/r/9",
                 subscriberId = "forged-by-attacker",
             },
             cts.Token);
@@ -132,7 +161,7 @@ public class EventsSubscriptionsEndpointTests
 
         await client.PostAsJsonAsync(
             new Uri("/api/events/subscriptions", UriKind.Relative),
-            new { prRef = new { owner = "o", repo = "r", number = 12 } },
+            new { prRef = "o/r/12" },
             cts.Token);
 
         var unsubResp = await client.DeleteAsync(
