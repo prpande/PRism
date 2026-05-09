@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { usePreferences } from '../../hooks/usePreferences';
+import { useCapabilities } from '../../hooks/useCapabilities';
 import { ThemeToggle } from './ThemeToggle';
 import { AccentPicker } from './AccentPicker';
 import { AiPreviewToggle } from './AiPreviewToggle';
@@ -30,6 +31,7 @@ function applyToDocument(theme: Theme, accent: Accent) {
 
 export function HeaderControls() {
   const { preferences, set } = usePreferences();
+  const { refetch: refetchCapabilities } = useCapabilities();
 
   useEffect(() => {
     if (preferences) applyToDocument(preferences.theme, preferences.accent);
@@ -45,7 +47,15 @@ export function HeaderControls() {
     const next = ACCENTS[(ACCENTS.indexOf(preferences.accent) + 1) % ACCENTS.length];
     void set('accent', next);
   };
-  const toggleAi = () => void set('aiPreview', !preferences.aiPreview);
+  // Capabilities mirror the same AiPreviewState the preference drives. Refetch
+  // immediately after the preference flip so consumers (Overview's
+  // AiSummaryCard, Inbox enrichment, etc.) see the new flag without waiting
+  // for a window-focus event. Fire-and-forget — the refetch is idempotent and
+  // the hook handles its own error state.
+  const toggleAi = async () => {
+    await set('aiPreview', !preferences.aiPreview);
+    void refetchCapabilities();
+  };
 
   return (
     <div className={styles.cluster}>
