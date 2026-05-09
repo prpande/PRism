@@ -164,6 +164,11 @@ export interface PrDetailDto {
   timelineCapHit: boolean;
 }
 
+export interface PrSummary {
+  body: string;
+  category: string;
+}
+
 export type FileChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 
 export interface DiffHunk {
