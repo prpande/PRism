@@ -9,6 +9,7 @@ revisions:
   - 2026-05-08: PR6 preflight reviewer pass — recorded reconnect-storm-no-backoff, ping-fetch-no-timeout, malformed-handshake-recovery, commentCountDelta-dedup, multi-tab-coordination, owner/repo route-param validation, useDelayedLoading 2nd-cycle race, PR-number permissive validation, no-degraded-UX-signal, reload-loop-tombstone, DELETE-before-POST race
   - 2026-05-08: PR6 review-loop pass — recorded empty-PrHeader-during-cold-load defer
   - 2026-05-08: PR7 preflight — recorded responsive-sheet, AI-focus-dot, inline-toast, viewed-semantics-graph-walk deferrals
+  - 2026-05-09: PR #32 architectural decision — recorded `[Skip]` Option B (client-side jsdiff) in favor of Option A (server-side `patch` parse) for the post-PR8 hunks-always-empty contract fix
 ---
 
 # Deferrals — S3 PR-detail (read) spec
@@ -403,3 +404,16 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Reason:** Spec says pressing d below 900px shows a tooltip informing the user that side-by-side requires a wider viewport. PR8 suppresses the toggle (no-op below 900px) but doesn't show a tooltip. The suppression itself is correct; the tooltip is polish.
 - **Revisit when:** S6 polish round or design system tooltip component lands.
 - **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx:handleToggleDiffMode` — returns early without tooltip.
+
+## [Skip] Client-side jsdiff for hunk derivation (Option B for PR #32 contract fix)
+
+- **Source:** Post-PR8 dogfooding bug investigation (Files tab "Empty file" placeholder for every file). Architectural decision before PR #32 patch-parser implementation.
+- **Severity:** P0 functional gap (every PR's Files tab broken) → architectural choice between two fixes
+- **Date:** 2026-05-09
+- **Reason:** Two paths were considered to populate `FileChange.Hunks`:
+  - **(A) Server-side parse of GitHub's per-file `patch` field** (chosen — shipped as PR #32). New `PRism.Core.Contracts.PatchParser` parses the unified-diff text GitHub already returns from `pulls/{n}/files`.
+  - **(B) Client-side derivation via jsdiff.** Frontend would fetch base-SHA and head-SHA file contents per selected file, then run jsdiff in the browser to compute hunks.
+
+  (B) was rejected on five grounds: (1) **source of truth** — GitHub's `patch` IS the canonical PR diff; jsdiff would produce a *different* diff (Myers without rename/copy detection) than what GitHub renders, so PRism would diverge from the GitHub review experience it mirrors; (2) **bandwidth** — for a 200KB file with a 5-line change, (B) moves 400KB of file content to compute what GitHub already handed us in 2KB; (3) **latency** — (A) is one round-trip per file, (B) is two with both required before render; (4) **AI seam alignment** — server-side hunks make the v2 `AiHunkAnnotation` pipeline simpler (annotations attach to hunk indices without round-tripping client state); (5) **existing frontend coupling** — PR8's `parseHunkLines` already expects per-hunk Body strings starting with `@@`, which is exactly the shape (A) emits; (B) would require a frontend rewrite of the diff parser.
+- **Revisit when:** A future feature requires a custom diff algorithm (rename detection, semantic diff) that diverges from what GitHub provides. At that point (B) becomes one of several alternatives (Diff-as-a-Service, semantic-diff library, etc.) rather than the default choice.
+- **Where the gap lives in code:** N/A — Option B was never implemented. PR #32 ships Option A in `PRism.Core.Contracts/PatchParser.cs` and `PRism.GitHub/GitHubReviewService.cs:ParseFileChanges`.

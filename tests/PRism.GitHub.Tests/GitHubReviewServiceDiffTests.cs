@@ -36,6 +36,37 @@ public class GitHubReviewServiceDiffTests
 
         diff.Files.Should().HaveCount(250);
         diff.Truncated.Should().BeFalse();
+        // End-to-end wire assertion that PatchParser populates Hunks: FilePage embeds
+        // a real "@@ -0,0 +1 @@\n+x" patch string per file. Without this, a regression
+        // that zeros Hunks in ParseFileChanges (e.g. reverting to Array.Empty<DiffHunk>)
+        // would pass all other assertions while the frontend falls back to the
+        // "Empty file" placeholder for every file.
+        diff.Files[0].Hunks.Should().NotBeEmpty();
+        diff.Files[0].Hunks[0].Body.Should().StartWith("@@");
+    }
+
+    [Fact]
+    public async Task GetDiffAsync_returns_empty_hunks_when_patch_field_is_absent()
+    {
+        // GitHub omits the `patch` field for binary files and files >~3MB. The
+        // ParseFileChanges branch must surface the file with empty Hunks (same
+        // wire shape the frontend treats as "Empty file") rather than throw or
+        // skip the file entirely.
+        const string filesJson =
+            "[{\"filename\":\"src/big.bin\",\"status\":\"modified\",\"additions\":0,\"deletions\":0}]";
+        var handler = new PaginatedFakeHandler()
+            .RouteJson("/repos/o/r/pulls/1/files", filesJson)
+            .RouteJson("/repos/o/r/pulls/1", PullJson("base", "head", 1));
+
+        var diff = await NewService(handler).GetDiffAsync(
+            new PrReference("o", "r", 1),
+            new DiffRangeRequest("base", "head"),
+            CancellationToken.None);
+
+        diff.Files.Should().HaveCount(1);
+        diff.Files[0].Path.Should().Be("src/big.bin");
+        diff.Files[0].Status.Should().Be(FileChangeStatus.Modified);
+        diff.Files[0].Hunks.Should().BeEmpty();
     }
 
     [Fact]

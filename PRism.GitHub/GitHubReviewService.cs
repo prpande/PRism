@@ -582,7 +582,7 @@ public sealed partial class GitHubReviewService : IReviewService
         return ParseFileChanges(filesEl);
     }
 
-    private static IReadOnlyList<FileChange> ParseFileChanges(JsonElement filesArray)
+    private IReadOnlyList<FileChange> ParseFileChanges(JsonElement filesArray)
     {
         if (filesArray.ValueKind != JsonValueKind.Array) return Array.Empty<FileChange>();
         var result = new List<FileChange>(filesArray.GetArrayLength());
@@ -597,10 +597,36 @@ public sealed partial class GitHubReviewService : IReviewService
                 "renamed" => FileChangeStatus.Renamed,
                 _ => FileChangeStatus.Modified,
             };
-            // PoC: hunks aren't parsed from the patch text in this slice; the diff pane
-            // re-fetches the file content and runs jsdiff. The patch field is preserved
-            // server-side but FileChange.Hunks is intentionally empty here. See spec § 6.1.
-            result.Add(new FileChange(path, status, Array.Empty<DiffHunk>()));
+            // Parse GitHub's per-file unified-diff `patch` field into structured hunks
+            // via PatchParser (PRism.Core.Contracts). The frontend's DiffPane consumes
+            // hunk Body INCLUDING the @@ header; the parser preserves that contract.
+            // GitHub omits the `patch` field for binary files and very large files
+            // (>~3MB), in which case Parse returns an empty list and the frontend
+            // renders an "Empty file" placeholder for that file — a follow-up should
+            // distinguish this from the truly-empty case with a "view on github.com"
+            // affordance.
+            var patch = f.TryGetProperty("patch", out var p) && p.ValueKind == JsonValueKind.String
+                ? p.GetString()
+                : null;
+            IReadOnlyList<DiffHunk> hunks;
+            try
+            {
+                hunks = PatchParser.Parse(patch);
+            }
+#pragma warning disable CA1031 // Per-file fault isolation: one bad file's parse must
+            // not abort the entire pulls/{n}/files response and discard already-parsed
+            // entries from earlier pagination pages. PatchParser is defensive (TryParse
+            // on every numeric group, malformed-header skip), so reaching this catch
+            // implies an unforeseen exception in future parser changes; surface as
+            // empty hunks (same wire shape as binary/>3MB files), log at Warning so
+            // the regression is diagnosable, and keep iterating.
+            catch (Exception ex)
+#pragma warning restore CA1031
+            {
+                Log.PatchParseFailed(_log, path, ex);
+                hunks = Array.Empty<DiffHunk>();
+            }
+            result.Add(new FileChange(path, status, hunks));
         }
         return result;
     }
@@ -661,6 +687,9 @@ public sealed partial class GitHubReviewService : IReviewService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Diff pagination hit the 30-page cap on PR {Owner}/{Repo}#{Number}; truncated diff will surface to the user via DiffDto.Truncated.")]
         internal static partial void DiffPagesCapped(ILogger logger, string owner, string repo, int number);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "PatchParser threw on file {Path}; surfacing empty hunks for that file (Files tab will show the \"Empty file\" placeholder). Per-file fault isolation kept the rest of the response intact. Inspect the patch shape if seen repeatedly.")]
+        internal static partial void PatchParseFailed(ILogger logger, string path, Exception ex);
     }
 
     private async Task<string> PostGraphQLAsync(string query, object variables, CancellationToken ct)
