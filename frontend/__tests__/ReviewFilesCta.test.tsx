@@ -24,11 +24,17 @@ describe('ReviewFilesCta', () => {
     expect(screen.getByText(/mark viewed/i)).toBeInTheDocument();
   });
 
-  it('disables the button and surfaces the empty-PR tooltip when hasFiles is false', () => {
+  it('disables the button and surfaces the empty-PR help text when hasFiles is false', () => {
     render(<ReviewFilesCta hasFiles={false} onReviewFiles={vi.fn()} />);
     const button = screen.getByRole('button', { name: /review files/i });
     expect(button).toBeDisabled();
-    expect(button).toHaveAttribute('title', 'No files to review yet');
+    // Help text is visible (sighted + AT) and wired via aria-describedby
+    // (title-on-disabled-button is unreliably announced by assistive tech).
+    const helpId = button.getAttribute('aria-describedby');
+    expect(helpId).toBeTruthy();
+    const help = document.getElementById(helpId!);
+    expect(help).not.toBeNull();
+    expect(help).toHaveTextContent('No files to review yet');
   });
 
   it('does not fire onReviewFiles when the disabled button is clicked', async () => {
@@ -38,10 +44,11 @@ describe('ReviewFilesCta', () => {
     expect(onReviewFiles).not.toHaveBeenCalled();
   });
 
-  it('does not set the disabled tooltip when hasFiles is true', () => {
+  it('does not render the empty-PR help text when hasFiles is true', () => {
     render(<ReviewFilesCta hasFiles onReviewFiles={vi.fn()} />);
     const button = screen.getByRole('button', { name: /review files/i });
     expect(button).not.toBeDisabled();
-    expect(button).not.toHaveAttribute('title', 'No files to review yet');
+    expect(button).not.toHaveAttribute('aria-describedby');
+    expect(screen.queryByText('No files to review yet')).not.toBeInTheDocument();
   });
 });

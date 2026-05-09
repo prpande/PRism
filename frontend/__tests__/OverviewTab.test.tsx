@@ -132,8 +132,11 @@ function LocationProbe() {
 }
 
 function mountOverview(opts: MockOptions = {}) {
+  // Use vi.spyOn so vi.restoreAllMocks() in afterEach actually unwinds the
+  // override. Direct assignment to globalThis.fetch is not restored by
+  // restoreAllMocks and leaks across tests when a worker is reused.
   const fetchMock = mockFetch(opts);
-  globalThis.fetch = fetchMock as typeof fetch;
+  vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);
   const prDetailForRoute = opts.detail ?? baseDetail;
   return render(
     <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
@@ -200,11 +203,119 @@ describe('OverviewTab', () => {
     expect(await screen.findByTestId('files-content')).toBeInTheDocument();
   });
 
-  it('disables the "Review files" CTA with the empty-state tooltip on an empty PR', async () => {
+  it('disables the "Review files" CTA with the empty-state help text on an empty PR', async () => {
     mountOverview({ diff: emptyDiff });
     const button = await screen.findByRole('button', { name: /review files/i });
     await waitFor(() => expect(button).toBeDisabled());
-    expect(button).toHaveAttribute('title', 'No files to review yet');
+    // aria-describedby points at a visible, AT-readable help paragraph.
+    expect(button).toHaveAttribute('aria-describedby');
+    expect(screen.getByText('No files to review yet')).toBeInTheDocument();
+  });
+
+  it('keeps the "Review files" CTA enabled while the diff is still loading', async () => {
+    // Hold the diff response open so OverviewTab spends the entire test in
+    // the loading window. CTA must NOT show the empty-state help; the user
+    // navigates to the Files tab where skeleton/error UX lives.
+    let releaseDiff: () => void = () => undefined;
+    const diffPromise = new Promise<Response>((resolve) => {
+      releaseDiff = () => resolve(jsonResponse(sampleDiff));
+    });
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path.startsWith('/api/preferences')) {
+        return Promise.resolve(
+          jsonResponse({ theme: 'system', accent: 'indigo', aiPreview: false }),
+        );
+      }
+      if (path.startsWith('/api/capabilities')) {
+        return Promise.resolve(
+          jsonResponse({
+            ai: {
+              summary: false,
+              fileFocus: false,
+              hunkAnnotations: false,
+              preSubmitValidators: false,
+              composerAssist: false,
+              draftSuggestions: false,
+              draftReconciliation: false,
+              inboxEnrichment: false,
+              inboxRanking: false,
+            },
+          }),
+        );
+      }
+      if (path.includes('/diff')) return diffPromise;
+      return Promise.resolve(jsonResponse({}, 204));
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);
+    render(
+      <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
+        <Routes>
+          <Route
+            path="/pr/:owner/:repo/:number"
+            element={<Outlet context={{ prDetail: baseDetail }} />}
+          >
+            <Route index element={<OverviewTab />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    // Description renders without waiting on the diff, so we can sample the
+    // CTA mid-load.
+    await screen.findByText('Task.WhenAll');
+    const button = screen.getByRole('button', { name: /review files/i });
+    expect(button).not.toBeDisabled();
+    expect(screen.queryByText('No files to review yet')).not.toBeInTheDocument();
+    releaseDiff();
+  });
+
+  it('keeps the "Review files" CTA enabled when the diff fetch errors', async () => {
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path.startsWith('/api/preferences')) {
+        return Promise.resolve(
+          jsonResponse({ theme: 'system', accent: 'indigo', aiPreview: false }),
+        );
+      }
+      if (path.startsWith('/api/capabilities')) {
+        return Promise.resolve(
+          jsonResponse({
+            ai: {
+              summary: false,
+              fileFocus: false,
+              hunkAnnotations: false,
+              preSubmitValidators: false,
+              composerAssist: false,
+              draftSuggestions: false,
+              draftReconciliation: false,
+              inboxEnrichment: false,
+              inboxRanking: false,
+            },
+          }),
+        );
+      }
+      if (path.includes('/diff')) return Promise.reject(new Error('network down'));
+      return Promise.resolve(jsonResponse({}, 204));
+    });
+    vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);
+    render(
+      <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
+        <Routes>
+          <Route
+            path="/pr/:owner/:repo/:number"
+            element={<Outlet context={{ prDetail: baseDetail }} />}
+          >
+            <Route index element={<OverviewTab />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByText('Task.WhenAll');
+    // Wait one tick so the rejected diff promise has been observed by the hook.
+    await waitFor(() => {
+      const button = screen.getByRole('button', { name: /review files/i });
+      // CTA stays enabled — error UX lives on the Files tab.
+      expect(button).not.toBeDisabled();
+    });
+    expect(screen.queryByText('No files to review yet')).not.toBeInTheDocument();
   });
 
   it('does NOT render AiSummaryCard when aiPreview is off (PoC default)', async () => {
