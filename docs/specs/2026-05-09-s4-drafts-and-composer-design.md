@@ -350,7 +350,7 @@ New endpoint **`POST /api/pr/{ref}/reload`**:
 1. **Phase 1 (no gate held):** Build `IFileContentSource`. Call `pipeline.ReconcileAsync(session, headSha, fileContentSource, ct)` to compute the result. File fetches happen in parallel (cap: 8 concurrent — bounded `SemaphoreSlim` inside the pipeline) with a per-fetch timeout (10 s). The pre-loaded session snapshot is the input.
 2. **Phase 2 (gate held briefly):** Call `appStateStore.UpdateAsync(s => ApplyResult(s, ref, result))` to atomically write the result. The transform body is pure — it does not call into the pipeline.
 
-**Head-shift detection between phases.** If the active-PR poller advances `headSha` between phase 1 and phase 2, the result is stale-relative-to-current-state. Phase 2's transform compares the request's `headSha` against the session's `LastViewedHeadSha`-equivalent at apply time; if they diverge (rare — requires a poll-fired update during the reload window), the apply is rejected and the endpoint returns `409 reload-stale-head` so the frontend can re-trigger reload against the now-current head.
+**Head-shift detection between phases.** If the active-PR poller advances `headSha` between phase 1 and phase 2, the result is stale-relative-to-current-state. Phase 2's transform compares the request's `headSha` against the session's current head (read from the active-PR cache populated by S3) at apply time; if they diverge (rare — requires a poll-fired update during the reload window), the apply is rejected and the endpoint returns `409 reload-stale-head` with `{ "currentHeadSha": "<sha>" }` in the body. **Frontend behavior:** `useReconcile` auto-retries once with the returned `currentHeadSha` (transparent to the user; the user already clicked Reload, retrying the same intent is correct). If the auto-retry also returns `409 reload-stale-head` (head shifted twice within the reload window — extremely rare), surface a banner *"Head shifted while reloading; please click Reload again."* and stop retrying.
 
 **Reload double-click guard.** Frontend disables the Reload button while a reload is in flight. Backend rejects a second `POST /reload` for the same `prRef` while the first is in-flight: it returns `409 reload-in-progress` (per-PR `SemaphoreSlim` with `await semaphore.WaitAsync(0)` non-blocking try-acquire).
 
@@ -431,7 +431,8 @@ Body is `ReviewSessionPatch` — exactly one field set per request per `spec/02-
   "updateDraftReply": { "id": "uuid", "bodyMarkdown": "..." },
   "deleteDraftReply": { "id": "uuid" },
   "confirmVerdict": true,                                  // flips draftVerdictStatus needs-reconfirm → draft
-  "markAllRead": true                                      // sets lastSeenCommentId to highest existing-comment id
+  "markAllRead": true,                                     // sets lastSeenCommentId to highest existing-comment id
+  "overrideStale": { "id": "uuid" }                        // user clicked "Keep anyway" on a Stale draft (see § 5.5)
 }
 ```
 
@@ -446,10 +447,11 @@ Body is `ReviewSessionPatch` — exactly one field set per request per `spec/02-
 - `confirmVerdict` when status is already `Draft` → no-op success (idempotent). No event published.
 - `markAllRead` when there are no existing comments → no-op success (see § 4.7 for cache-empty behavior).
 - `markAllRead` for a `prRef` not in the active-PR subscription set → `404 not-subscribed` (see § 4.7).
+- `overrideStale` against a draft whose `Status !== "stale"` → `400 not-stale` (see § 5.5).
 
 **Body validation (mirrors S3's `POST /files/viewed` precedent):**
-- `[RequestSizeLimit(16384)]` on the endpoint (16 KiB cap on the request body).
-- `bodyMarkdown`: max 8192 chars (UTF-16 code units; matches `react-markdown`'s practical limits and ensures one keystroke can't push a single draft past the request cap). Reject with `422 body-too-large`.
+- **16 KiB request-body cap.** Enforced via the existing pre-routing `app.UseWhen(...)` middleware in `PRism.Web/Program.cs` (~line 81), which sets `IHttpMaxRequestBodySizeFeature.MaxRequestBodySize = 16384` and pre-checks `Content-Length` before the body is read — `[RequestSizeLimit]` / `WithMetadata(new RequestSizeLimitAttribute(16384))` on minimal-API endpoints fires *after* parameter binding (the JSON body has already been deserialized), per the existing `RequestSizeLimitTests` in `tests/PRism.Web.Tests/Endpoints/`. PR3 extends the existing `UseWhen` predicate to match the `PUT /api/pr/{ref}/draft` route alongside the S3 routes that already opt in. The endpoint MAY *also* carry `WithMetadata(new RequestSizeLimitAttribute(16384))` for documentation/test coverage of the parameter-binding path, but the load-bearing defense is the middleware.
+- `bodyMarkdown`: max 8192 UTF-16 code units (`bodyMarkdown.Length`); matches `react-markdown`'s practical limits and ensures one keystroke can't push a single draft past the request cap. Reject with `422 body-too-large`.
 - `filePath`: same canonicalization as S3 — max 4096 bytes; reject `..` segments, `.` segments, leading `/`, trailing `/`, empty path, NUL byte, C0/C1 control chars, backslash, non-NFC. Reject with `422 file-path-invalid` (matches the existing `/viewed/path-invalid` family).
 - `anchoredSha`, `headSha`: must match `^[0-9a-f]{40}$` (SHA-1) or `^[0-9a-f]{64}$` (SHA-256). Reject with `422 sha-format-invalid`.
 - `parentThreadId`: must match `^PRRT_[A-Za-z0-9_-]{1,128}$` (GraphQL Node ID format). Reject with `422 thread-id-format-invalid`.
@@ -471,6 +473,7 @@ Per-patch-kind static map in `PrDraftEndpoints.cs`:
 | `newDraftReply` / `updateDraftReply` / `deleteDraftReply` | `["draft-replies"]` |
 | `confirmVerdict` | `["draft-verdict-status"]` |
 | `markAllRead` | `["last-seen-comment-id"]` |
+| `overrideStale` | `["draft-comments"]` (or `["draft-replies"]` when applied to a reply id) |
 
 Reload (`POST /api/pr/{ref}/reload`) emits `["draft-comments", "draft-replies", "draft-verdict-status"]` (broader set; reconciliation can touch any).
 
@@ -504,9 +507,11 @@ Existing S3 channel. New event names:
 
 | SSE event name | Payload |
 |---|---|
-| `state-changed` | `{ "prRef": "owner/repo/123", "fieldsTouched": ["..."] }` |
-| `draft-saved` | `{ "prRef": "owner/repo/123", "draftId": "uuid" }` |
-| `draft-discarded` | `{ "prRef": "owner/repo/123", "draftId": "uuid" }` |
+| `state-changed` | `{ "prRef": "owner/repo/123", "fieldsTouched": ["..."], "sourceTabId": "<uuid-or-null>" }` |
+| `draft-saved` | `{ "prRef": "owner/repo/123", "draftId": "uuid", "sourceTabId": "<uuid-or-null>" }` |
+| `draft-discarded` | `{ "prRef": "owner/repo/123", "draftId": "uuid", "sourceTabId": "<uuid-or-null>" }` |
+
+**`sourceTabId` plumbing.** The frontend sends a per-tab UUID via the `X-PRism-Tab-Id` HTTP header on every mutating request (`PUT /draft`, `POST /reload`). The endpoint reads the header (if present) and the event publication path threads it into the published event record (a new field on `IReviewEvent` carriers, set to `null` for events that don't originate from an HTTP request — e.g., `pr-updated` from the active-PR poller). The SSE projection copies it into the wire payload. The frontend's multi-tab subscriber filters out events whose `sourceTabId` matches the current tab's id, suppressing the toast-on-out-of-band-update noise (per § 5.7) for changes the local tab made itself. Reload events fire from a backend handler invoked by an HTTP request, so they carry a non-null `sourceTabId` and behave the same way. The header is opt-in: a request without it produces events with `sourceTabId: null`, and the frontend treats `null` as "no filtering possible — surface the toast" (conservative default).
 
 Existing event names (`pr-updated`, `inbox-updated`) unchanged. Frontend SSE plumbing today lives in `frontend/src/api/events.ts` (the `openEventStream` function plus a typed `EventPayloadByType` map keyed by event name); the React `useEventSource` hook is a thin wrapper that hands out the handle. To add the three new event names PR3 must:
 1. Extend `EventPayloadByType` in `frontend/src/api/events.ts` with three new entries (defining the `StateChangedEvent`, `DraftSavedEvent`, `DraftDiscardedEvent` payload types).
@@ -597,7 +602,8 @@ frontend/src/
 │   ├── useDraftMutation.ts                     ← PUT helpers per patch kind
 │   ├── useReconcile.ts                         ← POST /api/pr/{ref}/reload
 │   ├── useStateChangedSubscriber.ts            ← multi-tab consistency reconciler
-│   └── useCrossTabPrPresence.ts                ← BroadcastChannel-based "this PR is open elsewhere" banner
+│   ├── useCrossTabPrPresence.ts                ← BroadcastChannel-based "this PR is open elsewhere" banner
+│   └── useFirstActivePrPollComplete.ts         ← derived boolean: has the active-PR poller completed at least one fetch for this prRef? (gates Mark-all-read button)
 └── api/draft.ts                                ← typed wrapper around fetch (TS discriminated union → wire shape)
 ```
 
@@ -613,7 +619,9 @@ Server is source of truth. Frontend cache is per-PR `ReviewSessionDto` held in *
   - If `draftId` exists: `PUT` with `updateDraftComment` (or reply variant).
 - The hook is the *only* path that mutates persisted draft state from the composer. Discard button calls `deleteDraftComment` / `deleteDraftReply` (only when `draftId` exists; if no draft was ever created, Discard just unmounts) and unmounts the composer.
 
-**First-keystroke threshold.** Auto-save creation is gated on body trimmed length **≥ 3 chars**. Below that threshold, keystrokes accumulate locally only (no PUT). Rationale: protects against accidental drafts ("user opens composer, hits `f` while reaching for `j`, walks away → on return, finds a draft they don't recognize") without compromising the auto-save protection that real text needs. The threshold is small enough that any deliberate comment crosses it within 1-2 keystrokes; large enough to filter typos.
+**First-keystroke threshold.** Auto-save creation is gated on body trimmed length **≥ 3 chars** measured as UTF-16 code units (`bodyMarkdown.trim().length` in JS — not code points). Below that threshold, keystrokes accumulate locally only (no PUT). Rationale: protects against accidental drafts ("user opens composer, hits `f` while reaching for `j`, walks away → on return, finds a draft they don't recognize") without compromising the auto-save protection that real text needs. The threshold is small enough that any deliberate comment crosses it within 1-2 keystrokes; large enough to filter typos.
+
+*Edge case:* a single emoji like `👍` is 2 UTF-16 code units (1 code point) → does NOT cross the threshold on its own, but `👍!` (3 code units) does. Two-character responses like "No" / "OK" / "Lgtm" (4) similarly don't auto-save until the user adds a third character. The PoC accepts this — short responses are uncommon in code review and the user can press `Cmd/Ctrl+Enter` to force-flush a sub-threshold body (per § 5.3a). A future revision could switch to code-point counting (`[...str].length`) if dogfooding shows reviewers losing short responses; the unit-of-measure choice is preserved here so the change is deliberate.
 
 **`assignedId` race protection.** The `inFlightCreate` promise is the contract: between the first `newDraftComment` PUT firing and its 200 response, all subsequent auto-save debounces queue behind it. When the response arrives, the queued debounce (if any) fires once with the now-known `assignedId` as `updateDraftComment(assignedId, latestBody)`. This eliminates the duplicate-create class of bug (per `spec/02-architecture.md` § Multi-tab consistency, the backend is otherwise free to assign two ids for two parallel `newDraftComment` calls).
 
@@ -636,7 +644,7 @@ Spec/03 § 4 specifies: `Esc` cancels (with discard prompt if non-empty); `Cmd/C
 - **Cmd/Ctrl+Enter, with `draftId`**: force-flush the debounce (fire `updateDraftComment` immediately with the current body); on 200, the composer can be safely closed (close it; the user said "save").
 - **Reload-blocked modal "Save as draft" branch when a draft already exists** (per spec/03 § 3): force-flush the debounce (`updateDraftComment` with current body); on 200, allow the reload to proceed. Same code path as Cmd/Ctrl+Enter.
 
-### 5.3a Drafts tab + UnresolvedPanel role separation (intentional surface overlap)
+### 5.3b Drafts tab + UnresolvedPanel role separation (intentional surface overlap)
 
 A stale draft appears on two surfaces simultaneously: as a row in the Drafts tab (with Edit / Delete / Jump-to) and as a row in the `UnresolvedPanel` (with Show me / Edit / Delete / Keep anyway). This is intentional, with distinct roles:
 - **`UnresolvedPanel`** = *call to action.* Sticky-top, always visible from any tab; only shows things blocking submit (stale drafts, verdict needs re-confirm). Goes away when nothing blocks.
@@ -676,7 +684,7 @@ Content:
 
 **Keep anyway — server-side override (corrects earlier S4 narrowing).** When the user clicks `Keep anyway` on a stale draft, the frontend issues `PUT /draft` with a new patch kind `overrideStale: { id }`. Backend sets `IsOverriddenStale = true` on the draft (a new field on `DraftComment` and `DraftReply`, default `false`). The reconciliation pipeline's classifier respects the flag: a draft that would otherwise classify as `Stale` is reclassified as `Draft` (with `IsOverriddenStale = true` preserved) so submit is unblocked. The `UnresolvedPanel` filters out overridden drafts from its `staleCount`. The Drafts-tab `DraftListItem` renders the override chip ("User-overridden (was Stale)") so the user can find and revisit the override later. **Override clears on head shift:** any time `headSha` changes (next Reload after a teammate push), the next reconciliation pass clears `IsOverriddenStale = false` on every draft (the override only applies to one anchor state — once the code changes again, the user must re-judge). This faithfully implements `spec/03-poc-features.md` § 5's "Keep anyway moves draft from `stale` to `draft` status — user accepts it might land on the wrong line; rare but allowed" semantics.
 
-**Patch kind addition (consequence).** § 4.2 grows a tenth patch kind: `overrideStale: { id }` (no body other than id). `fieldsTouched` map (§ 4.3) gets entry `overrideStale` → `["draft-comments"]` (or `["draft-replies"]` if applied to a reply id). New rejection case in § 4.2: `overrideStale` against a draft whose `Status !== "stale"` → `400 not-stale`. Tests in PrDraftEndpointTests.cs cover happy path, not-stale rejection, and head-shift-clears-override.
+**Patch kind addition (consequence).** § 4.2 carries the `overrideStale: { id }` patch kind (no body other than id) alongside the other patch kinds, with the corresponding rejection case (`overrideStale` against a draft whose `Status !== "stale"` → `400 not-stale`) and `fieldsTouched` row. Tests in `PrDraftEndpointTests.cs` cover happy path, not-stale rejection, and head-shift-clears-override.
 
 ### 5.5a Modal focus management (single rule for all modals)
 
@@ -692,9 +700,9 @@ Implementation can use a single shared `Modal.tsx` primitive that bakes these ru
 ### 5.5b Keyboard navigation for `UnresolvedPanel`
 
 The panel is sticky-top and contains interactive controls; keyboard reachability is not optional.
-- Panel container: `role="region"`, `aria-label="Unresolved drafts"`, `tabindex="-1"` (focusable programmatically when the panel first appears, so a screen reader announces it).
+- Panel container: `role="region"`, `aria-label="Unresolved drafts"`, `tabIndex={-1}` (focusable programmatically when the panel first appears, so a screen reader announces it).
 - Per-row tab order: status badges → Show me → Edit → Delete → Keep anyway. Document order matches visual order (left to right).
-- `Show me` action: when activated by keyboard, cross-tab navigation moves focus to the diff line in Files tab (focus the line container `tabindex="-1"` and call `.focus()`); a screen reader announces the line content.
+- `Show me` action: when activated by keyboard, cross-tab navigation moves focus to the diff line in Files tab (focus the line container `tabIndex={-1}` and call `.focus()`); a screen reader announces the line content.
 - `aria-live="polite"` region inside the panel announces transitions: when `staleCount` drops to zero, announce *"All drafts reconciled."* When a new stale draft appears (post-Reload), announce *"N drafts need attention."*
 - Discard / Keep anyway / Delete activations follow the modal-focus rules in § 5.5a.
 
@@ -738,7 +746,7 @@ The `registerOpenComposer` hook is just a `useEffect` on the composer that calls
 
 ### 5.7a Cross-tab presence banner (P4 mitigation)
 
-`useCrossTabPrPresence(prRef)` uses the browser `BroadcastChannel` API (channel: `prism:pr-presence:<prRef>`). On mount, the tab broadcasts `{ kind: "open", tabId }`. On receiving an `open` from a different `tabId`, the tab shows a non-dismissable banner *"This PR is open in another tab. Saves may overwrite each other."* with two actions: *"Switch to other tab"* (calls `BroadcastChannel.postMessage({ kind: "request-focus" })` — the other tab listens and `window.focus()`'s itself) / *"Take over here"* (broadcasts `{ kind: "claim", tabId }`; the receiving tab switches to read-only mode, disabling its composers and dimming its UI; the claiming tab clears its banner).
+`useCrossTabPrPresence(prRef)` uses the browser `BroadcastChannel` API (channel: `prism:pr-presence:<prRef>`). On mount, the tab broadcasts `{ kind: "open", tabId }`. On receiving an `open` from a different `tabId`, the tab shows a banner *"This PR is open in another tab. Saves may overwrite each other."* with three actions: *"Switch to other tab"* (calls `BroadcastChannel.postMessage({ kind: "request-focus" })` — the other tab listens and `window.focus()`'s itself) / *"Take over here"* (broadcasts `{ kind: "claim", tabId }`; the receiving tab switches to read-only mode, disabling its composers and dimming its UI; the claiming tab clears its banner) / *"Dismiss for this session"* (suppresses re-show via `sessionStorage["prism:pr-presence-dismissed:" + prRef] = "true"` — addresses the "I have this PR pinned in a background window deliberately" use case; cleared when the browser session ends).
 
 This is a *frontend-only* mechanism — backend has no knowledge of tab identity. It does NOT prevent the underlying race (two tabs CAN still write concurrently if the user dismisses or ignores the banner), but it surfaces the risk and offers a one-click resolution. Conflict-detection UI proper (P4-F9) remains v2.
 
@@ -793,6 +801,11 @@ New types added by S4:
 - `useCrossTabPrPresence.test.ts`:
   - `OpenSamePrInTwoTabs_BothTabsShowBanner`.
   - `TakeOver_TransitionsOtherTabToReadOnly`.
+  - `BannerDismissForSession_PersistsToSessionStorage_NoReshow`.
+- `useFirstActivePrPollComplete.test.ts`:
+  - `BeforeFirstPoll_ReturnsFalse`.
+  - `AfterFirstPoll_ReturnsTrue`.
+  - `PrRefChange_ResetsToFalse`.
 - `api/draft.test.ts`:
   - One round-trip test per patch kind asserting wire-shape "exactly one field set."
   - `OverrideStale_AgainstNonStaleDraft_400NotStale` (server-side rejection round-trip).
@@ -824,6 +837,8 @@ New types added by S4:
   - `OnClose_FocusReturnsToTrigger`.
 
 **Playwright E2E (`frontend/e2e/`):**
+
+E2E tests reference "simulate iter-N push" and "simulate head-shift" via fixtures. **The fixture mechanism is a test-server-shaped backend swap:** Playwright launches `PRism.Web` with the GitHub adapter (`IReviewService`) replaced by `FakeReviewService` (a new test-only impl that reads canned PR-state JSON files from `frontend/e2e/fixtures/`). The fake exposes `POST /test/advance-head?prRef=...&newHeadSha=...&fileChanges=...` to mutate the in-memory state mid-test, simulating a push. Existing S3 E2E tests already use a similar fake (`PRism.GitHub.Tests/Fakes/`). The plan doc enumerates the exact fake API; this spec just commits to "fixture-based, not live-GitHub."
 - `s4-drafts-survive-restart.spec.ts` — open PR → save inline draft → close browser → reopen → draft visible at anchor with body intact.
 - `s4-reconciliation-fires.spec.ts` — save draft on iter-3 file → simulate iter-4 push (fixture) → click Reload → assert classification badges per matrix.
 - `s4-multi-tab-consistency.spec.ts` — open same PR in two tabs → cross-tab presence banner appears in both → save draft in tab A → tab B's draft list refetches and shows it → open composer in tab B for a different draft → tab A's update of *that* same draft is held back from clobbering tab B's open composer.
@@ -864,9 +879,14 @@ PR closure is detected by the active-PR poller (S3, returns `state` field). On `
 - See § 4.6.
 
 ### 7.3 Reconciliation edges
-- `IFileContentSource.GetAsync(filePath, sha)` returns `404` → `Stale (FileDeleted)`. Distinguish from "SHA unreachable" (force-push fallback).
-- Network error during reconciliation: pipeline aborts, returns no result, persists nothing. Frontend shows banner: *"Reload failed; please retry."* Drafts remain in their pre-reload state. The `_gate` was held during the pipeline call but no state was modified.
+- `IFileContentSource.GetAsync(filePath, sha)` returns `404` → distinguish "file deleted at this SHA" (file gone in the new tree but `sha` reachable) from "SHA unreachable" (force-push rewrote history). Distinction is implementation-specific; see § 3.1 `ForcePushFallback.cs` for the strategy.
+- Network error during reconciliation aborts in **Phase 1** (file fetches, no `_gate` held — see § 3.3): pipeline returns no result; endpoint returns `502` (or surfaces a domain `ReconciliationAbortedException`); no state mutation runs; frontend shows banner *"Reload failed; please retry."*; drafts remain in their pre-reload state. If the failure happens during **Phase 2** (`UpdateAsync` transform body, `_gate` briefly held), the transform throws and `UpdateAsync` unwinds, releasing `_gate` without persisting; same banner. Neither path holds `_gate` across network I/O.
 - `IFileContentSource` cache is per-`Reconcile()` call; nothing persisted across reloads.
+
+**SHA reachability check (`ForcePushFallback.cs` strategy).** The pipeline distinguishes "file deleted" from "SHA unreachable" via a positive reachability probe at the top of reconciliation, before per-draft file fetches:
+1. **Probe.** Call a new `IFileContentSource.IsCommitReachableAsync(sha, ct)` that maps to `IReviewService.GetCommitAsync(prRef, sha, ct)` (returns `null` for 404, throws otherwise) — added to `IReviewService` as part of PR2 if absent.
+2. **Cache.** The probe result is cached per-`Reconcile()` call, keyed by `sha`. The pipeline groups drafts by their `AnchoredSha` and runs at most one probe per distinct anchored SHA.
+3. **Branch.** If `IsCommitReachableAsync(anchoredSha) == false` → enter force-push fallback for every draft with that anchored SHA. If true → run the standard line-resolution algorithm; a 404 from the per-`(filePath, sha)` `GetAsync` then unambiguously means the file is deleted at that SHA, classified `Stale (FileDeleted)`.
 
 ### 7.4 Composer auto-save edges
 - See § 5.3 (failure path).
