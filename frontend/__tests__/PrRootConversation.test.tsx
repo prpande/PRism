@@ -1,7 +1,10 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
-import { PrRootConversation } from '../src/components/PrDetail/OverviewTab/PrRootConversation';
-import type { IssueCommentDto } from '../src/api/types';
+import {
+  PrRootConversation,
+  type PrRootConversationReplyContext,
+} from '../src/components/PrDetail/OverviewTab/PrRootConversation';
+import type { IssueCommentDto, PrReference } from '../src/api/types';
 
 const aliceComment: IssueCommentDto = {
   id: 101,
@@ -17,12 +20,34 @@ const bobComment: IssueCommentDto = {
   body: 'Acknowledged.',
 };
 
+const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
+
+const replyContext: PrRootConversationReplyContext = {
+  prRef: ref,
+  prState: 'open',
+  existingPrRootDraft: null,
+  registerOpenComposer: () => () => undefined,
+  onComposerClose: () => undefined,
+};
+
 describe('PrRootConversation', () => {
-  it('renders the S4 footer copy even when there are no comments', () => {
+  it('renders the read-only fallback footer when replyContext is omitted', () => {
     render(<PrRootConversation comments={[]} />);
-    expect(
-      screen.getByText(/Reply lands when the comment composer ships in S4\./),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Composer not available in this context\./)).toBeInTheDocument();
+  });
+
+  it('replaces the read-only footer with Reply + Mark-all-read actions when replyContext is supplied', () => {
+    render(<PrRootConversation comments={[]} replyContext={replyContext} />);
+    expect(screen.queryByText(/Composer not available in this context\./)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /mark all read/i })).toBeInTheDocument();
+  });
+
+  it('clicking Reply mounts the PrRootReplyComposer (form role with PR-root aria-label)', async () => {
+    const user = await import('@testing-library/user-event').then((m) => m.default.setup());
+    render(<PrRootConversation comments={[]} replyContext={replyContext} />);
+    await user.click(screen.getByRole('button', { name: 'Reply' }));
+    expect(screen.getByRole('form', { name: 'Reply to this PR' })).toBeInTheDocument();
   });
 
   it('renders no comment entries when comments is empty', () => {
@@ -45,12 +70,12 @@ describe('PrRootConversation', () => {
     expect(authors).toEqual(['alice', 'bob']);
   });
 
-  it('does not render any Reply button (composer ships in S4)', () => {
+  it('does not render any Reply button when replyContext is omitted', () => {
     render(<PrRootConversation comments={[aliceComment, bobComment]} />);
     expect(screen.queryByRole('button', { name: /reply/i })).not.toBeInTheDocument();
   });
 
-  it('does not render a Mark all read button (read-only in S3)', () => {
+  it('does not render a Mark all read button when replyContext is omitted', () => {
     render(<PrRootConversation comments={[aliceComment]} />);
     expect(screen.queryByRole('button', { name: /mark all read/i })).not.toBeInTheDocument();
   });

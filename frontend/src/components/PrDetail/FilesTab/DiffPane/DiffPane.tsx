@@ -1,6 +1,9 @@
 import type { FileChange, ReviewThreadDto, DraftSide } from '../../../../api/types';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
-import { ExistingCommentWidget } from './ExistingCommentWidget';
+import {
+  ExistingCommentWidget,
+  type ExistingCommentWidgetReplyContext,
+} from './ExistingCommentWidget';
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
 
@@ -22,6 +25,11 @@ export interface DiffPaneProps {
   // FilesTab passes its <InlineCommentComposer> here; DiffPane simply
   // inserts it as a `colspan=3` follow-up row analogous to ExistingCommentWidget.
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
+  // Bound by FilesTab from its `useDraftSession`. Forwarded verbatim to each
+  // `<ExistingCommentWidget>` so per-thread Reply buttons can mount a
+  // `<ReplyComposer>`. Absent → DiffPane test harnesses render threads
+  // read-only.
+  replyContext?: ExistingCommentWidgetReplyContext;
 }
 
 interface DiffLine {
@@ -88,6 +96,7 @@ export function DiffPane({
   prUrl,
   onLineClick,
   renderComposerForLine,
+  replyContext,
 }: DiffPaneProps) {
   if (!selectedPath) {
     return (
@@ -148,6 +157,7 @@ export function DiffPane({
                   filePath={selectedPath}
                   onLineClick={onLineClick}
                   renderComposerForLine={renderComposerForLine}
+                  replyContext={replyContext}
                 />
               );
             })}
@@ -167,6 +177,7 @@ interface DiffLineRowProps {
   filePath: string;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
+  replyContext?: ExistingCommentWidgetReplyContext;
 }
 
 function DiffLineRow({
@@ -177,6 +188,7 @@ function DiffLineRow({
   filePath,
   onLineClick,
   renderComposerForLine,
+  replyContext,
 }: DiffLineRowProps) {
   const rowClass = `diff-line diff-line--${line.type}`;
 
@@ -266,7 +278,7 @@ function DiffLineRow({
       {threadsAtLine && threadsAtLine.length > 0 && (
         <tr className="diff-comment-row">
           <td colSpan={3}>
-            <ExistingCommentWidget threads={threadsAtLine} />
+            <ExistingCommentWidget threads={threadsAtLine} replyContext={replyContext} />
           </td>
         </tr>
       )}

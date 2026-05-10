@@ -83,10 +83,18 @@ public sealed class ActivePrPoller : BackgroundService
             {
                 var snapshot = await _review.PollActivePrAsync(prRef, ct).ConfigureAwait(false);
 
+                // First-poll detection: state has no LastHeadSha / LastCommentCount yet.
+                // Emit ActivePrUpdated even with zero deltas so frontend gates that
+                // depend on the snapshot being hydrated (`useFirstActivePrPollComplete`
+                // backing the Mark-all-read button per spec § 5.6) reliably fire on
+                // the first successful poll for a newly-subscribed PR. Without this,
+                // a quiet PR with no head-SHA or comment-count changes never produces
+                // an event, leaving the gate closed indefinitely.
+                var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
                 var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
                 var commentChanged = state.LastCommentCount is { } prevCount && prevCount != snapshot.CommentCount;
 
-                if (headChanged || commentChanged)
+                if (firstPoll || headChanged || commentChanged)
                 {
                     _bus.Publish(new ActivePrUpdated(
                         prRef,

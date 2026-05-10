@@ -91,6 +91,33 @@ public class ActivePrPollerBackoffTests
     }
 
     [Fact]
+    public async Task FirstSuccessfulPoll_PublishesActivePrUpdated_EvenWithoutDeltas()
+    {
+        // Spec § 5.6 + frontend `useFirstActivePrPollComplete`: the gate hook
+        // backing the Mark-all-read button needs the first successful poll
+        // for a newly-subscribed PR to surface as a `pr-updated` SSE event.
+        // Without this, a quiet PR (no head SHA or comment count changes)
+        // would never publish, leaving the gate closed indefinitely. Both
+        // delta flags are false because there is nothing to compare against
+        // on the first poll — consumers treat the first event as a hydration
+        // signal, not a delta announcement.
+        var (poller, review, bus, registry, _) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+
+        await poller.TickAsync(T0, default);
+
+        bus.Published.Should().ContainSingle();
+        var evt = (ActivePrUpdated)bus.Published[0];
+        evt.PrRef.Should().Be(pr);
+        evt.HeadShaChanged.Should().BeFalse();
+        evt.CommentCountChanged.Should().BeFalse();
+        evt.NewHeadSha.Should().BeNull();
+        evt.NewCommentCount.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Publishes_ActivePrUpdated_when_head_sha_changes()
     {
         var (poller, review, bus, registry, _) = Build();
@@ -98,17 +125,19 @@ public class ActivePrPollerBackoffTests
         registry.Add("sub1", pr);
 
         review.SetSnapshot(pr, Snapshot(headSha: "h1"));
-        await poller.TickAsync(T0, default);  // first poll seeds state — no publish
-        bus.Published.Should().BeEmpty("first poll seeds state without publishing");
+        await poller.TickAsync(T0, default);  // first poll publishes a hydration event
+        bus.Published.Should().ContainSingle("first poll publishes a hydration event");
+        var firstEvt = (ActivePrUpdated)bus.Published[0];
+        firstEvt.HeadShaChanged.Should().BeFalse("the first event has no prior state to diff against");
 
         review.SetSnapshot(pr, Snapshot(headSha: "h2"));
         await poller.TickAsync(T0.AddSeconds(30), default);
-        bus.Published.Should().ContainSingle();
-        var evt = (ActivePrUpdated)bus.Published[0];
-        evt.PrRef.Should().Be(pr);
-        evt.HeadShaChanged.Should().BeTrue();
-        evt.NewHeadSha.Should().Be("h2");
-        evt.CommentCountChanged.Should().BeFalse();
+        bus.Published.Should().HaveCount(2);
+        var deltaEvt = (ActivePrUpdated)bus.Published[1];
+        deltaEvt.PrRef.Should().Be(pr);
+        deltaEvt.HeadShaChanged.Should().BeTrue();
+        deltaEvt.NewHeadSha.Should().Be("h2");
+        deltaEvt.CommentCountChanged.Should().BeFalse();
     }
 
     [Fact]
@@ -120,19 +149,19 @@ public class ActivePrPollerBackoffTests
 
         review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
         await poller.TickAsync(T0, default);
-        bus.Published.Should().BeEmpty();
+        bus.Published.Should().ContainSingle("first poll publishes a hydration event");
 
         review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 3));
         await poller.TickAsync(T0.AddSeconds(30), default);
-        bus.Published.Should().ContainSingle();
-        var evt = (ActivePrUpdated)bus.Published[0];
-        evt.HeadShaChanged.Should().BeFalse();
-        evt.CommentCountChanged.Should().BeTrue();
-        evt.NewCommentCount.Should().Be(3);
+        bus.Published.Should().HaveCount(2);
+        var deltaEvt = (ActivePrUpdated)bus.Published[1];
+        deltaEvt.HeadShaChanged.Should().BeFalse();
+        deltaEvt.CommentCountChanged.Should().BeTrue();
+        deltaEvt.NewCommentCount.Should().Be(3);
     }
 
     [Fact]
-    public async Task Does_not_publish_when_snapshot_is_unchanged()
+    public async Task Does_not_publish_again_when_snapshot_is_unchanged()
     {
         var (poller, review, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
@@ -142,6 +171,6 @@ public class ActivePrPollerBackoffTests
         await poller.TickAsync(T0, default);
         await poller.TickAsync(T0.AddSeconds(30), default);
         await poller.TickAsync(T0.AddSeconds(60), default);
-        bus.Published.Should().BeEmpty("identical snapshots produce no publish");
+        bus.Published.Should().ContainSingle("the first poll publishes a hydration event; identical subsequent snapshots do not");
     }
 }

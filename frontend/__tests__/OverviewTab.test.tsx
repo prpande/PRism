@@ -185,13 +185,14 @@ describe('OverviewTab', () => {
     expect(screen.getByText('Viewed').nextElementSibling?.textContent).toBe('0/2');
   });
 
-  it('renders PrRootConversation with the rootComments and the S4 footer', async () => {
+  it('renders PrRootConversation with the rootComments plus the PR5 actions (Reply + Mark all read)', async () => {
     mountOverview();
     await screen.findByText('reviewer1');
     expect(screen.getByText('reviewer2')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Reply lands when the comment composer ships in S4\./),
-    ).toBeInTheDocument();
+    // S3 footer placeholder is gone — S4 PR5 wires real actions.
+    expect(screen.queryByText(/Composer not available in this context\./)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /mark all read/i })).toBeInTheDocument();
   });
 
   it('navigates to the Files route when "Review files" is clicked', async () => {

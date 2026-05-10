@@ -284,6 +284,12 @@ export function FilesTab() {
     void draftSession.refetch();
   }
 
+  const prState: 'open' | 'closed' | 'merged' = prDetail.pr.isMerged
+    ? 'merged'
+    : prDetail.pr.isClosed
+      ? 'closed'
+      : 'open';
+
   function renderComposerForLine(filePath: string, lineNumber: number): React.ReactNode {
     if (!activeAnchor) return null;
     if (activeAnchor.filePath !== filePath) return null;
@@ -292,7 +298,7 @@ export function FilesTab() {
     return (
       <InlineCommentComposer
         prRef={prRef}
-        prState={prDetail.pr.isMerged ? 'merged' : prDetail.pr.isClosed ? 'closed' : 'open'}
+        prState={prState}
         anchor={activeAnchor}
         initialBody={existing?.bodyMarkdown ?? ''}
         draftId={composerDraftId}
@@ -302,6 +308,38 @@ export function FilesTab() {
       />
     );
   }
+
+  // Per-thread reply composer wiring (Task 40 Step 3). Each
+  // ExistingCommentWidget receives the bag and self-manages composer state
+  // (one open reply per thread, multiple threads can host open replies
+  // simultaneously — matches the GitHub UX precedent).
+  //
+  // Memoized so the bag's reference is stable across renders that don't
+  // touch its inputs. `ReplyComposer`'s `registerOpenComposer` useEffect
+  // re-runs whenever the registry function reference changes; without
+  // memoization, every parent render would tear down and re-register the
+  // refcount entry, briefly dropping the diff-and-prefer merge protection
+  // for the open draft.
+  const handleReplyComposerClose = useCallback(() => {
+    void draftSession.refetch();
+  }, [draftSession.refetch]);
+
+  const replyContext = useMemo(
+    () => ({
+      prRef,
+      prState,
+      draftReplies: draftSession.session?.draftReplies ?? [],
+      registerOpenComposer: draftSession.registerOpenComposer,
+      onReplyComposerClose: handleReplyComposerClose,
+    }),
+    [
+      prRef,
+      prState,
+      draftSession.session?.draftReplies,
+      draftSession.registerOpenComposer,
+      handleReplyComposerClose,
+    ],
+  );
 
   return (
     <div className="files-tab">
@@ -356,6 +394,7 @@ export function FilesTab() {
             prUrl={prUrl}
             onLineClick={handleLineClick}
             renderComposerForLine={renderComposerForLine}
+            replyContext={replyContext}
           />
         </div>
       </div>
