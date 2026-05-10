@@ -10,13 +10,14 @@ public class ActivePrPollerBackoffTests
 {
     private static readonly DateTimeOffset T0 = new(2026, 5, 7, 0, 0, 0, TimeSpan.Zero);
 
-    private static (ActivePrPoller poller, FakePollerReviewService review, FakeReviewEventBus bus, ActivePrSubscriberRegistry registry) Build()
+    private static (ActivePrPoller poller, FakePollerReviewService review, FakeReviewEventBus bus, ActivePrSubscriberRegistry registry, IActivePrCache cache) Build()
     {
         var registry = new ActivePrSubscriberRegistry();
         var review = new FakePollerReviewService();
         var bus = new FakeReviewEventBus();
-        var poller = new ActivePrPoller(registry, review, bus, NullLogger<ActivePrPoller>.Instance);
-        return (poller, review, bus, registry);
+        var cache = new ActivePrCache(registry);
+        var poller = new ActivePrPoller(registry, review, bus, cache, NullLogger<ActivePrPoller>.Instance);
+        return (poller, review, bus, registry, cache);
     }
 
     private static ActivePrPollSnapshot Snapshot(string headSha = "h1", int commentCount = 0) =>
@@ -25,7 +26,7 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Healthy_pr_continues_to_poll_while_other_pr_is_in_backoff()
     {
-        var (poller, review, _, registry) = Build();
+        var (poller, review, _, registry, _) = Build();
         var prA = new PrReference("o", "r", 1);
         var prB = new PrReference("o", "r", 2);
         registry.Add("sub1", prA);
@@ -47,7 +48,7 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Backoff_resets_after_successful_poll()
     {
-        var (poller, review, _, registry) = Build();
+        var (poller, review, _, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
         review.SetThrows(pr, new HttpRequestException("500"));
@@ -76,7 +77,7 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Single_pr_exception_does_not_block_other_prs()
     {
-        var (poller, review, _, registry) = Build();
+        var (poller, review, _, registry, _) = Build();
         var prA = new PrReference("o", "r", 1);
         var prB = new PrReference("o", "r", 2);
         registry.Add("sub1", prA);
@@ -92,7 +93,7 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Publishes_ActivePrUpdated_when_head_sha_changes()
     {
-        var (poller, review, bus, registry) = Build();
+        var (poller, review, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
@@ -113,7 +114,7 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Publishes_ActivePrUpdated_when_comment_count_changes()
     {
-        var (poller, review, bus, registry) = Build();
+        var (poller, review, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
 
@@ -133,7 +134,7 @@ public class ActivePrPollerBackoffTests
     [Fact]
     public async Task Does_not_publish_when_snapshot_is_unchanged()
     {
-        var (poller, review, bus, registry) = Build();
+        var (poller, review, bus, registry, _) = Build();
         var pr = new PrReference("o", "r", 1);
         registry.Add("sub1", pr);
         review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));

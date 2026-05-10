@@ -328,19 +328,23 @@ Token storage is in the OS keychain via MSAL Extensions, NOT in the data directo
 - **`PUT /api/pr/{ref}/draft`** — body is a partial `ReviewSessionPatch` (a typed object with optional fields for each writable element):
   ```jsonc
   {
-    "draftVerdict": "approve" | "requestChanges" | "comment" | null,    // null clears
+    "draftVerdict": "approve" | "requestChanges" | "comment",           // set/replace; explicit null-clear unsupported in S4 wire — see deferrals "PR3 wire-shape gap: explicit verdict-clear has no sentinel"
     "draftSummaryMarkdown": "...",                                       // string replace
     "newDraftComment": { filePath, lineNumber, side, anchoredSha, anchoredLineContent, bodyMarkdown },     // append; backend assigns `id`
-    "updateDraftComment": { id, bodyMarkdown? },                         // edit existing draft body
+    "newPrRootDraftComment": { bodyMarkdown },                           // append PR-root (file-scope) draft; backend assigns `id`
+    "updateDraftComment": { id, bodyMarkdown },                          // edit existing draft body (bodyMarkdown required, non-empty)
     "deleteDraftComment": { id },                                        // discard
     "newDraftReply": { parentThreadId, bodyMarkdown },                   // append reply; backend assigns `id`
-    "updateDraftReply": { id, bodyMarkdown? },
+    "updateDraftReply": { id, bodyMarkdown },                            // edit existing draft reply body (bodyMarkdown required, non-empty)
     "deleteDraftReply": { id },
+    "confirmVerdict": true,                                              // re-confirm verdict after a NeedsReconfirm reload (clears the status)
+    "markAllRead": true,                                                 // bookmark the highest issue-comment id as seen (subscriber-only — 404 otherwise)
+    "overrideStale": { id },                                             // mark a Stale draft/reply as user-acknowledged-stale; classifier short-circuits it back to Draft until the next head shift
     "iterationOverridePatch": { addOverrides[], removeOverrides[] },     // merge/split persistence
     "fileViewedToggle": { filePath, viewedAtSha }                        // mark/unmark viewed
   }
   ```
-  Exactly **one** of these fields is set per request; the backend rejects multi-field patches with 400. The single-field constraint makes `StateChanged.fieldsTouched` deterministic ("the field that was set, plus any derived state — e.g., `lastSeenCommentId` if a comment-related field was touched").
+  Exactly **one** of these fields is set per request; the backend rejects multi-field patches with 400. The single-field constraint makes `StateChanged.fieldsTouched` deterministic ("the field that was set, plus any derived state — e.g., `lastSeenCommentId` if a comment-related field was touched"). `markAllRead` requires that **at least one tab is currently subscribed** to `{ref}` via SSE (`/api/pr/{ref}/subscribe`); the backend returns 404 otherwise. This closes the drive-by-tab vector for the PoC threat model (single-user; OriginCheckMiddleware + SameSite=Strict + the session-token gate cover the rest). A stricter per-session subscription-ownership check is deferred — see deferrals "PR3: markAllRead authorization broader than spec § 4.7" — for when multi-user lands.
 - **Response**: `{ assignedId?: string }` for `newDraftComment` / `newDraftReply` (server-generated UUIDv4 the client adopts); empty body otherwise. The full updated state is *not* returned — clients re-`GET` if they need it; the SSE `StateChanged` event tells other tabs to refresh.
 
 There is no `DELETE /api/pr/{ref}/draft/{id}` route — discards go through `PUT` with `deleteDraftComment` / `deleteDraftReply`. This keeps the endpoint count small and the SSE-event-fan-out logic uniform.

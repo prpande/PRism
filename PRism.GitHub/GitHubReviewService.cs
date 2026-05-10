@@ -411,6 +411,37 @@ public sealed partial class GitHubReviewService : IReviewService
         return false;
     }
 
+    public async Task<CommitInfo?> GetCommitAsync(PrReference reference, string sha, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentNullException.ThrowIfNull(sha);
+
+        var url = $"repos/{reference.Owner}/{reference.Repo}/commits/{Uri.EscapeDataString(sha)}";
+
+        var token = await _readToken().ConfigureAwait(false);
+        using var http = _httpFactory.CreateClient("github");
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        if (!string.IsNullOrEmpty(token))
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        req.Headers.UserAgent.ParseAdd("PRism/0.1");
+        req.Headers.Accept.ParseAdd("application/vnd.github+json");
+
+        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
+        if (resp.StatusCode == HttpStatusCode.NotFound)
+            return null;
+        resp.EnsureSuccessStatusCode();
+
+        // Parse just the canonical sha — the only field PR3's force-push fallback consumes.
+        // Future callers can extend CommitInfo and pull more fields here without breaking
+        // the existing presence-check semantic.
+        var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(bytes);
+        var canonicalSha = doc.RootElement.TryGetProperty("sha", out var shaProp) && shaProp.ValueKind == JsonValueKind.String
+            ? shaProp.GetString() ?? sha
+            : sha;
+        return new CommitInfo(canonicalSha);
+    }
+
     public async Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(reference);

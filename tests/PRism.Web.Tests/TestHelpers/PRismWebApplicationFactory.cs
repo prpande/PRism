@@ -127,6 +127,7 @@ internal sealed class StubReviewService : IReviewService
     public Task<PRism.Core.Iterations.ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
     public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException();
     public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
+    public Task<CommitInfo?> GetCommitAsync(PrReference reference, string sha, CancellationToken ct) => throw new NotImplementedException();
 
     public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException();
 }

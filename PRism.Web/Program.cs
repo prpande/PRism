@@ -78,9 +78,23 @@ app.UseMiddleware<SessionTokenMiddleware>();
 // to the framework-native MaxRequestBodySize cap (Kestrel honors it; TestServer doesn't,
 // but the Content-Length pre-check is the unit-testable defense). Adversarial
 // reviewer ADV-PR5-003.
+// Predicate covers four mutating endpoints: POST /api/events/subscriptions (S3 PR5),
+// PUT /api/pr/{ref}/draft (S4 PR3 Task 25), POST /api/pr/{ref}/reload (S4 PR3 Task 29).
+// /draft and /reload are leaf segments under /api/pr/{owner}/{repo}/{number}/, so
+// EndsWithSegments is the cheapest correct match — neither owner nor repo nor number
+// can produce a path ending in /draft or /reload.
 app.UseWhen(
-    static ctx => HttpMethods.IsPost(ctx.Request.Method)
-        && ctx.Request.Path.StartsWithSegments("/api/events/subscriptions", StringComparison.Ordinal),
+    static ctx =>
+    {
+        var path = ctx.Request.Path;
+        var method = ctx.Request.Method;
+        if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/events/subscriptions", StringComparison.Ordinal))
+            return true;
+        if (!path.StartsWithSegments("/api/pr", StringComparison.Ordinal)) return false;
+        if (HttpMethods.IsPut(method) && path.Value!.EndsWith("/draft", StringComparison.Ordinal)) return true;
+        if (HttpMethods.IsPost(method) && path.Value!.EndsWith("/reload", StringComparison.Ordinal)) return true;
+        return false;
+    },
     branch => branch.Use(async (ctx, next) =>
     {
         const long Cap = 16 * 1024;
@@ -129,6 +143,8 @@ app.MapAuth();
 app.MapEvents();
 app.MapInbox();
 app.MapPrDetail();
+app.MapPrDraftEndpoints();
+app.MapPrReloadEndpoints();
 app.MapAi();
 
 if (builder.Environment.IsEnvironment("Test"))

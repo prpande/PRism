@@ -111,6 +111,7 @@ public static class ServiceCollectionExtensions
         // and publishes ActivePrUpdated to the bus when head SHA or comment count
         // changes. Per-PR backoff isolates flaky PRs from healthy ones (spec § 6.2).
         services.AddSingleton<ActivePrSubscriberRegistry>();
+        services.AddSingleton<IActivePrCache, ActivePrCache>();
         services.AddHostedService<ActivePrPoller>();
 
         return services;

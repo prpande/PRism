@@ -57,6 +57,37 @@ public class WhitespaceTests
     }
 
     [Fact]
+    public async Task TrailingNewline_DoesNotProduceSpuriousMatch_AtPhantomLine()
+    {
+        // SplitLines drops exactly one trailing empty element when content ends with \n
+        // (POSIX text-file convention). Without that trim, a 3-line file with trailing \n
+        // would be split into 4 entries and the phantom 4th line ("") would whitespace-equiv
+        // match an empty anchored content, producing a spurious end-of-file match.
+        var fake = new FakeFileContentSource(
+            files: new() { [("src/Foo.cs", NewSha)] = "line A\nline B\nline C\n" },
+            reachableShas: new() { OldSha, NewSha });
+
+        var draft = new DraftComment(
+            Id: "d1",
+            FilePath: "src/Foo.cs",
+            LineNumber: 4,                      // phantom (file has 3 lines after trim)
+            Side: "right",
+            AnchoredSha: OldSha,
+            AnchoredLineContent: "",            // empty anchor (degenerate but possible)
+            BodyMarkdown: "body",
+            Status: DraftStatus.Draft,
+            IsOverriddenStale: false);
+
+        var session = SessionWith(draft);
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
+
+        var d = Assert.Single(result.Drafts);
+        // Without the trim: the phantom line 4 would whitespace-equiv match empty anchored
+        // content → Row 5 (Fresh) at line 4. With the trim: no candidate exists → Stale.
+        Assert.Equal(DraftStatus.Stale, d.Status);
+    }
+
+    [Fact]
     public async Task WhitespaceEquivInPyExt_NotAllowlisted_FallsBackToExactOnly_Stale()
     {
         var fake = new FakeFileContentSource(

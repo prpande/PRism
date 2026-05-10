@@ -78,10 +78,16 @@ public sealed class DraftReconciliationPipeline
             // draft (FilePath set + any anchor field null) would crash the per-draft body
             // via the ! null-forgiving operators on the standard / force-push paths. Treat
             // as Stale (NoMatch) to keep the per-draft loop isolated — the user can re-anchor
-            // manually.
+            // manually. Preserve draft.FilePath and draft.LineNumber so PR3's apply step
+            // renders the Stale row at the user's original location.
             if (draft.AnchoredSha is null || draft.AnchoredLineContent is null || draft.LineNumber is null)
             {
-                reconciledDrafts.Add(MakeStale(draft, StaleReason.NoMatch, forcePush: false));
+                reconciledDrafts.Add(MakeStale(
+                    draft,
+                    StaleReason.NoMatch,
+                    forcePush: false,
+                    resolvedFilePath: draft.FilePath,
+                    resolvedLineNumber: draft.LineNumber));
                 continue;
             }
 
@@ -91,7 +97,15 @@ public sealed class DraftReconciliationPipeline
                 var fileResult = FileResolution.Resolve(draft.FilePath, renames, deletedPaths);
                 if (!fileResult.Resolved)
                 {
-                    reconciledDrafts.Add(MakeStale(draft, fileResult.StaleReason!.Value, forcePush: false));
+                    // File deleted from the PR. Preserve draft.FilePath (the old path the
+                    // user anchored to) and draft.LineNumber so PR3 can render the stale
+                    // row at the deletion site instead of mistaking it for a PR-root draft.
+                    reconciledDrafts.Add(MakeStale(
+                        draft,
+                        fileResult.StaleReason!.Value,
+                        forcePush: false,
+                        resolvedFilePath: draft.FilePath,
+                        resolvedLineNumber: draft.LineNumber));
                     continue;
                 }
 
@@ -105,8 +119,15 @@ public sealed class DraftReconciliationPipeline
                 {
                     // File doesn't exist at newHeadSha — covers the "deleted at this SHA but not in
                     // the renames map" case (e.g., file was added then removed in a series of pushes
-                    // without being in this PR's rename list).
-                    reconciledDrafts.Add(MakeStale(draft, StaleReason.FileDeleted, forcePush: !reachable));
+                    // without being in this PR's rename list). Preserve the resolved path (the
+                    // post-rename location, if any) and the original line so PR3 can render
+                    // the stale row at the user's anchor target.
+                    reconciledDrafts.Add(MakeStale(
+                        draft,
+                        StaleReason.FileDeleted,
+                        forcePush: !reachable,
+                        resolvedFilePath: fileResult.ResolvedPath,
+                        resolvedLineNumber: draft.LineNumber));
                     continue;
                 }
 
@@ -168,7 +189,13 @@ public sealed class DraftReconciliationPipeline
                 // adapter to GitHub; transient failures (network, rate-limit, deserialize)
                 // on draft N should not abort reconciliation for the other N-1 drafts.
                 // Treat as Stale (NoMatch) — the user re-anchors or retries Reload manually.
-                reconciledDrafts.Add(MakeStale(draft, StaleReason.NoMatch, forcePush: false));
+                // Preserve original location metadata so PR3 renders the row in place.
+                reconciledDrafts.Add(MakeStale(
+                    draft,
+                    StaleReason.NoMatch,
+                    forcePush: false,
+                    resolvedFilePath: draft.FilePath,
+                    resolvedLineNumber: draft.LineNumber));
             }
         }
 
@@ -195,12 +222,17 @@ public sealed class DraftReconciliationPipeline
         return new ReconciliationResult(reconciledDrafts, reconciledReplies, verdictOutcome);
     }
 
-    private static ReconciledDraft MakeStale(DraftComment draft, StaleReason reason, bool forcePush)
+    private static ReconciledDraft MakeStale(
+        DraftComment draft,
+        StaleReason reason,
+        bool forcePush,
+        string? resolvedFilePath,
+        int? resolvedLineNumber)
         => new(
             Id: draft.Id,
             Status: DraftStatus.Stale,
-            ResolvedFilePath: null,
-            ResolvedLineNumber: null,
+            ResolvedFilePath: resolvedFilePath,
+            ResolvedLineNumber: resolvedLineNumber,
             ResolvedAnchoredSha: draft.AnchoredSha,
             AlternateMatchCount: 0,
             StaleReason: reason,

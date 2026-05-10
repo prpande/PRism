@@ -30,6 +30,10 @@ internal sealed class SseChannel : IDisposable
 
     private readonly IDisposable _busInbox;
     private readonly IDisposable _busActivePr;
+    private readonly IDisposable _busStateChanged;
+    private readonly IDisposable _busDraftSaved;
+    private readonly IDisposable _busDraftDiscarded;
+    // NOTE: DraftSubmitted intentionally NOT subscribed in S4 (no producer; S5 wires it).
 
     public SseChannel(
         IReviewEventBus bus,
@@ -44,6 +48,9 @@ internal sealed class SseChannel : IDisposable
         _activeRegistry = activeRegistry;
         _busInbox = bus.Subscribe<InboxUpdated>(OnInboxUpdated);
         _busActivePr = bus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
+        _busStateChanged = bus.Subscribe<StateChanged>(OnStateChanged);
+        _busDraftSaved = bus.Subscribe<DraftSaved>(OnDraftSaved);
+        _busDraftDiscarded = bus.Subscribe<DraftDiscarded>(OnDraftDiscarded);
     }
 
     // Returns the most-recent subscriberId for the given cookieSessionId, or null if no
@@ -226,6 +233,25 @@ internal sealed class SseChannel : IDisposable
         }
     }
 
+    private void OnStateChanged(StateChanged evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnDraftSaved(DraftSaved evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnDraftDiscarded(DraftDiscarded evt) => FanoutProjected(evt, evt.PrRef);
+
+    // Per-PR fanout for events that carry a PrReference and use the projection wire shape
+    // (prRef as "owner/repo/number" string per spec § 4.5). Mirrors OnActivePrUpdated's
+    // _activeRegistry.SubscribersFor lookup so cross-PR information leakage is impossible.
+    private void FanoutProjected(IReviewEvent evt, PrReference prRef)
+    {
+        var (eventName, payload) = SseEventProjection.Project(evt);
+        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+        var frame = $"event: {eventName}\ndata: {json}\n\n";
+        foreach (var subscriberId in _activeRegistry.SubscribersFor(prRef))
+        {
+            if (_subscribers.TryGetValue(subscriberId, out var sub))
+                _ = WriteAndEvictOnFailureAsync(sub, frame);
+        }
+    }
+
 #pragma warning disable CA1031 // SSE write failures must not crash the publisher; observe + evict.
     private async Task WriteAndEvictOnFailureAsync(SseSubscriber s, string frame)
     {
@@ -268,6 +294,9 @@ internal sealed class SseChannel : IDisposable
     {
         _busInbox.Dispose();
         _busActivePr.Dispose();
+        _busStateChanged.Dispose();
+        _busDraftSaved.Dispose();
+        _busDraftDiscarded.Dispose();
     }
 
     internal sealed class SseSubscriber : IDisposable
