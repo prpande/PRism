@@ -59,4 +59,12 @@ public sealed class ActivePrSubscriberRegistry
         ArgumentNullException.ThrowIfNull(prRef);
         return _byPr.TryGetValue(prRef, out var subs) ? subs.Keys.ToList() : Array.Empty<string>();
     }
+
+    // Cheaper than SubscribersFor when the caller only needs presence — IActivePrCache.IsSubscribed
+    // hits this on every markAllRead and POST /reload call, so avoid the per-call ToList allocation.
+    public bool AnySubscribers(PrReference prRef)
+    {
+        ArgumentNullException.ThrowIfNull(prRef);
+        return _byPr.ContainsKey(prRef);
+    }
 }

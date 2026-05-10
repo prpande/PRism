@@ -388,6 +388,24 @@ Items the user already approved as in-scope or that were applied in commits land
 - **Why:** Each commit must leave the build green. Holding consumer fixes for Tasks 5/6 (per the plan's literal commit boundary) would require committing a non-compiling tree at Task 2 and Task 2.5.
 - **Trade-off considered and rejected:** Committing a non-compiling tree at intermediate task boundaries and verifying green only after Task 6. Rejected — never commit code that doesn't build.
 
+## [Defer] `IActivePrCache.HighestIssueCommentId` populated by `ActivePrPoller`
+
+- **Source:** PR3 Task 24a implementation (2026-05-10)
+- **Severity:** P2
+- **Date:** 2026-05-10
+- **Reason:** Plan Task 24a Step 3 said the poller should publish the highest issue-comment id alongside the head SHA, claiming "the same path that builds `ActivePrUpdated` events" computes it. That claim is wrong: `IReviewService.PollActivePrAsync` returns `(headSha, commentCount)` — a count, not an id — and `ActivePrPoller` only carries `LastCommentCount: int?`. To populate a real `HighestIssueCommentId`, the poller would need either a new GraphQL/REST call per tick to fetch the issue-comment list (and compute max), or a broader change to `IReviewService`'s return shape. Neither lands in S4. The cache is wired with `HighestIssueCommentId: null` in production for now; the field is preserved on `ActivePrSnapshot` so callers (`PUT /draft markAllRead` and any future readers) compile against the eventual shape.
+- **Production effect:** `markAllRead` in production always returns `PatchOutcome.NoOp` (cache cold for that field) and emits no `state-changed` event. The user's "Mark all read" button click effectively does nothing in S4 — see spec § 4.7 for the intended semantics. Tests exercise the success path via a fake `IActivePrCache` that fills the field in.
+- **Revisit when:** Either (a) S5's submit pipeline path needs a comment-id timestamp anyway, at which point the poller can piggyback the same fetch, or (b) a dogfooding session shows users actually using markAllRead on real PRs and noticing the no-op.
+- **Plan deviation captured:** Plan Task 24a Step 3 wording ("computed by the same path that builds `ActivePrUpdated` events") is inaccurate; document this in the PR3 description so reviewers don't expect a working markAllRead flow end-to-end.
+
+## [Decision] PR3 Task 24a — added `ActivePrSubscriberRegistry.AnySubscribers` for cheap presence check
+
+- **Source:** PR3 Task 24a implementation (2026-05-10)
+- **Date:** 2026-05-10
+- **Decision:** Plan Task 24a Step 1 said `IActivePrCache.IsSubscribed` should call `_subscribers.AnySubscribers(prRef)`, but `ActivePrSubscriberRegistry` only exposed `SubscribersFor(prRef)` (which materializes a `List<string>`). Added a new `bool AnySubscribers(PrReference prRef) => _byPr.ContainsKey(prRef)` method to avoid the per-call ToList allocation in the hot path (`markAllRead` and `POST /reload` both call `IsSubscribed` on every request).
+- **Why:** Plan said to add it if missing; the perf justification justifies dedicating a method instead of calling `SubscribersFor(prRef).Count > 0`.
+- **Tested by:** `ActivePrCacheTests.IsSubscribed_delegates_to_registry` exercises both the false-then-true transition (Add) and true-then-false transition (Remove).
+
 ## [Decision] PR2 iteration-3 fixes folded into PR3 via cherry-pick (not amended back into PR2)
 
 - **Source:** PR #36 iteration-3 review — Copilot inline comments [`3214576959`](https://github.com/prpande/PRism/pull/36#discussion_r3214576959) (MakeStale data-loss) and [`3214576974`](https://github.com/prpande/PRism/pull/36#discussion_r3214576974) (SplitLines trailing-newline phantom). Both surfaced after PR2 was already merged at `6ce8338`.

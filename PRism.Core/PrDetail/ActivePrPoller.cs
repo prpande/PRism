@@ -14,6 +14,7 @@ public sealed class ActivePrPoller : BackgroundService
     private readonly ActivePrSubscriberRegistry _registry;
     private readonly IReviewService _review;
     private readonly IReviewEventBus _bus;
+    private readonly IActivePrCache _cache;
     private readonly ILogger<ActivePrPoller> _logger;
     private readonly ConcurrentDictionary<PrReference, ActivePrPollerState> _state = new();
     private readonly TimeSpan _cadence = TimeSpan.FromSeconds(30);
@@ -22,15 +23,18 @@ public sealed class ActivePrPoller : BackgroundService
         ActivePrSubscriberRegistry registry,
         IReviewService review,
         IReviewEventBus bus,
+        IActivePrCache cache,
         ILogger<ActivePrPoller> logger)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(review);
         ArgumentNullException.ThrowIfNull(bus);
+        ArgumentNullException.ThrowIfNull(cache);
         ArgumentNullException.ThrowIfNull(logger);
         _registry = registry;
         _review = review;
         _bus = bus;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -96,6 +100,14 @@ public sealed class ActivePrPoller : BackgroundService
                 state.LastCommentCount = snapshot.CommentCount;
                 state.ConsecutiveErrors = 0;
                 state.NextRetryAt = null;
+
+                // Publish cache snapshot for PUT /draft (markAllRead) and POST /reload
+                // head-shift detection. HighestIssueCommentId stays null in S4 — see
+                // IActivePrCache class comment + deferrals doc for the markAllRead gap.
+                _cache.Update(prRef, new ActivePrSnapshot(
+                    HeadSha: snapshot.HeadSha,
+                    HighestIssueCommentId: null,
+                    ObservedAt: now));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
