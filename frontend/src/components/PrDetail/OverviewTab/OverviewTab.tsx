@@ -9,7 +9,7 @@ import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
 import { PrDescription } from './PrDescription';
 import { StatsTiles } from './StatsTiles';
-import { PrRootConversation } from './PrRootConversation';
+import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
 import { ReviewFilesCta } from './ReviewFilesCta';
 
 interface OverviewTabContext {
@@ -48,6 +48,20 @@ export function OverviewTab() {
   const handleReviewFiles = () =>
     navigate(`/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/files`);
 
+  // PR5 PoC scope: OverviewTab does not own a `useDraftSession` instance —
+  // the PR-root composer always opens empty and the user finds existing
+  // PR-root drafts via the Drafts tab (PR6 wiring). On close we pass a
+  // no-op refetch; the composer's own auto-save/discard already round-trips
+  // through `sendPatch`. `registerOpenComposer` is a no-op for the same
+  // reason (no parallel session merge could clobber this composer's body).
+  const replyContext: PrRootConversationReplyContext = {
+    prRef,
+    prState: prDetail.pr.isMerged ? 'merged' : prDetail.pr.isClosed ? 'closed' : 'open',
+    existingPrRootDraft: null,
+    registerOpenComposer: () => () => undefined,
+    onComposerClose: () => undefined,
+  };
+
   return (
     <div className="overview-tab overview-grid">
       <AiSummaryCard summary={aiSummary} />
@@ -58,7 +72,7 @@ export function OverviewTab() {
         threadsCount={threadsCount}
         viewedCount={0}
       />
-      <PrRootConversation comments={prDetail.rootComments} />
+      <PrRootConversation comments={prDetail.rootComments} replyContext={replyContext} />
       <ReviewFilesCta hasFiles={hasFiles} onReviewFiles={handleReviewFiles} />
     </div>
   );
