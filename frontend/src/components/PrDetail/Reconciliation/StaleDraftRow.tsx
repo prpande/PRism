@@ -2,15 +2,19 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal } from '../../Modal/Modal';
 import { sendPatch } from '../../../api/draft';
-import type { DraftCommentDto, DraftReplyDto, PrReference } from '../../../api/types';
+import type { PrReference } from '../../../api/types';
+import type { DraftLike } from '../draftKinds';
 
-type StaleDraft =
-  | { kind: 'comment'; data: DraftCommentDto }
-  | { kind: 'reply'; data: DraftReplyDto };
+// StaleDraftRow operates on the same shape as DraftListItem — see
+// `../draftKinds.ts` for the canonical alias.
+type StaleDraft = DraftLike;
 
 interface StaleDraftRowProps {
   prRef: PrReference;
   draft: StaleDraft;
+  // Own-tab state-changed events are filtered (spec § 5.7), so the
+  // panel must drive the refetch itself after a successful mutation.
+  onMutated: () => void;
 }
 
 const PREVIEW_CHARS = 80;
@@ -20,7 +24,7 @@ function previewBody(body: string): string {
   return body.slice(0, PREVIEW_CHARS).trimEnd() + '…';
 }
 
-export function StaleDraftRow({ prRef, draft }: StaleDraftRowProps) {
+export function StaleDraftRow({ prRef, draft, onMutated }: StaleDraftRowProps) {
   const navigate = useNavigate();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -32,14 +36,17 @@ export function StaleDraftRow({ prRef, draft }: StaleDraftRowProps) {
 
   const base = `/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;
 
+  // FilesTab does not currently consume `:filePath/*` splat or `?line=`
+  // (deferrals doc § "FilesTab URL→state hydration deferred"). Navigate
+  // to the bare Files tab and let the user pick the file manually for
+  // now. Lift when FilesTab gains the deep-link mechanic spec § 5.4
+  // describes.
   const handleShowMe = () => {
     if (filePath != null) {
-      navigate(`${base}/files/${filePath}?line=${lineNumber ?? ''}`);
+      navigate(`${base}/files`);
       return;
     }
-    // PR-root drafts and replies route to Overview tab. Replies have no
-    // file anchor in the DTO — see DraftsTab's `handleEdit` for the same
-    // simplification.
+    // PR-root drafts and replies route to Overview tab.
     navigate(base);
   };
 
@@ -62,10 +69,12 @@ export function StaleDraftRow({ prRef, draft }: StaleDraftRowProps) {
         ? { kind: 'deleteDraftComment' as const, payload: { id: draft.data.id } }
         : { kind: 'deleteDraftReply' as const, payload: { id: draft.data.id } };
     const result = await sendPatch(prRef, patch);
+    setBusy(false);
     if (!result.ok) {
       console.warn('stale-row delete failed', result);
-      setBusy(false);
+      return;
     }
+    onMutated();
   };
 
   const handleKeepAnyway = async () => {
@@ -75,10 +84,12 @@ export function StaleDraftRow({ prRef, draft }: StaleDraftRowProps) {
       kind: 'overrideStale',
       payload: { id: draft.data.id },
     });
+    setBusy(false);
     if (!result.ok) {
       console.warn('overrideStale failed', result);
-      setBusy(false);
+      return;
     }
+    onMutated();
   };
 
   const anchorLabel =
@@ -155,5 +166,3 @@ export function StaleDraftRow({ prRef, draft }: StaleDraftRowProps) {
     </li>
   );
 }
-
-export type { StaleDraft };

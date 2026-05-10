@@ -7,9 +7,13 @@ interface DiscardAllStaleButtonProps {
   prRef: PrReference;
   staleComments: DraftCommentDto[];
   staleReplies: DraftReplyDto[];
+  // Own-tab state-changed events are filtered, so the parent must drive
+  // the refetch explicitly. DraftsTab passes draftSession.refetch in.
+  onMutated: () => void;
 }
 
-const PREVIEW_LINES = 3;
+const MAX_PREVIEW_ITEMS = 3;
+const PREVIEW_LINES_PER_ITEM = 3;
 const PREVIEW_LINE_CHARS = 80;
 
 interface PreviewItem {
@@ -31,18 +35,18 @@ function firstLines(body: string, n: number): string {
 function buildPreviews(comments: DraftCommentDto[], replies: DraftReplyDto[]): PreviewItem[] {
   const head: PreviewItem[] = [];
   for (const c of comments) {
-    if (head.length >= PREVIEW_LINES) break;
+    if (head.length >= MAX_PREVIEW_ITEMS) break;
     const label = c.filePath
       ? `[thread on ${c.filePath}:${c.lineNumber ?? '?'}]`
       : '[PR-root thread]';
-    head.push({ id: c.id, label, body: firstLines(c.bodyMarkdown, PREVIEW_LINES) });
+    head.push({ id: c.id, label, body: firstLines(c.bodyMarkdown, PREVIEW_LINES_PER_ITEM) });
   }
   for (const r of replies) {
-    if (head.length >= PREVIEW_LINES) break;
+    if (head.length >= MAX_PREVIEW_ITEMS) break;
     head.push({
       id: r.id,
       label: `[reply on ${r.parentThreadId}]`,
-      body: firstLines(r.bodyMarkdown, PREVIEW_LINES),
+      body: firstLines(r.bodyMarkdown, PREVIEW_LINES_PER_ITEM),
     });
   }
   return head;
@@ -52,6 +56,7 @@ export function DiscardAllStaleButton({
   prRef,
   staleComments,
   staleReplies,
+  onMutated,
 }: DiscardAllStaleButtonProps) {
   const [open, setOpen] = useState(false);
   const [running, setRunning] = useState(false);
@@ -68,9 +73,9 @@ export function DiscardAllStaleButton({
     // Per spec § 5.4, iterate deleteDraftComment / deleteDraftReply per id.
     // Sequential dispatch keeps the backend's per-PR write lock from queueing
     // a burst that can't be observed mid-flight; on the user side, the modal
-    // stays open with both buttons disabled until the loop finishes (the
-    // session refetch from the trailing `state-changed` SSE drops the rows).
+    // stays open with both buttons disabled until the loop finishes.
     let failures = 0;
+    let successes = 0;
     for (const c of staleComments) {
       const r = await sendPatch(prRef, {
         kind: 'deleteDraftComment',
@@ -79,6 +84,8 @@ export function DiscardAllStaleButton({
       if (!r.ok) {
         console.warn('discard-all-stale: deleteDraftComment failed', c.id, r);
         failures++;
+      } else {
+        successes++;
       }
     }
     for (const reply of staleReplies) {
@@ -89,13 +96,16 @@ export function DiscardAllStaleButton({
       if (!r.ok) {
         console.warn('discard-all-stale: deleteDraftReply failed', reply.id, r);
         failures++;
+      } else {
+        successes++;
       }
     }
     setRunning(false);
-    // Hold the modal open if anything failed so the user is not silently
-    // misled into thinking all drafts were discarded; success rows have
-    // already been dropped by the trailing state-changed SSE refetch, so
-    // re-clicking Discard re-tries only what's left in the prop list.
+    // Own-tab state-changed events are filtered (spec § 5.7), so we must
+    // refetch the session here for the deleted rows to disappear from the
+    // Drafts tab. Refetch on any partial or full success — the modal stays
+    // open on partial failure so the user can retry the remainder.
+    if (successes > 0) onMutated();
     if (failures > 0) {
       setFailedCount(failures);
     } else {

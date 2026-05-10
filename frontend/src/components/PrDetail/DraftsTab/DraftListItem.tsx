@@ -2,16 +2,18 @@ import { useState } from 'react';
 import { Modal } from '../../Modal/Modal';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { sendPatch } from '../../../api/draft';
-import type { DraftCommentDto, DraftReplyDto, DraftStatus, PrReference } from '../../../api/types';
-
-type DraftLike =
-  | { kind: 'comment'; data: DraftCommentDto }
-  | { kind: 'reply'; data: DraftReplyDto };
+import type { DraftStatus, PrReference } from '../../../api/types';
+import type { DraftLike } from '../draftKinds';
 
 interface DraftListItemProps {
   prRef: PrReference;
   draft: DraftLike;
   onEdit: (draft: DraftLike) => void;
+  // useStateChangedSubscriber filters own-tab events, so a successful
+  // sendPatch here does NOT trigger an automatic session refetch. The
+  // owning DraftsTab passes its draftSession.refetch down so this
+  // component can refresh the list itself.
+  onMutated: () => void;
 }
 
 const PREVIEW_CHARS = 80;
@@ -33,7 +35,7 @@ function previewBody(body: string): string {
   return body.slice(0, PREVIEW_CHARS).trimEnd() + '…';
 }
 
-export function DraftListItem({ prRef, draft, onEdit }: DraftListItemProps) {
+export function DraftListItem({ prRef, draft, onEdit, onMutated }: DraftListItemProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const status = statusLabel(draft);
@@ -63,9 +65,14 @@ export function DraftListItem({ prRef, draft, onEdit }: DraftListItemProps) {
       // yanking the user; inline error UX deferred to S6 polish.
       console.warn('delete-draft failed', result);
       setDeleting(false);
+      return;
     }
-    // On success the parent's session refetch (via `state-changed` SSE)
-    // will drop the row, so we leave `deleting=true` rather than flicker.
+    // Own-tab state-changed events are filtered (spec § 5.7), so we have
+    // to drive the refetch ourselves. Re-enable the buttons immediately so
+    // the user is not stuck behind a permanent disabled state if refetch
+    // is slow or fails.
+    setDeleting(false);
+    onMutated();
   };
 
   return (
@@ -128,5 +135,3 @@ export function DraftListItem({ prRef, draft, onEdit }: DraftListItemProps) {
     </div>
   );
 }
-
-export type { DraftLike };

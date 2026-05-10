@@ -7,10 +7,11 @@ import type {
   ReviewSessionDto,
 } from '../../../api/types';
 import type { DraftSessionStatus } from '../../../hooks/useDraftSession';
+import type { DraftLike } from '../draftKinds';
 import { DraftsTabSkeleton } from './DraftsTabSkeleton';
 import { DraftsTabError } from './DraftsTabError';
 import { DraftListEmpty } from './DraftListEmpty';
-import { DraftListItem, type DraftLike } from './DraftListItem';
+import { DraftListItem } from './DraftListItem';
 import { DiscardAllStaleButton } from './DiscardAllStaleButton';
 
 interface DraftsTabProps {
@@ -61,12 +62,12 @@ function groupByFile(session: ReviewSessionDto): FileGroup[] {
   for (const c of session.draftComments) {
     ensure(c.filePath ?? null).comments.push(c);
   }
-  // Replies have no file anchor — group under a synthetic "PR-root replies"
-  // entry per spec § 5.4 ("…or under a file-less PR-root replies group when
-  // the parent thread is on the PR conversation"). PoC simplification:
-  // group ALL replies under the file-less bucket; mapping replies back to
-  // their parent thread's file requires the PR detail loader's review-thread
-  // index, which the Drafts tab does not currently consume.
+  // Replies have no file anchor in their DTO. Mapping replies back to
+  // their parent thread's file requires the PR detail loader's review-
+  // thread index, which the Drafts tab does not currently consume; for
+  // the PoC, all replies AND PR-root draft comments share a single
+  // file-less group. The heading "PR conversation drafts" reflects that
+  // both shapes (PR-root comment + replies on any thread) live there.
   for (const r of session.draftReplies) {
     ensure(null).replies.push(r);
   }
@@ -98,17 +99,24 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
     (r) => r.status === 'stale' && !r.isOverriddenStale,
   );
 
+  // FilesTab does not currently consume `:filePath/*` splat or `?line=`
+  // (S3's deep-link plumbing was never wired through to selection state),
+  // so a precise file-and-line nav would land users on the Files tab with
+  // selectedPath=null. For the PoC we navigate to the bare Files tab and
+  // let the user pick the file from the tree manually. Tracked in the
+  // deferrals doc; lift when FilesTab gains URL→state hydration.
   const handleEdit = (draft: DraftLike) => {
     const base = `/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;
     if (draft.kind === 'comment' && draft.data.filePath != null) {
-      navigate(`${base}/files/${draft.data.filePath}?line=${draft.data.lineNumber ?? ''}`);
+      navigate(`${base}/files`);
       return;
     }
-    // PR-root drafts (filePath null) and replies (no file anchor in their
-    // own DTO) navigate to the Overview tab. The Files-tab Edit mechanic
-    // for replies-on-file-threads is deferred — replies need a thread → file
-    // index that the Drafts tab does not currently load.
+    // PR-root drafts (filePath null) and replies navigate to the Overview tab.
     navigate(base);
+  };
+
+  const handleMutated = () => {
+    void refetch();
   };
 
   if (summary.total === 0) {
@@ -142,6 +150,7 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
             prRef={prRef}
             staleComments={staleComments}
             staleReplies={staleReplies}
+            onMutated={handleMutated}
           />
         )}
       </div>
@@ -152,6 +161,7 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
             group={g}
             prRef={prRef}
             onEdit={handleEdit}
+            onMutated={handleMutated}
           />
         ))}
       </div>
@@ -163,12 +173,17 @@ function FileGroupSection({
   group,
   prRef,
   onEdit,
+  onMutated,
 }: {
   group: FileGroup;
   prRef: PrReference;
   onEdit: (draft: DraftLike) => void;
+  onMutated: () => void;
 }) {
-  const heading = group.filePath ?? 'PR-root replies';
+  // The null-key bucket holds both PR-root draft comments AND all
+  // (file-anchored) replies. "PR conversation drafts" covers both shapes
+  // without misleading users that the section is replies-only.
+  const heading = group.filePath ?? 'PR conversation drafts';
   return (
     <section className="drafts-tab-file-group">
       <h3 className="drafts-tab-file-heading">{heading}</h3>
@@ -178,6 +193,7 @@ function FileGroupSection({
           prRef={prRef}
           draft={{ kind: 'comment', data: c }}
           onEdit={onEdit}
+          onMutated={onMutated}
         />
       ))}
       {group.replies.map((r) => (
@@ -186,6 +202,7 @@ function FileGroupSection({
           prRef={prRef}
           draft={{ kind: 'reply', data: r }}
           onEdit={onEdit}
+          onMutated={onMutated}
         />
       ))}
     </section>

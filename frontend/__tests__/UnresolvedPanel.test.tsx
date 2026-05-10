@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -38,13 +38,19 @@ function mkSession(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto 
   };
 }
 
-function renderPanel(session: ReviewSessionDto, initialPath = '/pr/octocat/hello/42') {
+interface RenderOpts {
+  onMutated?: () => void;
+  initialPath?: string;
+}
+
+function renderPanel(session: ReviewSessionDto, opts: RenderOpts = {}) {
+  const onMutated = opts.onMutated ?? vi.fn();
   return render(
-    <MemoryRouter initialEntries={[initialPath]}>
+    <MemoryRouter initialEntries={[opts.initialPath ?? '/pr/octocat/hello/42']}>
       <Routes>
         <Route
           path="/pr/:owner/:repo/:number"
-          element={<UnresolvedPanel prRef={ref} session={session} />}
+          element={<UnresolvedPanel prRef={ref} session={session} onMutated={onMutated} />}
         />
         <Route path="/pr/:owner/:repo/:number/files/*" element={<div>FILES_TAB_STUB</div>} />
       </Routes>
@@ -107,28 +113,52 @@ describe('UnresolvedPanel', () => {
     expect(summary.textContent).toMatch(/verdict needs re-confirm/i);
   });
 
-  it('VerdictReconfirmRow_FiresConfirmVerdictPatch', async () => {
+  it('VerdictReconfirmRow_FiresConfirmVerdictPatch_AndCallsOnMutated', async () => {
     const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    const onMutated = vi.fn();
     const session = mkSession({ draftVerdictStatus: 'needs-reconfirm' });
-    renderPanel(session);
+    renderPanel(session, { onMutated });
     const button = screen.getByRole('button', { name: /confirm verdict/i });
     await userEvent.click(button);
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     expect(spy).toHaveBeenCalledWith(ref, { kind: 'confirmVerdict' });
+    await waitFor(() => expect(onMutated).toHaveBeenCalledTimes(1));
+    // Button must re-enable on success — the row will hide once the
+    // refetched session has draftVerdictStatus !== 'needs-reconfirm', but
+    // until then the user must not be stuck behind a permanent disabled.
+    expect(button).not.toBeDisabled();
   });
 
-  it('KeepAnyway_FiresOverrideStalePatch', async () => {
+  it('VerdictReconfirmRow_DoesNotCallOnMutated_OnFailure', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockResolvedValue({ ok: false, status: 0, kind: 'network', body: 'fetch failed' });
+    const onMutated = vi.fn();
+    const session = mkSession({ draftVerdictStatus: 'needs-reconfirm' });
+    renderPanel(session, { onMutated });
+    const button = screen.getByRole('button', { name: /confirm verdict/i });
+    await userEvent.click(button);
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    expect(onMutated).not.toHaveBeenCalled();
+    // Button still re-enables so the user can retry.
+    expect(button).not.toBeDisabled();
+  });
+
+  it('KeepAnyway_FiresOverrideStalePatch_AndCallsOnMutated', async () => {
     const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    const onMutated = vi.fn();
     const session = mkSession({
       draftComments: [mkComment({ id: 'stale-1', status: 'stale' })],
     });
-    renderPanel(session);
+    renderPanel(session, { onMutated });
     await userEvent.click(screen.getByRole('button', { name: /keep anyway/i }));
     await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
     expect(spy).toHaveBeenCalledWith(ref, {
       kind: 'overrideStale',
       payload: { id: 'stale-1' },
     });
+    await waitFor(() => expect(onMutated).toHaveBeenCalledTimes(1));
   });
 
   it('AriaLive_RegionPresent', () => {
@@ -142,31 +172,42 @@ describe('UnresolvedPanel', () => {
   });
 
   it('AriaLive_AnnouncesAllReconciled_WhenStaleCountDropsToZero', async () => {
-    const session = mkSession({
-      draftComments: [mkComment({ id: 'a', status: 'stale' })],
-    });
-    const { rerender } = renderPanel(session);
-    // Initial mount: announces "1 drafts need attention" or similar.
-    const region = screen.getByRole('region', { name: /unresolved drafts/i });
-    const live = region.querySelector('[aria-live="polite"]') as HTMLElement;
-    expect(live.textContent).toMatch(/1 draft needs attention/i);
+    vi.useFakeTimers();
+    try {
+      const session = mkSession({
+        draftComments: [mkComment({ id: 'a', status: 'stale' })],
+      });
+      const { rerender } = renderPanel(session);
+      // Initial mount: panel visible, summary text present.
+      const region = screen.getByRole('region', { name: /unresolved drafts/i });
+      const live = region.querySelector('[aria-live="polite"]') as HTMLElement;
+      expect(live.textContent).toMatch(/1 draft needs attention/i);
 
-    // Transition: stale drops to zero. Panel hides; the announce message
-    // moves to "All drafts reconciled." in a final render before unmount.
-    const reconciled = mkSession();
-    rerender(
-      <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
-        <Routes>
-          <Route
-            path="/pr/:owner/:repo/:number"
-            element={<UnresolvedPanel prRef={ref} session={reconciled} announceReconciled />}
-          />
-        </Routes>
-      </MemoryRouter>,
-    );
-    // Panel now renders ONLY a hidden announce region with the reconciled message.
-    const liveAfter = document.querySelector('[aria-live="polite"]') as HTMLElement | null;
-    expect(liveAfter?.textContent).toMatch(/all drafts reconciled/i);
+      // Transition: stale drops to zero. Panel hides itself but emits
+      // "All drafts reconciled." in a hidden aria-live region for the
+      // configured duration so screen-reader users get the confirmation.
+      const reconciled = mkSession();
+      rerender(
+        <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
+          <Routes>
+            <Route
+              path="/pr/:owner/:repo/:number"
+              element={<UnresolvedPanel prRef={ref} session={reconciled} onMutated={vi.fn()} />}
+            />
+          </Routes>
+        </MemoryRouter>,
+      );
+      const announce = screen.getByTestId('unresolved-panel-announce');
+      expect(announce.textContent).toMatch(/all drafts reconciled/i);
+
+      // After the timeout, the announce region unmounts.
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(screen.queryByTestId('unresolved-panel-announce')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('TabOrderInsideRow_StatusShowMeEditDeleteKeepAnyway', () => {
@@ -188,7 +229,9 @@ describe('UnresolvedPanel', () => {
     expect(deleteIdx).toBeLessThan(keepIdx);
   });
 
-  it('ShowMe_OnFileDraft_NavigatesToFilesTab', async () => {
+  it('ShowMe_OnFileDraft_NavigatesToFilesTab_PlainNoLineParam', async () => {
+    // FilesTab does not consume `?line=` (deferrals doc); navigation
+    // lands on the bare /files route.
     const session = mkSession({
       draftComments: [
         mkComment({ id: 'a', status: 'stale', filePath: 'src/Foo.cs', lineNumber: 7 }),

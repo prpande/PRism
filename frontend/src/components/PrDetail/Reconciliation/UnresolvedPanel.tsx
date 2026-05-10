@@ -1,27 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { sendPatch } from '../../../api/draft';
 import type { PrReference, ReviewSessionDto } from '../../../api/types';
-import { StaleDraftRow, type StaleDraft } from './StaleDraftRow';
+import { StaleDraftRow } from './StaleDraftRow';
+import type { DraftLike } from '../draftKinds';
 
 interface UnresolvedPanelProps {
   prRef: PrReference;
   session: ReviewSessionDto | null;
-  // Test-only escape hatch: forces the panel to render the
-  // "All drafts reconciled." announce-only state. Production callers don't
-  // need this — the panel emits the message itself when staleCount transitions
-  // from positive to zero (see useEffect in body).
-  announceReconciled?: boolean;
+  // Own-tab state-changed events are filtered (spec § 5.7), so the
+  // panel cannot rely on SSE to refresh after its verdict-confirm or
+  // its child rows' Keep-anyway / Delete actions. PrDetailPage passes
+  // draftSession.refetch in.
+  onMutated: () => void;
 }
 
 interface PanelCounts {
-  stale: StaleDraft[];
+  stale: DraftLike[];
   movedCount: number;
   needsReconfirm: boolean;
 }
 
 function computeCounts(session: ReviewSessionDto | null): PanelCounts {
   if (!session) return { stale: [], movedCount: 0, needsReconfirm: false };
-  const stale: StaleDraft[] = [];
+  const stale: DraftLike[] = [];
   let movedCount = 0;
   for (const c of session.draftComments) {
     if (c.isOverriddenStale) continue;
@@ -52,14 +53,19 @@ function buildSummary(counts: PanelCounts): string {
   return parts.join(' · ');
 }
 
-export function UnresolvedPanel({ prRef, session, announceReconciled }: UnresolvedPanelProps) {
+// How long the "All drafts reconciled." announcement stays mounted.
+// Long enough for a screen reader to pick up the polite live-region
+// update; short enough that it doesn't linger past the user's task.
+const RECONCILED_ANNOUNCE_MS = 4000;
+
+export function UnresolvedPanel({ prRef, session, onMutated }: UnresolvedPanelProps) {
   const counts = useMemo(() => computeCounts(session), [session]);
   const containerRef = useRef<HTMLElement | null>(null);
-  const lastAnnouncedRef = useRef<string>('');
 
-  // Focus the panel programmatically when it first appears so a screen reader
-  // announces the region's contents (per spec § 5.5b).
   const visible = counts.stale.length > 0 || counts.movedCount > 0 || counts.needsReconfirm;
+
+  // Focus the panel programmatically when it first appears so a screen
+  // reader announces the region's contents (spec § 5.5b).
   const previousVisibleRef = useRef(false);
   useEffect(() => {
     if (visible && !previousVisibleRef.current) {
@@ -68,33 +74,41 @@ export function UnresolvedPanel({ prRef, session, announceReconciled }: Unresolv
     previousVisibleRef.current = visible;
   }, [visible]);
 
+  // staleCount → 0 transition detection. When the last stale draft
+  // clears (delete / keep-anyway / reconciliation-pass move), the panel
+  // hides — but we hold a hidden aria-live region for a few seconds
+  // with "All drafts reconciled." so screen-reader users get the
+  // confirmation. Tracked with a ref so React's batched-state path
+  // doesn't double-fire on a single transition.
+  const previousStaleCountRef = useRef(counts.stale.length);
+  const [reconciledAnnounce, setReconciledAnnounce] = useState(false);
+  useEffect(() => {
+    const prev = previousStaleCountRef.current;
+    const now = counts.stale.length;
+    previousStaleCountRef.current = now;
+    if (prev > 0 && now === 0) {
+      setReconciledAnnounce(true);
+      const timer = setTimeout(() => setReconciledAnnounce(false), RECONCILED_ANNOUNCE_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [counts.stale.length]);
+
   const [confirmingVerdict, setConfirmingVerdict] = useState(false);
 
   const handleConfirmVerdict = async () => {
     if (confirmingVerdict) return;
     setConfirmingVerdict(true);
     const result = await sendPatch(prRef, { kind: 'confirmVerdict' });
+    setConfirmingVerdict(false);
     if (!result.ok) {
       console.warn('confirm-verdict failed', result);
-      setConfirmingVerdict(false);
+      return;
     }
-    // On success the parent's session refetch (via state-changed SSE) will
-    // flip draftVerdictStatus to 'draft' and the row hides naturally.
+    onMutated();
   };
 
-  // Announce-region content. When the panel is visible, mirror the summary
-  // so screen readers track stale-count transitions. When hidden via the
-  // explicit `announceReconciled` flag, surface the reconciled message
-  // (parents render the panel one more time with that flag set after the
-  // last stale draft clears, so the AT user gets confirmation).
-  const summary = buildSummary(counts);
-  const announceText = announceReconciled && !visible ? 'All drafts reconciled.' : summary;
-  if (announceText && announceText !== lastAnnouncedRef.current) {
-    lastAnnouncedRef.current = announceText;
-  }
-
   if (!visible) {
-    if (announceReconciled) {
+    if (reconciledAnnounce) {
       return (
         <div
           aria-live="polite"
@@ -107,6 +121,8 @@ export function UnresolvedPanel({ prRef, session, announceReconciled }: Unresolv
     }
     return null;
   }
+
+  const summary = buildSummary(counts);
 
   return (
     <section
@@ -123,7 +139,7 @@ export function UnresolvedPanel({ prRef, session, announceReconciled }: Unresolv
       </header>
       <ul className="unresolved-panel-rows">
         {counts.stale.map((d) => (
-          <StaleDraftRow key={d.data.id} prRef={prRef} draft={d} />
+          <StaleDraftRow key={d.data.id} prRef={prRef} draft={d} onMutated={onMutated} />
         ))}
         {counts.needsReconfirm && (
           <li className="verdict-reconfirm-row row gap-2">

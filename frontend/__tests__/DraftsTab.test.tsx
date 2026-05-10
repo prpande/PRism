@@ -365,6 +365,53 @@ describe('DraftsTab', () => {
     expect(within(dialog).getByRole('button', { name: /cancel/i })).toHaveFocus();
   });
 
+  it('DeleteAction_OnSuccess_CallsRefetch', async () => {
+    const session = mkSession({
+      draftComments: [mkComment({ id: 'a', bodyMarkdown: '' })],
+    });
+    const refetch = vi.fn(() => Promise.resolve());
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    renderDraftsTab({ session, status: 'ready', refetch });
+    await userEvent.click(screen.getByRole('button', { name: /^delete$/i }));
+    // Empty body → no confirm modal → direct delete → refetch.
+    await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
+  });
+
+  it('DiscardAllStale_OnFullSuccess_CallsRefetch', async () => {
+    const session = mkSession({
+      draftComments: [
+        mkComment({ id: 's1', status: 'stale' }),
+        mkComment({ id: 's2', status: 'stale' }),
+      ],
+    });
+    const refetch = vi.fn(() => Promise.resolve());
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    renderDraftsTab({ session, status: 'ready', refetch });
+    await userEvent.click(screen.getByRole('button', { name: /discard all stale/i }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^discard$/i }));
+    await waitFor(() => expect(refetch).toHaveBeenCalled());
+  });
+
+  it('PrRootGroupHeading_ReadsPrConversationDrafts_NotPrRootReplies', () => {
+    const session = mkSession({
+      draftComments: [
+        mkComment({
+          id: 'pr-root',
+          filePath: null,
+          lineNumber: null,
+          side: null,
+          anchoredSha: null,
+          anchoredLineContent: null,
+        }),
+      ],
+    });
+    renderDraftsTab({ session, status: 'ready' });
+    // Heading must be inclusive of both PR-root comments and replies.
+    expect(screen.getByText(/PR conversation drafts/i)).toBeInTheDocument();
+    expect(screen.queryByText(/PR-root replies/i)).not.toBeInTheDocument();
+  });
+
   it('DeleteAction_OnEmptyBody_DeletesWithoutConfirmation', async () => {
     const session = mkSession({
       draftComments: [mkComment({ id: 'a', bodyMarkdown: '' })],

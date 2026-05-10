@@ -112,7 +112,11 @@ function PrDetailPageInner({
         onReload={handleReload}
         onDismiss={updates.clear}
       />
-      <UnresolvedPanel prRef={ref} session={draftSession.session} />
+      <UnresolvedPanel
+        prRef={ref}
+        session={draftSession.session}
+        onMutated={() => void draftSession.refetch()}
+      />
       {error && (
         <div role="alert" className="pr-detail-error">
           Couldn't load PR — {error.message}
