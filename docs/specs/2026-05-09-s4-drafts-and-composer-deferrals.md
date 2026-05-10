@@ -6,6 +6,7 @@ status: open
 revisions:
   - 2026-05-10: initial cut — captures Defer/Skip items from spec ce-doc-review (7-persona pass, 2026-05-09), spec PR-review pass (Copilot inline + claude-bot, 2026-05-09), plan ce-doc-review (6-persona pass, 2026-05-10), and plan PR-review pass (Copilot inline + claude-bot round 2, 2026-05-10). Also captures rigor-survived design decisions worth preserving outside the spec.
   - 2026-05-10: append two PR1-implementation-time decisions — (a) rename `PRism.Core.Contracts.DraftComment`/`DraftReply` → `DraftCommentInput`/`DraftReplyInput` to resolve a three-way name collision against the new state types and the planned wire DTOs; (b) pull minimum compile-fix into Task 2's commit because Task 6's broader fixture work was downstream of a non-compiling test project.
+  - 2026-05-10: append four PR2-implementation-time decisions — (a) defer `ReviewServiceFileContentSource` adapter and `IReviewService.GetCommitAsync` to PR3 (no consumer in PR2; cleaner scope split); (b) plan-described commit boundaries don't survive the repo's strict analyzers (CA1812 on unused fakes, CS8625 in MemberData arrays) — Task 10's fake and Task 12's red-test commit are merged into Task 17's orchestrator commit; (c) Task 19 Test 1 (`...AnchoredShaReachable_ClassifierShortCircuits`) had to be re-anchored at `LastViewedHeadSha = NewSha` to avoid the head-shift override-clear that Test 4 asserts (the plan's hardcoded `SessionWith` helper made Tests 1 and 4 mutually unsatisfiable); (d) Task 12 Row 6 expected `ResolvedLineNumber` reduced from 3 to 1 to keep tie-breaker semantics consistent with Row 4 (both have equidistant candidates [1, 3] vs originalLine=2 — lower-line wins).
 ---
 
 # Deferrals — S4 drafts + composer spec
@@ -212,6 +213,25 @@ Items the user already approved as in-scope or that were applied in commits land
 - **Revisit when:** During PR3 creation, if the reviewer feels the load is too high, split per the documented PR3a/PR3b cut.
 - **Original finding evidence (adversarial, conf 0.75):** *"PR3 lands a LOT in one PR — endpoint, events, SSE projection, IReviewService addition, body-cap middleware extension, spec doc edit. Could it deadlock review?"*
 
+## [Skip] Matrix tier priority — exact-elsewhere wins over whitespace-equiv-at-original
+
+- **Source:** PR2 preflight adversarial review (2026-05-10)
+- **Severity:** P2 (UX consequence)
+- **Date:** 2026-05-10
+- **Reason:** Spec/03 § 5's seven-row matrix orders the matcher tiers strictly: exact-tier wins over whitespace-equiv-tier. Rows 5–6 are gated on "no exact match." This means a draft anchored on a line that gets auto-formatted (so the original line is whitespace-equivalent at originalLine) but whose exact bytes happen to appear elsewhere in the file lands in Row 3 (single exact elsewhere → Moved) instead of staying at the user's anchor. The implementation is faithful to the spec; the question is whether the spec's tier-priority is the right design choice for the "auto-formatter ran on an otherwise stable file" case. Spec § 5 does add a "subtle badge" on Row 3 ("moved to line M") so the user has visual feedback, which softens the silent move. The user explicitly chose to keep this as-is for PR2 after pushback during preflight.
+- **Revisit when:** Dogfooding shows reviewers losing comments after auto-format runs, OR a follow-up product-lens pass on spec/03 § 5 decides whitespace-equiv-at-original should override exact-elsewhere. The fix would be a Row 5b in the classifier and a corresponding spec edit.
+- **Original finding evidence (adversarial, conf 0.75):** *"Matrix gap — when the anchored line is whitespace-equivalent at originalLine AND exact elsewhere... classifier returns Moved to line elsewhere, ignoring the at-original whitespace-equiv match. Repro: anchored='line B', originalLine=2, file='line B\\n  line B  \\nline C\\n' → ExactElsewhere=[1], WhitespaceEquivAll=[2] → Moved to line 1."*
+
+## ~~[Skip] Verdict reconcile with null `LastViewedHeadSha` returns NeedsReconfirm~~ → Applied (2026-05-10, post-open review)
+
+- **Source:** PR2 preflight adversarial review (2026-05-10); re-surfaced as Finding A in claude[bot]'s post-open review (2026-05-10).
+- **Severity:** P3 (originally) / pattern-asymmetry latent trap (claude[bot])
+- **Date:** 2026-05-10 (skipped); 2026-05-10 (applied after re-review)
+- **Original reason for skip:** Currently unreachable through normal user flow — verdict requires viewing the PR which sets `LastViewedHeadSha` first.
+- **Why applied after all:** claude[bot]'s post-open review surfaced a different angle: even if the case is unreachable, the verdict head-shift check (no null guard) is asymmetric with the override head-shift check at the top of `ReconcileAsync` (which DOES guard null). The asymmetric pattern is a latent trap for whoever wires PR3's endpoint. Aligning the check costs one boolean variable, restores symmetry, and adds a `VerdictSetButLastViewedHeadShaNull_Unchanged` test pinning the behavior.
+- **Resolution:** `verdictHeadShifted` boolean now mirrors the override pattern (`session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha`).
+- **Original finding evidence (adversarial, conf 0.40):** *"Verdict reconcile uses `session.LastViewedHeadSha != newHeadSha` directly. If LastViewedHeadSha is null... the comparison evaluates to NeedsReconfirm... Currently unreachable through normal user flow."*
+
 ## [Skip] PR1 line-number annotation off (8 numbers for "6 hits")
 
 - **Source:** Plan ce-doc-review — feasibility finding F6 (2026-05-10)
@@ -322,6 +342,42 @@ Items the user already approved as in-scope or that were applied in commits land
 - **Why `Input` (not `Dto`):** `Dto` is already claimed by the planned wire DTOs in PR3. `Input` distinguishes seam-input shapes from network/persistence-boundary DTOs.
 - **Trade-off considered and rejected:** Per-file `using` aliases at every conflict point. Worked locally for one test file, but the collision recurs in any code that touches both layers (PR2 reconciliation tests, PR3 endpoint code). One-time rename is cheaper than per-file alias discipline.
 - **Surface of change:** `PRism.Core.Contracts/DraftComment.cs` (record + filename), `PRism.Core.Contracts/DraftReply.cs` (record + filename), `PRism.Core.Contracts/DraftReview.cs` (consumer), `PRism.AI.Contracts/Seams/IDraftReconciliator.cs` (consumer), `PRism.AI.Contracts/Noop/NoopDraftReconciliator.cs` (consumer), `PRism.AI.Placeholder/PlaceholderDraftReconciliator.cs` (consumer), `tests/PRism.Core.Tests/Ai/NoopSeamTests.cs` (consumer). No spec/plan edits required.
+
+## [Decision] PR2 file-list correction: defer `ReviewServiceFileContentSource` + `IReviewService.GetCommitAsync` to PR3
+
+- **Source:** PR2 implementation — the plan's "Files touched" header for Phase 2 lists `Create: PRism.Core/Reconciliation/Pipeline/ReviewServiceFileContentSource.cs` and `Modify: PRism.Core/IReviewService.cs (add GetCommitAsync if absent)`, but no task in 10–21 implements either. The kickoff brief states "no consumers wired in this PR; that's PR3."
+- **Date:** 2026-05-10
+- **Decision:** Both deferred to PR3, where they become load-bearing (the reload endpoint constructs `ReviewServiceFileContentSource` and the reachability probe calls `IReviewService.GetCommitAsync`). PR2 ships with the `IFileContentSource` interface + test fake + orchestrator + 27 tests; production wiring is PR3's job.
+- **Why:** Adding the adapter in PR2 with no caller would land dead code (CA1812-adjacent: any analyzer flagging unused production types would trip; even without analyzer fail, the unused class is review noise). Adding `GetCommitAsync` to `IReviewService` requires `PRism.GitHub` to ship an implementation, which expands PR2 surface beyond its title's scope ("DraftReconciliationPipeline + matrix tests + override semantics").
+- **Trade-off considered and rejected:** Land both in PR2 as scaffolding so PR3 only adds endpoint code. Rejected because (a) dead production code until PR3 lands; (b) PR3's scope is already explicit; (c) keeping PR2 strictly to "no consumers" matches the kickoff brief.
+- **Surface of change in PR3:** Two file additions + one one-method addition to the existing `IReviewService` + one implementation in `GitHubReviewService`.
+
+## [Decision] PR2 commit-boundary deviation — strict analyzers force test+orchestrator commit merge
+
+- **Source:** PR2 implementation — the repo enforces `CA1812` (unused-internal-class → error) and `CS8625` (null-in-non-nullable-context → error). Plan Task 10 commits `FakeFileContentSource` standalone (no consumer yet) and Task 12 commits `MatrixTests.cs` red (referencing `DraftReconciliationPipeline` before Task 17 creates it).
+- **Date:** 2026-05-10
+- **Decision:** Tasks 10 (fake), 12 (matrix tests), and 17 (orchestrator) are merged into a single commit (`feat(s4-pr2): DraftReconciliationPipeline + seven-row matrix tests`). The interface from Task 10 still ships standalone (no analyzer trip on a public interface), and the four step files (Tasks 13–16) and DTOs (Task 11) ship in their own commits.
+- **Why:** Each commit must leave the build green per global rules. The plan's red-commit pattern relies on "test runs and fails," but in C# with strict analyzers the only achievable red is a compile error — which violates the green-commit rule. Merging the test fixture, fake, and implementation preserves observable TDD red→green in the dev workflow (the matrix tests fail in-memory before the orchestrator file exists; pass after) while keeping every committed tree green.
+- **Trade-off considered and rejected:** (a) Suppress CA1812 on the fake until consumers exist — works but requires the suppression to be removed later. (b) Stub the orchestrator with `throw new NotImplementedException()` to satisfy compile, then implement in a later commit — adds two extra commits, hides the actual TDD sequence. The merged commit is the cleanest representation.
+- **Tested by:** All 27 reconciliation tests pass against the merged commit.
+
+## [Decision] PR2 Task 19 Test 1 re-anchored to NewSha — `LastViewedHeadSha = NewSha` to prevent head-shift override-clear
+
+- **Source:** PR2 implementation — plan Task 19 lists 4 tests (`OverrideStaleTests`). Test 1 (`IsOverriddenStaleTrueAndAnchoredShaReachable_ClassifierShortCircuitsToDraft`) uses the same `SessionWith(params DraftComment[])` helper as Test 4 (`HeadShiftBetweenReloads_ClearsOverride`), which hardcodes `LastViewedHeadSha = OldSha`. Both tests reload to `NewSha`, so both have head-shift = TRUE. Test 1 expects override short-circuit (Status=Draft, IsOverriddenStale=true); Test 4 expects override-cleared (Status=Stale, IsOverriddenStale=false). With the plan's pipeline implementation (head-shift clears override at top of `ReconcileAsync`), Tests 1 and 4 are mutually unsatisfiable.
+- **Date:** 2026-05-10
+- **Decision:** Test 1 reconstructs its session with `LastViewedHeadSha = NewSha` (no head shift) so the override persists into the classifier; the matrix says Stale → override gate fires → result is Status=Draft, IsOverriddenStale=true. Test 4 keeps the helper's `OldSha → NewSha` shift to assert the head-shift-clears contract. Tests 2 and 3 work with either setup; left on the helper.
+- **Why:** The override semantics from spec § 3.2 are: (a) head shift always clears override (single-use per anchor state); (b) override-then-stale-content short-circuits to Draft. These are two distinct paths. The plan author wrote both tests with head-shift fixtures, which collapses the cases. Re-anchoring Test 1 separates them.
+- **Trade-off considered and rejected:** Move head-shift clearing from the top of `ReconcileAsync` to the apply-result step (Phase 2 of § 3.3 — the spec's literal wording). Rejected because (a) larger deviation from the plan's pipeline implementation; (b) requires the reconciliation result DTO to round-trip the un-cleared `IsOverriddenStale` value back to the apply step (which it already does, but for a different reason: surviving the override-still-set short-circuit); (c) Test 4 would also need rewriting.
+- **Tested by:** All 4 OverrideStaleTests pass against the corrected setup.
+
+## [Decision] PR2 Task 12 Row 6 `ResolvedLineNumber` reduced from 3 to 1 — single tie-break for the matrix
+
+- **Source:** PR2 implementation — plan Task 12's seven-row matrix has Row 4 (multiple exact-elsewhere) and Row 6 (multiple whitespace-equiv) with the same candidate shape `[1, 3]` and `originalLine = 2`. Both candidates are mathematically equidistant (|1-2| = |3-2| = 1). Plan expects Row 4 → ResolvedLine=1 and Row 6 → ResolvedLine=3 — contradictory tie-break semantics for one classifier algorithm.
+- **Date:** 2026-05-10
+- **Decision:** `Classifier.ClosestTo` uses strict less-than (`dist < bestDist`), so the first candidate wins on tie (lower line number). Row 4's expectation matches; Row 6's expected `ResolvedLineNumber` adjusted from 3 to 1.
+- **Why:** Spec/03 § 5 says only "closest line number wins" without specifying tie-break. The plan author's Row 4 comment (`// line 1 closer to original (2) than line 3`) suggests they intended lower-line-wins (line 1 isn't actually closer than line 3 to 2 — they're tied — but the comment's preference is for line 1). Applying the same rule to Row 6 yields ResolvedLine=1.
+- **Trade-off considered and rejected:** (a) Pick higher-line-wins (`<=`) — would break Row 4's expectation. (b) Different tie-breaks per matcher tier (exact: lower wins, whitespace-equiv: higher wins) — undocumented in spec, hard to defend, ad hoc. (c) Re-craft Row 6 content to break the tie (e.g., shift `originalLine` to 4) — preserves the plan's literal expected value but obscures the matrix-row intent.
+- **Tested by:** Row 6 now passes with ResolvedLineNumber=1 alongside Row 4's ResolvedLineNumber=1.
 
 ## [Decision] Task 5 + Task 6 scope-pull-forward — minimum compile fix lives in PR1's early commits
 
