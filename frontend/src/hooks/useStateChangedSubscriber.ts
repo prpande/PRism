@@ -38,12 +38,5 @@ export function useStateChangedSubscriber({
         onInboxBadgeInvalidation?.();
       }
     });
-  }, [
-    stream,
-    prRef?.owner,
-    prRef?.repo,
-    prRef?.number,
-    onSessionChange,
-    onInboxBadgeInvalidation,
-  ]);
+  }, [stream, prRef?.owner, prRef?.repo, prRef?.number, onSessionChange, onInboxBadgeInvalidation]);
 }

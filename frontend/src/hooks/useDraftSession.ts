@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getDraft } from '../api/draft';
-import type {
-  DraftCommentDto,
-  DraftReplyDto,
-  PrReference,
-  ReviewSessionDto,
-} from '../api/types';
+import type { DraftCommentDto, DraftReplyDto, PrReference, ReviewSessionDto } from '../api/types';
 
 export type DraftSessionStatus = 'loading' | 'ready' | 'error';
 

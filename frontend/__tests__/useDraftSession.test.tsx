@@ -70,7 +70,10 @@ describe('useDraftSession — diff-and-prefer merge', () => {
   });
 
   it('DiffAndPreferMerge_KeepsLocalBody_WhenComposerOpen — composer-open ids preserve local body', async () => {
-    const v1 = { ...emptySession(), draftComments: [comment('c1', 'local-body', { status: 'draft' })] };
+    const v1 = {
+      ...emptySession(),
+      draftComments: [comment('c1', 'local-body', { status: 'draft' })],
+    };
     // Server version moved the draft to status: 'stale' AND changed the body.
     const v2 = {
       ...emptySession(),
@@ -82,7 +85,7 @@ describe('useDraftSession — diff-and-prefer merge', () => {
     await waitFor(() => expect(result.current.status).toBe('ready'));
 
     // Simulate a composer being open for c1.
-    let cleanup: (() => void) = () => undefined;
+    let cleanup: () => void = () => undefined;
     act(() => {
       cleanup = result.current.registerOpenComposer('c1');
     });
@@ -104,7 +107,10 @@ describe('useDraftSession — diff-and-prefer merge', () => {
 
   it('DiffAndPreferMerge_AcceptsServer_WhenNoComposerOpen — server wins for unwatched ids', async () => {
     const v1 = { ...emptySession(), draftComments: [comment('c1', 'local-body')] };
-    const v2 = { ...emptySession(), draftComments: [comment('c1', 'remote-body', { status: 'moved' })] };
+    const v2 = {
+      ...emptySession(),
+      draftComments: [comment('c1', 'remote-body', { status: 'moved' })],
+    };
     vi.spyOn(draftApi, 'getDraft').mockResolvedValueOnce(v1).mockResolvedValueOnce(v2);
 
     const { result } = renderHook(() => useDraftSession(ref));

@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { sendPatch, type SendPatchResult } from '../api/draft';
-import type {
-  DraftSide,
-  PrReference,
-  ReviewSessionPatch,
-} from '../api/types';
+import type { DraftSide, PrReference, ReviewSessionPatch } from '../api/types';
 
 export type ComposerSaveBadge = 'saved' | 'saving' | 'unsaved' | 'rejected';
 
@@ -48,9 +44,7 @@ export interface UseComposerAutoSaveResult {
 export const COMPOSER_DEBOUNCE_MS = 250;
 export const COMPOSER_CREATE_THRESHOLD = 3;
 
-export function useComposerAutoSave(
-  props: UseComposerAutoSaveProps,
-): UseComposerAutoSaveResult {
+export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseComposerAutoSaveResult {
   const [badge, setBadge] = useState<ComposerSaveBadge>('saved');
 
   // In-flight create promise. Subsequent debounces await it rather than
@@ -173,10 +167,7 @@ export function useComposerAutoSave(
   return { badge, flush };
 }
 
-function applyErrorBadge(
-  result: SendPatchResult,
-  setBadge: (b: ComposerSaveBadge) => void,
-): void {
+function applyErrorBadge(result: SendPatchResult, setBadge: (b: ComposerSaveBadge) => void): void {
   if (result.ok) return;
   if (result.kind === 'invalid-body') {
     // 422 — semantic rejection (body too large, file path invalid, etc.).
@@ -213,11 +204,7 @@ function makeCreatePatch(body: string, anchor: ComposerAnchor): ReviewSessionPat
   }
 }
 
-function makeUpdatePatch(
-  id: string,
-  body: string,
-  anchor: ComposerAnchor,
-): ReviewSessionPatch {
+function makeUpdatePatch(id: string, body: string, anchor: ComposerAnchor): ReviewSessionPatch {
   if (anchor.kind === 'reply') {
     return { kind: 'updateDraftReply', payload: { id, bodyMarkdown: body } };
   }

@@ -203,9 +203,7 @@ function DiffLineRow({
   const commentLineNum = line.newLineNum;
   const side: DraftSide = 'right';
   const canComment =
-    onLineClick &&
-    commentLineNum !== null &&
-    (line.type === 'insert' || line.type === 'context');
+    onLineClick && commentLineNum !== null && (line.type === 'insert' || line.type === 'context');
 
   const handleClick = () => {
     if (!canComment || commentLineNum === null) return;
@@ -237,7 +235,7 @@ function DiffLineRow({
                   {line.newLineNum ?? line.oldLineNum ?? ''}
                 </button>
               ) : (
-                line.newLineNum ?? ''
+                (line.newLineNum ?? '')
               )}
             </td>
           </>
@@ -255,7 +253,7 @@ function DiffLineRow({
                   {line.newLineNum ?? line.oldLineNum ?? ''}
                 </button>
               ) : (
-                line.newLineNum ?? ''
+                (line.newLineNum ?? '')
               )}
             </td>
           </>
@@ -270,7 +268,11 @@ function DiffLineRow({
         </tr>
       )}
       {commentLineNum !== null && renderComposerForLine && (
-        <ComposerSlot filePath={filePath} lineNumber={commentLineNum} render={renderComposerForLine} />
+        <ComposerSlot
+          filePath={filePath}
+          lineNumber={commentLineNum}
+          render={renderComposerForLine}
+        />
       )}
     </>
   );

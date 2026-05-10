@@ -238,11 +238,7 @@ export function InlineCommentComposer({
         onClose={() => setDiscardModalOpen(false)}
       >
         <p>This will remove the saved draft on this line.</p>
-        <button
-          type="button"
-          data-modal-role="cancel"
-          onClick={() => setDiscardModalOpen(false)}
-        >
+        <button type="button" data-modal-role="cancel" onClick={() => setDiscardModalOpen(false)}>
           Cancel
         </button>
         <button type="button" data-modal-role="primary" onClick={handleDiscardConfirm}>

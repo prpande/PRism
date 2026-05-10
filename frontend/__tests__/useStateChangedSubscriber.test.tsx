@@ -173,8 +173,7 @@ describe('useStateChangedSubscriber', () => {
   it('PR ref change re-subscribes', async () => {
     const onSessionChange = vi.fn();
     const { rerender } = renderHook(
-      ({ prRef }: { prRef: PrReference }) =>
-        useStateChangedSubscriber({ prRef, onSessionChange }),
+      ({ prRef }: { prRef: PrReference }) => useStateChangedSubscriber({ prRef, onSessionChange }),
       { wrapper, initialProps: { prRef: ref } },
     );
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));

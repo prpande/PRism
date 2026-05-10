@@ -22,9 +22,7 @@ export function AiComposerAssistant() {
       role="note"
       aria-label="AI composer suggestions (preview)"
     >
-      <span className="ai-summary-chip muted">
-        AI preview — composer suggestions appear here
-      </span>
+      <span className="ai-summary-chip muted">AI preview — composer suggestions appear here</span>
     </div>
   );
 }

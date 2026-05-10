@@ -58,7 +58,11 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 function captureFetch(response: Response | (() => Response)) {
-  const fn = vi.fn().mockImplementation(() => Promise.resolve(typeof response === 'function' ? response() : response));
+  const fn = vi
+    .fn()
+    .mockImplementation(() =>
+      Promise.resolve(typeof response === 'function' ? response() : response),
+    );
   globalThis.fetch = fn as unknown as typeof fetch;
   return fn;
 }
@@ -305,7 +309,9 @@ describe('sendPatch — HTTP wiring', () => {
   it('rethrows non-ApiError failures (e.g., network errors)', async () => {
     globalThis.fetch = vi
       .fn()
-      .mockImplementation(() => Promise.reject(new TypeError('network'))) as unknown as typeof fetch;
+      .mockImplementation(() =>
+        Promise.reject(new TypeError('network')),
+      ) as unknown as typeof fetch;
     await expect(sendPatch(ref, { kind: 'confirmVerdict' })).rejects.toThrow(TypeError);
   });
 });

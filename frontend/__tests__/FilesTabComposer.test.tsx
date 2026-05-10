@@ -3,12 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
 import { __resetTabIdForTest } from '../src/api/draft';
-import type {
-  DiffDto,
-  PrDetailDto,
-  PrReference,
-  ReviewSessionDto,
-} from '../src/api/types';
+import type { DiffDto, PrDetailDto, PrReference, ReviewSessionDto } from '../src/api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -135,12 +130,12 @@ function makeRouteHandler(
         const isCreate =
           body !== null &&
           typeof body === 'object' &&
-          ('newDraftComment' in body ||
-            'newPrRootDraftComment' in body ||
-            'newDraftReply' in body);
+          ('newDraftComment' in body || 'newPrRootDraftComment' in body || 'newDraftReply' in body);
         return Promise.resolve(
           new Response(
-            JSON.stringify(isCreate ? { assignedId: `uuid-new-${patchTracker?.calls.length ?? 0}` } : {}),
+            JSON.stringify(
+              isCreate ? { assignedId: `uuid-new-${patchTracker?.calls.length ?? 0}` } : {},
+            ),
             {
               status: 200,
               headers: { 'Content-Type': 'application/json' },
@@ -237,9 +232,7 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     const line2 = screen.getByRole('button', { name: 'Add comment on line 3' });
     fireEvent.click(line2);
 
-    expect(
-      screen.queryByText(/Discard or keep your saved draft/i),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Discard or keep your saved draft/i)).not.toBeInTheDocument();
     await waitFor(() =>
       expect(
         screen.getByRole('form', { name: 'Draft comment on src/main.ts line 3' }),
@@ -273,11 +266,7 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
   it('ClickAnotherLine_DiscardBranch_FiresDeleteDraftComment', async () => {
     const tracker = { calls: [] as { url: string; body: unknown }[] };
     const session = sessionWithDraftAt('src/main.ts', 1, 'right', 'saved body');
-    globalThis.fetch = makeRouteHandler(
-      onefileDiff,
-      session,
-      tracker,
-    ) as unknown as typeof fetch;
+    globalThis.fetch = makeRouteHandler(onefileDiff, session, tracker) as unknown as typeof fetch;
     renderFilesTab();
 
     await waitFor(() => expect(screen.getByText('main.ts')).toBeInTheDocument());
@@ -310,11 +299,7 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
   it('ClickAnotherLine_KeepBranch_LeavesDraftPersisted', async () => {
     const tracker = { calls: [] as { url: string; body: unknown }[] };
     const session = sessionWithDraftAt('src/main.ts', 1, 'right', 'saved body');
-    globalThis.fetch = makeRouteHandler(
-      onefileDiff,
-      session,
-      tracker,
-    ) as unknown as typeof fetch;
+    globalThis.fetch = makeRouteHandler(onefileDiff, session, tracker) as unknown as typeof fetch;
     renderFilesTab();
 
     await waitFor(() => expect(screen.getByText('main.ts')).toBeInTheDocument());

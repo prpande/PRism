@@ -210,9 +210,7 @@ describe('useComposerAutoSave — assignedId + update path', () => {
 
   it('OneOrTwoChars_WithDraftId_FiresUpdate — threshold gate is for creation only', async () => {
     const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
-    renderHook(() =>
-      useComposerAutoSave(defaultProps({ body: 'ab', draftId: 'uuid-existing' })),
-    );
+    renderHook(() => useComposerAutoSave(defaultProps({ body: 'ab', draftId: 'uuid-existing' })));
     await flushTimersAndPromises();
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0][1]).toEqual({
@@ -225,9 +223,7 @@ describe('useComposerAutoSave — assignedId + update path', () => {
     const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
     const onLocalDelete = vi.fn();
     renderHook(() =>
-      useComposerAutoSave(
-        defaultProps({ body: '', draftId: 'uuid-existing', onLocalDelete }),
-      ),
+      useComposerAutoSave(defaultProps({ body: '', draftId: 'uuid-existing', onLocalDelete })),
     );
     await flushTimersAndPromises();
     expect(spy).toHaveBeenCalledTimes(1);
@@ -352,9 +348,7 @@ describe('useComposerAutoSave — reply anchor variant', () => {
     const spy = vi
       .spyOn(draftApi, 'sendPatch')
       .mockResolvedValue({ ok: true, assignedId: 'uuid-r' });
-    renderHook(() =>
-      useComposerAutoSave(defaultProps({ body: 'abc', anchor: replyAnchor })),
-    );
+    renderHook(() => useComposerAutoSave(defaultProps({ body: 'abc', anchor: replyAnchor })));
     await flushTimersAndPromises();
     expect(spy.mock.calls[0][1]).toEqual({
       kind: 'newDraftReply',

@@ -278,9 +278,7 @@ export function FilesTab() {
     return (
       <InlineCommentComposer
         prRef={prRef}
-        prState={
-          prDetail.pr.isMerged ? 'merged' : prDetail.pr.isClosed ? 'closed' : 'open'
-        }
+        prState={prDetail.pr.isMerged ? 'merged' : prDetail.pr.isClosed ? 'closed' : 'open'}
         anchor={activeAnchor}
         initialBody={existing?.bodyMarkdown ?? ''}
         draftId={composerDraftId}
@@ -354,14 +352,8 @@ export function FilesTab() {
         defaultFocus="cancel"
         onClose={() => setPendingNewAnchor(null)}
       >
-        <p>
-          You have a saved draft on the line you&apos;re leaving. Switch to the new line and:
-        </p>
-        <button
-          type="button"
-          data-modal-role="cancel"
-          onClick={handleTransitionKeep}
-        >
+        <p>You have a saved draft on the line you&apos;re leaving. Switch to the new line and:</p>
+        <button type="button" data-modal-role="cancel" onClick={handleTransitionKeep}>
           Keep
         </button>
         <button type="button" data-modal-role="primary" onClick={handleTransitionDiscard}>
