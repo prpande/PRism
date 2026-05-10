@@ -44,7 +44,11 @@ public sealed class DraftReconciliationPipeline
             };
         }
 
-        var fileCache = new Dictionary<(string, string), string>();
+        // Per-call caches. The file cache value type is nullable so a null fetch (file
+        // doesn't exist at SHA) is recorded and not re-fetched if multiple drafts on the
+        // same missing (filePath, sha) appear in the session — relevant once PR3 wires
+        // ReviewServiceFileContentSource against GitHub.
+        var fileCache = new Dictionary<(string, string), string?>();
         var reachabilityCache = new Dictionary<string, bool>();
 
         var reconciledDrafts = new List<ReconciledDraft>();
@@ -198,12 +202,12 @@ public sealed class DraftReconciliationPipeline
     private static async Task<string?> GetCachedContent(
         string filePath, string sha,
         IFileContentSource source,
-        Dictionary<(string, string), string> cache,
+        Dictionary<(string, string), string?> cache,
         CancellationToken ct)
     {
         if (cache.TryGetValue((filePath, sha), out var cached)) return cached;
         var fetched = await source.GetAsync(filePath, sha, ct).ConfigureAwait(false);
-        if (fetched is not null) cache[(filePath, sha)] = fetched;
+        cache[(filePath, sha)] = fetched;
         return fetched;
     }
 

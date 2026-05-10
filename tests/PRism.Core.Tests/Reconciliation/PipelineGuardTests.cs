@@ -130,6 +130,34 @@ public class PipelineGuardTests
     }
 
     [Fact]
+    public async Task MissingFile_FetchedOncePerSha_AcrossMultipleDrafts()
+    {
+        // Pins the per-call cache contract: when N drafts share the same missing
+        // (filePath, sha), the source's GetAsync is called exactly once. PR3 will wire
+        // ReviewServiceFileContentSource against GitHub; un-cached missing files would
+        // amplify network calls under realistic session shapes.
+        var counting = new CountingFakeFileContentSource(
+            files: new(),                                         // file is missing at NewSha
+            reachableShas: new() { OldSha, NewSha });
+
+        var draft1 = MakeDraft(id: "d1", path: "src/Missing.cs", line: 2);
+        var draft2 = MakeDraft(id: "d2", path: "src/Missing.cs", line: 5);
+        var draft3 = MakeDraft(id: "d3", path: "src/Missing.cs", line: 9);
+
+        var session = SessionWith(draft1, draft2, draft3);
+
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, counting, CancellationToken.None);
+
+        Assert.Equal(3, result.Drafts.Count);
+        Assert.All(result.Drafts, d =>
+        {
+            Assert.Equal(DraftStatus.Stale, d.Status);
+            Assert.Equal(StaleReason.FileDeleted, d.StaleReason);
+        });
+        Assert.Equal(1, counting.GetAsyncCallCount);
+    }
+
+    [Fact]
     public async Task SourceThrowsOperationCanceled_PropagatesOut()
     {
         // OperationCanceledException must NOT be swallowed by the per-draft try/catch —
@@ -153,6 +181,18 @@ public class PipelineGuardTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, cts.Token));
     }
+
+    private static DraftComment MakeDraft(string id, string path, int line)
+        => new(
+            Id: id,
+            FilePath: path,
+            LineNumber: line,
+            Side: "right",
+            AnchoredSha: OldSha,
+            AnchoredLineContent: "line B",
+            BodyMarkdown: "body",
+            Status: DraftStatus.Draft,
+            IsOverriddenStale: false);
 
     private static ReviewSessionState SessionWith(params DraftComment[] drafts)
         => new(
@@ -186,6 +226,31 @@ public class PipelineGuardTests
         {
             if (filePath == _throwForPath)
                 throw new InvalidOperationException("simulated source failure");
+            return Task.FromResult(_files.GetValueOrDefault((filePath, sha)));
+        }
+
+        public Task<bool> IsCommitReachableAsync(string sha, CancellationToken ct)
+            => Task.FromResult(_reachableShas.Contains(sha));
+    }
+
+    private sealed class CountingFakeFileContentSource : IFileContentSource
+    {
+        private readonly Dictionary<(string, string), string> _files;
+        private readonly HashSet<string> _reachableShas;
+
+        public int GetAsyncCallCount { get; private set; }
+
+        public CountingFakeFileContentSource(
+            Dictionary<(string, string), string> files,
+            HashSet<string> reachableShas)
+        {
+            _files = files;
+            _reachableShas = reachableShas;
+        }
+
+        public Task<string?> GetAsync(string filePath, string sha, CancellationToken ct)
+        {
+            GetAsyncCallCount++;
             return Task.FromResult(_files.GetValueOrDefault((filePath, sha)));
         }
 
