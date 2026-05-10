@@ -27,8 +27,20 @@ function readSessionCookie(): string | null {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = {};
+export interface RequestOptions {
+  // Caller-provided headers are baseline; standard headers (X-PRism-Session,
+  // Content-Type) override on collision. Used by api/draft.ts to attach
+  // X-PRism-Tab-Id without duplicating session-cookie logic.
+  headers?: Record<string, string>;
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  options?: RequestOptions,
+): Promise<T> {
+  const headers: Record<string, string> = { ...options?.headers };
   const session = readSessionCookie();
   if (session !== null) headers['X-PRism-Session'] = session;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -57,7 +69,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const apiClient = {
-  get: <T>(path: string) => request<T>('GET', path),
-  post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
-  delete: <T>(path: string) => request<T>('DELETE', path),
+  get: <T>(path: string, options?: RequestOptions) => request<T>('GET', path, undefined, options),
+  post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
+    request<T>('POST', path, body, options),
+  put: <T>(path: string, body?: unknown, options?: RequestOptions) =>
+    request<T>('PUT', path, body, options),
+  delete: <T>(path: string, options?: RequestOptions) =>
+    request<T>('DELETE', path, undefined, options),
 };

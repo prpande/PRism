@@ -421,7 +421,7 @@ Body is `ReviewSessionPatch` — exactly one field set per request per `spec/02-
 ```jsonc
 {
   // exactly ONE of:
-  "draftVerdict": "approve" | "requestChanges" | "comment" | null,
+  "draftVerdict": "approve" | "requestChanges" | "comment",     // null is NOT a valid wire value — `EnumerateSetFields` filters null DraftVerdict as "not set" and would 400 the patch as zero-set; clearing the verdict is not representable as a single-field patch in S4 (see deferrals)
   "draftSummaryMarkdown": "...",
   "newDraftComment": { "filePath": "...", "lineNumber": 42, "side": "right", "anchoredSha": "...", "anchoredLineContent": "...", "bodyMarkdown": "..." },
   "newPrRootDraftComment": { "bodyMarkdown": "..." },     // PR-root reply; null filePath/lineNumber/side="pr" on the persisted side

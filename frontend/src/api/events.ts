@@ -1,6 +1,11 @@
-import type { InboxUpdatedEvent } from './types';
+import type {
+  DraftDiscardedEvent,
+  DraftSavedEvent,
+  InboxUpdatedEvent,
+  StateChangedEvent,
+} from './types';
 
-export type { InboxUpdatedEvent };
+export type { InboxUpdatedEvent, StateChangedEvent, DraftSavedEvent, DraftDiscardedEvent };
 
 export type PrUpdatedEvent = {
   prRef: string;
@@ -12,6 +17,9 @@ export type PrUpdatedEvent = {
 export type EventPayloadByType = {
   'inbox-updated': InboxUpdatedEvent;
   'pr-updated': PrUpdatedEvent;
+  'state-changed': StateChangedEvent;
+  'draft-saved': DraftSavedEvent;
+  'draft-discarded': DraftDiscardedEvent;
 };
 
 export type EventStreamHandle = {
@@ -103,7 +111,9 @@ export function openEventStream(): EventStreamHandle {
       resetWatchdog();
     });
 
-    (['inbox-updated', 'pr-updated'] as const).forEach((type) => {
+    (
+      ['inbox-updated', 'pr-updated', 'state-changed', 'draft-saved', 'draft-discarded'] as const
+    ).forEach((type) => {
       es.addEventListener(type, (raw) => {
         try {
           const data = JSON.parse((raw as MessageEvent).data) as EventPayloadByType[typeof type];
