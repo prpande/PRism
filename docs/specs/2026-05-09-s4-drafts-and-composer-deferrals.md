@@ -213,6 +213,24 @@ Items the user already approved as in-scope or that were applied in commits land
 - **Revisit when:** During PR3 creation, if the reviewer feels the load is too high, split per the documented PR3a/PR3b cut.
 - **Original finding evidence (adversarial, conf 0.75):** *"PR3 lands a LOT in one PR — endpoint, events, SSE projection, IReviewService addition, body-cap middleware extension, spec doc edit. Could it deadlock review?"*
 
+## [Skip] Matrix tier priority — exact-elsewhere wins over whitespace-equiv-at-original
+
+- **Source:** PR2 preflight adversarial review (2026-05-10)
+- **Severity:** P2 (UX consequence)
+- **Date:** 2026-05-10
+- **Reason:** Spec/03 § 5's seven-row matrix orders the matcher tiers strictly: exact-tier wins over whitespace-equiv-tier. Rows 5–6 are gated on "no exact match." This means a draft anchored on a line that gets auto-formatted (so the original line is whitespace-equivalent at originalLine) but whose exact bytes happen to appear elsewhere in the file lands in Row 3 (single exact elsewhere → Moved) instead of staying at the user's anchor. The implementation is faithful to the spec; the question is whether the spec's tier-priority is the right design choice for the "auto-formatter ran on an otherwise stable file" case. Spec § 5 does add a "subtle badge" on Row 3 ("moved to line M") so the user has visual feedback, which softens the silent move. The user explicitly chose to keep this as-is for PR2 after pushback during preflight.
+- **Revisit when:** Dogfooding shows reviewers losing comments after auto-format runs, OR a follow-up product-lens pass on spec/03 § 5 decides whitespace-equiv-at-original should override exact-elsewhere. The fix would be a Row 5b in the classifier and a corresponding spec edit.
+- **Original finding evidence (adversarial, conf 0.75):** *"Matrix gap — when the anchored line is whitespace-equivalent at originalLine AND exact elsewhere... classifier returns Moved to line elsewhere, ignoring the at-original whitespace-equiv match. Repro: anchored='line B', originalLine=2, file='line B\\n  line B  \\nline C\\n' → ExactElsewhere=[1], WhitespaceEquivAll=[2] → Moved to line 1."*
+
+## [Skip] Verdict reconcile with null `LastViewedHeadSha` returns NeedsReconfirm
+
+- **Source:** PR2 preflight adversarial review (2026-05-10)
+- **Severity:** P3
+- **Date:** 2026-05-10
+- **Reason:** `DraftReconciliationPipeline.ReconcileAsync` computes verdict outcome as `session.DraftVerdict is not null && session.LastViewedHeadSha != newHeadSha`. If `LastViewedHeadSha` is null (never-viewed PR with a verdict somehow pre-set), the `!=` evaluates to `true` (null != non-null) and the result is `NeedsReconfirm`. Currently unreachable through normal user flow — verdict requires viewing the PR which sets `LastViewedHeadSha` first. Reachable only via hand-crafted fixtures or a hypothetical future migration path that pre-populates `DraftVerdict`.
+- **Revisit when:** A future test or migration introduces a path where `DraftVerdict` is set without `LastViewedHeadSha` being set, OR a real user flow surfaces this combination.
+- **Original finding evidence (adversarial, conf 0.40):** *"Verdict reconcile uses `session.LastViewedHeadSha != newHeadSha` directly. If LastViewedHeadSha is null... the comparison evaluates to NeedsReconfirm... Currently unreachable through normal user flow."*
+
 ## [Skip] PR1 line-number annotation off (8 numbers for "6 hits")
 
 - **Source:** Plan ce-doc-review — feasibility finding F6 (2026-05-10)

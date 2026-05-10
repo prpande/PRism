@@ -50,8 +50,9 @@ public sealed class DraftReconciliationPipeline
         var reconciledDrafts = new List<ReconciledDraft>();
         foreach (var draft in session.DraftComments)
         {
-            // PR-root drafts (no anchor) pass through. Their override flag is preserved —
-            // there's no anchor reasoning to invalidate.
+            // PR-root drafts (no anchor) pass through. Their override flag — whether cleared
+            // above by head-shift or carried in fresh — is observationally inert because
+            // PR-root drafts can never become Stale through reconciliation.
             if (draft.FilePath is null)
             {
                 reconciledDrafts.Add(new ReconciledDraft(
@@ -67,73 +68,104 @@ public sealed class DraftReconciliationPipeline
                 continue;
             }
 
-            // Step 1: file resolution (rename / delete / exists).
-            var fileResult = FileResolution.Resolve(draft.FilePath, renames, deletedPaths);
-            if (!fileResult.Resolved)
+            // Defensive null-anchor guard. The ReviewSessionState schema permits null on
+            // AnchoredSha / AnchoredLineContent / LineNumber for PR-root drafts (FilePath
+            // is the only field that distinguishes them), so a malformed line-anchored
+            // draft (FilePath set + any anchor field null) would crash the per-draft body
+            // via the ! null-forgiving operators on the standard / force-push paths. Treat
+            // as Stale (NoMatch) to keep the per-draft loop isolated — the user can re-anchor
+            // manually.
+            if (draft.AnchoredSha is null || draft.AnchoredLineContent is null || draft.LineNumber is null)
             {
-                reconciledDrafts.Add(MakeStale(draft, fileResult.StaleReason!.Value, forcePush: false));
+                reconciledDrafts.Add(MakeStale(draft, StaleReason.NoMatch, forcePush: false));
                 continue;
             }
 
-            // Step 2: SHA reachability probe (against the draft's anchored SHA, not the new head).
-            bool reachable = await GetCachedReachable(draft.AnchoredSha!, fileSource, reachabilityCache, ct).ConfigureAwait(false);
-
-            string? newContent = await GetCachedContent(
-                fileResult.ResolvedPath!, newHeadSha, fileSource, fileCache, ct).ConfigureAwait(false);
-
-            if (newContent is null)
+            try
             {
-                // File doesn't exist at newHeadSha — covers the "deleted at this SHA but not in
-                // the renames map" case (e.g., file was added then removed in a series of pushes
-                // without being in this PR's rename list).
-                reconciledDrafts.Add(MakeStale(draft, StaleReason.FileDeleted, forcePush: !reachable));
-                continue;
-            }
+                // Step 1: file resolution (rename / delete / exists).
+                var fileResult = FileResolution.Resolve(draft.FilePath, renames, deletedPaths);
+                if (!fileResult.Resolved)
+                {
+                    reconciledDrafts.Add(MakeStale(draft, fileResult.StaleReason!.Value, forcePush: false));
+                    continue;
+                }
 
-            if (!reachable)
-            {
-                // Force-push fallback: anchored SHA is gone from the commit graph. Override does
-                // not apply — anchor reasoning is broken — so IsOverriddenStale is cleared.
-                var fb = ForcePushFallback.Apply(newContent, draft.AnchoredLineContent!, fileResult.ResolvedPath!);
+                // Step 2: SHA reachability probe (against the draft's anchored SHA, not the new head).
+                bool reachable = await GetCachedReachable(draft.AnchoredSha, fileSource, reachabilityCache, ct).ConfigureAwait(false);
+
+                string? newContent = await GetCachedContent(
+                    fileResult.ResolvedPath!, newHeadSha, fileSource, fileCache, ct).ConfigureAwait(false);
+
+                if (newContent is null)
+                {
+                    // File doesn't exist at newHeadSha — covers the "deleted at this SHA but not in
+                    // the renames map" case (e.g., file was added then removed in a series of pushes
+                    // without being in this PR's rename list).
+                    reconciledDrafts.Add(MakeStale(draft, StaleReason.FileDeleted, forcePush: !reachable));
+                    continue;
+                }
+
+                if (!reachable)
+                {
+                    // Force-push fallback: anchored SHA is gone from the commit graph. Override does
+                    // not apply — anchor reasoning is broken — so IsOverriddenStale is cleared.
+                    var fb = ForcePushFallback.Apply(newContent, draft.AnchoredLineContent, fileResult.ResolvedPath!);
+                    reconciledDrafts.Add(new ReconciledDraft(
+                        Id: draft.Id,
+                        Status: fb.Status,
+                        ResolvedFilePath: fb.Status == DraftStatus.Stale ? null : fileResult.ResolvedPath,
+                        ResolvedLineNumber: fb.ResolvedLine,
+                        ResolvedAnchoredSha: fb.Status == DraftStatus.Stale ? draft.AnchoredSha : newHeadSha,
+                        AlternateMatchCount: 0,
+                        StaleReason: fb.StaleReason,
+                        ForcePushFallbackTriggered: true,
+                        IsOverriddenStale: false));
+                    continue;
+                }
+
+                // Standard path: line matching + classification against the seven-row matrix.
+                var matches = LineMatching.Compute(newContent, draft.LineNumber.Value, draft.AnchoredLineContent, fileResult.ResolvedPath!);
+                var cls = Classifier.Classify(matches, draft.LineNumber.Value);
+
+                // Override gate: the matrix said Stale but the user previously clicked "Keep anyway"
+                // and the head has not shifted (otherwise the override was already cleared above).
+                // Short-circuit to Draft and preserve the override. If the matrix did NOT say Stale,
+                // the override is no longer needed (content re-anchors cleanly) — clear it.
+                DraftStatus finalStatus = cls.Status;
+                bool overrideStillSet = false;
+                if (cls.Status == DraftStatus.Stale && draft.IsOverriddenStale)
+                {
+                    finalStatus = DraftStatus.Draft;
+                    overrideStillSet = true;
+                }
+
                 reconciledDrafts.Add(new ReconciledDraft(
                     Id: draft.Id,
-                    Status: fb.Status,
-                    ResolvedFilePath: fb.Status == DraftStatus.Stale ? null : fileResult.ResolvedPath,
-                    ResolvedLineNumber: fb.ResolvedLine,
-                    ResolvedAnchoredSha: fb.Status == DraftStatus.Stale ? draft.AnchoredSha : newHeadSha,
-                    AlternateMatchCount: 0,
-                    StaleReason: fb.StaleReason,
-                    ForcePushFallbackTriggered: true,
-                    IsOverriddenStale: false));
-                continue;
+                    Status: finalStatus,
+                    ResolvedFilePath: fileResult.ResolvedPath,
+                    ResolvedLineNumber: cls.ResolvedLine,
+                    ResolvedAnchoredSha: newHeadSha,
+                    AlternateMatchCount: cls.AlternateMatchCount,
+                    StaleReason: finalStatus == DraftStatus.Stale ? cls.StaleReason : null,
+                    ForcePushFallbackTriggered: false,
+                    IsOverriddenStale: overrideStillSet));
             }
-
-            // Standard path: line matching + classification against the seven-row matrix.
-            var matches = LineMatching.Compute(newContent, draft.LineNumber!.Value, draft.AnchoredLineContent!, fileResult.ResolvedPath!);
-            var cls = Classifier.Classify(matches, draft.LineNumber!.Value);
-
-            // Override gate: the matrix said Stale but the user previously clicked "Keep anyway"
-            // and the head has not shifted (otherwise the override was already cleared above).
-            // Short-circuit to Draft and preserve the override. If the matrix did NOT say Stale,
-            // the override is no longer needed (content re-anchors cleanly) — clear it.
-            DraftStatus finalStatus = cls.Status;
-            bool overrideStillSet = false;
-            if (cls.Status == DraftStatus.Stale && draft.IsOverriddenStale)
+            catch (OperationCanceledException)
             {
-                finalStatus = DraftStatus.Draft;
-                overrideStillSet = true;
+                // Cooperative cancellation — propagate.
+                throw;
             }
-
-            reconciledDrafts.Add(new ReconciledDraft(
-                Id: draft.Id,
-                Status: finalStatus,
-                ResolvedFilePath: fileResult.ResolvedPath,
-                ResolvedLineNumber: cls.ResolvedLine,
-                ResolvedAnchoredSha: newHeadSha,
-                AlternateMatchCount: cls.AlternateMatchCount,
-                StaleReason: finalStatus == DraftStatus.Stale ? cls.StaleReason : null,
-                ForcePushFallbackTriggered: false,
-                IsOverriddenStale: overrideStillSet));
+#pragma warning disable CA1031 // Do not catch general exception types
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+                // Per-draft isolation at the IFileContentSource boundary. PR3 wires the
+                // adapter to GitHub; transient failures (network, rate-limit, deserialize)
+                // on draft N should not abort reconciliation for the other N-1 drafts.
+                // Treat as Stale (NoMatch) — the user re-anchors or retries Reload manually.
+                reconciledDrafts.Add(MakeStale(draft, StaleReason.NoMatch, forcePush: false));
+            }
         }
 
         // Replies — PR2 scope: pass-through. PR3 wires existingThreadIds to detect
