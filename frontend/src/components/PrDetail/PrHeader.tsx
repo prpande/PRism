@@ -12,6 +12,7 @@ interface PrHeaderProps {
   activeTab: PrTabId;
   onTabChange: (tab: PrTabId) => void;
   fileCount?: number;
+  draftsCount?: number;
 }
 
 export function PrHeader({
@@ -25,6 +26,7 @@ export function PrHeader({
   activeTab,
   onTabChange,
   fileCount,
+  draftsCount,
 }: PrHeaderProps) {
   return (
     <div className="pr-header">
@@ -75,7 +77,12 @@ export function PrHeader({
           </button>
         </div>
       </div>
-      <PrSubTabStrip activeTab={activeTab} onTabChange={onTabChange} fileCount={fileCount} />
+      <PrSubTabStrip
+        activeTab={activeTab}
+        onTabChange={onTabChange}
+        fileCount={fileCount}
+        draftsCount={draftsCount}
+      />
     </div>
   );
 }

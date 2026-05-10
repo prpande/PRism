@@ -9,7 +9,7 @@ import { InboxPage } from './pages/InboxPage';
 import { PrDetailPage } from './pages/PrDetailPage';
 import { OverviewTab } from './components/PrDetail/OverviewTab/OverviewTab';
 import { FilesTab } from './components/PrDetail/FilesTab/FilesTab';
-import { DraftsTabDisabled } from './components/PrDetail/DraftsTab/DraftsTabDisabled';
+import { DraftsTabRoute } from './components/PrDetail/DraftsTab/DraftsTabRoute';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
@@ -64,7 +64,7 @@ export function App() {
         >
           <Route index element={<OverviewTab />} />
           <Route path="files/*" element={<FilesTab />} />
-          <Route path="drafts" element={<DraftsTabDisabled />} />
+          <Route path="drafts" element={<DraftsTabRoute />} />
         </Route>
         <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
       </Routes>

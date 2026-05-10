@@ -1,10 +1,24 @@
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PrHeader } from '../components/PrDetail/PrHeader';
 import { BannerRefresh } from '../components/PrDetail/BannerRefresh';
+import { UnresolvedPanel } from '../components/PrDetail/Reconciliation/UnresolvedPanel';
 import type { PrTabId } from '../components/PrDetail/PrSubTabStrip';
 import { usePrDetail } from '../hooks/usePrDetail';
 import { useActivePrUpdates } from '../hooks/useActivePrUpdates';
-import type { PrReference } from '../api/types';
+import { useDraftSession, type UseDraftSessionResult } from '../hooks/useDraftSession';
+import { useStateChangedSubscriber } from '../hooks/useStateChangedSubscriber';
+import type { PrDetailDto, PrReference } from '../api/types';
+
+// Single source of truth for the per-PR draft session is the PrDetailPage.
+// Tabs read it via Outlet context; the sticky-top UnresolvedPanel + tab-strip
+// drafts count read it directly. Hoisted from FilesTab in S4 PR6 so the
+// shared in-memory composer-open registry (refcounted in `useDraftSession`)
+// is one instance, not one-per-tab. See deferrals doc § "Session ownership
+// hoisted to PrDetailPage".
+export interface PrDetailOutletContext {
+  prDetail: PrDetailDto;
+  draftSession: UseDraftSessionResult;
+}
 
 export function PrDetailPage() {
   const {
@@ -54,6 +68,10 @@ function PrDetailPageInner({
 }) {
   const { data, showSkeleton, error, reload } = usePrDetail(ref);
   const updates = useActivePrUpdates(ref);
+  const draftSession = useDraftSession(ref);
+  // Refetch draft session when other tabs / the reload pipeline mutate
+  // drafts. Own-tab events are filtered by the subscriber per spec § 5.7.
+  useStateChangedSubscriber({ prRef: ref, onSessionChange: draftSession.refetch });
 
   const handleTabChange = (tab: PrTabId) => {
     if (tab === 'overview') navigate(basePath);
@@ -67,6 +85,9 @@ function PrDetailPageInner({
   };
 
   const currentIter = data?.iterations?.at(-1)?.number ?? 0;
+  const draftsCount =
+    (draftSession.session?.draftComments.length ?? 0) +
+    (draftSession.session?.draftReplies.length ?? 0);
 
   return (
     <div className="pr-detail-page">
@@ -81,6 +102,7 @@ function PrDetailPageInner({
         ciSummary={data?.pr.ciSummary}
         activeTab={activeTab}
         onTabChange={handleTabChange}
+        draftsCount={draftsCount}
       />
       <BannerRefresh
         hasUpdate={updates.hasUpdate}
@@ -90,12 +112,21 @@ function PrDetailPageInner({
         onReload={handleReload}
         onDismiss={updates.clear}
       />
+      <UnresolvedPanel
+        prRef={ref}
+        session={draftSession.session}
+        onMutated={() => void draftSession.refetch()}
+      />
       {error && (
         <div role="alert" className="pr-detail-error">
           Couldn't load PR — {error.message}
         </div>
       )}
-      {showSkeleton ? <PrDetailSkeleton /> : data ? <Outlet context={{ prDetail: data }} /> : null}
+      {showSkeleton ? (
+        <PrDetailSkeleton />
+      ) : data ? (
+        <Outlet context={{ prDetail: data, draftSession } satisfies PrDetailOutletContext} />
+      ) : null}
     </div>
   );
 }

@@ -2,7 +2,36 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
-import type { PrDetailDto, DiffDto, PrReference } from '../src/api/types';
+import { useDraftSession } from '../src/hooks/useDraftSession';
+import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../src/api/types';
+
+const emptyReviewSession: ReviewSessionDto = {
+  draftVerdict: null,
+  draftVerdictStatus: 'draft',
+  draftSummaryMarkdown: null,
+  draftComments: [],
+  draftReplies: [],
+  iterationOverrides: [],
+  pendingReviewId: null,
+  pendingReviewCommitOid: null,
+  fileViewState: { viewedFiles: {} },
+};
+
+// Routes /draft to a valid empty ReviewSessionDto and falls through to the
+// supplied diff-handler fetch for everything else. The diff-handler mock in
+// each test below was previously catching /draft and returning the DiffDto
+// shape, leaving draftSession.session with `draftComments: undefined`. Any
+// future test that exercises FilesTab.findExistingDraft would crash; this
+// helper prevents that. See FilesTabComposer.test.tsx makeRouteHandler for
+// the per-route pattern.
+function diffOrDraft(diffMock: () => Promise<Response>) {
+  return vi.fn().mockImplementation((url: string) => {
+    if (typeof url === 'string' && url.endsWith('/draft')) {
+      return Promise.resolve(jsonResponse(emptyReviewSession));
+    }
+    return diffMock();
+  });
+}
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -64,7 +93,9 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
-  return <Outlet context={{ prDetail }} />;
+  // Mirrors PrDetailPage's hoisted ownership of the draft session in S4 PR6.
+  const draftSession = useDraftSession(ref);
+  return <Outlet context={{ prDetail, draftSession }} />;
 }
 
 function renderFilesTab(prDetail: PrDetailDto = minimalPrDetail) {
@@ -89,9 +120,7 @@ afterEach(() => {
 
 describe('FilesTab', () => {
   it('renders iteration tab strip when clusteringQuality is ok', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockImplementation(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
+    globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
       expect(screen.getByText('All changes')).toBeInTheDocument();
@@ -104,9 +133,7 @@ describe('FilesTab', () => {
       clusteringQuality: 'low',
       iterations: null,
     };
-    globalThis.fetch = vi
-      .fn()
-      .mockImplementation(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
+    globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab(lowQuality);
     await waitFor(() => {
       expect(screen.getByRole('combobox')).toBeInTheDocument();
@@ -114,9 +141,7 @@ describe('FilesTab', () => {
   });
 
   it('renders file tree with files from diff response', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockImplementation(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
+    globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
       expect(screen.getByText('main.ts')).toBeInTheDocument();
@@ -125,9 +150,7 @@ describe('FilesTab', () => {
   });
 
   it('renders diff pane placeholder stub', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockImplementation(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
+    globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
       expect(screen.getByText(/select a file/i)).toBeInTheDocument();
@@ -135,9 +158,7 @@ describe('FilesTab', () => {
   });
 
   it('selecting a file shows its path in diff pane', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockImplementation(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
+    globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
       expect(screen.getByText('main.ts')).toBeInTheDocument();
