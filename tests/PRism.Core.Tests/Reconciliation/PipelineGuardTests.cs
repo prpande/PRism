@@ -158,6 +158,41 @@ public class PipelineGuardTests
     }
 
     [Fact]
+    public async Task PrRootDraft_NullFilePath_PassesThroughUnchanged()
+    {
+        // PR-root drafts (FilePath null) skip the per-draft IO pipeline entirely.
+        // Pin the pass-through fields so future composer / reload wiring can't silently
+        // change the contract: Status / IsOverriddenStale flow through; ResolvedFilePath
+        // and ResolvedLineNumber are null; AlternateMatchCount = 0; ForcePushFallbackTriggered
+        // = false; ResolvedAnchoredSha echoes the input AnchoredSha.
+        var prRootDraft = new DraftComment(
+            Id: "pr-root-1",
+            FilePath: null,
+            LineNumber: null,
+            Side: null,
+            AnchoredSha: null,
+            AnchoredLineContent: null,
+            BodyMarkdown: "PR-root comment body",
+            Status: DraftStatus.Draft,
+            IsOverriddenStale: false);
+
+        var fake = new FakeFileContentSource(reachableShas: new() { OldSha, NewSha });
+        var session = SessionWith(prRootDraft);
+
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
+
+        var d = Assert.Single(result.Drafts);
+        Assert.Equal(DraftStatus.Draft, d.Status);
+        Assert.Null(d.ResolvedFilePath);
+        Assert.Null(d.ResolvedLineNumber);
+        Assert.Null(d.ResolvedAnchoredSha);
+        Assert.Equal(0, d.AlternateMatchCount);
+        Assert.Null(d.StaleReason);
+        Assert.False(d.ForcePushFallbackTriggered);
+        Assert.False(d.IsOverriddenStale);
+    }
+
+    [Fact]
     public async Task SourceThrowsOperationCanceled_PropagatesOut()
     {
         // OperationCanceledException must NOT be swallowed by the per-draft try/catch —

@@ -222,13 +222,14 @@ Items the user already approved as in-scope or that were applied in commits land
 - **Revisit when:** Dogfooding shows reviewers losing comments after auto-format runs, OR a follow-up product-lens pass on spec/03 § 5 decides whitespace-equiv-at-original should override exact-elsewhere. The fix would be a Row 5b in the classifier and a corresponding spec edit.
 - **Original finding evidence (adversarial, conf 0.75):** *"Matrix gap — when the anchored line is whitespace-equivalent at originalLine AND exact elsewhere... classifier returns Moved to line elsewhere, ignoring the at-original whitespace-equiv match. Repro: anchored='line B', originalLine=2, file='line B\\n  line B  \\nline C\\n' → ExactElsewhere=[1], WhitespaceEquivAll=[2] → Moved to line 1."*
 
-## [Skip] Verdict reconcile with null `LastViewedHeadSha` returns NeedsReconfirm
+## ~~[Skip] Verdict reconcile with null `LastViewedHeadSha` returns NeedsReconfirm~~ → Applied (2026-05-10, post-open review)
 
-- **Source:** PR2 preflight adversarial review (2026-05-10)
-- **Severity:** P3
-- **Date:** 2026-05-10
-- **Reason:** `DraftReconciliationPipeline.ReconcileAsync` computes verdict outcome as `session.DraftVerdict is not null && session.LastViewedHeadSha != newHeadSha`. If `LastViewedHeadSha` is null (never-viewed PR with a verdict somehow pre-set), the `!=` evaluates to `true` (null != non-null) and the result is `NeedsReconfirm`. Currently unreachable through normal user flow — verdict requires viewing the PR which sets `LastViewedHeadSha` first. Reachable only via hand-crafted fixtures or a hypothetical future migration path that pre-populates `DraftVerdict`.
-- **Revisit when:** A future test or migration introduces a path where `DraftVerdict` is set without `LastViewedHeadSha` being set, OR a real user flow surfaces this combination.
+- **Source:** PR2 preflight adversarial review (2026-05-10); re-surfaced as Finding A in claude[bot]'s post-open review (2026-05-10).
+- **Severity:** P3 (originally) / pattern-asymmetry latent trap (claude[bot])
+- **Date:** 2026-05-10 (skipped); 2026-05-10 (applied after re-review)
+- **Original reason for skip:** Currently unreachable through normal user flow — verdict requires viewing the PR which sets `LastViewedHeadSha` first.
+- **Why applied after all:** claude[bot]'s post-open review surfaced a different angle: even if the case is unreachable, the verdict head-shift check (no null guard) is asymmetric with the override head-shift check at the top of `ReconcileAsync` (which DOES guard null). The asymmetric pattern is a latent trap for whoever wires PR3's endpoint. Aligning the check costs one boolean variable, restores symmetry, and adds a `VerdictSetButLastViewedHeadShaNull_Unchanged` test pinning the behavior.
+- **Resolution:** `verdictHeadShifted` boolean now mirrors the override pattern (`session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha`).
 - **Original finding evidence (adversarial, conf 0.40):** *"Verdict reconcile uses `session.LastViewedHeadSha != newHeadSha` directly. If LastViewedHeadSha is null... the comparison evaluates to NeedsReconfirm... Currently unreachable through normal user flow."*
 
 ## [Skip] PR1 line-number annotation off (8 numbers for "6 hits")

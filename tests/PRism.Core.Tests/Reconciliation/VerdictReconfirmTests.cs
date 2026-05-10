@@ -34,6 +34,22 @@ public class VerdictReconfirmTests
     }
 
     [Fact]
+    public async Task VerdictSetButLastViewedHeadShaNull_Unchanged()
+    {
+        // Symmetric to the override head-shift check at the top of ReconcileAsync:
+        // a session with LastViewedHeadSha == null is not a head shift even if a verdict
+        // is pre-set. Currently unreachable through normal user flow (verdict requires
+        // viewing the PR), but the symmetry prevents the asymmetric pattern from becoming
+        // a latent trap when PR3 wires the endpoint.
+        var session = SessionWith(lastViewedHeadSha: null!, verdict: DraftVerdict.Approve);
+        var fake = new FakeFileContentSource(reachableShas: new() { NewSha });
+
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
+
+        Assert.Equal(VerdictReconcileOutcome.Unchanged, result.VerdictOutcome);
+    }
+
+    [Fact]
     public async Task NoVerdictSet_HeadShifted_Unchanged()
     {
         var session = SessionWith(OldSha, verdict: null);

@@ -179,8 +179,16 @@ public sealed class DraftReconciliationPipeline
             .ToList();
 
         // Verdict reconcile: head shifted while a verdict was set → user must re-confirm.
+        // The null-guard on LastViewedHeadSha mirrors the override head-shift check above
+        // (line ~26): a never-viewed session (LastViewedHeadSha == null) is not a head shift
+        // even if a verdict happens to be pre-set, matching "first-reload doesn't count as
+        // a shift." This case is currently unreachable through normal user flow — verdict
+        // requires viewing the PR which sets LastViewedHeadSha — but keeping the two
+        // head-shift checks symmetric prevents the asymmetry from becoming a latent trap
+        // when PR3 wires the endpoint.
+        bool verdictHeadShifted = session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha;
         var verdictOutcome =
-            session.DraftVerdict is not null && session.LastViewedHeadSha != newHeadSha
+            session.DraftVerdict is not null && verdictHeadShifted
                 ? VerdictReconcileOutcome.NeedsReconfirm
                 : VerdictReconcileOutcome.Unchanged;
 
