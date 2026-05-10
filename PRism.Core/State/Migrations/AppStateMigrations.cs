@@ -2,7 +2,7 @@ using System.Text.Json.Nodes;
 
 namespace PRism.Core.State.Migrations;
 
-internal static class Migrations
+internal static class AppStateMigrations
 {
     public static JsonObject MigrateV1ToV2(JsonObject root)
     {

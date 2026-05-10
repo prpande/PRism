@@ -17,7 +17,7 @@ public class MigrationStepTests
         }
         """)!.AsObject();
 
-        var result = Migrations.MigrateV1ToV2(root);
+        var result = AppStateMigrations.MigrateV1ToV2(root);
 
         Assert.Equal(2, result["version"]!.GetValue<int>());
         var session = result["review-sessions"]!["acme/api/123"]!.AsObject();
@@ -26,7 +26,7 @@ public class MigrationStepTests
     }
 
     [Fact]
-    public void MigrateV2ToV3_RenamesReviewSessionsToReviewsSessions()
+    public void MigrateV2ToV3_RenamesReviewSessionsKeyToReviewsDotSessions()
     {
         var root = JsonNode.Parse("""
         {
@@ -37,7 +37,7 @@ public class MigrationStepTests
         }
         """)!.AsObject();
 
-        var result = Migrations.MigrateV2ToV3(root);
+        var result = AppStateMigrations.MigrateV2ToV3(root);
 
         Assert.Equal(3, result["version"]!.GetValue<int>());
         Assert.Null(result["review-sessions"]);
@@ -58,7 +58,7 @@ public class MigrationStepTests
         }
         """)!.AsObject();
 
-        var result = Migrations.MigrateV2ToV3(root);
+        var result = AppStateMigrations.MigrateV2ToV3(root);
 
         var session = result["reviews"]!["sessions"]!["acme/api/123"]!.AsObject();
         Assert.IsType<JsonArray>(session["draft-comments"]);
@@ -80,7 +80,7 @@ public class MigrationStepTests
         }
         """)!.AsObject();
 
-        var result = Migrations.MigrateV2ToV3(root);
+        var result = AppStateMigrations.MigrateV2ToV3(root);
 
         var sessions = result["reviews"]!["sessions"]!.AsObject();
         Assert.True(sessions.ContainsKey("acme/api/123"));
@@ -100,7 +100,7 @@ public class MigrationStepTests
         }
         """)!.AsObject();
 
-        var result = Migrations.MigrateV2ToV3(root);
+        var result = AppStateMigrations.MigrateV2ToV3(root);
 
         var sessions = result["reviews"]!["sessions"]!.AsObject();
         Assert.Single(sessions);
@@ -121,7 +121,7 @@ public class MigrationStepTests
         }
         """)!.AsObject();
 
-        var result = Migrations.MigrateV2ToV3(root);
+        var result = AppStateMigrations.MigrateV2ToV3(root);
 
         var session = result["reviews"]!["sessions"]!["acme/api/123"]!.AsObject();
         Assert.IsType<JsonArray>(session["draft-comments"]);

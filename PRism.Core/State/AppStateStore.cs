@@ -13,11 +13,16 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
     // at version N-1 and returns the same root mutated to version N. Adding a step here is
     // the single place that introduces a new schema version — bumping CurrentVersion alone
     // is not enough.
+    // Steps MUST be defined in ascending ToVersion order. AppStateMigrationsOrderingTests
+    // pins this, and the runtime guard below sorts defensively in case an out-of-order
+    // entry slips past code review — a v2 file running v3→v4 before v2→v3 would silently
+    // corrupt state. Sort cost is one-time at type init; the array is tiny.
     private static readonly (int ToVersion, Func<JsonObject, JsonObject> Transform)[] MigrationSteps =
-    {
-        (2, Migrations.Migrations.MigrateV1ToV2),
-        (3, Migrations.Migrations.MigrateV2ToV3),
-    };
+        new (int ToVersion, Func<JsonObject, JsonObject> Transform)[]
+        {
+            (2, AppStateMigrations.MigrateV1ToV2),
+            (3, AppStateMigrations.MigrateV2ToV3),
+        }.OrderBy(s => s.ToVersion).ToArray();
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
 

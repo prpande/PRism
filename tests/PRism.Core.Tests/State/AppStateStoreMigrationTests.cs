@@ -63,7 +63,16 @@ public class AppStateStoreMigrationTests
 
         // v2 → v3 runs the rename + draft-collections migration; v1→v2 step is skipped.
         state.Version.Should().Be(3);
-        state.Reviews.Sessions["owner/repo/123"].ViewedFiles.Should().ContainKey("src/Foo.cs");
+        var session = state.Reviews.Sessions["owner/repo/123"];
+        session.ViewedFiles.Should().ContainKey("src/Foo.cs");
+        // Draft-collection backfill — symmetry with MigrationStepTests.MigrateV2ToV3_BackfillsDraftFieldsPerSession.
+        // Without this, a regression that wires up the rename but skips AddV3DraftCollections
+        // would only fail in the per-step unit test, not in this end-to-end Load test.
+        session.DraftComments.Should().BeEmpty();
+        session.DraftReplies.Should().BeEmpty();
+        session.DraftSummaryMarkdown.Should().BeNull();
+        session.DraftVerdict.Should().BeNull();
+        session.DraftVerdictStatus.Should().Be(DraftVerdictStatus.Draft);
         store.IsReadOnlyMode.Should().BeFalse();
     }
 
