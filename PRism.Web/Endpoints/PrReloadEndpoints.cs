@@ -84,6 +84,7 @@ internal static class PrReloadEndpoints
             // between Phase 1's read and this Phase 2 apply — return 409 with the current
             // sha so the frontend can auto-retry (S4 Task 46).
             string? currentHeadShaForRetry = null;
+            ReviewSessionState? updatedSession = null;
             await store.UpdateAsync(state =>
             {
                 if (!state.Reviews.Sessions.TryGetValue(refKey, out var current))
@@ -96,9 +97,26 @@ internal static class PrReloadEndpoints
                     return state;
                 }
 
-                var updatedDrafts = result.Drafts.Select(r =>
+                // Left-join the reconciled outcomes onto the live current.DraftComments —
+                // not a Select over result.Drafts. Two reasons (preflight Critical findings
+                // 1 + 2 against the original Select-over-result implementation):
+                //  - Concurrent PUT /draft DELETION between Phase 1 and Phase 2: the
+                //    reconciled draft id no longer exists in `current`. A `Select(r =>
+                //    current.DraftComments.First(...))` throws InvalidOperationException
+                //    inside the transform — propagates to the user as a 500.
+                //  - Concurrent PUT /draft ADDITION: the new draft is in `current` but
+                //    NOT in `result.Drafts`. A Select over result.Drafts would silently
+                //    drop the new draft when we replace `current.DraftComments` with the
+                //    reconciled subset — data loss.
+                // The left-join shape (iterate current; lookup reconciled outcome by id;
+                // apply when present, keep original when absent) handles both cases
+                // correctly: deletions fall out of the iteration naturally, additions
+                // pass through unchanged.
+                var draftOutcomesById = result.Drafts.ToDictionary(r => r.Id, r => r);
+                var updatedDrafts = current.DraftComments.Select(orig =>
                 {
-                    var orig = current.DraftComments.First(d => d.Id == r.Id);
+                    if (!draftOutcomesById.TryGetValue(orig.Id, out var r))
+                        return orig;
                     return orig with
                     {
                         FilePath = r.ResolvedFilePath ?? orig.FilePath,
@@ -109,9 +127,11 @@ internal static class PrReloadEndpoints
                     };
                 }).ToList();
 
-                var updatedReplies = result.Replies.Select(r =>
+                var replyOutcomesById = result.Replies.ToDictionary(r => r.Id, r => r);
+                var updatedReplies = current.DraftReplies.Select(orig =>
                 {
-                    var orig = current.DraftReplies.First(rp => rp.Id == r.Id);
+                    if (!replyOutcomesById.TryGetValue(orig.Id, out var r))
+                        return orig;
                     return orig with { Status = r.Status, IsOverriddenStale = r.IsOverriddenStale };
                 }).ToList();
 
@@ -126,6 +146,7 @@ internal static class PrReloadEndpoints
                     DraftVerdictStatus = newVerdictStatus,
                     LastViewedHeadSha = request.HeadSha
                 };
+                updatedSession = updated;
 
                 var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
                 {
@@ -145,10 +166,19 @@ internal static class PrReloadEndpoints
             // signal regardless of which fields changed.
             bus.Publish(new StateChanged(prRef, ReloadFieldsTouched, sourceTabId));
 
-            // Save the frontend a round-trip by returning the updated DTO directly.
-            var stateAfter = await store.LoadAsync(ct).ConfigureAwait(false);
-            var session2 = stateAfter.Reviews.Sessions[refKey];
-            return Results.Ok(PrDraftEndpoints.MapToDto(session2));
+            // Save the frontend a round-trip by returning the updated DTO directly. We
+            // captured `updatedSession` out of the transform — avoids a second LoadAsync
+            // (saves an fs round-trip + a `_gate` acquisition) and removes the latent
+            // KeyNotFoundException that the previous `stateAfter.Reviews.Sessions[refKey]`
+            // would have thrown if a future code path ever deletes a session between the
+            // transform's commit and a re-LoadAsync. Today no such path exists; the
+            // captured-session form is defensive against that future and simpler.
+            // updatedSession is null only if the transform's TryGetValue at line 89-90
+            // missed (session vanished between Phase 1 and Phase 2 — also currently
+            // unreachable but defended against).
+            return updatedSession is null
+                ? Results.NotFound(new { error = "session-not-found" })
+                : Results.Ok(PrDraftEndpoints.MapToDto(updatedSession));
         }
         finally
         {

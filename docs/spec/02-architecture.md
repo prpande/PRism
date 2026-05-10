@@ -328,7 +328,7 @@ Token storage is in the OS keychain via MSAL Extensions, NOT in the data directo
 - **`PUT /api/pr/{ref}/draft`** — body is a partial `ReviewSessionPatch` (a typed object with optional fields for each writable element):
   ```jsonc
   {
-    "draftVerdict": "approve" | "requestChanges" | "comment" | null,    // null clears
+    "draftVerdict": "approve" | "requestChanges" | "comment",           // set/replace; explicit null-clear unsupported in S4 wire — see deferrals "PR3 wire-shape gap: explicit verdict-clear has no sentinel"
     "draftSummaryMarkdown": "...",                                       // string replace
     "newDraftComment": { filePath, lineNumber, side, anchoredSha, anchoredLineContent, bodyMarkdown },     // append; backend assigns `id`
     "newPrRootDraftComment": { bodyMarkdown },                           // append PR-root (file-scope) draft; backend assigns `id`

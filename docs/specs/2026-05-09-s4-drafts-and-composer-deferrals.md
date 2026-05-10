@@ -406,6 +406,34 @@ Items the user already approved as in-scope or that were applied in commits land
 - **Why:** Plan said to add it if missing; the perf justification justifies dedicating a method instead of calling `SubscribersFor(prRef).Count > 0`.
 - **Tested by:** `ActivePrCacheTests.IsSubscribed_delegates_to_registry` exercises both the false-then-true transition (Add) and true-then-false transition (Remove).
 
+## [Defer] PR3 wire-shape gap: explicit verdict-clear has no sentinel
+
+- **Source:** PR3 preflight adversarial review (2026-05-10)
+- **Severity:** P2
+- **Date:** 2026-05-10
+- **Reason:** Spec § 4.2 / spec/02-architecture.md originally said `"draftVerdict": null clears`. The implementation's `ReviewSessionPatch` is `string? DraftVerdict` and `EnumerateSetFields` filters `p.DraftVerdict is not null` — so a JSON body of `{"draftVerdict": null}` deserializes as "field set to null", `EnumerateSetFields` returns 0 set fields (matching every other nullable patch field's "absent" semantics), and the request fails with 400 "exactly one patch field must be set" instead of dispatching to the verdict arm with the null value. The existing `null => null` arm inside `ApplyPatch.draftVerdict` is dead code by construction.
+- **Spec aligned to implementation:** spec/02-architecture.md updated to remove the `| null    // null clears` annotation. The patch shape no longer claims to support clearing the verdict.
+- **Revisit when:** Dogfooding shows users wanting to revert from "approve" / "requestChanges" / "comment" back to "no verdict yet". Two viable paths: (a) add a `bool? ClearVerdict` field to `ReviewSessionPatch` (parallel to `ConfirmVerdict`), dispatch via the new "clearVerdict" kind. (b) Switch the patch wire-shape to JsonElement-based parsing where present-but-null and absent are distinguishable, then EnumerateSetFields can detect "field present, value null" as `clearVerdict`. (a) is cheaper and matches the existing kind-discriminator pattern.
+- **Plan deviation captured:** PR3 Task 25's verdict null-clear test (`DraftVerdict_null_clear_persists_and_publishes_state_changed`) was rewritten during implementation to assert the actual behavior (400 BadRequest) rather than the spec's claimed contract — the test comment names this gap. The `null => null` arm in `ApplyPatch` survives as a defensive guard if the wire shape later evolves to deliver an explicit-null sentinel that lands in `DraftVerdict`.
+
+## [Defer] markAllRead authorization is broader than spec § 4.7 prescribes
+
+- **Source:** PR3 preflight adversarial review (2026-05-10)
+- **Severity:** P3 (PoC-acceptable per the threat model below; downgrade-to-P2 only if a multi-user / shared-token scenario opens)
+- **Date:** 2026-05-10
+- **Reason:** Spec § 4.7 / spec/02-architecture.md describes `markAllRead` security as: "the caller's session-cookie to also have an active SSE subscription registered for `{ref}`" — i.e., the same cookieSessionId that issued the PUT must own at least one of the SSE subscribers in `_activeRegistry.SubscribersFor(prRef)`. The implementation only checks `cache.IsSubscribed(prRef)` which delegates to `ActivePrSubscriberRegistry.AnySubscribers` — a global "any cookieSessionId has subscribed for this prRef" check. A second cookieSessionId could PUT markAllRead on a PR that the FIRST cookieSessionId is the only subscriber for; the security guard would pass.
+- **PoC threat-model context:** PRism is a single-user local tool. All browser tabs of one PRism launch share the same `prism-session` cookie value (per `SessionTokenProvider`'s singleton). `OriginCheckMiddleware` + `SameSite=Strict` block cross-origin POSTs entirely. So in practice the "drive-by tab" vector the spec § 4.7 guard targets is already closed by the same-origin / same-session-token enforcement upstream of this check; the broader `AnySubscribers` predicate is observationally equivalent for the PoC threat model.
+- **Revisit when:** PRism opens a multi-user mode (each browser session gets its own session-token), OR the threat model expands to consider an attacker who can already establish an SSE subscription for one PR and wants to influence `LastSeenCommentId` on a different PR for the same user.
+- **Fix when revisited:** Plumb the cookieSessionId from `SessionTokenProvider` / `HttpContext.Request.Cookies["prism-session"]` through to a new `IActivePrCache.IsSubscribedBySession(string cookieSessionId, PrReference prRef)` method or directly via `SseChannel.LatestSubscriberIdForCookieSession` + `ActivePrSubscriberRegistry.SubscribersFor(prRef)` join. The plumbing is non-trivial (cache lives in PRism.Core; SseChannel lives in PRism.Web).
+
+## [Decision] PR3 reload Phase 2 left-joins outcomes onto live session (not Select-over-result)
+
+- **Source:** PR3 preflight adversarial review (2026-05-10) — Critical findings 1 + 2.
+- **Date:** 2026-05-10
+- **Decision:** `PrReloadEndpoints.PostReload`'s Phase 2 apply was originally a `result.Drafts.Select(r => current.DraftComments.First(d => d.Id == r.Id) with { ... })` form. Two concurrency bugs collapsed it: (a) a concurrent PUT /draft DELETION between Phase 1's reconcile-snapshot read and Phase 2's transform-input read makes `r.Id` not exist in `current.DraftComments` — `.First` throws InvalidOperationException → 500 to user. (b) A concurrent PUT /draft ADDITION puts the new draft in `current.DraftComments` but NOT in `result.Drafts` — the Select-over-result form replaces `current.DraftComments` with the reconciled subset, silently dropping the new draft. Data loss.
+- **Why left-join:** Iterate `current.DraftComments` (live state under _gate); for each draft, look up the reconciled outcome by id in a `ToDictionary` view of `result.Drafts`; apply the outcome when present, keep the original entry when absent. Deletions naturally fall out of the iteration (no entry in `current` to copy); additions naturally pass through (entry in `current`, no entry in lookup → keep original).
+- **Tested by:** All existing reload tests still pass (the left-join is a strict superset of the Select-over-result behavior when there are no concurrent mutations). A targeted concurrent-mutation regression test would require injecting a precise race window between Phase 1 LoadAsync and Phase 2 UpdateAsync — doable but mechanically heavy; deferred to a follow-up if real-world reproduction surfaces.
+
 ## [Decision] PR2 iteration-3 fixes folded into PR3 via cherry-pick (not amended back into PR2)
 
 - **Source:** PR #36 iteration-3 review — Copilot inline comments [`3214576959`](https://github.com/prpande/PRism/pull/36#discussion_r3214576959) (MakeStale data-loss) and [`3214576974`](https://github.com/prpande/PRism/pull/36#discussion_r3214576974) (SplitLines trailing-newline phantom). Both surfaced after PR2 was already merged at `6ce8338`.
