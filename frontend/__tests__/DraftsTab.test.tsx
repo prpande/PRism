@@ -269,6 +269,39 @@ describe('DraftsTab', () => {
     );
   });
 
+  it('DiscardAllStale_KeepsModalOpenAndShowsError_OnPartialFailure', async () => {
+    const session = mkSession({
+      draftComments: [
+        mkComment({ id: 's1', status: 'stale' }),
+        mkComment({ id: 's2', status: 'stale' }),
+      ],
+    });
+    // First call fails, second succeeds. Modal must stay open and surface
+    // the failure count so the user is not silently misled.
+    let callCount = 0;
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          ok: false as const,
+          status: 0,
+          kind: 'network' as const,
+          body: 'fetch failed',
+        });
+      }
+      return Promise.resolve({ ok: true as const, assignedId: null });
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    renderDraftsTab({ session, status: 'ready' });
+    await userEvent.click(screen.getByRole('button', { name: /discard all stale/i }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: /^discard$/i }));
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+    // Modal still open, error message visible.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/1 draft could not be discarded/i);
+  });
+
   it('OverriddenStale_NotIncluded_InDiscardAllStale', async () => {
     const session = mkSession({
       draftComments: [

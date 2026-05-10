@@ -126,8 +126,13 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
     <div className="drafts-tab">
       <div className="drafts-tab-header row gap-2">
         <span className="drafts-tab-header-title">
-          {summary.total} draft{summary.total === 1 ? '' : 's'} on {summary.files} file
-          {summary.files === 1 ? '' : 's'}
+          {summary.total} draft{summary.total === 1 ? '' : 's'}
+          {summary.files > 0 && (
+            <>
+              {' '}
+              on {summary.files} file{summary.files === 1 ? '' : 's'}
+            </>
+          )}
         </span>
         {summary.staleCount > 0 && (
           <span className="chip chip-status-stale">{summary.staleCount} stale</span>
