@@ -1,11 +1,5 @@
 import { apiClient, ApiError } from './client';
-import type {
-  AssignedIdResponse,
-  DraftVerdict,
-  PrReference,
-  ReviewSessionDto,
-  ReviewSessionPatch,
-} from './types';
+import type { DraftVerdict, PrReference, ReviewSessionDto, ReviewSessionPatch } from './types';
 
 // Per-launch tab id used by SSE multi-tab consistency (spec § 4.5 / § 5.7).
 // `crypto.randomUUID()` is available in jsdom v22+ and every browser the PoC
@@ -105,7 +99,22 @@ export async function sendPatch(
       headers: tabIdHeader(),
     });
     if (isCreate && typeof resp === 'object' && resp !== null && 'assignedId' in resp) {
-      return { ok: true, assignedId: (resp as AssignedIdResponse).assignedId };
+      // Validate the shape: a string `assignedId` is the contract per
+      // PR3's `AssignedIdResponse`. Defending here means downstream
+      // callers (`useComposerAutoSave.handleAssignedId(id: string)`) can
+      // trust the type without runtime guards. A non-string value
+      // indicates a backend protocol violation; surface it as a failure
+      // rather than letting a numeric/null id silently propagate.
+      const candidate = (resp as { assignedId: unknown }).assignedId;
+      if (typeof candidate === 'string' && candidate.length > 0) {
+        return { ok: true, assignedId: candidate };
+      }
+      return {
+        ok: false,
+        status: 200,
+        kind: 'other',
+        body: { error: 'malformed-assigned-id', received: candidate },
+      };
     }
     return { ok: true, assignedId: null };
   } catch (e) {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useComposerAutoSave } from '../../../hooks/useComposerAutoSave';
+import { useComposerAutoSave, COMPOSER_CREATE_THRESHOLD } from '../../../hooks/useComposerAutoSave';
 import { sendPatch } from '../../../api/draft';
 import { Modal } from '../../Modal/Modal';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
@@ -110,7 +110,18 @@ export function InlineCommentComposer({
     textareaRef.current?.focus();
   }, []);
 
-  const bodyEmpty = body.trim().length === 0;
+  const trimmedLength = body.trim().length;
+  const bodyEmpty = trimmedLength === 0;
+  // Creation threshold gate (spec § 5.3): a brand-new draft (`draftId`
+  // is null) needs ≥3 chars before it can be persisted. For an existing
+  // draft, sub-threshold edits are valid updates per § 5.4.
+  const belowCreateThreshold = draftId === null && trimmedLength < COMPOSER_CREATE_THRESHOLD;
+  const saveDisabled = bodyEmpty || belowCreateThreshold;
+  const saveTooltip = bodyEmpty
+    ? 'Type something to save.'
+    : belowCreateThreshold
+      ? `Type at least ${COMPOSER_CREATE_THRESHOLD} characters to save.`
+      : undefined;
 
   const handleDiscardClick = () => {
     if (draftId === null) {
@@ -122,7 +133,24 @@ export function InlineCommentComposer({
 
   const handleDiscardConfirm = async () => {
     if (draftId !== null) {
-      await sendPatch(prRef, { kind: 'deleteDraftComment', payload: { id: draftId } });
+      let result;
+      try {
+        result = await sendPatch(prRef, {
+          kind: 'deleteDraftComment',
+          payload: { id: draftId },
+        });
+      } catch {
+        // Network / non-ApiError. Stay in the modal so the user can retry
+        // — closing on failure would optimistically appear that the draft
+        // was discarded when the server still has it.
+        return;
+      }
+      if (!result.ok) {
+        // Backend rejection (404 / 422 / 409 / 5xx). Keep the modal open
+        // so the user knows the discard didn't take effect; FilesTab's
+        // refetch-on-close path can't recover this since we didn't close.
+        return;
+      }
       onDraftIdChange(null);
     }
     setDiscardModalOpen(false);
@@ -130,7 +158,7 @@ export function InlineCommentComposer({
   };
 
   const handleSaveClick = async () => {
-    if (bodyEmpty) return;
+    if (saveDisabled) return;
     await flush();
   };
 
@@ -223,8 +251,8 @@ export function InlineCommentComposer({
         <button
           type="button"
           className="composer-save"
-          aria-disabled={bodyEmpty}
-          title={bodyEmpty ? 'Type something to save.' : undefined}
+          aria-disabled={saveDisabled}
+          title={saveTooltip}
           onClick={handleSaveClick}
         >
           Save

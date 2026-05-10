@@ -235,10 +235,24 @@ export function FilesTab() {
 
   async function handleTransitionDiscard() {
     if (composerDraftId !== null) {
-      await sendPatch(prRef, {
-        kind: 'deleteDraftComment',
-        payload: { id: composerDraftId },
-      });
+      let result;
+      try {
+        result = await sendPatch(prRef, {
+          kind: 'deleteDraftComment',
+          payload: { id: composerDraftId },
+        });
+      } catch {
+        // Network / non-ApiError. Keep the transition modal open; the
+        // user retries or hits Keep.
+        return;
+      }
+      if (!result.ok) {
+        // Backend rejection (404 / 422 / 409 / 5xx). Don't proceed —
+        // closing the modal and opening the new composer would
+        // optimistically appear that the saved draft was discarded
+        // when the server still has it.
+        return;
+      }
       // Sync local session so the deleted draft doesn't surface as
       // existing data when the new composer's hydrate-from-session path
       // (or any later render) runs.

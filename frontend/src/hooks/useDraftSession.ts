@@ -62,9 +62,13 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
 
   // Reset to loading on prRef change so a stale local session for the
   // previous PR doesn't get diffed against the new PR's server response.
+  // Clearing `error` is also load-bearing: if the prior PR's load failed,
+  // a successful load on the new PR shouldn't leave a stale error visible
+  // to consumers. Same on the success path of refetch().
   useEffect(() => {
     setSession(null);
     setStatus('loading');
+    setError(null);
     setOutOfBandToast(null);
     openComposers.current.clear();
     let cancelled = false;
@@ -74,6 +78,7 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
         if (cancelled) return;
         setSession(server);
         setStatus('ready');
+        setError(null);
       } catch (e) {
         if (cancelled) return;
         setError(e as Error);

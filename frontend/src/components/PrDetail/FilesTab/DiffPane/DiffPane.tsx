@@ -211,8 +211,11 @@ function DiffLineRow({
       filePath,
       lineNumber: commentLineNum,
       side,
-      // anchoredSha and anchoredLineContent are filled by the parent so the
-      // SHA matches the iteration head being viewed.
+      // anchoredSha is left empty here — DiffPane has no PR-detail context.
+      // FilesTab.openComposerAt fills it in (PoC simplification: always
+      // prDetail.pr.headSha; iteration-relative anchoring is deferred and
+      // only right-side clicks are enabled, so headSha is always a valid
+      // anchor for the right side).
       anchoredSha: '',
       anchoredLineContent: line.content,
     });
