@@ -306,13 +306,61 @@ describe('sendPatch — HTTP wiring', () => {
     }
   });
 
-  it('rethrows non-ApiError failures (e.g., network errors)', async () => {
+  it('maps non-ApiError failures (network / fetch / programmer) to kind: network', async () => {
+    // sendPatch never throws — non-ApiError failures land as a
+    // discriminated SendPatchResult so callers can switch on .kind
+    // without try/catch around the await. The auto-save flow's
+    // `await inFlightCreate.current` and the discard handlers all
+    // depend on this no-throw contract.
     globalThis.fetch = vi
       .fn()
       .mockImplementation(() =>
         Promise.reject(new TypeError('network')),
       ) as unknown as typeof fetch;
-    await expect(sendPatch(ref, { kind: 'confirmVerdict' })).rejects.toThrow(TypeError);
+    const result = await sendPatch(ref, { kind: 'confirmVerdict' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe('network');
+      expect(result.status).toBe(0);
+      expect(result.body).toBe('network');
+    }
+  });
+
+  it('treats create patch with missing assignedId field as malformed (kind: other)', async () => {
+    // Backend contract for create patches is { assignedId: string }.
+    // A 200 with missing key is a protocol violation — previously this
+    // silently returned { ok: true, assignedId: null } and downstream
+    // consumers received the wrong type.
+    captureFetch(jsonResponse(200, {}));
+    const result = await sendPatch(ref, {
+      kind: 'newDraftComment',
+      payload: SAMPLE_NEW_COMMENT,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe('other');
+    }
+  });
+
+  it('treats create patch with non-string assignedId as malformed', async () => {
+    captureFetch(jsonResponse(200, { assignedId: null }));
+    const result = await sendPatch(ref, {
+      kind: 'newDraftComment',
+      payload: SAMPLE_NEW_COMMENT,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe('other');
+    }
+  });
+
+  it('treats create patch with empty-string assignedId as malformed', async () => {
+    captureFetch(jsonResponse(200, { assignedId: '' }));
+    const result = await sendPatch(ref, {
+      kind: 'newDraftComment',
+      payload: SAMPLE_NEW_COMMENT,
+    });
+    expect(result.ok).toBe(false);
   });
 });
 

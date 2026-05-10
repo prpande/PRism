@@ -79,6 +79,7 @@ export type SendPatchResult =
   | { ok: false; status: 422; kind: 'invalid-body'; body: unknown }
   | { ok: false; status: 409; kind: 'conflict'; body: unknown }
   | { ok: false; status: 400; kind: 'bad-request'; body: unknown }
+  | { ok: false; status: 0; kind: 'network'; body: unknown }
   | { ok: false; status: number; kind: 'other'; body: unknown };
 
 export async function getDraft(prRef: PrReference): Promise<ReviewSessionDto> {
@@ -94,37 +95,53 @@ export async function sendPatch(
     patch.kind === 'newDraftComment' ||
     patch.kind === 'newPrRootDraftComment' ||
     patch.kind === 'newDraftReply';
+
+  let resp: unknown;
   try {
-    const resp = await apiClient.put<unknown>(`${prPath(prRef)}/draft`, body, {
+    resp = await apiClient.put<unknown>(`${prPath(prRef)}/draft`, body, {
       headers: tabIdHeader(),
     });
-    if (isCreate && typeof resp === 'object' && resp !== null && 'assignedId' in resp) {
-      // Validate the shape: a string `assignedId` is the contract per
-      // PR3's `AssignedIdResponse`. Defending here means downstream
-      // callers (`useComposerAutoSave.handleAssignedId(id: string)`) can
-      // trust the type without runtime guards. A non-string value
-      // indicates a backend protocol violation; surface it as a failure
-      // rather than letting a numeric/null id silently propagate.
-      const candidate = (resp as { assignedId: unknown }).assignedId;
-      if (typeof candidate === 'string' && candidate.length > 0) {
-        return { ok: true, assignedId: candidate };
-      }
-      return {
-        ok: false,
-        status: 200,
-        kind: 'other',
-        body: { error: 'malformed-assigned-id', received: candidate },
-      };
-    }
-    return { ok: true, assignedId: null };
   } catch (e) {
-    if (!(e instanceof ApiError)) throw e;
-    if (e.status === 404) return { ok: false, status: 404, kind: 'draft-not-found', body: e.body };
-    if (e.status === 422) return { ok: false, status: 422, kind: 'invalid-body', body: e.body };
-    if (e.status === 409) return { ok: false, status: 409, kind: 'conflict', body: e.body };
-    if (e.status === 400) return { ok: false, status: 400, kind: 'bad-request', body: e.body };
-    return { ok: false, status: e.status, kind: 'other', body: e.body };
+    if (e instanceof ApiError) {
+      if (e.status === 404)
+        return { ok: false, status: 404, kind: 'draft-not-found', body: e.body };
+      if (e.status === 422) return { ok: false, status: 422, kind: 'invalid-body', body: e.body };
+      if (e.status === 409) return { ok: false, status: 409, kind: 'conflict', body: e.body };
+      if (e.status === 400) return { ok: false, status: 400, kind: 'bad-request', body: e.body };
+      return { ok: false, status: e.status, kind: 'other', body: e.body };
+    }
+    // Non-ApiError = network / fetch / programmer error. sendPatch never
+    // throws on this path so callers never have to wrap it in try/catch
+    // (the auto-save flow's `await inFlightCreate.current` and the
+    // discard handlers all rely on this no-throw contract).
+    return {
+      ok: false,
+      status: 0,
+      kind: 'network',
+      body: e instanceof Error ? e.message : String(e),
+    };
   }
+
+  if (isCreate) {
+    // Backend contract for create patches: 200 + { assignedId: string }
+    // (PR3's AssignedIdResponse). A response missing the key OR with a
+    // non-string value violates the contract — surface as a failure
+    // rather than silently losing the assignedId, since downstream
+    // callers (useComposerAutoSave.handleAssignedId(id: string)) require
+    // a valid string.
+    const hasField = typeof resp === 'object' && resp !== null && 'assignedId' in resp;
+    const candidate = hasField ? (resp as { assignedId: unknown }).assignedId : undefined;
+    if (typeof candidate === 'string' && candidate.length > 0) {
+      return { ok: true, assignedId: candidate };
+    }
+    return {
+      ok: false,
+      status: 200,
+      kind: 'other',
+      body: { error: 'malformed-assigned-id', received: candidate },
+    };
+  }
+  return { ok: true, assignedId: null };
 }
 
 export type ReloadConflictKind = 'reload-stale-head' | 'reload-in-progress' | 'conflict';
@@ -132,6 +149,7 @@ export type ReloadConflictKind = 'reload-stale-head' | 'reload-in-progress' | 'c
 export type PostReloadResult =
   | { ok: true }
   | { ok: false; status: 409; kind: ReloadConflictKind; body: unknown }
+  | { ok: false; status: 0; kind: 'network'; body: unknown }
   | { ok: false; status: number; kind: 'other'; body: unknown };
 
 export async function postReload(prRef: PrReference, headSha: string): Promise<PostReloadResult> {
@@ -143,11 +161,21 @@ export async function postReload(prRef: PrReference, headSha: string): Promise<P
     );
     return { ok: true };
   } catch (e) {
-    if (!(e instanceof ApiError)) throw e;
-    if (e.status === 409) {
-      return { ok: false, status: 409, kind: parseReloadConflictKind(e.body), body: e.body };
+    if (e instanceof ApiError) {
+      if (e.status === 409) {
+        return { ok: false, status: 409, kind: parseReloadConflictKind(e.body), body: e.body };
+      }
+      return { ok: false, status: e.status, kind: 'other', body: e.body };
     }
-    return { ok: false, status: e.status, kind: 'other', body: e.body };
+    // Same no-throw contract as sendPatch — the reload caller in
+    // FilesTab cannot recover meaningfully from a thrown network error
+    // mid-await.
+    return {
+      ok: false,
+      status: 0,
+      kind: 'network',
+      body: e instanceof Error ? e.message : String(e),
+    };
   }
 }
 

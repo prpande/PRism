@@ -74,8 +74,21 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
     // Drain any in-flight create first. The next save needs the assigned id
     // before deciding create-vs-update; queueing here also dedupes the
     // simultaneous-debounces-during-create race.
+    //
+    // The wrapped IIFE below resolves the promise with `null` on failure
+    // (sendPatch returns a SendPatchResult; never throws), so the await
+    // here cannot throw under the current contract. The try/catch is
+    // defense-in-depth against a future refactor that reintroduces a
+    // throw path — without it, an uncaught rejection here would crash
+    // the debounced callback (no-op badge, no retry).
     if (inFlightCreate.current !== null) {
-      const id = await inFlightCreate.current;
+      let id: string | null = null;
+      try {
+        id = await inFlightCreate.current;
+      } catch {
+        // Defense-in-depth: keep id at the initial null so the
+        // post-await branch falls through to a fresh create.
+      }
       if (id !== null) {
         draftIdRef.current = id;
       }
