@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
+import { useDraftSession } from '../src/hooks/useDraftSession';
 import type { PrDetailDto, DiffDto, PrReference } from '../src/api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
@@ -64,7 +65,9 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
-  return <Outlet context={{ prDetail }} />;
+  // Mirrors PrDetailPage's hoisted ownership of the draft session in S4 PR6.
+  const draftSession = useDraftSession(ref);
+  return <Outlet context={{ prDetail, draftSession }} />;
 }
 
 function renderFilesTab(prDetail: PrDetailDto = minimalPrDetail) {

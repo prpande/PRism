@@ -1,10 +1,11 @@
 import { useMemo } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import type { PrDetailDto, PrReference } from '../../../api/types';
+import type { PrReference } from '../../../api/types';
 import { useCapabilities } from '../../../hooks/useCapabilities';
 import { usePreferences } from '../../../hooks/usePreferences';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
+import type { PrDetailOutletContext } from '../../../pages/PrDetailPage';
 import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
 import { PrDescription } from './PrDescription';
@@ -12,12 +13,8 @@ import { StatsTiles } from './StatsTiles';
 import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
 import { ReviewFilesCta } from './ReviewFilesCta';
 
-interface OverviewTabContext {
-  prDetail: PrDetailDto;
-}
-
 export function OverviewTab() {
-  const { prDetail } = useOutletContext<OverviewTabContext>();
+  const { prDetail, draftSession } = useOutletContext<PrDetailOutletContext>();
   const { capabilities } = useCapabilities();
   const { preferences } = usePreferences();
   const navigate = useNavigate();
@@ -36,6 +33,9 @@ export function OverviewTab() {
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;
+  const draftsCount =
+    (draftSession.session?.draftComments.length ?? 0) +
+    (draftSession.session?.draftReplies.length ?? 0);
 
   // hasFiles only goes false when the diff has loaded successfully AND
   // contains zero files (truly empty PR). During loading or on error,
@@ -48,17 +48,15 @@ export function OverviewTab() {
   const handleReviewFiles = () =>
     navigate(`/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/files`);
 
-  // PR5 PoC scope: OverviewTab does not own a `useDraftSession` instance —
-  // the PR-root composer always opens empty and the user finds existing
-  // PR-root drafts via the Drafts tab (PR6 wiring). On close we pass a
-  // no-op refetch; the composer's own auto-save/discard already round-trips
-  // through `sendPatch`. `registerOpenComposer` is a no-op for the same
-  // reason (no parallel session merge could clobber this composer's body).
-  // TODO(s4-pr6): hydrate `existingPrRootDraft` from
-  // `useDraftSession.session.draftComments.find(d => d.filePath === null)`
-  // once OverviewTab gains a session instance, and replace the no-op
-  // `registerOpenComposer` / `onComposerClose` with the live ones.
-  //
+  // Hydrate `existingPrRootDraft` from the shared draft session so the
+  // PR-root composer opens with the persisted body when one exists. PR-root
+  // drafts are anchor-less (filePath / lineNumber / side / anchoredSha all
+  // null) per spec § 5.6. There is at most one PR-root draft per PR.
+  const existingPrRootDraft = useMemo(
+    () => draftSession.session?.draftComments.find((d) => d.filePath === null) ?? null,
+    [draftSession.session],
+  );
+
   // `replyContext` is memoized so its reference is stable across renders.
   // PrRootConversationActions's `registerOpenComposer` useEffect
   // (and PrRootReplyComposer's mount-time effect) re-runs when its
@@ -68,11 +66,18 @@ export function OverviewTab() {
     () => ({
       prRef,
       prState: prDetail.pr.isMerged ? 'merged' : prDetail.pr.isClosed ? 'closed' : 'open',
-      existingPrRootDraft: null,
-      registerOpenComposer: () => () => undefined,
-      onComposerClose: () => undefined,
+      existingPrRootDraft,
+      registerOpenComposer: draftSession.registerOpenComposer,
+      onComposerClose: draftSession.refetch,
     }),
-    [prRef, prDetail.pr.isMerged, prDetail.pr.isClosed],
+    [
+      prRef,
+      prDetail.pr.isMerged,
+      prDetail.pr.isClosed,
+      existingPrRootDraft,
+      draftSession.registerOpenComposer,
+      draftSession.refetch,
+    ],
   );
 
   return (
@@ -81,7 +86,7 @@ export function OverviewTab() {
       <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiPreview} />
       <StatsTiles
         filesCount={filesCount}
-        draftsCount={0}
+        draftsCount={draftsCount}
         threadsCount={threadsCount}
         viewedCount={0}
       />

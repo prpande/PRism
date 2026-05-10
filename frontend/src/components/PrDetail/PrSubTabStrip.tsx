@@ -4,11 +4,15 @@ interface PrSubTabStripProps {
   activeTab: PrTabId;
   onTabChange: (tab: PrTabId) => void;
   fileCount?: number;
+  draftsCount?: number;
 }
 
-const DRAFTS_TOOLTIP = 'Drafts arrive in S4 — comment composer ships in the next slice';
-
-export function PrSubTabStrip({ activeTab, onTabChange, fileCount }: PrSubTabStripProps) {
+export function PrSubTabStrip({
+  activeTab,
+  onTabChange,
+  fileCount,
+  draftsCount,
+}: PrSubTabStripProps) {
   return (
     <div role="tablist" className="pr-tabs">
       <Tab
@@ -29,7 +33,7 @@ export function PrSubTabStrip({ activeTab, onTabChange, fileCount }: PrSubTabStr
         label="Drafts"
         active={activeTab === 'drafts'}
         onSelect={onTabChange}
-        disabled
+        count={draftsCount}
       />
     </div>
   );
@@ -52,14 +56,13 @@ function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
       aria-selected={active}
       aria-disabled={disabled || undefined}
       tabIndex={disabled ? -1 : 0}
-      title={disabled ? DRAFTS_TOOLTIP : undefined}
       className={`pr-tab ${active ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}`.trim()}
       onClick={() => {
         if (!disabled) onSelect(id);
       }}
     >
       {label}
-      {count !== undefined && <span className="pr-tab-count">{count}</span>}
+      {count !== undefined && count > 0 && <span className="pr-tab-count">{count}</span>}
     </button>
   );
 }

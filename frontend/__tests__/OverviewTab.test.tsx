@@ -3,7 +3,35 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet, useLocation } from 'react-router-dom';
 import { OverviewTab } from '../src/components/PrDetail/OverviewTab/OverviewTab';
-import type { PrDetailDto, DiffDto, PrReference } from '../src/api/types';
+import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../src/api/types';
+import type { UseDraftSessionResult } from '../src/hooks/useDraftSession';
+
+function emptySession(): ReviewSessionDto {
+  return {
+    draftVerdict: null,
+    draftVerdictStatus: 'draft',
+    draftSummaryMarkdown: null,
+    draftComments: [],
+    draftReplies: [],
+    iterationOverrides: [],
+    pendingReviewId: null,
+    pendingReviewCommitOid: null,
+    fileViewState: { viewedFiles: {} },
+  };
+}
+
+function fakeDraftSession(overrides: Partial<UseDraftSessionResult> = {}): UseDraftSessionResult {
+  return {
+    session: emptySession(),
+    status: 'ready',
+    error: null,
+    refetch: () => Promise.resolve(),
+    registerOpenComposer: () => () => undefined,
+    outOfBandToast: null,
+    clearOutOfBandToast: () => undefined,
+    ...overrides,
+  };
+}
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -77,6 +105,7 @@ interface MockOptions {
   aiPreview?: boolean;
   capabilitiesOn?: boolean;
   aiSummary?: { body: string; category: string } | null;
+  draftSession?: UseDraftSessionResult;
 }
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -138,12 +167,13 @@ function mountOverview(opts: MockOptions = {}) {
   const fetchMock = mockFetch(opts);
   vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);
   const prDetailForRoute = opts.detail ?? baseDetail;
+  const draftSession = opts.draftSession ?? fakeDraftSession();
   return render(
     <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
       <Routes>
         <Route
           path="/pr/:owner/:repo/:number"
-          element={<Outlet context={{ prDetail: prDetailForRoute }} />}
+          element={<Outlet context={{ prDetail: prDetailForRoute, draftSession }} />}
         >
           <Route index element={<OverviewTab />} />
           <Route path="files/*" element={<div data-testid="files-content">FILES</div>} />
@@ -253,7 +283,9 @@ describe('OverviewTab', () => {
         <Routes>
           <Route
             path="/pr/:owner/:repo/:number"
-            element={<Outlet context={{ prDetail: baseDetail }} />}
+            element={
+              <Outlet context={{ prDetail: baseDetail, draftSession: fakeDraftSession() }} />
+            }
           >
             <Route index element={<OverviewTab />} />
           </Route>
@@ -302,7 +334,9 @@ describe('OverviewTab', () => {
         <Routes>
           <Route
             path="/pr/:owner/:repo/:number"
-            element={<Outlet context={{ prDetail: baseDetail }} />}
+            element={
+              <Outlet context={{ prDetail: baseDetail, draftSession: fakeDraftSession() }} />
+            }
           >
             <Route index element={<OverviewTab />} />
           </Route>

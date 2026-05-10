@@ -1,13 +1,11 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
-import type { PrDetailDto, PrReference } from '../../../api/types';
+import type { PrReference } from '../../../api/types';
 import { postFileViewed } from '../../../api/fileViewed';
 import { sendPatch } from '../../../api/draft';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
-import { useDraftSession } from '../../../hooks/useDraftSession';
-import { useStateChangedSubscriber } from '../../../hooks/useStateChangedSubscriber';
 import { FileTree } from './FileTree';
 import { DiffPane } from './DiffPane';
 import type { DiffMode } from './DiffPane';
@@ -18,10 +16,7 @@ import { buildTree, flattenPaths } from './treeBuilder';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { Modal } from '../../Modal/Modal';
-
-interface FilesTabContext {
-  prDetail: PrDetailDto;
-}
+import type { PrDetailOutletContext } from '../../../pages/PrDetailPage';
 
 function useViewportWidth() {
   const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
@@ -36,7 +31,7 @@ function useViewportWidth() {
 }
 
 export function FilesTab() {
-  const { prDetail } = useOutletContext<FilesTabContext>();
+  const { prDetail, draftSession } = useOutletContext<PrDetailOutletContext>();
   const {
     owner,
     repo,
@@ -164,17 +159,10 @@ export function FilesTab() {
     onToggleDiffMode: handleToggleDiffMode,
   });
 
-  // S4 — drafts session for the active PR. Powers the InlineCommentComposer
-  // (initial body / draftId hydration) plus the A2 transition modal flow.
-  const draftSession = useDraftSession(prRef);
-
-  // The state-changed subscriber refetches drafts when other tabs (or the
-  // reload pipeline) mutate them. Own-tab events are filtered out by the
-  // subscriber (spec § 5.7).
-  useStateChangedSubscriber({
-    prRef,
-    onSessionChange: draftSession.refetch,
-  });
+  // S4 — drafts session is owned by PrDetailPage and threaded through the
+  // Outlet context (single source of truth for tab strip count, sticky-top
+  // UnresolvedPanel, and per-tab consumers). Files tab pulls it through
+  // `useOutletContext` rather than re-instantiating its own hook.
 
   // Active inline composer state. activeAnchor + composerDraftId together
   // describe "the composer the user is currently in". pendingNewAnchor is

@@ -26,17 +26,11 @@ describe('PrSubTabStrip', () => {
     expect(screen.getByRole('tab', { name: /drafts/i })).toHaveAttribute('aria-selected', 'false');
   });
 
-  it('Drafts tab is aria-disabled with tabIndex=-1 (skipped from Tab cycle)', () => {
+  it('Drafts tab is enabled in S4 PR6 — no aria-disabled, full tab cycle', () => {
     render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} />);
     const drafts = screen.getByRole('tab', { name: /drafts/i });
-    expect(drafts).toHaveAttribute('aria-disabled', 'true');
-    expect(drafts).toHaveAttribute('tabindex', '-1');
-  });
-
-  it('Drafts tab carries a tooltip explaining the disabled state', () => {
-    render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} />);
-    const drafts = screen.getByRole('tab', { name: /drafts/i });
-    expect(drafts).toHaveAttribute('title', expect.stringMatching(/Drafts arrive in S4/i));
+    expect(drafts).not.toHaveAttribute('aria-disabled');
+    expect(drafts).toHaveAttribute('tabindex', '0');
   });
 
   it('clicking Files calls onTabChange("files")', async () => {
@@ -46,16 +40,28 @@ describe('PrSubTabStrip', () => {
     expect(onTabChange).toHaveBeenCalledWith('files');
   });
 
-  it('clicking Drafts does NOT call onTabChange', async () => {
+  it('clicking Drafts calls onTabChange("drafts") in S4 PR6', async () => {
     const onTabChange = vi.fn();
     render(<PrSubTabStrip activeTab="overview" onTabChange={onTabChange} />);
     await userEvent.click(screen.getByRole('tab', { name: /drafts/i }));
-    expect(onTabChange).not.toHaveBeenCalled();
+    expect(onTabChange).toHaveBeenCalledWith('drafts');
   });
 
   it('renders file count next to Files tab when provided', () => {
     render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} fileCount={12} />);
     const files = screen.getByRole('tab', { name: /files/i });
     expect(files.textContent).toMatch(/12/);
+  });
+
+  it('renders draft count next to Drafts tab when > 0', () => {
+    render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} draftsCount={3} />);
+    const drafts = screen.getByRole('tab', { name: /drafts/i });
+    expect(drafts.textContent).toMatch(/3/);
+  });
+
+  it('does NOT render a "0" count next to Drafts tab when draftsCount is 0', () => {
+    render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} draftsCount={0} />);
+    const drafts = screen.getByRole('tab', { name: /drafts/i });
+    expect(drafts.querySelector('.pr-tab-count')).toBeNull();
   });
 });
