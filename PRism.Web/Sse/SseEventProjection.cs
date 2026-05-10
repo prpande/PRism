@@ -7,6 +7,13 @@ namespace PRism.Web.Sse;
 // Only the three new event types added in S4 PR3 use string-shaped prRef per spec § 4.5;
 // existing pr-updated / inbox-updated continue to serialize the event record directly so
 // their wire contract is unchanged.
+//
+// Intentionally NOT in the switch: `DraftSubmitted` is declared in PRism.Core/Events for
+// forward-compat with S5 but has no producer in S4 (no submit endpoint yet), and
+// `SseChannel` does not subscribe to it. When S5 wires the submit path, add the
+// `DraftSubmitted -> ("draft-submitted", new DraftSubmittedWire(...))` arm here in lockstep
+// with the SseChannel subscription so the default-arm `ArgumentOutOfRangeException` doesn't
+// fire at runtime.
 internal static class SseEventProjection
 {
     internal sealed record StateChangedWire(string PrRef, IReadOnlyList<string> FieldsTouched, string? SourceTabId);

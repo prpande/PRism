@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -66,7 +67,7 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     }
 
     [Fact]
-    public async Task Reload_double_click_one_returns_409_reload_in_progress()
+    public async Task Reload_concurrent_requests_at_most_one_returns_409()
     {
         var client = ClientWithTab();
         await SeedSessionAsync(client, "acme/api/1002");
@@ -126,6 +127,27 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         var body = await ReadApiJsonAsync<PrReloadEndpoints.ReloadStaleHeadResponse>(resp);
         body.Should().NotBeNull();
         body!.CurrentHeadSha.Should().Be(cachedSha);
+    }
+
+    [Fact]
+    public async Task Reload_with_null_headSha_returns_400_not_500()
+    {
+        // System.Text.Json deserializes `{"headSha": null}` into ReloadRequest.HeadSha = null
+        // despite the non-nullable record declaration. The pre-fix code called Sha40.IsMatch
+        // on null, which throws ArgumentNullException → 500. Now: 400 at the boundary.
+        var client = ClientWithTab();
+        var raw = new StringContent("{\"headSha\":null}", Encoding.UTF8, "application/json");
+        var resp = await client.PostAsync(new Uri("/api/pr/acme/api/1006/reload", UriKind.Relative), raw);
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task Reload_with_missing_headSha_returns_400_not_500()
+    {
+        var client = ClientWithTab();
+        var raw = new StringContent("{}", Encoding.UTF8, "application/json");
+        var resp = await client.PostAsync(new Uri("/api/pr/acme/api/1007/reload", UriKind.Relative), raw);
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     private sealed class FakeCacheWithSnapshot : IActivePrCache

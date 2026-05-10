@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -169,22 +170,22 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
     }
 
     [Fact]
-    public async Task DraftVerdict_null_clear_persists_and_publishes_state_changed()
+    public async Task Patch_with_no_fields_set_returns_400()
     {
         var client = ClientWithTab();
-        // First set a verdict
+        // First set a verdict so a session exists.
         await client.PutAsJsonAsync("/api/pr/acme/api/321/draft", SinglePatch(draftVerdict: "approve"));
 
-        // Then clear it (DraftVerdict = null is the explicit-clear case the buggy Step 3
-        // sketch missed; Step 3a's kind-discriminator dispatch handles it correctly).
-        var clear = new ReviewSessionPatch(
+        // All-null patch — 12 nulls means 0 set fields per EnumerateSetFields. The
+        // single-field constraint in PutDraft rejects this with 400. Note: we can't
+        // legitimately clear a verdict via JSON null without distinguishing "field
+        // absent" from "field null" on the wire — see deferrals "PR3 wire-shape gap:
+        // explicit verdict-clear has no sentinel". This test pins the dispatch
+        // boundary, not a clear semantic.
+        var allNull = new ReviewSessionPatch(
             DraftVerdict: null, DraftSummaryMarkdown: null,
             null, null, null, null, null, null, null, null, null, null);
-        // Multi-field empty would be 12 nulls = 0 set fields → 400. We can't legitimately
-        // clear a verdict via JSON null without also distinguishing "field absent" from
-        // "field null". Until the wire shape supports that, this test asserts the kind
-        // dispatch correctly rejects no-fields-set with 400 (covering the boundary).
-        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/321/draft", clear);
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/321/draft", allNull);
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -256,6 +257,75 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         // markAllRead with the same id should remain OK with no further state churn.
         var resp2 = await client.PutAsJsonAsync("/api/pr/acme/api/333/draft", SinglePatch(markAllRead: true));
         resp2.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    // Regression: validation must return 400 instead of throwing → 500 when System.Text.Json
+    // deserializes explicit JSON `null` into non-nullable record-string properties. Each
+    // ValidatePatch null-guard added in the PR-followup pass is pinned by one of the tests
+    // below — sending a typed object with nullable C# props would not exercise these paths,
+    // so raw JSON via StringContent is required.
+
+    private static StringContent JsonContent(string raw) =>
+        new(raw, Encoding.UTF8, "application/json");
+
+    [Fact]
+    public async Task PutDraft_unknown_verdict_returns_400_not_500()
+    {
+        var client = ClientWithTab();
+        // "request-changes" (kebab-case) is a common client-side typo. Wire shape is
+        // camelCase "requestChanges". The pre-fix code threw ArgumentException inside
+        // ApplyPatch's switch default → 500. ValidatePatch now rejects unknown values at
+        // the boundary with 400.
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/901/draft", SinglePatch(draftVerdict: "request-changes"));
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task PutDraft_null_bodyMarkdown_in_newDraftComment_returns_400_not_500()
+    {
+        var client = ClientWithTab();
+        var raw = "{\"newDraftComment\":{\"filePath\":\"src/Foo.cs\",\"lineNumber\":42,\"side\":\"right\",\"anchoredSha\":\""
+            + new string('a', 40) + "\",\"anchoredLineContent\":\"line\",\"bodyMarkdown\":null}}";
+        var resp = await client.PutAsync(new Uri("/api/pr/acme/api/902/draft", UriKind.Relative), JsonContent(raw));
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task PutDraft_null_anchoredSha_in_newDraftComment_returns_400_not_500()
+    {
+        var client = ClientWithTab();
+        var raw = "{\"newDraftComment\":{\"filePath\":\"src/Foo.cs\",\"lineNumber\":42,\"side\":\"right\",\"anchoredSha\":null,\"anchoredLineContent\":\"line\",\"bodyMarkdown\":\"hi\"}}";
+        var resp = await client.PutAsync(new Uri("/api/pr/acme/api/903/draft", UriKind.Relative), JsonContent(raw));
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task PutDraft_null_parentThreadId_in_newDraftReply_returns_400_not_500()
+    {
+        var client = ClientWithTab();
+        var raw = "{\"newDraftReply\":{\"parentThreadId\":null,\"bodyMarkdown\":\"reply\"}}";
+        var resp = await client.PutAsync(new Uri("/api/pr/acme/api/904/draft", UriKind.Relative), JsonContent(raw));
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task PutDraft_null_bodyMarkdown_in_updateDraftComment_returns_400_not_500()
+    {
+        var client = ClientWithTab();
+        // updateDraftComment was missing both null AND empty validation pre-fix; STJ's
+        // null-into-non-nullable behavior would NRE on .Length → 500.
+        var raw = "{\"updateDraftComment\":{\"id\":\"some-id\",\"bodyMarkdown\":null}}";
+        var resp = await client.PutAsync(new Uri("/api/pr/acme/api/905/draft", UriKind.Relative), JsonContent(raw));
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task PutDraft_empty_bodyMarkdown_in_updateDraftReply_returns_400()
+    {
+        var client = ClientWithTab();
+        var patch = SinglePatch(updateReply: new UpdateDraftPayload(Id: "some-id", BodyMarkdown: "   "));
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/906/draft", patch);
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     private sealed class FakeCache : IActivePrCache

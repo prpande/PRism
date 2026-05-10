@@ -273,8 +273,13 @@ internal static class PrDraftEndpoints
 
             case "markAllRead":
                 {
-                    // SECURITY: closes the drive-by-tab vector per spec § 4.7. Only an SSE
-                    // subscriber for this PR can mark-all-read on it.
+                    // SECURITY (PoC scope): `IsSubscribed` checks whether ANY tab is currently
+                    // subscribed to this PR (registry presence), not whether the caller's
+                    // session owns a subscription. This closes the drive-by-tab vector via the
+                    // outer OriginCheckMiddleware + SameSite=Strict + session token + the
+                    // single-user PoC threat model — see deferrals "PR3: markAllRead authorization
+                    // broader than spec § 4.7". A future per-session check tightens this when
+                    // multi-user lands.
                     if (!cache.IsSubscribed(prRef))
                         return new PatchOutcome.NotSubscribed();
                     var snap = cache.GetCurrent(prRef);
@@ -339,12 +344,19 @@ internal static class PrDraftEndpoints
 
     private static IResult? ValidatePatch(ReviewSessionPatch patch)
     {
+        // System.Text.Json can deserialize an explicit JSON `null` into non-nullable
+        // record-string properties despite the C# nullability declaration (no runtime
+        // enforcement on JsonNamingPolicy paths). Every required string is null-checked
+        // BEFORE any `.Length` / regex call so a malformed payload returns 400 instead
+        // of throwing NullReferenceException → 500.
         if (patch.NewDraftComment is { } ndc)
         {
-            if (ndc.BodyMarkdown.Length > BodyMarkdownMaxChars)
-                return Results.UnprocessableEntity(new { error = "body-too-large" });
             if (string.IsNullOrWhiteSpace(ndc.BodyMarkdown))
                 return Results.BadRequest(new { error = "body-empty" });
+            if (ndc.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                return Results.UnprocessableEntity(new { error = "body-too-large" });
+            if (string.IsNullOrEmpty(ndc.AnchoredSha))
+                return Results.BadRequest(new { error = "anchored-sha-missing" });
             if (!Sha40.IsMatch(ndc.AnchoredSha) && !Sha64.IsMatch(ndc.AnchoredSha))
                 return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
             if (!IsCanonicalFilePath(ndc.FilePath))
@@ -352,26 +364,49 @@ internal static class PrDraftEndpoints
         }
         if (patch.NewPrRootDraftComment is { } nprdc)
         {
-            if (nprdc.BodyMarkdown.Length > BodyMarkdownMaxChars)
-                return Results.UnprocessableEntity(new { error = "body-too-large" });
             if (string.IsNullOrWhiteSpace(nprdc.BodyMarkdown))
                 return Results.BadRequest(new { error = "body-empty" });
+            if (nprdc.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                return Results.UnprocessableEntity(new { error = "body-too-large" });
         }
         if (patch.NewDraftReply is { } ndr)
         {
-            if (ndr.BodyMarkdown.Length > BodyMarkdownMaxChars)
-                return Results.UnprocessableEntity(new { error = "body-too-large" });
             if (string.IsNullOrWhiteSpace(ndr.BodyMarkdown))
                 return Results.BadRequest(new { error = "body-empty" });
+            if (ndr.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                return Results.UnprocessableEntity(new { error = "body-too-large" });
+            if (string.IsNullOrEmpty(ndr.ParentThreadId))
+                return Results.BadRequest(new { error = "parent-thread-id-missing" });
             if (!ParentThreadId.IsMatch(ndr.ParentThreadId))
                 return Results.UnprocessableEntity(new { error = "thread-id-format-invalid" });
         }
-        if (patch.UpdateDraftComment is { } udc && udc.BodyMarkdown.Length > BodyMarkdownMaxChars)
-            return Results.UnprocessableEntity(new { error = "body-too-large" });
-        if (patch.UpdateDraftReply is { } udr && udr.BodyMarkdown.Length > BodyMarkdownMaxChars)
-            return Results.UnprocessableEntity(new { error = "body-too-large" });
+        if (patch.UpdateDraftComment is { } udc)
+        {
+            if (string.IsNullOrWhiteSpace(udc.BodyMarkdown))
+                return Results.BadRequest(new { error = "body-empty" });
+            if (udc.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                return Results.UnprocessableEntity(new { error = "body-too-large" });
+        }
+        if (patch.UpdateDraftReply is { } udr)
+        {
+            if (string.IsNullOrWhiteSpace(udr.BodyMarkdown))
+                return Results.BadRequest(new { error = "body-empty" });
+            if (udr.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                return Results.UnprocessableEntity(new { error = "body-too-large" });
+        }
         if (patch.DraftSummaryMarkdown is { } summary && summary.Length > BodyMarkdownMaxChars)
             return Results.UnprocessableEntity(new { error = "body-too-large" });
+
+        // Validate draftVerdict at the boundary so an unknown value (e.g., "request-changes"
+        // kebab-typo) returns 400 instead of escaping ApplyPatch's switch default as
+        // ArgumentException → 500. EnumerateSetFields filters nulls upstream, so reaching
+        // this branch with a non-null value means the client expressed intent to set it.
+        if (patch.DraftVerdict is { } verdict
+            && verdict is not "approve" and not "requestChanges" and not "comment")
+        {
+            return Results.BadRequest(new { error = "verdict-invalid" });
+        }
+
         return null;
     }
 

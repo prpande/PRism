@@ -53,8 +53,13 @@ internal static class PrReloadEndpoints
         var refKey = prRef.ToString();
         var sourceTabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
 
-        // SECURITY: validate headSha format before touching state — mirrors
-        // PrDraftEndpoints.NewDraftComment AnchoredSha validation per spec § 4.2.
+        // SECURITY: validate headSha presence + format before touching state. The null
+        // guard runs first because System.Text.Json can deserialize `{}` or
+        // `{"headSha": null}` into a `ReloadRequest` with `HeadSha = null` despite the
+        // non-nullable record declaration; `Regex.IsMatch(null)` would throw
+        // ArgumentNullException → 500 instead of returning 400.
+        if (string.IsNullOrEmpty(request.HeadSha))
+            return Results.BadRequest(new { error = "head-sha-missing" });
         if (!Sha40.IsMatch(request.HeadSha) && !Sha64.IsMatch(request.HeadSha))
             return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
 
@@ -160,12 +165,6 @@ internal static class PrReloadEndpoints
                     new ReloadStaleHeadResponse(currentHeadShaForRetry),
                     statusCode: StatusCodes.Status409Conflict);
 
-            // Publish StateChanged outside _gate per spec § 4.4. Reload always touches
-            // the three reconciled fields even when the result is a no-op (e.g., session
-            // had zero drafts) — the frontend treats StateChanged as a "trigger refetch"
-            // signal regardless of which fields changed.
-            bus.Publish(new StateChanged(prRef, ReloadFieldsTouched, sourceTabId));
-
             // Save the frontend a round-trip by returning the updated DTO directly. We
             // captured `updatedSession` out of the transform — avoids a second LoadAsync
             // (saves an fs round-trip + a `_gate` acquisition) and removes the latent
@@ -176,9 +175,17 @@ internal static class PrReloadEndpoints
             // updatedSession is null only if the transform's TryGetValue at line 89-90
             // missed (session vanished between Phase 1 and Phase 2 — also currently
             // unreachable but defended against).
-            return updatedSession is null
-                ? Results.NotFound(new { error = "session-not-found" })
-                : Results.Ok(PrDraftEndpoints.MapToDto(updatedSession));
+            if (updatedSession is null)
+                return Results.NotFound(new { error = "session-not-found" });
+
+            // Publish StateChanged outside _gate per spec § 4.4. Gated on
+            // `updatedSession is not null` so the 404 path emits no event — matches
+            // the "don't publish on error/no-op" policy in PrDraftEndpoints.PutDraft.
+            // Reload always touches the three reconciled fields even when the result is
+            // a no-op (e.g., session had zero drafts) — the frontend treats StateChanged
+            // as a "trigger refetch" signal regardless of which fields changed.
+            bus.Publish(new StateChanged(prRef, ReloadFieldsTouched, sourceTabId));
+            return Results.Ok(PrDraftEndpoints.MapToDto(updatedSession));
         }
         finally
         {
