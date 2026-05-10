@@ -1,6 +1,6 @@
-namespace PRism.Core.Reconciliation.Pipeline.Steps;
-
 using PRism.Core.State;
+
+namespace PRism.Core.Reconciliation.Pipeline.Steps;
 
 internal static class ForcePushFallback
 {
