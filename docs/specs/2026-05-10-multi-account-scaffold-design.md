@@ -1,73 +1,76 @@
-# Multi-account scaffold (v1) + multi-account v2 spec sketch
+# Multi-account storage-shape scaffold (v1) + multi-account v2 spec sketch
 
 **Slice**: S6 PR0 — lands ahead of the Settings page work in S6.
 **Date**: 2026-05-10.
 **Status**: Design — pending user review and implementation plan.
 **Branch**: `spec/multi-account-scaffold` (worktree at `D:\src\PRism\.claude\worktrees\spec+multi-account-scaffold`).
-**Source authorities**: [`docs/spec/02-architecture.md`](../spec/02-architecture.md) is the PoC architecture; this slice introduces a *deliberate amendment* to its "one host per launch" constraint via scaffolding now and runtime support in v2. [`docs/roadmap.md`](../roadmap.md) S6 row gains S6 PR0 as a new prefix.
+**Source authorities**: [`docs/spec/02-architecture.md`](../spec/02-architecture.md) is the PoC architecture; this slice introduces a *deliberate amendment* to its "one host per launch" constraint via storage-shape scaffolding now and runtime support in v2. [`docs/roadmap.md`](../roadmap.md) S6 row gains S6 PR0 as a new prefix.
+**Review history**: ce-doc-review surfaced significant scope concerns; § 8.1 was reshaped to adopt the **storage-only scaffold** alternative the initial draft missed. The full-scaffold and no-scaffold options are documented there for completeness.
 
 ---
 
 ## 1. Goal
 
-Land the multi-account *shape* — schema, interfaces, wire dimension, migrations — in v1 PoC, with all surfaces hardcoded to a single `"default"` account. v2 adds the user-facing model (account add/remove, unified inbox, switcher, etc.) with zero schema or interface refactor.
+Reshape the *on-disk* and *config* surfaces — `state.json`, `config.json`, the token cache — to a multi-account-friendly shape in v1, with all in-memory interfaces and wire payloads unchanged. v2 brainstorms the user-facing model and runtime semantics; when v2 ships, the irreversible bit (data on disk for existing users) is already friendly. Reversible bits (interface signatures, middleware, wire headers) are explicitly out of scope and get designed against the ratified v2 model.
 
-This mirrors the AI-seam pattern the spec already uses: ship architecture in S0+S1 with `Noop*` defaults, swap to real impls in v2 without reshaping anything.
+This is the *narrowest* AI-seam-analogous move: AI seams shipped interface contracts in S0+S1 because the v2 implementer had already specified them; multi-account doesn't have that benefit yet, so we ship only the part that's irreversible-if-deferred (storage shape) and defer the part that benefits from v2 design input (interfaces, runtime).
 
-End-to-end demo at slice completion: nothing visible to the user changes. PRism still ships single-account; the keychain still holds one PAT; the inbox still queries `@me` against one host. But internally, every persistence boundary, every API call, and every SSE event carries an `accountKey` dimension that v2 can populate without rewriting plumbing.
+End-to-end demo at slice completion: nothing visible to the user changes. PRism still ships single-account; the keychain still holds one PAT in a JSON-map blob with one entry; the inbox still queries `@me` against one host. Internally, `AppState` exposes `Accounts["default"]` while preserving the existing `Reviews` / `AiState` / `LastConfiguredGithubHost` accessors via delegate properties, so all callers compile and run unchanged.
 
-The bet: v2 ships multi-account. If it doesn't, the scaffold is dead weight. Section 8 quantifies the bet.
+The bet: v2 ships multi-account *and* the storage shape this slice picks turns out to fit it. If v2 abandons multi-account, the storage shape is dead weight (small, easily reverted via V4→V5). If v2 ships multi-account but with a different storage shape (e.g., active-account record rather than dictionary, or accountKey embedded in `PrReference`), this slice helps less than zero — section 8 quantifies.
 
 ## 2. Scope
 
 ### In scope (v1, lands in S6 PR0)
 
-- **State schema migration V3 → V4**: `AppState.{Reviews, AiState, LastConfiguredGithubHost}` move under `AppState.Accounts[accountKey].{Reviews, AiState, LastConfiguredGithubHost}`. UI preferences stay top-level (cross-account).
-- **Config schema rewrite**: `github.host: string` → `github.accounts: [{ id, host, login? }]`. Idempotent at load time. v1 reads `accounts[0]`.
-- **Token store reshape**: `PRism.tokens.cache` continues to be one MSAL-wrapped file, but its serialized contents change from a single-string blob to a JSON map keyed by accountKey. Token migration on first load.
-- **`ITokenStore` interface**: every method gains an `accountKey` parameter. v1 callsites pass `"default"`.
-- **`IReviewService` interface**: every method gains `accountKey` as the first parameter. `GitHubReviewService` resolves the per-account `HttpClient` via named factory (`$"github-{accountKey}"`).
-- **`IAppStateStore` interface**: per-account accessors (`GetReviews(accountKey)`, `SetReviews(accountKey, …)`, etc.). The store internally indexes into `Accounts[accountKey]`.
-- **`HostUrlResolver`**: takes an `accountKey` parameter and resolves against `config.github.accounts[…where id==accountKey].host`.
-- **Wire dimension**: `X-PRism-Account-Key` header on every state-mutating request and every SSE subscription.
-- **Middleware**: `AccountKeyMiddleware` validates the header; missing → defaults to `"default"` (v1 backwards-compat); unknown → 400 Bad Request.
-- **SSE**: every event payload gains an `accountKey` field. v1 always emits `"default"`.
-- **Frontend `apiClient`**: injects `X-PRism-Account-Key: 'default'` on every request.
-- **Frontend `useStateChangedSubscriber`** (and any other SSE consumer added by the time S6 PR0 lands): accepts an optional `accountKey` parameter defaulting to `"default"`; filters incoming events by it.
-- **`PrReference` stays unchanged**: `(owner, repo, number)`. `accountKey` is a sibling parameter on every backend call and request, never embedded in the ref.
-- **Banned-API analyzer rule**: any new method overload on `ITokenStore` / `IReviewService` / `IAppStateStore` that omits `accountKey` fails the build.
-- **State-event-log convention**: every `StateEvent.Fields` dict MUST include `"accountKey"`. S6 PR0 ships an emit-site test that fails the build if any caller of `IStateEventLog.AppendAsync` omits it. No amendment to the eventual real `IStateEventLog` impl PR.
-- **Identity-change rules** for `state.json`: stay at the per-account level. Each `AccountState.LastConfiguredGithubHost` is compared against the same account's `config.github.accounts[…].host`. The host-change-between-launches modal becomes per-account in shape but only fires for the single `"default"` account in v1.
+1. **State schema migration V3 → V4**: `AppState.{Reviews, AiState, LastConfiguredGithubHost}` move under `AppState.Accounts[accountKey].{Reviews, AiState, LastConfiguredGithubHost}`. UI preferences stay top-level (cross-account).
+2. **`AppState` C# record** gains delegate properties for backwards compat: `state.Reviews` returns `state.Accounts["default"].Reviews`, etc. Callers compile and run unchanged. The delegate properties are marked with a comment indicating they will be removed in v2 alongside the multi-account runtime.
+3. **Config schema rewrite**: `github.host: string` → `github.accounts: [{ id, host, login?, localWorkspace? }]`. `LocalWorkspace` (currently a sibling of `Host` on `GithubConfig`) moves under each account because clone access is PAT-scoped — same repo cloned for two PATs may have different access paths in v2. v1 has one entry. `AppConfig.Github.Host` becomes a delegate property reading `Accounts[0].Host`.
+4. **Token cache reshape with version field**: `PRism.tokens.cache` continues to be one MSAL-wrapped file. Its serialized contents change from `"<pat>"` to `{"version": 1, "tokens": {"default": "<pat>"}}`. The `version` field exists so v1 binaries running against a future-version cache fail loudly rather than silently downgrading.
+5. **Token migration on first load**: legacy single-string blob → versioned JSON-map with one `"default"` key. Idempotent. Unparseable cache (or future-version cache) surfaces as "re-validate at Setup" without overwriting.
+6. **`AccountKey` as a string constant**, not a typed record-struct. Single source of truth: `public const string DefaultAccountKey = "default";` in `PRism.Core.State`. v1 always uses this constant; v2 introduces UUID generation alongside it.
+7. **First-launch initialization**: `ConfigStore` seeds `accounts: [{id: "default", host: null, login: null, localWorkspace: null}]` on first launch when no config exists. Setup populates `host` on commit.
+8. **`"default"` key as a permanent fixture in v2**: the spec commits that v1-upgraded users keep `accountKey == "default"` indefinitely. v2's `accountKey` validator MUST accept arbitrary opaque strings, not just UUIDs. Future code that assumes UUID shape (display logic, log redaction) carries this constraint.
 
-### Deferred to v2 (spec covers design intent, no code in v1)
+### Explicitly NOT in scope (deferred to v2 brainstorm)
 
-- **Account add/remove UX**: how does the user register a second PAT? Setup screen redesign, account-list management surface, per-account validation flow.
-- **Active account concept**: does the inbox show all accounts merged (recommended; see § 7) or one active account at a time?
-- **Unified inbox renderer**: account badges on PR rows, parallel polling per account, rate-limit budgeting across accounts, cross-account dedup rules for the same PR appearing in two accounts.
-- **URL-paste account routing**: when the user pastes a PR URL and multiple accounts could serve it (same host, two PATs), how is disambiguation done?
-- **Settings page account-management surface**: list, add, remove, re-validate per-account PATs.
-- **Active-PR poller per-account isolation**: parallel polling cycles, per-account backoff, rate-limit budgets.
-- **SSE per-PR REST subscribe/unsubscribe per-account**: the channel keying expansion.
-- **Per-account login-change rules**: when an account's `viewer.login` changes (rename), what carries forward and what clears.
-- **Cross-account operations** (intentional non-feature): drafts on PR-A in Account-1 cannot move to Account-2's submission. Each account's drafts submit via that account's PAT.
+The following were in an earlier draft of this spec; ce-doc-review's storage-only-alternative finding moved them out:
 
-### Explicit non-goal for v1
+- `ITokenStore`, `IReviewService`, `IAppStateStore` interface signatures (no `accountKey` parameter in v1)
+- `AccountKeyMiddleware` and the `X-PRism-Account-Key` header
+- SSE `accountKey` payload field
+- Frontend `apiClient` header injection
+- State-event-log emit-site convention enforcement
+- Banned-API analyzer rules / Roslyn-emit-site tests for accountKey threading
+- Per-account named `HttpClient` registration
+- URL-paste account routing logic
 
-A hidden multi-account code path that's "almost working." The scaffold is `"default"`-only and rigorously single-account. No half-states. No second-account in tests. The `"default"` constant is not a feature flag.
+These all benefit from the v2 brainstorm having ratified the user-facing model first. Shipping them now bakes guesses about runtime semantics (unified inbox vs switcher, per-account vs global rate-limit budgets, account-on-PrReference vs sibling parameter) into v1 with no exit ramp other than another reshape.
+
+### Deferred to v2 (runtime + UX, no v1 commitment)
+
+- Account add/remove UX (Setup screen redesign, account-list management surface, per-account validation flow)
+- Active-account vs unified-inbox decision
+- Inbox aggregation (parallel polling, rate-limit budgeting, dedup of same PR across accounts)
+- URL-paste account routing including the **non-negotiable rule**: if multiple accounts could serve a pasted URL, prompt the user — never silent fallback (auth-blast-radius bug class). This rule is captured here so the v2 brainstorm inherits it.
+- Per-account active-PR poller, SSE channel keying, host-change-modal scoping
+- Cross-account operations (intentional non-feature: drafts submit via the account that authored them; no cross-account moves)
+- Identity-change rules per-account (login rename, host rebrand)
+
+### Explicit non-goals for v1
+
+- Hidden multi-account code path. The scaffold is `"default"`-only and rigorously single-account. No half-states.
+- Interface or wire shape commitments. v2 picks those.
 
 ## 3. AccountKey identity
 
-Opaque string. Recommendation:
+Bare string. Single constant: `public const string DefaultAccountKey = "default";` in `PRism.Core.State`. v1 callers reference the constant.
 
-- v1: hardcoded `"default"`.
-- v2: UUID generated at account-add time (`Guid.NewGuid().ToString("N")`).
+v2 introduces UUID generation at account-add time (`Guid.NewGuid().ToString("N")`) but MUST treat `accountKey` as an opaque string — not a UUID — because the legacy `"default"` key persists for v1-upgraded users.
 
-**Why opaque, not derived from `host` or `login`:**
-- A user can rename their GitHub login (rare but real). Display strings change; identity should not.
-- Same for host changes within an account (e.g., GHES instance rebrand).
-- Display strings (`pratyush@github.com`) are derived metadata, not the key.
+**Display name** (v2 concern): `${login}@${host}` derived from `viewer.login` and the configured host. Cached on `config.github.accounts[…].login`.
 
-**Display name** (v2): `${login}@${host}` derived from `viewer.login` and the configured host. Cached on `config.github.accounts[…].login`.
+**Why not a typed `AccountKey` record-struct in v1:** there are no interfaces accepting `accountKey` parameters in v1. The dimension lives only in JSON serialization (state, config, token cache) and that's already a string boundary. A record-struct would be ceremony with no compiler-checked benefit. v2 can introduce a typed wrapper alongside the interface changes if it wants.
 
 ## 4. Schema
 
@@ -93,13 +96,45 @@ Migration `MigrateV3ToV4(JsonObject root)`:
 3. Remove the now-orphaned root keys.
 4. Set `version: 4`.
 
-JsonNode-rewrite, follows existing `MigrateV2ToV3` pattern. Atomic-rename write via `AppStateStore`.
+JsonNode-rewrite, follows the existing `MigrateV2ToV3` pattern. Atomic-rename write via `AppStateStore`.
+
+**C# `AppState` record reshape:**
+
+```csharp
+public sealed record AppState(
+    int Version,
+    UiPreferences UiPreferences,
+    IReadOnlyDictionary<string, AccountState> Accounts)
+{
+    // Backwards-compat delegate properties — to be removed in v2 alongside multi-account runtime.
+    public PrSessionsState Reviews => Accounts[DefaultAccountKey].Reviews;
+    public AiState AiState => Accounts[DefaultAccountKey].AiState;
+    public string? LastConfiguredGithubHost => Accounts[DefaultAccountKey].LastConfiguredGithubHost;
+
+    public static AppState Default { get; } = new(
+        Version: 4,
+        UiPreferences: UiPreferences.Default,
+        Accounts: new Dictionary<string, AccountState>
+        {
+            [DefaultAccountKey] = AccountState.Default
+        });
+}
+
+public sealed record AccountState(
+    PrSessionsState Reviews,
+    AiState AiState,
+    string? LastConfiguredGithubHost);
+```
+
+The delegate properties exist solely to keep all callers (inbox, PR detail, drafts, submit pipeline, every test fixture) compiling and running unchanged. v2 either removes them when interface signatures change to take `accountKey`, or leaves them with a different default-resolution policy.
+
+`IAppStateStore` interface unchanged. `LoadAsync` / `SaveAsync` / `UpdateAsync` operate on the new `AppState` shape; consumers see the existing flat property surface.
 
 ### 4.2 Config (`config.json`) — additive rewrite
 
 Old:
 ```jsonc
-{ "github": { "host": "https://github.com" } }
+{ "github": { "host": "https://github.com", "local-workspace": "C:/..." } }
 ```
 
 New:
@@ -107,20 +142,41 @@ New:
 {
   "github": {
     "accounts": [
-      { "id": "default", "host": "https://github.com", "login": null }
+      {
+        "id": "default",
+        "host": "https://github.com",
+        "login": null,
+        "local-workspace": "C:/..."
+      }
     ]
   }
 }
 ```
 
-`ConfigStore` load path (idempotent):
-- If `github.host` is present and `github.accounts` is not, rewrite to the new shape.
-- If `github.accounts` is already present, no-op.
+`ConfigStore` load path:
+- If `github.host` present and `github.accounts` not, rewrite to the new shape; move `local-workspace` into the single account.
+- If `github.accounts` already present, no-op.
+- If neither present (fresh install), seed `accounts: [{id: "default", host: null, login: null, localWorkspace: null}]`.
 - Atomic-rename write so partial writes can't leave a file with both shapes.
+
+`AppConfig.GithubConfig` C# record:
+
+```csharp
+public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
+{
+    // Backwards-compat delegate properties — removed in v2.
+    public string Host => Accounts[0].Host;
+    public string? LocalWorkspace => Accounts[0].LocalWorkspace;
+}
+
+public sealed record GithubAccountConfig(string Id, string? Host, string? Login, string? LocalWorkspace);
+```
+
+Callers continue to access `config.Github.Host` unchanged.
 
 ### 4.3 Token store
 
-`PRism.tokens.cache` stays one file, one MSAL-wrapped keychain entry. The serialized contents change:
+`PRism.tokens.cache` stays one MSAL-wrapped file, one keychain entry. Serialized contents change:
 
 Before (v1):
 ```
@@ -129,264 +185,133 @@ Before (v1):
 
 After (v1 with scaffold):
 ```jsonc
-{ "default": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+{
+  "version": 1,
+  "tokens": {
+    "default": "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+}
 ```
 
-Token-store load path (idempotent):
-- If the cache parses as a single string (legacy), wrap it as `{ "default": <string> }` and write back via MSAL.
-- If it parses as a JSON object, no-op.
-- If it fails to parse, surface as "re-validate at Setup" — same recovery path as any token corruption today.
+Token-store load path:
+- If the cache parses as a single string (legacy), wrap it as `{"version": 1, "tokens": {"default": <string>}}` and write back via MSAL.
+- If it parses as `{"version": 1, "tokens": {…}}`, no-op.
+- If it parses as `{"version": <future>, …}`, set token-store to read-only mode (analogous to `AppStateStore` future-version handling at `AppStateStore.cs:267-269`), surface as "PRism was downgraded; upgrade or wipe `PRism.tokens.cache`."
+- If it fails to parse, surface as "re-validate at Setup" — and DO NOT overwrite the cache file. Setup writes a fresh `{"version": 1, "tokens": {…}}` only after successful PAT validation.
+
+The v1-after-v2 regression class (older binary destroying newer cache) is closed by the version field + read-only mode. Without this, an older binary that meets a future v2 cache would silently re-write as `{"version": 1, "tokens": {"default": <new-pat>}}`, destroying any other-account tokens v2 had stored.
+
+`ITokenStore` interface unchanged. Methods continue to read/write a single PAT (the `"default"` entry); the multi-token JSON shape is internal to `TokenStore`'s implementation.
 
 **Why one file, not per-account files:**
 
-| Trait | Per-account cache files (rejected) | One file with JSON map (chosen) |
+| Trait | Per-account cache files | One file with versioned JSON map (chosen) |
 |---|---|---|
 | Keychain entries | N | 1 |
 | First-run consent prompts (Linux) | N | 1 |
 | Atomic write surface | Per-account | Whole-map |
 | Corruption blast radius | One account | All accounts |
-| `ClearAsync(accountKey)` | Delete file | Rewrite map |
 | Ops complexity | Higher | Lower |
 
-The corruption blast radius is the only real downside, but MSAL's atomic-rename wrap keeps the corruption window small and the recovery path is the same as today. One file wins.
+The corruption blast radius is the only real downside, but MSAL's atomic-rename wrap keeps the corruption window small and the recovery path is the same as today's single-string cache.
 
 ## 5. Interfaces
 
-### 5.1 `ITokenStore`
+**No interface changes in v1.** `ITokenStore`, `IReviewService`, `IAppStateStore`, `HostUrlResolver` all keep their current signatures. The storage-shape change is invisible to consumers via the delegate properties on `AppState` and `GithubConfig`.
 
-```csharp
-public interface ITokenStore
-{
-    Task<bool>    HasTokenAsync(string accountKey, CancellationToken ct);
-    Task<string?> ReadAsync(string accountKey, CancellationToken ct);
-    Task          WriteTransientAsync(string accountKey, string token, CancellationToken ct);
-    Task          SetTransientLoginAsync(string accountKey, string login, CancellationToken ct);
-    Task<string?> ReadTransientLoginAsync(string accountKey, CancellationToken ct);
-    Task          CommitAsync(string accountKey, CancellationToken ct);
-    Task          RollbackTransientAsync(string accountKey, CancellationToken ct);
-    Task          ClearAsync(string accountKey, CancellationToken ct);
-}
-```
+This is the explicit deferral that distinguishes the storage-only scaffold from the full scaffold. Interface shapes get designed in v2 against a ratified user-facing model rather than guessed at now.
 
-### 5.2 `IReviewService`
+## 6. Wire conventions
 
-`accountKey` becomes the first parameter on every method. `GitHubReviewService` uses it to:
-- Resolve the per-account `HttpClient` via `IHttpClientFactory.CreateClient($"github-{accountKey}")`.
-- Resolve the per-account host via `HostUrlResolver.ApiBase(config.github.accounts[…where id==accountKey].host)`.
+**No wire changes in v1.** No `X-PRism-Account-Key` header, no `accountKey` field in SSE payloads, no middleware addition. The wire stays single-account-shaped.
 
-In v1, the named-client registration in `ServiceCollectionExtensions` registers exactly one client (`"github-default"`). In v2, it registers one per configured account.
+v2 picks header / path / payload conventions when the runtime model is ratified.
 
-### 5.3 `IAppStateStore`
+## 7. v2 user-facing model (sketch — non-binding)
 
-Replace flat accessors with per-account accessors:
+The v2 brainstorm picks the user-facing model. This section captures *constraints* the v1 storage-shape places on it, plus advisory observations the brainstorm should consider.
 
-```csharp
-public interface IAppStateStore
-{
-    Task<bool> LoadAsync(CancellationToken ct);
-    bool IsReadOnly { get; }
+**Constraints v1 places on v2:**
 
-    // Per-account accessors
-    PrSessionsState GetReviews(string accountKey);
-    Task SetReviewsAsync(string accountKey, PrSessionsState value, CancellationToken ct);
+1. **`accountKey` is an arbitrary opaque string**, not a UUID. v1-upgraded users carry `"default"` indefinitely. Display logic, log redaction, and any UUID-shape assumption must accept the legacy literal.
+2. **Per-account state lives under `Accounts[accountKey]`**. v2 can repartition (e.g., add a top-level `activeAccountKey` field, or restructure `Reviews` keying), but the per-account top-level dimension is committed.
+3. **Per-account `localWorkspace`**. v2's clone-management can pick whether to merge clones across accounts, but the config shape supports per-account paths.
+4. **One MSAL token cache file, multi-account JSON map inside.** v2 can shard if needed, but the v1-shape doesn't pre-commit to sharding.
 
-    AiState GetAiState(string accountKey);
-    Task SetAiStateAsync(string accountKey, AiState value, CancellationToken ct);
+**Advisory for v2 brainstorm (no v1 cost if v2 picks differently):**
 
-    string? GetLastConfiguredGithubHost(string accountKey);
-    Task SetLastConfiguredGithubHostAsync(string accountKey, string? value, CancellationToken ct);
-
-    // Cross-account
-    UiPreferences GetUiPreferences();
-    Task SetUiPreferencesAsync(UiPreferences value, CancellationToken ct);
-
-    Task ResetAsync(CancellationToken ct);
-}
-```
-
-The store internally indexes into `Accounts[accountKey]`. Unknown accountKey on read → throws `UnknownAccountException` (caller bug, not user-facing).
-
-### 5.4 `HostUrlResolver`
-
-```csharp
-public static class HostUrlResolver
-{
-    public static Uri ApiBase(string host);          // unchanged signature; called with the per-account host
-    public static Uri GraphQlEndpoint(string host);  // unchanged
-}
-```
-
-The resolver itself doesn't need an `accountKey` parameter — callers fetch the per-account host from config and pass the string in. But every call-site in `GitHubReviewService` (and any future caller) MUST resolve the host from `config.github.accounts[accountKey].host`, never from a hardcoded source.
-
-## 6. Wire convention
-
-### 6.1 `X-PRism-Account-Key` header
-
-On every state-mutating request:
-- `PUT /api/pr/{ref}/draft`
-- `POST /api/pr/{ref}/reload`
-- `POST /api/auth/connect`, `POST /api/auth/connect/commit`
-- All future state-mutating endpoints (banned-API analyzer enforces inclusion via the middleware path).
-
-On every read endpoint that depends on identity:
-- `GET /api/pr/{ref}/draft`
-- `GET /api/inbox`
-- `GET /api/pr/{ref}/...` (all PR-detail reads)
-- `GET /api/capabilities` (capabilities can vary per account in v2)
-
-Not on:
-- `GET /api/preferences` / `POST /api/preferences` — UI prefs are cross-account.
-- Static asset routes.
-
-### 6.2 `AccountKeyMiddleware`
-
-Sits next to `SessionTokenMiddleware` and `OriginCheckMiddleware`. Reads `X-PRism-Account-Key`:
-
-| Header value | v1 behavior | v2 behavior |
-|---|---|---|
-| Absent | Default to `"default"`. Pass through. | 400 Bad Request — header is mandatory. |
-| `"default"` | Pass through. | Pass through (v2 still has a "default" if user hasn't renamed). |
-| Unknown / not in `config.github.accounts` | 400 Bad Request. | 400 Bad Request. |
-
-The v1 default-to-`"default"` is a transitional courtesy. v2 makes it mandatory because clients will be aware of the dimension by then.
-
-The middleware sets the resolved accountKey on `HttpContext.Items["PRismAccountKey"]` for downstream handlers.
-
-### 6.3 SSE event payloads
-
-Every event gains an `accountKey` field:
-
-```jsonc
-{ "type": "state-changed", "accountKey": "default", "prRef": "owner/repo/123", "sourceTabId": "...", "fieldsTouched": [...] }
-{ "type": "draft-saved",   "accountKey": "default", "prRef": "owner/repo/123", ... }
-{ "type": "inbox-updated", "accountKey": "default" }
-```
-
-Consumers (e.g., `useStateChangedSubscriber`) filter on `event.accountKey === expectedAccountKey`. v1 expectedAccountKey is `"default"`.
-
-### 6.4 Frontend `apiClient`
-
-Injects `X-PRism-Account-Key: 'default'` on every request, baked into the wrapper analogous to `X-Request-Id`. The constant lives in one place. v2 replaces the constant with a runtime-resolved value from the active account context.
-
-## 7. v2 user-facing model (sketch — to be expanded by v2 brainstorm)
-
-The v1 scaffold is shaped to support a **unified inbox with account badges** as the v2 default. This section captures the design intent so v1 doesn't accidentally constrain it; v2's brainstorm will ratify or revise.
-
-**Inbox model (recommended for v2):**
-- All accounts' PRs in one merged list.
-- Each row is badged with its account (`pratyush@github.com`, `pratyush@github.acmecorp.com`, etc.).
-- Backend polls accounts in parallel; merges results before serving the inbox endpoint.
-- Rate-limit budgets are per-account (each PAT has its own GitHub Search 30/min and Core 5000/hour budgets).
-
-**Account add/remove (v2):**
-- Settings page surfaces a list of registered accounts.
-- "Add account" flow re-uses the Setup screen: pick a host, paste a PAT, validate, name the account (default name: `${login}@${host}`).
-- "Remove account" deletes the account's `AccountState`, removes its token from `PRism.tokens.cache`'s map, removes its config entry, and stops its poller.
-
-**URL-paste routing (v2):**
-- If only one registered account's host matches the pasted URL, route there.
-- If multiple match (two PATs against the same host), prompt the user to pick. No silent fallback — silent routing creates auth-blast-radius bugs.
-
-**Submit pipeline (v2):**
-- Drafts submit via the account that authored them. The account is recorded on every draft (already true in v1 schema: drafts live under `AccountState.Reviews`).
-- Cross-account draft moves are not supported. If a user wants to submit Account-A's draft as Account-B, they re-author it.
-
-**Identity-change rules (v2):**
-- Per-account `viewer.login` change → carry forward drafts (same identity in PRism's eyes), clear `pendingReviewId`/`threadId`/`replyCommentId` (host issues those server-side and may not honor them after a user rename in edge cases).
-- Per-account host change → already covered by v1's host-change-between-launches modal, now scoped to the affected account.
-
-**Single-instance enforcement** (already a P0+ backlog item per `docs/roadmap.md`): unchanged. Multi-account does NOT change the single-instance constraint. Two PRism processes still write the same `state.json` last-write-wins. The named-mutex / IPC fix is independent of multi-account.
+- **Inbox model**: unified-with-account-badges vs active-account-with-switcher. Both fit the v1 storage shape.
+- **`PrReference` shape**: stay as `(owner, repo, number)` with `accountKey` as a sibling parameter, OR embed `accountKey` in the ref. The v1 shape doesn't force the call.
+- **URL-paste routing** (binding non-negotiable): no silent fallback when multiple accounts could serve a pasted URL. Always prompt. Captured here so v2 brainstorm inherits it.
+- **Submit pipeline**: drafts submit via the account that authored them. Per-account `Reviews` in storage already enforces this.
+- **Single-instance enforcement** (P0+ backlog): unchanged. Multi-account does NOT change the single-instance constraint.
 
 ## 8. Risks
 
-### 8.1 Dead-weight risk
+### 8.1 Three options compared
 
-If v2 doesn't ship multi-account (e.g., dogfooding shows two-instance is fine, or the wedge moves), the scaffold is permanent code complexity for no user value.
+| Option | Cost | What's irreversible | What's reversible | If v2 doesn't ship multi-account | If v2 ships with different shape |
+|---|---|---|---|---|---|
+| **A. No scaffold** | 0 days | nothing | n/a | Zero cost | Full retrofit when v2 ships: schema migration + interface reshape + wire dimension addition + token-cache reshape under load. Estimate: 7-10 days. |
+| **B. Storage-only scaffold (chosen)** | 1-2 days | V3→V4 state, config rewrite, token cache version | Interface signatures, wire shape, middleware | Small dead weight: V4→V5 collapse migration (1 day). | Schema-shape leverage if v2's shape matches; partial leverage if v2 reshapes (e.g., shards token cache per-account); negative leverage if v2 picks a fundamentally different storage shape (rare — the per-account dictionary is the standard pattern). |
+| **C. Full scaffold (initial draft, rejected)** | 5-7 days | V3→V4 state, config, token cache, interface signatures, wire dimension, middleware | nothing | Larger dead weight + spec/invariant repeal cost. Estimate: 5+ days to remove. | Heavier negative leverage: interface/wire/middleware all picked against unbrainstormed v2 model; high probability of partial rewrite. |
 
-**Mitigation:**
-- Scaffold cost is bounded: ~5-7 day slice (S6 PR0).
-- The shape is reversible — collapsing `AccountState` back to flat fields is a V4→V5 migration of similar size.
-- The cost of *not* scaffolding and later needing it is strictly larger (full retrofit of every interface plus migration plus token-cache reshape under load).
+The storage-only scaffold (B) dominates A in expected value if there's any non-trivial probability v2 ships multi-account, and dominates C in expected value across the full uncertainty range because it concentrates the bet on the irreversible-cheap part.
 
-The bet is on v2 shipping multi-account. My read is that it will: multi-account is table-stakes once people use the tool seriously across personal+work contexts. AI-seam-style scaffolding has worked for the analogous bet on AI providers.
+### 8.2 V3→V4 migration risk
 
-### 8.2 Schema-level retrofit fatigue
+The C# `AppState` record changes shape, but the delegate properties (`state.Reviews => state.Accounts["default"].Reviews`) keep all callers compiling. Test fixtures that construct `AppState` directly need updating to the new constructor signature; that's mechanical (~all `new AppState(...)` calls in tests). Production code using property accessors (`state.Reviews`) is unchanged.
 
-Every state migration adds incremental risk: data loss on bug, complexity on read, version-drift across users. V3 just landed; V4 immediately after is the third migration in two slices.
+The migration step itself (`MigrateV3ToV4`) is mechanical: read three keys, write under a new parent. Atomic-rename write. Failure mode: if migration crashes mid-write, the atomic-rename guarantee leaves the V3 file intact — same recovery as V2→V3.
 
-**Mitigation:**
-- Migration framework already exists (`AppStateMigrations.MigrateV2ToV3` pattern).
-- V3→V4 is mechanical (move three keys under a new parent); no data transformation, no validation, no fallible computation.
-- Test fixtures from V3 → V4 are easy to author (load V3 sample, assert V4 shape).
+### 8.3 Token cache version field
 
-### 8.3 Forward-reference rot
+Without the `version` field, an older PRism binary running against a v2-shaped cache silently re-writes it as a fresh single-`"default"` map, destroying v2's other-account tokens. The version field + read-only mode closes this regression class. Added in this slice.
 
-The v1 scaffold names the `accountKey` dimension everywhere but exercises only `"default"`. Risk: v2 finds the dimension was shaped wrong (e.g., string was the wrong choice; should have been a typed `AccountKey` value object) and has to retrofit anyway.
+### 8.4 Dead-weight risk if v2 doesn't ship multi-account
 
-**Mitigation:**
-- The `accountKey` parameter is declared as a typed `AccountKey` record-struct (`public readonly record struct AccountKey(string Value)`) from day one, not a bare `string`. Future evolution within the type is a non-breaking change to callers.
-- Builder pattern for typed access at v1 → eliminates "string vs typed" retrofit.
+V4→V5 collapse migration: read `accounts.default.{reviews, ai-state, last-configured-github-host}`, write at root, remove `accounts`. ~1 day including tests. The C# delegate properties get removed and `AppState` reverts to its V3 shape. Atomic-rename write.
 
-### 8.4 Convention drift on state-event-log
+The reversal cost is small *because the storage-only scaffold doesn't touch interfaces, wire shape, or invariants documents*. The full-scaffold (option C) reversal would also need to repeal the architectural-invariants entry, undo banned-API analyzer rules, rewrite middleware ordering decisions, and update spec docs — order of magnitude more work. The storage-only scope keeps the bet contained.
 
-The convention "every `StateEvent.Fields` MUST include `accountKey`" relies on developer memory between now and the real `IStateEventLog` impl PR. Risk: convention forgotten.
+### 8.5 Wrong storage shape risk
 
-**Mitigation:**
-- Convention recorded in this spec.
-- S6 PR0 ships an emit-site test that fails the build if any caller of `IStateEventLog.AppendAsync` omits `"accountKey"` from `Fields`.
-- The test scans the codebase for `IStateEventLog`-typed call sites at compile time (Roslyn analyzer) or via reflection-based scan in a unit test (whichever is cheaper to author).
+If v2 brainstorms a different storage shape (e.g., active-account with separate side-record per inactive account, or `accountKey` embedded in `PrReference`), this slice's V3→V4 migration still helps with the per-account dimension but a second migration may be needed to restructure further. The conservative read: storage-only is *probably* a partial leverage win in this case rather than zero or negative; the certain win is option A in this scenario.
 
 ## 9. Testing
 
-### 9.1 Migration tests (must exist)
+### 9.1 Migration tests
 
 - `AppStateMigrations.MigrateV3ToV4`: load V3 fixture → assert V4 shape, assert `accounts.default` contains all prior data, assert root-level orphan keys removed.
 - `MigrateV3ToV4` idempotence: load V4 → no-op.
-- `ConfigStore` migration: load `github.host` fixture → assert rewrite to `accounts[0]`, assert idempotent re-load.
-- `TokenStore` migration: legacy single-string blob → JSON-map shape with one `"default"` key. Legacy missing → no-op. Legacy unparseable → surfaces as "re-validate at Setup."
+- `ConfigStore` migration: load `github.host` fixture → assert rewrite to `accounts[0]` with `localWorkspace` moved under the account; assert idempotence.
+- `ConfigStore` first-launch: no config file → assert seeded `accounts: [{id: "default", host: null, login: null, localWorkspace: null}]`.
+- `TokenStore` migration: legacy single-string blob → versioned JSON-map. Legacy missing → no-op. Future-version cache → read-only mode + clear surfacing message.
+- `TokenStore` non-overwrite-on-unparseable: corrupt cache file → "re-validate at Setup" surface; assert cache file untouched until Setup commits.
 
-### 9.2 Boundary tests (must exist)
+### 9.2 Backwards-compat tests
 
-- `IReviewService.{any method}` with `accountKey == null` → `ArgumentNullException` at boundary.
-- `IReviewService.{any method}` with unknown `accountKey` → `UnknownAccountException`.
-- `AccountKeyMiddleware` with `X-PRism-Account-Key: <unknown>` → 400.
-- `AccountKeyMiddleware` with no header (v1) → defaults to `"default"`, passes through.
-- `AccountKeyMiddleware` with `X-PRism-Account-Key: default` → passes through.
+- `AppState.Reviews` (delegate property) returns `state.Accounts["default"].Reviews` for a freshly-loaded V4 state.
+- `AppState.AiState`, `AppState.LastConfiguredGithubHost` likewise.
+- `AppConfig.Github.Host` returns `accounts[0].host`.
+- All existing test suites (S2 inbox, S3 PR detail, S4 drafts) pass against the V4 state without modification.
 
-### 9.3 Round-trip tests
+### 9.3 No interface-boundary tests in v1
 
-- Parameterized fixture: every state-mutating endpoint added in S3-S5 round-trips with `accountKey == "default"` end-to-end. Read-then-write-then-read returns identical state.
-
-### 9.4 Convention tests
-
-- Emit-site test: scan all `IStateEventLog.AppendAsync` calls; fail build if any pass a `Fields` dict without an `"accountKey"` key.
-- Banned-API analyzer rule: any new method on `ITokenStore` / `IReviewService` / `IAppStateStore` lacking `accountKey` parameter fails the build.
+(Because no interfaces change. v2's slice adds them when interfaces gain `accountKey`.)
 
 ## 10. Project standards updates
 
-- `docs/spec/02-architecture.md` § "GitHub host configuration" — amend to describe `github.accounts: [...]` as the canonical shape; note the v1 single-entry constraint and the v2 multi-account expansion.
-- `docs/spec/02-architecture.md` § "Changing `github.host` between launches" — amend to describe the per-account `LastConfiguredGithubHost` model.
-- `docs/spec/05-non-goals.md` "Multi-host concurrency" row — amend to "Multi-host concurrency: scaffolded in v1 (single-account hardcoded); v2 ships runtime."
+- `docs/spec/02-architecture.md` § "GitHub host configuration" — amend to describe `github.accounts: [...]` as the canonical config shape; note that v1 has one entry and the runtime is single-account.
+- `docs/spec/02-architecture.md` § "Changing `github.host` between launches" — minor amend: `LastConfiguredGithubHost` lives under `accounts.default` in V4; the modal logic is unchanged.
+- `docs/spec/05-non-goals.md` "Multi-host concurrency" row — amend to "Multi-host concurrency: storage shape scaffolded in v1; runtime + UX in v2."
 - `docs/roadmap.md` S6 row — add S6 PR0 to the front of S6's PR sequence.
-- `.ai/docs/architectural-invariants.md` — add an invariant: "All identity-bearing surfaces (token store, review service, app state store, state-event-log entries, SSE events, mutating HTTP requests) take or carry an `accountKey` dimension. v1 hardcodes `"default"`; v2 populates from the active account."
-- `.ai/docs/documentation-maintenance.md` — add a row for "multi-account scaffold changes" pointing at the architectural invariant.
+- `.ai/docs/architectural-invariants.md` — **no entry yet**. The invariant is added by v2's slice, when interfaces and runtime are committed. Adding the invariant in v1 would couple the dead-weight reversal to a doc repeal and is precisely what § 8.4 trades to keep reversal small.
 
-## 11. Out-of-scope explicitly
+## 11. Open questions
 
-- Settings page UX (S6 main work, not S6 PR0).
-- Account add/remove flow (v2).
-- Inbox aggregation logic (v2).
-- Per-account rate-limit budgeting at runtime (v2; v1 has one account so the budget is the existing single-PAT budget).
-- Per-account active-PR poller (v2).
-- Cross-account draft moves (intentional non-feature).
-- Single-instance enforcement (independent backlog item; multi-account does not unblock or block it).
-- Multi-platform (still a non-goal; multi-account is multi-PAT-on-GitHub, not multi-provider).
-
-## 12. Open questions for user review
-
-1. **`AccountKey` as record-struct vs bare string.** I've recommended record-struct for type-safety against accidental string mixing (e.g., passing a `prRefStr` where an `accountKey` was expected). Cost: minor verbosity at call sites (`new AccountKey("default")`). Worth it?
-2. **`AccountKeyMiddleware` v1 default behavior.** I've defaulted missing-header to `"default"`. Alternative: require the header from day one in v1, force the frontend to send it from S6 PR0 ship date. Cost: stricter contract, no transitional courtesy. Benefit: v1 is closer to v2's contract, fewer "but in v1 …" caveats in v2 brainstorm.
-3. **Banned-API analyzer scope.** I've scoped it to the three core interfaces. Should it also cover `HostUrlResolver` and any future identity-bearing API?
-4. **State-event-log emit-site test approach.** Roslyn analyzer (build-time, more upfront work, perfect coverage) vs. reflection-based unit test (test-time, cheaper to author, catches at PR-time not edit-time). Recommendation: reflection-based — analyzers are heavyweight for one-off conventions.
+1. **`AppState` delegate properties — public API or internal-only?** Recommendation: public for v1 (zero caller-side change). v2 removes them when interfaces gain `accountKey`. Alternative: mark `[Obsolete]` from day one so consumers get warnings encouraging migration. I'd vote against the obsolete attribute in v1 because there's nothing for callers to migrate *to* until v2's interfaces land.
+2. **Should the `accountKey == "default"` constant be exported from `PRism.Core.State` or co-located with each consumer?** Recommendation: single export (`PRism.Core.State.DefaultAccountKey`). Used by the migrations and by `AppState` itself; nothing else references it in v1.
+3. **Token cache version field migration policy beyond v2.** v1 ships `version: 1`. If v2 changes the cache shape (e.g., adds `lastValidatedAt` per token), it bumps to `version: 2` and writes a `MigrateTokenCacheV1ToV2`. Worth committing to that policy now or deferring? Recommendation: defer; the policy follows the state-migration pattern naturally.
 
 These are real open calls. I'll commit to defaults during writing-plans if you don't pull on them.
