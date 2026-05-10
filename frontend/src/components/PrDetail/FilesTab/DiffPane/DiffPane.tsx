@@ -1,4 +1,5 @@
-import type { FileChange, ReviewThreadDto } from '../../../../api/types';
+import type { FileChange, ReviewThreadDto, DraftSide } from '../../../../api/types';
+import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
 import { ExistingCommentWidget } from './ExistingCommentWidget';
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
@@ -12,6 +13,15 @@ export interface DiffPaneProps {
   truncated: boolean;
   reviewThreads: ReviewThreadDto[];
   prUrl: string;
+  // Spec § 5.3a: clicking an "Add comment" affordance on a diff line opens
+  // an InlineCommentComposer at that line. The handler is owned by FilesTab
+  // because the composer's lifecycle (and the A2 click-another-line modal)
+  // is sibling-state to the diff view.
+  onLineClick?: (anchor: InlineAnchor) => void;
+  // Optional renderer for an inline composer mounted on the clicked line.
+  // FilesTab passes its <InlineCommentComposer> here; DiffPane simply
+  // inserts it as a `colspan=3` follow-up row analogous to ExistingCommentWidget.
+  renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
 }
 
 interface DiffLine {
@@ -76,6 +86,8 @@ export function DiffPane({
   truncated,
   reviewThreads,
   prUrl,
+  onLineClick,
+  renderComposerForLine,
 }: DiffPaneProps) {
   if (!selectedPath) {
     return (
@@ -133,6 +145,9 @@ export function DiffPane({
                   pair={pair}
                   threadsAtLine={threadsAtLine}
                   isSplit={isSplit}
+                  filePath={selectedPath}
+                  onLineClick={onLineClick}
+                  renderComposerForLine={renderComposerForLine}
                 />
               );
             })}
@@ -149,9 +164,20 @@ interface DiffLineRowProps {
   pair: DiffLine | null;
   threadsAtLine: ReviewThreadDto[] | undefined;
   isSplit: boolean;
+  filePath: string;
+  onLineClick?: (anchor: InlineAnchor) => void;
+  renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
 }
 
-function DiffLineRow({ line, pair, threadsAtLine, isSplit }: DiffLineRowProps) {
+function DiffLineRow({
+  line,
+  pair,
+  threadsAtLine,
+  isSplit,
+  filePath,
+  onLineClick,
+  renderComposerForLine,
+}: DiffLineRowProps) {
   const rowClass = `diff-line diff-line--${line.type}`;
 
   const renderContent = () => {
@@ -168,29 +194,103 @@ function DiffLineRow({ line, pair, threadsAtLine, isSplit }: DiffLineRowProps) {
     return <span>{line.content}</span>;
   };
 
+  // Anchor metadata: side='left' for delete (old side), 'right' otherwise.
+  // lineNumber is the side-appropriate line. anchoredSha is left to the
+  // parent — DiffPane has no PR detail context; FilesTab fills it in.
+  // (See FilesTab.handleLineClick.)
+  const commentLineNum = line.type === 'delete' ? line.oldLineNum : line.newLineNum;
+  const side: DraftSide = line.type === 'delete' ? 'left' : 'right';
+  const canComment =
+    onLineClick &&
+    commentLineNum !== null &&
+    line.type !== 'hunk-header';
+
+  const handleClick = () => {
+    if (!canComment || commentLineNum === null) return;
+    onLineClick({
+      filePath,
+      lineNumber: commentLineNum,
+      side,
+      // anchoredSha and anchoredLineContent are filled by the parent so the
+      // SHA matches the iteration head being viewed.
+      anchoredSha: '',
+      anchoredLineContent: line.content,
+    });
+  };
+
   return (
     <>
       <tr className={rowClass}>
         {isSplit ? (
           <>
             <td className="diff-gutter diff-gutter--old">{line.oldLineNum ?? ''}</td>
-            <td className="diff-gutter diff-gutter--new">{line.newLineNum ?? ''}</td>
+            <td className="diff-gutter diff-gutter--new">
+              {commentLineNum !== null && canComment ? (
+                <button
+                  type="button"
+                  className="diff-comment-affordance"
+                  aria-label={`Add comment on line ${commentLineNum}`}
+                  onClick={handleClick}
+                >
+                  {line.newLineNum ?? line.oldLineNum ?? ''}
+                </button>
+              ) : (
+                line.newLineNum ?? ''
+              )}
+            </td>
           </>
         ) : (
           <>
             <td className="diff-gutter diff-gutter--old">{line.oldLineNum ?? ''}</td>
-            <td className="diff-gutter diff-gutter--new">{line.newLineNum ?? ''}</td>
+            <td className="diff-gutter diff-gutter--new">
+              {commentLineNum !== null && canComment ? (
+                <button
+                  type="button"
+                  className="diff-comment-affordance"
+                  aria-label={`Add comment on line ${commentLineNum}`}
+                  onClick={handleClick}
+                >
+                  {line.newLineNum ?? line.oldLineNum ?? ''}
+                </button>
+              ) : (
+                line.newLineNum ?? ''
+              )}
+            </td>
           </>
         )}
         <td className="diff-content">{renderContent()}</td>
       </tr>
       {threadsAtLine && threadsAtLine.length > 0 && (
         <tr className="diff-comment-row">
-          <td colSpan={isSplit ? 3 : 3}>
+          <td colSpan={3}>
             <ExistingCommentWidget threads={threadsAtLine} />
           </td>
         </tr>
       )}
+      {commentLineNum !== null && renderComposerForLine && (
+        <ComposerSlot filePath={filePath} lineNumber={commentLineNum} render={renderComposerForLine} />
+      )}
     </>
+  );
+}
+
+// A row that renders the composer iff the parent's renderComposerForLine
+// returns non-null for the given line. Avoids putting `if (active)` logic
+// into DiffPane itself.
+function ComposerSlot({
+  filePath,
+  lineNumber,
+  render,
+}: {
+  filePath: string;
+  lineNumber: number;
+  render: (filePath: string, lineNumber: number) => React.ReactNode;
+}) {
+  const node = render(filePath, lineNumber);
+  if (!node) return null;
+  return (
+    <tr className="diff-composer-row">
+      <td colSpan={3}>{node}</td>
+    </tr>
   );
 }
