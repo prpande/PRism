@@ -158,6 +158,66 @@ public class PipelineGuardTests
     }
 
     [Fact]
+    public async Task NullAnchorGuard_PreservesFilePathAndLineNumber()
+    {
+        // Stale line-anchored drafts (even malformed ones with null anchor fields) must
+        // round-trip the user's FilePath + LineNumber so PR3's apply step doesn't lose
+        // location metadata. Only PR-root drafts (FilePath == null at input) get
+        // ResolvedFilePath == null in the output.
+        var draft = new DraftComment(
+            Id: "d1",
+            FilePath: "src/Foo.cs",
+            LineNumber: 7,
+            Side: "right",
+            AnchoredSha: null,                  // triggers null-anchor guard
+            AnchoredLineContent: "line B",
+            BodyMarkdown: "body",
+            Status: DraftStatus.Draft,
+            IsOverriddenStale: false);
+
+        var fake = new FakeFileContentSource(reachableShas: new() { OldSha, NewSha });
+        var session = SessionWith(draft);
+
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
+
+        var d = Assert.Single(result.Drafts);
+        Assert.Equal(DraftStatus.Stale, d.Status);
+        Assert.Equal(StaleReason.NoMatch, d.StaleReason);
+        Assert.Equal("src/Foo.cs", d.ResolvedFilePath);
+        Assert.Equal(7, d.ResolvedLineNumber);
+    }
+
+    [Fact]
+    public async Task SourceThrowsThenStale_PreservesFilePathAndLineNumber()
+    {
+        // Per-draft isolation path also preserves location metadata.
+        var draft = new DraftComment(
+            Id: "d1",
+            FilePath: "src/Bad.cs",
+            LineNumber: 12,
+            Side: "right",
+            AnchoredSha: OldSha,
+            AnchoredLineContent: "line B",
+            BodyMarkdown: "body",
+            Status: DraftStatus.Draft,
+            IsOverriddenStale: false);
+
+        var fake = new ThrowingFakeFileContentSource(
+            throwForPath: "src/Bad.cs",
+            files: new(),
+            reachableShas: new() { OldSha, NewSha });
+        var session = SessionWith(draft);
+
+        var result = await new DraftReconciliationPipeline().ReconcileAsync(session, NewSha, fake, CancellationToken.None);
+
+        var d = Assert.Single(result.Drafts);
+        Assert.Equal(DraftStatus.Stale, d.Status);
+        Assert.Equal(StaleReason.NoMatch, d.StaleReason);
+        Assert.Equal("src/Bad.cs", d.ResolvedFilePath);
+        Assert.Equal(12, d.ResolvedLineNumber);
+    }
+
+    [Fact]
     public async Task PrRootDraft_NullFilePath_PassesThroughUnchanged()
     {
         // PR-root drafts (FilePath null) skip the per-draft IO pipeline entirely.

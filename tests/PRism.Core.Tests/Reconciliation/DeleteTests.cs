@@ -48,5 +48,12 @@ public class DeleteTests
         var d = Assert.Single(result.Drafts);
         Assert.Equal(DraftStatus.Stale, d.Status);
         Assert.Equal(StaleReason.FileDeleted, d.StaleReason);
+
+        // Stale line-anchored drafts preserve location metadata so PR3's apply step
+        // can render the row at the user's anchor target (deletion site) and let them
+        // re-anchor manually. Only PR-root drafts (FilePath == null at input) produce
+        // a null ResolvedFilePath in the result.
+        Assert.Equal("src/Foo.cs", d.ResolvedFilePath);
+        Assert.Equal(2, d.ResolvedLineNumber);
     }
 }

@@ -38,10 +38,23 @@ internal static class LineMatching
         // Strip trailing CR from each split line so CRLF↔LF flips don't leak into the
         // exact-string compare. The anchored content is NOT trimmed — if the stored anchor
         // has a trailing \r it falls through to the whitespace-equivalent path.
-        return content
+        var lines = content
             .Split('\n')
             .Select(l => l.TrimEnd('\r'))
             .ToList();
+
+        // Drop exactly one trailing empty element when the file ends with `\n` — that's
+        // the trailing-newline artifact (POSIX text-file convention), not a real line N+1
+        // a draft could anchor to. Without this, an empty anchored content (rare; user
+        // anchored on a blank end-of-file) would produce a spurious whitespace-equiv match
+        // on the phantom line, and the line count would be off-by-one for matrix
+        // semantics tied to file length.
+        if (content.Length > 0 && content[^1] == '\n' && lines.Count > 0 && lines[^1].Length == 0)
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
+        return lines;
     }
 
     private static bool WhitespaceEquivalent(string a, string b)
