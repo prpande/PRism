@@ -144,6 +144,7 @@ app.MapEvents();
 app.MapInbox();
 app.MapPrDetail();
 app.MapPrDraftEndpoints();
+app.MapPrReloadEndpoints();
 app.MapAi();
 
 if (builder.Environment.IsEnvironment("Test"))

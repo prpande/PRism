@@ -17,7 +17,7 @@ namespace PRism.Core.Reconciliation.Pipeline;
 // Future enhancement: add distinct StaleReason variants for FileBinary / FileTooLarge so
 // the reconciliation panel can surface a more specific message ("file too large to
 // reconcile — re-anchor manually"). Out of scope for S4.
-internal sealed class ReviewServiceFileContentSource : IFileContentSource
+public sealed class ReviewServiceFileContentSource : IFileContentSource
 {
     private readonly IReviewService _inner;
     private readonly PrReference _pr;
