@@ -105,10 +105,10 @@ describe('serializePatch — wire shape per patch kind', () => {
     expect(wire).toEqual({ draftVerdict: 'requestChanges' });
   });
 
-  it('draftVerdict — null clears the verdict', () => {
-    const wire = serializePatch({ kind: 'draftVerdict', payload: null });
-    expect(wire).toEqual({ draftVerdict: null });
-  });
+  // No "null clears the verdict" test — the backend's EnumerateSetFields
+  // filters null DraftVerdict as "not set" (PrDraftEndpoints.cs:331), so a
+  // null payload would round-trip as a zero-set patch and 400. The frontend
+  // type excludes null for that reason.
 
   it('draftSummaryMarkdown', () => {
     const wire = serializePatch({ kind: 'draftSummaryMarkdown', payload: 'Looks good overall.' });

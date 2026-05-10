@@ -36,8 +36,7 @@ function prPath(prRef: PrReference): string {
 // The frontend canonical type uses the GET-response shape ("request-changes").
 // Translate at the wire boundary. See deferrals doc § "DraftVerdict wire shape
 // asymmetric".
-function verdictToWire(v: DraftVerdict | null): string | null {
-  if (v === null) return null;
+function verdictToWire(v: DraftVerdict): string {
   return v === 'request-changes' ? 'requestChanges' : v;
 }
 

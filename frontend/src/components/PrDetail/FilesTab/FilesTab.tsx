@@ -197,7 +197,12 @@ export function FilesTab() {
   }
 
   function openComposerAt(rawAnchor: InlineAnchor) {
-    // DiffPane sends back an empty anchoredSha — fill in from prDetail head.
+    // DiffPane sends back an empty anchoredSha. PoC simplification: stamp
+    // prDetail.pr.headSha for every right-side click. This is correct for
+    // the "All changes" iteration range (afterSha === headSha) but wrong
+    // for older iteration views — the iteration's afterSha would be the
+    // right anchor. Deferred (see deferrals doc); DiffPane only allows
+    // right-side clicks so the SHA is always a valid HEAD anchor.
     const anchor: InlineAnchor = { ...rawAnchor, anchoredSha: prDetail.pr.headSha };
     const existing = findExistingDraft(anchor);
     setActiveAnchor(anchor);
@@ -234,6 +239,10 @@ export function FilesTab() {
         kind: 'deleteDraftComment',
         payload: { id: composerDraftId },
       });
+      // Sync local session so the deleted draft doesn't surface as
+      // existing data when the new composer's hydrate-from-session path
+      // (or any later render) runs.
+      await draftSession.refetch();
     }
     if (pendingNewAnchor) {
       openComposerAt(pendingNewAnchor);
@@ -254,6 +263,11 @@ export function FilesTab() {
   function handleComposerClose() {
     setActiveAnchor(null);
     setComposerDraftId(null);
+    // Own-tab mutations are filtered by useStateChangedSubscriber, so the
+    // SSE channel won't trigger a refetch for changes this tab made.
+    // Refresh on close so the next click at the same anchor sees the
+    // just-saved/just-deleted state and avoids creating a duplicate draft.
+    void draftSession.refetch();
   }
 
   function renderComposerForLine(filePath: string, lineNumber: number): React.ReactNode {

@@ -194,16 +194,18 @@ function DiffLineRow({
     return <span>{line.content}</span>;
   };
 
-  // Anchor metadata: side='left' for delete (old side), 'right' otherwise.
-  // lineNumber is the side-appropriate line. anchoredSha is left to the
-  // parent — DiffPane has no PR detail context; FilesTab fills it in.
-  // (See FilesTab.handleLineClick.)
-  const commentLineNum = line.type === 'delete' ? line.oldLineNum : line.newLineNum;
-  const side: DraftSide = line.type === 'delete' ? 'left' : 'right';
+  // PoC scope: only right-side (insert/context) clicks open the composer.
+  // Left-side (deleted-line) commenting is deferred — its anchoredSha would
+  // need to be the iteration's beforeSha, but FilesTab currently uses
+  // prDetail.pr.headSha as the anchor (see deferrals doc). Once the
+  // anchoredSha-by-iteration plumbing lands, this gate can flip to allow
+  // line.type === 'delete' as well.
+  const commentLineNum = line.newLineNum;
+  const side: DraftSide = 'right';
   const canComment =
     onLineClick &&
     commentLineNum !== null &&
-    line.type !== 'hunk-header';
+    (line.type === 'insert' || line.type === 'context');
 
   const handleClick = () => {
     if (!canComment || commentLineNum === null) return;

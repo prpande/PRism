@@ -51,6 +51,11 @@ export function InlineCommentComposer({
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
   const [recoveryModalOpen, setRecoveryModalOpen] = useState(false);
 
+  // Mirrors recoveryModalOpen synchronously so Cmd+Enter's flush()→onClose()
+  // sequence can detect a 404-recovery transition that opened mid-flush
+  // (state updates aren't visible until the next render but the ref is).
+  const recoveryModalOpenRef = useRef(false);
+
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const composerAnchor = {
@@ -71,6 +76,7 @@ export function InlineCommentComposer({
 
   const handleDraftDeletedByServer = useCallback(() => {
     onDraftIdChange(null);
+    recoveryModalOpenRef.current = true;
     setRecoveryModalOpen(true);
   }, [onDraftIdChange]);
 
@@ -129,6 +135,7 @@ export function InlineCommentComposer({
   };
 
   const handleRecoveryRecreate = async () => {
+    recoveryModalOpenRef.current = false;
     setRecoveryModalOpen(false);
     // draftId was cleared by onDraftDeletedByServer. flush() with current
     // body (>= 3 chars) re-fires create through useComposerAutoSave.
@@ -136,6 +143,7 @@ export function InlineCommentComposer({
   };
 
   const handleRecoveryDiscard = () => {
+    recoveryModalOpenRef.current = false;
     setRecoveryModalOpen(false);
     onClose();
   };
@@ -152,6 +160,10 @@ export function InlineCommentComposer({
       e.preventDefault();
       void (async () => {
         await flush();
+        // If the flush triggered a 404 recovery, the modal is now open and
+        // expects the user to choose Re-create / Discard. Skip onClose so
+        // the modal doesn't get unmounted out from under them.
+        if (recoveryModalOpenRef.current) return;
         onClose();
       })();
       return;

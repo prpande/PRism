@@ -288,8 +288,15 @@ export interface OverrideStalePayload {
 // api/draft.ts:serializePatch unwraps to the wire's "exactly one field set"
 // shape (spec § 4.2). The exhaustiveness check in the serializer guarantees
 // every kind is handled at compile time.
+//
+// Note on draftVerdict: `payload: null` is intentionally excluded. Spec
+// § 4.2 lists null as a valid wire value, but PR3's backend
+// `EnumerateSetFields` (PrDraftEndpoints.cs:331) filters null DraftVerdict
+// as "not set", which would round-trip a "clear verdict" intent through
+// the multi-field guard as zero-set and 400. Until the backend accepts
+// null as "clear", the frontend cannot represent a clear-verdict patch.
 export type ReviewSessionPatch =
-  | { kind: 'draftVerdict'; payload: DraftVerdict | null }
+  | { kind: 'draftVerdict'; payload: DraftVerdict }
   | { kind: 'draftSummaryMarkdown'; payload: string }
   | { kind: 'newDraftComment'; payload: NewDraftCommentPayload }
   | { kind: 'newPrRootDraftComment'; payload: NewPrRootDraftCommentPayload }
