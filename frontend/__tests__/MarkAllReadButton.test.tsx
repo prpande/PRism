@@ -81,6 +81,38 @@ describe('MarkAllReadButton', () => {
     expect(spy).toHaveBeenCalledWith(ref, { kind: 'markAllRead' });
   });
 
+  it('DoubleClick_FiresOnlyOnePatch — in-flight guard prevents concurrent dispatches', async () => {
+    let resolveSend: (v: { ok: true; assignedId: null }) => void = () => undefined;
+    const pending = new Promise<{ ok: true; assignedId: null }>((r) => {
+      resolveSend = r;
+    });
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockImplementation(() => pending);
+    render(<MarkAllReadButton prRef={ref} />, { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    act(() =>
+      dispatchPrUpdated({
+        prRef: 'octocat/hello/42',
+        headShaChanged: false,
+        commentCountDelta: 0,
+      }),
+    );
+
+    const btn = screen.getByRole('button', { name: /mark all read/i });
+    fireEvent.click(btn);
+    fireEvent.click(btn);
+
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Resolve the pending request so React state can settle without leaking.
+    await act(async () => {
+      resolveSend({ ok: true, assignedId: null });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  });
+
   it('LogsAndStaysEnabled_OnNetworkFailure — non-ok result is logged and the button stays clickable', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const spy = vi

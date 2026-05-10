@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { DraftCommentDto, IssueCommentDto, PrReference } from '../../../api/types';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
@@ -58,8 +58,19 @@ function PrRootConversationActions({
 }) {
   const { prRef, prState, existingPrRootDraft, registerOpenComposer, onComposerClose } =
     replyContext;
+  // `useState(initialValue)` is frozen at first render. When a cross-tab
+  // refetch later populates `existingPrRootDraft` (PR6 will wire that path),
+  // the useEffect below re-syncs so the composer auto-opens with the
+  // persisted body. Without it, the freshly-arrived draft is silently
+  // dropped and the user sees only the Reply button.
   const [composerOpen, setComposerOpen] = useState<boolean>(!!existingPrRootDraft);
   const [draftId, setDraftId] = useState<string | null>(existingPrRootDraft?.id ?? null);
+
+  useEffect(() => {
+    if (!existingPrRootDraft) return;
+    setDraftId(existingPrRootDraft.id);
+    setComposerOpen(true);
+  }, [existingPrRootDraft?.id]);
 
   const handleReplyClick = () => setComposerOpen(true);
   const handleClose = () => {

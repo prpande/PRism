@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useFirstActivePrPollComplete } from '../../../hooks/useFirstActivePrPollComplete';
 import { sendPatch } from '../../../api/draft';
 import type { PrReference } from '../../../api/types';
@@ -16,24 +17,36 @@ export interface MarkAllReadButtonProps {
 
 export function MarkAllReadButton({ prRef }: MarkAllReadButtonProps) {
   const ready = useFirstActivePrPollComplete(prRef);
+  // In-flight guard so a double-click does not dispatch two concurrent
+  // `markAllRead` patches. The handler is async and the button has no other
+  // gate against re-entry while the first request is outstanding.
+  const [pending, setPending] = useState(false);
 
   const handleClick = async () => {
-    const result = await sendPatch(prRef, { kind: 'markAllRead' });
-    if (!result.ok) {
-      // Surface in DevTools without yanking the user out of the page.
-      // Per the PR5 [Decision] in the deferrals doc, an inline error UX is
-      // deferred to S6 polish to mirror the InlineCommentComposer discard
-      // failure UX deferral.
-      console.warn('mark-all-read failed', result);
+    if (pending) return;
+    setPending(true);
+    try {
+      const result = await sendPatch(prRef, { kind: 'markAllRead' });
+      if (!result.ok) {
+        // Surface in DevTools without yanking the user out of the page.
+        // Per the PR5 [Decision] in the deferrals doc, an inline error UX is
+        // deferred to S6 polish to mirror the InlineCommentComposer discard
+        // failure UX deferral.
+        console.warn('mark-all-read failed', result);
+      }
+    } finally {
+      setPending(false);
     }
   };
+
+  const disabled = !ready || pending;
 
   return (
     <button
       type="button"
       className="mark-all-read-button"
-      disabled={!ready}
-      aria-disabled={!ready}
+      disabled={disabled}
+      aria-disabled={disabled}
       title={ready ? 'Mark all conversation comments read' : 'Loading…'}
       onClick={handleClick}
     >

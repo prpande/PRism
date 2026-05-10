@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { DraftReplyDto, PrReference, ReviewThreadDto } from '../../../../api/types';
 import { MarkdownRenderer } from '../../../Markdown/MarkdownRenderer';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
@@ -48,11 +48,20 @@ function ThreadView({
   );
 
   // The composer auto-mounts when there is already a saved draft for this
-  // thread; otherwise the user opens it via the Reply button. Either way,
-  // `composerOpen` controls whether ReplyComposer is currently mounted; it
-  // remounts on the `Reply` click after a close.
+  // thread; otherwise the user opens it via the Reply button. The useEffect
+  // below re-syncs when `replyContext.draftReplies` changes after mount —
+  // e.g., another tab creates a draft reply and `useStateChangedSubscriber`
+  // refetches the session. Without it, the useState initializer would be
+  // frozen at the first-render value and the auto-open silently misses
+  // cross-tab arrivals.
   const [composerOpen, setComposerOpen] = useState<boolean>(!!existingDraft);
   const [draftReplyId, setDraftReplyId] = useState<string | null>(existingDraft?.id ?? null);
+
+  useEffect(() => {
+    if (!existingDraft) return;
+    setDraftReplyId(existingDraft.id);
+    setComposerOpen(true);
+  }, [existingDraft?.id]);
 
   const handleReplyClick = () => setComposerOpen(true);
 
