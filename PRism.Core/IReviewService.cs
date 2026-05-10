@@ -30,6 +30,10 @@ public interface IReviewService
     Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct);
     Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct);
 
+    // Returns null if commit is unreachable from the repo (404). Throws on transport errors.
+    // Used by ReviewServiceFileContentSource.IsCommitReachableAsync (S4 PR3 force-push fallback).
+    Task<CommitInfo?> GetCommitAsync(PrReference reference, string sha, CancellationToken ct);
+
     // Submit (GraphQL pending-review pipeline)
     Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct);
 }

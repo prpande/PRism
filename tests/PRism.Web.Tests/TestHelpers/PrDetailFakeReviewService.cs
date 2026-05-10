@@ -48,6 +48,9 @@ public sealed class PrDetailFakeReviewService : IReviewService
         return Task.FromResult(factory(reference, path, sha));
     }
 
+    public Task<CommitInfo?> GetCommitAsync(PrReference reference, string sha, CancellationToken ct)
+        => Task.FromResult<CommitInfo?>(new CommitInfo(sha));
+
     // Methods PR-detail tests don't exercise.
     public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) =>
         Task.FromResult(new AuthValidationResult(true, "tester", new[] { "repo" }, null, null));
