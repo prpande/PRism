@@ -42,6 +42,37 @@ public class MigrationChainTests
     }
 
     [Fact]
+    public async Task LoadsV3FileWithReviewsButNoSessions_BackfillsEmptySessions()
+    {
+        // Regression: a state.json shaped `{ "reviews": {} }` (missing the inner `sessions`
+        // child) used to deserialize to `Reviews.Sessions == null`, which would NRE in
+        // any downstream `state.Reviews.Sessions.TryGetValue(...)` call.
+        var temp = Path.GetTempPath();
+        var dir = Directory.CreateDirectory(Path.Combine(temp, $"prism-test-{Guid.NewGuid():N}")).FullName;
+        try
+        {
+            var json = """
+            {
+              "version": 3,
+              "reviews": {},
+              "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+              "last-configured-github-host": null,
+              "ui-preferences": { "diff-mode": "side-by-side" }
+            }
+            """;
+            await File.WriteAllTextAsync(Path.Combine(dir, "state.json"), json);
+
+            var store = new AppStateStore(dir);
+            var loaded = await store.LoadAsync(CancellationToken.None);
+
+            Assert.NotNull(loaded.Reviews);
+            Assert.NotNull(loaded.Reviews.Sessions);
+            Assert.Empty(loaded.Reviews.Sessions);
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
     public async Task LoadsV3File_AppliesNothing_ResultUnchanged()
     {
         var temp = Path.GetTempPath();

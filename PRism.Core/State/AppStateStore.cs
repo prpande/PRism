@@ -299,6 +299,15 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         if (root["ui-preferences"] is null)
             root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
         if (root["reviews"] is null)
+        {
             root["reviews"] = new JsonObject { ["sessions"] = new JsonObject() };
+        }
+        else if (root["reviews"] is JsonObject reviewsObj && reviewsObj["sessions"] is null)
+        {
+            // Defense against partial wraps like `"reviews": {}` — without this, the
+            // deserializer produces `Reviews.Sessions == null` and the next
+            // state.Reviews.Sessions.TryGetValue(...) NREs at the consumer site.
+            reviewsObj["sessions"] = new JsonObject();
+        }
     }
 }
