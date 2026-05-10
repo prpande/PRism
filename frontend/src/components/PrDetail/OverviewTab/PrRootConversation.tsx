@@ -47,9 +47,7 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
         // (e.g., a future Drafts-tab preview slot). The S3-shipped message
         // ("Reply lands when…S4") was retired with PR5; the new fallback
         // is stable across slices.
-        <p className="pr-root-conversation-footer muted">
-          Composer not available in this context.
-        </p>
+        <p className="pr-root-conversation-footer muted">Composer not available in this context.</p>
       )}
     </section>
   );

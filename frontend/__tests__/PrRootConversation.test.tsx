@@ -38,9 +38,7 @@ describe('PrRootConversation', () => {
 
   it('replaces the read-only footer with Reply + Mark-all-read actions when replyContext is supplied', () => {
     render(<PrRootConversation comments={[]} replyContext={replyContext} />);
-    expect(
-      screen.queryByText(/Composer not available in this context\./),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Composer not available in this context\./)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /mark all read/i })).toBeInTheDocument();
   });
