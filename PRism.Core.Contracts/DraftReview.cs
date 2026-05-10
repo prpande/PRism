@@ -4,7 +4,7 @@ public sealed record DraftReview(
     PrReference Pr,
     Verdict Verdict,
     string SummaryMarkdown,
-    IReadOnlyList<DraftComment> NewThreads,
-    IReadOnlyList<DraftReply> Replies,
+    IReadOnlyList<DraftCommentInput> NewThreads,
+    IReadOnlyList<DraftReplyInput> Replies,
     string? PendingReviewId,
     string? CommitOid);

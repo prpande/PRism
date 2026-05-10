@@ -5,6 +5,7 @@ last-updated: 2026-05-10
 status: open
 revisions:
   - 2026-05-10: initial cut — captures Defer/Skip items from spec ce-doc-review (7-persona pass, 2026-05-09), spec PR-review pass (Copilot inline + claude-bot, 2026-05-09), plan ce-doc-review (6-persona pass, 2026-05-10), and plan PR-review pass (Copilot inline + claude-bot round 2, 2026-05-10). Also captures rigor-survived design decisions worth preserving outside the spec.
+  - 2026-05-10: append two PR1-implementation-time decisions — (a) rename `PRism.Core.Contracts.DraftComment`/`DraftReply` → `DraftCommentInput`/`DraftReplyInput` to resolve a three-way name collision against the new state types and the planned wire DTOs; (b) pull minimum compile-fix into Task 2's commit because Task 6's broader fixture work was downstream of a non-compiling test project.
 ---
 
 # Deferrals — S4 drafts + composer spec
@@ -306,6 +307,29 @@ Items the user already approved as in-scope or that were applied in commits land
 - **Decision:** `useReconcile` auto-retries once with the `currentHeadSha` from the `409 reload-stale-head` response body (transparent to the user). Banner only on second consecutive 409 ("Head shifted while reloading; please click Reload again.").
 - **Why:** First 409 means the poller advanced head between Phase 1 and Phase 2 — rare but possible. The user's intent ("reload to current head") is unchanged, so silently retrying with the now-current head is correct. Second 409 in a row means the head is moving faster than reload can complete (extremely rare; warrants surfacing).
 - **Trade-off considered and rejected:** (a) Always surface the banner on 409 — would force the user to click Reload twice for a momentary race they didn't cause. (b) Indefinite retry loop — could mask a degenerate case where the head shifts repeatedly.
+
+## [Decision] Rename `Contracts.DraftComment`/`DraftReply` → `DraftCommentInput`/`DraftReplyInput`
+
+- **Source:** PR1 implementation — surfaced when the new `PRism.Core.State.DraftComment`/`DraftReply` records collided with the existing `PRism.Core.Contracts.DraftComment`/`DraftReply` skeletons added in S0+S1 (commit `0982284`).
+- **Date:** 2026-05-10
+- **Decision:** Rename the *existing* Contracts skeleton types to `DraftCommentInput` and `DraftReplyInput`. The new state-layer types in `PRism.Core.State` keep the bare names `DraftComment`/`DraftReply` per spec § 2.4. The Contracts versions retain their AI-seam-input role (consumed by `IDraftReconciliator`) — the suffix clarifies the intent.
+- **Why renamed Contracts (not State):** Three logical "DraftComment" shapes exist or are planned:
+  1. `PRism.Core.State.DraftComment` (this PR) — persistent record with `Status` / `IsOverriddenStale` / nullable file/line for PR-root drafts.
+  2. `PRism.Core.Contracts.DraftComment*` (existing seam input) — required file/line/sha/anchor + `ThreadId`; consumed only by `IDraftReconciliator` (currently Noop/Placeholder; real consumer is post-PoC).
+  3. `DraftCommentDto` (planned PR3, spec § 4.2 line 407) — wire DTO for the GET `/draft` response.
+
+  Renaming State to `PersistedDraftComment` would force spec/plan rewrites across ~40 named references. Renaming the planned wire DTO leaves the seam name colliding with State. Renaming the existing seam type touches 6 files (no spec edits) and aligns with its actual role.
+- **Why `Input` (not `Dto`):** `Dto` is already claimed by the planned wire DTOs in PR3. `Input` distinguishes seam-input shapes from network/persistence-boundary DTOs.
+- **Trade-off considered and rejected:** Per-file `using` aliases at every conflict point. Worked locally for one test file, but the collision recurs in any code that touches both layers (PR2 reconciliation tests, PR3 endpoint code). One-time rename is cheaper than per-file alias discipline.
+- **Surface of change:** `PRism.Core.Contracts/DraftComment.cs` (record + filename), `PRism.Core.Contracts/DraftReply.cs` (record + filename), `PRism.Core.Contracts/DraftReview.cs` (consumer), `PRism.AI.Contracts/Seams/IDraftReconciliator.cs` (consumer), `PRism.AI.Contracts/Noop/NoopDraftReconciliator.cs` (consumer), `PRism.AI.Placeholder/PlaceholderDraftReconciliator.cs` (consumer), `tests/PRism.Core.Tests/Ai/NoopSeamTests.cs` (consumer). No spec/plan edits required.
+
+## [Decision] Task 5 + Task 6 scope-pull-forward — minimum compile fix lives in PR1's early commits
+
+- **Source:** PR1 implementation — Task 2 of the plan adds five required parameters to `ReviewSessionState`; six pre-existing call sites construct `ReviewSessionState` directly and stop compiling: four in tests (Task 6 scope: `AppStateStoreUpdateAsyncTests`, `AppStateStoreMigrationTests` ×2, `InboxRefreshOrchestratorTests`), one in production (Task 5 scope: `PRism.Web/Endpoints/PrDetailEndpoints.cs` ×2 occurrences via `replace_all`), and one in tests (Task 5 scope: `tests/PRism.Web.Tests/Endpoints/PrDetailEndpointsTests.cs`).
+- **Date:** 2026-05-10
+- **Decision:** The minimum compile fix for all six sites lands in PR1's early commits (Task 2's commit covers the four PRism.Core.Tests sites; Task 2.5's commit — the Contracts rename — covers `PrDetailEndpoints.cs` and `PrDetailEndpointsTests.cs`). Each pulled-forward site passes empty `List<DraftComment>()`/`List<DraftReply>()` and `DraftVerdictStatus.Draft` defaults. Task 5's broader work (consume `state.Reviews.Sessions`, slash-key normalization at endpoint sites) and Task 6's fixture cleanup (helper extraction, consolidation) still apply in their own commits.
+- **Why:** Each commit must leave the build green. Holding consumer fixes for Tasks 5/6 (per the plan's literal commit boundary) would require committing a non-compiling tree at Task 2 and Task 2.5.
+- **Trade-off considered and rejected:** Committing a non-compiling tree at intermediate task boundaries and verifying green only after Task 6. Rejected — never commit code that doesn't build.
 
 ---
 

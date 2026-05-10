@@ -8,7 +8,7 @@ namespace PRism.Core.Tests.State;
 public class AppStateStoreMigrationTests
 {
     [Fact]
-    public async Task LoadAsync_migrates_v1_state_file_to_v2_and_adds_empty_viewed_files_to_each_session()
+    public async Task LoadAsync_migrates_v1_state_file_through_chain_and_adds_empty_viewed_files_to_each_session()
     {
         using var dir = new TempDataDir();
         await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
@@ -30,14 +30,15 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(2);
-        state.ReviewSessions.Should().ContainKey("owner/repo/123");
-        state.ReviewSessions["owner/repo/123"].ViewedFiles.Should().BeEmpty();
-        state.ReviewSessions["owner/repo/123"].LastViewedHeadSha.Should().Be("abc123");
+        // v1 → v2 (adds empty viewed-files) → v3 (rename + draft collections) chained.
+        state.Version.Should().Be(3);
+        state.Reviews.Sessions.Should().ContainKey("owner/repo/123");
+        state.Reviews.Sessions["owner/repo/123"].ViewedFiles.Should().BeEmpty();
+        state.Reviews.Sessions["owner/repo/123"].LastViewedHeadSha.Should().Be("abc123");
     }
 
     [Fact]
-    public async Task LoadAsync_leaves_v2_state_file_unchanged()
+    public async Task LoadAsync_migrates_v2_state_file_to_v3_and_preserves_viewed_files()
     {
         using var dir = new TempDataDir();
         await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
@@ -60,8 +61,18 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(2);
-        state.ReviewSessions["owner/repo/123"].ViewedFiles.Should().ContainKey("src/Foo.cs");
+        // v2 → v3 runs the rename + draft-collections migration; v1→v2 step is skipped.
+        state.Version.Should().Be(3);
+        var session = state.Reviews.Sessions["owner/repo/123"];
+        session.ViewedFiles.Should().ContainKey("src/Foo.cs");
+        // Draft-collection backfill — symmetry with MigrationStepTests.MigrateV2ToV3_BackfillsDraftFieldsPerSession.
+        // Without this, a regression that wires up the rename but skips AddV3DraftCollections
+        // would only fail in the per-step unit test, not in this end-to-end Load test.
+        session.DraftComments.Should().BeEmpty();
+        session.DraftReplies.Should().BeEmpty();
+        session.DraftSummaryMarkdown.Should().BeNull();
+        session.DraftVerdict.Should().BeNull();
+        session.DraftVerdictStatus.Should().Be(DraftVerdictStatus.Draft);
         store.IsReadOnlyMode.Should().BeFalse();
     }
 
@@ -137,6 +148,11 @@ public class AppStateStoreMigrationTests
                     LastSeenCommentId: null,
                     PendingReviewId: null,
                     PendingReviewCommitOid: null,
+                    DraftComments: new List<DraftComment>(),
+                    DraftReplies: new List<DraftReply>(),
+                    DraftSummaryMarkdown: null,
+                    DraftVerdict: null,
+                    DraftVerdictStatus: DraftVerdictStatus.Draft,
                     ViewedFiles: new Dictionary<string, string>
                     {
                         ["src/Foo.cs"] = "head1",
@@ -144,13 +160,13 @@ public class AppStateStoreMigrationTests
                         ["lower/case/path.ts"] = "head1",
                     })
             };
-            await writeStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
+            await writeStore.SaveAsync(initial with { Reviews = initial.Reviews with { Sessions = sessions } }, CancellationToken.None);
         }
 
         using var readStore = new AppStateStore(dir.Path);
         var roundtrip = await readStore.LoadAsync(CancellationToken.None);
 
-        var session = roundtrip.ReviewSessions["mindbody/Mindbody.BizApp.Bff/42"];
+        var session = roundtrip.Reviews.Sessions["mindbody/Mindbody.BizApp.Bff/42"];
         session.ViewedFiles.Should().ContainKey("src/Foo.cs");
         session.ViewedFiles.Should().ContainKey("PRism.Core/State/AppState.cs");
         session.ViewedFiles.Should().ContainKey("lower/case/path.ts");
@@ -162,13 +178,13 @@ public class AppStateStoreMigrationTests
         using var dir = new TempDataDir();
         var statePath = Path.Combine(dir.Path, "state.json");
         // version=99 trips the future-version branch (IsReadOnlyMode=true), but the
-        // structurally-incompatible body (review-sessions as a string) makes Deserialize
-        // throw JsonException — the catch quarantines and writes a fresh v2 default.
-        // After that, the on-disk file IS v2 and saves must work again.
+        // structurally-incompatible body (`reviews` as a string) makes Deserialize
+        // throw JsonException — the catch quarantines and writes a fresh current-version
+        // default. After that, the on-disk file IS current-version and saves must work again.
         await File.WriteAllTextAsync(statePath, """
         {
           "version": 99,
-          "review-sessions": "not-a-dict",
+          "reviews": "not-a-dict",
           "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
           "last-configured-github-host": "https://github.com"
         }
@@ -310,7 +326,7 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(2);
+        state.Version.Should().Be(3);
         state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
     }
 
@@ -401,9 +417,14 @@ public class AppStateStoreMigrationTests
                     LastSeenCommentId: null,
                     PendingReviewId: null,
                     PendingReviewCommitOid: null,
-                    ViewedFiles: new Dictionary<string, string>())
+                    ViewedFiles: new Dictionary<string, string>(),
+                    DraftComments: new List<DraftComment>(),
+                    DraftReplies: new List<DraftReply>(),
+                    DraftSummaryMarkdown: null,
+                    DraftVerdict: null,
+                    DraftVerdictStatus: DraftVerdictStatus.Draft)
             };
-            await writeStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
+            await writeStore.SaveAsync(initial with { Reviews = initial.Reviews with { Sessions = sessions } }, CancellationToken.None);
             await writeStore.ResetToDefaultAsync(CancellationToken.None);
         }
 

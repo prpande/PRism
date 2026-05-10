@@ -6,6 +6,6 @@ namespace PRism.AI.Contracts.Noop;
 
 public sealed class NoopDraftReconciliator : IDraftReconciliator
 {
-    public Task<IReadOnlyList<DraftReconciliation>> ReconcileAsync(PrReference pr, IReadOnlyList<DraftComment> drafts, CancellationToken ct)
+    public Task<IReadOnlyList<DraftReconciliation>> ReconcileAsync(PrReference pr, IReadOnlyList<DraftCommentInput> drafts, CancellationToken ct)
         => Task.FromResult<IReadOnlyList<DraftReconciliation>>(Array.Empty<DraftReconciliation>());
 }

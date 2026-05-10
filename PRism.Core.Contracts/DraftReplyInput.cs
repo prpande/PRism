@@ -1,6 +1,6 @@
 namespace PRism.Core.Contracts;
 
-public sealed record DraftReply(
+public sealed record DraftReplyInput(
     string Id,
     string ParentThreadId,
     string BodyMarkdown,

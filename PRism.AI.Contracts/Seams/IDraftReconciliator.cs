@@ -5,5 +5,5 @@ namespace PRism.AI.Contracts.Seams;
 
 public interface IDraftReconciliator
 {
-    Task<IReadOnlyList<DraftReconciliation>> ReconcileAsync(PrReference pr, IReadOnlyList<DraftComment> drafts, CancellationToken ct);
+    Task<IReadOnlyList<DraftReconciliation>> ReconcileAsync(PrReference pr, IReadOnlyList<DraftCommentInput> drafts, CancellationToken ct);
 }

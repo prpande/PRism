@@ -1,12 +1,28 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using PRism.Core.Json;
+using PRism.Core.State.Migrations;
 
 namespace PRism.Core.State;
 
 public sealed class AppStateStore : IAppStateStore, IDisposable
 {
-    private const int CurrentVersion = 2;
+    private const int CurrentVersion = 3;
+
+    // Per-step migrations applied in ascending ToVersion order. Each step takes a JsonObject
+    // at version N-1 and returns the same root mutated to version N. Adding a step here is
+    // the single place that introduces a new schema version — bumping CurrentVersion alone
+    // is not enough.
+    // Steps MUST be defined in ascending ToVersion order. AppStateMigrationsOrderingTests
+    // pins this, and the runtime guard below sorts defensively in case an out-of-order
+    // entry slips past code review — a v2 file running v3→v4 before v2→v3 would silently
+    // corrupt state. Sort cost is one-time at type init; the array is tiny.
+    private static readonly (int ToVersion, Func<JsonObject, JsonObject> Transform)[] MigrationSteps =
+        new (int ToVersion, Func<JsonObject, JsonObject> Transform)[]
+        {
+            (2, AppStateMigrations.MigrateV1ToV2),
+            (3, AppStateMigrations.MigrateV2ToV3),
+        }.OrderBy(s => s.ToVersion).ToArray();
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -222,16 +238,16 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         return false;
     }
 
-    private JsonNode MigrateIfNeeded(JsonNode root)
+    private JsonObject MigrateIfNeeded(JsonNode root)
     {
         // JsonNode's string indexer (root["version"]) and AsObject() throw
         // InvalidOperationException for non-object nodes — that escapes the
         // catch (JsonException) in LoadAsync. Funnel non-object roots through
         // the quarantine path explicitly.
-        if (root is not JsonObject)
+        if (root is not JsonObject obj)
             throw new JsonException("state.json root must be a JSON object");
 
-        var versionNode = root["version"];
+        var versionNode = obj["version"];
         if (versionNode is null)
             throw new UnsupportedStateVersionException(0);
 
@@ -251,13 +267,12 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         if (stored > CurrentVersion)
         {
             IsReadOnlyMode = true;
-            // Best-effort load: still backfill known v2-shape defaults so the deserializer
-            // doesn't trip on optional fields a future-version file might also lack
-            // (e.g., ui-preferences). Without this, a missing optional field cascades into
-            // the JsonException quarantine path, which would clear IsReadOnlyMode and
-            // delete the file — defeating the read-only intent.
-            EnsureV2Shape(root);
-            return root;
+            // Best-effort load: still backfill known current-shape defaults so the deserializer
+            // doesn't trip on optional fields a future-version file might also lack. Without
+            // this, a missing optional field cascades into the JsonException quarantine path,
+            // which would clear IsReadOnlyMode and delete the file — defeating the read-only intent.
+            EnsureCurrentShape(obj);
+            return obj;
         }
 
         // Only versions in [1, CurrentVersion] are recognized. Version 0 / negative
@@ -265,42 +280,39 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         if (stored < 1)
             throw new JsonException($"state.json has unsupported version {stored}");
 
-        if (stored == 1) root = MigrateV1ToV2(root);
-        EnsureV2Shape(root);
-        IsReadOnlyMode = false;
-        return root;
-    }
-
-    private static JsonNode MigrateV1ToV2(JsonNode root)
-    {
-        var sessionsNode = root["review-sessions"];
-        if (sessionsNode is not null)
+        // Apply each migration step whose ToVersion is greater than the stored version,
+        // in ascending order. A v1 file runs both v1→v2 and v2→v3; a v2 file runs only v2→v3.
+        foreach (var (toVersion, transform) in MigrationSteps)
         {
-            // AsObject() throws InvalidOperationException for non-object nodes —
-            // funnel through JsonException so LoadAsync's catch quarantines instead.
-            if (sessionsNode is not JsonObject sessions)
-                throw new JsonException("state.json 'review-sessions' must be a JSON object");
-
-            foreach (var sessionEntry in sessions)
-            {
-                if (sessionEntry.Value is JsonObject obj && obj["viewed-files"] is null)
-                    obj["viewed-files"] = new JsonObject();
-            }
+            if (toVersion > stored && toVersion <= CurrentVersion)
+                obj = transform(obj);
         }
-        root["version"] = 2;
-        return root;
+
+        EnsureCurrentShape(obj);
+        IsReadOnlyMode = false;
+        return obj;
     }
 
-    // Forward-fixup for v2 top-level fields added after the initial v2 cut shipped.
-    // PR #14's v2 wrote files lacking `ui-preferences`; this step runs on every read
-    // that reaches the deserializer (v1→v2 path, plain v2 path, and the future-version
-    // best-effort path) and backfills the defaulted shape. The next SaveAsync persists
-    // the result on the v1/v2 paths; the future-version path stays read-only and only
-    // uses the in-memory backfill to keep deserialization from tripping on optional
-    // missing fields. Idempotent — repeated runs are no-ops. Spec § 6.3.
-    private static void EnsureV2Shape(JsonNode root)
+    // Forward-fixup for current-shape top-level fields added after a version cut shipped.
+    // Runs on every read that reaches the deserializer (migration path, plain current-version
+    // path, and the future-version best-effort path) and backfills the defaulted shape. The
+    // next SaveAsync persists the result on the migration/current paths; the future-version
+    // path stays read-only and only uses the in-memory backfill to keep deserialization from
+    // tripping on optional missing fields. Idempotent — repeated runs are no-ops. Spec § 6.3.
+    private static void EnsureCurrentShape(JsonObject root)
     {
         if (root["ui-preferences"] is null)
             root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
+        if (root["reviews"] is null)
+        {
+            root["reviews"] = new JsonObject { ["sessions"] = new JsonObject() };
+        }
+        else if (root["reviews"] is JsonObject reviewsObj && reviewsObj["sessions"] is null)
+        {
+            // Defense against partial wraps like `"reviews": {}` — without this, the
+            // deserializer produces `Reviews.Sessions == null` and the next
+            // state.Reviews.Sessions.TryGetValue(...) NREs at the consumer site.
+            reviewsObj["sessions"] = new JsonObject();
+        }
     }
 }
