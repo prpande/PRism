@@ -3,7 +3,7 @@
 **Slice**: S6 PR0 — lands ahead of the Settings page work in S6.
 **Date**: 2026-05-10.
 **Status**: Design — pending user review and implementation plan.
-**Branch**: `spec/multi-account-scaffold` (worktree at `D:\src\PRism\.claude\worktrees\spec+multi-account-scaffold`).
+**Branch**: `spec/multi-account-scaffold`.
 **Source authorities**: [`docs/spec/02-architecture.md`](../spec/02-architecture.md) is the PoC architecture; this slice introduces a *deliberate amendment* to its "one host per launch" constraint via storage-shape scaffolding now and runtime support in v2. [`docs/roadmap.md`](../roadmap.md) S6 row gains S6 PR0 as a new prefix.
 **Review history**: ce-doc-review run twice. Round 1 reshaped scope from full scaffold (5-7d) to storage-only (1-2d implementation). Round 2 surfaced the C# `with`-expression breakage that the delegate-property pattern would cause, the first-launch nullability cascade, and undercounted cost; this version corrects all three. Implementation cost: **3-5 days all-in** (1-2d implementation + 1d plan + ~1d review/iteration + ~1d test fixture rewrites).
 
@@ -27,11 +27,11 @@ The bet: v2 ships multi-account *and* the storage shape this slice picks turns o
 
 1. **State schema migration V3 → V4**: `AppState.{Reviews, AiState, LastConfiguredGithubHost}` move under `AppState.Accounts[accountKey].{Reviews, AiState, LastConfiguredGithubHost}`. UI preferences stay top-level (cross-account).
 2. **`AppState` C# record reshape with read delegates and write helpers**: `state.Reviews` (read) returns `state.Accounts["default"].Reviews`; `state.WithDefaultReviews(newReviews)` (write) returns `state with { Accounts = state.Accounts.SetItem("default", state.Accounts["default"] with { Reviews = newReviews }) }`. Read-site callers compile unchanged. Write-site callers (currently using `state with { Reviews = ... }` and `state with { LastConfiguredGithubHost = ... }`) get rewritten to use the helpers — this is part of v1 scope, not deferred. Same pattern for `WithDefaultAiState` and `WithDefaultLastConfiguredGithubHost`.
-3. **Config schema rewrite**: `github.host: string` → `github.accounts: [{ id, host, login?, localWorkspace? }]`. `LocalWorkspace` (currently a sibling of `Host` on `GithubConfig`) moves under each account because clone access is PAT-scoped. v1 has one entry. `AppConfig.Github.Host` becomes a delegate property reading `Accounts[0].Host`; **`AppConfig.Default` is updated to construct the new `GithubConfig(Accounts: [...])` shape** so first-launch writes the V4 config layout from day one.
+3. **Config schema rewrite**: `github.host: string` → `github.accounts: [{ "id", "host", "login"?, "local-workspace"? }]` (kebab-case JSON keys per the project's serializer policy; `LocalWorkspace` is the corresponding C# property name). `LocalWorkspace` (currently a sibling of `Host` on `GithubConfig`) moves under each account because clone access is PAT-scoped. v1 has one entry. `AppConfig.Github.Host` becomes a delegate property reading `Accounts[0].Host`; **`AppConfig.Default` is updated to construct the new `GithubConfig(Accounts: [...])` shape** so first-launch writes the V4 config layout from day one.
 4. **Token cache reshape with version field**: `PRism.tokens.cache` continues to be one MSAL-wrapped file. Its serialized contents change from `"<pat>"` to `{"version": 1, "tokens": {"default": "<pat>"}}`. The `version` field exists so v1 binaries running against a future-version cache fail loudly rather than silently downgrading.
 5. **Token migration on first load**: legacy single-string blob → versioned JSON-map with one `"default"` key. Idempotent. Unparseable cache (or future-version cache, or a JSON object whose `version < 1`) surfaces as "re-validate at Setup" without overwriting.
 6. **`AccountKey` as a string constant**, not a typed record-struct. Single source of truth: `public const string DefaultAccountKey = "default";` in `PRism.Core.State`. v1 always uses this constant; v2 introduces UUID generation alongside it.
-7. **First-launch initialization**: `ConfigStore` seeds `accounts: [{id: "default", host: "https://github.com", login: null, localWorkspace: null}]` on first launch when no config exists. `host` defaults to `"https://github.com"` to match the existing `AppConfig.Default` contract — DI registration of host-dependent components (`IReviewService`, the `github` `HttpClient`) reads a non-null host at startup, same as today. The Setup screen overrides this default if the user enters a GHES host.
+7. **First-launch initialization**: `ConfigStore` seeds `accounts: [{"id": "default", "host": "https://github.com", "login": null, "local-workspace": null}]` on first launch when no config exists. `host` defaults to `"https://github.com"` to match the existing `AppConfig.Default` contract — DI registration of host-dependent components (`IReviewService`, the `github` `HttpClient`) reads a non-null host at startup, same as today. The Setup screen overrides this default if the user enters a GHES host.
 8. **`"default"` key as a permanent fixture (in v1) with v2 rekey option open**: spec commits that v1-upgraded users keep `accountKey == "default"` *if v2 chooses not to rekey*. v2 MAY perform a one-time `default` → UUID rekey on first v2 launch; the v1 storage shape supports either path. Future code that assumes UUID shape (display logic, log redaction) carries the legacy-literal constraint only if v2 picks the no-rekey path.
 
 ### Explicitly NOT in scope (deferred to v2 brainstorm)
@@ -112,7 +112,7 @@ JsonNode-rewrite, follows the existing `MigrateV2ToV3` pattern. Atomic-rename wr
 public sealed record AppState(
     int Version,
     UiPreferences UiPreferences,
-    IReadOnlyDictionary<string, AccountState> Accounts)
+    ImmutableDictionary<string, AccountState> Accounts)
 {
     // Read delegate properties — to be removed in v2 alongside multi-account runtime.
     public PrSessionsState Reviews => Accounts[DefaultAccountKey].Reviews;
@@ -151,7 +151,7 @@ public sealed record AccountState(
 }
 ```
 
-`Accounts` is typed as `IReadOnlyDictionary<string, AccountState>` for read-only consumption and instantiated as `ImmutableDictionary<string, AccountState>` so `SetItem` exists for the write helpers.
+`Accounts` is declared as `ImmutableDictionary<string, AccountState>` directly (not `IReadOnlyDictionary`) because the `WithDefault*` helpers call `SetItem`, which is defined on `ImmutableDictionary`, not on the read-only interface. Read-site consumers see full `IReadOnlyDictionary` behavior because `ImmutableDictionary` implements it; no caller-side change.
 
 **Caller migration** — production code that mutates state:
 
@@ -192,7 +192,7 @@ New:
 `ConfigStore` load path:
 - If `github.host` present and `github.accounts` not, rewrite to the new shape; move `local-workspace` into the single account.
 - If `github.accounts` already present, no-op.
-- If neither present (fresh install), seed `accounts: [{id: "default", host: "https://github.com", login: null, localWorkspace: null}]`. **Host defaults to `"https://github.com"`** (matches current `AppConfig.Default` contract; preserves DI's non-null host expectation at registration time).
+- If neither present (fresh install), seed `accounts: [{"id": "default", "host": "https://github.com", "login": null, "local-workspace": null}]`. **Host defaults to `"https://github.com"`** (matches current `AppConfig.Default` contract; preserves DI's non-null host expectation at registration time).
 - Atomic-rename write so partial writes can't leave a file with both shapes.
 
 `AppConfig.GithubConfig` C# record:
@@ -209,6 +209,8 @@ public sealed record GithubAccountConfig(string Id, string Host, string? Login, 
 ```
 
 `GithubAccountConfig.Host` is non-null to preserve the existing public-API contract. Callers continue to access `config.Github.Host` unchanged.
+
+**`Login` write-back:** the field is initialized as `null` on first launch and on V3→V4 migration. It is populated by the existing PAT-validation flow (`IReviewService.ValidateCredentialsAsync` → `ViewerLoginHydrator`) the first time `viewer.login` is fetched after Setup. The hydrator gains a side-write into `config.Github.Accounts[0].Login` for v1; v2 generalizes the side-write to the active account. Without this hook the field would remain `null` indefinitely — the spec calls it out so the implementation plan inherits the responsibility.
 
 `AppConfig.Default` is updated to construct the new shape:
 
@@ -247,7 +249,7 @@ Token-store load path (in priority order):
 2. **Parses as a single string (legacy)** → wrap as `{"version": 1, "tokens": {"default": <string>}}` and write back via MSAL. **Migration crash window**: between read and MSAL-save, a process crash leaves the file half-written or zero-byte; the user runs Setup to re-validate. This crash window is acknowledged rather than mitigated — `MsalCacheHelper.SaveUnencryptedTokenCache` does not provide atomic-rename, and adding our own temp-write-then-rename around MSAL is out of scope for this slice.
 3. **Parses as `{"version": 1, "tokens": {…}}`** → no-op.
 4. **Parses as `{"version": <future>, …}` (version > 1)** → token-store enters read-only mode (analogous to `AppStateStore.cs:267-269`); surface "PRism was downgraded; upgrade or wipe `PRism.tokens.cache`."
-5. **Parses as `{"version": <0 or negative>, …}` or any other JSON shape** → treat as parse failure; surface "re-validate at Setup"; do **not** overwrite.
+5. **Parses as `{"version": <0 or negative>, …}`, `{"version": null, …}`, `{"version": <non-integer>, …}`, or any other JSON shape** → treat as parse failure; surface "re-validate at Setup"; do **not** overwrite. (`null` and non-integer version values are rejected because the version field is the load-path discriminator; an unparseable discriminator cannot be safely routed to any branch.)
 6. **Fails to parse** → same as branch 5.
 
 The v1-after-v2 regression class (older binary destroying newer cache) is closed by the version field + read-only mode under one assumption: **v2 disciplines version bumps when extending the `tokens` map structure**. See § 7 for the binding policy v2 inherits. Without that policy, v2 could add a second token to the `tokens` map without bumping `version: 2`, in which case a v1 binary parses it as `{"version": 1, "tokens": {…}}` (branch 3, no-op) — and any downstream v1 write path that re-serializes only `default` would silently drop the v2-added token. The version-field defense is *conditional on v2's discipline*; the § 7 constraint makes that discipline binding.
@@ -291,7 +293,7 @@ These are non-negotiable because v1 ships data to disk that v2 inherits. Reversa
 1. **`accountKey` is an arbitrary opaque string** (irreversible if v2 keeps the `"default"` literal — see § 3 for the rekey alternative). v1-upgraded users carry `"default"` indefinitely if v2 doesn't rekey. Display logic, log redaction, and any UUID-shape assumption must accept the legacy literal under that path.
 2. **`accountKey` MUST pass a safe-string allowlist before use in JSON map keys, log lines, file paths, or HTTP headers.** v1 hardcodes `"default"` (trivially safe). v2's `accountKey` validator MUST enforce a bounded character set (recommended: `[a-zA-Z0-9_-]`, max 64 characters). Without this, an attacker-controlled or accidentally-malformed accountKey lands in log output (CRLF injection), JSON dictionary key (escape-character injection), or path component (`../../`) depending on serializer / sink configuration. The "arbitrary opaque string" commitment in (1) is bounded by this allowlist.
 3. **One MSAL token cache file, multi-account JSON map inside.** v2 can shard if needed, but the v1-shape doesn't pre-commit to sharding.
-4. **Per-account `localWorkspace`** field exists. v2's clone-management can pick whether to merge clones across accounts, but the config shape supports per-account paths.
+4. **Per-account `"local-workspace"`** field exists in the on-disk shape (C# property: `LocalWorkspace`). v2's clone-management can pick whether to merge clones across accounts, but the config shape supports per-account paths.
 5. **Version-bump discipline (binding)**: any v2 change that extends the `tokens` map (token cache) or `accounts` map (state.json) MUST bump the corresponding `version` field, even if the shape is structurally backwards-readable by an older binary. Without this discipline, the version-field regression-mitigation in § 4.3 / § 4.1 partially fails — older binaries silently round-trip-strip new map entries. This is cheap to commit now and load-bearing if violated later.
 6. **No-silent-fallback (binding) — auth-blast-radius bug class**. When v2 routes a request to one of multiple accounts, prompt the user when the routing is ambiguous; never silent fallback. Applies to:
    - **URL-paste**: if multiple accounts could serve a pasted URL, prompt.
@@ -363,8 +365,8 @@ If v2 brainstorms a different storage shape (e.g., active-account with separate 
 - `AppStateMigrations.MigrateV3ToV4`: load V3 fixture → assert V4 shape, assert `accounts.default` contains all prior data, assert root-level orphan keys removed.
 - `MigrateV3ToV4` idempotence: load V4 → no-op.
 - `AppState.WithDefault*` helpers: assert each helper returns a new `AppState` with the targeted account-state field updated and all other fields unchanged.
-- `ConfigStore` migration: load `github.host` fixture → assert rewrite to `accounts[0]` with `localWorkspace` moved under the account; assert idempotence.
-- `ConfigStore` first-launch: no config file → assert seeded `accounts: [{id: "default", host: "https://github.com", login: null, localWorkspace: null}]`.
+- `ConfigStore` migration: load `github.host` fixture → assert rewrite to `accounts[0]` with the `"local-workspace"` key moved under the account; assert idempotence.
+- `ConfigStore` first-launch: no config file → assert seeded `accounts: [{"id": "default", "host": "https://github.com", "login": null, "local-workspace": null}]`.
 - `AppConfig.Default` round-trip: serialize `AppConfig.Default` → assert JSON contains `github.accounts[0].host` and does NOT contain `github.host`.
 - `TokenStore` migration: legacy single-string blob → versioned JSON-map. Legacy missing → no-op. Future-version cache → read-only mode + clear surfacing message. **`version: 0` cache → parse-failure surface (no overwrite)**. Unparseable cache → parse-failure surface (no overwrite).
 
@@ -372,7 +374,7 @@ If v2 brainstorms a different storage shape (e.g., active-account with separate 
 
 - `AppState.Reviews` (delegate property) returns `state.Accounts["default"].Reviews` for a freshly-loaded V4 state.
 - `AppState.AiState`, `AppState.LastConfiguredGithubHost` likewise.
-- `AppConfig.Github.Host` returns `accounts[0].host`; `AppConfig.Github.LocalWorkspace` returns `accounts[0].localWorkspace`.
+- `AppConfig.Github.Host` (C# delegate property) returns `Accounts[0].Host`; `AppConfig.Github.LocalWorkspace` returns `Accounts[0].LocalWorkspace`.
 - Production write-site smoke: every endpoint that previously used `state with { Reviews = ... }` now uses `state.WithDefaultReviews(...)` and produces an identical post-state to the V3 baseline (assert via state-snapshot diff against a frozen fixture).
 
 ### 9.3 No interface-boundary tests in v1
@@ -386,7 +388,7 @@ If v2 brainstorms a different storage shape (e.g., active-account with separate 
 - `docs/spec/02-architecture.md` § "Changing `github.host` between launches" — minor amend: `LastConfiguredGithubHost` lives under `accounts.default` in V4; the modal logic is unchanged.
 - `docs/spec/05-non-goals.md` "Multi-host concurrency" row — amend to "Multi-host concurrency: storage shape scaffolded in v1; runtime + UX in v2."
 - `docs/roadmap.md` S6 row — add S6 PR0 to the front of S6's PR sequence.
-- `.ai/docs/architectural-invariants.md` — **no entry yet**. The invariant is added by v2's slice, when interfaces and runtime are committed. Adding the invariant in v1 would couple the dead-weight reversal to a doc repeal and is precisely what § 8.4 trades to keep reversal contained.
+- `.ai/docs/architectural-invariants.md` — **no new multi-account invariant entry in v1**. The existing "one host per launch" invariant is amended (per § 10) to note that v1 runtime remains single-account while the storage shape scaffolds for v2. A permanent multi-account invariant (e.g., the binding no-silent-fallback rule from § 7) is added by v2's slice when interfaces and runtime are committed. Adding the invariant in v1 would couple the dead-weight reversal to a doc repeal and is precisely what § 8.4 trades to keep reversal contained.
 
 ## 11. Open questions
 
