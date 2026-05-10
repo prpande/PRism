@@ -1,6 +1,7 @@
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PrHeader } from '../components/PrDetail/PrHeader';
 import { BannerRefresh } from '../components/PrDetail/BannerRefresh';
+import { UnresolvedPanel } from '../components/PrDetail/Reconciliation/UnresolvedPanel';
 import type { PrTabId } from '../components/PrDetail/PrSubTabStrip';
 import { usePrDetail } from '../hooks/usePrDetail';
 import { useActivePrUpdates } from '../hooks/useActivePrUpdates';
@@ -111,6 +112,7 @@ function PrDetailPageInner({
         onReload={handleReload}
         onDismiss={updates.clear}
       />
+      <UnresolvedPanel prRef={ref} session={draftSession.session} />
       {error && (
         <div role="alert" className="pr-detail-error">
           Couldn't load PR — {error.message}
