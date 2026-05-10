@@ -313,15 +313,33 @@ export function FilesTab() {
   // ExistingCommentWidget receives the bag and self-manages composer state
   // (one open reply per thread, multiple threads can host open replies
   // simultaneously — matches the GitHub UX precedent).
-  const replyContext = {
-    prRef,
-    prState,
-    draftReplies: draftSession.session?.draftReplies ?? [],
-    registerOpenComposer: draftSession.registerOpenComposer,
-    onReplyComposerClose: () => {
-      void draftSession.refetch();
-    },
-  };
+  //
+  // Memoized so the bag's reference is stable across renders that don't
+  // touch its inputs. `ReplyComposer`'s `registerOpenComposer` useEffect
+  // re-runs whenever the registry function reference changes; without
+  // memoization, every parent render would tear down and re-register the
+  // refcount entry, briefly dropping the diff-and-prefer merge protection
+  // for the open draft.
+  const handleReplyComposerClose = useCallback(() => {
+    void draftSession.refetch();
+  }, [draftSession.refetch]);
+
+  const replyContext = useMemo(
+    () => ({
+      prRef,
+      prState,
+      draftReplies: draftSession.session?.draftReplies ?? [],
+      registerOpenComposer: draftSession.registerOpenComposer,
+      onReplyComposerClose: handleReplyComposerClose,
+    }),
+    [
+      prRef,
+      prState,
+      draftSession.session?.draftReplies,
+      draftSession.registerOpenComposer,
+      handleReplyComposerClose,
+    ],
+  );
 
   return (
     <div className="files-tab">

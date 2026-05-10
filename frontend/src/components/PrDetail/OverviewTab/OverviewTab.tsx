@@ -58,13 +58,22 @@ export function OverviewTab() {
   // `useDraftSession.session.draftComments.find(d => d.filePath === null)`
   // once OverviewTab gains a session instance, and replace the no-op
   // `registerOpenComposer` / `onComposerClose` with the live ones.
-  const replyContext: PrRootConversationReplyContext = {
-    prRef,
-    prState: prDetail.pr.isMerged ? 'merged' : prDetail.pr.isClosed ? 'closed' : 'open',
-    existingPrRootDraft: null,
-    registerOpenComposer: () => () => undefined,
-    onComposerClose: () => undefined,
-  };
+  //
+  // `replyContext` is memoized so its reference is stable across renders.
+  // PrRootConversationActions's `registerOpenComposer` useEffect
+  // (and PrRootReplyComposer's mount-time effect) re-runs when its
+  // dependency reference changes — without memoization, every parent
+  // render would tear down and re-create the registry entry.
+  const replyContext: PrRootConversationReplyContext = useMemo(
+    () => ({
+      prRef,
+      prState: prDetail.pr.isMerged ? 'merged' : prDetail.pr.isClosed ? 'closed' : 'open',
+      existingPrRootDraft: null,
+      registerOpenComposer: () => () => undefined,
+      onComposerClose: () => undefined,
+    }),
+    [prRef, prDetail.pr.isMerged, prDetail.pr.isClosed],
+  );
 
   return (
     <div className="overview-tab overview-grid">

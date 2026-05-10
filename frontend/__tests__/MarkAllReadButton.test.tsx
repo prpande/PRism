@@ -58,7 +58,6 @@ describe('MarkAllReadButton', () => {
 
     const btn = screen.getByRole('button', { name: /mark all read/i });
     expect(btn).toBeDisabled();
-    expect(btn).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('MarkAllReadButton_FiresMarkAllReadPatch_AfterPoll — clicks fire the markAllRead patch once gated open', async () => {

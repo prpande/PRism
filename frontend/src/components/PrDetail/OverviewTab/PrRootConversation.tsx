@@ -43,8 +43,12 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
       {replyContext ? (
         <PrRootConversationActions replyContext={replyContext} />
       ) : (
+        // Rendered when the conversation is mounted in a read-only context
+        // (e.g., a future Drafts-tab preview slot). The S3-shipped message
+        // ("Reply lands when…S4") was retired with PR5; the new fallback
+        // is stable across slices.
         <p className="pr-root-conversation-footer muted">
-          Reply lands when the comment composer ships in S4.
+          Composer not available in this context.
         </p>
       )}
     </section>

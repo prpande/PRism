@@ -179,8 +179,12 @@ describe('FilesTab — diff-line-click composer mount', () => {
     renderFilesTab();
 
     // Wait for the diff to render (file appears in tree).
-    await waitFor(() => expect(screen.getByText('main.ts')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('main.ts'));
+    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
+    // race between waitFor's success callback and the next sync line cannot
+    // flip the file tree back to skeleton between query and click.
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
 
     // The "Add comment" affordance button is on each non-deleted line.
     // Click line 1 (the first line of the new content).
@@ -200,8 +204,12 @@ describe('FilesTab — diff-line-click composer mount', () => {
     globalThis.fetch = makeRouteHandler(onefileDiff, session) as unknown as typeof fetch;
     renderFilesTab();
 
-    await waitFor(() => expect(screen.getByText('main.ts')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('main.ts'));
+    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
+    // race between waitFor's success callback and the next sync line cannot
+    // flip the file tree back to skeleton between query and click.
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
 
     const lineButton = await screen.findByRole('button', { name: 'Add comment on line 1' });
     fireEvent.click(lineButton);
@@ -216,8 +224,12 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     globalThis.fetch = makeRouteHandler(onefileDiff, emptySession()) as unknown as typeof fetch;
     renderFilesTab();
 
-    await waitFor(() => expect(screen.getByText('main.ts')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('main.ts'));
+    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
+    // race between waitFor's success callback and the next sync line cannot
+    // flip the file tree back to skeleton between query and click.
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
 
     const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
     fireEvent.click(line1);
@@ -246,8 +258,12 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     globalThis.fetch = makeRouteHandler(onefileDiff, session) as unknown as typeof fetch;
     renderFilesTab();
 
-    await waitFor(() => expect(screen.getByText('main.ts')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('main.ts'));
+    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
+    // race between waitFor's success callback and the next sync line cannot
+    // flip the file tree back to skeleton between query and click.
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
 
     // Open composer at line 1 → composerDraftId === 'uuid-existing'.
     const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
@@ -269,8 +285,12 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     globalThis.fetch = makeRouteHandler(onefileDiff, session, tracker) as unknown as typeof fetch;
     renderFilesTab();
 
-    await waitFor(() => expect(screen.getByText('main.ts')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('main.ts'));
+    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
+    // race between waitFor's success callback and the next sync line cannot
+    // flip the file tree back to skeleton between query and click.
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
 
     const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
     fireEvent.click(line1);
@@ -302,8 +322,12 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     globalThis.fetch = makeRouteHandler(onefileDiff, session, tracker) as unknown as typeof fetch;
     renderFilesTab();
 
-    await waitFor(() => expect(screen.getByText('main.ts')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('main.ts'));
+    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
+    // race between waitFor's success callback and the next sync line cannot
+    // flip the file tree back to skeleton between query and click.
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
 
     const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
     fireEvent.click(line1);

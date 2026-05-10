@@ -31,17 +31,15 @@ const replyContext: PrRootConversationReplyContext = {
 };
 
 describe('PrRootConversation', () => {
-  it('renders the legacy S3 footer copy when replyContext is omitted (read-only mode)', () => {
+  it('renders the read-only fallback footer when replyContext is omitted', () => {
     render(<PrRootConversation comments={[]} />);
-    expect(
-      screen.getByText(/Reply lands when the comment composer ships in S4\./),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Composer not available in this context\./)).toBeInTheDocument();
   });
 
-  it('replaces the legacy footer with Reply + Mark-all-read actions when replyContext is supplied', () => {
+  it('replaces the read-only footer with Reply + Mark-all-read actions when replyContext is supplied', () => {
     render(<PrRootConversation comments={[]} replyContext={replyContext} />);
     expect(
-      screen.queryByText(/Reply lands when the comment composer ships in S4\./),
+      screen.queryByText(/Composer not available in this context\./),
     ).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /mark all read/i })).toBeInTheDocument();

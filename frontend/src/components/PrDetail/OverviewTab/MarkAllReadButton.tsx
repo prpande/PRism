@@ -52,12 +52,18 @@ export function MarkAllReadButton({ prRef }: MarkAllReadButtonProps) {
 
   const disabled = !ready || pending;
 
+  // Native `disabled` already communicates state to assistive technology;
+  // an additional `aria-disabled` would be redundant for buttons that are
+  // taken out of the tab order via `disabled`. This is intentionally
+  // different from the composer Save buttons, which use `aria-disabled`
+  // *without* `disabled` so they remain focusable while signalling state
+  // to screen readers (a deliberate PR4 pattern that preserves tooltip
+  // hover and Enter-as-confirm semantics on the disabled state).
   return (
     <button
       type="button"
       className="mark-all-read-button"
       disabled={disabled}
-      aria-disabled={disabled}
       title={ready ? 'Mark all conversation comments read' : 'Loading…'}
       onClick={handleClick}
     >

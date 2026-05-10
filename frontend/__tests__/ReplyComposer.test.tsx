@@ -91,6 +91,34 @@ describe('ReplyComposer — discard flow', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it('DiscardConfirm_ServerRejectsDelete_ModalStaysOpen — non-ok result keeps the modal open', async () => {
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: false,
+      status: 422,
+      kind: 'invalid-body',
+      body: 'rejected',
+    });
+    const onClose = vi.fn();
+    render(<Harness initialDraftId="uuid-existing" initialBody="text" onClose={onClose} />);
+    const textarea = screen.getByLabelText('Reply body') as HTMLTextAreaElement;
+    fireEvent.keyDown(textarea, { key: 'Escape' });
+
+    const modalDiscard = screen
+      .getAllByRole('button', { name: 'Discard' })
+      .find((b) => b.getAttribute('data-modal-role') === 'primary');
+    expect(modalDiscard).toBeDefined();
+    fireEvent.click(modalDiscard!);
+    await settle(0);
+
+    expect(spy).toHaveBeenCalledWith(ref, {
+      kind: 'deleteDraftReply',
+      payload: { id: 'uuid-existing' },
+    });
+    // sendPatch returned !ok → composer keeps the modal open + does NOT call onClose
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('Esc with draftId opens discard-confirm modal; confirm sends deleteDraftReply', async () => {
     const onClose = vi.fn();
     const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
