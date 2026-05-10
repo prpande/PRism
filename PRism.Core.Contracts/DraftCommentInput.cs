@@ -1,6 +1,6 @@
 namespace PRism.Core.Contracts;
 
-public sealed record DraftComment(
+public sealed record DraftCommentInput(
     string Id,
     string FilePath,
     int LineNumber,

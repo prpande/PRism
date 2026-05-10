@@ -27,7 +27,11 @@
 
 **Spec sections:** § 2.1 (wrap rename), § 2.2 (migration framework), § 2.3 (V2→V3 step), § 2.4 (schema additions), § 2.5 (tests + scope).
 
-**Files touched (~11):**
+**Implementation-time additions (2026-05-10):** see `docs/specs/2026-05-09-s4-drafts-and-composer-deferrals.md` § "Rename `Contracts.DraftComment`/`DraftReply`" and § "Task 6 scope-pull-forward". Two adjustments to PR1's scope:
+- An ad-hoc Task 2.5 lands a rename of pre-existing `PRism.Core.Contracts.DraftComment`/`DraftReply` (S0+S1 seam skeletons) → `DraftCommentInput`/`DraftReplyInput` to resolve a three-way name collision against the new state types and the planned wire DTOs. Adds 6 file edits to PR1's scope, no spec/plan edits required.
+- Task 2's commit pulls forward the *minimum compile fix* for four consumer-test call sites (Task 6 scope) by passing empty `List<DraftComment>()`/`List<DraftReply>()` defaults. Task 2.5's commit pulls forward the same minimum fix for two further call sites (Task 5 scope: `PRism.Web/Endpoints/PrDetailEndpoints.cs` ×2 occurrences and `tests/PRism.Web.Tests/Endpoints/PrDetailEndpointsTests.cs`). Tasks 5 and 6's broader work (consume `state.Reviews.Sessions`, slash-key normalization, fixture cleanup, helper extraction) still applies as separate commits.
+
+**Files touched (~11 baseline + 6 from Task 2.5 rename):**
 - Create: `PRism.Core/State/PrSessionsState.cs`
 - Create: `PRism.Core/State/Migrations/Migrations.cs`
 - Create: `PRism.Core/State/Migrations/PrSessionsMigrations.cs`
@@ -41,6 +45,14 @@
 - Modify: `tests/PRism.Core.Tests/State/AppStateStoreUpdateAsyncTests.cs`, `AppStateStoreTests.cs`, `AppStateStoreMigrationTests.cs`
 - Modify: `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs`
 - Modify: `tests/PRism.Web.Tests/Endpoints/PrDetailEndpointsTests.cs`
+- **Task 2.5 — Contracts rename (added 2026-05-10):**
+  - Modify (rename type + content): `PRism.Core.Contracts/DraftComment.cs` → `DraftCommentInput.cs`
+  - Modify (rename type + content): `PRism.Core.Contracts/DraftReply.cs` → `DraftReplyInput.cs`
+  - Modify: `PRism.Core.Contracts/DraftReview.cs` (consumer)
+  - Modify: `PRism.AI.Contracts/Seams/IDraftReconciliator.cs` (consumer)
+  - Modify: `PRism.AI.Contracts/Noop/NoopDraftReconciliator.cs` (consumer)
+  - Modify: `PRism.AI.Placeholder/PlaceholderDraftReconciliator.cs` (consumer)
+  - Modify: `tests/PRism.Core.Tests/Ai/NoopSeamTests.cs` (consumer)
 
 ---
 

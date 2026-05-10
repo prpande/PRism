@@ -456,7 +456,7 @@ public class PrDetailEndpointsTests
                 .ToDictionary(i => $"seed/file-{i:D5}.cs", _ => "head1");
             var sessions = new Dictionary<string, ReviewSessionState>
             {
-                ["octo/repo/1"] = new ReviewSessionState(null, null, null, null, viewedFiles)
+                ["octo/repo/1"] = new ReviewSessionState(null, null, null, null, viewedFiles, new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
             };
             await seedStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
         }

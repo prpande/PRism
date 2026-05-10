@@ -63,7 +63,7 @@ public class NoopSeamTests
     public async Task NoopDraftReconciliator_returns_empty()
     {
         IDraftReconciliator s = new NoopDraftReconciliator();
-        var result = await s.ReconcileAsync(Ref, Array.Empty<DraftComment>(), CancellationToken.None);
+        var result = await s.ReconcileAsync(Ref, Array.Empty<DraftCommentInput>(), CancellationToken.None);
         result.Should().BeEmpty();
     }
 

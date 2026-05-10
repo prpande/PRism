@@ -10,9 +10,6 @@ using PRism.Core.Contracts;
 using PRism.Core.Events;
 using PRism.Core.Inbox;
 using PRism.Core.State;
-// Disambiguate against PRism.Core.Contracts.DraftComment/DraftReply (AI-seam DTOs):
-using StateDraftComment = PRism.Core.State.DraftComment;
-using StateDraftReply = PRism.Core.State.DraftReply;
 
 namespace PRism.Core.Tests.Inbox;
 
@@ -500,8 +497,8 @@ public sealed class InboxRefreshOrchestratorTests
             PendingReviewId: null,
             PendingReviewCommitOid: null,
             ViewedFiles: new Dictionary<string, string>(),
-            DraftComments: new List<StateDraftComment>(),
-            DraftReplies: new List<StateDraftReply>(),
+            DraftComments: new List<DraftComment>(),
+            DraftReplies: new List<DraftReply>(),
             DraftSummaryMarkdown: null,
             DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);

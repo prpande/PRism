@@ -107,7 +107,7 @@ internal static partial class PrDetailEndpoints
                     await stateStore.UpdateAsync(state =>
                     {
                         var session = state.ReviewSessions.GetValueOrDefault(key) ??
-                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
+                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
                         var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                         sessions[key] = session with
                         {
@@ -166,7 +166,7 @@ internal static partial class PrDetailEndpoints
                     await stateStore.UpdateAsync(state =>
                     {
                         var session = state.ReviewSessions.GetValueOrDefault(key) ??
-                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>());
+                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
                         var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
 
                         if (body.Viewed)
