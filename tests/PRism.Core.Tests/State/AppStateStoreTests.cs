@@ -14,8 +14,8 @@ public class AppStateStoreTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(2);
-        state.ReviewSessions.Should().BeEmpty();
+        state.Version.Should().Be(3);
+        state.Reviews.Sessions.Should().BeEmpty();
         state.LastConfiguredGithubHost.Should().BeNull();
         File.Exists(Path.Combine(dir.Path, "state.json")).Should().BeTrue();
     }
@@ -42,7 +42,7 @@ public class AppStateStoreTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(2);
+        state.Version.Should().Be(3);
         Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().HaveCount(1);
     }
 

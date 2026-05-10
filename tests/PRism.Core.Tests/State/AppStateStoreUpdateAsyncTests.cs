@@ -40,21 +40,21 @@ public class AppStateStoreUpdateAsyncTests
         // Seed an initial session so transforms have somewhere to accumulate.
         await store.UpdateAsync(s => s with
         {
-            ReviewSessions = new Dictionary<string, ReviewSessionState>
+            Reviews = new PrSessionsState(new Dictionary<string, ReviewSessionState>
             {
                 ["o/r/1"] = new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
-            }
+            })
         }, CancellationToken.None);
 
         var tasks = Enumerable.Range(0, 50)
             .Select(i => store.UpdateAsync(s =>
             {
-                var session = s.ReviewSessions["o/r/1"];
+                var session = s.Reviews.Sessions["o/r/1"];
                 var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
                 viewedFiles[$"file-{i}.cs"] = "head1";
-                var sessions = s.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                var sessions = s.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                 sessions["o/r/1"] = session with { ViewedFiles = viewedFiles };
-                return s with { ReviewSessions = sessions };
+                return s with { Reviews = s.Reviews with { Sessions = sessions } };
             }, CancellationToken.None))
             .ToArray();
 
@@ -62,7 +62,7 @@ public class AppStateStoreUpdateAsyncTests
 
         using var roundTrip = new AppStateStore(dir.Path);
         var loaded = await roundTrip.LoadAsync(CancellationToken.None);
-        loaded.ReviewSessions["o/r/1"].ViewedFiles.Should().HaveCount(50,
+        loaded.Reviews.Sessions["o/r/1"].ViewedFiles.Should().HaveCount(50,
             because: "every concurrent transform must observe prior writes; no lost writes");
     }
 

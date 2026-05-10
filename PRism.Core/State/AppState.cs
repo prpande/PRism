@@ -2,14 +2,14 @@ namespace PRism.Core.State;
 
 public sealed record AppState(
     int Version,
-    IReadOnlyDictionary<string, ReviewSessionState> ReviewSessions,
+    PrSessionsState Reviews,
     AiState AiState,
     string? LastConfiguredGithubHost,
     UiPreferences UiPreferences)
 {
     public static AppState Default { get; } = new(
-        Version: 2,
-        ReviewSessions: new Dictionary<string, ReviewSessionState>(),
+        Version: 3,
+        Reviews: PrSessionsState.Empty,
         AiState: new AiState(new Dictionary<string, RepoCloneEntry>(), null),
         LastConfiguredGithubHost: null,
         UiPreferences: UiPreferences.Default);

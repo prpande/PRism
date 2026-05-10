@@ -106,15 +106,15 @@ internal static partial class PrDetailEndpoints
                 {
                     await stateStore.UpdateAsync(state =>
                     {
-                        var session = state.ReviewSessions.GetValueOrDefault(key) ??
+                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ??
                                       new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
-                        var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                        var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                         sessions[key] = session with
                         {
                             LastViewedHeadSha = body.HeadSha,
                             LastSeenCommentId = body.MaxCommentId,
                         };
-                        return state with { ReviewSessions = sessions };
+                        return state with { Reviews = state.Reviews with { Sessions = sessions } };
                     }, ct).ConfigureAwait(false);
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("read-only mode", StringComparison.Ordinal))
@@ -165,7 +165,7 @@ internal static partial class PrDetailEndpoints
                 {
                     await stateStore.UpdateAsync(state =>
                     {
-                        var session = state.ReviewSessions.GetValueOrDefault(key) ??
+                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ??
                                       new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
                         var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
 
@@ -183,9 +183,9 @@ internal static partial class PrDetailEndpoints
                             viewedFiles.Remove(canonical);
                         }
 
-                        var sessions = state.ReviewSessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                        var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                         sessions[key] = session with { ViewedFiles = viewedFiles };
-                        return state with { ReviewSessions = sessions };
+                        return state with { Reviews = state.Reviews with { Sessions = sessions } };
                     }, ct).ConfigureAwait(false);
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("read-only mode", StringComparison.Ordinal))

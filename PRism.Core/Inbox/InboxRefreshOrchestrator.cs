@@ -236,10 +236,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         AppState state)
     {
         var ci = ciByRef.TryGetValue(r.Reference, out var c) ? c : CiStatus.None;
-        var sessionKey = $"{r.Reference.Owner}/{r.Reference.Repo}#{r.Reference.Number}";
+        var sessionKey = r.Reference.ToString();   // canonical slash form, matches PrReference.ToString()
         string? lastViewedHeadSha = null;
         long? lastSeenCommentId = null;
-        if (state.ReviewSessions.TryGetValue(sessionKey, out var session))
+        if (state.Reviews.Sessions.TryGetValue(sessionKey, out var session))
         {
             lastViewedHeadSha = session.LastViewedHeadSha;
             if (session.LastSeenCommentId != null

@@ -329,7 +329,7 @@ public class PrDetailEndpointsTests
         // Verify state.json side-effect.
         using var stateStore = new AppStateStore(factory.DataDir);
         var state = await stateStore.LoadAsync(CancellationToken.None);
-        var session = state.ReviewSessions["octo/repo/1"];
+        var session = state.Reviews.Sessions["octo/repo/1"];
         session.LastViewedHeadSha.Should().Be("head1");
         session.LastSeenCommentId.Should().Be("999");
     }
@@ -389,7 +389,7 @@ public class PrDetailEndpointsTests
 
         using var stateStore = new AppStateStore(factory.DataDir);
         var state = await stateStore.LoadAsync(CancellationToken.None);
-        state.ReviewSessions["octo/repo/1"].ViewedFiles.Should().ContainKey("src/Foo.cs");
+        state.Reviews.Sessions["octo/repo/1"].ViewedFiles.Should().ContainKey("src/Foo.cs");
     }
 
     [Theory]
@@ -458,7 +458,7 @@ public class PrDetailEndpointsTests
             {
                 ["octo/repo/1"] = new ReviewSessionState(null, null, null, null, viewedFiles, new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
             };
-            await seedStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
+            await seedStore.SaveAsync(initial with { Reviews = initial.Reviews with { Sessions = sessions } }, CancellationToken.None);
         }
 
         var client = factory.CreateClient();

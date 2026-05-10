@@ -31,9 +31,9 @@ public class AppStateStoreMigrationTests
         var state = await store.LoadAsync(CancellationToken.None);
 
         state.Version.Should().Be(2);
-        state.ReviewSessions.Should().ContainKey("owner/repo/123");
-        state.ReviewSessions["owner/repo/123"].ViewedFiles.Should().BeEmpty();
-        state.ReviewSessions["owner/repo/123"].LastViewedHeadSha.Should().Be("abc123");
+        state.Reviews.Sessions.Should().ContainKey("owner/repo/123");
+        state.Reviews.Sessions["owner/repo/123"].ViewedFiles.Should().BeEmpty();
+        state.Reviews.Sessions["owner/repo/123"].LastViewedHeadSha.Should().Be("abc123");
     }
 
     [Fact]
@@ -61,7 +61,7 @@ public class AppStateStoreMigrationTests
         var state = await store.LoadAsync(CancellationToken.None);
 
         state.Version.Should().Be(2);
-        state.ReviewSessions["owner/repo/123"].ViewedFiles.Should().ContainKey("src/Foo.cs");
+        state.Reviews.Sessions["owner/repo/123"].ViewedFiles.Should().ContainKey("src/Foo.cs");
         store.IsReadOnlyMode.Should().BeFalse();
     }
 
@@ -149,13 +149,13 @@ public class AppStateStoreMigrationTests
                         ["lower/case/path.ts"] = "head1",
                     })
             };
-            await writeStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
+            await writeStore.SaveAsync(initial with { Reviews = initial.Reviews with { Sessions = sessions } }, CancellationToken.None);
         }
 
         using var readStore = new AppStateStore(dir.Path);
         var roundtrip = await readStore.LoadAsync(CancellationToken.None);
 
-        var session = roundtrip.ReviewSessions["mindbody/Mindbody.BizApp.Bff/42"];
+        var session = roundtrip.Reviews.Sessions["mindbody/Mindbody.BizApp.Bff/42"];
         session.ViewedFiles.Should().ContainKey("src/Foo.cs");
         session.ViewedFiles.Should().ContainKey("PRism.Core/State/AppState.cs");
         session.ViewedFiles.Should().ContainKey("lower/case/path.ts");
@@ -413,7 +413,7 @@ public class AppStateStoreMigrationTests
                     DraftVerdict: null,
                     DraftVerdictStatus: DraftVerdictStatus.Draft)
             };
-            await writeStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
+            await writeStore.SaveAsync(initial with { Reviews = initial.Reviews with { Sessions = sessions } }, CancellationToken.None);
             await writeStore.ResetToDefaultAsync(CancellationToken.None);
         }
 

@@ -490,7 +490,8 @@ public sealed class InboxRefreshOrchestratorTests
     public async Task State_json_reads_propagate_to_inbox_items()
     {
         // Arrange: state.json has a session entry for PR #1 in acme/api
-        var sessionKey = "acme/api#1";
+        // Slash form per S4 PR1 — matches PrReference.ToString() canonical form.
+        var sessionKey = "acme/api/1";
         var sessionState = new ReviewSessionState(
             LastViewedHeadSha: "abc",
             LastSeenCommentId: "12345",
@@ -504,10 +505,10 @@ public sealed class InboxRefreshOrchestratorTests
             DraftVerdictStatus: DraftVerdictStatus.Draft);
         var appState = AppState.Default with
         {
-            ReviewSessions = new Dictionary<string, ReviewSessionState>
+            Reviews = new PrSessionsState(new Dictionary<string, ReviewSessionState>
             {
                 [sessionKey] = sessionState
-            }
+            })
         };
 
         var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
