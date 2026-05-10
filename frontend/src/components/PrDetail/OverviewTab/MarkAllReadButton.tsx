@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFirstActivePrPollComplete } from '../../../hooks/useFirstActivePrPollComplete';
 import { sendPatch } from '../../../api/draft';
 import type { PrReference } from '../../../api/types';
@@ -21,6 +21,17 @@ export function MarkAllReadButton({ prRef }: MarkAllReadButtonProps) {
   // `markAllRead` patches. The handler is async and the button has no other
   // gate against re-entry while the first request is outstanding.
   const [pending, setPending] = useState(false);
+  // Mount tracker: the user can navigate away from the Overview tab while a
+  // slow markAllRead request is in flight. Without this guard, the finally
+  // block calls setPending(false) on an unmounted component (React dev-mode
+  // warning; harmless in production but noisy).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const handleClick = async () => {
     if (pending) return;
@@ -35,7 +46,7 @@ export function MarkAllReadButton({ prRef }: MarkAllReadButtonProps) {
         console.warn('mark-all-read failed', result);
       }
     } finally {
-      setPending(false);
+      if (mountedRef.current) setPending(false);
     }
   };
 

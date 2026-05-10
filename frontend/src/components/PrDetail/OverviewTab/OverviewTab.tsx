@@ -54,6 +54,10 @@ export function OverviewTab() {
   // no-op refetch; the composer's own auto-save/discard already round-trips
   // through `sendPatch`. `registerOpenComposer` is a no-op for the same
   // reason (no parallel session merge could clobber this composer's body).
+  // TODO(s4-pr6): hydrate `existingPrRootDraft` from
+  // `useDraftSession.session.draftComments.find(d => d.filePath === null)`
+  // once OverviewTab gains a session instance, and replace the no-op
+  // `registerOpenComposer` / `onComposerClose` with the live ones.
   const replyContext: PrRootConversationReplyContext = {
     prRef,
     prState: prDetail.pr.isMerged ? 'merged' : prDetail.pr.isClosed ? 'closed' : 'open',
