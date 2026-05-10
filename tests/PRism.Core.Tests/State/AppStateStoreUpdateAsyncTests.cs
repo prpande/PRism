@@ -42,7 +42,7 @@ public class AppStateStoreUpdateAsyncTests
         {
             ReviewSessions = new Dictionary<string, ReviewSessionState>
             {
-                ["o/r/1"] = new ReviewSessionState(null, null, null, null, new Dictionary<string, string>())
+                ["o/r/1"] = new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
             }
         }, CancellationToken.None);
 

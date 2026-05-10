@@ -137,6 +137,11 @@ public class AppStateStoreMigrationTests
                     LastSeenCommentId: null,
                     PendingReviewId: null,
                     PendingReviewCommitOid: null,
+                    DraftComments: new List<DraftComment>(),
+                    DraftReplies: new List<DraftReply>(),
+                    DraftSummaryMarkdown: null,
+                    DraftVerdict: null,
+                    DraftVerdictStatus: DraftVerdictStatus.Draft,
                     ViewedFiles: new Dictionary<string, string>
                     {
                         ["src/Foo.cs"] = "head1",
@@ -401,7 +406,12 @@ public class AppStateStoreMigrationTests
                     LastSeenCommentId: null,
                     PendingReviewId: null,
                     PendingReviewCommitOid: null,
-                    ViewedFiles: new Dictionary<string, string>())
+                    ViewedFiles: new Dictionary<string, string>(),
+                    DraftComments: new List<DraftComment>(),
+                    DraftReplies: new List<DraftReply>(),
+                    DraftSummaryMarkdown: null,
+                    DraftVerdict: null,
+                    DraftVerdictStatus: DraftVerdictStatus.Draft)
             };
             await writeStore.SaveAsync(initial with { ReviewSessions = sessions }, CancellationToken.None);
             await writeStore.ResetToDefaultAsync(CancellationToken.None);

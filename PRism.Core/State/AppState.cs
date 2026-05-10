@@ -20,7 +20,35 @@ public sealed record ReviewSessionState(
     string? LastSeenCommentId,
     string? PendingReviewId,
     string? PendingReviewCommitOid,
-    IReadOnlyDictionary<string, string> ViewedFiles);
+    IReadOnlyDictionary<string, string> ViewedFiles,
+    IReadOnlyList<DraftComment> DraftComments,
+    IReadOnlyList<DraftReply> DraftReplies,
+    string? DraftSummaryMarkdown,
+    DraftVerdict? DraftVerdict,
+    DraftVerdictStatus DraftVerdictStatus);
+
+public sealed record DraftComment(
+    string Id,
+    string? FilePath,
+    int? LineNumber,
+    string? Side,
+    string? AnchoredSha,
+    string? AnchoredLineContent,
+    string BodyMarkdown,
+    DraftStatus Status,
+    bool IsOverriddenStale);
+
+public sealed record DraftReply(
+    string Id,
+    string ParentThreadId,
+    string? ReplyCommentId,
+    string BodyMarkdown,
+    DraftStatus Status,
+    bool IsOverriddenStale);
+
+public enum DraftVerdict { Approve, RequestChanges, Comment }
+public enum DraftVerdictStatus { Draft, NeedsReconfirm }
+public enum DraftStatus { Draft, Moved, Stale }
 
 public sealed record AiState(
     IReadOnlyDictionary<string, RepoCloneEntry> RepoCloneMap,
