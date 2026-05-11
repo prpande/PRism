@@ -26,7 +26,16 @@ internal static class PrReloadEndpoints
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> PerPrSemaphores = new();
 
     internal sealed record ReloadRequest(string HeadSha);
-    internal sealed record ReloadStaleHeadResponse(string CurrentHeadSha);
+
+    // The frontend's parseReloadConflictKind (api/draft.ts) discriminates 409
+    // responses by the `error` field — same shape as the inline 409
+    // reload-in-progress response above. Without this field the response is
+    // unrecognized and the auto-retry path in useReconcile (S4 PR7 Task 46)
+    // never fires.
+    internal sealed record ReloadStaleHeadResponse(string CurrentHeadSha)
+    {
+        public string Error { get; } = "reload-stale-head";
+    }
 
     public static IEndpointRouteBuilder MapPrReloadEndpoints(this IEndpointRouteBuilder app)
     {

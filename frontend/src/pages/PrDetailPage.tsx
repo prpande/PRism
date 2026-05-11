@@ -9,7 +9,9 @@ import { useActivePrUpdates } from '../hooks/useActivePrUpdates';
 import { useDraftSession, type UseDraftSessionResult } from '../hooks/useDraftSession';
 import { useStateChangedSubscriber } from '../hooks/useStateChangedSubscriber';
 import { useCrossTabPrPresence } from '../hooks/useCrossTabPrPresence';
+import { useReconcile } from '../hooks/useReconcile';
 import type { PrDetailDto, PrReference } from '../api/types';
+import { useCallback } from 'react';
 
 // Single source of truth for the per-PR draft session is the PrDetailPage.
 // Tabs read it via Outlet context; the sticky-top UnresolvedPanel + tab-strip
@@ -80,6 +82,19 @@ function PrDetailPageInner({
   useStateChangedSubscriber({ prRef: ref, onSessionChange: draftSession.refetch });
   const presence = useCrossTabPrPresence(ref);
 
+  // Wraps POST /api/pr/{ref}/reload with the spec's 409-stale-head auto-retry.
+  // Wired alongside usePrDetail.reload — the two reload paths address
+  // different concerns (PR-detail refetch vs. draft reconciliation) and run
+  // concurrently when the user clicks the Reload button.
+  const handleReconcileComplete = useCallback(() => {
+    void draftSession.refetch();
+  }, [draftSession]);
+  const reconcile = useReconcile({
+    prRef: ref,
+    headSha: data?.pr.headSha ?? null,
+    onReloadComplete: handleReconcileComplete,
+  });
+
   const handleTabChange = (tab: PrTabId) => {
     if (tab === 'overview') navigate(basePath);
     else if (tab === 'files') navigate(`${basePath}/files`);
@@ -89,6 +104,7 @@ function PrDetailPageInner({
   const handleReload = () => {
     updates.clear();
     reload();
+    void reconcile.reload();
   };
 
   const currentIter = data?.iterations?.at(-1)?.number ?? 0;
@@ -125,6 +141,14 @@ function PrDetailPageInner({
         onTakeOver={presence.takeOver}
         onDismiss={presence.dismissForSession}
       />
+      {reconcile.banner && (
+        <div role="alert" className="reload-error-banner">
+          <span>{reconcile.banner}</span>
+          <button type="button" onClick={reconcile.clearBanner}>
+            Dismiss
+          </button>
+        </div>
+      )}
       <BannerRefresh
         hasUpdate={updates.hasUpdate}
         headShaChanged={updates.headShaChanged}
