@@ -46,9 +46,17 @@ export function CrossTabPresenceBanner({
             Take over here
           </button>
         )}
-        <button type="button" className="btn btn-link btn-sm" onClick={onDismiss}>
-          Dismiss for this session
-        </button>
+        {!readOnly && (
+          // In read-only mode, the banner is the only signal that composers
+          // are disabled; clicking Dismiss would set sessionStorage but the
+          // banner would still re-render (the `!readOnly` short-circuit
+          // forces it visible), so the button would appear to do nothing.
+          // Hide it to avoid a confusing no-op control. Recovery from
+          // read-only is via Switch-to-other-tab or a page reload.
+          <button type="button" className="btn btn-link btn-sm" onClick={onDismiss}>
+            Dismiss for this session
+          </button>
+        )}
       </div>
     </div>
   );

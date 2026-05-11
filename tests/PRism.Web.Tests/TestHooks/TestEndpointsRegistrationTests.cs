@@ -13,14 +13,18 @@ namespace PRism.Web.Tests.TestHooks;
 public class TestEndpointsRegistrationTests
 {
     [Fact]
-    public async Task TestEndpoints_NotRegisteredInProduction_404()
+    public async Task TestEndpoints_NotLiveInProduction()
     {
         // Boot the host with ASPNETCORE_ENVIRONMENT=Production. MapTestEndpoints
-        // must short-circuit at registration and leave both routes unmapped, so
-        // the SPA fallback hits and returns 404 (MapFallback at "/api/{*rest}"
-        // only catches /api/* — /test/* falls through to the index.html fallback,
-        // which returns 200 with HTML. We assert the JSON 404 from a HEAD-equivalent
-        // probe: POST /test/advance-head should NOT succeed.)
+        // must short-circuit at registration and leave both routes unmapped.
+        // The actual response status depends on what catches the request:
+        //   - 404 if no fallback file is present in the test wwwroot
+        //   - 405 if the SPA fallback is GET-only and rejects POST
+        //   - 200 with text/html if the SPA fallback served index.html
+        // All three are acceptable — the load-bearing invariant is "/test/*
+        // is NOT a live JSON endpoint in Production". The test name reflects
+        // that contract rather than the more specific "404" the earlier
+        // revision claimed.
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(b =>
         {
             b.UseEnvironment("Production");
