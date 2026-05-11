@@ -1,5 +1,11 @@
 interface CrossTabPresenceBannerProps {
   visible: boolean;
+  // True when a peer tab has CLAIMED ownership of this PR via the take-over
+  // action. The banner stays mounted (instead of hiding when showBanner
+  // clears) so the user has an in-page affordance to switch back to the
+  // other tab; the copy and action set adapt to this state so it is clear
+  // why composers/actions are disabled.
+  readOnly: boolean;
   onSwitchToOther: () => void;
   onTakeOver: () => void;
   onDismiss: () => void;
@@ -10,25 +16,36 @@ interface CrossTabPresenceBannerProps {
 // pick one of: switch tabs, take over, or "dismiss for this session" (which
 // is the explicit "I know, leave me alone" affordance and writes to
 // sessionStorage so the banner stays gone for the rest of this tab session).
+//
+// Read-only mode (peer tab claimed ownership): the banner stays visible with
+// the read-only copy + the Switch-to-other-tab action so the user can recover
+// without reloading the page. Take-over is hidden in read-only mode because
+// re-claiming defeats the cross-tab UX (it just bounces ownership back).
 export function CrossTabPresenceBanner({
   visible,
+  readOnly,
   onSwitchToOther,
   onTakeOver,
   onDismiss,
 }: CrossTabPresenceBannerProps) {
-  if (!visible) return null;
+  // Always render when read-only — the message is the user's only signal
+  // that their composer is disabled because of cross-tab take-over.
+  if (!visible && !readOnly) return null;
+  const message = readOnly
+    ? 'Another tab claimed this PR. Composer actions are disabled here. Switch to that tab to keep editing.'
+    : 'This PR is open in another tab. Saves may overwrite each other.';
   return (
     <div role="alert" aria-live="assertive" className="cross-tab-presence-banner">
-      <span className="cross-tab-presence-banner-message">
-        This PR is open in another tab. Saves may overwrite each other.
-      </span>
+      <span className="cross-tab-presence-banner-message">{message}</span>
       <div className="cross-tab-presence-banner-actions">
         <button type="button" className="btn btn-secondary btn-sm" onClick={onSwitchToOther}>
           Switch to other tab
         </button>
-        <button type="button" className="btn btn-primary btn-sm" onClick={onTakeOver}>
-          Take over here
-        </button>
+        {!readOnly && (
+          <button type="button" className="btn btn-primary btn-sm" onClick={onTakeOver}>
+            Take over here
+          </button>
+        )}
         <button type="button" className="btn btn-link btn-sm" onClick={onDismiss}>
           Dismiss for this session
         </button>

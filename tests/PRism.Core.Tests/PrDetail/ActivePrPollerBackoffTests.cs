@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Contracts;
 using PRism.Core.Events;
@@ -16,7 +17,10 @@ public class ActivePrPollerBackoffTests
         var review = new FakePollerReviewService();
         var bus = new FakeReviewEventBus();
         var cache = new ActivePrCache(registry);
-        var poller = new ActivePrPoller(registry, review, bus, cache, NullLogger<ActivePrPoller>.Instance);
+        var poller = new ActivePrPoller(
+            registry, review, bus, cache,
+            NullLogger<ActivePrPoller>.Instance,
+            new FakeHostEnvironment("Production"));
         return (poller, review, bus, registry, cache);
     }
 

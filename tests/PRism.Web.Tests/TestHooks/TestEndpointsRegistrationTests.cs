@@ -26,6 +26,13 @@ public class TestEndpointsRegistrationTests
             b.UseEnvironment("Production");
         });
         var client = factory.CreateClient();
+        // Set Origin so OriginCheckMiddleware (which rejects mutating verbs
+        // without it) does not 403 the request before routing happens.
+        // Without this header, the request fails for the wrong reason — a 403
+        // from CSRF defense — and the test would falsely pass even if
+        // MapTestEndpoints had regressed and registered the route in Production.
+        var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
+        if (!string.IsNullOrEmpty(origin)) client.DefaultRequestHeaders.Add("Origin", origin);
 
         var resp = await client.PostAsJsonAsync(
             "/test/advance-head",

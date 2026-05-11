@@ -104,7 +104,12 @@ function PrDetailPageInner({
   const handleReload = () => {
     updates.clear();
     reload();
-    void reconcile.reload();
+    // Skip the reconcile leg when a peer tab claimed cross-tab ownership;
+    // POST /reload is a mutating write and would race the claiming tab.
+    // usePrDetail.reload() is a pure GET-refresh of the PR detail and stays.
+    if (!presence.readOnly) {
+      void reconcile.reload();
+    }
   };
 
   const currentIter = data?.iterations?.at(-1)?.number ?? 0;
@@ -137,6 +142,7 @@ function PrDetailPageInner({
       />
       <CrossTabPresenceBanner
         visible={presence.showBanner}
+        readOnly={presence.readOnly}
         onSwitchToOther={presence.switchToOther}
         onTakeOver={presence.takeOver}
         onDismiss={presence.dismissForSession}

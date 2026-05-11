@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
@@ -53,7 +54,10 @@ public class ActivePrCacheTests
         var review = new FakePollerReviewService();
         var bus = new FakeReviewEventBus();
         var cache = new ActivePrCache(registry);
-        var poller = new ActivePrPoller(registry, review, bus, cache, NullLogger<ActivePrPoller>.Instance);
+        var poller = new ActivePrPoller(
+            registry, review, bus, cache,
+            NullLogger<ActivePrPoller>.Instance,
+            new FakeHostEnvironment("Production"));
 
         registry.Add("sub1", Pr);
         review.SetSnapshot(Pr, new ActivePrPollSnapshot("h-fresh", "MERGEABLE", "OPEN", 0, 0));

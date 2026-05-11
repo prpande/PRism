@@ -292,6 +292,7 @@ internal sealed class FakeReviewService : IReviewService
 
     public Task<CommitInfo?> GetCommitAsync(PrReference reference, string sha, CancellationToken ct)
     {
+        if (reference != Scenario) return Task.FromResult<CommitInfo?>(null);
         lock (_gate)
         {
             return Task.FromResult<CommitInfo?>(_reachableShas.Contains(sha) ? new CommitInfo(sha) : null);
