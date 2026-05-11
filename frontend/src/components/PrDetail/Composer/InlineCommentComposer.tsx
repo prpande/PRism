@@ -30,6 +30,10 @@ export interface InlineCommentComposerProps {
   // successful empty-body delete, after the 404-recovery "Discard" choice,
   // and after the discard-modal "Discard" confirmation.
   onClose: () => void;
+  // Spec § 5.7a. Set when a peer tab claimed cross-tab ownership of this
+  // PR. Disables the textarea and the action buttons; auto-save short-
+  // circuits via useComposerAutoSave's `disabled` gate.
+  readOnly?: boolean;
 }
 
 function composerAriaLabel(anchor: InlineAnchor): string {
@@ -45,6 +49,7 @@ export function InlineCommentComposer({
   onDraftIdChange,
   registerOpenComposer,
   onClose,
+  readOnly = false,
 }: InlineCommentComposerProps) {
   const [body, setBody] = useState(initialBody);
   const [previewMode, setPreviewMode] = useState(false);
@@ -94,6 +99,7 @@ export function InlineCommentComposer({
     onAssignedId: handleAssignedId,
     onDraftDeletedByServer: handleDraftDeletedByServer,
     onLocalDelete: handleLocalDelete,
+    disabled: readOnly,
   });
 
   // Keep the merge predicate truthy for as long as this composer is mounted
@@ -116,12 +122,14 @@ export function InlineCommentComposer({
   // is null) needs ≥3 chars before it can be persisted. For an existing
   // draft, sub-threshold edits are valid updates per § 5.4.
   const belowCreateThreshold = draftId === null && trimmedLength < COMPOSER_CREATE_THRESHOLD;
-  const saveDisabled = bodyEmpty || belowCreateThreshold;
-  const saveTooltip = bodyEmpty
-    ? 'Type something to save.'
-    : belowCreateThreshold
-      ? `Type at least ${COMPOSER_CREATE_THRESHOLD} characters to save.`
-      : undefined;
+  const saveDisabled = bodyEmpty || belowCreateThreshold || readOnly;
+  const saveTooltip = readOnly
+    ? 'Another tab is editing this PR.'
+    : bodyEmpty
+      ? 'Type something to save.'
+      : belowCreateThreshold
+        ? `Type at least ${COMPOSER_CREATE_THRESHOLD} characters to save.`
+        : undefined;
 
   const handleDiscardClick = () => {
     if (draftId === null) {
@@ -225,6 +233,8 @@ export function InlineCommentComposer({
           onKeyDown={handleKeyDown}
           aria-label="Comment body"
           rows={4}
+          readOnly={readOnly}
+          aria-readonly={readOnly || undefined}
         />
       )}
 
@@ -244,7 +254,13 @@ export function InlineCommentComposer({
 
         <AiComposerAssistant />
 
-        <button type="button" className="composer-discard" onClick={handleDiscardClick}>
+        <button
+          type="button"
+          className="composer-discard"
+          onClick={handleDiscardClick}
+          disabled={readOnly}
+          aria-disabled={readOnly || undefined}
+        >
           Discard
         </button>
 
@@ -254,6 +270,7 @@ export function InlineCommentComposer({
           aria-disabled={saveDisabled}
           title={saveTooltip}
           onClick={handleSaveClick}
+          disabled={readOnly}
         >
           Save
         </button>

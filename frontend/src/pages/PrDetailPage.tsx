@@ -1,12 +1,14 @@
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PrHeader } from '../components/PrDetail/PrHeader';
 import { BannerRefresh } from '../components/PrDetail/BannerRefresh';
+import { CrossTabPresenceBanner } from '../components/PrDetail/CrossTabPresenceBanner';
 import { UnresolvedPanel } from '../components/PrDetail/Reconciliation/UnresolvedPanel';
 import type { PrTabId } from '../components/PrDetail/PrSubTabStrip';
 import { usePrDetail } from '../hooks/usePrDetail';
 import { useActivePrUpdates } from '../hooks/useActivePrUpdates';
 import { useDraftSession, type UseDraftSessionResult } from '../hooks/useDraftSession';
 import { useStateChangedSubscriber } from '../hooks/useStateChangedSubscriber';
+import { useCrossTabPrPresence } from '../hooks/useCrossTabPrPresence';
 import type { PrDetailDto, PrReference } from '../api/types';
 
 // Single source of truth for the per-PR draft session is the PrDetailPage.
@@ -18,6 +20,10 @@ import type { PrDetailDto, PrReference } from '../api/types';
 export interface PrDetailOutletContext {
   prDetail: PrDetailDto;
   draftSession: UseDraftSessionResult;
+  // Spec § 5.7a. True when a peer tab claimed ownership of this PR via the
+  // cross-tab presence channel. Composers gate their auto-save + UI on it;
+  // PrDetailPage applies a top-level dimming class. Default false.
+  readOnly: boolean;
 }
 
 export function PrDetailPage() {
@@ -72,6 +78,7 @@ function PrDetailPageInner({
   // Refetch draft session when other tabs / the reload pipeline mutate
   // drafts. Own-tab events are filtered by the subscriber per spec § 5.7.
   useStateChangedSubscriber({ prRef: ref, onSessionChange: draftSession.refetch });
+  const presence = useCrossTabPrPresence(ref);
 
   const handleTabChange = (tab: PrTabId) => {
     if (tab === 'overview') navigate(basePath);
@@ -89,8 +96,16 @@ function PrDetailPageInner({
     (draftSession.session?.draftComments.length ?? 0) +
     (draftSession.session?.draftReplies.length ?? 0);
 
+  // Mount the banner at the top of the layout, above UnresolvedPanel per
+  // spec § 5.7a. The read-only dim is a page-level class so the entire
+  // detail UI (composers, action buttons in DraftsTab/UnresolvedPanel)
+  // signals "another tab owns this" without prop-drilling to every leaf.
+  const pageClassName = presence.readOnly
+    ? 'pr-detail-page pr-detail-page-readonly'
+    : 'pr-detail-page';
+
   return (
-    <div className="pr-detail-page">
+    <div className={pageClassName} aria-disabled={presence.readOnly || undefined}>
       <PrHeader
         reference={ref}
         title={data?.pr.title ?? ''}
@@ -103,6 +118,12 @@ function PrDetailPageInner({
         activeTab={activeTab}
         onTabChange={handleTabChange}
         draftsCount={draftsCount}
+      />
+      <CrossTabPresenceBanner
+        visible={presence.showBanner}
+        onSwitchToOther={presence.switchToOther}
+        onTakeOver={presence.takeOver}
+        onDismiss={presence.dismissForSession}
       />
       <BannerRefresh
         hasUpdate={updates.hasUpdate}
@@ -125,7 +146,15 @@ function PrDetailPageInner({
       {showSkeleton ? (
         <PrDetailSkeleton />
       ) : data ? (
-        <Outlet context={{ prDetail: data, draftSession } satisfies PrDetailOutletContext} />
+        <Outlet
+          context={
+            {
+              prDetail: data,
+              draftSession,
+              readOnly: presence.readOnly,
+            } satisfies PrDetailOutletContext
+          }
+        />
       ) : null}
     </div>
   );

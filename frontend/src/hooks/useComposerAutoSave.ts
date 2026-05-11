@@ -22,6 +22,11 @@ export interface UseComposerAutoSaveProps {
   body: string;
   draftId: string | null;
   anchor: ComposerAnchor;
+  // Spec § 5.7a — cross-tab take-over yields this tab to read-only. The
+  // hook skips creates / updates / deletes when set so the OTHER tab's
+  // composer is the only one writing. The debounce timer is also
+  // suppressed to avoid a deferred save firing after the flag flips.
+  disabled?: boolean;
   // Fired exactly once per composer session, when the first PUT
   // (newDraftComment / newPrRootDraftComment / newDraftReply) returns its
   // server-assigned id. Parent uses this to bind composer → draft id.
@@ -69,6 +74,7 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
   const performSave = useCallback(async (currentBody: string): Promise<void> => {
     const p = propsRef.current;
     if (p.prState !== 'open') return;
+    if (p.disabled) return;
     const trimmed = currentBody.trim();
 
     // Drain any in-flight create first. The next save needs the assigned id
@@ -164,6 +170,16 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
 
   useEffect(() => {
     if (props.prState !== 'open') return;
+    if (props.disabled) {
+      // Cancel any pending debounce. Without this an in-flight timer
+      // queued just before the flag flipped would still fire after the
+      // take-over, racing with the other tab.
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+      }
+      return;
+    }
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(() => {
       debounceTimer.current = null;
@@ -175,7 +191,7 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
         debounceTimer.current = null;
       }
     };
-  }, [props.body, props.prState, performSave]);
+  }, [props.body, props.prState, props.disabled, performSave]);
 
   return { badge, flush };
 }

@@ -14,7 +14,7 @@ import { PrRootConversation, type PrRootConversationReplyContext } from './PrRoo
 import { ReviewFilesCta } from './ReviewFilesCta';
 
 export function OverviewTab() {
-  const { prDetail, draftSession } = useOutletContext<PrDetailOutletContext>();
+  const { prDetail, draftSession, readOnly } = useOutletContext<PrDetailOutletContext>();
   const { capabilities } = useCapabilities();
   const { preferences } = usePreferences();
   const navigate = useNavigate();
@@ -69,6 +69,7 @@ export function OverviewTab() {
       existingPrRootDraft,
       registerOpenComposer: draftSession.registerOpenComposer,
       onComposerClose: draftSession.refetch,
+      readOnly,
     }),
     [
       prRef,
@@ -77,6 +78,7 @@ export function OverviewTab() {
       existingPrRootDraft,
       draftSession.registerOpenComposer,
       draftSession.refetch,
+      readOnly,
     ],
   );
 

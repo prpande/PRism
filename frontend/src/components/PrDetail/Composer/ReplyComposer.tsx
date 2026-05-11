@@ -23,6 +23,10 @@ export interface ReplyComposerProps {
   // body delete, after the 404-recovery "Discard" choice, and after the
   // discard-modal "Discard" confirmation.
   onClose: () => void;
+  // Spec § 5.7a. Set when a peer tab claimed cross-tab ownership of this
+  // PR. Disables the textarea and the action buttons; auto-save short-
+  // circuits via useComposerAutoSave's `disabled` gate.
+  readOnly?: boolean;
 }
 
 function replyAriaLabel(parentThreadId: string): string {
@@ -38,6 +42,7 @@ export function ReplyComposer({
   onDraftIdChange,
   registerOpenComposer,
   onClose,
+  readOnly = false,
 }: ReplyComposerProps) {
   const [body, setBody] = useState(initialBody);
   const [previewMode, setPreviewMode] = useState(false);
@@ -82,6 +87,7 @@ export function ReplyComposer({
     onAssignedId: handleAssignedId,
     onDraftDeletedByServer: handleDraftDeletedByServer,
     onLocalDelete: handleLocalDelete,
+    disabled: readOnly,
   });
 
   useEffect(() => {
@@ -96,12 +102,14 @@ export function ReplyComposer({
   const trimmedLength = body.trim().length;
   const bodyEmpty = trimmedLength === 0;
   const belowCreateThreshold = draftId === null && trimmedLength < COMPOSER_CREATE_THRESHOLD;
-  const saveDisabled = bodyEmpty || belowCreateThreshold;
-  const saveTooltip = bodyEmpty
-    ? 'Type something to save.'
-    : belowCreateThreshold
-      ? `Type at least ${COMPOSER_CREATE_THRESHOLD} characters to save.`
-      : undefined;
+  const saveDisabled = bodyEmpty || belowCreateThreshold || readOnly;
+  const saveTooltip = readOnly
+    ? 'Another tab is editing this PR.'
+    : bodyEmpty
+      ? 'Type something to save.'
+      : belowCreateThreshold
+        ? `Type at least ${COMPOSER_CREATE_THRESHOLD} characters to save.`
+        : undefined;
 
   const handleDiscardClick = () => {
     if (draftId === null) {
@@ -189,6 +197,8 @@ export function ReplyComposer({
           onKeyDown={handleKeyDown}
           aria-label="Reply body"
           rows={3}
+          readOnly={readOnly}
+          aria-readonly={readOnly || undefined}
         />
       )}
 
@@ -208,7 +218,13 @@ export function ReplyComposer({
 
         <AiComposerAssistant />
 
-        <button type="button" className="composer-discard" onClick={handleDiscardClick}>
+        <button
+          type="button"
+          className="composer-discard"
+          onClick={handleDiscardClick}
+          disabled={readOnly}
+          aria-disabled={readOnly || undefined}
+        >
           Discard
         </button>
 
@@ -218,6 +234,7 @@ export function ReplyComposer({
           aria-disabled={saveDisabled}
           title={saveTooltip}
           onClick={handleSaveClick}
+          disabled={readOnly}
         >
           Save
         </button>
