@@ -529,7 +529,7 @@ Single-column, scrollable body, sticky Confirm/Cancel footer. Responsive widths 
 
 The current order leads with the verdict picker (configuration) before the counts block + validator results (information that informs the verdict). This is a deliberate IA choice — most reviewers arrive at the dialog with a verdict already in mind from the review session, and the picker is affirmation, not decision. An alternate IA leading with counts/validator before verdict would respect "show evidence before asking for decision" but inverts the typical reviewer flow.
 
-**Status:** Marked as Outstanding Question (§ 18.1) — surfaced for explicit user decision before PR4 lands. Default in this spec is verdict-first; if the user prefers counts-first, swap items 1↔3 in the dialog body order above and update PR4 accordingly.
+**Status:** Resolved 2026-05-11 — verdict-first per user decision during this spec's brainstorm + doc-review cycle. Recorded in § 18.1 "Resolved" subsection. If the call ever needs reopening, swap items 1↔3 in the dialog body order above and update PR4 accordingly.
 
 ### 8.2 PR-level summary textarea
 
@@ -859,7 +859,11 @@ Decisions captured during the brainstorm and folded into the spec body above. Nu
 
 ### 18.1 Resolve before planning
 
-- **[Affects PR4][User decision]** **Submit dialog information architecture — verdict-first vs counts-first.** Spec § 8.1 leads with the verdict picker (configuration before evidence); doc-review surfaced a defensible alternate IA leading with the counts block + validator results before verdict ("show evidence before asking for decision"). The current default is verdict-first because most reviewers arrive with a verdict in mind from the review session. If you prefer counts-first, swap items 1↔3 in § 8.1 dialog body order before PR4 starts; small spec edit, larger downstream impact on PR4 component shape.
+- **(none open)** — every product / scope decision in this spec is pinned. The empirical gates in § 18.3 (C6 / C7 / C9) are objective, not user-judgment, decisions; their fallback paths are documented.
+
+**Resolved during this spec's brainstorm + doc-review cycle:**
+
+- **2026-05-11 — Submit dialog information architecture: verdict-first.** Doc-review surfaced a defensible alternate IA leading with counts + validator before verdict ("show evidence before asking for decision"); user picked verdict-first because most reviewers arrive with a verdict in mind from the review session. If the call needs to be reopened, swap items 1↔3 in § 8.1 dialog body order before PR4 starts — small spec edit, larger downstream impact on PR4 component shape. See § 8.1a for the rationale.
 
 ### 18.2 Deferred to planning (`ce-plan` answers from codebase exploration)
 
