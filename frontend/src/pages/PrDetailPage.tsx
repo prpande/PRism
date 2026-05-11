@@ -161,6 +161,7 @@ function PrDetailPageInner({
         prRef={ref}
         session={draftSession.session}
         onMutated={() => void draftSession.refetch()}
+        readOnly={presence.readOnly}
       />
       {error && (
         <div role="alert" className="pr-detail-error">

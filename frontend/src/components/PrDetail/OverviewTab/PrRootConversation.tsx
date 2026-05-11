@@ -90,7 +90,7 @@ function PrRootConversationActions({
             Reply
           </button>
         )}
-        <MarkAllReadButton prRef={prRef} />
+        <MarkAllReadButton prRef={prRef} readOnly={readOnly ?? false} />
       </div>
       {composerOpen && (
         <PrRootReplyComposer

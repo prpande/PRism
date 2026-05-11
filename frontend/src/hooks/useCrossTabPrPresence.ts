@@ -53,6 +53,15 @@ export function useCrossTabPrPresence(prRef: PrReference | null): UseCrossTabPrP
   const tabId = tabIdRef.current;
   const channelRef = useRef<BroadcastChannel | null>(null);
   const dismissedRef = useRef(false);
+  // True between `takeOver()` posting its 'claim' and the resulting state
+  // updates. Guards against the simultaneous-claim deadlock where both tabs
+  // call takeOver "at once": each tab's incoming claim from the peer would
+  // otherwise flip the local tab to read-only, leaving BOTH tabs unable to
+  // edit and the user with no in-page recovery. With the ref set, an
+  // incoming claim is dropped — the claiming tab insists it kept ownership.
+  // (If two tabs really do claim simultaneously, the resulting state is
+  // "both tabs editable; banner clears" — a soft glass-jaw, not a deadlock.)
+  const claimingRef = useRef(false);
   const [showBanner, setShowBanner] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
 
@@ -99,6 +108,7 @@ export function useCrossTabPrPresence(prRef: PrReference | null): UseCrossTabPrP
           break;
         case 'claim':
           if (msg.tabId === tabId) return;
+          if (claimingRef.current) return; // simultaneous-claim guard, see claimingRef comment above
           setReadOnly(true);
           setShowBanner(false);
           break;
@@ -120,8 +130,19 @@ export function useCrossTabPrPresence(prRef: PrReference | null): UseCrossTabPrP
   }, []);
 
   const takeOver = useCallback(() => {
+    // Set the guard BEFORE posting so the symmetric simultaneous-claim case
+    // sees claimingRef=true on this side when the peer's claim arrives.
+    claimingRef.current = true;
     channelRef.current?.postMessage({ kind: 'claim', tabId } satisfies PresenceMessage);
     setShowBanner(false);
+    // Release the guard after the channel has drained one event-loop tick;
+    // any peer claim posted in the same window is dispatched within this
+    // microtask burst (BroadcastChannel delivers asynchronously but within
+    // the next macrotask). 0ms is correct here because we only need to span
+    // the synchronous postMessage → microtask delivery boundary.
+    setTimeout(() => {
+      claimingRef.current = false;
+    }, 0);
   }, [tabId]);
 
   const dismissForSession = useCallback(() => {

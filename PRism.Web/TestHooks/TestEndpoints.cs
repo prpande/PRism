@@ -10,10 +10,15 @@ namespace PRism.Web.TestHooks;
 // ensures these routes never exist in Production — verified by the negative
 // test (TestEndpoints_NotRegisteredInProduction_404).
 //
-// Auth-flow note: SessionTokenMiddleware (PRism.Web/Middleware/) only enforces
-// auth on /api/* paths. /test/* falls outside that prefix, so Playwright's
-// page.request.post('/test/advance-head') succeeds without supplying the
-// session header. The Origin / CSRF check is similarly /api/*-scoped.
+// Middleware-interaction note:
+//   - SessionTokenMiddleware enforces session auth on /api/* paths only;
+//     /test/* falls outside that prefix and is exempt from the cookie/header
+//     check.
+//   - OriginCheckMiddleware applies to every POST/PUT/PATCH/DELETE regardless
+//     of path, so /test/* mutations DO need an Origin header (helpers in
+//     frontend/e2e/helpers/s4-setup.ts supply Origin: http://localhost:5180
+//     explicitly because page.request.post does not auto-add it the way
+//     fetch from a page document does).
 internal static class TestEndpoints
 {
     internal sealed record AdvanceHeadRequest(

@@ -17,19 +17,27 @@ public sealed class ActivePrPoller : BackgroundService
     private readonly IActivePrCache _cache;
     private readonly ILogger<ActivePrPoller> _logger;
     private readonly ConcurrentDictionary<PrReference, ActivePrPollerState> _state = new();
-    // Default 30s for production; the PRISM_POLLER_CADENCE_SECONDS env var
-    // overrides for E2E tests that need the poller to surface a pr-updated
-    // event within a Playwright test's timeout window (S4 PR7 Task 47).
+    // Default 30s for production; PRISM_POLLER_CADENCE_SECONDS overrides ONLY
+    // when ASPNETCORE_ENVIRONMENT == "Test" so that a stray env var set on a
+    // production host cannot drive the poller into GitHub secondary-rate-limit
+    // territory (the existing exponential backoff fires on errors, not on
+    // healthy 1Hz traffic). E2E tests need a sub-30s cadence so the
+    // pr-updated event fires inside a Playwright test window — Test-env-only
+    // gating is sufficient for that.
     private readonly TimeSpan _cadence = ResolveCadence();
 
     private static TimeSpan ResolveCadence()
     {
-        var raw = Environment.GetEnvironmentVariable("PRISM_POLLER_CADENCE_SECONDS");
-        if (!string.IsNullOrEmpty(raw)
-            && int.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var sec)
-            && sec > 0)
+        var envName = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+        if (string.Equals(envName, "Test", StringComparison.Ordinal))
         {
-            return TimeSpan.FromSeconds(sec);
+            var raw = Environment.GetEnvironmentVariable("PRISM_POLLER_CADENCE_SECONDS");
+            if (!string.IsNullOrEmpty(raw)
+                && int.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var sec)
+                && sec > 0)
+            {
+                return TimeSpan.FromSeconds(sec);
+            }
         }
         return TimeSpan.FromSeconds(30);
     }
