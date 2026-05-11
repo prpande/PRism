@@ -57,8 +57,12 @@ test('drafts survive a browser-context restart', async ({ page, context }) => {
   // come back to the same place.
   const url = page.url();
 
-  // Hard restart: close the context. A fresh context (clean cookies, clean
-  // storage) is the closest Playwright equivalent to quit-and-relaunch.
+  // Hard restart: close the page and open a new one in the SAME context.
+  // The browser-context cookies are intentionally preserved so the fresh
+  // page authenticates immediately via the prism-session cookie; the test
+  // validates draft persistence via the backend state.json, not via a
+  // cookie-isolated restart. (A full context tear-down would also work
+  // but would require re-running the Setup flow on the fresh context.)
   await page.close();
   const freshPage = await context.newPage();
   await freshPage.goto(url);

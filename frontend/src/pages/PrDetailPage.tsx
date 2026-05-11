@@ -118,15 +118,17 @@ function PrDetailPageInner({
     (draftSession.session?.draftReplies.length ?? 0);
 
   // Mount the banner at the top of the layout, above UnresolvedPanel per
-  // spec § 5.7a. The read-only dim is a page-level class so the entire
-  // detail UI (composers, action buttons in DraftsTab/UnresolvedPanel)
-  // signals "another tab owns this" without prop-drilling to every leaf.
+  // spec § 5.7a. The read-only mode is a page-level class for future
+  // visual dimming; per-leaf `disabled` / `aria-readonly` on the
+  // composer textareas and action buttons carry the a11y signal to
+  // assistive tech, so no `aria-disabled` is needed on this container
+  // (it's not a valid attribute on a non-interactive div anyway).
   const pageClassName = presence.readOnly
     ? 'pr-detail-page pr-detail-page-readonly'
     : 'pr-detail-page';
 
   return (
-    <div className={pageClassName} aria-disabled={presence.readOnly || undefined}>
+    <div className={pageClassName}>
       <PrHeader
         reference={ref}
         title={data?.pr.title ?? ''}

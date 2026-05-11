@@ -135,14 +135,17 @@ export function useCrossTabPrPresence(prRef: PrReference | null): UseCrossTabPrP
     claimingRef.current = true;
     channelRef.current?.postMessage({ kind: 'claim', tabId } satisfies PresenceMessage);
     setShowBanner(false);
-    // Release the guard after the channel has drained one event-loop tick;
-    // any peer claim posted in the same window is dispatched within this
-    // microtask burst (BroadcastChannel delivers asynchronously but within
-    // the next macrotask). 0ms is correct here because we only need to span
-    // the synchronous postMessage → microtask delivery boundary.
+    // Release the guard after a 50ms safety window. The browser does not
+    // guarantee ordering between a `setTimeout(0)` macrotask and a queued
+    // BroadcastChannel `message` macrotask, so a 0ms timer can race ahead
+    // of the peer claim's dispatch in some engines, dropping the guard
+    // and leaving both tabs read-only. 50ms is far longer than any
+    // realistic BroadcastChannel propagation window (typically sub-ms
+    // same-origin) and short enough that a user clicking Take-over twice
+    // by accident still works as expected.
     setTimeout(() => {
       claimingRef.current = false;
-    }, 0);
+    }, 50);
   }, [tabId]);
 
   const dismissForSession = useCallback(() => {

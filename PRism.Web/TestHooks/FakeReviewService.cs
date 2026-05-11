@@ -56,8 +56,11 @@ internal sealed class FakeReviewService : IReviewService
 
     public FakeReviewService()
     {
-        _now = DateTimeOffset.UtcNow;
-        _currentHeadSha = Sha3;
+        // Initial-state assignments happen inside Reset(); ctor stays
+        // a thin delegate. `_currentHeadSha` needs a non-null seed for the
+        // null-safety analyzer since the field is non-nullable, so Reset()
+        // is the single source of truth for the canonical initial state.
+        _currentHeadSha = string.Empty;
         Reset();
     }
 
@@ -224,6 +227,15 @@ internal sealed class FakeReviewService : IReviewService
         // diff renders blank.
         lock (_gate)
         {
+            // If `range.HeadSha` was not seeded by AdvanceHead's `fileChanges`
+            // (e.g., the caller advanced the head without supplying file
+            // content), fall back to Calc3 — the iteration-3 baseline. This
+            // is deliberate fallback behavior for sparsely-defined E2E
+            // scenarios, NOT a not-found signal. A future spec that needs
+            // to test "file did not exist at this sha" should explicitly
+            // remove the entry from `_fileContent` and rely on
+            // GetFileContentAsync's NotFound path, which is the load-bearing
+            // reconciliation surface.
             var newContent = _fileContent.TryGetValue(("src/Calc.cs", range.HeadSha), out var c) ? c : Calc3;
             var newLines = newContent.TrimEnd('\n').Split('\n');
             var sb = new System.Text.StringBuilder();
