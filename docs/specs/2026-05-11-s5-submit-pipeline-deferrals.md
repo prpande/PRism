@@ -343,3 +343,11 @@ These aren't deferred decisions — they're known unknowns the plan / implemente
 - **Date:** 2026-05-11
 - **Reason:** If state.json's session is per-PR-not-per-tab (which the S4 design implies), then across-tab DraftId collisions during submit are also possible if both tabs created drafts at the same time and the cross-tab presence banner from S4 was dismissed.
 - **Action:** Out of scope for S5; revisit if dogfooding surfaces it.
+
+### [Risk] Snapshot A→B body-level staleness is not detected (count-only check)
+
+- **Source:** PR #43 review feedback (claude-bot, high priority — surfaced post-doc-review)
+- **Severity:** P3 (silent acceptance of an edge case)
+- **Date:** 2026-05-11
+- **Reason:** Spec § 11.1 (revised) computes Snapshot A↔B staleness entirely on the frontend by comparing thread/reply counts retained from the SSE event against the resume endpoint's 200 response. Per-thread body-level changes (same count, different content) are not detected — doing so would require carrying per-thread body hashes through the `submit-foreign-pending-review` SSE event, which the threat-model defense in § 7.5 currently keeps body-free. The dominant attacker / collaborator case (thread added or removed during the prompt delay) is captured; the residual case (thread body edited in place during the prompt delay) silently flows through to the user's adjudication panel where they can still edit / discard before re-publishing.
+- **Action:** Accepted as PoC residual. If dogfooding surfaces a real instance where in-place body edits during the prompt window matter, add per-thread body-hash carriage to the SSE payload (the hash is privacy-preserving and the threat-model surface is narrower than full bodies). PR5 implementer carries the count-only check; no spec change without new evidence.

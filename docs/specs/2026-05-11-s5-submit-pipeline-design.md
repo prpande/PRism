@@ -7,7 +7,7 @@ topic: s5-submit-pipeline
 
 **Slice.** S5 in [`../roadmap.md`](../roadmap.md). Highest-risk, highest-test-coverage slice of the PoC. When S5 ships, [`../spec/01-vision-and-acceptance.md`](../spec/01-vision-and-acceptance.md) § "The PoC demo" passes end-to-end (steps 1–13) and the unchecked submit-dependent DoD checkboxes close.
 
-**Brainstorm output of:** `ce-brainstorm` session 2026-05-11 with the user. Handoff input: [`_s5-brainstorm-handoff.md`](_s5-brainstorm-handoff.md).
+**Brainstorm output of:** `ce-brainstorm` session 2026-05-11 with the user. The handoff input enumerating dangling threads from S0–S4 (architectural-readiness items gated to S5, pre-existing deferrals, verification gates) was a conversational input — its content is folded into the relevant sections of this spec and the deferrals sidecar (§ 19), so no separate handoff file is preserved.
 
 **Implementation cycle.** This document is the design (spec). The implementation plan lands at `docs/plans/<TBD>-s5-submit-pipeline.md` after this spec passes human review *and* the C6 / C7 empirical gates (§ 2) clear.
 
@@ -245,6 +245,11 @@ public sealed record DraftThreadRequest(
     string FilePath,
     int LineNumber,
     string Side,
+    // Reserved for multi-line / range comments — both fields stay null in PoC scope.
+    // Multi-line is deferred to a focused later slice or P4 (see deferrals sidecar
+    // "[Defer] Multi-line / range comments"). PR1 wires `null` into the pipeline call
+    // sites; PR1 implementer should NOT plumb these through from the composer or
+    // attempt to populate them from existing draft state.
     int? StartLine = null,
     string? StartSide = null);
 
@@ -424,16 +429,30 @@ public sealed record DraftComment(
 The migration step body is empty (no per-session transform — `null` is the correct default for existing `DraftComment` entries that pre-date the field). The version bump is the visibility:
 
 ```csharp
-// PRism.Core/State/Migration/MigrateV3ToV4.cs
-internal static class MigrateV3ToV4
+// PRism.Core/State/Migrations/AppStateMigrations.cs (add alongside MigrateV1ToV2 / MigrateV2ToV3)
+public static JsonObject MigrateV3ToV4(JsonObject root)
 {
-    // Additive-only: ThreadId defaults to null on existing DraftComments. No per-session transform needed.
-    // The version bump documents the schema change so downstream tooling can scan migrations chronologically.
-    public static AppState Apply(AppState v3) => v3 with { Version = 4 };
+    // Additive-only: thread-id defaults to absent (deserializes to null) on existing
+    // DraftComment entries. No per-session transform needed.
+    // The version bump documents the schema change so downstream tooling can scan
+    // migrations chronologically.
+    root["version"] = 4;
+    return root;
 }
 ```
 
-Wired into `AppStateStore.Steps[]` per the framework S4 PR1 shipped.
+**Note on shape.** The migration framework operates on `Func<JsonObject, JsonObject>` per the S4 PR1 implementation at `PRism.Core/State/AppStateStore.cs:20` — migrations transform the raw JSON tree before it deserializes into typed records, not the typed records themselves. (This is why the AppState-to-AppState `with`-expression sketch that appeared in earlier doc-review drafts would not compile against the shipped framework; see the deferrals sidecar Risk R1.) Wired into `AppStateStore.MigrationSteps[]` as the V3→V4 entry:
+
+```csharp
+// PRism.Core/State/AppStateStore.cs
+private static readonly (int ToVersion, Func<JsonObject, JsonObject> Transform)[] MigrationSteps =
+    new (int ToVersion, Func<JsonObject, JsonObject> Transform)[]
+    {
+        (2, AppStateMigrations.MigrateV1ToV2),
+        (3, AppStateMigrations.MigrateV2ToV3),
+        (4, AppStateMigrations.MigrateV3ToV4),  // S5 PR2
+    };
+```
 
 **Tests** — `MigrateV3ToV4_BumpsVersionWithoutDataChange` in `tests/PRism.Core.Tests/State/MigrationStepTests.cs`. Plus the existing `failing-migration-leaves-vN.bak-intact` test from S4 covers the failure path generically.
 
@@ -451,7 +470,7 @@ Body: `{ verdict: "Approve" | "RequestChanges" | "Comment" }`. The session's dra
 
 This defends against the multi-tab simultaneous-submit collision: two PRism tabs open on the same PR both share `state.json` so both observe `PendingReviewId == null` initially. Without the lock, both tabs' pipelines call `BeginPendingReviewAsync`; GitHub's "one pending review per user per PR" constraint serializes — one wins, the other gets back the existing pending review ID OR an error. The losing tab's session has stale or null `PendingReviewId`; on retry `FindOwnPendingReviewAsync` returns a pending review whose ID doesn't match the losing tab's session, triggering a `ForeignPendingReviewPromptRequired` outcome — but against the user's OWN content from the other tab. The modal's "from {timestamp}" framing biases the user toward Discard. Per-PR lock prevents the second tab's pipeline from ever starting; the second tab sees `409 submit-in-progress` and surfaces "Submit in progress in another tab — please wait" inline. The cross-tab presence banner from S4 reflects the same state.
 
-**Body size cap.** `[RequestSizeLimit(1024)]` — this endpoint's body is a one-field discriminator; no need for the 16 KiB cap mutating endpoints carry.
+**Body size cap.** Extend the pre-routing `UseWhen` predicate in `PRism.Web/Program.cs` (the same middleware that currently caps `/api/events/subscriptions`, `/api/pr/{ref}/draft`, `/api/pr/{ref}/reload` — see the comment block at `PRism.Web/Program.cs:99–142`) to also match `POST /api/pr/{ref}/submit`. The endpoint's body is a one-field discriminator, so it inherits the existing 16 KiB cap rather than getting a separate primitive — the unified branch keeps the cap defense single-sited. `[RequestSizeLimit]` attribute or endpoint filter would NOT enforce pre-binding for minimal APIs (the comment in `Program.cs` documents why; `IHttpMaxRequestBodySizeFeature` is read-only by the time route filters run), so the pre-routing middleware is the only correct site.
 
 **Response.** `200 OK` with `{ outcome: "started" }` — the actual progress flows over SSE; the response just confirms the pipeline started. On 4xx (rule-violation, e.g., stale drafts present): structured error body with `code` discriminator (`stale-drafts` / `verdict-needs-reconfirm` / `head-sha-drift` / `validator-blocking` / `no-content`).
 
@@ -542,18 +561,27 @@ Per spec § 6 PR-level summary: textarea + live preview, debounced auto-save to 
 Once Confirm fires, the dialog body collapses to:
 
 1. Header: *"Submitting your review…"* (turns to *"Review submitted."* on success or *"Submit failed at step X."* on failure)
-2. Checklist of pipeline steps. **Initial state on Confirm**: render all five pipeline steps as rows in *pending* state immediately (clock-icon, step label, no count text), so the user sees the full pipeline shape before the first SSE event arrives (the first event needs a GraphQL round-trip and isn't instantaneous). The first SSE event transitions the relevant row to in-progress; subsequent events advance per `submit-progress` payloads. The checklist container carries `aria-live="polite"` so screen readers announce each step transition without interrupting the Confirm action announcement.
-   - ⏳ *Detect existing pending review*
-   - ⏳ *Create pending review*
+2. Checklist of pipeline steps, rendered in two phases to avoid flashing the full 5-step UI for an outcome that exits before any thread is attached:
+
+   **Phase A — Step 1 in flight (no checklist).** From Confirm until the SSE event for `BeginPendingReview: Succeeded` arrives, the dialog body shows a single neutral indicator: *"Checking pending review state…"* (one row, ⏳ icon, `aria-live="polite"`). Step 1 (`DetectExistingPendingReview`) can exit early into the foreign-pending-review modal (`ForeignPendingReviewPromptRequired` outcome — § 5.2 step 1) or into the stale-`commitOID` button state (`StaleCommitOidRecreating` outcome — § 12); in both cases the dialog closes / transitions before any threads are attached. Rendering the full 5-step pending checklist during Phase A would imply "we started attaching threads" for an outcome that means "we haven't attached anything yet."
+
+   **Phase B — Step 2 stamped (full checklist).** Once `BeginPendingReview` succeeds and `PendingReviewId` is stamped, the dialog body re-renders to the full 5-row checklist with steps 1 and 2 already marked ✓:
+   - ✓ *Detected pending review state*
+   - ✓ *Created pending review*
    - ⏳ *Attach threads*
    - ⏳ *Attach replies*
    - ⏳ *Finalize*
-   
+
+   Subsequent SSE events advance the in-progress / completed rows per `submit-progress` payloads. The checklist container carries `aria-live="polite"` so screen readers announce each step transition without interrupting the Confirm action announcement.
+
    Example mid-run state:
+   - ✓ *Detected pending review state*
    - ✓ *Created pending review*
    - ✓ *Attached 3 of 3 threads*
    - ⏳ *Attaching reply 1 of 2…*
    - ✗ *Submit failed*
+
+   On retry into a session with `PendingReviewId` already stamped (resume-from-mid-pipeline), the checklist enters Phase B immediately on Confirm — Step 1 + Step 2 are pre-marked ✓ from session state without waiting for SSE confirmation, since the IDs prove they previously succeeded.
 3. Footer changes:
    - During run: Cancel disabled (hard commitment per spec § 6 — the pipeline cannot be cancelled mid-flight). Confirm replaced with a non-actionable spinner.
    - On success: Cancel disappears; Confirm replaced with *"View on GitHub →"* (links to the submitted review URL) + *Close* button.
@@ -573,6 +601,13 @@ type SubmitState =
   | { kind: 'success', pullRequestReviewId: string }
   | { kind: 'failed', failedStep: SubmitStep, errorMessage: string, steps: SubmitProgressStep[] }
   | { kind: 'foreign-pending-review-prompt', snapshot: OwnPendingReviewSnapshot }
+  // The pipeline detected stale-commitOID server-side, deleted the orphan, and cleared
+  // session stamps — but has NOT attached any threads. The dialog footer must show:
+  //   - Cancel re-enabled (the user may walk away; nothing on github.com to commit yet)
+  //   - "Recreate and resubmit" primary button (NOT the in-flight spinner used by 'in-flight')
+  //   - Banner copy from § 12
+  // Distinct from 'in-flight' specifically because Cancel is enabled and the action is
+  // explicit-click, not pending. See § 12 for the full lifecycle.
   | { kind: 'stale-commit-oid', orphanReviewId: string };
 
 export function useSubmit(prRef: string): {
@@ -665,7 +700,7 @@ Single click on Resume calls `POST /api/pr/{ref}/submit/foreign-pending-review/r
 
 **Why `Draft` status not `Moved` or `Stale`.** The threads come from a pending review the user (likely) authored earlier — they're not coming through the reconcile-on-Reload path, so the matrix's classifications don't apply. `Draft` is the honest classification: "user content, not yet submitted, awaiting adjudication." If the user wants to re-anchor or discard, the standard Drafts tab affordances apply.
 
-**Snapshot A → Snapshot B body staleness.** Content the user saw in the original modal (counts from Snapshot A in the SSE event) may differ from Snapshot B if github.com was mutated during the prompt delay. When `Snapshot A.threadCount != Snapshot B.threadCount` or any per-thread body changed (the endpoint computes a body-hash diff), the frontend surfaces a one-line note above the imported drafts: *"The pending review changed during the prompt — N thread(s) imported (you saw M in the prompt)."*
+**Snapshot A → Snapshot B count staleness.** Content the user saw in the original modal (counts from Snapshot A in the SSE event — see § 7.5) may differ from Snapshot B if github.com was mutated during the prompt delay. The frontend computes the staleness check entirely client-side: it retains the counts from the `submit-foreign-pending-review` SSE event (Snapshot A) and compares them against the counts in the `/foreign-pending-review/resume` 200 response (Snapshot B, full payload). When `Snapshot A.threadCount != Snapshot B.threadCount` or `Snapshot A.replyCount != Snapshot B.replyCount`, it surfaces a one-line note above the imported drafts: *"The pending review changed during the prompt — N thread(s) / R reply(ies) imported (you saw M / S in the prompt)."* Per-thread body-level staleness (same count, different content) is **not** detected in PoC scope — doing so would require carrying per-thread body hashes through the SSE event, and the count-mismatch heuristic captures the dominant case (someone added or removed a thread). Body-level changes within the same thread set are accepted silently; the user's adjudication panel still gives them the chance to edit or discard before re-publishing. (Logged as a residual risk in the deferrals sidecar.)
 
 ### 11.2 Discard path
 
@@ -695,11 +730,16 @@ When the pipeline emits `SubmitOutcome.StaleCommitOidRecreating`, the frontend s
 
 **Behavior.** The banner appears in the dialog body (above the verdict picker, below the dialog title). The banner stays visible **until the user explicitly clicks** *"Recreate and resubmit"* (primary) or *"Cancel"* (secondary, returns to pre-Confirm dialog state). The `state.json` already has the cleared `PendingReviewId` / `PendingReviewCommitOid` / draft `ThreadId` / reply `ReplyCommentId` from the pipeline's `StaleCommitOidRecreating` outcome — that part already happened server-side; the user is consenting to the *resubmit*, not the recreation.
 
+**Dialog state during the banner.** `useSubmit.state.kind === 'stale-commit-oid'` (per § 8.4). This kind is deliberately *not* `in-flight` because the user-facing affordance differs: Cancel is **re-enabled**, the primary button text is *"Recreate and resubmit"* (not a spinner), and Confirm-level click lands the user back in Phase B of § 8.3 once the resubmit fires. The footer wiring during the `stale-commit-oid` kind:
+
+- **Cancel** — enabled. Closes the dialog and returns the user to the PR view; `useSubmit.state` resets to `idle`. No server-side action needed (the orphan was already deleted; session stamps are already cleared). The user can walk away and resume later — the next Submit Review click runs Step 1 cleanly.
+- **Recreate and resubmit** — primary. Calls `useSubmit.retry()`, which fires `POST /api/pr/{ref}/submit` with the same verdict. `useSubmit.state` transitions to `in-flight`; § 8.3 Phase A re-engages until Step 2 stamps the new `PendingReviewId`. From Step 3 onward, Cancel is permanently disabled per § 8.3.
+
 **Why explicit click rather than auto-retry.** Approving code the reviewer hasn't seen is the spec's stated worst-case failure mode (Problem Frame). An auto-retry timed at 2 seconds is shorter than typical AFK windows (Slack ping, coworker question); a user who looks away for 3 seconds returns to find their verdict has been re-anchored to a new head sha they have not viewed. The "explicit-consent surrogate" framing the earlier draft used does not survive contact with realistic user attention patterns. The explicit click is the only consent shape that actually behaves as consent.
 
 **Pre-Finalize head_sha re-poll.** After the user clicks "Recreate and resubmit" but before Step 5 runs, the pipeline performs one final `head_sha` poll. If drift occurred during the in-progress pipeline (the author pushed again while the new pending review's threads were being attached), the pipeline aborts back to rule (f) — surfaces the standard `head_sha drift` blocker; the user sees the Reload banner and must Reload before submitting. This closes the "shifted under us mid-pipeline" residual window the explicit-button defense alone doesn't cover.
 
-**If the user has not yet Reloaded against the new head** (e.g., the pipeline detected the stale-`commitOID` server-side without an intervening Reload click on the frontend), the banner copy gains a second sentence: *"Click Reload first to re-classify your drafts against the new diff."* The dialog footer reverts to its pre-Confirm state — Cancel re-enabled (closing the dialog returns the user to the PR view where they can click Reload), Confirm disabled with tooltip: *"Reload the PR first to re-classify drafts against the new diff."* This resolves the apparent conflict with § 8.3's "Cancel disabled during pipeline run": Cancel is only permanently disabled after the pipeline has begun attaching threads (Step 3+); the stale-`commitOID` recreation has not yet attached anything (only the orphan delete + state clear has run, both of which are reversible by the user re-deciding to walk away).
+**If the user has not yet Reloaded against the new head** (e.g., the pipeline detected the stale-`commitOID` server-side without an intervening Reload click on the frontend), the banner copy gains a second sentence: *"Click Reload first to re-classify your drafts against the new diff."* The footer wiring is identical to the standard `stale-commit-oid` kind above except *"Recreate and resubmit"* is **disabled** with tooltip: *"Reload the PR first to re-classify drafts against the new diff."* (Cancel remains enabled.) This consistency with § 8.3's "Cancel disabled during pipeline run" rule is precisely the point of the `stale-commit-oid` kind being separate from `in-flight`: Cancel is only permanently disabled in Phase B step 3+ of the pipeline (threads being attached); the stale-`commitOID` recreation has not yet attached anything (only the orphan delete + state clear has run, both of which are reversible by the user re-deciding to walk away).
 
 ---
 
@@ -715,7 +755,7 @@ Click opens a confirmation modal listing the draft count: *"Discard {N} draft(s)
 
 ### 13.2 Endpoint and sequence
 
-`POST /api/pr/{ref}/drafts/discard-all` (new endpoint; `[RequestSizeLimit(1024)]` since the body is empty). The endpoint:
+`POST /api/pr/{ref}/drafts/discard-all` (new endpoint). Body cap: extend the same pre-routing `UseWhen` predicate in `PRism.Web/Program.cs:99–142` to match this path; body is empty in practice so it inherits the existing 16 KiB cap (rationale identical to § 7.1's note — `[RequestSizeLimit]` doesn't fire pre-binding for minimal APIs). The endpoint:
 
 1. Reads `pendingReviewId` from session state. Captures it locally.
 2. Clears all session state via `AppStateStore.UpdateAsync`: `DraftComments = []`, `DraftReplies = []`, `DraftSummaryMarkdown = null`, `DraftVerdict = null`, `PendingReviewId = null`, `PendingReviewCommitOid = null`. Publishes `StateChanged`.
@@ -871,7 +911,7 @@ Decisions captured during the brainstorm and folded into the spec body above. Nu
 - **[Affects PR1][Technical]** Octokit's GraphQL helper vs raw `HttpClient` for `GitHubReviewService.Submit.cs`. PR1 implementer picks based on existing GraphQL usage in `PRism.GitHub` (none today; either is greenfield).
 - **[Affects PR2][Technical]** Per-step persistence boundary inside `SubmitPipeline` — does each successful per-thread `AttachThreadAsync` call `AppStateStore.UpdateAsync` directly, or does the pipeline accumulate updates and persist at step-boundary granularity? Spec says "persist after every stamp" (§ 5.2 step 3); plan refines to specific control-flow.
 - **[Affects PR3][Technical]** The `submit-progress` SSE event's payload shape — whether the `step` field uses C# enum names (`"AttachThreads"`) or kebab-case (`"attach-threads"`). Existing SSE events use camelCase property names; the kebab-vs-PascalCase choice for enum values is a small consistency call.
-- **[Affects PR3][Technical]** `SensitiveFieldScrubber` blocked-fields extension — add `pendingReviewId`, `threadId`, `replyCommentId` to `BlockedFieldNames` before any submit-pipeline structured-log call sites land. Currently the scrubber blocks `subscriberId`, `pat`, `token`. The submit pipeline introduces the first call sites where these new fields could appear in structured logs.
+- **[Affects PR3][Lands in PR3]** `SensitiveFieldScrubber` blocked-fields extension — add `pendingReviewId`, `threadId`, `replyCommentId` to `BlockedFieldNames`. Lands as part of PR3's scope per § 16 (the row says "scrubber extension"); listed here as a planning concern only because the field-name list and the call-site sweep need ce-plan's codebase tour to enumerate. Currently the scrubber blocks `subscriberId`, `pat`, `token`. The submit pipeline introduces the first call sites where these new fields could appear in structured logs.
 - **[Affects PR4][Technical]** Submit dialog component placement — top-level modal vs portal vs inline. PoC has no portal pattern yet; modal pattern is established (`<Modal>`). Plan picks per existing component conventions; the dialog's 720px width + scrollable body may want React.createPortal to avoid PrHeader-mounted clipping.
 - **[Affects PR5][Technical]** Confirmation sub-modal for Resume — should it block before the TOCTOU re-fetch, or after? Spec is silent; the safer default is "after" (re-fetch first, modal asks "found N threads to import — continue?"), but this adds a round-trip. Plan decides.
 
@@ -889,7 +929,6 @@ Decisions captured during the brainstorm and folded into the spec body above. Nu
 - DoD: [`../spec/01-vision-and-acceptance.md`](../spec/01-vision-and-acceptance.md) § *Definition of done*.
 - Verification gates: [`../spec/00-verification-notes.md`](../spec/00-verification-notes.md) § C1, C6, C7.
 - Architectural readiness: [`2026-05-06-architectural-readiness-design.md`](2026-05-06-architectural-readiness-design.md) § ADR-S5-1, ADR-S5-2, Convention-1.
-- Brainstorm handoff: [`_s5-brainstorm-handoff.md`](_s5-brainstorm-handoff.md).
 - Prior slice deferrals: [`2026-05-06-s3-pr-detail-read-deferrals.md`](2026-05-06-s3-pr-detail-read-deferrals.md), [`2026-05-09-s4-drafts-and-composer-deferrals.md`](2026-05-09-s4-drafts-and-composer-deferrals.md).
 - This slice's deferrals sidecar: [`2026-05-11-s5-submit-pipeline-deferrals.md`](2026-05-11-s5-submit-pipeline-deferrals.md) — records brainstorm-time deferrals (S6 / v2 / planning targets), doc-review FYI observations, and forward-looking residual risks for the implementer.
 - Roadmap: [`../roadmap.md`](../roadmap.md) § S5 row.

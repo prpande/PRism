@@ -367,6 +367,40 @@ If the injection works (outcomes 1 or 2), the cumulative-shift design ships as w
 
 ---
 
+## C9 — `submitPullRequestReview` accepts a Comment-verdict review with no attached threads (UNDOCUMENTED-VERIFY-EMPIRICALLY)
+
+### Claim under test
+
+S5's submit pipeline (`specs/2026-05-11-s5-submit-pipeline-design.md` § 5.2 step 5 *Empty-pipeline finalize*, jointly with Submit Review button rule (e) in `spec/03-poc-features.md` § 6) enables a path where verdict = Comment + non-empty summary + zero drafts/replies finalizes successfully. The narrowed claim: **GitHub's GraphQL `submitPullRequestReview` accepts a Comment-verdict pending review that has no `addPullRequestReviewThread` calls attached, finalizing the review as body-only.** GitHub's documented constraint historically required at least one comment on a Comment-verdict review; if that constraint still applies in GraphQL, the empty-pipeline path 422s, leaving an orphan pending review and a stuck-state UX (rule (e) blocks retry; the user has no path forward without the closed/merged bulk-discard).
+
+### Verification method
+
+Empirical test before the submit-pipeline implementation lands. The test is narrow: confirm that a Comment-verdict review finalize is accepted on a pending review with no attached threads.
+
+1. Against a sandbox PR, call `addPullRequestReview` with no `event` (creates the pending review with `state: PENDING`).
+2. Do NOT call `addPullRequestReviewThread` (zero threads attached).
+3. Call `submitPullRequestReview` with `event: COMMENT` and a non-empty `body`.
+4. Confirm the GraphQL call returns success and the review appears on github.com as a Comment-verdict review with body-only.
+
+Estimated time: ~30 minutes with a sandbox PR.
+
+### Status
+
+**Pending.** To be performed by the submit-pipeline implementer before PR1 lands. Two outcomes:
+
+- **GraphQL accepts the empty-threads Comment finalize** — the spec stands as written; the empty-pipeline path in § 5.2 step 5 ships unchanged. **This is the expected outcome** based on the GraphQL surface being more permissive than the REST `comments[]`-required constraint.
+- **GraphQL rejects the empty-threads finalize** — two documented fallbacks:
+  - **(a)** `BeginPendingReviewAsync` injects the summary as a `threads[]` argument so the review carries content from the start (one synthetic thread tied to the summary; rendered alongside the verdict). Spec § 4 / § 5.2 step 2 add a "summary-only path uses synthetic-thread variant" branch.
+  - **(b)** The summary-only path uses the legacy REST `POST /pulls/{n}/reviews` endpoint, which accepts `body + event` with no `comments[]`. Spec § 4 adds a `SubmitSummaryOnlyReviewAsync` method bypassing the pending-review pipeline. Two code paths but each is simple.
+
+  Implementer chooses based on which option fits the existing GraphQL builder/`HttpClient` surface in `PRism.GitHub` more cleanly. Default recommendation: (b) (smaller surface area; the pending-review pipeline already has cognitive load).
+
+### Implication for the submit pipeline
+
+C9 is a tripwire identical in shape to C6 / C7: ship the spec's default path, run the gate, fall back only if the gate fails. The fallback variants are pre-designed so the implementer does not need to re-brainstorm under failure. If neither (a) nor (b) is acceptable in production, escalate before committing — the alternative is a UX rule that forbids Comment + zero-draft + body-only submission, which would require spec § 6 rule (e) to flip from "allow" to "block" and the dialog to refuse Confirm in that state.
+
+---
+
 ## Wave 2 readiness checklist
 
 Spec-level updates that flow from Wave 1's findings. Items checked here are the *spec-text* updates, not the *implementation* — those are gating tripwires the implementer hits during P0 work.
@@ -388,6 +422,7 @@ C5, C6, C7, the C4 clean-end resume probe, and C8 are deferrable to P0 implement
 - **C5** (MCP config JSON shape): ~30 minutes with `claude --mcp-config <test.json>` and a stub HTTP server that logs incoming requests. Resolves whether `"type": "http"` is the correct discriminator.
 - **C6** (`AddPullRequestReviewThreadInput` field name): ~2 minutes with `gh api graphql -f query='{ __type(name: "AddPullRequestReviewThreadInput") { inputFields { name description isDeprecated } } }'`. Resolves the parameter shape against the live schema.
 - **C7** (HTML-comment marker durability): ~few hours with a test PR — submit a thread with the marker, query the pending review's threads, check whether the marker substring is preserved in the returned body. Resolves the default for the lost-response retry path.
+- **C9** (empty-pipeline finalize): ~30 minutes with a sandbox PR — open a pending review, attach no threads, finalize with `event: COMMENT` + body. Resolves whether the spec's § 5.2 step 5 empty-pipeline path ships as written or via fallback (synthetic-thread or legacy REST).
 - **C4 (clean-end resume)**: ~1 day with two sequential `claude` invocations and a follow-up turn that probes prior context. Resolves the cross-restart chat resume UX.
 - **C8** (head-shift cumulative-injection model behavior): ~1 day with a test fixture PR and a current-generation Claude model. Resolves whether the chat orchestrator's design holds.
 
@@ -399,6 +434,7 @@ Outstanding empirical gates (these are not spec-text updates; they are tripwires
 - [ ] **C5** — verify the `--mcp-config` JSON shape (`"type": "http"` discriminator key) against the running Claude Code CLI version the project ships against. Run as the first task of P0-7.
 - [ ] **C6** — verify the live `AddPullRequestReviewThreadInput` parameter shape (whether `pullRequestReviewId` or `pullRequestId` is the correct field as of implementation time) via `gh api graphql -f query='...'`. Run before the submit-pipeline implementation lands.
 - [ ] **C7** — verify that the `<!-- prism:client-id:<id> -->` HTML-comment marker survives `addPullRequestReviewThread` round-trips (rendered UI strips the comment; the GraphQL `body` field retains it). The lost-response adoption step in the submit pipeline matches by marker, not by body equivalence. Run before the submit-pipeline implementation lands. See § C7. Documented fallback if the marker is stripped: (a) client-side body normalization parity; (c) accept-best-effort is no longer an option.
+- [ ] **C9** — verify that `submitPullRequestReview` accepts a Comment-verdict review on a pending review with no attached threads (the "empty-pipeline finalize" path in S5 § 5.2 step 5). Run before the submit-pipeline implementation lands. See § C9. Documented fallback if the finalize 422s: (a) synthetic-thread injection at `BeginPendingReview` time, or (b) legacy REST `POST /pulls/{n}/reviews` for the summary-only path.
 - [ ] **C8** — verify the model defers to current diff over pre-shift answers when prompted with the cumulative head-shift note. Run before P2-2 chat ships. See § C8 for the test sequence and outcomes.
 
 ---

@@ -56,7 +56,7 @@ S0+S1 lands the architecture; each subsequent slice plugs in placeholders as the
 - **S2** — inbox row category chips, freshness/unread badges (the badges are non-AI but landed in the same slice), and the activity rail. Flipping the toggle now produces visible category chips.
 - **S3** — three placeholder slots: the **Overview-tab AI summary card**, **file-tree focus dots** on the Files tab, and the **AI hunk annotation slot** (the slot is wired to `react-diff-view`'s widget API; the PoC never inserts an annotation, so the slot stays empty even with `aiPreview` on). Flipping the toggle now produces a visible AI summary on the Overview tab and visible focus dots in the file tree.
 - **S4** — no new AI seam slots; the slice focuses on drafts/replies/reconciliation state. Flipping the toggle has no incremental visible effect (S3's placeholders remain).
-- **S5** — submit-modal AI validator card and the Ask AI drawer with pre-baked messages. Flipping the toggle now produces a visible AI validator alongside the verdict picker and a populated Ask AI drawer with seeded conversation.
+- **S5** — submit-modal AI validator card and the **Ask AI button + static "coming in v2" empty state** (the originally-planned interactive drawer with pre-baked messages was cut after doc-review to avoid the validation-cohort UX risk; see [`specs/2026-05-11-s5-submit-pipeline-design.md`](./specs/2026-05-11-s5-submit-pipeline-design.md) § 14.2 and the deferrals sidecar). Flipping the toggle now produces a visible AI validator alongside the verdict picker and the empty-state container next to the Ask AI button.
 
 ## When a slice changes shape
 
