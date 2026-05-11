@@ -17,7 +17,22 @@ public sealed class ActivePrPoller : BackgroundService
     private readonly IActivePrCache _cache;
     private readonly ILogger<ActivePrPoller> _logger;
     private readonly ConcurrentDictionary<PrReference, ActivePrPollerState> _state = new();
-    private readonly TimeSpan _cadence = TimeSpan.FromSeconds(30);
+    // Default 30s for production; the PRISM_POLLER_CADENCE_SECONDS env var
+    // overrides for E2E tests that need the poller to surface a pr-updated
+    // event within a Playwright test's timeout window (S4 PR7 Task 47).
+    private readonly TimeSpan _cadence = ResolveCadence();
+
+    private static TimeSpan ResolveCadence()
+    {
+        var raw = Environment.GetEnvironmentVariable("PRISM_POLLER_CADENCE_SECONDS");
+        if (!string.IsNullOrEmpty(raw)
+            && int.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var sec)
+            && sec > 0)
+        {
+            return TimeSpan.FromSeconds(sec);
+        }
+        return TimeSpan.FromSeconds(30);
+    }
 
     public ActivePrPoller(
         ActivePrSubscriberRegistry registry,

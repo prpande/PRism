@@ -13,10 +13,12 @@ var builder = WebApplication.CreateBuilder(args);
 // under wwwroot) are auto-enabled only in Development. The Playwright E2E
 // suite runs the host under Test env (to engage the FakeReviewService swap
 // below) and would otherwise serve every JS/CSS asset as 200 OK with 0
-// bytes — the SPA never bootstraps. Explicitly enabling SWA here keeps the
-// prod-project E2E rendering the real SPA. Production deploys publish to a
-// fixed wwwroot, so SWA isn't needed there.
-if (builder.Environment.IsEnvironment("Test"))
+// bytes — the SPA never bootstraps. We gate this on the same opt-in env
+// var as the fake-review swap (PRISM_E2E_FAKE_REVIEW=1) so the existing
+// xUnit WebApplicationFactory suite (also Test env) keeps using its per-
+// test UseWebRoot stub instead of the real wwwroot manifest.
+if (builder.Environment.IsEnvironment("Test")
+    && Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1")
 {
     builder.WebHost.UseStaticWebAssets();
 }

@@ -58,23 +58,41 @@ internal sealed class FakeReviewService : IReviewService
     {
         _now = DateTimeOffset.UtcNow;
         _currentHeadSha = Sha3;
+        Reset();
+    }
 
-        _fileContent[("src/Calc.cs", Sha1)] = Calc1;
-        _fileContent[("src/Calc.cs", Sha2)] = Calc2;
-        _fileContent[("src/Calc.cs", Sha3)] = Calc3;
+    // Hard-resets all mutable state back to the initial 3-iteration scenario.
+    // Called by POST /test/reset between Playwright specs so each test starts
+    // from a known baseline (the backend process is long-running across an
+    // entire `npx playwright test` run).
+    public void Reset()
+    {
+        lock (_gate)
+        {
+            _now = DateTimeOffset.UtcNow;
+            _currentHeadSha = Sha3;
 
-        _reachableShas.Add(BaseSha);
-        _reachableShas.Add(Sha1);
-        _reachableShas.Add(Sha2);
-        _reachableShas.Add(Sha3);
+            _fileContent.Clear();
+            _fileContent[("src/Calc.cs", Sha1)] = Calc1;
+            _fileContent[("src/Calc.cs", Sha2)] = Calc2;
+            _fileContent[("src/Calc.cs", Sha3)] = Calc3;
 
-        _commits.Add(new CommitDto(Sha1, "Add Calc.Add", _now.AddMinutes(-30), 4, 0));
-        _commits.Add(new CommitDto(Sha2, "Add Sub + Mul", _now.AddMinutes(-20), 2, 0));
-        _commits.Add(new CommitDto(Sha3, "Add Div + Mod", _now.AddMinutes(-10), 2, 0));
+            _reachableShas.Clear();
+            _reachableShas.Add(BaseSha);
+            _reachableShas.Add(Sha1);
+            _reachableShas.Add(Sha2);
+            _reachableShas.Add(Sha3);
 
-        _iterations.Add(new IterationDto(1, BaseSha, Sha1, new List<CommitDto> { _commits[0] }, true));
-        _iterations.Add(new IterationDto(2, Sha1, Sha2, new List<CommitDto> { _commits[1] }, true));
-        _iterations.Add(new IterationDto(3, Sha2, Sha3, new List<CommitDto> { _commits[2] }, true));
+            _commits.Clear();
+            _commits.Add(new CommitDto(Sha1, "Add Calc.Add", _now.AddMinutes(-30), 4, 0));
+            _commits.Add(new CommitDto(Sha2, "Add Sub + Mul", _now.AddMinutes(-20), 2, 0));
+            _commits.Add(new CommitDto(Sha3, "Add Div + Mod", _now.AddMinutes(-10), 2, 0));
+
+            _iterations.Clear();
+            _iterations.Add(new IterationDto(1, BaseSha, Sha1, new List<CommitDto> { _commits[0] }, true));
+            _iterations.Add(new IterationDto(2, Sha1, Sha2, new List<CommitDto> { _commits[1] }, true));
+            _iterations.Add(new IterationDto(3, Sha2, Sha3, new List<CommitDto> { _commits[2] }, true));
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -200,16 +218,23 @@ internal sealed class FakeReviewService : IReviewService
         ArgumentNullException.ThrowIfNull(range);
         if (reference != Scenario)
             return Task.FromResult(new DiffDto(Range: "", Files: Array.Empty<FileChange>(), Truncated: false));
-        // Single-file diff using the head-sha file content. Two hunks isn't
-        // necessary for the E2E demos; one Modified hunk against the base is
-        // enough to drive the diff renderer and let the user click any line.
+        // Single-file diff against the empty base. DiffPane's parseHunkLines
+        // requires unified-diff format (lines prefixed with `+`/`-`/` ` and a
+        // `@@ -N,M +N,M @@` header), otherwise it skips every line and the
+        // diff renders blank.
         lock (_gate)
         {
             var newContent = _fileContent.TryGetValue(("src/Calc.cs", range.HeadSha), out var c) ? c : Calc3;
-            var lineCount = newContent.Split('\n').Length;
+            var newLines = newContent.TrimEnd('\n').Split('\n');
+            var sb = new System.Text.StringBuilder();
+            sb.Append("@@ -0,0 +1,").Append(newLines.Length).Append(" @@\n");
+            foreach (var line in newLines)
+            {
+                sb.Append('+').Append(line).Append('\n');
+            }
             var hunks = new[]
             {
-                new DiffHunk(OldStart: 1, OldLines: 1, NewStart: 1, NewLines: lineCount, Body: newContent),
+                new DiffHunk(OldStart: 0, OldLines: 0, NewStart: 1, NewLines: newLines.Length, Body: sb.ToString()),
             };
             return Task.FromResult(new DiffDto(
                 Range: $"{range.BaseSha}..{range.HeadSha}",

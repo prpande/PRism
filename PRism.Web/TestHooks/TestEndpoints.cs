@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using PRism.Core;
+using PRism.Core.Hosting;
+using PRism.Core.State;
 
 namespace PRism.Web.TestHooks;
 
@@ -41,6 +43,35 @@ internal static class TestEndpoints
                 return Results.BadRequest(new { error = "new-head-sha-missing" });
             fake.AdvanceHead(req.NewHeadSha, req.FileChanges ?? Array.Empty<FakeReviewService.FileContentChange>());
             return Results.Ok(new { ok = true });
+        });
+
+        // Resets per-test state: in-memory FakeReviewService (head sha,
+        // reachable shas, iterations, file content) AND the persisted
+        // state.json drafts. Called from each S4 PR7 spec's beforeEach so
+        // tests don't leak state into each other. The backend process is
+        // long-running for the whole Playwright run, so without this hook
+        // the inboxes/sessions accumulate across tests.
+        app.MapPost("/test/reset", async (
+            IReviewService reviewService,
+            IAppStateStore stateStore) =>
+        {
+            if (reviewService is FakeReviewService fake)
+            {
+                fake.Reset();
+            }
+            // Force-wipe state.json by re-applying Default. The single overwrite
+            // is the documented pattern; LoadAsync after the await sees the
+            // fresh empty state because UpdateAsync holds the gate across the
+            // load → transform → save → release sequence.
+            await stateStore.UpdateAsync(
+                _ => AppState.Default,
+                CancellationToken.None).ConfigureAwait(false);
+            var after = await stateStore.LoadAsync(CancellationToken.None).ConfigureAwait(false);
+            return Results.Ok(new
+            {
+                ok = true,
+                sessions = after.Reviews.Sessions.Count,
+            });
         });
 
         app.MapPost("/test/set-commit-reachable", (

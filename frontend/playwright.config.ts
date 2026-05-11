@@ -64,6 +64,11 @@ const backendWebServer = {
     ASPNETCORE_ENVIRONMENT: 'Test',
     PRISM_E2E_FAKE_REVIEW: '1',
     DataDir: e2eDataDir,
+    // Pull the ActivePrPoller cadence down so the reconciliation spec sees
+    // a `pr-updated` SSE event within Playwright's 30s default test timeout
+    // (production default is 30s — too slow to fit a snapshot-shift fire
+    // inside one test cycle).
+    PRISM_POLLER_CADENCE_SECONDS: '1',
   },
 };
 
