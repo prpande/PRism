@@ -31,7 +31,7 @@ function useViewportWidth() {
 }
 
 export function FilesTab() {
-  const { prDetail, draftSession } = useOutletContext<PrDetailOutletContext>();
+  const { prDetail, draftSession, readOnly } = useOutletContext<PrDetailOutletContext>();
   const {
     owner,
     repo,
@@ -293,6 +293,7 @@ export function FilesTab() {
         onDraftIdChange={setComposerDraftId}
         registerOpenComposer={draftSession.registerOpenComposer}
         onClose={handleComposerClose}
+        readOnly={readOnly}
       />
     );
   }
@@ -319,6 +320,7 @@ export function FilesTab() {
       draftReplies: draftSession.session?.draftReplies ?? [],
       registerOpenComposer: draftSession.registerOpenComposer,
       onReplyComposerClose: handleReplyComposerClose,
+      readOnly,
     }),
     [
       prRef,
@@ -326,6 +328,7 @@ export function FilesTab() {
       draftSession.session?.draftReplies,
       draftSession.registerOpenComposer,
       handleReplyComposerClose,
+      readOnly,
     ],
   );
 

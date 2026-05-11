@@ -5,8 +5,23 @@ using PRism.GitHub;
 using PRism.Web.Composition;
 using PRism.Web.Endpoints;
 using PRism.Web.Middleware;
+using PRism.Web.TestHooks;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Static Web Assets (the build manifest that maps /assets/* URLs to files
+// under wwwroot) are auto-enabled only in Development. The Playwright E2E
+// suite runs the host under Test env (to engage the FakeReviewService swap
+// below) and would otherwise serve every JS/CSS asset as 200 OK with 0
+// bytes — the SPA never bootstraps. We gate this on the same opt-in env
+// var as the fake-review swap (PRISM_E2E_FAKE_REVIEW=1) so the existing
+// xUnit WebApplicationFactory suite (also Test env) keeps using its per-
+// test UseWebRoot stub instead of the real wwwroot manifest.
+if (builder.Environment.IsEnvironment("Test")
+    && Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1")
+{
+    builder.WebHost.UseStaticWebAssets();
+}
 
 // Resolve dataDir from configuration (test sets it via UseSetting; production uses SpecialFolder).
 var dataDir = builder.Configuration["DataDir"] ?? DataDirectoryResolver.Resolve();
@@ -16,6 +31,24 @@ builder.Services.AddPrismGitHub();
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
+
+// Test environment: opt-in swap GitHubReviewService → FakeReviewService so
+// Playwright can drive the backend without needing a real GitHub PAT. The
+// swap also makes /test/* endpoints meaningful (they downcast IReviewService
+// to FakeReviewService). See PRism.Web/TestHooks/FakeReviewService.cs.
+//
+// Why opt-in (PRISM_E2E_FAKE_REVIEW=1) instead of just IsEnvironment("Test"):
+// the existing xUnit/WebApplicationFactory test suite already uses Test env
+// and assumes the real GitHubReviewService (or per-test overrides). Auto-
+// swapping under Test env would silently rewire those tests. The env-var
+// is set only by Playwright via playwright.config.ts.
+if (builder.Environment.IsEnvironment("Test")
+    && Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1")
+{
+    var existing = builder.Services.FirstOrDefault(d => d.ServiceType == typeof(IReviewService));
+    if (existing is not null) builder.Services.Remove(existing);
+    builder.Services.AddSingleton<IReviewService, FakeReviewService>();
+}
 
 var app = builder.Build();
 
@@ -149,6 +182,11 @@ app.MapAi();
 
 if (builder.Environment.IsEnvironment("Test"))
     app.MapGet("/test/boom", () => { throw new InvalidOperationException("test boom"); });
+
+// /test/advance-head + /test/set-commit-reachable for Playwright fixture mutation.
+// Method itself env-guards at registration; the call here keeps Program.cs symmetric
+// with the other endpoint map* calls.
+app.MapTestEndpoints();
 
 // Unknown /api/* paths return 404 (more specific pattern wins over the SPA fallback).
 app.MapFallback("/api/{*rest}", () => Microsoft.AspNetCore.Http.Results.NotFound());

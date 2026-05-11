@@ -1,4 +1,15 @@
 import { defineConfig } from '@playwright/test';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+// A per-run DataDir keeps E2E hermetic: no leakage from a developer's local
+// %LOCALAPPDATA%/PRism token cache or state.json into the test backend, and
+// no leakage from one test run into the next. The directory is created fresh
+// at config-load time and passed to the backend via --DataDir. Placed under
+// the OS temp dir so it cleans up via standard temp-folder eviction.
+const e2eDataDir = path.join(os.tmpdir(), `PRism-e2e-${Date.now()}`);
+fs.mkdirSync(e2eDataDir, { recursive: true });
 
 // CI vs. local split — read once so both `webServer` and `projects` agree.
 //
@@ -28,12 +39,37 @@ import { defineConfig } from '@playwright/test';
 const isCI = !!process.env.CI;
 
 const backendWebServer = {
-  command: 'cd .. && dotnet run --project PRism.Web --urls http://localhost:5180 -- --no-browser',
+  // --no-launch-profile so PRism.Web/Properties/launchSettings.json (which
+  // forces ASPNETCORE_ENVIRONMENT=Development) doesn't override the Test env
+  // var Playwright passes via `env` below. Without this flag, the
+  // FakeReviewService swap never engages.
+  command: `cd .. && dotnet run --project PRism.Web --no-launch-profile --urls http://localhost:5180 -- --no-browser`,
   url: 'http://localhost:5180/api/health',
   reuseExistingServer: !isCI,
   timeout: 120_000,
   stdout: 'pipe' as const,
   stderr: 'pipe' as const,
+  // Boots the backend with the test-only IReviewService swap so the new S4 PR7
+  // E2E specs (drafts-survive-restart, reconciliation-fires, multi-tab-
+  // consistency, keep-anyway-survives-reload) can drive real backend behavior
+  // without needing a GitHub PAT. The existing specs (inbox, cold-start, no-
+  // browser) page.route-mock the API surface and are unaffected by the swap.
+  // See PRism.Web/TestHooks/FakeReviewService.cs + TestEndpoints.cs and
+  // Program.cs (the env-var gate).
+  // `DataDir` is read by Program.cs (Configuration["DataDir"]) via the
+  // Environment config provider, which gives us a per-run dataDir without
+  // having to argv-thread it through `dotnet run -- ...` (the arg-vs-config
+  // split there is finicky on Windows shells).
+  env: {
+    ASPNETCORE_ENVIRONMENT: 'Test',
+    PRISM_E2E_FAKE_REVIEW: '1',
+    DataDir: e2eDataDir,
+    // Pull the ActivePrPoller cadence down so the reconciliation spec sees
+    // a `pr-updated` SSE event within Playwright's 30s default test timeout
+    // (production default is 30s — too slow to fit a snapshot-shift fire
+    // inside one test cycle).
+    PRISM_POLLER_CADENCE_SECONDS: '1',
+  },
 };
 
 const viteDevWebServer = {

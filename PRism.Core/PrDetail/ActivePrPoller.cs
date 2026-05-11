@@ -17,19 +17,49 @@ public sealed class ActivePrPoller : BackgroundService
     private readonly IActivePrCache _cache;
     private readonly ILogger<ActivePrPoller> _logger;
     private readonly ConcurrentDictionary<PrReference, ActivePrPollerState> _state = new();
-    private readonly TimeSpan _cadence = TimeSpan.FromSeconds(30);
+    // Default 30s for production; PRISM_POLLER_CADENCE_SECONDS overrides ONLY
+    // when the host is running under Test env so that a stray env var set on a
+    // production host cannot drive the poller into GitHub secondary-rate-limit
+    // territory (the existing exponential backoff fires on errors, not on
+    // healthy 1Hz traffic). E2E tests need a sub-30s cadence so the
+    // pr-updated event fires inside a Playwright test window — Test-env-only
+    // gating is sufficient for that.
+    //
+    // Env gate keys off IHostEnvironment (not the raw env var) so that
+    // WebApplicationFactory tests using UseEnvironment("Test") agree with the
+    // hosting model. Reading the env var directly diverges from the host's
+    // view in those tests.
+    private readonly TimeSpan _cadence;
+
+    private static TimeSpan ResolveCadence(IHostEnvironment env)
+    {
+        if (env.IsEnvironment("Test"))
+        {
+            var raw = Environment.GetEnvironmentVariable("PRISM_POLLER_CADENCE_SECONDS");
+            if (!string.IsNullOrEmpty(raw)
+                && int.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var sec)
+                && sec > 0)
+            {
+                return TimeSpan.FromSeconds(sec);
+            }
+        }
+        return TimeSpan.FromSeconds(30);
+    }
 
     public ActivePrPoller(
         ActivePrSubscriberRegistry registry,
         IReviewService review,
         IReviewEventBus bus,
         IActivePrCache cache,
-        ILogger<ActivePrPoller> logger)
+        ILogger<ActivePrPoller> logger,
+        IHostEnvironment env)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(review);
         ArgumentNullException.ThrowIfNull(bus);
         ArgumentNullException.ThrowIfNull(cache);
+        ArgumentNullException.ThrowIfNull(env);
+        _cadence = ResolveCadence(env);
         ArgumentNullException.ThrowIfNull(logger);
         _registry = registry;
         _review = review;

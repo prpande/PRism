@@ -12,6 +12,8 @@ export interface ExistingCommentWidgetReplyContext {
   // session (mirrors the on-close path the inline composer uses for the
   // own-tab refresh-after-write case).
   onReplyComposerClose: () => void;
+  // Spec § 5.7a. Forwarded to ReplyComposer; disables textarea + save.
+  readOnly?: boolean;
 }
 
 export interface ExistingCommentWidgetProps {
@@ -112,6 +114,7 @@ function ThreadView({
           onDraftIdChange={setDraftReplyId}
           registerOpenComposer={replyContext.registerOpenComposer}
           onClose={handleComposerClose}
+          readOnly={replyContext.readOnly ?? false}
         />
       )}
     </div>

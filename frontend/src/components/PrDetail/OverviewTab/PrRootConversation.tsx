@@ -13,6 +13,8 @@ export interface PrRootConversationReplyContext {
   existingPrRootDraft: DraftCommentDto | null;
   registerOpenComposer: (draftId: string) => () => void;
   onComposerClose: () => void;
+  // Spec § 5.7a. Forwarded to PrRootReplyComposer.
+  readOnly?: boolean;
 }
 
 interface PrRootConversationProps {
@@ -58,7 +60,7 @@ function PrRootConversationActions({
 }: {
   replyContext: PrRootConversationReplyContext;
 }) {
-  const { prRef, prState, existingPrRootDraft, registerOpenComposer, onComposerClose } =
+  const { prRef, prState, existingPrRootDraft, registerOpenComposer, onComposerClose, readOnly } =
     replyContext;
   // `useState(initialValue)` is frozen at first render. When a cross-tab
   // refetch later populates `existingPrRootDraft` (PR6 will wire that path),
@@ -88,7 +90,7 @@ function PrRootConversationActions({
             Reply
           </button>
         )}
-        <MarkAllReadButton prRef={prRef} />
+        <MarkAllReadButton prRef={prRef} readOnly={readOnly ?? false} />
       </div>
       {composerOpen && (
         <PrRootReplyComposer
@@ -99,6 +101,7 @@ function PrRootConversationActions({
           onDraftIdChange={setDraftId}
           registerOpenComposer={registerOpenComposer}
           onClose={handleClose}
+          readOnly={readOnly ?? false}
         />
       )}
     </div>

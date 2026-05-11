@@ -13,9 +13,14 @@ import type { PrReference } from '../../../api/types';
 // in dogfooding. Don't chase a phantom no-op bug here.
 export interface MarkAllReadButtonProps {
   prRef: PrReference;
+  // Spec § 5.7a — when a peer tab claimed cross-tab ownership via
+  // `useCrossTabPrPresence`, this tab must not mutate the session.
+  // markAllRead is a mutation, so we gate the button alongside the
+  // composer save/discard buttons that already check readOnly.
+  readOnly?: boolean;
 }
 
-export function MarkAllReadButton({ prRef }: MarkAllReadButtonProps) {
+export function MarkAllReadButton({ prRef, readOnly = false }: MarkAllReadButtonProps) {
   const ready = useFirstActivePrPollComplete(prRef);
   // In-flight guard so a double-click does not dispatch two concurrent
   // `markAllRead` patches. The handler is async and the button has no other
@@ -50,7 +55,7 @@ export function MarkAllReadButton({ prRef }: MarkAllReadButtonProps) {
     }
   };
 
-  const disabled = !ready || pending;
+  const disabled = !ready || pending || readOnly;
 
   // Native `disabled` already communicates state to assistive technology;
   // an additional `aria-disabled` would be redundant for buttons that are
@@ -64,7 +69,13 @@ export function MarkAllReadButton({ prRef }: MarkAllReadButtonProps) {
       type="button"
       className="mark-all-read-button"
       disabled={disabled}
-      title={ready ? 'Mark all conversation comments read' : 'Loading…'}
+      title={
+        readOnly
+          ? 'Another tab is editing this PR.'
+          : ready
+            ? 'Mark all conversation comments read'
+            : 'Loading…'
+      }
       onClick={handleClick}
     >
       Mark all read

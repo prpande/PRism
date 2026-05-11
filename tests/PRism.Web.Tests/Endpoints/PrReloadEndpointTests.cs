@@ -127,6 +127,14 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         var body = await ReadApiJsonAsync<PrReloadEndpoints.ReloadStaleHeadResponse>(resp);
         body.Should().NotBeNull();
         body!.CurrentHeadSha.Should().Be(cachedSha);
+
+        // Wire-shape pin: the `error` discriminator is what the frontend's
+        // parseReloadConflictKind switches on. Without it, useReconcile's
+        // auto-retry (S4 PR7 Task 46) classifies the response as a generic
+        // 'conflict' and never retries with currentHeadSha.
+        var raw = await resp.Content.ReadAsStringAsync();
+        raw.Should().Contain("\"error\":\"reload-stale-head\"");
+        raw.Should().Contain($"\"currentHeadSha\":\"{cachedSha}\"");
     }
 
     [Fact]

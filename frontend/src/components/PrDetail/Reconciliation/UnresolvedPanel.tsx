@@ -12,6 +12,10 @@ interface UnresolvedPanelProps {
   // its child rows' Keep-anyway / Delete actions. PrDetailPage passes
   // draftSession.refetch in.
   onMutated: () => void;
+  // Spec § 5.7a — when a peer tab claimed cross-tab ownership, gate the
+  // verdict-confirm + StaleDraftRow actions so this tab cannot race the
+  // claiming tab's edits.
+  readOnly?: boolean;
 }
 
 interface PanelCounts {
@@ -58,7 +62,12 @@ function buildSummary(counts: PanelCounts): string {
 // update; short enough that it doesn't linger past the user's task.
 const RECONCILED_ANNOUNCE_MS = 4000;
 
-export function UnresolvedPanel({ prRef, session, onMutated }: UnresolvedPanelProps) {
+export function UnresolvedPanel({
+  prRef,
+  session,
+  onMutated,
+  readOnly = false,
+}: UnresolvedPanelProps) {
   const counts = useMemo(() => computeCounts(session), [session]);
   const containerRef = useRef<HTMLElement | null>(null);
 
@@ -96,7 +105,7 @@ export function UnresolvedPanel({ prRef, session, onMutated }: UnresolvedPanelPr
   const [confirmingVerdict, setConfirmingVerdict] = useState(false);
 
   const handleConfirmVerdict = async () => {
-    if (confirmingVerdict) return;
+    if (confirmingVerdict || readOnly) return;
     setConfirmingVerdict(true);
     const result = await sendPatch(prRef, { kind: 'confirmVerdict' });
     setConfirmingVerdict(false);
@@ -149,7 +158,8 @@ export function UnresolvedPanel({ prRef, session, onMutated }: UnresolvedPanelPr
               type="button"
               className="btn btn-primary btn-sm"
               onClick={() => void handleConfirmVerdict()}
-              disabled={confirmingVerdict}
+              disabled={confirmingVerdict || readOnly}
+              title={readOnly ? 'Another tab is editing this PR.' : undefined}
             >
               Confirm verdict
             </button>
