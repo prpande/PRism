@@ -1,7 +1,7 @@
 ---
 source-doc: docs/specs/2026-05-06-s3-pr-detail-read-design.md
 created: 2026-05-07
-last-updated: 2026-05-09
+last-updated: 2026-05-11
 status: open
 revisions:
   - 2026-05-07: PR5-design — recorded multimap chosen over (a) last-SSE-wins / (b) reject-second-SSE for `{cookieSessionId → Set<subscriberId>}`
@@ -10,6 +10,7 @@ revisions:
   - 2026-05-08: PR6 review-loop pass — recorded empty-PrHeader-during-cold-load defer
   - 2026-05-08: PR7 preflight — recorded responsive-sheet, AI-focus-dot, inline-toast, viewed-semantics-graph-walk deferrals
   - 2026-05-09: PR #32 architectural decision — recorded `[Skip]` Option B (client-side jsdiff) in favor of Option A (server-side `patch` parse) for the post-PR8 hunks-always-empty contract fix
+  - 2026-05-11: S5 brainstorm pass — re-targeted file-viewed graph-walk (S4-or-S5 → S6) and Shiki-in-DiffPane (S5-or-S6 → S6) to S6 polish per [`2026-05-11-s5-submit-pipeline-design.md`](2026-05-11-s5-submit-pipeline-design.md) § 1.2
 ---
 
 # Deferrals — S3 PR-detail (read) spec
@@ -365,8 +366,9 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Source:** PR7 preflight — correctness reviewer
 - **Severity:** P2
 - **Date:** 2026-05-08
+- **Last updated:** 2026-05-11 — re-targeted from "S4 or S5" to S6 polish per S5 brainstorm (see [`2026-05-11-s5-submit-pipeline-design.md`](2026-05-11-s5-submit-pipeline-design.md) § 1.2). Reason: parallel to the submit pipeline, has its own DTO + frontend compute surface, and is not on the S5 demo / DoD critical path. S5 is already 8 PRs against a tight DoD bar; the viewed-semantics fix is a natural fit for S6's polish framing where "subtly-wrong affordance" items get cleaned up.
 - **Reason:** Spec § 7.2 defines two viewed modes: (a) default mode walks the full PR commit graph between ViewedFiles[path] and headSha checking changedFiles, (b) skipped-Jaccard mode uses exact-SHA match. PR7 implements client-side viewed state as a simple Set<string> toggle without either graph walk or SHA comparison — viewed is purely a client-side UI toggle with optimistic POST. The backend POST persists the viewed mark; the graph-walk or SHA-match logic that determines whether a file is *still* viewed after new iterations is a read-path concern that requires `PrDetailDto.viewedFiles` data (not yet surfaced in the DTO). This is by design: PR7 focuses on the file-tree layout and diff-fetching infrastructure; viewed-semantics accuracy depends on backend data that lands with full state-management polish.
-- **Revisit when:** Backend surfaces `ViewedFiles` in PrDetailDto and commit `changedFiles` data, enabling the frontend to compute accurate viewed status. Likely S4 or S5.
+- **Revisit when:** S6 polish work picks it up. Backend surfaces `ViewedFiles` in `PrDetailDto` and commit `changedFiles` data, enabling the frontend to compute accurate viewed status.
 - **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx:38` — `viewedPaths` is `useState<Set<string>>(new Set())` with no initialisation from backend data.
 
 ## [Defer] Shiki syntax highlighting in DiffPane (spec § 7.2 line 718)
@@ -374,8 +376,9 @@ The following items were Apply'd during the original spec-rigor pass (commit `6c
 - **Source:** PR8 preflight — correctness reviewer
 - **Severity:** P2
 - **Date:** 2026-05-08
+- **Last updated:** 2026-05-11 — narrowed from "S5 or S6 polish round" to S6 polish per S5 brainstorm (see [`2026-05-11-s5-submit-pipeline-design.md`](2026-05-11-s5-submit-pipeline-design.md) § 1.2). Reason: visual-only polish with no submit-pipeline coupling; S5 is already at-capacity against the DoD bar.
 - **Reason:** Spec requires DiffPane lines to be syntax-highlighted via the shared Shiki instance. PR8 ships the shikiInstance module with lazy initialization and uses it in MarkdownRenderer code blocks, but DiffPane currently renders plain-text diff lines without Shiki tokenization. Integrating Shiki into the per-line rendering requires mapping file extensions to language IDs and handling the async highlighter load state within the diff table — non-trivial but visual-only polish.
-- **Revisit when:** S5 or S6 polish round addresses syntax coloring across the diff surface.
+- **Revisit when:** S6 polish round addresses syntax coloring across the diff surface.
 - **Where the gap lives in code:** `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx` — `renderContent()` returns plain `<span>` without Shiki token spans.
 
 ## [Defer] react-diff-view integration (spec § 7.2 line 716)
