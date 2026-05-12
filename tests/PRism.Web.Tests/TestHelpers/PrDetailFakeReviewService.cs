@@ -1,3 +1,5 @@
+using System.Text;
+
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
@@ -48,7 +50,12 @@ public sealed class PrDetailFakeReviewService : IReviewAuth, IPrDiscovery, IPrRe
 
     public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct)
     {
-        var factory = FileContentFactory ?? ((_, p, _) => new FileContentResult(FileContentStatus.Ok, $"content of {p}", 100));
+        // ByteSize is a UTF-8 byte count to match production (GitHubReviewService uses bytes.LongLength).
+        var factory = FileContentFactory ?? ((_, p, _) =>
+        {
+            var content = $"content of {p}";
+            return new FileContentResult(FileContentStatus.Ok, content, Encoding.UTF8.GetByteCount(content));
+        });
         return Task.FromResult(factory(reference, path, sha));
     }
 
