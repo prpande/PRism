@@ -110,6 +110,11 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
       }),
       stream.on('submit-foreign-pending-review', (ev: SubmitForeignPendingReviewEvent) => {
         if (ev.prRef !== prRef || !ownsActiveSubmit.current) return;
+        // Step 1 detected a foreign pending review and the pipeline stopped —
+        // no more submit-progress events are coming. Drop ownership so a
+        // late/out-of-order event can't overwrite the prompt (like the
+        // stale-commit-oid path).
+        ownsActiveSubmit.current = false;
         setState({ kind: 'foreign-pending-review-prompt', snapshot: ev });
       }),
       stream.on('submit-stale-commit-oid', (ev: SubmitStaleCommitOidEvent) => {

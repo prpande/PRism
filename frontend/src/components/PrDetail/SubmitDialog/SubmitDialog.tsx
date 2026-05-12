@@ -61,14 +61,13 @@ export function SubmitDialog(props: Props) {
   const [escNotice, setEscNotice] = useState('');
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Re-seed local fields from the (possibly refetched) session each time the
-  // dialog opens — the auto-saved summary persists across Cancel/reopen
-  // (spec § 8.2) by living in the session, not in component state.
-  // Re-seed local fields only when the dialog opens — mid-session re-syncs from
-  // `session` would clobber in-progress typing (the auto-saved summary already
-  // round-trips via the session, so the value isn't lost on Cancel/reopen). The
-  // deps list is `[open]` by design; this project's eslint config carries no
-  // react-hooks/exhaustive-deps rule.
+  // Re-seed the local picker + summary from the session, but only on the
+  // false→true `open` transition (`openRef` guards it) — a mid-session re-sync
+  // would clobber in-progress typing. The auto-saved summary persists across
+  // Cancel/reopen (spec § 8.2) by living in the session, so re-reading it on
+  // reopen is the right source. `session` is in the deps so the effect closure
+  // sees the current value when `open` flips; the `justOpened` guard makes the
+  // `session`-only re-runs no-ops.
   const openRef = useRef(open);
   useEffect(() => {
     const justOpened = open && !openRef.current;
@@ -174,7 +173,9 @@ export function SubmitDialog(props: Props) {
     {
       ...session,
       draftVerdict: verdict,
-      draftSummaryMarkdown: summary.length > 0 ? summary : null,
+      // Trimmed-emptiness, matching SubmitButton's isEmptyContent — a
+      // whitespace-only textarea is "no summary" for the § 9 rules.
+      draftSummaryMarkdown: summary.trim().length > 0 ? summary : null,
     },
     headShaDrift,
     validatorResults,
