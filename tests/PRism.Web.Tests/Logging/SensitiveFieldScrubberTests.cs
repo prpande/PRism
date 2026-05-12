@@ -47,6 +47,21 @@ public class SensitiveFieldScrubberTests
         SensitiveFieldScrubber.Scrub("PrRef", "owner/repo/123").Should().Be("owner/repo/123");
     }
 
+    [Theory]
+    [InlineData("pendingReviewId")]
+    [InlineData("threadId")]
+    [InlineData("replyCommentId")]
+    [InlineData("PendingReviewId")]
+    [InlineData("ThreadId")]
+    [InlineData("ReplyCommentId")]
+    public void Redacts_submit_pipeline_field_names(string fieldName)
+    {
+        // S5 PR3 (spec § 18.2): pendingReviewId / threadId / replyCommentId are live GitHub-issued
+        // identifiers the submit pipeline introduces; redact by name so a structured-log arg can't
+        // correlate a specific user's in-flight review.
+        SensitiveFieldScrubber.Scrub(fieldName, "PRR_secret_id").Should().Be("[REDACTED]");
+    }
+
     [Fact]
     public void Truncates_strings_longer_than_1024_chars_with_original_length_suffix()
     {

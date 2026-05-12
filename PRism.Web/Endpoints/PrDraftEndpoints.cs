@@ -1,8 +1,12 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
+
 using PRism.Core.Contracts;
 using PRism.Core.Events;
+using PRism.Core.Json;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Core.Submit.Pipeline;
 
 namespace PRism.Web.Endpoints;
 
@@ -13,14 +17,29 @@ internal static class PrDraftEndpoints
     private static readonly Regex ParentThreadId = new("^PRRT_[A-Za-z0-9_-]{1,128}$", RegexOptions.Compiled);
     private const int BodyMarkdownMaxChars = 8192;
 
+    private static readonly JsonSerializerOptions Api = JsonSerializerOptionsFactory.Api;
+
     // Pre-allocated FieldsTouched arrays per spec § 4.3 — one per touchable field name.
-    // PatchOutcome.Applied references these instead of allocating new[] per request.
     private static readonly string[] FieldsTouchedDraftVerdict = { "draft-verdict" };
     private static readonly string[] FieldsTouchedDraftSummary = { "draft-summary" };
     private static readonly string[] FieldsTouchedDraftComments = { "draft-comments" };
     private static readonly string[] FieldsTouchedDraftReplies = { "draft-replies" };
     private static readonly string[] FieldsTouchedDraftVerdictStatus = { "draft-verdict-status" };
     private static readonly string[] FieldsTouchedLastSeenCommentId = { "last-seen-comment-id" };
+
+    // Object-valued patch kinds (operand is a JSON object).
+    private static readonly string[] ObjectKinds =
+    {
+        "newDraftComment", "newPrRootDraftComment", "updateDraftComment", "deleteDraftComment",
+        "newDraftReply", "updateDraftReply", "deleteDraftReply", "overrideStale",
+    };
+    // Boolean-valued patch kinds (operand must be `true` to count as set — matches the historic
+    // EnumerateSetFields semantics where `false` meant "not set"; the frontend always emits `true`).
+    private static readonly string[] BoolKinds = { "confirmVerdict", "markAllRead" };
+    // String-or-null kinds — present-with-string sets the value, present-with-null clears it,
+    // absent leaves it unchanged. This is the JsonElement wire-shape's whole point (spec § 10):
+    // the historic typed-record binding couldn't distinguish present-null from absent.
+    private static readonly string[] ScalarKinds = { "draftVerdict", "draftSummaryMarkdown" };
 
     public static IEndpointRouteBuilder MapPrDraftEndpoints(this IEndpointRouteBuilder app)
     {
@@ -41,9 +60,15 @@ internal static class PrDraftEndpoints
         return Results.Ok(MapToDto(session));
     }
 
+    // PUT /api/pr/{ref}/draft — JsonElement-based parsing so present-null distinguishes from absent
+    // (spec § 10 / S4 deferral 5 option (b)). Wire contract: exactly one operation per request; the
+    // property whose name matches a known patch kind is the operation, its value (including explicit
+    // null on draftVerdict / draftSummaryMarkdown) is the operand. A property whose value is null on
+    // a non-clearable kind, or `false` on a bool kind, is treated as "not set" — so a typed-record
+    // serialization that emits every field (`{"draftVerdict":null, "newDraftComment":{...}, …}`)
+    // still resolves to the single non-null operation, exactly as the historic binding did.
     private static async Task<IResult> PutDraft(
         string owner, string repo, int number,
-        ReviewSessionPatch? patch,
         HttpContext httpContext,
         IAppStateStore store,
         IActivePrCache cache,
@@ -51,74 +76,120 @@ internal static class PrDraftEndpoints
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
-        if (patch is null)
-            return Results.BadRequest(new { error = "patch-body-missing" });
 
         var prRef = new PrReference(owner, repo, number);
         var refKey = prRef.ToString();
         var sourceTabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
 
-        var setFields = EnumerateSetFields(patch).ToList();
-        if (setFields.Count != 1)
-            return Results.BadRequest(new { error = "exactly one patch field must be set", fieldsSet = setFields });
-
-        var validation = ValidatePatch(patch);
-        if (validation is not null) return validation;
-
-        var kind = setFields[0];
-        PatchOutcome outcome = new PatchOutcome.NoOp();
-
-        await store.UpdateAsync(state =>
+        JsonDocument doc;
+        try
         {
-            var session = state.Reviews.Sessions.TryGetValue(refKey, out var existing)
-                ? existing
-                : new ReviewSessionState(
-                    LastViewedHeadSha: null, LastSeenCommentId: null,
-                    PendingReviewId: null, PendingReviewCommitOid: null,
-                    ViewedFiles: new Dictionary<string, string>(),
-                    DraftComments: Array.Empty<DraftComment>(),
-                    DraftReplies: Array.Empty<DraftReply>(),
-                    DraftSummaryMarkdown: null, DraftVerdict: null,
-                    DraftVerdictStatus: DraftVerdictStatus.Draft);
-
-            outcome = ApplyPatch(kind, patch, session, cache, prRef);
-
-            if (outcome is PatchOutcome.Applied applied)
-            {
-                var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
-                {
-                    [refKey] = applied.Updated
-                };
-                return state with { Reviews = state.Reviews with { Sessions = sessions } };
-            }
-            return state;
-        }, ct).ConfigureAwait(false);
-
-        // Publish events outside _gate per spec § 4.4. NoOp/error outcomes intentionally
-        // do not publish (prevents the false-StateChanged-on-no-op bug from the Step 3
-        // sketch — markAllRead on cold cache, confirmVerdict-when-already-draft, missing
-        // draft id, etc.).
-        if (outcome is PatchOutcome.Applied a)
+            doc = await JsonDocument.ParseAsync(httpContext.Request.Body, default, ct).ConfigureAwait(false);
+        }
+        catch (JsonException)
         {
-            if (a.PublishSaved && a.EventDraftId is not null)
-                bus.Publish(new DraftSaved(prRef, a.EventDraftId, sourceTabId));
-            if (a.PublishDiscarded && a.EventDraftId is not null)
-                bus.Publish(new DraftDiscarded(prRef, a.EventDraftId, sourceTabId));
-            bus.Publish(new StateChanged(prRef, a.FieldsTouched, sourceTabId));
+            return Results.BadRequest(new { error = "patch-body-missing" });
         }
 
-        return outcome switch
+        using (doc)
         {
-            PatchOutcome.Applied applied when applied.AssignedId is not null
-                => Results.Ok(new AssignedIdResponse(applied.AssignedId)),
-            PatchOutcome.Applied => Results.Ok(),
-            PatchOutcome.NoOp => Results.Ok(),
-            PatchOutcome.DraftNotFound => Results.NotFound(new { error = "draft-not-found" }),
-            PatchOutcome.NotStale => Results.BadRequest(new { error = "not-stale" }),
-            PatchOutcome.FileNotInDiff => Results.UnprocessableEntity(new { error = "draft-file-not-in-diff" }),
-            PatchOutcome.NotSubscribed => Results.NotFound(new { error = "not-subscribed" }),
-            _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
-        };
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return Results.BadRequest(new { error = "patch-body-missing" });
+
+            // Resolve the single operation. "Real" ops: an object kind with an object value, a bool
+            // kind with `true`, or a scalar kind with a non-null string. "Clear" ops: a scalar kind
+            // with explicit null. If there is exactly one real op, it wins and any clear-null on the
+            // other scalar kind is ignored (the spurious-nulls case). Otherwise a lone clear op wins.
+            (string Kind, JsonElement Value)? realOp = null;
+            var realCount = 0;
+            (string Kind, JsonElement Value)? clearOp = null;
+            var clearCount = 0;
+
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                var v = prop.Value;
+                if (Array.IndexOf(ObjectKinds, prop.Name) >= 0)
+                {
+                    if (v.ValueKind == JsonValueKind.Object) { realOp = (prop.Name, v); realCount++; }
+                }
+                else if (Array.IndexOf(BoolKinds, prop.Name) >= 0)
+                {
+                    if (v.ValueKind == JsonValueKind.True) { realOp = (prop.Name, v); realCount++; }
+                }
+                else if (Array.IndexOf(ScalarKinds, prop.Name) >= 0)
+                {
+                    if (v.ValueKind == JsonValueKind.Null) { clearOp = (prop.Name, v); clearCount++; }
+                    else { realOp = (prop.Name, v); realCount++; }
+                }
+                // Unknown property names are ignored (parity with the historic record binding).
+            }
+
+            (string Kind, JsonElement Value) op;
+            if (realCount == 1) op = realOp!.Value;
+            else if (realCount == 0 && clearCount == 1) op = clearOp!.Value;
+            else return Results.BadRequest(new { error = "exactly one patch field must be set", realCount, clearCount });
+
+            // Marker-prefix collision defense (spec § 4 / Task 40): reject user bodies that contain
+            // the literal `<!-- prism:client-id:` substring outside fenced code blocks — such a body
+            // would confuse the SubmitPipeline's lost-response adoption matcher.
+            var userBody = ExtractUserBody(op.Kind, op.Value);
+            if (userBody is not null && PipelineMarker.ContainsMarkerPrefix(userBody))
+                return Results.Json(new
+                {
+                    code = "marker-prefix-collision",
+                    message = "Comment body cannot contain the internal marker string '<!-- prism:client-id:'",
+                }, statusCode: StatusCodes.Status400BadRequest);
+
+            // Deserialise + validate the operand once here; ApplyPatch reuses the typed payload
+            // (object kinds) rather than re-parsing the JsonElement inside the store transaction.
+            var validation = ValidateAndParseOperand(op.Kind, op.Value, out var operandPayload);
+            if (validation is not null) return validation;
+
+            PatchOutcome outcome = new PatchOutcome.NoOp();
+            await store.UpdateAsync(state =>
+            {
+                var session = state.Reviews.Sessions.TryGetValue(refKey, out var existing)
+                    ? existing
+                    : NewEmptySession();
+
+                outcome = ApplyPatch(op.Kind, op.Value, operandPayload, session, cache, prRef);
+
+                if (outcome is PatchOutcome.Applied applied)
+                {
+                    var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
+                    {
+                        [refKey] = applied.Updated
+                    };
+                    return state with { Reviews = state.Reviews with { Sessions = sessions } };
+                }
+                return state;
+            }, ct).ConfigureAwait(false);
+
+            // Publish events outside _gate per spec § 4.4. NoOp / error outcomes intentionally do
+            // not publish (prevents false-StateChanged-on-no-op).
+            if (outcome is PatchOutcome.Applied a)
+            {
+                if (a.PublishSaved && a.EventDraftId is not null)
+                    bus.Publish(new DraftSaved(prRef, a.EventDraftId, sourceTabId));
+                if (a.PublishDiscarded && a.EventDraftId is not null)
+                    bus.Publish(new DraftDiscarded(prRef, a.EventDraftId, sourceTabId));
+                bus.Publish(new StateChanged(prRef, a.FieldsTouched, sourceTabId));
+            }
+
+            return outcome switch
+            {
+                PatchOutcome.Applied applied when applied.AssignedId is not null
+                    => Results.Ok(new AssignedIdResponse(applied.AssignedId)),
+                PatchOutcome.Applied => Results.Ok(),
+                PatchOutcome.NoOp => Results.Ok(),
+                PatchOutcome.DraftNotFound => Results.NotFound(new { error = "draft-not-found" }),
+                PatchOutcome.NotStale => Results.BadRequest(new { error = "not-stale" }),
+                PatchOutcome.FileNotInDiff => Results.UnprocessableEntity(new { error = "draft-file-not-in-diff" }),
+                PatchOutcome.NotSubscribed => Results.NotFound(new { error = "not-subscribed" }),
+                PatchOutcome.PatchShapeInvalid => Results.BadRequest(new { error = "patch-shape-invalid" }),
+                _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
+            };
+        }
     }
 
     internal abstract record PatchOutcome
@@ -135,12 +206,18 @@ internal static class PrDraftEndpoints
         internal sealed record NotStale : PatchOutcome;
         internal sealed record FileNotInDiff : PatchOutcome;
         internal sealed record NotSubscribed : PatchOutcome;
+        internal sealed record PatchShapeInvalid : PatchOutcome;
         internal sealed record NoOp : PatchOutcome;
     }
 
+    // `payload` is the typed operand ValidateAndParseOperand already deserialised for object kinds
+    // (NewDraftCommentPayload / DeleteDraftPayload / …); it is null for the scalar kinds
+    // (draftVerdict / draftSummaryMarkdown — those read `value` directly for the null-vs-string
+    // distinction) and the bool kinds (confirmVerdict / markAllRead).
     private static PatchOutcome ApplyPatch(
         string kind,
-        ReviewSessionPatch patch,
+        JsonElement value,
+        object? payload,
         ReviewSessionState session,
         IActivePrCache cache,
         PrReference prRef)
@@ -149,14 +226,15 @@ internal static class PrDraftEndpoints
         {
             case "draftVerdict":
                 {
-                    var verdict = patch.DraftVerdict switch
-                    {
-                        "approve" => (DraftVerdict?)DraftVerdict.Approve,
-                        "requestChanges" => (DraftVerdict?)DraftVerdict.RequestChanges,
-                        "comment" => (DraftVerdict?)DraftVerdict.Comment,
-                        null => null,
-                        _ => throw new ArgumentException($"unknown verdict: {patch.DraftVerdict}")
-                    };
+                    DraftVerdict? verdict = value.ValueKind == JsonValueKind.Null
+                        ? null
+                        : value.GetString() switch
+                        {
+                            "approve" => DraftVerdict.Approve,
+                            "requestChanges" => DraftVerdict.RequestChanges,
+                            "comment" => DraftVerdict.Comment,
+                            _ => throw new InvalidOperationException("verdict already validated"),
+                        };
                     return new PatchOutcome.Applied(
                         session with { DraftVerdict = verdict },
                         AssignedId: null, EventDraftId: null,
@@ -165,13 +243,16 @@ internal static class PrDraftEndpoints
                 }
 
             case "draftSummaryMarkdown":
-                return new PatchOutcome.Applied(
-                    session with { DraftSummaryMarkdown = patch.DraftSummaryMarkdown },
-                    null, null, false, false, FieldsTouchedDraftSummary);
+                {
+                    var summary = value.ValueKind == JsonValueKind.Null ? null : value.GetString();
+                    return new PatchOutcome.Applied(
+                        session with { DraftSummaryMarkdown = summary },
+                        null, null, false, false, FieldsTouchedDraftSummary);
+                }
 
             case "newDraftComment":
                 {
-                    var n = patch.NewDraftComment!;
+                    if (payload is not NewDraftCommentPayload n) return new PatchOutcome.PatchShapeInvalid();
                     var id = Guid.NewGuid().ToString();
                     var draft = new DraftComment(
                         Id: id,
@@ -189,7 +270,7 @@ internal static class PrDraftEndpoints
 
             case "newPrRootDraftComment":
                 {
-                    var n = patch.NewPrRootDraftComment!;
+                    if (payload is not NewPrRootDraftCommentPayload n) return new PatchOutcome.PatchShapeInvalid();
                     var id = Guid.NewGuid().ToString();
                     var draft = new DraftComment(
                         Id: id,
@@ -205,7 +286,7 @@ internal static class PrDraftEndpoints
 
             case "updateDraftComment":
                 {
-                    var u = patch.UpdateDraftComment!;
+                    if (payload is not UpdateDraftCommentPayload u) return new PatchOutcome.PatchShapeInvalid();
                     var list = session.DraftComments.ToList();
                     var idx = list.FindIndex(d => d.Id == u.Id);
                     if (idx < 0) return new PatchOutcome.DraftNotFound();
@@ -217,7 +298,7 @@ internal static class PrDraftEndpoints
 
             case "deleteDraftComment":
                 {
-                    var d = patch.DeleteDraftComment!;
+                    if (payload is not DeleteDraftPayload d) return new PatchOutcome.PatchShapeInvalid();
                     var list = session.DraftComments.ToList();
                     var idx = list.FindIndex(x => x.Id == d.Id);
                     if (idx < 0) return new PatchOutcome.DraftNotFound();
@@ -229,7 +310,7 @@ internal static class PrDraftEndpoints
 
             case "newDraftReply":
                 {
-                    var n = patch.NewDraftReply!;
+                    if (payload is not NewDraftReplyPayload n) return new PatchOutcome.PatchShapeInvalid();
                     var id = Guid.NewGuid().ToString();
                     var reply = new DraftReply(
                         Id: id, ParentThreadId: n.ParentThreadId, ReplyCommentId: null,
@@ -242,7 +323,7 @@ internal static class PrDraftEndpoints
 
             case "updateDraftReply":
                 {
-                    var u = patch.UpdateDraftReply!;
+                    if (payload is not UpdateDraftPayload u) return new PatchOutcome.PatchShapeInvalid();
                     var list = session.DraftReplies.ToList();
                     var idx = list.FindIndex(r => r.Id == u.Id);
                     if (idx < 0) return new PatchOutcome.DraftNotFound();
@@ -254,7 +335,7 @@ internal static class PrDraftEndpoints
 
             case "deleteDraftReply":
                 {
-                    var d = patch.DeleteDraftReply!;
+                    if (payload is not DeleteDraftPayload d) return new PatchOutcome.PatchShapeInvalid();
                     var list = session.DraftReplies.ToList();
                     var idx = list.FindIndex(r => r.Id == d.Id);
                     if (idx < 0) return new PatchOutcome.DraftNotFound();
@@ -273,13 +354,11 @@ internal static class PrDraftEndpoints
 
             case "markAllRead":
                 {
-                    // SECURITY (PoC scope): `IsSubscribed` checks whether ANY tab is currently
-                    // subscribed to this PR (registry presence), not whether the caller's
-                    // session owns a subscription. This closes the drive-by-tab vector via the
-                    // outer OriginCheckMiddleware + SameSite=Strict + session token + the
-                    // single-user PoC threat model — see deferrals "PR3: markAllRead authorization
-                    // broader than spec § 4.7". A future per-session check tightens this when
-                    // multi-user lands.
+                    // SECURITY (PoC scope): IsSubscribed checks whether ANY tab is currently
+                    // subscribed to this PR (registry presence), not whether the caller's session
+                    // owns a subscription. Closed by OriginCheckMiddleware + SameSite=Strict +
+                    // session token + the single-user PoC threat model — see deferrals "PR3:
+                    // markAllRead authorization broader than spec § 4.7".
                     if (!cache.IsSubscribed(prRef))
                         return new PatchOutcome.NotSubscribed();
                     var snap = cache.GetCurrent(prRef);
@@ -295,7 +374,7 @@ internal static class PrDraftEndpoints
 
             case "overrideStale":
                 {
-                    var os = patch.OverrideStale!;
+                    if (payload is not OverrideStalePayload os) return new PatchOutcome.PatchShapeInvalid();
                     var commentList = session.DraftComments.ToList();
                     var commentIdx = commentList.FindIndex(d => d.Id == os.Id);
                     if (commentIdx >= 0)
@@ -326,88 +405,149 @@ internal static class PrDraftEndpoints
         }
     }
 
-    private static IEnumerable<string> EnumerateSetFields(ReviewSessionPatch p)
+    // Pulls the user-authored body text out of a patch operand, for the marker-prefix collision
+    // check. Returns null for operations that carry no free-text body.
+    private static string? ExtractUserBody(string kind, JsonElement value)
     {
-        if (p.DraftVerdict is not null) yield return "draftVerdict";
-        if (p.DraftSummaryMarkdown is not null) yield return "draftSummaryMarkdown";
-        if (p.NewDraftComment is not null) yield return "newDraftComment";
-        if (p.NewPrRootDraftComment is not null) yield return "newPrRootDraftComment";
-        if (p.UpdateDraftComment is not null) yield return "updateDraftComment";
-        if (p.DeleteDraftComment is not null) yield return "deleteDraftComment";
-        if (p.NewDraftReply is not null) yield return "newDraftReply";
-        if (p.UpdateDraftReply is not null) yield return "updateDraftReply";
-        if (p.DeleteDraftReply is not null) yield return "deleteDraftReply";
-        if (p.ConfirmVerdict == true) yield return "confirmVerdict";
-        if (p.MarkAllRead == true) yield return "markAllRead";
-        if (p.OverrideStale is not null) yield return "overrideStale";
+        switch (kind)
+        {
+            case "draftSummaryMarkdown":
+                return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            case "newDraftComment":
+            case "newPrRootDraftComment":
+            case "updateDraftComment":
+            case "newDraftReply":
+            case "updateDraftReply":
+                return value.ValueKind == JsonValueKind.Object
+                    && value.TryGetProperty("bodyMarkdown", out var b) && b.ValueKind == JsonValueKind.String
+                    ? b.GetString()
+                    : null;
+            default:
+                return null;
+        }
     }
 
-    private static IResult? ValidatePatch(ReviewSessionPatch patch)
+    // Deserialises an object-kind operand exactly once (so ApplyPatch doesn't re-parse inside the
+    // store transaction), validates it, and yields the typed record via `payload`. Scalar kinds
+    // (draftVerdict / draftSummaryMarkdown) and bool kinds set `payload = null` — ApplyPatch reads
+    // the JsonElement directly for those. Required strings are null-checked BEFORE any .Length /
+    // regex call so a malformed payload returns 4xx instead of throwing NullReferenceException → 500.
+    private static IResult? ValidateAndParseOperand(string kind, JsonElement value, out object? payload)
     {
-        // System.Text.Json can deserialize an explicit JSON `null` into non-nullable
-        // record-string properties despite the C# nullability declaration (no runtime
-        // enforcement on JsonNamingPolicy paths). Every required string is null-checked
-        // BEFORE any `.Length` / regex call so a malformed payload returns 400 instead
-        // of throwing NullReferenceException → 500.
-        if (patch.NewDraftComment is { } ndc)
+        payload = null;
+        switch (kind)
         {
-            if (string.IsNullOrWhiteSpace(ndc.BodyMarkdown))
-                return Results.BadRequest(new { error = "body-empty" });
-            if (ndc.BodyMarkdown.Length > BodyMarkdownMaxChars)
-                return Results.UnprocessableEntity(new { error = "body-too-large" });
-            if (string.IsNullOrEmpty(ndc.AnchoredSha))
-                return Results.BadRequest(new { error = "anchored-sha-missing" });
-            if (!Sha40.IsMatch(ndc.AnchoredSha) && !Sha64.IsMatch(ndc.AnchoredSha))
-                return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
-            if (!IsCanonicalFilePath(ndc.FilePath))
-                return Results.UnprocessableEntity(new { error = "file-path-invalid" });
+            case "newDraftComment":
+                {
+                    if (!TryDeserialize<NewDraftCommentPayload>(value, out var ndc))
+                        return Results.BadRequest(new { error = "patch-shape-invalid" });
+                    if (string.IsNullOrWhiteSpace(ndc.BodyMarkdown))
+                        return Results.BadRequest(new { error = "body-empty" });
+                    if (ndc.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                        return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    if (string.IsNullOrEmpty(ndc.AnchoredSha))
+                        return Results.BadRequest(new { error = "anchored-sha-missing" });
+                    if (!Sha40.IsMatch(ndc.AnchoredSha) && !Sha64.IsMatch(ndc.AnchoredSha))
+                        return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
+                    if (!IsCanonicalFilePath(ndc.FilePath))
+                        return Results.UnprocessableEntity(new { error = "file-path-invalid" });
+                    payload = ndc;
+                    return null;
+                }
+            case "newPrRootDraftComment":
+                {
+                    if (!TryDeserialize<NewPrRootDraftCommentPayload>(value, out var nprdc))
+                        return Results.BadRequest(new { error = "patch-shape-invalid" });
+                    if (string.IsNullOrWhiteSpace(nprdc.BodyMarkdown))
+                        return Results.BadRequest(new { error = "body-empty" });
+                    if (nprdc.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                        return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    payload = nprdc;
+                    return null;
+                }
+            case "newDraftReply":
+                {
+                    if (!TryDeserialize<NewDraftReplyPayload>(value, out var ndr))
+                        return Results.BadRequest(new { error = "patch-shape-invalid" });
+                    if (string.IsNullOrWhiteSpace(ndr.BodyMarkdown))
+                        return Results.BadRequest(new { error = "body-empty" });
+                    if (ndr.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                        return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    if (string.IsNullOrEmpty(ndr.ParentThreadId))
+                        return Results.BadRequest(new { error = "parent-thread-id-missing" });
+                    if (!ParentThreadId.IsMatch(ndr.ParentThreadId))
+                        return Results.UnprocessableEntity(new { error = "thread-id-format-invalid" });
+                    payload = ndr;
+                    return null;
+                }
+            case "updateDraftComment":
+                {
+                    if (!TryDeserialize<UpdateDraftCommentPayload>(value, out var udc))
+                        return Results.BadRequest(new { error = "patch-shape-invalid" });
+                    if (string.IsNullOrWhiteSpace(udc.BodyMarkdown))
+                        return Results.BadRequest(new { error = "body-empty" });
+                    if (udc.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                        return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    payload = udc;
+                    return null;
+                }
+            case "updateDraftReply":
+                {
+                    if (!TryDeserialize<UpdateDraftPayload>(value, out var udr))
+                        return Results.BadRequest(new { error = "patch-shape-invalid" });
+                    if (string.IsNullOrWhiteSpace(udr.BodyMarkdown))
+                        return Results.BadRequest(new { error = "body-empty" });
+                    if (udr.BodyMarkdown.Length > BodyMarkdownMaxChars)
+                        return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    payload = udr;
+                    return null;
+                }
+            case "deleteDraftComment":
+            case "deleteDraftReply":
+                if (!TryDeserialize<DeleteDraftPayload>(value, out var del) || string.IsNullOrEmpty(del.Id))
+                    return Results.BadRequest(new { error = "patch-shape-invalid" });
+                payload = del;
+                return null;
+            case "overrideStale":
+                if (!TryDeserialize<OverrideStalePayload>(value, out var os) || string.IsNullOrEmpty(os.Id))
+                    return Results.BadRequest(new { error = "patch-shape-invalid" });
+                payload = os;
+                return null;
+            case "draftSummaryMarkdown":
+                {
+                    if (value.ValueKind == JsonValueKind.Null) return null;  // explicit clear is valid
+                    if (value.ValueKind != JsonValueKind.String) return Results.BadRequest(new { error = "patch-shape-invalid" });
+                    var summary = value.GetString();
+                    if (summary is not null && summary.Length > BodyMarkdownMaxChars)
+                        return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    return null;
+                }
+            case "draftVerdict":
+                {
+                    if (value.ValueKind == JsonValueKind.Null) return null;  // explicit clear is valid
+                    var verdict = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                    if (verdict is not "approve" and not "requestChanges" and not "comment")
+                        return Results.BadRequest(new { error = "verdict-invalid" });
+                    return null;
+                }
+            default:
+                return null;  // confirmVerdict / markAllRead — operand was already constrained to `true` in op resolution
         }
-        if (patch.NewPrRootDraftComment is { } nprdc)
-        {
-            if (string.IsNullOrWhiteSpace(nprdc.BodyMarkdown))
-                return Results.BadRequest(new { error = "body-empty" });
-            if (nprdc.BodyMarkdown.Length > BodyMarkdownMaxChars)
-                return Results.UnprocessableEntity(new { error = "body-too-large" });
-        }
-        if (patch.NewDraftReply is { } ndr)
-        {
-            if (string.IsNullOrWhiteSpace(ndr.BodyMarkdown))
-                return Results.BadRequest(new { error = "body-empty" });
-            if (ndr.BodyMarkdown.Length > BodyMarkdownMaxChars)
-                return Results.UnprocessableEntity(new { error = "body-too-large" });
-            if (string.IsNullOrEmpty(ndr.ParentThreadId))
-                return Results.BadRequest(new { error = "parent-thread-id-missing" });
-            if (!ParentThreadId.IsMatch(ndr.ParentThreadId))
-                return Results.UnprocessableEntity(new { error = "thread-id-format-invalid" });
-        }
-        if (patch.UpdateDraftComment is { } udc)
-        {
-            if (string.IsNullOrWhiteSpace(udc.BodyMarkdown))
-                return Results.BadRequest(new { error = "body-empty" });
-            if (udc.BodyMarkdown.Length > BodyMarkdownMaxChars)
-                return Results.UnprocessableEntity(new { error = "body-too-large" });
-        }
-        if (patch.UpdateDraftReply is { } udr)
-        {
-            if (string.IsNullOrWhiteSpace(udr.BodyMarkdown))
-                return Results.BadRequest(new { error = "body-empty" });
-            if (udr.BodyMarkdown.Length > BodyMarkdownMaxChars)
-                return Results.UnprocessableEntity(new { error = "body-too-large" });
-        }
-        if (patch.DraftSummaryMarkdown is { } summary && summary.Length > BodyMarkdownMaxChars)
-            return Results.UnprocessableEntity(new { error = "body-too-large" });
+    }
 
-        // Validate draftVerdict at the boundary so an unknown value (e.g., "request-changes"
-        // kebab-typo) returns 400 instead of escaping ApplyPatch's switch default as
-        // ArgumentException → 500. EnumerateSetFields filters nulls upstream, so reaching
-        // this branch with a non-null value means the client expressed intent to set it.
-        if (patch.DraftVerdict is { } verdict
-            && verdict is not "approve" and not "requestChanges" and not "comment")
+    private static bool TryDeserialize<T>(JsonElement value, out T result) where T : class
+    {
+        try
         {
-            return Results.BadRequest(new { error = "verdict-invalid" });
+            var parsed = value.Deserialize<T>(Api);
+            result = parsed!;
+            return parsed is not null;
         }
-
-        return null;
+        catch (JsonException)
+        {
+            result = null!;
+            return false;
+        }
     }
 
     private static bool IsCanonicalFilePath(string path)
@@ -424,7 +564,20 @@ internal static class PrDraftEndpoints
         return true;
     }
 
-    // Shared with PrReloadEndpoints (Task 29) — keep `internal` visibility.
+    // The canonical "no draft session yet" value — `PUT /draft` materialises one when a patch
+    // arrives for a PR with no session, and PrSubmitEndpoints.ResumeForeignPendingReviewAsync uses
+    // it for the same reason. Internal so both endpoint classes share the single definition: a new
+    // field on ReviewSessionState then produces one compile error, not zero.
+    internal static ReviewSessionState NewEmptySession() => new(
+        LastViewedHeadSha: null, LastSeenCommentId: null,
+        PendingReviewId: null, PendingReviewCommitOid: null,
+        ViewedFiles: new Dictionary<string, string>(),
+        DraftComments: Array.Empty<DraftComment>(),
+        DraftReplies: Array.Empty<DraftReply>(),
+        DraftSummaryMarkdown: null, DraftVerdict: null,
+        DraftVerdictStatus: DraftVerdictStatus.Draft);
+
+    // Shared with PrReloadEndpoints — keep `internal` visibility.
     internal static ReviewSessionDto MapToDto(ReviewSessionState s) => new(
         DraftVerdict: s.DraftVerdict,
         DraftVerdictStatus: s.DraftVerdictStatus,

@@ -20,6 +20,9 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="PRism.Core.Tests" />
+    <!-- S5 PR3: PrDraftEndpoints (composer marker-prefix rejection) + PrSubmitEndpoints
+         (Resume import) call into the internal PipelineMarker helper in PRism.Core/Submit/Pipeline/. -->
+    <InternalsVisibleTo Include="PRism.Web" />
   </ItemGroup>
 
 </Project>

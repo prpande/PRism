@@ -74,6 +74,7 @@ internal static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
 
         services.AddSingleton<SseChannel>();
+        services.AddSingleton<PRism.Web.Submit.SubmitLockRegistry>();
 
         services.ConfigureHttpJsonOptions(o =>
         {
