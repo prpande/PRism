@@ -34,7 +34,10 @@ export function ForeignPendingReviewModal({
 
   if (!open) return null;
 
-  const humanized = new Date(snapshot.createdAt).toLocaleString();
+  const createdAtDate = new Date(snapshot.createdAt);
+  const humanized = Number.isNaN(createdAtDate.getTime())
+    ? 'an earlier time'
+    : createdAtDate.toLocaleString();
 
   return (
     <>

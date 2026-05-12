@@ -166,23 +166,24 @@ export function PrHeader({
     show({ kind: 'error', message: 'Could not complete that action on the pending review.' });
   };
 
+  // Close the dialog synchronously before awaiting — once the resume/discard
+  // POST resolves, useSubmit flips its state to `idle`, and if the dialog were
+  // still mounted that would flash the full submit form (and jump focus) for one
+  // render before the .then unmounts it. The spec also has the dialog close on a
+  // TOCTOU 409 here, so optimistic-close + a toast on failure matches both.
   const onResumeForeignPendingReview = (reviewId: string) => {
+    setDialogOpen(false);
     void submit
       .resumeForeignPendingReview(reviewId)
-      .then(() => {
-        setDialogOpen(false);
-        onSessionRefetch?.();
-      })
+      .then(() => onSessionRefetch?.())
       .catch(surfaceForeignReviewError);
   };
 
   const onDiscardForeignPendingReview = (reviewId: string) => {
+    setDialogOpen(false);
     void submit
       .discardForeignPendingReview(reviewId)
-      .then(() => {
-        setDialogOpen(false);
-        onSessionRefetch?.();
-      })
+      .then(() => onSessionRefetch?.())
       .catch(surfaceForeignReviewError);
   };
 

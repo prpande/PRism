@@ -372,6 +372,27 @@ describe('useSubmit', () => {
     expect(result.current.lastResume).toBeNull();
   });
 
+  it('resumeForeignPendingReview ignores a re-entrant call while one is in flight (double-click guard)', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    await act(async () => {
+      await result.current.submit('Comment');
+    });
+    act(() => emitForeignPrompt());
+    let release!: () => void;
+    resumeForeignMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        release = () => resolve();
+      }),
+    );
+    await act(async () => {
+      const p1 = result.current.resumeForeignPendingReview('PRR_x');
+      const p2 = result.current.resumeForeignPendingReview('PRR_x');
+      release();
+      await Promise.all([p1, p2]);
+    });
+    expect(resumeForeignMock).toHaveBeenCalledTimes(1);
+  });
+
   it('resumeForeignPendingReview 409 (TOCTOU) re-throws and resets to idle (no stuck prompt)', async () => {
     const { result } = renderHook(() => useSubmit(ref));
     await act(async () => {

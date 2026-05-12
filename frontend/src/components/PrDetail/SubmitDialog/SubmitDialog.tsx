@@ -120,9 +120,17 @@ export function SubmitDialog(props: Props) {
   // Esc focuses Cancel, never dismisses (spec § 8.1) — and announces the
   // focus shift through an aria-live region so SR users aren't surprised. The
   // trailing zero-width space toggles so a *repeated* Esc still changes the
-  // region's text content and re-announces (adversarial #7).
+  // region's text content and re-announces (adversarial #7). Skipped while the
+  // dialog is delegating to a child modal (foreign-prompt) or has collapsed to
+  // the stale-commitOID banner — there's no Cancel button in `cancelRef` then,
+  // and those surfaces own their own Esc handling.
   useEffect(() => {
-    if (!open) return;
+    if (
+      !open ||
+      submitState.kind === 'foreign-pending-review-prompt' ||
+      submitState.kind === 'stale-commit-oid'
+    )
+      return;
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       e.preventDefault();
@@ -137,7 +145,7 @@ export function SubmitDialog(props: Props) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [open]);
+  }, [open, submitState.kind]);
 
   useEffect(
     () => () => {

@@ -91,6 +91,11 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   // captured when the prompt state arrives so resumeForeignPendingReview can
   // diff them against the resume 200's counts (Snapshot B) — spec § 11.1.
   const lastForeignSnapshotRef = useRef<{ threadCount: number; replyCount: number } | null>(null);
+  // Re-entry guard for the foreign-pending-review Resume/Discard buttons (they
+  // aren't disabled mid-flight): a rapid double-click would otherwise fire two
+  // POSTs, the second 409-ing on the already-consumed pending review and
+  // surfacing a spurious "state changed" toast.
+  const foreignActionInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!stream) return;
@@ -188,6 +193,8 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
 
   const resumeForeignPendingReview = useCallback(
     async (reviewId: string) => {
+      if (foreignActionInFlightRef.current) return;
+      foreignActionInFlightRef.current = true;
       try {
         const resp = await resumeForeignApi(reference, reviewId);
         // Imports land in the session as Draft entries; the user adjudicates via
@@ -196,8 +203,8 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
         if (snapshotA) {
           setLastResume({
             snapshotA,
-            snapshotB: { threadCount: resp.threadCount, replyCount: resp.replyCount },
-            hasResolvedImports: resp.threads.some((t) => t.isResolved),
+            snapshotB: { threadCount: resp?.threadCount ?? 0, replyCount: resp?.replyCount ?? 0 },
+            hasResolvedImports: (resp?.threads ?? []).some((t) => t.isResolved),
           });
         }
         ownsActiveSubmit.current = false;
@@ -206,6 +213,8 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
         ownsActiveSubmit.current = false;
         setState({ kind: 'idle' });
         throw err;
+      } finally {
+        foreignActionInFlightRef.current = false;
       }
     },
     [reference],
@@ -213,6 +222,8 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
 
   const discardForeignPendingReview = useCallback(
     async (reviewId: string) => {
+      if (foreignActionInFlightRef.current) return;
+      foreignActionInFlightRef.current = true;
       try {
         await discardForeignApi(reference, reviewId);
         ownsActiveSubmit.current = false;
@@ -221,6 +232,8 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
         ownsActiveSubmit.current = false;
         setState({ kind: 'idle' });
         throw err;
+      } finally {
+        foreignActionInFlightRef.current = false;
       }
     },
     [reference],
