@@ -289,6 +289,7 @@ public sealed partial class GitHubReviewService
                       originalLine
                       isResolved
                       comments(first: 100) {
+                        pageInfo { hasNextPage }
                         nodes { id body createdAt originalCommit { oid } pullRequestReview { id } }
                       }
                     }
@@ -344,6 +345,20 @@ public sealed partial class GitHubReviewService
                     ? cn.EnumerateArray().ToArray()
                     : Array.Empty<JsonElement>();
                 if (comments.Length == 0) continue;
+
+                // Fail loud if a thread's comment chain is truncated — the inclusion test below
+                // ("does our pending review own any of these comments?") is unsound on a partial
+                // page (our reply could be on page 2, so the thread would be wrongly excluded and
+                // Step 4 would demote a reply we actually posted). Same fail-loud-over-partial stance
+                // as the reviewThreads cap; cursor pagination on both is the deferred fix.
+                if (TryGetPath(thread, out var cHasNextPage, "comments", "pageInfo", "hasNextPage")
+                    && cHasNextPage.ValueKind == JsonValueKind.True)
+                {
+                    var truncatedThreadId = thread.TryGetProperty("id", out var ttid) ? ttid.GetString() ?? "?" : "?";
+                    throw new GitHubGraphQLException(
+                        $"Review thread {truncatedThreadId} on {reference.Owner}/{reference.Repo}#{reference.Number} has more than 100 comments; " +
+                        "FindOwnPendingReviewAsync cannot reliably determine pending-review membership of a truncated comment chain. (PoC: comment pagination is not implemented.)");
+                }
 
                 // Include this thread iff our pending review owns *any* comment on it — the thread it
                 // created (root comment is ours), OR an existing thread it merely replied to (a later

@@ -240,6 +240,44 @@ public class GitHubReviewServiceSubmitFindOwnTests
     }
 
     [Fact]
+    public async Task FindOwnPendingReviewAsync_ThreadCommentChainTruncated_ThrowsGitHubGraphQLException()
+    {
+        // A thread with >100 comments truncates the page; the "does our pending review own any of
+        // these?" inclusion test would be unsound (our reply could be on page 2), so the adapter
+        // fails loud rather than silently mis-classifying the thread.
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """
+            {
+              "data": {
+                "repository": {
+                  "pullRequest": {
+                    "reviews": { "nodes": [
+                      { "id": "PRR_mine", "viewerDidAuthor": true, "commit": { "oid": "abc1234" }, "createdAt": "2026-05-11T10:00:00Z" }
+                    ] },
+                    "reviewThreads": { "pageInfo": { "hasNextPage": false }, "nodes": [
+                      {
+                        "id": "PRRT_long",
+                        "path": "src/Foo.cs",
+                        "line": 1,
+                        "diffSide": "RIGHT",
+                        "originalLine": 1,
+                        "isResolved": false,
+                        "comments": { "pageInfo": { "hasNextPage": true }, "nodes": [
+                          { "id": "PRRC_root", "body": "x", "createdAt": "2026-05-01T08:00:00Z", "originalCommit": { "oid": "old999" }, "pullRequestReview": { "id": "PRR_someone_else" } }
+                        ] }
+                      }
+                    ] }
+                  }
+                }
+              }
+            }
+            """);
+        var svc = NewService(handler);
+
+        Func<Task> act = () => svc.FindOwnPendingReviewAsync(Ref, CancellationToken.None);
+        await act.Should().ThrowAsync<GitHubGraphQLException>().WithMessage("*more than 100 comments*");
+    }
+
+    [Fact]
     public async Task FindOwnPendingReviewAsync_ThreadWithNeitherLineNorOriginalLine_ThrowsGitHubGraphQLException()
     {
         var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """

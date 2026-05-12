@@ -76,15 +76,19 @@ public sealed class SubmitPipeline
                 if (!string.Equals(existing.CommitOid, currentHeadSha, StringComparison.Ordinal))
                 {
                     // ---- Stale-commitOID branch (spec § 5.2) ----
-                    // Surface "Recreating against new head sha…" before the destructive call, then
-                    // delete the orphan, clear the session's pending state + every stamp, and hand
-                    // the StaleCommitOidRecreating outcome back; the endpoint persists nothing more
-                    // (the clear already happened here) and the user re-confirms / re-runs.
+                    // Surface "Recreating against new head sha…" before the destructive call (spec
+                    // § 5.2 step 1 mandates this second Started so the dialog banner can update — a
+                    // progress consumer sees Started→…→Started→Succeeded for DetectExistingPendingReview;
+                    // the duplicate Started is intentional and the endpoint's SSE bridge dedups/re-renders).
+                    // Then delete the orphan, clear the session's pending state + every stamp, emit the
+                    // terminal Succeeded, and hand the StaleCommitOidRecreating outcome back; the endpoint
+                    // persists nothing more (the clear already happened here) and the user re-confirms / re-runs.
                     progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Started, 0, 0));
                     await InvokeAsync(SubmitStep.DetectExistingPendingReview, 0, 0, session, progress,
                         () => _submitter.DeletePendingReviewAsync(reference, existing.PullRequestReviewId, ct)).ConfigureAwait(false);
                     await PersistOrFailAsync(SubmitStep.DetectExistingPendingReview, session, progress,
                         state => ClearPendingReviewStamps(state, sessionKey), ct).ConfigureAwait(false);
+                    progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
                     return new SubmitOutcome.StaleCommitOidRecreating(existing.PullRequestReviewId, existing.CommitOid);
                 }
 
@@ -221,9 +225,11 @@ public sealed class SubmitPipeline
             // We have a pending review (Step 1 found it, or Begin just created it) but the re-fetch
             // returned null — GitHub's reviews(...) list query lagging. Treat as a retryable step
             // failure rather than re-creating every thread (which would double-post on a lost-response
-            // retry); the next attempt's snapshot will reflect reality.
-            throw new SubmitFailedException(SubmitStep.AttachThreads,
-                "could not fetch the pending-review snapshot to reconcile threads; retry", session);
+            // retry); the next attempt's snapshot will reflect reality. Emit the terminal Failed so a
+            // progress consumer sees a matching event for the Started above.
+            const string msg = "could not fetch the pending-review snapshot to reconcile threads; retry";
+            progress.Report(new SubmitProgressEvent(SubmitStep.AttachThreads, SubmitStepStatus.Failed, 0, total, msg));
+            throw new SubmitFailedException(SubmitStep.AttachThreads, msg, session);
         }
 
         var current = session;
@@ -232,8 +238,8 @@ public sealed class SubmitPipeline
         {
             if (draft.ThreadId is not null)
             {
-                var stillThere = snapshot is not null
-                    && snapshot.Threads.Any(t => string.Equals(t.PullRequestReviewThreadId, draft.ThreadId, StringComparison.Ordinal));
+                // snapshot is non-null here — the null-snapshot guard above threw a retryable failure.
+                var stillThere = snapshot.Threads.Any(t => string.Equals(t.PullRequestReviewThreadId, draft.ThreadId, StringComparison.Ordinal));
                 if (stillThere)
                 {
                     progress.Report(new SubmitProgressEvent(SubmitStep.AttachThreads, SubmitStepStatus.Succeeded, ++done, total));
@@ -281,8 +287,9 @@ public sealed class SubmitPipeline
                 // review — GitHub's addPullRequestReviewThread requires a path + line. Fail loud so
                 // the user discards/rewrites rather than silently dropping their comment. (Folding
                 // PR-root drafts into the review summary is deferred — see the deferrals sidecar.)
-                throw new SubmitFailedException(SubmitStep.AttachThreads,
-                    $"draft {draft.Id} has no diff anchor; PR-root comments aren't submittable as part of a pending review", current);
+                var msg = $"draft {draft.Id} has no diff anchor; PR-root comments aren't submittable as part of a pending review";
+                progress.Report(new SubmitProgressEvent(SubmitStep.AttachThreads, SubmitStepStatus.Failed, done, total, msg));
+                throw new SubmitFailedException(SubmitStep.AttachThreads, msg, current);
             }
 
             var request = new DraftThreadRequest(
@@ -358,9 +365,10 @@ public sealed class SubmitPipeline
             // The pending review exists (Step 1 found it / Begin created it) but the re-fetch came
             // back null — GitHub's reviews(...) list lagging. Treat as a retryable step failure; do
             // NOT demote replies as if their parent threads were deleted (a transient null must not
-            // permanently strand the user's replies).
-            throw new SubmitFailedException(SubmitStep.AttachReplies,
-                "could not fetch the pending-review snapshot to reconcile replies; retry", session);
+            // permanently strand the user's replies). Emit the terminal Failed for the Started above.
+            const string msg = "could not fetch the pending-review snapshot to reconcile replies; retry";
+            progress.Report(new SubmitProgressEvent(SubmitStep.AttachReplies, SubmitStepStatus.Failed, 0, total, msg));
+            throw new SubmitFailedException(SubmitStep.AttachReplies, msg, session);
         }
 
         var current = session;
@@ -467,9 +475,11 @@ public sealed class SubmitPipeline
         return demoted;
     }
 
-    // Comments on the parent thread whose marker matches replyId, ordered by comment id (no
-    // createdAt on PendingReviewCommentSnapshot — the adapter has it but doesn't surface it; the
-    // multi-match adopt-which is cosmetic since reply duplicates can't be auto-removed anyway).
+    // Comments on the parent thread whose marker matches replyId, ordered by comment id. This is an
+    // *approximate* "earliest first" — GitHub node ids aren't guaranteed to sort by creation time,
+    // and PendingReviewCommentSnapshot carries no createdAt (the adapter has it but doesn't surface
+    // it). The multi-match adopt-which is cosmetic anyway: reply duplicates can't be auto-removed
+    // (no delete-comment capability on IReviewSubmitter), so all of them stay on the PR after submit.
     private static List<PendingReviewCommentSnapshot> MarkeredReplies(PendingReviewThreadSnapshot? parent, string replyId)
         => parent is null
             ? new List<PendingReviewCommentSnapshot>()
@@ -478,6 +488,13 @@ public sealed class SubmitPipeline
                 .OrderBy(c => c.CommentId, StringComparer.Ordinal)
                 .ToList();
 
+    // TODO: this matches the InMemoryReviewSubmitter fake's "NOT_FOUND: parent thread …" message,
+    // not GitHub's actual GraphQL error shape — GitHubGraphQLException puts the error text in
+    // ErrorsJson, not Message, and PRism.Core can't reference that type. In production the snapshot
+    // `parent is null` branch (Step 4 re-fetches before AttachReplyAsync) catches a genuinely-deleted
+    // parent, and a deletion that races the call self-heals on the next attempt via that branch — so
+    // a false negative here is a slightly cryptic first-attempt message, not a stranded reply. A
+    // typed not-found exception in PRism.Core, thrown by the adapter, is the proper fix (deferred).
     private static bool IsParentThreadGone(Exception ex)
         => ex.Message.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase)
         || ex.Message.Contains("parent thread", StringComparison.OrdinalIgnoreCase)
