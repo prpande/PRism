@@ -130,7 +130,11 @@ export function SubmitDialog(props: Props) {
   const failed = kind === 'failed';
   const staleCommitOid = kind === 'stale-commit-oid';
   const foreignPrompt = kind === 'foreign-pending-review-prompt';
-  const frozen = inFlight || success;
+  // The verdict picker + summary textarea are frozen for the whole submit flow
+  // — through success, failure, and the stale-commitOID/foreign-prompt branches
+  // (the retry paths re-fire with the last-confirmed verdict). Only `idle` is
+  // editable. (spec § 8.3)
+  const frozen = kind !== 'idle';
 
   const progressSteps =
     submitState.kind === 'in-flight' || submitState.kind === 'failed' ? submitState.steps : [];

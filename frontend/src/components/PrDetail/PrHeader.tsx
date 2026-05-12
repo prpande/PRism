@@ -85,8 +85,11 @@ export function PrHeader({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [askAiOpen, setAskAiOpen] = useState(false);
 
-  // Verdict picker frozen while the pipeline runs and after success (spec § 8.3).
-  const submitting = submit.state.kind === 'in-flight' || submit.state.kind === 'success';
+  // Any active submit flow freezes the header verdict picker (spec § 8.3 — held
+  // from Confirm through success or failure; the stale-commitOID/failed retry
+  // paths re-fire with the last-confirmed verdict, so a mid-flow change would
+  // be a no-op) and disables Submit Review (can't open a second dialog).
+  const inSubmitFlow = submit.state.kind !== 'idle';
 
   const patchVerdict = (verdict: DraftVerdict | null) => {
     void sendPatch(reference, { kind: 'draftVerdict', payload: verdict }).then(() => {
@@ -142,14 +145,14 @@ export function PrHeader({
           <VerdictPicker
             value={session?.draftVerdict ?? null}
             verdictStatus={session?.draftVerdictStatus}
-            disabled={!session || submitting}
+            disabled={!session || inSubmitFlow}
             onChange={patchVerdict}
           />
           <SubmitButton
             session={session ?? EMPTY_SESSION}
             headShaDrift={headShaDrift}
             validatorResults={validatorResults}
-            disabled={!session || submitting}
+            disabled={!session || inSubmitFlow}
             onSubmit={() => setDialogOpen(true)}
           />
           <AskAiButton aiPreview={aiPreview} onClick={() => setAskAiOpen(true)} />
