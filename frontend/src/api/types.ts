@@ -291,14 +291,12 @@ export interface OverrideStalePayload {
 //
 // Note on clear-verdict / clear-summary: S5 PR3 switched PUT /draft to
 // JsonElement parsing, so the backend now accepts `{"draftVerdict": null}`
-// (and `{"draftSummaryMarkdown": null}`) as an explicit clear (spec § 10) —
-// the historic typed-record path that treated present-null as "field absent"
-// is gone. No `payload: null` variant is added here yet: the frontend's
-// verdict-picker clear semantics land in PR4 (spec § 10 / § 8.3), at which
-// point a `{ kind: 'draftVerdict'; payload: null }` variant joins this union
-// and `serializePatch` gains the matching `{ draftVerdict: null }` wire case.
+// (and `{"draftSummaryMarkdown": null}`) as an explicit clear (spec § 10).
+// PR4's verdict picker (spec § 10 / § 8.3) wires the clear semantics: the
+// `{ kind: 'draftVerdict'; payload: null }` variant below maps to a
+// `{ draftVerdict: null }` body in serializePatch.
 export type ReviewSessionPatch =
-  | { kind: 'draftVerdict'; payload: DraftVerdict }
+  | { kind: 'draftVerdict'; payload: DraftVerdict | null }
   | { kind: 'draftSummaryMarkdown'; payload: string }
   | { kind: 'newDraftComment'; payload: NewDraftCommentPayload }
   | { kind: 'newPrRootDraftComment'; payload: NewPrRootDraftCommentPayload }
@@ -379,4 +377,42 @@ export interface SubmitOrphanCleanupFailedEvent {
 export interface SubmitDuplicateMarkerDetectedEvent {
   prRef: string;
   draftId: string;
+}
+
+// S5 PR4 — submit-pipeline frontend types.
+
+// POST /api/pr/{ref}/submit body verdict is PascalCase (the C# Verdict enum
+// name), distinct from the kebab-case DraftVerdict the session/PUT-draft path
+// uses. api/submit.ts:verdictToSubmitWire bridges DraftVerdict → Verdict.
+export type Verdict = 'Approve' | 'RequestChanges' | 'Comment';
+
+// IPreSubmitValidator result (spec § 14.1). PoC's NoopPreSubmitValidator
+// returns []; under aiPreview the slot renders frontend-side canned data.
+export type ValidatorSeverity = 'Suggestion' | 'Concern' | 'Blocking';
+
+export interface ValidatorResult {
+  severity: ValidatorSeverity;
+  message: string;
+}
+
+// Imported thread/reply shapes from POST /submit/foreign-pending-review/resume's
+// 200 response (spec § 7.2 / § 11.1) — full marker-stripped bodies. PR5 consumes
+// these; PR4 declares the types for the api/submit.ts client helper signature.
+export interface ImportedThread {
+  id: string;
+  filePath: string;
+  lineNumber: number;
+  side: string;
+  isResolved: boolean;
+  body: string;
+  replies: { id: string; body: string }[];
+}
+
+export interface ResumeForeignPendingReviewResponse {
+  pullRequestReviewId: string;
+  commitOid: string;
+  createdAt: string;
+  threadCount: number;
+  replyCount: number;
+  threads: ImportedThread[];
 }

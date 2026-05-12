@@ -109,10 +109,14 @@ describe('serializePatch — wire shape per patch kind', () => {
     expect(wire).toEqual({ draftVerdict: 'requestChanges' });
   });
 
-  // No "null clears the verdict" test — the backend's EnumerateSetFields
-  // filters null DraftVerdict as "not set" (PrDraftEndpoints.cs:331), so a
-  // null payload would round-trip as a zero-set patch and 400. The frontend
-  // type excludes null for that reason.
+  it('draftVerdict — null payload serializes to a present-null clear (spec § 10)', () => {
+    // PR3 switched PUT /draft to JsonElement parsing, so present-null is an
+    // explicit clear (not "absent"). PR4's verdict picker fires this on
+    // click-the-selected-segment.
+    const wire = serializePatch({ kind: 'draftVerdict', payload: null });
+    expectExactlyOneField(wire, 'draftVerdict');
+    expect(wire).toEqual({ draftVerdict: null });
+  });
 
   it('draftSummaryMarkdown', () => {
     const wire = serializePatch({ kind: 'draftSummaryMarkdown', payload: 'Looks good overall.' });

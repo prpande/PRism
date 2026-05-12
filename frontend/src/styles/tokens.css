@@ -459,3 +459,153 @@ a:hover { text-decoration: underline; }
   background: color-mix(in oklch, var(--accent) 15%, transparent);
   color: var(--accent);
 }
+
+/* Validator-severity chips (spec § 14.1) */
+.chip-status-suggestion { background: var(--info-soft); color: var(--info-fg); }
+.chip-status-concern { background: var(--warning-soft); color: var(--warning-fg); }
+.chip-status-blocking { background: var(--danger-soft); color: var(--danger-fg); }
+
+/* ======================================================================
+   S5 — submit surface (verdict picker / Submit dialog / progress / AI slots)
+   ====================================================================== */
+
+/* Modal shell — the existing <Modal> renders these class hooks. Width tokens
+   per spec § 8.5: 480px modals; the Submit dialog widens to 720px via the
+   :has() override below. Below the 900px breakpoint everything is full-width
+   minus the backdrop's 16px×2 gutter (width:100% + the backdrop padding). */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--s-8) var(--s-4);
+  background: oklch(0 0 0 / 0.45);
+  z-index: 1000;
+  overflow-y: auto;
+}
+.modal-dialog {
+  width: 100%;
+  max-width: 480px;
+  max-height: calc(100vh - var(--s-16));
+  overflow-y: auto;
+  padding: var(--s-5);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-4);
+  box-shadow: 0 16px 48px oklch(0 0 0 / 0.25);
+}
+.modal-dialog:has(.submit-dialog) { max-width: 720px; }
+@media (max-width: 899px) {
+  .modal-dialog,
+  .modal-dialog:has(.submit-dialog) { max-width: none; }
+}
+.modal-title {
+  margin: 0 0 var(--s-3);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.modal-body { color: var(--text-1); }
+
+/* Verdict picker — segmented control */
+.verdict-picker { display: inline-flex; align-items: center; gap: var(--s-2); }
+.verdict-picker__segments {
+  display: inline-flex;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+}
+.verdict-picker__segment {
+  height: 30px;
+  padding: 0 var(--s-3);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border-2);
+  white-space: nowrap;
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+.verdict-picker__segment:last-child { border-right: none; }
+.verdict-picker__segment:hover:not(:disabled) { background: var(--surface-3); color: var(--text-1); }
+.verdict-picker__segment--selected,
+.verdict-picker__segment--selected:hover { background: var(--accent); color: var(--accent-text); }
+.verdict-picker__segment:disabled { opacity: 0.5; cursor: not-allowed; }
+.verdict-picker__status { white-space: nowrap; }
+
+/* In-flight-submit recovery badge (R3) */
+.submit-in-progress-badge { cursor: pointer; border: none; }
+.submit-in-progress-badge:hover { filter: brightness(0.96); }
+
+/* Ask AI button + static empty-state container (spec § 14.2) */
+.ask-ai-empty-state {
+  margin: var(--s-3) var(--s-4);
+  padding: var(--s-4);
+  border-radius: var(--radius-3);
+}
+.ask-ai-empty-state__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--s-2);
+}
+.ask-ai-empty-state__title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.ask-ai-empty-state__body { margin: 0; color: var(--text-2); font-size: var(--text-sm); line-height: 1.5; }
+
+/* Submit dialog */
+.submit-dialog { display: flex; flex-direction: column; gap: var(--s-4); }
+.submit-dialog__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.submit-dialog__banner { padding: var(--s-3); border-radius: var(--radius-2); font-size: var(--text-sm); }
+.submit-dialog__body { display: flex; flex-direction: column; gap: var(--s-4); }
+.submit-dialog__section { display: flex; flex-direction: column; gap: var(--s-2); }
+.submit-dialog__summary-label { font-size: var(--text-sm); font-weight: 500; color: var(--text-2); }
+.submit-dialog__summary-cols { display: grid; grid-template-columns: 1fr; gap: var(--s-3); }
+@media (min-width: 900px) {
+  .submit-dialog__summary-cols { grid-template-columns: 1fr 1fr; }
+}
+.submit-dialog__summary-input { max-height: 400px; }
+.submit-dialog__summary-preview {
+  min-height: 80px;
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  overflow-y: auto;
+}
+.submit-dialog__counts { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
+.submit-dialog__footer {
+  position: sticky;
+  bottom: calc(-1 * var(--s-5));
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  padding-top: var(--s-3);
+  margin-top: var(--s-2);
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-1);
+}
+.submit-dialog__spinner { font-size: var(--text-sm); color: var(--text-2); }
+
+/* Submit-progress checklist (spec § 8.3) */
+.submit-progress { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--s-2); }
+.submit-progress__row { display: flex; align-items: baseline; gap: var(--s-2); font-size: var(--text-sm); color: var(--text-2); }
+.submit-progress__row[data-state="done"] { color: var(--text-1); }
+.submit-progress__row[data-state="failed"] { color: var(--danger-fg); }
+.submit-progress__icon { flex: none; width: 1.2em; text-align: center; }
+
+/* Pre-submit validator card (spec § 14.1) */
+.ai-validator-card { padding: var(--s-3); border-radius: var(--radius-3); }
+.ai-validator-card__chip { font-size: var(--text-2xs); margin-bottom: var(--s-2); }
+.ai-validator-card__list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--s-2); }
+.ai-validator-card__item { display: flex; align-items: baseline; gap: var(--s-2); font-size: var(--text-sm); }
+.ai-validator-card__message { flex: 1; min-width: 0; }
+.ai-validator-card__show-me { font-size: var(--text-xs); color: var(--text-3); cursor: default; }
+.ai-validator-card__show-me:disabled { opacity: 0.6; }

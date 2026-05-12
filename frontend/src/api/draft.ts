@@ -34,13 +34,20 @@ function verdictToWire(v: DraftVerdict): string {
   return v === 'request-changes' ? 'requestChanges' : v;
 }
 
+// Verdict-clear (spec § 10): null payload serializes to a present-null
+// `draftVerdict` so PR3's JsonElement parser reads it as an explicit clear,
+// not an absent field. Any value goes through the camelCase translation.
+function verdictPatchValue(v: DraftVerdict | null): string | null {
+  return v === null ? null : verdictToWire(v);
+}
+
 // Discriminated union → wire's "exactly one field set" body shape (spec § 4.2).
 // The `default: never` clause guarantees adding a new patch kind without
 // updating this switch produces a TS compile error.
 export function serializePatch(patch: ReviewSessionPatch): Record<string, unknown> {
   switch (patch.kind) {
     case 'draftVerdict':
-      return { draftVerdict: verdictToWire(patch.payload) };
+      return { draftVerdict: verdictPatchValue(patch.payload) };
     case 'draftSummaryMarkdown':
       return { draftSummaryMarkdown: patch.payload };
     case 'newDraftComment':

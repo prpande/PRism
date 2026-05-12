@@ -1,5 +1,41 @@
-import type { PrReference } from '../../api/types';
+import { useEffect, useState } from 'react';
+import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
+import { sendPatch } from '../../api/draft';
+import { verdictToSubmitWire } from '../../api/submit';
+import { useCapabilities } from '../../hooks/useCapabilities';
+import { usePreferences } from '../../hooks/usePreferences';
+import { useSubmit } from '../../hooks/useSubmit';
 import { PrSubTabStrip, type PrTabId } from './PrSubTabStrip';
+import { VerdictPicker } from './VerdictPicker';
+import { SubmitButton } from './SubmitButton';
+import { SubmitInProgressBadge } from './SubmitInProgressBadge';
+import { AskAiButton } from './AskAiButton';
+import { AskAiEmptyState } from './AskAiEmptyState';
+import { SubmitDialog } from './SubmitDialog/SubmitDialog';
+
+// Frontend-side canned validator result for the demo (spec § 14.1). No
+// IPreSubmitValidator.ValidateAsync call — the placeholder mirrors S0–S4's
+// "frontend stub data, not backend-served" precedent.
+export const CANNED_PRESUBMIT_VALIDATOR_RESULTS: ValidatorResult[] = [
+  {
+    severity: 'Suggestion',
+    message: '3 inline threads on the same file (`src/Foo.cs`) — consider consolidating?',
+  },
+];
+
+// Feeds SubmitButton's enable-rule evaluation while the draft session hasn't
+// loaded yet — the `disabled` override keeps the button off regardless.
+const EMPTY_SESSION: ReviewSessionDto = {
+  draftVerdict: null,
+  draftVerdictStatus: 'draft',
+  draftSummaryMarkdown: null,
+  draftComments: [],
+  draftReplies: [],
+  iterationOverrides: [],
+  pendingReviewId: null,
+  pendingReviewCommitOid: null,
+  fileViewState: { viewedFiles: {} },
+};
 
 interface PrHeaderProps {
   reference: PrReference;
@@ -13,6 +49,14 @@ interface PrHeaderProps {
   onTabChange: (tab: PrTabId) => void;
   fileCount?: number;
   draftsCount?: number;
+  // S5 — the draft session drives the verdict picker + Submit button + the
+  // in-flight-submit recovery badge. Null while the PR detail is loading.
+  session?: ReviewSessionDto | null;
+  // Rule (f): the most-recent active-PR poll observed head_sha drift.
+  headShaDrift?: boolean;
+  // Called after a verdict patch so the page refetches the session (own-tab
+  // SSE events are filtered, so the change wouldn't otherwise round-trip).
+  onSessionRefetch?: () => void;
 }
 
 export function PrHeader({
@@ -27,7 +71,56 @@ export function PrHeader({
   onTabChange,
   fileCount,
   draftsCount,
+  session = null,
+  headShaDrift = false,
+  onSessionRefetch,
 }: PrHeaderProps) {
+  const { capabilities } = useCapabilities();
+  const { preferences } = usePreferences();
+  const aiPreview = preferences?.aiPreview ?? false;
+  const validatorResults: ValidatorResult[] =
+    aiPreview && !!capabilities?.preSubmitValidators ? CANNED_PRESUBMIT_VALIDATOR_RESULTS : [];
+
+  const submit = useSubmit(reference);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [askAiOpen, setAskAiOpen] = useState(false);
+
+  // Any active submit flow freezes the header verdict picker (spec § 8.3 — held
+  // from Confirm through success or failure; the stale-commitOID/failed retry
+  // paths re-fire with the last-confirmed verdict, so a mid-flow change would
+  // be a no-op) and disables Submit Review (can't open a second dialog).
+  const inSubmitFlow = submit.state.kind !== 'idle';
+
+  // A successful submit clears the session server-side; the own-tab SSE filter
+  // can swallow the pipeline's state-changed event, so refetch explicitly so the
+  // header (verdict picker, recovery badge, Submit button enable state) reflects
+  // the cleared session without a manual reload (adversarial #3). onSessionRefetch
+  // is intentionally not a dep — it's re-created each render by PrDetailPage.
+  useEffect(() => {
+    if (submit.state.kind === 'success') onSessionRefetch?.();
+  }, [submit.state.kind]);
+
+  const patchVerdict = (verdict: DraftVerdict | null) => {
+    void sendPatch(reference, { kind: 'draftVerdict', payload: verdict }).then(() => {
+      onSessionRefetch?.();
+    });
+  };
+
+  const closeDialog = () => {
+    setDialogOpen(false);
+    submit.reset();
+  };
+
+  const onResume = () => {
+    // R3 — re-enter the pipeline at Step 1's "match by ID" outcome via the
+    // persisted pendingReviewId; default to Comment if no verdict was set.
+    setDialogOpen(true);
+    void submit.submit(verdictToSubmitWire(session?.draftVerdict ?? 'comment')).catch(() => {
+      // 409 / 4xx: useSubmit already reset to idle; PR5's useSubmitToasts
+      // surfaces the code. The dialog stays open in idle.
+    });
+  };
+
   return (
     <div className="pr-header">
       <div className="pr-header-top">
@@ -57,32 +150,54 @@ export function PrHeader({
           </div>
         </div>
         <div className="pr-actions">
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled
-            aria-disabled="true"
-            title="Verdict picker arrives in S4"
-          >
-            Verdict
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled
-            aria-disabled="true"
-            title="Submit arrives in S4 with the comment composer"
-          >
-            Submit review
-          </button>
+          {/* Only when nothing is in flight in *this* tab — re-firing submit()
+              over an active pipeline would 409 and (caught) wedge the dialog. */}
+          {session && submit.state.kind === 'idle' && (
+            <SubmitInProgressBadge session={session} onResume={onResume} />
+          )}
+          <VerdictPicker
+            value={session?.draftVerdict ?? null}
+            verdictStatus={session?.draftVerdictStatus}
+            disabled={!session || inSubmitFlow}
+            onChange={patchVerdict}
+          />
+          <SubmitButton
+            session={session ?? EMPTY_SESSION}
+            headShaDrift={headShaDrift}
+            validatorResults={validatorResults}
+            disabled={!session || inSubmitFlow}
+            onSubmit={() => setDialogOpen(true)}
+          />
+          <AskAiButton aiPreview={aiPreview} onClick={() => setAskAiOpen(true)} />
         </div>
       </div>
+      <AskAiEmptyState open={askAiOpen} onClose={() => setAskAiOpen(false)} />
       <PrSubTabStrip
         activeTab={activeTab}
         onTabChange={onTabChange}
         fileCount={fileCount}
         draftsCount={draftsCount}
       />
+      {dialogOpen && session && (
+        <SubmitDialog
+          open
+          reference={reference}
+          session={session}
+          validatorResults={validatorResults}
+          submitState={submit.state}
+          headShaDrift={headShaDrift}
+          onClose={closeDialog}
+          onSubmit={(verdict) => {
+            void submit.submit(verdict).catch(() => {
+              // See onResume — PR5's useSubmitToasts handles the 409 toast.
+            });
+          }}
+          onRetry={() => {
+            void submit.retry();
+          }}
+          onVerdictChange={patchVerdict}
+        />
+      )}
     </div>
   );
 }

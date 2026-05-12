@@ -141,6 +141,9 @@ function PrDetailPageInner({
         activeTab={activeTab}
         onTabChange={handleTabChange}
         draftsCount={draftsCount}
+        session={draftSession.session}
+        headShaDrift={updates.headShaChanged}
+        onSessionRefetch={() => void draftSession.refetch()}
       />
       <CrossTabPresenceBanner
         visible={presence.showBanner}
