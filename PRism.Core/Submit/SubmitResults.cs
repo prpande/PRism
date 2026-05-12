@@ -18,7 +18,7 @@ public sealed record AttachReplyResult(string CommentId);
 public sealed record OwnPendingReviewSnapshot(
     string PullRequestReviewId,
     string CommitOid,
-    DateTime CreatedAt,
+    DateTimeOffset CreatedAt,   // GraphQL PullRequestReview.createdAt — DateTimeOffset to match the adapter's other GitHub timestamps
     IReadOnlyList<PendingReviewThreadSnapshot> Threads);
 
 public sealed record PendingReviewThreadSnapshot(

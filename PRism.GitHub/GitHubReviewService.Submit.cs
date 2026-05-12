@@ -200,15 +200,41 @@ public sealed partial class GitHubReviewService
         ArgumentNullException.ThrowIfNull(reference);
         ArgumentException.ThrowIfNullOrEmpty(pullRequestReviewThreadId);
 
-        const string mutation = """
-            mutation($threadId: ID!) {
-              deletePullRequestReviewThread(input: { pullRequestReviewThreadId: $threadId }) {
-                thread { id }
+        // GitHub's GraphQL has no "delete a review thread" mutation — only deletePullRequestReviewComment
+        // (by comment node ID). A review thread disappears when its last comment is deleted, so deleting
+        // every comment on the thread removes it. Under the multi-marker-match defense (§ 5.2 step 3) a
+        // duplicate thread carries only its body comment, so this is usually a single delete; the loop
+        // covers the rare with-replies case too. (The plan's Task 16 named a `deletePullRequestReviewThread`
+        // mutation that does not exist — see the deferrals sidecar.)
+        const string lookup = """
+            query($threadId: ID!) {
+              node(id: $threadId) {
+                ... on PullRequestReviewThread {
+                  comments(first: 100) { nodes { id } }
+                }
               }
             }
             """;
 
-        _ = await PostSubmitGraphQLAsync(mutation, new { threadId = pullRequestReviewThreadId }, ct).ConfigureAwait(false);
+        var data = await PostSubmitGraphQLAsync(lookup, new { threadId = pullRequestReviewThreadId }, ct).ConfigureAwait(false);
+
+        // node:null → the thread is already gone; nothing to delete (the caller is best-effort, so treat as success).
+        if (!data.TryGetProperty("node", out var node) || node.ValueKind != JsonValueKind.Object) return;
+        if (!TryGetPath(node, out var commentNodes, "comments", "nodes") || commentNodes.ValueKind != JsonValueKind.Array) return;
+
+        const string deleteComment = """
+            mutation($id: ID!) {
+              deletePullRequestReviewComment(input: { id: $id }) {
+                pullRequestReview { id }
+              }
+            }
+            """;
+
+        foreach (var c in commentNodes.EnumerateArray())
+        {
+            if (c.TryGetProperty("id", out var idEl) && idEl.GetString() is { Length: > 0 } commentId)
+                _ = await PostSubmitGraphQLAsync(deleteComment, new { id = commentId }, ct).ConfigureAwait(false);
+        }
     }
 
     public async Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(
@@ -268,11 +294,11 @@ public sealed partial class GitHubReviewService
         }
         if (viewerPending is not { } review) return null;
 
-        if (review.GetProperty("id").GetString() is not { Length: > 0 } pendingReviewId)
+        if (!review.TryGetProperty("id", out var pridEl) || pridEl.GetString() is not { Length: > 0 } pendingReviewId)
             throw new GitHubGraphQLException("Pending review node missing id.");
         var commitOid = TryGetPath(review, out var oidEl, "commit", "oid") ? oidEl.GetString() ?? "" : "";
         var createdAt = review.TryGetProperty("createdAt", out var ca) && ca.ValueKind == JsonValueKind.String
-            ? ca.GetDateTime()
+            ? ca.GetDateTimeOffset()
             : default;
 
         var threads = new List<PendingReviewThreadSnapshot>();

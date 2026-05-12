@@ -55,25 +55,66 @@ public class GitHubReviewServiceSubmitDeleteTests
     }
 
     [Fact]
-    public async Task DeletePendingReviewThreadAsync_PostsDeletePullRequestReviewThreadMutation()
+    public async Task DeletePendingReviewThreadAsync_LooksUpThreadComments_ThenDeletesEachByCommentId()
     {
-        var handler = new RecordingHttpMessageHandler(
-            HttpStatusCode.OK, """{"data":{"deletePullRequestReviewThread":{"thread":{"id":"PRRT_dupe"}}}}""");
+        // GitHub has no delete-thread mutation — the adapter resolves the thread's comments via node(id:)
+        // and deletes each via deletePullRequestReviewComment. A duplicate thread has one (body) comment.
+        var handler = new RecordingHttpMessageHandler(new[]
+        {
+            (HttpStatusCode.OK, """{"data":{"node":{"comments":{"nodes":[{"id":"PRRC_body"}]}}}}"""),
+            (HttpStatusCode.OK, """{"data":{"deletePullRequestReviewComment":{"pullRequestReview":{"id":"PRR_x"}}}}"""),
+        });
         var svc = NewService(handler);
 
         await svc.DeletePendingReviewThreadAsync(Ref, "PRRT_dupe", CancellationToken.None);
 
-        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
-        var root = doc.RootElement;
-        root.GetProperty("query").GetString().Should().Contain("deletePullRequestReviewThread");
-        root.GetProperty("variables").GetProperty("threadId").GetString().Should().Be("PRRT_dupe");
+        handler.RequestCount.Should().Be(2);
+
+        using (var lookup = JsonDocument.Parse(handler.RequestBodies[0]!))
+        {
+            lookup.RootElement.GetProperty("query").GetString().Should().Contain("PullRequestReviewThread");
+            lookup.RootElement.GetProperty("variables").GetProperty("threadId").GetString().Should().Be("PRRT_dupe");
+        }
+
+        using var del = JsonDocument.Parse(handler.RequestBodies[1]!);
+        del.RootElement.GetProperty("query").GetString().Should().Contain("deletePullRequestReviewComment");
+        del.RootElement.GetProperty("variables").GetProperty("id").GetString().Should().Be("PRRC_body");
+    }
+
+    [Fact]
+    public async Task DeletePendingReviewThreadAsync_ThreadWithReplies_DeletesEveryComment()
+    {
+        var handler = new RecordingHttpMessageHandler(new[]
+        {
+            (HttpStatusCode.OK, """{"data":{"node":{"comments":{"nodes":[{"id":"PRRC_body"},{"id":"PRRC_reply1"},{"id":"PRRC_reply2"}]}}}}"""),
+            (HttpStatusCode.OK, """{"data":{"deletePullRequestReviewComment":{"pullRequestReview":{"id":"PRR_x"}}}}"""),
+            (HttpStatusCode.OK, """{"data":{"deletePullRequestReviewComment":{"pullRequestReview":{"id":"PRR_x"}}}}"""),
+            (HttpStatusCode.OK, """{"data":{"deletePullRequestReviewComment":{"pullRequestReview":{"id":"PRR_x"}}}}"""),
+        });
+        var svc = NewService(handler);
+
+        await svc.DeletePendingReviewThreadAsync(Ref, "PRRT_t", CancellationToken.None);
+
+        handler.RequestCount.Should().Be(4);  // 1 lookup + 3 deletes
+        handler.RequestPaths.Should().AllSatisfy(p => p!.Should().EndWith("/graphql"));
+    }
+
+    [Fact]
+    public async Task DeletePendingReviewThreadAsync_ThreadAlreadyGone_NodeNull_NoDeletesNoThrow()
+    {
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """{"data":{"node":null}}""");
+        var svc = NewService(handler);
+
+        await svc.DeletePendingReviewThreadAsync(Ref, "PRRT_already_gone", CancellationToken.None);
+
+        handler.RequestCount.Should().Be(1);  // just the lookup; nothing to delete
     }
 
     [Fact]
     public async Task DeletePendingReviewThreadAsync_OnGraphqlError_ThrowsGitHubGraphQLException()
     {
         var handler = new RecordingHttpMessageHandler(
-            HttpStatusCode.OK, """{"data":null,"errors":[{"message":"NOT_FOUND"}]}""");
+            HttpStatusCode.OK, """{"data":null,"errors":[{"message":"Something went wrong"}]}""");
         var svc = NewService(handler);
 
         Func<Task> act = () => svc.DeletePendingReviewThreadAsync(Ref, "PRRT_missing", CancellationToken.None);

@@ -98,7 +98,7 @@ public class GitHubReviewServiceSubmitFindOwnTests
         snapshot.Should().NotBeNull();
         snapshot!.PullRequestReviewId.Should().Be("PRR_mine_123");
         snapshot.CommitOid.Should().Be("abc1234");
-        snapshot.CreatedAt.Should().Be(new DateTime(2026, 5, 11, 10, 0, 0, DateTimeKind.Utc));
+        snapshot.CreatedAt.Should().Be(new DateTimeOffset(2026, 5, 11, 10, 0, 0, TimeSpan.Zero));
 
         // Only the thread whose root comment belongs to PRR_mine_123 is included; PRRT_foreign is dropped.
         snapshot.Threads.Should().HaveCount(1);

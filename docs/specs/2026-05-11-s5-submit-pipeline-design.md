@@ -235,6 +235,10 @@ public interface IReviewSubmitter
     // Best-effort cleanup of a single duplicate thread under the multi-marker-match defense (§ 5.2 step 3):
     // when more than one server thread carries the same draft's marker, the pipeline adopts the earliest
     // and asks to delete the rest. (Doc-review R16 — landed in PR1 so the interface is stable for PR2.)
+    // GitHub's GraphQL has no delete-thread mutation, so the adapter implements this by resolving the
+    // thread's comments via node(id:) and deleting each via deletePullRequestReviewComment — a thread
+    // disappears when its last comment goes (a duplicate thread carries only its body comment, so it's
+    // usually a single delete). See the deferrals sidecar.
     Task DeletePendingReviewThreadAsync(
         PrReference reference,
         string pullRequestReviewThreadId,
@@ -268,7 +272,7 @@ public sealed record AttachReplyResult(string CommentId);
 public sealed record OwnPendingReviewSnapshot(
     string PullRequestReviewId,
     string CommitOid,
-    DateTime CreatedAt,
+    DateTimeOffset CreatedAt,    // GraphQL PullRequestReview.createdAt — DateTimeOffset to match the adapter's other GitHub timestamps
     IReadOnlyList<PendingReviewThreadSnapshot> Threads);
 
 public sealed record PendingReviewThreadSnapshot(

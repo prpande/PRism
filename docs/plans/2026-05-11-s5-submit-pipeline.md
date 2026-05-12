@@ -1332,7 +1332,7 @@ public interface IReviewSubmitter
 }
 ```
 
-The `DeletePendingReviewThreadAsync` implementation lands alongside `DeletePendingReviewAsync` in Task 16 (a `deletePullRequestReviewThread` GraphQL mutation taking `pullRequestReviewThreadId`); the `InMemoryReviewSubmitter` fake (Task 24) implements it by removing the thread from the in-memory pending review. Landing all 7 methods in PR1 keeps the interface stable so PR2 doesn't have to re-touch `GitHubReviewService.Submit.cs` + the fakes.
+The `DeletePendingReviewThreadAsync` implementation lands alongside `DeletePendingReviewAsync` in Task 16; the `InMemoryReviewSubmitter` fake (Task 24) implements it by removing the thread from the in-memory pending review. Landing all 7 methods in PR1 keeps the interface stable so PR2 doesn't have to re-touch `GitHubReviewService.Submit.cs` + the fakes. **(PR1 execution correction: GitHub's GraphQL has no `deletePullRequestReviewThread` mutation — the implementation resolves the thread's comment IDs via `node(id:){... on PullRequestReviewThread{comments{nodes{id}}}}` and deletes each via `deletePullRequestReviewComment(input:{id})`; a thread vanishes once its last comment is deleted. The interface signature is unchanged — still `(reference, pullRequestReviewThreadId, ct)` — so Task 29 below needs no rework. See the deferrals sidecar.)**
 
 - [ ] **Step 7: Run test to verify it passes**
 
