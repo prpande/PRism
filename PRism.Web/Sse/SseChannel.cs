@@ -33,7 +33,16 @@ internal sealed class SseChannel : IDisposable
     private readonly IDisposable _busStateChanged;
     private readonly IDisposable _busDraftSaved;
     private readonly IDisposable _busDraftDiscarded;
-    // NOTE: DraftSubmitted intentionally NOT subscribed in S4 (no producer; S5 wires it).
+    // S5 PR3: the submit endpoint's five wire-bound events. Each fans out per-PR via the
+    // SseEventProjection arm of the same name.
+    private readonly IDisposable _busSubmitProgress;
+    private readonly IDisposable _busSubmitForeignPendingReview;
+    private readonly IDisposable _busSubmitStaleCommitOid;
+    private readonly IDisposable _busSubmitOrphanCleanupFailed;
+    private readonly IDisposable _busSubmitDuplicateMarkerDetected;
+    // NOTE: DraftSubmitted intentionally NOT subscribed — the submit endpoint publishes it
+    // for forward-compat (spec § 17 #25) but the frontend reacts to the StateChanged that
+    // fires alongside; there is no SseEventProjection arm for it.
 
     public SseChannel(
         IReviewEventBus bus,
@@ -51,6 +60,11 @@ internal sealed class SseChannel : IDisposable
         _busStateChanged = bus.Subscribe<StateChanged>(OnStateChanged);
         _busDraftSaved = bus.Subscribe<DraftSaved>(OnDraftSaved);
         _busDraftDiscarded = bus.Subscribe<DraftDiscarded>(OnDraftDiscarded);
+        _busSubmitProgress = bus.Subscribe<SubmitProgressBusEvent>(OnSubmitProgress);
+        _busSubmitForeignPendingReview = bus.Subscribe<SubmitForeignPendingReviewBusEvent>(OnSubmitForeignPendingReview);
+        _busSubmitStaleCommitOid = bus.Subscribe<SubmitStaleCommitOidBusEvent>(OnSubmitStaleCommitOid);
+        _busSubmitOrphanCleanupFailed = bus.Subscribe<SubmitOrphanCleanupFailedBusEvent>(OnSubmitOrphanCleanupFailed);
+        _busSubmitDuplicateMarkerDetected = bus.Subscribe<SubmitDuplicateMarkerDetectedBusEvent>(OnSubmitDuplicateMarkerDetected);
     }
 
     // Returns the most-recent subscriberId for the given cookieSessionId, or null if no
@@ -236,6 +250,11 @@ internal sealed class SseChannel : IDisposable
     private void OnStateChanged(StateChanged evt) => FanoutProjected(evt, evt.PrRef);
     private void OnDraftSaved(DraftSaved evt) => FanoutProjected(evt, evt.PrRef);
     private void OnDraftDiscarded(DraftDiscarded evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnSubmitProgress(SubmitProgressBusEvent evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnSubmitForeignPendingReview(SubmitForeignPendingReviewBusEvent evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnSubmitStaleCommitOid(SubmitStaleCommitOidBusEvent evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnSubmitOrphanCleanupFailed(SubmitOrphanCleanupFailedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnSubmitDuplicateMarkerDetected(SubmitDuplicateMarkerDetectedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
 
     // Per-PR fanout for events that carry a PrReference and use the projection wire shape
     // (prRef as "owner/repo/number" string per spec § 4.5). Mirrors OnActivePrUpdated's
@@ -297,6 +316,11 @@ internal sealed class SseChannel : IDisposable
         _busStateChanged.Dispose();
         _busDraftSaved.Dispose();
         _busDraftDiscarded.Dispose();
+        _busSubmitProgress.Dispose();
+        _busSubmitForeignPendingReview.Dispose();
+        _busSubmitStaleCommitOid.Dispose();
+        _busSubmitOrphanCleanupFailed.Dispose();
+        _busSubmitDuplicateMarkerDetected.Dispose();
     }
 
     internal sealed class SseSubscriber : IDisposable
