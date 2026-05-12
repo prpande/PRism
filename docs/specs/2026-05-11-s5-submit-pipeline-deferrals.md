@@ -1,10 +1,11 @@
 ---
 source-doc: docs/specs/2026-05-11-s5-submit-pipeline-design.md
 created: 2026-05-11
-last-updated: 2026-05-11
+last-updated: 2026-05-12
 status: open
 revisions:
   - 2026-05-11: brainstorm + ce-doc-review pass — recorded brainstorm-time deferrals (12 items in spec § 1.2), doc-review-time deferrals routed to ce-plan, doc-review FYI observations, and forward-looking residual risks for the implementer
+  - 2026-05-12: PR #43 review pass — marked Risk R1 (MigrateV3ToV4 signature mismatch) Resolved after spec § 6 was corrected to the JsonObject step shape
 ---
 
 # Deferrals — S5 submit pipeline spec
@@ -287,8 +288,8 @@ These items came up at confidence anchor 50 (verified-but-advisory) during ce-do
 - **Source:** ce-doc-review product-lens P3 (anchor 50, FYI)
 - **Severity:** P3 (advisory)
 - **Date:** 2026-05-11
-- **Reason:** With the Ask AI drawer cut to a static empty state (decision 16, post-revision), PR6 carries only the validator card slot wiring + the Ask AI button + empty state container. PR4 is the natural home; folding cuts the slice from 8 PRs to 7.
-- **Why not actioned:** Already reflected in spec § 16 PR6 ("PR6 may fold into PR4 if scope permits") and § 17 #22. Final call is ce-plan's during PR4/PR6 scoping.
+- **Reason:** With the Ask AI drawer cut to a static empty state (decision 16, post-revision), PR6 carries only the validator card slot wiring + the Ask AI button + empty state container. PR4 is the natural home.
+- **Status (2026-05-12):** Actioned in the plan — PR6 is folded into PR4. With PR0 also pre-split into PR0a + PR0b, the net deliverable count is 8 (PR0a, PR0b, PR1, PR2, PR3, PR4, PR5, PR7). Reflected in spec § 16 / § 17 #22, `docs/roadmap.md`, and `docs/specs/README.md`.
 
 ---
 
@@ -296,13 +297,13 @@ These items came up at confidence anchor 50 (verified-but-advisory) during ce-do
 
 These aren't deferred decisions — they're known unknowns the plan / implementer should watch.
 
-### [Risk] `MigrateV3ToV4.Apply` example signature mismatch with actual migration pipeline
+### [Resolved] `MigrateV3ToV4` example signature mismatch with actual migration pipeline
 
 - **Source:** ce-doc-review feasibility R1
 - **Severity:** P3 (doc-internal accuracy issue)
-- **Date:** 2026-05-11
-- **Reason:** Spec § 6 example shows `AppState → AppState`. Actual `AppStateStore.MigrationSteps` operates on `JsonObject → JsonObject`, with each step responsible for stamping `root["version"] = N`. The intent (additive field, version bump) is implementable; the example just doesn't compile against `MigrationSteps` as written.
-- **Action:** PR2 implementer rewrites the example into a `JsonObject` step that does `root["version"] = 4; return root;`. Doc-internal correction during PR2.
+- **Date raised:** 2026-05-11 · **Resolved:** 2026-05-12
+- **Reason:** An earlier doc-review draft of spec § 6 sketched the migration as `AppState Apply(AppState v3) => v3 with { Version = 4 }`, which doesn't compile against `AppStateStore.MigrationSteps` (operates on `JsonObject → JsonObject`).
+- **Resolution:** Spec § 6 now shows the correct `JsonObject` step (`public static JsonObject MigrateV3ToV4(JsonObject root) { root["version"] = 4; return root; }`) wired into `MigrationSteps[]`, plus a "Note on shape" paragraph explaining why the `with`-expression sketch would not compile. No PR2 correction needed; left here for traceability.
 
 ### [Risk] `IProgress<SubmitProgressEvent>` → SSE bridge has no codebase precedent
 

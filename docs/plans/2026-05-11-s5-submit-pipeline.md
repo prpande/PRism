@@ -100,7 +100,7 @@ Task 42 adds `pendingReviewId` / `threadId` / `replyCommentId` to `SensitiveFiel
 
 **Affects:** Task 22 (`PipelineMarkerTests`).
 
-The bare `Regex.Matches(body, @"```").Count` odd/even check doesn't distinguish: inline backtick mentions in prose ("wrap this in ``` for readability"), indented code blocks, quad-fences (` ```` ` nesting triple-backtick examples), or `~~~` alt-syntax fences. A body with an odd count of triple-backticks from a prose mention gets a spurious closing fence injected mid-text, corrupting the rendered comment. Add adversarial test cases to Task 22's `PipelineMarkerTests`: mention-of-fence-in-prose (single ` ``` ` in text, no actual code block), embedded triple inside a quad-fence, `~~~`-style fence. The fix is line-by-line state tracking that only counts lines matching `^\s*` + a fence opener (` ``` ` or ` ```` ` or `~~~`), not inline backticks. If the markdown-aware fix is more than a few lines, document the limitation in the deferrals sidecar and ship the line-state-tracking version; the test cases pin the contract.
+The bare `Regex.Matches(body, @"```").Count` odd/even check doesn't distinguish: inline backtick mentions in prose ("wrap this in ``` for readability"), indented code blocks, quad-fences (` ```` ` nesting triple-backtick examples), or `~~~` alt-syntax fences. A body with an odd count of triple-backticks from a prose mention gets a spurious closing fence injected mid-text, corrupting the rendered comment. These adversarial test cases are now inlined directly in Task 22's `PipelineMarkerTests` body (`Inject_DoesNotTreatInlineProseBacktickMentionAsAnOpenFence`, `Inject_ClosesUnclosedTildeFence`, `Inject_TreatsQuadFenceAsBalanced_NotOddTriple`) — the implementer doesn't need to cross-reference this section to find them. The fix is line-by-line state tracking that only counts lines matching `^\s*` + a fence opener (` ``` ` or ` ```` ` or `~~~`), not inline backticks. If the markdown-aware fix is more than a few lines, document the limitation in the deferrals sidecar and ship the line-state-tracking version; the test cases pin the contract.
 
 ### R11 — Task 59 head_sha re-poll uses a fresh `PollActivePrAsync`, not the cache
 
@@ -2991,6 +2991,48 @@ public class PipelineMarkerTests
         Assert.True(PipelineMarker.ContainsMarkerPrefix("some body with <!-- prism:client-id: inside"));
         Assert.False(PipelineMarker.ContainsMarkerPrefix("```\n<!-- prism:client-id: in fence\n```"));
         Assert.False(PipelineMarker.ContainsMarkerPrefix("no marker here"));
+    }
+
+    // --- Adversarial fence-detection cases (see "Doc-review revisions" R10) ---
+    // The bare `Regex.Matches(body, @"```").Count` odd/even check has false
+    // positives: an inline triple-backtick mention in prose, a `~~~`-style alt
+    // fence, or a quad-fence wrapping a triple-backtick example all skew the
+    // count and would otherwise inject a spurious closing fence mid-text. The
+    // fix is line-by-line state tracking that only counts lines whose first
+    // non-whitespace run is a fence opener (` ``` `, ` ```` `, or `~~~`). These
+    // tests pin the contract; if the markdown-aware fix grows past a few lines,
+    // document the residual limitation in the deferrals sidecar and ship the
+    // line-state-tracking version.
+
+    [Fact]
+    public void Inject_DoesNotTreatInlineProseBacktickMentionAsAnOpenFence()
+    {
+        // Single ``` appears inside a sentence, not as a code-block opener.
+        var body = "wrap the snippet in ``` so it renders as a block";
+        var result = PipelineMarker.Inject(body, "d6");
+        // No closing fence injected; body is left intact, marker appended at end.
+        Assert.Equal(body + "\n\n<!-- prism:client-id:d6 -->", result);
+    }
+
+    [Fact]
+    public void Inject_ClosesUnclosedTildeFence()
+    {
+        var body = "intro\n~~~\nplain text block\n";  // unclosed ~~~ fence
+        var result = PipelineMarker.Inject(body, "d7");
+        // Closing ~~~ injected before the marker so it lands outside the fence.
+        Assert.Matches(@"~~~.*plain text block.*~~~.*<!-- prism:client-id:d7 -->",
+            System.Text.RegularExpressions.Regex.Replace(result, @"\s+", " "));
+    }
+
+    [Fact]
+    public void Inject_TreatsQuadFenceAsBalanced_NotOddTriple()
+    {
+        // A ```` ... ```` block that contains a literal ``` example line. Counting
+        // bare ``` runs would see 3 and call it unbalanced; the real fence (````)
+        // is balanced, so no closing fence should be injected.
+        var body = "````\nhere is a ``` example\n````";
+        var result = PipelineMarker.Inject(body, "d8");
+        Assert.Equal(body + "\n\n<!-- prism:client-id:d8 -->", result);
     }
 }
 ```

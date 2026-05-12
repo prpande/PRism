@@ -9,7 +9,7 @@ topic: s5-submit-pipeline
 
 **Brainstorm output of:** `ce-brainstorm` session 2026-05-11 with the user. The handoff input enumerating dangling threads from S0–S4 (architectural-readiness items gated to S5, pre-existing deferrals, verification gates) was a conversational input — its content is folded into the relevant sections of this spec and the deferrals sidecar (§ 19), so no separate handoff file is preserved.
 
-**Implementation cycle.** This document is the design (spec). The implementation plan lands at `docs/plans/<TBD>-s5-submit-pipeline.md` after this spec passes human review *and* the C6 / C7 empirical gates (§ 2) clear.
+**Implementation cycle.** This document is the design (spec). The implementation plan is at [`../plans/2026-05-11-s5-submit-pipeline.md`](../plans/2026-05-11-s5-submit-pipeline.md); implementation starts after this spec passes human review *and* the C6 / C7 empirical gates (§ 2) clear.
 
 **Reference axes.** Spec refs use `spec/0X-name.md § N`. Roadmap refs use `roadmap.md`. ADR refs use `specs/2026-05-06-architectural-readiness-design.md § ADR-S5-N`. S4 refs use `specs/2026-05-09-s4-drafts-and-composer-design.md § N`.
 
@@ -17,7 +17,7 @@ topic: s5-submit-pipeline
 
 ## Summary
 
-S5 lands the resumable GraphQL pending-review submit pipeline behind a new stepwise `IReviewSubmitter` capability seam, surfaces step-by-step progress to the user via the existing SSE channel, and lights up the verdict picker, the submit confirmation dialog, the AI validator placeholder card, and the Ask-AI drawer placeholder. Lost-response idempotency anchors on a server-stamped thread / comment ID per draft, with an HTML-comment client-ID marker as the one-shot adoption key on retry.
+S5 lands the resumable GraphQL pending-review submit pipeline behind a new stepwise `IReviewSubmitter` capability seam, surfaces step-by-step progress to the user via the existing SSE channel, and lights up the verdict picker, the submit confirmation dialog, the AI validator placeholder card, and the Ask AI button (which surfaces a static "coming in v2" empty state — the originally-planned interactive drawer is cut per § 14.2). Lost-response idempotency anchors on a server-stamped thread / comment ID per draft, with an HTML-comment client-ID marker as the one-shot adoption key on retry.
 
 ---
 
@@ -885,7 +885,7 @@ Decisions captured during the brainstorm and folded into the spec body above. Nu
 19. **Verdict picker is a segmented control** (§ 10) — three slots, mirrored between header and dialog.
 20. **`IPrDetailLoader.GetFiles()` rename/delete wiring is deferred to S6 polish** — earlier draft had it landing in S5 PR1 alongside submit work; revised after doc-review surfaced that the existing reconciliation matrix already produces `Stale` for unmapped renames and deletions (per § 5 reconciliation), so the wiring is an accuracy improvement (re-anchors renamed-file drafts as `Moved` instead of `Stale`) rather than a submit-pipeline correctness requirement. Closes S4 deferral 7 when it lands, but doesn't block S5.
 21. **Playwright multi-spec state-leak gets root-caused before S5's specs land** (§ 2.3) — no more `test.fixme` suites in S5.
-22. **Slice cut is 8 PRs** (§ 16) — PR0 sequencing is the only firm constraint. PR6 may fold into PR4 if the Ask-AI-drawer-cut + validator-card-only scope makes it small enough.
+22. **Slice cut is 8 PRs** (§ 16) — PR6's validator-card-only scope (after the Ask-AI drawer cut) is small enough that the plan folds it into PR4; PR0 is pre-split into PR0a (capability split + C6/C7/C9 gates) + PR0b (Playwright state-leak fix). Net deliverables: PR0a, PR0b, PR1, PR2, PR3, PR4, PR5, PR7. PR0a → PR1 sequencing is the only firm constraint; PR0b runs parallel, off the demo critical path.
 23. **Lost-response retry includes multi-marker-match defense** (§ 5.2 step 3, § 5.3) — earlier draft assumed singular match; revised after doc-review surfaced the GitHub eventual-consistency window that can produce duplicate markers. Adopt earliest by `createdAt` and best-effort delete the others; emit `submit-duplicate-marker-detected` SSE event so the user is aware.
 24. **Per-PR submit lock prevents multi-tab collision** (§ 7.1) — earlier draft had no defense against two tabs both clicking Submit; revised after doc-review surfaced that the losing tab would mis-trigger the foreign-pending-review prompt against its own content. Lock is a separate primitive from `AppStateStore._gate` to avoid the publication-vs-_gate ordering hazard.
 25. **`DraftSubmitted` publication is outside `_gate`** (§ 5.2 step 5) — restated from the S4 design § 4.5 ordering contract since S5 is the first slice with a producer. Endpoint publishes both `DraftSubmitted` and `StateChanged` after `AppStateStore.UpdateAsync` returns.
