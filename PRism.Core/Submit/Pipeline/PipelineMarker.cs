@@ -76,6 +76,37 @@ internal static class PipelineMarker
         return match.Success ? match.Groups["id"].Value : null;
     }
 
+    // Matches the marker comment anywhere in the body (not just at end-of-body). Used by
+    // StripAllMarkerPrefixes when importing a foreign pending review's bodies on Resume.
+    private static readonly Regex MarkerAnywhereRegex = new(
+        @"<!-- prism:client-id:[^\s>]+ -->",
+        RegexOptions.Compiled);
+
+    // Removes the trailing `<!-- prism:client-id:<id> -->` end-marker the pipeline appended on
+    // submit (if present), plus the trailing whitespace that preceded it. Used by PR3's Resume
+    // endpoint when importing a foreign pending review's threads/replies as drafts — the marker is
+    // an internal-format detail, not user content.
+    public static string StripIfPresent(string body)
+    {
+        if (string.IsNullOrEmpty(body)) return body;
+        return EndMarkerRegex.Replace(body, "").TrimEnd('\n', ' ', '\t');
+    }
+
+    // Belt-and-suspenders for Resume import (revision R8): StripIfPresent only strips the trailing
+    // end-marker; a foreign body could (deliberately or by paste accident) carry an embedded
+    // `<!-- prism:client-id:` substring that would survive into the imported DraftComment and
+    // confuse the next submit's lost-response adoption matcher. Strip every well-formed marker
+    // comment, then any leftover bare prefix substring. Returns a body for which
+    // ContainsMarkerPrefix is false.
+    public static string StripAllMarkerPrefixes(string body)
+    {
+        if (string.IsNullOrEmpty(body)) return body;
+        var stripped = MarkerAnywhereRegex.Replace(body, "");
+        if (stripped.Contains(Prefix, StringComparison.Ordinal))
+            stripped = stripped.Replace(Prefix, "", StringComparison.Ordinal);
+        return stripped;
+    }
+
     // Composer-side rejection helper (called from PR3's PUT /draft). True if the marker prefix
     // appears OUTSIDE any fenced code block — a marker inside a fence renders as literal text and
     // is not part of the adoption attack surface.

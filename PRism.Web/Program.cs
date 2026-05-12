@@ -127,11 +127,14 @@ app.UseMiddleware<SessionTokenMiddleware>();
 // to the framework-native MaxRequestBodySize cap (Kestrel honors it; TestServer doesn't,
 // but the Content-Length pre-check is the unit-testable defense). Adversarial
 // reviewer ADV-PR5-003.
-// Predicate covers four mutating endpoints: POST /api/events/subscriptions (S3 PR5),
-// PUT /api/pr/{ref}/draft (S4 PR3 Task 25), POST /api/pr/{ref}/reload (S4 PR3 Task 29).
-// /draft and /reload are leaf segments under /api/pr/{owner}/{repo}/{number}/, so
-// EndsWithSegments is the cheapest correct match — neither owner nor repo nor number
-// can produce a path ending in /draft or /reload.
+// Predicate covers the mutating endpoints with body caps: POST /api/events/subscriptions
+// (S3 PR5), PUT /api/pr/{ref}/draft (S4 PR3 Task 25), POST /api/pr/{ref}/reload (S4 PR3
+// Task 29), and S5 PR3's POST /api/pr/{ref}/submit + /submit/foreign-pending-review/{resume,
+// discard} + /drafts/discard-all (spec § 7.1 / § 13.2). The submit-family bodies are one-field
+// discriminators / empty, so they inherit the existing 16 KiB cap rather than getting a separate
+// primitive — the unified branch keeps the cap defense single-sited. These are all leaf segments
+// under /api/pr/{owner}/{repo}/{number}/, so suffix matching is the cheapest correct check —
+// none of owner / repo / number can produce a path ending in one of these.
 app.UseWhen(
     static ctx =>
     {
@@ -140,9 +143,14 @@ app.UseWhen(
         if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/events/subscriptions", StringComparison.Ordinal))
             return true;
         if (!path.StartsWithSegments("/api/pr", StringComparison.Ordinal)) return false;
-        if (HttpMethods.IsPut(method) && path.Value!.EndsWith("/draft", StringComparison.Ordinal)) return true;
-        if (HttpMethods.IsPost(method) && path.Value!.EndsWith("/reload", StringComparison.Ordinal)) return true;
-        return false;
+        var value = path.Value!;
+        if (HttpMethods.IsPut(method) && value.EndsWith("/draft", StringComparison.Ordinal)) return true;
+        if (!HttpMethods.IsPost(method)) return false;
+        return value.EndsWith("/reload", StringComparison.Ordinal)
+            || value.EndsWith("/submit", StringComparison.Ordinal)
+            || value.EndsWith("/submit/foreign-pending-review/resume", StringComparison.Ordinal)
+            || value.EndsWith("/submit/foreign-pending-review/discard", StringComparison.Ordinal)
+            || value.EndsWith("/drafts/discard-all", StringComparison.Ordinal);
     },
     branch => branch.Use(async (ctx, next) =>
     {
@@ -194,6 +202,8 @@ app.MapInbox();
 app.MapPrDetail();
 app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
+app.MapPrSubmitEndpoints();
+app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();
 
 if (builder.Environment.IsEnvironment("Test"))
