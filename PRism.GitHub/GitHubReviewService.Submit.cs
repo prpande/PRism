@@ -289,7 +289,7 @@ public sealed partial class GitHubReviewService
                       originalLine
                       isResolved
                       comments(first: 100) {
-                        nodes { id body originalCommit { oid } pullRequestReview { id } }
+                        nodes { id body createdAt originalCommit { oid } pullRequestReview { id } }
                       }
                     }
                   }
@@ -385,6 +385,10 @@ public sealed partial class GitHubReviewService
             OriginalLineContent: "",
             IsResolved: thread.TryGetProperty("isResolved", out var ir) && ir.ValueKind == JsonValueKind.True,
             BodyMarkdown: root.TryGetProperty("body", out var rb) ? rb.GetString() ?? "" : "",
+            // PullRequestReviewThread has no createdAt; the root comment's createdAt is the closest proxy.
+            CreatedAt: root.TryGetProperty("createdAt", out var cca) && cca.ValueKind == JsonValueKind.String
+                ? cca.GetDateTimeOffset()
+                : default,
             Comments: replies);
     }
 

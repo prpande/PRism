@@ -70,8 +70,8 @@ public class GitHubReviewServiceSubmitFindOwnTests
                         "originalLine": 42,
                         "isResolved": false,
                         "comments": { "nodes": [
-                          { "id": "PRRC_root", "body": "original body\n\n<!-- prism:client-id:d1 -->", "originalCommit": { "oid": "abc1234" }, "pullRequestReview": { "id": "PRR_mine_123" } },
-                          { "id": "PRRC_reply", "body": "reply body\n\n<!-- prism:client-id:r1 -->", "originalCommit": { "oid": "abc1234" }, "pullRequestReview": { "id": "PRR_mine_123" } }
+                          { "id": "PRRC_root", "body": "original body\n\n<!-- prism:client-id:d1 -->", "createdAt": "2026-05-11T10:00:05Z", "originalCommit": { "oid": "abc1234" }, "pullRequestReview": { "id": "PRR_mine_123" } },
+                          { "id": "PRRC_reply", "body": "reply body\n\n<!-- prism:client-id:r1 -->", "createdAt": "2026-05-11T10:00:06Z", "originalCommit": { "oid": "abc1234" }, "pullRequestReview": { "id": "PRR_mine_123" } }
                         ] }
                       },
                       {
@@ -111,6 +111,7 @@ public class GitHubReviewServiceSubmitFindOwnTests
         t.OriginalLineContent.Should().BeEmpty();   // adapter leaves this for PR5's Resume enrichment
         t.IsResolved.Should().BeFalse();
         t.BodyMarkdown.Should().Be("original body\n\n<!-- prism:client-id:d1 -->");
+        t.CreatedAt.Should().Be(new DateTimeOffset(2026, 5, 11, 10, 0, 5, TimeSpan.Zero));  // the root comment's createdAt
 
         // Comments carries the replies only — the root comment is BodyMarkdown, not Comments[0].
         t.Comments.Should().HaveCount(1);

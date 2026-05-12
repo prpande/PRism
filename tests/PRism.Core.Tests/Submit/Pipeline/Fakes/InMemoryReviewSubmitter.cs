@@ -46,7 +46,8 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
         var pending = RequirePending(reference);
         var threadId = $"PRRT_{_nextId++}";
         pending.Threads.Add(new InMemoryThread(threadId, draft.FilePath, draft.LineNumber, draft.Side,
-            CommitOid: pending.CommitOid, Body: draft.BodyMarkdown, IsResolved: false, Replies: new List<InMemoryComment>()));
+            CommitOid: pending.CommitOid, Body: draft.BodyMarkdown, IsResolved: false,
+            Replies: new List<InMemoryComment>(), CreatedAt: DateTimeOffset.UtcNow));
         AttachThreadCallCount++;
         return Task.FromResult(new AttachThreadResult(threadId));
     }
@@ -100,6 +101,7 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
                 OriginalLineContent: "",
                 IsResolved: t.IsResolved,
                 BodyMarkdown: t.Body,
+                CreatedAt: t.CreatedAt,
                 Comments: t.Replies.Select(r => new PendingReviewCommentSnapshot(r.Id, r.Body)).ToList()))
             .ToList();
 
@@ -138,7 +140,7 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
 
     internal sealed record InMemoryThread(
         string Id, string FilePath, int LineNumber, string Side, string CommitOid,
-        string Body, bool IsResolved, List<InMemoryComment> Replies);
+        string Body, bool IsResolved, List<InMemoryComment> Replies, DateTimeOffset CreatedAt = default);
 
     internal sealed record InMemoryComment(string Id, string Body);
 }

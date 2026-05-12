@@ -215,8 +215,21 @@ public sealed class SubmitPipeline
                 }
                 if (markered.Count > 1)
                 {
-                    // Multi-marker-match defense — adopt earliest, best-effort-delete the rest. Task 29.
-                    throw new NotImplementedException("Task 29 — thread multi-marker-match defense");
+                    // Multi-marker-match defense (spec § 5.2 step 3 / § 5.3 invariant 3): GitHub's
+                    // pending-review listing isn't strictly read-your-writes consistent, so a lost
+                    // response + retry can leave N>1 server threads carrying the same draft's marker.
+                    // Adopt the earliest (lowest CreatedAt; markered is already ordered earliest-first)
+                    // and best-effort-delete the rest — don't abort the pipeline on a cleanup failure;
+                    // surface it through the onDuplicateMarker notice instead.
+                    var earliest = markered[0];
+                    current = StampDraftThreadId(current, draft.Id, earliest.PullRequestReviewThreadId);
+                    await StampDraftThreadIdAsync(sessionKey, draft.Id, earliest.PullRequestReviewThreadId, ct).ConfigureAwait(false);
+                    foreach (var dup in markered.Skip(1))
+                        await TryDeleteDuplicateThreadAsync(reference, draft.Id, dup.PullRequestReviewThreadId, ct).ConfigureAwait(false);
+                    _onDuplicateMarker?.Invoke(
+                        $"draft {draft.Id}: {markered.Count} server threads carried its marker; adopted {earliest.PullRequestReviewThreadId}, deleted the rest (best-effort)");
+                    progress.Report(new SubmitProgressEvent(SubmitStep.AttachThreads, SubmitStepStatus.Succeeded, ++done, total));
+                    continue;
                 }
                 // Falls through to create.
             }
@@ -250,14 +263,34 @@ public sealed class SubmitPipeline
     }
 
     // Server threads whose body's <!-- prism:client-id:<id> --> marker matches draftId, ordered
-    // by thread id as a deterministic proxy (refined to createdAt-earliest by Task 29's defense).
+    // earliest-first (CreatedAt, thread id as a stable tiebreak) so the multi-match defense can
+    // adopt the earliest deterministically.
     private static List<PendingReviewThreadSnapshot> MarkeredThreads(OwnPendingReviewSnapshot? snapshot, string draftId)
         => snapshot is null
             ? new List<PendingReviewThreadSnapshot>()
             : snapshot.Threads
                 .Where(t => string.Equals(PipelineMarker.Extract(t.BodyMarkdown), draftId, StringComparison.Ordinal))
-                .OrderBy(t => t.PullRequestReviewThreadId, StringComparer.Ordinal)
+                .OrderBy(t => t.CreatedAt)
+                .ThenBy(t => t.PullRequestReviewThreadId, StringComparer.Ordinal)
                 .ToList();
+
+    private async Task TryDeleteDuplicateThreadAsync(PrReference reference, string draftId, string threadId, CancellationToken ct)
+    {
+        try
+        {
+            await _submitter.DeletePendingReviewThreadAsync(reference, threadId, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // cleanup is best-effort by design — a failure is reported, not fatal
+        catch (Exception ex)
+        {
+            _onDuplicateMarker?.Invoke($"draft {draftId}: failed to delete duplicate thread {threadId}: {ex.Message}");
+        }
+#pragma warning restore CA1031
+    }
 
     // ---- Step 4 — Attach replies (spec § 5.2 step 4) ----
     // Mirrors Step 3 per reply (excluding Stale): stamped-and-present → skip; unstamped + marker in
@@ -308,8 +341,18 @@ public sealed class SubmitPipeline
                 }
                 if (markered.Count > 1)
                 {
-                    // Multi-marker-match defense for replies — adopt earliest, delete the rest. Task 29.
-                    throw new NotImplementedException("Task 29 — reply multi-marker-match defense");
+                    // Reply multi-marker-match: adopt the earliest (lowest comment id — there is no
+                    // delete-comment capability on IReviewSubmitter, so the duplicates can't be
+                    // cleaned up; surface the situation through the onDuplicateMarker notice). The
+                    // adopted reply still lands on github.com once Finalize runs; the leftover
+                    // duplicates are cosmetic and visible on the PR after submit.
+                    var earliest = markered[0];
+                    current = StampReplyCommentId(current, reply.Id, earliest.CommentId);
+                    await StampReplyCommentIdAsync(sessionKey, reply.Id, earliest.CommentId, ct).ConfigureAwait(false);
+                    _onDuplicateMarker?.Invoke(
+                        $"reply {reply.Id}: {markered.Count} server comments carried its marker; adopted {earliest.CommentId} (duplicates can't be auto-removed)");
+                    progress.Report(new SubmitProgressEvent(SubmitStep.AttachReplies, SubmitStepStatus.Succeeded, ++done, total));
+                    continue;
                 }
                 // Falls through to create.
             }
