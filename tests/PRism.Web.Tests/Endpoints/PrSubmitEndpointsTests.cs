@@ -52,6 +52,7 @@ public class PrSubmitEndpointsTests
 
         await TestPoll.UntilAsync(() => ctx.Submitter.FinalizeCalled, PipelineWait, "pipeline should finalize");
         await TestPoll.UntilAsync(() => ctx.Bus.Published.OfType<DraftSubmitted>().Any(), PipelineWait, "DraftSubmitted should publish");
+        ctx.Bus.Published.OfType<StateChanged>().Should().NotBeEmpty("a StateChanged fires alongside DraftSubmitted on success");
 
         var session = await ctx.LoadSessionAsync("o", "r", 1);
         session!.DraftComments.Should().BeEmpty();
@@ -301,5 +302,22 @@ public class PrSubmitEndpointsTests
 
         resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("pending-review-state-changed");
+    }
+
+    [Fact]
+    public async Task PostDiscard_github_delete_failure_returns_502_and_leaves_session_untouched()
+    {
+        using var ctx = SubmitEndpointsTestContext.Create();
+        ctx.Submitter.OwnPendingReview = Snapshot("PRR_x");
+        ctx.Submitter.DeletePendingReviewException = new HttpRequestException("network");
+        await ctx.SeedSessionAsync("o", "r", 3, SubmitEndpointsTestContext.ValidSession() with { PendingReviewId = "PRR_x", PendingReviewCommitOid = "head1" });
+        using var client = ctx.CreateClient();
+
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/3/submit/foreign-pending-review/discard", new { pullRequestReviewId = "PRR_x" });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("delete-failed");
+        // The pending-review reference is NOT cleared — a re-detect on the next submit re-prompts.
+        (await ctx.LoadSessionAsync("o", "r", 3))!.PendingReviewId.Should().Be("PRR_x");
     }
 }

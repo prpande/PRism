@@ -138,8 +138,10 @@ internal static class PrSubmitEndpoints
                         // bridge. Defensively persist the at-failure session (carries the Begin stamp for
                         // the begin-persist-failed case; idempotent otherwise — the per-step overlays
                         // already ran) and publish StateChanged so the frontend picks up any stamped
-                        // PendingReviewId / ThreadId for the in-flight-recovery surface.
-                        await stateStore.UpdateAsync(state => WithSession(state, sessionKey, failed.NewSession), pipelineCt).ConfigureAwait(false);
+                        // PendingReviewId / ThreadId for the in-flight-recovery surface. Uses
+                        // CancellationToken.None — the pipeline already returned (it caught the
+                        // cancellation, if any); this cleanup write must land even during host shutdown.
+                        await stateStore.UpdateAsync(state => WithSession(state, sessionKey, failed.NewSession), CancellationToken.None).ConfigureAwait(false);
                         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
                         break;
                     case SubmitOutcome.ForeignPendingReviewPromptRequired prompt:
@@ -204,36 +206,40 @@ internal static class PrSubmitEndpoints
             return Results.Json(new SubmitErrorDto("pending-review-state-changed", "The pending review changed during the prompt. Please retry submit."), statusCode: StatusCodes.Status409Conflict);
 
         // Import each thread as a DraftComment (Status=Draft, ThreadId stamped); reply chains as
-        // DraftReply (ReplyCommentId stamped). Bodies have all PRism marker prefixes stripped (R8).
+        // DraftReply (ReplyCommentId stamped). Bodies have all PRism marker prefixes stripped (R8) —
+        // computed once and reused for both the persisted drafts and the 200-response payload.
         // OriginalLineContent is enriched from the file content at OriginalCommitOid (R7) — an empty
         // anchor poisons reconciliation, so a fetch failure imports the draft Stale instead.
-        var newDrafts = new List<DraftComment>(snapshotB.Threads.Count);
-        var newReplies = new List<DraftReply>();
+        var imported = new List<ImportedThread>(snapshotB.Threads.Count);
         foreach (var t in snapshotB.Threads)
         {
             var (anchoredLine, status) = await EnrichAnchoredLineAsync(prReader, prRef, t, ct).ConfigureAwait(false);
-            newDrafts.Add(new DraftComment(
-                Id: Guid.NewGuid().ToString(),
-                FilePath: t.FilePath,
-                LineNumber: t.LineNumber,
-                Side: t.Side,
-                AnchoredSha: t.OriginalCommitOid,
-                AnchoredLineContent: anchoredLine,
-                BodyMarkdown: PipelineMarker.StripAllMarkerPrefixes(PipelineMarker.StripIfPresent(t.BodyMarkdown)),
+            imported.Add(new ImportedThread(
+                t,
+                StrippedBody: StripBody(t.BodyMarkdown),
+                AnchoredLine: anchoredLine,
                 Status: status,
-                IsOverriddenStale: false,
-                ThreadId: t.PullRequestReviewThreadId));
-            foreach (var c in t.Comments)
-            {
-                newReplies.Add(new DraftReply(
-                    Id: Guid.NewGuid().ToString(),
-                    ParentThreadId: t.PullRequestReviewThreadId,
-                    ReplyCommentId: c.CommentId,
-                    BodyMarkdown: PipelineMarker.StripAllMarkerPrefixes(PipelineMarker.StripIfPresent(c.BodyMarkdown)),
-                    Status: DraftStatus.Draft,
-                    IsOverriddenStale: false));
-            }
+                Replies: t.Comments.Select(c => new ImportedReply(c, StripBody(c.BodyMarkdown))).ToList()));
         }
+
+        var newDrafts = imported.Select(it => new DraftComment(
+            Id: Guid.NewGuid().ToString(),
+            FilePath: it.Thread.FilePath,
+            LineNumber: it.Thread.LineNumber,
+            Side: it.Thread.Side,
+            AnchoredSha: it.Thread.OriginalCommitOid,
+            AnchoredLineContent: it.AnchoredLine,
+            BodyMarkdown: it.StrippedBody,
+            Status: it.Status,
+            IsOverriddenStale: false,
+            ThreadId: it.Thread.PullRequestReviewThreadId)).ToList();
+        var newReplies = imported.SelectMany(it => it.Replies.Select(r => new DraftReply(
+            Id: Guid.NewGuid().ToString(),
+            ParentThreadId: it.Thread.PullRequestReviewThreadId,
+            ReplyCommentId: r.Comment.CommentId,
+            BodyMarkdown: r.StrippedBody,
+            Status: DraftStatus.Draft,
+            IsOverriddenStale: false))).ToList();
 
         await stateStore.UpdateAsync(state =>
         {
@@ -260,22 +266,25 @@ internal static class PrSubmitEndpoints
             createdAt = snapshotB.CreatedAt.ToString("O"),
             threadCount = snapshotB.Threads.Count,
             replyCount = snapshotB.Threads.Sum(t => t.Comments.Count),
-            threads = snapshotB.Threads.Select(t => new
+            threads = imported.Select(it => new
             {
-                id = t.PullRequestReviewThreadId,
-                filePath = t.FilePath,
-                lineNumber = t.LineNumber,
-                side = t.Side,
-                isResolved = t.IsResolved,
-                body = PipelineMarker.StripAllMarkerPrefixes(PipelineMarker.StripIfPresent(t.BodyMarkdown)),
-                replies = t.Comments.Select(c => new
-                {
-                    id = c.CommentId,
-                    body = PipelineMarker.StripAllMarkerPrefixes(PipelineMarker.StripIfPresent(c.BodyMarkdown)),
-                }).ToList(),
+                id = it.Thread.PullRequestReviewThreadId,
+                filePath = it.Thread.FilePath,
+                lineNumber = it.Thread.LineNumber,
+                side = it.Thread.Side,
+                isResolved = it.Thread.IsResolved,
+                body = it.StrippedBody,
+                replies = it.Replies.Select(r => new { id = r.Comment.CommentId, body = r.StrippedBody }).ToList(),
             }).ToList(),
         });
     }
+
+    private static string StripBody(string body) => PipelineMarker.StripAllMarkerPrefixes(PipelineMarker.StripIfPresent(body));
+
+    private sealed record ImportedThread(
+        PendingReviewThreadSnapshot Thread, string StrippedBody, string AnchoredLine, DraftStatus Status, List<ImportedReply> Replies);
+
+    private sealed record ImportedReply(PendingReviewCommentSnapshot Comment, string StrippedBody);
 
     // ----------------------------------------- POST /submit/foreign-pending-review/discard
 
@@ -299,7 +308,24 @@ internal static class PrSubmitEndpoints
         if (snapshotB is null || !string.Equals(snapshotB.PullRequestReviewId, request.PullRequestReviewId, StringComparison.Ordinal))
             return Results.Json(new SubmitErrorDto("pending-review-state-changed", "The pending review changed during the prompt. Please retry submit."), statusCode: StatusCodes.Status409Conflict);
 
-        await submitter.DeletePendingReviewAsync(prRef, snapshotB.PullRequestReviewId, ct).ConfigureAwait(false);
+        // Unlike the closed/merged bulk-discard's *courtesy* delete (best-effort, never blocks),
+        // this is the user's explicit "delete the pending review on GitHub" intent — a failure must
+        // surface so they can retry. Don't clear local state on failure: GitHub still has the pending
+        // review, so a re-detect on the next submit would re-prompt — clearing now would lose track.
+        try
+        {
+            await submitter.DeletePendingReviewAsync(prRef, snapshotB.PullRequestReviewId, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // surface any GitHub/transport failure as a structured error rather than a bare 500
+        catch (Exception)
+        {
+            return Results.Json(new SubmitErrorDto("delete-failed", "Failed to delete the pending review on GitHub. Please retry."), statusCode: StatusCodes.Status502BadGateway);
+        }
+#pragma warning restore CA1031
 
         await stateStore.UpdateAsync(state =>
         {
@@ -346,7 +372,10 @@ internal static class PrSubmitEndpoints
         if (fc.Status != FileContentStatus.Ok || fc.Content is null) return ("", DraftStatus.Stale);
         var lines = fc.Content.Split('\n');
         if (t.LineNumber < 1 || t.LineNumber > lines.Length) return ("", DraftStatus.Stale);
-        return (lines[t.LineNumber - 1], DraftStatus.Draft);
+        // Strip a trailing CR so the anchored line matches the reconciliation pipeline's
+        // normalisation (LineMatching.SplitLines TrimEnd('\r')); otherwise a CRLF-ending file's
+        // imported draft would never exact-match and would land Stale / mis-anchor on the next Reload.
+        return (lines[t.LineNumber - 1].TrimEnd('\r'), DraftStatus.Draft);
     }
 
     private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)

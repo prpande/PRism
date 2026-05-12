@@ -112,4 +112,47 @@ public class PipelineMarkerTests
         var result = PipelineMarker.Inject(body, "d9");
         Assert.Equal(body + "\n\n<!-- prism:client-id:d9 -->", result);
     }
+
+    // ---- StripIfPresent / StripAllMarkerPrefixes (S5 PR3 Resume import — R8) ----
+
+    [Fact]
+    public void StripIfPresent_RemovesTrailingEndMarkerAndPrecedingWhitespace()
+    {
+        Assert.Equal("thread body", PipelineMarker.StripIfPresent("thread body\n\n<!-- prism:client-id:olddraft -->"));
+    }
+
+    [Fact]
+    public void StripIfPresent_LeavesAMarkerlessBodyUntouched()
+    {
+        Assert.Equal("plain body", PipelineMarker.StripIfPresent("plain body"));
+    }
+
+    [Fact]
+    public void StripAllMarkerPrefixes_RemovesEmbeddedWellFormedMarkers()
+    {
+        var result = PipelineMarker.StripAllMarkerPrefixes("before <!-- prism:client-id:embedded --> after");
+        Assert.False(PipelineMarker.ContainsMarkerPrefix(result));
+        Assert.DoesNotContain("prism:client-id", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StripAllMarkerPrefixes_RemovesABareUnclosedPrefixSubstring()
+    {
+        // A body containing only the prefix `<!-- prism:client-id:` (no closing ` -->`) — the
+        // well-formed-marker regex doesn't match it, so the fallback bare-prefix replace must catch
+        // it for R8's "ContainsMarkerPrefix(result) is false" guarantee to hold.
+        var result = PipelineMarker.StripAllMarkerPrefixes("oops pasted <!-- prism:client-id: into prose");
+        Assert.False(PipelineMarker.ContainsMarkerPrefix(result));
+    }
+
+    [Fact]
+    public void StripAllMarkerPrefixes_LeavesAMarkerInsideAFenceAlone_ContainsMarkerPrefixWasAlreadyFalse()
+    {
+        // A marker inside a fenced block is not part of the adoption attack surface — ContainsMarkerPrefix
+        // already returns false for it, and StripAllMarkerPrefixes still strips the literal text (the
+        // regex doesn't track fences), which is harmless for an imported body.
+        var body = "```\n<!-- prism:client-id:literal -->\n```";
+        Assert.False(PipelineMarker.ContainsMarkerPrefix(body));
+        Assert.False(PipelineMarker.ContainsMarkerPrefix(PipelineMarker.StripAllMarkerPrefixes(body)));
+    }
 }

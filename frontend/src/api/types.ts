@@ -289,12 +289,14 @@ export interface OverrideStalePayload {
 // shape (spec § 4.2). The exhaustiveness check in the serializer guarantees
 // every kind is handled at compile time.
 //
-// Note on draftVerdict: `payload: null` is intentionally excluded. Spec
-// § 4.2 lists null as a valid wire value, but PR3's backend
-// `EnumerateSetFields` (PrDraftEndpoints.cs:331) filters null DraftVerdict
-// as "not set", which would round-trip a "clear verdict" intent through
-// the multi-field guard as zero-set and 400. Until the backend accepts
-// null as "clear", the frontend cannot represent a clear-verdict patch.
+// Note on clear-verdict / clear-summary: S5 PR3 switched PUT /draft to
+// JsonElement parsing, so the backend now accepts `{"draftVerdict": null}`
+// (and `{"draftSummaryMarkdown": null}`) as an explicit clear (spec § 10) —
+// the historic typed-record path that treated present-null as "field absent"
+// is gone. No `payload: null` variant is added here yet: the frontend's
+// verdict-picker clear semantics land in PR4 (spec § 10 / § 8.3), at which
+// point a `{ kind: 'draftVerdict'; payload: null }` variant joins this union
+// and `serializePatch` gains the matching `{ draftVerdict: null }` wire case.
 export type ReviewSessionPatch =
   | { kind: 'draftVerdict'; payload: DraftVerdict }
   | { kind: 'draftSummaryMarkdown'; payload: string }
