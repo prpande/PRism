@@ -10,7 +10,7 @@ namespace PRism.GitHub.Tests;
 
 public sealed class PrUrlParsingTests
 {
-    private static IReviewService Make(string host) =>
+    private static GitHubReviewService Make(string host) =>
         new GitHubReviewService(
             new FakeHttpClientFactory(new FakeHttpMessageHandler(_ => new HttpResponseMessage()), HostUrlResolver.ApiBase(host)),
             () => Task.FromResult<string?>("token"),

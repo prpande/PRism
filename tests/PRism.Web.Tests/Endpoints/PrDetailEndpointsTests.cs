@@ -137,7 +137,7 @@ public class PrDetailEndpointsTests
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("truncated").GetBoolean().Should().BeTrue(
-            because: "truncation flag must propagate from IReviewService");
+            because: "truncation flag must propagate from IPrReader");
         body.GetProperty("files").GetArrayLength().Should().Be(1);
     }
 
@@ -205,7 +205,7 @@ public class PrDetailEndpointsTests
     public async Task Get_file_returns_422_sha_invalid_when_sha_is_not_a_git_oid()
     {
         // /file?sha= must be validated consistently with /diff?range=. The endpoint short-
-        // circuits the snapshot probe and IReviewService call when the SHA is malformed.
+        // circuits the snapshot probe and IPrReader call when the SHA is malformed.
         var (factory, _) = MakeFactory();
         using var _f = factory;
         var client = factory.CreateClient();

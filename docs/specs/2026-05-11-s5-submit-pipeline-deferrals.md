@@ -6,6 +6,7 @@ status: open
 revisions:
   - 2026-05-11: brainstorm + ce-doc-review pass — recorded brainstorm-time deferrals (12 items in spec § 1.2), doc-review-time deferrals routed to ce-plan, doc-review FYI observations, and forward-looking residual risks for the implementer
   - 2026-05-12: PR #43 review pass — marked Risk R1 (MigrateV3ToV4 signature mismatch) Resolved after spec § 6 was corrected to the JsonObject step shape
+  - 2026-05-12: PR0a execution — added the "Implementation-time deferrals" section (IDraftReconciliator dead-code not deleted; IReviewSubmitter CA1040 suppression; GitHub-test concrete return type; PRismWebApplicationFactory override re-typed)
 ---
 
 # Deferrals — S5 submit pipeline spec
@@ -352,3 +353,37 @@ These aren't deferred decisions — they're known unknowns the plan / implemente
 - **Date:** 2026-05-11
 - **Reason:** Spec § 11.1 (revised) computes Snapshot A↔B staleness entirely on the frontend by comparing thread/reply counts retained from the SSE event against the resume endpoint's 200 response. Per-thread body-level changes (same count, different content) are not detected — doing so would require carrying per-thread body hashes through the `submit-foreign-pending-review` SSE event, which the threat-model defense in § 7.5 currently keeps body-free. The dominant attacker / collaborator case (thread added or removed during the prompt delay) is captured; the residual case (thread body edited in place during the prompt delay) silently flows through to the user's adjudication panel where they can still edit / discard before re-publishing.
 - **Action:** Accepted as PoC residual. If dogfooding surfaces a real instance where in-place body edits during the prompt window matter, add per-thread body-hash carriage to the SSE payload (the hash is privacy-preserving and the threat-model surface is narrower than full bodies). PR5 implementer carries the count-only check; no spec change without new evidence.
+
+---
+
+## Implementation-time deferrals (surfaced during PR execution)
+
+Decisions made while executing the plan that diverge from a literal task body or the "Files touched" lists. Captured here so a reviewer comparing the PR to the plan sees the rationale.
+
+### [Decision] PR0a does NOT delete the `IDraftReconciliator` AI seam dead code
+
+- **Source:** PR0a execution (2026-05-12)
+- **Affects:** Plan Phase 1a "Files touched" list ("Delete: `PRism.AI.Contracts/Seams/IDraftReconciliator.cs` … `Noop/NoopDraftReconciliator.cs` … `PRism.AI.Placeholder/PlaceholderDraftReconciliator.cs` … `tests/PRism.Core.Tests/Ai/NoopSeamTests.cs`"), annotated "legacy seam not consumed; retired with `DraftReview`".
+- **Decision:** Kept all four files. `IDraftReconciliator` is **not** related to `DraftReview` — its method is `ReconcileAsync(PrReference, IReadOnlyList<DraftCommentInput>, …) → IReadOnlyList<DraftReconciliation>`, none of which touch the retired `DraftReview` record. It is also still wired: `PRism.Web/Composition/ServiceCollectionExtensions.cs` registers `NoopDraftReconciliator` / `PlaceholderDraftReconciliator` in the `AiSeamSelector` Noop/Placeholder dictionaries. Deleting it would mean editing the AI composition root for a change unrelated to the `IReviewService` capability split — out of PR0a's stated scope ("Land the architectural prerequisites" for the submit pipeline). PR0a deletes only `IReviewService.cs` and `PRism.Core.Contracts/DraftReview.cs` (the latter genuinely orphaned once the `SubmitReviewAsync` stub is removed).
+- **Revisit when:** A dedicated AI-seam-cleanup PR (or whenever `IDraftReconciliator` is either given a real consumer in v2 or formally removed from `AiSeamSelector`). Not blocking S5.
+
+### [Decision] `IReviewSubmitter` carries a CA1040 suppression
+
+- **Source:** PR0a execution (2026-05-12)
+- **Affects:** Plan Task 1 Step 4 (bare empty `interface IReviewSubmitter {}` code block).
+- **Decision:** The repo's analyzer config treats CA1040 ("Avoid empty interfaces") as a build error, so the literal code block does not compile. Added `[SuppressMessage("Design", "CA1040:Avoid empty interfaces", Justification = "Intentional empty capability seam … PR1 fills it with the seven pending-review pipeline methods.")]` to `PRism.Core/IReviewSubmitter.cs`. PR1 removes the suppression once the seven methods land.
+- **Revisit when:** PR1 (the suppression should be deleted in the same commit that adds the methods).
+
+### [Decision] `tests/PRism.GitHub.Tests/*` factory helpers return the concrete `GitHubReviewService`
+
+- **Source:** PR0a execution (2026-05-12)
+- **Affects:** Plan Task 3's "swap to the narrowest sub-interface" rule.
+- **Decision:** That rule targets *production* consumers. The 7 GitHub adapter test files had `private static IReviewService NewService(…)` / `Make(…)` helpers that construct `new GitHubReviewService(…)`. Changed the return type to the concrete `GitHubReviewService` rather than picking a per-file sub-interface — these tests exercise the GitHub adapter directly, so the concrete type is the honest contract and avoids an arbitrary interface choice per file.
+- **Revisit when:** N/A — this is the intended end state for adapter-level tests.
+
+### [Decision] `PRismWebApplicationFactory.ReviewServiceOverride` re-typed; `StubReviewService` narrowed
+
+- **Source:** PR0a execution (2026-05-12)
+- **Affects:** `tests/PRism.Web.Tests/TestHelpers/PRismWebApplicationFactory.cs`.
+- **Decision:** `ReviewServiceOverride` was typed `IReviewService?` (the now-deleted composite). Re-typed to `PrDetailFakeReviewService?` (the only type ever assigned to it); that fake now implements all four capability interfaces and the factory binds the single instance to all four seams — preserving the old single-override semantics exactly. `StubReviewService` (the `ValidateOverride` branch) is narrowed to `IReviewAuth` since `ValidateCredentialsAsync` is the only method it implemented meaningfully. Added a private `ReplaceSingleton<T>` helper to dedupe the remove-then-add pattern.
+- **Revisit when:** N/A.

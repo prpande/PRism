@@ -3,7 +3,7 @@ using PRism.Core.Contracts;
 namespace PRism.Core.Reconciliation.Pipeline;
 
 // Production IFileContentSource adapter — fetches file content + commit reachability via
-// IReviewService for the reconciliation pipeline (S4 PR3 Task 28). The PrReference is
+// IPrReader for the reconciliation pipeline (S4 PR3 Task 28). The PrReference is
 // captured at construction so the caller (POST /api/pr/{ref}/reload) can scope a single
 // instance to a single PR's reconcile pass.
 //
@@ -19,10 +19,10 @@ namespace PRism.Core.Reconciliation.Pipeline;
 // reconcile — re-anchor manually"). Out of scope for S4.
 public sealed class ReviewServiceFileContentSource : IFileContentSource
 {
-    private readonly IReviewService _inner;
+    private readonly IPrReader _inner;
     private readonly PrReference _pr;
 
-    public ReviewServiceFileContentSource(IReviewService inner, PrReference pr)
+    public ReviewServiceFileContentSource(IPrReader inner, PrReference pr)
     {
         ArgumentNullException.ThrowIfNull(inner);
         ArgumentNullException.ThrowIfNull(pr);

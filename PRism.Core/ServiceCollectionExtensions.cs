@@ -33,7 +33,7 @@ public static class ServiceCollectionExtensions
     /// <b>Required companion calls.</b> <see cref="IInboxRefreshOrchestrator"/> and
     /// <see cref="ViewerLoginHydrator"/> are registered here via factory lambdas that close
     /// over <see cref="IServiceProvider"/> and resolve services registered by other
-    /// <c>AddPrism*</c> extensions: <c>IReviewService</c>, <c>ISectionQueryRunner</c>,
+    /// <c>AddPrism*</c> extensions: <c>IReviewAuth</c>, <c>ISectionQueryRunner</c>,
     /// <c>IPrEnricher</c>, <c>IAwaitingAuthorFilter</c>, <c>ICiFailingDetector</c> (all from
     /// <c>AddPrismGitHub</c>) and <c>IAiSeamSelector</c> (from <c>AddPrismAi</c>). DI
     /// factories are lazy, so the cross-method dependencies only resolve at first use after
@@ -84,7 +84,7 @@ public static class ServiceCollectionExtensions
         services.AddHostedService<ViewerLoginHydrator>(sp =>
             new ViewerLoginHydrator(
                 sp.GetRequiredService<ITokenStore>(),
-                sp.GetRequiredService<IReviewService>(),
+                sp.GetRequiredService<IReviewAuth>(),
                 sp.GetRequiredService<IViewerLoginProvider>(),
                 sp.GetRequiredService<ILogger<ViewerLoginHydrator>>()));
 

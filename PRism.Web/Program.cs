@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using PRism.Core;
 using PRism.Core.Hosting;
@@ -11,7 +12,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Static Web Assets (the build manifest that maps /assets/* URLs to files
 // under wwwroot) are auto-enabled only in Development. The Playwright E2E
-// suite runs the host under Test env (to engage the FakeReviewService swap
+// suite runs the host under Test env (to engage the fake-review swap
 // below) and would otherwise serve every JS/CSS asset as 200 OK with 0
 // bytes — the SPA never bootstraps. We gate this on the same opt-in env
 // var as the fake-review swap (PRISM_E2E_FAKE_REVIEW=1) so the existing
@@ -32,22 +33,37 @@ builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
 
-// Test environment: opt-in swap GitHubReviewService → FakeReviewService so
-// Playwright can drive the backend without needing a real GitHub PAT. The
-// swap also makes /test/* endpoints meaningful (they downcast IReviewService
-// to FakeReviewService). See PRism.Web/TestHooks/FakeReviewService.cs.
+// Test environment: opt-in swap GitHubReviewService → the split fakes so Playwright
+// can drive the backend without needing a real GitHub PAT. The swap also makes /test/*
+// endpoints meaningful (they resolve FakeReviewBackingStore to mutate scenario state).
+// See PRism.Web/TestHooks/FakeReviewBackingStore.cs and the four Fake*.cs fakes.
 //
 // Why opt-in (PRISM_E2E_FAKE_REVIEW=1) instead of just IsEnvironment("Test"):
 // the existing xUnit/WebApplicationFactory test suite already uses Test env
 // and assumes the real GitHubReviewService (or per-test overrides). Auto-
 // swapping under Test env would silently rewire those tests. The env-var
 // is set only by Playwright via playwright.config.ts.
+//
+// One FakeReviewBackingStore instance is shared by the four fakes (FakeReviewAuth /
+// FakePrDiscovery / FakePrReader / FakeReviewSubmitter), mirroring the ADR-S5-1
+// capability split on the test side.
 if (builder.Environment.IsEnvironment("Test")
     && Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1")
 {
-    var existing = builder.Services.FirstOrDefault(d => d.ServiceType == typeof(IReviewService));
-    if (existing is not null) builder.Services.Remove(existing);
-    builder.Services.AddSingleton<IReviewService, FakeReviewService>();
+    foreach (var serviceType in new[]
+             {
+                 typeof(IReviewAuth), typeof(IPrDiscovery), typeof(IPrReader), typeof(IReviewSubmitter),
+             })
+    {
+        // RemoveAll (vs. removing the first match) in case any of these were registered
+        // more than once upstream.
+        builder.Services.RemoveAll(serviceType);
+    }
+    builder.Services.AddSingleton<FakeReviewBackingStore>();
+    builder.Services.AddSingleton<IReviewAuth, FakeReviewAuth>();
+    builder.Services.AddSingleton<IPrDiscovery, FakePrDiscovery>();
+    builder.Services.AddSingleton<IPrReader, FakePrReader>();
+    builder.Services.AddSingleton<IReviewSubmitter, FakeReviewSubmitter>();
 }
 
 var app = builder.Build();

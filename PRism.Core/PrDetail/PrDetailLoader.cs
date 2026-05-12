@@ -7,9 +7,9 @@ namespace PRism.Core.PrDetail;
 
 /// <summary>
 /// Concrete coordinator for the PR-detail surface (spec § 6.1). No <c>IPrDetailLoader</c>
-/// interface — single implementation; tests substitute <see cref="IReviewService"/>.
+/// interface — single implementation; tests substitute <see cref="IPrReader"/>.
 ///
-/// Composes <see cref="PrDetailSnapshot"/> by orchestrating <see cref="IReviewService"/>
+/// Composes <see cref="PrDetailSnapshot"/> by orchestrating <see cref="IPrReader"/>
 /// (PollActivePr → cache probe → on miss: GetPrDetail + GetTimeline) and the iteration
 /// clustering strategy. Caches per <c>(prRef, headSha, generation)</c>; subscribes to
 /// <see cref="IConfigStore.Changed"/> so coefficient hot-reloads invalidate the cache.
@@ -22,7 +22,7 @@ namespace PRism.Core.PrDetail;
 /// </summary>
 public sealed class PrDetailLoader
 {
-    private readonly IReviewService _review;
+    private readonly IPrReader _review;
     private readonly IIterationClusteringStrategy _clusterer;
     private readonly IterationClusteringCoefficients _coefficients;
     private readonly IConfigStore _configStore;
@@ -41,7 +41,7 @@ public sealed class PrDetailLoader
     private int _generation;
 
     public PrDetailLoader(
-        IReviewService review,
+        IPrReader review,
         IIterationClusteringStrategy clusterer,
         IterationClusteringCoefficients coefficients,
         IConfigStore configStore)

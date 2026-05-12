@@ -14,13 +14,13 @@ namespace PRism.Core.Auth;
 public sealed partial class ViewerLoginHydrator : IHostedService
 {
     private readonly ITokenStore _tokens;
-    private readonly IReviewService _review;
+    private readonly IReviewAuth _review;
     private readonly IViewerLoginProvider _loginCache;
     private readonly ILogger<ViewerLoginHydrator> _log;
 
     public ViewerLoginHydrator(
         ITokenStore tokens,
-        IReviewService review,
+        IReviewAuth review,
         IViewerLoginProvider loginCache,
         ILogger<ViewerLoginHydrator> log)
     {

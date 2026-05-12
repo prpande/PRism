@@ -12,8 +12,10 @@ public static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers PRism's GitHub adapter: the named <c>github</c> <see cref="HttpClient"/>
-    /// (configured against <c>github.host</c>), <see cref="IReviewService"/>, and the four
-    /// inbox-pipeline implementations under <c>PRism.GitHub/Inbox/</c>
+    /// (configured against <c>github.host</c>), <see cref="GitHubReviewService"/> bound to the
+    /// four capability interfaces (<see cref="IReviewAuth"/>, <see cref="IPrDiscovery"/>,
+    /// <see cref="IPrReader"/>, <see cref="IReviewSubmitter"/> — one shared singleton instance),
+    /// and the four inbox-pipeline implementations under <c>PRism.GitHub/Inbox/</c>
     /// (<see cref="ISectionQueryRunner"/>, <see cref="IPrEnricher"/>,
     /// <see cref="IAwaitingAuthorFilter"/>, <see cref="ICiFailingDetector"/>).
     /// </summary>
@@ -32,7 +34,10 @@ public static class ServiceCollectionExtensions
             client.BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host);
         });
 
-        services.AddSingleton<IReviewService>(sp =>
+        // GitHubReviewService implements all four capability interfaces (ADR-S5-1). Register
+        // the concrete type once and bind each interface to that shared singleton so a single
+        // instance backs auth, discovery, read, and submit.
+        services.AddSingleton<GitHubReviewService>(sp =>
         {
             var config = sp.GetRequiredService<IConfigStore>();
             var tokens = sp.GetRequiredService<ITokenStore>();
@@ -43,6 +48,10 @@ public static class ServiceCollectionExtensions
                 config.Current.Github.Host,
                 sp.GetRequiredService<ILogger<GitHubReviewService>>());
         });
+        services.AddSingleton<IReviewAuth>(sp => sp.GetRequiredService<GitHubReviewService>());
+        services.AddSingleton<IPrDiscovery>(sp => sp.GetRequiredService<GitHubReviewService>());
+        services.AddSingleton<IPrReader>(sp => sp.GetRequiredService<GitHubReviewService>());
+        services.AddSingleton<IReviewSubmitter>(sp => sp.GetRequiredService<GitHubReviewService>());
 
         services.AddSingleton<ISectionQueryRunner>(sp =>
         {

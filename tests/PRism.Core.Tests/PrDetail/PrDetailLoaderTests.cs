@@ -8,7 +8,7 @@ using Xunit;
 namespace PRism.Core.Tests.PrDetail;
 
 // Spec § 6.1 + § 6.4 + Q5. PrDetailLoader is a concrete class — there is no
-// IPrDetailLoader interface. Tests substitute IReviewService directly via constructor
+// IPrDetailLoader interface. Tests substitute IPrReader directly via constructor
 // injection (the loader's only meaningful collaborator that varies between tests).
 public class PrDetailLoaderTests
 {

@@ -49,7 +49,7 @@ internal static class PrReloadEndpoints
         ReloadRequest? request,
         HttpContext httpContext,
         IAppStateStore store,
-        IReviewService reviewService,
+        IPrReader reviewService,
         IActivePrCache activePrCache,
         IReviewEventBus bus,
         CancellationToken ct)

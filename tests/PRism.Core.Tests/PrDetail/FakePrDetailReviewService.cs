@@ -4,10 +4,10 @@ using PRism.Core.Iterations;
 
 namespace PRism.Core.Tests.PrDetail;
 
-// Test helper. Scripts IReviewService responses for PrDetailLoader tests + records the
+// Test helper. Scripts IPrReader responses for PrDetailLoader tests + records the
 // per-method call-order so tests can assert orchestration sequencing. The PR-detail surface
 // is the only part PrDetailLoader exercises; legacy / non-S3 methods throw NotImplementedException.
-internal sealed class FakePrDetailReviewService : IReviewService
+internal sealed class FakePrDetailReviewService : IPrReader
 {
     private readonly List<string>? _callLog;
 
@@ -65,9 +65,6 @@ internal sealed class FakePrDetailReviewService : IReviewService
 
     // Methods PrDetailLoader doesn't call in its current shape — left unimplemented so
     // accidental use in a test is loud.
-    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) => throw new NotImplementedException();
-    public Task<InboxSection[]> GetInboxAsync(CancellationToken ct) => throw new NotImplementedException();
-    public bool TryParsePrUrl(string url, out PrReference? reference) => throw new NotImplementedException();
     public Task<Pr> GetPrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
     public Task<PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
     public Task<FileChange[]> GetDiffAsync(PrReference reference, string fromSha, string toSha, CancellationToken ct) => throw new NotImplementedException();
@@ -84,5 +81,4 @@ internal sealed class FakePrDetailReviewService : IReviewService
     }
     public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException();
     public Task<CommitInfo?> GetCommitAsync(PrReference reference, string sha, CancellationToken ct) => throw new NotImplementedException();
-    public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException();
 }

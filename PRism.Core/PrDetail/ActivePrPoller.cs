@@ -12,7 +12,7 @@ namespace PRism.Core.PrDetail;
 public sealed class ActivePrPoller : BackgroundService
 {
     private readonly ActivePrSubscriberRegistry _registry;
-    private readonly IReviewService _review;
+    private readonly IPrReader _review;
     private readonly IReviewEventBus _bus;
     private readonly IActivePrCache _cache;
     private readonly ILogger<ActivePrPoller> _logger;
@@ -48,7 +48,7 @@ public sealed class ActivePrPoller : BackgroundService
 
     public ActivePrPoller(
         ActivePrSubscriberRegistry registry,
-        IReviewService review,
+        IPrReader review,
         IReviewEventBus bus,
         IActivePrCache cache,
         ILogger<ActivePrPoller> logger,

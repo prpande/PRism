@@ -50,7 +50,7 @@ internal static class InboxEndpoints
 
         app.MapPost("/api/inbox/parse-pr-url", async (
             HttpContext ctx,
-            IReviewService review,
+            IPrDiscovery review,
             IConfigStore config,
             CancellationToken ct) =>
         {
