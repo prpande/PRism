@@ -17,7 +17,7 @@ interface Props {
 }
 
 export function SubmitButton({ session, headShaDrift, validatorResults, onSubmit, disabled }: Props) {
-  const reason = computeDisabledReason(session, headShaDrift, validatorResults);
+  const reason = submitDisabledReason(session, headShaDrift, validatorResults);
   const isDisabled = disabled === true || reason !== null;
   return (
     <button
@@ -40,7 +40,9 @@ function isEmptyContent(s: ReviewSessionDto): boolean {
   return noDrafts && noReplies && noSummary;
 }
 
-function computeDisabledReason(
+// Exported so the Submit dialog's Confirm button re-evaluates the same rules
+// after an in-dialog verdict change (spec § 10 two-surfaces-one-source).
+export function submitDisabledReason(
   s: ReviewSessionDto,
   headShaDrift: boolean,
   validators: ValidatorResult[],
