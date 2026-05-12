@@ -23,8 +23,8 @@ export function PreSubmitValidatorCard({ results }: Props) {
         AI preview — sample content, not generated from this PR
       </div>
       <ul className="ai-validator-card__list">
-        {results.map((r, i) => (
-          <li key={i} className="ai-validator-card__item">
+        {results.map((r) => (
+          <li key={`${r.severity}:${r.message}`} className="ai-validator-card__item">
             <span className={`chip ${CHIP_CLASS[r.severity]}`}>{r.severity}</span>
             <span className="ai-validator-card__message">
               <MarkdownRenderer source={r.message} className="ai-validator-card__md" />

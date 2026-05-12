@@ -54,6 +54,23 @@ describe('SubmitProgressIndicator — merged Phase A / Phase B (R2)', () => {
     expect(screen.getByText(/network blip/i)).toBeInTheDocument();
   });
 
+  it('Phase A failure (BeginPendingReview fails before succeeding): shows ✗ + error, not the spinner', () => {
+    const steps: SubmitProgressStep[] = [
+      { step: 'DetectExistingPendingReview', status: 'Succeeded', done: 1, total: 1 },
+      {
+        step: 'BeginPendingReview',
+        status: 'Failed',
+        done: 0,
+        total: 1,
+        errorMessage: 'addPullRequestReview failed',
+      },
+    ];
+    const { container } = render(<SubmitProgressIndicator steps={steps} />);
+    expect(screen.queryByText(/checking pending review state/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/addPullRequestReview failed/i)).toBeInTheDocument();
+    expect(container.querySelector('[data-state="failed"]')).not.toBeNull();
+  });
+
   it('the container is an aria-live polite region in both phases', () => {
     const { rerender, container } = render(<SubmitProgressIndicator steps={[]} />);
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull();

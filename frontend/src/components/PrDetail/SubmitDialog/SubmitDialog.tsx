@@ -58,6 +58,7 @@ export function SubmitDialog(props: Props) {
   const [summary, setSummary] = useState(session.draftSummaryMarkdown ?? '');
   const cancelRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const confirmingRef = useRef(false);
   const [escNotice, setEscNotice] = useState('');
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -197,11 +198,20 @@ export function SubmitDialog(props: Props) {
   const prUrl = `https://github.com/${reference.owner}/${reference.repo}/pull/${reference.number}`;
 
   const handleConfirm = async () => {
-    // Flush the debounced summary save so a keystroke <250ms before Confirm
-    // still lands in the session the pipeline reads (spec § 8.2). Default to
-    // Comment when no verdict was picked (spec § 6).
-    await flushSummary();
-    onSubmit(verdictToSubmitWire(verdict ?? 'comment'));
+    // Guard the flushSummary round-trip — the dialog stays `idle` (Confirm
+    // enabled) until the parent's submit() flips the state, so a rapid
+    // double-click would otherwise fire two onSubmit calls.
+    if (confirmingRef.current) return;
+    confirmingRef.current = true;
+    try {
+      // Flush the debounced summary save so a keystroke <250ms before Confirm
+      // still lands in the session the pipeline reads (spec § 8.2). Default to
+      // Comment when no verdict was picked (spec § 6).
+      await flushSummary();
+      onSubmit(verdictToSubmitWire(verdict ?? 'comment'));
+    } finally {
+      confirmingRef.current = false;
+    }
   };
 
   return (
@@ -230,8 +240,8 @@ export function SubmitDialog(props: Props) {
               (submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>)
                 .snapshot.replyCount
             }{' '}
-            reply(ies)). Resume / Discard handling lands in the next slice — Cancel for now and use
-            the Drafts tab.
+            reply(ies)). Resume / discard options are coming soon — for now, Cancel and adjudicate
+            it from the Drafts tab.
           </div>
         )}
 

@@ -71,13 +71,21 @@ function rowFor(step: SubmitStep, steps: SubmitProgressStep[]): { state: RowStat
 
 export function SubmitProgressIndicator({ steps }: Props) {
   if (!isPhaseB(steps)) {
+    // Step 1 / Step 2 can fail before BeginPendingReview succeeds — render a
+    // failed row then, not the "checking…" spinner (which would contradict the
+    // dialog's "Submit failed" title + Retry footer).
+    const failed = steps.find((s) => s.status === 'Failed');
     return (
       <div className="submit-progress submit-progress--phase-a" aria-live="polite">
-        <div className="submit-progress__row" data-state="active">
+        <div className="submit-progress__row" data-state={failed ? 'failed' : 'active'}>
           <span className="submit-progress__icon" aria-hidden="true">
-            {ICON.active}
+            {failed ? ICON.failed : ICON.active}
           </span>
-          <span className="submit-progress__text">Checking pending review state…</span>
+          <span className="submit-progress__text">
+            {failed
+              ? `Submit failed${failed.errorMessage ? `: ${failed.errorMessage}` : ''}`
+              : 'Checking pending review state…'}
+          </span>
         </div>
       </div>
     );
