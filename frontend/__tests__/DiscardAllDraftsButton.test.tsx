@@ -107,10 +107,24 @@ describe('DiscardAllDraftsButton', () => {
     expect(screen.getByRole('button')).toHaveTextContent(/^Discard$/);
   });
 
-  it('click opens the confirmation modal with the count', () => {
+  it('click opens the confirmation modal listing the drafts/replies being removed', () => {
     render(<DiscardAllDraftsButton prState="closed" session={withDrafts} onDiscard={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
-    expect(screen.getByText(/discard 2 draft.+1 repl/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 draft comments? and 1 repl/i)).toBeInTheDocument();
+    expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+  });
+
+  it('pending-review-only session: modal copy names the pending review, not "0 draft(s)"', () => {
+    render(
+      <DiscardAllDraftsButton
+        prState="merged"
+        session={session({ pendingReviewId: 'PRR_z' })}
+        onDiscard={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
+    expect(screen.getByText(/pending review on github/i)).toBeInTheDocument();
+    expect(screen.queryByText(/0 draft/i)).toBeNull();
   });
 
   it('confirming the modal fires onDiscard', () => {

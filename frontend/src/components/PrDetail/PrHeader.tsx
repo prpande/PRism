@@ -125,7 +125,10 @@ export function PrHeader({
       // banner is moot now.
       submit.clearLastResume();
     }
-  }, [submit.state.kind]);
+    // `onSessionRefetch` is intentionally omitted — it's re-created each render
+    // by PrDetailPage; including it would re-run the refetch every render while
+    // in `success`. `submit.clearLastResume` is stable (useCallback([])).
+  }, [submit.state.kind, submit.clearLastResume]);
 
   const patchVerdict = (verdict: DraftVerdict | null) => {
     void sendPatch(reference, { kind: 'draftVerdict', payload: verdict }).then(() => {

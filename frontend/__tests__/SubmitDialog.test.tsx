@@ -255,6 +255,23 @@ describe('SubmitDialog', () => {
     expect(screen.queryByLabelText(/pr-level summary/i)).not.toBeInTheDocument();
   });
 
+  it('stale-commit-oid state: Esc dismisses (nothing was submitted; no editable content to protect)', () => {
+    const onClose = vi.fn();
+    render(
+      <SubmitDialog
+        {...baseProps({
+          submitState: { kind: 'stale-commit-oid', orphanCommitOid: 'old' },
+          currentHeadSha: 'feedface',
+          onClose,
+        })}
+      />,
+    );
+    // The SubmitDialog-level window Esc handler is skipped for this kind; the
+    // shared <Modal>'s document-level handler dismisses (disableEscDismiss off).
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it('stale-commit-oid with head_sha drift still pending: Recreate disabled + Reload reminder', () => {
     render(
       <SubmitDialog

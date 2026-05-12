@@ -12,8 +12,29 @@ interface Props {
   prState: 'closed' | 'merged';
   threadCount: number;
   replyCount: number;
+  // The bulk-discard button also surfaces when the *only* leftover is a draft
+  // summary or a stale pendingReviewId — name those in the copy so it doesn't
+  // read "0 draft(s) and 0 reply(ies)" when something is in fact being removed.
+  hasSummary?: boolean;
+  hasPendingReview?: boolean;
   onConfirm(): void;
   onCancel(): void;
+}
+
+function discardedItems(
+  threadCount: number,
+  replyCount: number,
+  hasSummary: boolean,
+  hasPendingReview: boolean,
+): string {
+  const parts: string[] = [];
+  if (threadCount > 0) parts.push(`${threadCount} draft comment${threadCount === 1 ? '' : 's'}`);
+  if (replyCount > 0) parts.push(`${replyCount} repl${replyCount === 1 ? 'y' : 'ies'}`);
+  if (hasSummary) parts.push('your draft summary');
+  if (hasPendingReview) parts.push('the pending review on GitHub');
+  if (parts.length === 0) return 'all local review state';
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 }
 
 export function DiscardAllConfirmationModal({
@@ -21,15 +42,18 @@ export function DiscardAllConfirmationModal({
   prState,
   threadCount,
   replyCount,
+  hasSummary = false,
+  hasPendingReview = false,
   onConfirm,
   onCancel,
 }: Props) {
   if (!open) return null;
+  const items = discardedItems(threadCount, replyCount, hasSummary, hasPendingReview);
   return (
     <Modal open title="Discard all drafts?" onClose={onCancel} defaultFocus="cancel">
       <div className="discard-all-confirmation-modal">
         <p>
-          Discard {threadCount} draft(s) and {replyCount} reply(ies) on this {prState} PR? This
+          Discard everything still on this {prState} PR? This permanently removes {items}. This
           cannot be undone.
         </p>
         <footer className="discard-all-confirmation-modal__footer">

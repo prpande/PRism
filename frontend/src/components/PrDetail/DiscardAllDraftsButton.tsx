@@ -41,6 +41,8 @@ export function DiscardAllDraftsButton({ prState, session, onDiscard }: Props) {
         prState={prState}
         threadCount={session.draftComments.length}
         replyCount={session.draftReplies.length}
+        hasSummary={!!session.draftSummaryMarkdown && session.draftSummaryMarkdown.trim() !== ''}
+        hasPendingReview={!!session.pendingReviewId}
         onConfirm={() => {
           setConfirmOpen(false);
           onDiscard();

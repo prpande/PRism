@@ -62,7 +62,7 @@ describe('ImportedDraftsBanner', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('is an aria-live region so the staleness note is announced when it appears', () => {
+  it('is a live region (role="status") so the staleness note is announced when it appears', () => {
     render(
       <ImportedDraftsBanner
         snapshotA={{ threadCount: 1, replyCount: 0 }}
@@ -70,7 +70,8 @@ describe('ImportedDraftsBanner', () => {
         hasResolvedImports={false}
       />,
     );
-    const region = screen.getByRole('status');
-    expect(region).toHaveAttribute('aria-live', 'polite');
+    // role="status" implies aria-live="polite" — assert the role, not a
+    // redundant explicit aria-live attribute.
+    expect(screen.getByRole('status')).toBeInTheDocument();
   });
 });

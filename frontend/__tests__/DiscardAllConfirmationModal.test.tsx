@@ -16,10 +16,45 @@ function renderModal(overrides: Partial<Parameters<typeof DiscardAllConfirmation
 }
 
 describe('DiscardAllConfirmationModal', () => {
-  it('renders the count copy and the "cannot be undone" warning', () => {
+  it('lists the draft/reply counts and warns it cannot be undone', () => {
     renderModal({ threadCount: 2, replyCount: 1 });
-    expect(screen.getByText(/discard 2 draft.+1 repl/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 draft comments? and 1 repl/i)).toBeInTheDocument();
     expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+  });
+
+  it('singularizes draft / reply counts', () => {
+    renderModal({ threadCount: 1, replyCount: 1, prState: 'closed' });
+    expect(screen.getByText(/1 draft comment and 1 reply\b/i)).toBeInTheDocument();
+  });
+
+  it('names a summary-only / pending-review-only leftover instead of "0 draft(s) and 0 reply(ies)"', () => {
+    const { unmount } = render(
+      <DiscardAllConfirmationModal
+        open
+        prState="merged"
+        threadCount={0}
+        replyCount={0}
+        hasPendingReview
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/pending review on github/i)).toBeInTheDocument();
+    expect(screen.queryByText(/0 draft/i)).toBeNull();
+    unmount();
+    render(
+      <DiscardAllConfirmationModal
+        open
+        prState="closed"
+        threadCount={0}
+        replyCount={0}
+        hasSummary
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/your draft summary/i)).toBeInTheDocument();
+    expect(screen.queryByText(/0 draft/i)).toBeNull();
   });
 
   it('names the actual PR state in the copy', () => {

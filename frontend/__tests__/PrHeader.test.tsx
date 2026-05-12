@@ -193,12 +193,13 @@ describe('PrHeader — closed/merged PR (PR5 § 13)', () => {
     expect(screen.getByRole('group', { name: /verdict/i })).toBeInTheDocument();
   });
 
-  it('clicking "Discard all drafts" opens the confirmation modal with the count copy', () => {
+  it('clicking "Discard all drafts" opens the confirmation modal naming what is removed', () => {
     render(
       <PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_x' })} prState="merged" />,
     );
     fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
-    expect(screen.getByText(/discard 0 draft.+0 repl/i)).toBeInTheDocument();
+    expect(screen.getByText(/on this merged PR/i)).toBeInTheDocument();
+    expect(screen.getByText(/pending review on github/i)).toBeInTheDocument();
     expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
   });
 });

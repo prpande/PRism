@@ -186,10 +186,12 @@ export function SubmitDialog(props: Props) {
   // The stale-commit-oid state collapses the dialog body to the banner — the
   // orphan was already deleted server-side, so the verdict picker / summary /
   // counts are moot until the user re-fires (spec § 12). The banner owns its
-  // own Cancel + "Recreate and resubmit" buttons.
+  // own Cancel + "Recreate and resubmit" buttons; Esc dismisses (≡ Cancel,
+  // useSubmit resets to idle) since nothing was submitted and there's no
+  // editable content to protect — unlike the idle dialog, Esc isn't trapped.
   if (kind === 'stale-commit-oid') {
     return (
-      <Modal open={open} title="The PR’s head commit changed." onClose={onClose} disableEscDismiss>
+      <Modal open={open} title="The PR’s head commit changed." onClose={onClose}>
         <div className="submit-dialog submit-dialog--stale" ref={dialogRef} tabIndex={-1}>
           <StaleCommitOidBanner
             currentHeadSha={currentHeadSha}

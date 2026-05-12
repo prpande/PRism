@@ -33,7 +33,9 @@ export function ImportedDraftsBanner({ snapshotA, snapshotB, hasResolvedImports 
   if (!countDrift && !hasResolvedImports) return null;
 
   return (
-    <div className="imported-drafts-banner banner-warning" role="status" aria-live="polite">
+    // role="status" already implies aria-live="polite" — the note is announced
+    // when this banner mounts after a Resume.
+    <div className="imported-drafts-banner banner-warning" role="status">
       {countDrift && (
         <p>
           The pending review changed during the prompt — {snapshotB.threadCount} thread(s) /{' '}
