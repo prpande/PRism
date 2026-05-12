@@ -11,6 +11,14 @@ internal sealed class NoopProgress : IProgress<SubmitProgressEvent>
     public void Report(SubmitProgressEvent value) { }
 }
 
+// Captures every progress event the pipeline emits so a test can assert step ordering / skips.
+internal sealed class RecordingProgress : IProgress<SubmitProgressEvent>
+{
+    private readonly List<SubmitProgressEvent> _events = new();
+    public IReadOnlyList<SubmitProgressEvent> Events => _events;
+    public void Report(SubmitProgressEvent value) => _events.Add(value);
+}
+
 internal static class SessionFactory
 {
     // A bare session at a given head with no drafts / replies / summary / verdict and no pending review.
