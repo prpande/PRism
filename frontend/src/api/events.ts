@@ -3,9 +3,24 @@ import type {
   DraftSavedEvent,
   InboxUpdatedEvent,
   StateChangedEvent,
+  SubmitDuplicateMarkerDetectedEvent,
+  SubmitForeignPendingReviewEvent,
+  SubmitOrphanCleanupFailedEvent,
+  SubmitProgressEvent,
+  SubmitStaleCommitOidEvent,
 } from './types';
 
-export type { InboxUpdatedEvent, StateChangedEvent, DraftSavedEvent, DraftDiscardedEvent };
+export type {
+  InboxUpdatedEvent,
+  StateChangedEvent,
+  DraftSavedEvent,
+  DraftDiscardedEvent,
+  SubmitProgressEvent,
+  SubmitForeignPendingReviewEvent,
+  SubmitStaleCommitOidEvent,
+  SubmitOrphanCleanupFailedEvent,
+  SubmitDuplicateMarkerDetectedEvent,
+};
 
 export type PrUpdatedEvent = {
   prRef: string;
@@ -20,7 +35,28 @@ export type EventPayloadByType = {
   'state-changed': StateChangedEvent;
   'draft-saved': DraftSavedEvent;
   'draft-discarded': DraftDiscardedEvent;
+  'submit-progress': SubmitProgressEvent;
+  'submit-foreign-pending-review': SubmitForeignPendingReviewEvent;
+  'submit-stale-commit-oid': SubmitStaleCommitOidEvent;
+  'submit-orphan-cleanup-failed': SubmitOrphanCleanupFailedEvent;
+  'submit-duplicate-marker-detected': SubmitDuplicateMarkerDetectedEvent;
 };
+
+// SSE event names the EventSource must register listeners for. EventSource only dispatches
+// `event:`-named frames whose name was passed to addEventListener — adding a type to
+// EventPayloadByType is necessary but not sufficient; it must also appear here.
+const EVENT_TYPES = [
+  'inbox-updated',
+  'pr-updated',
+  'state-changed',
+  'draft-saved',
+  'draft-discarded',
+  'submit-progress',
+  'submit-foreign-pending-review',
+  'submit-stale-commit-oid',
+  'submit-orphan-cleanup-failed',
+  'submit-duplicate-marker-detected',
+] as const satisfies readonly (keyof EventPayloadByType)[];
 
 export type EventStreamHandle = {
   subscriberId(): Promise<string>;
@@ -111,9 +147,7 @@ export function openEventStream(): EventStreamHandle {
       resetWatchdog();
     });
 
-    (
-      ['inbox-updated', 'pr-updated', 'state-changed', 'draft-saved', 'draft-discarded'] as const
-    ).forEach((type) => {
+    EVENT_TYPES.forEach((type) => {
       es.addEventListener(type, (raw) => {
         try {
           const data = JSON.parse((raw as MessageEvent).data) as EventPayloadByType[typeof type];

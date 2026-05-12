@@ -333,3 +333,48 @@ export interface DraftDiscardedEvent {
   draftId: string;
   sourceTabId: string | null;
 }
+
+// S5 PR3 submit-pipeline SSE events (spec § 7.4 / § 7.5 / § 13.2). Counts + IDs only — the
+// per-PR fanout is broader-than-spec, so payloads never carry thread/reply bodies, the orphan
+// review id, or pendingReviewId (threat-model defense). step / status are the C# enum names.
+
+export type SubmitStep =
+  | 'DetectExistingPendingReview'
+  | 'BeginPendingReview'
+  | 'AttachThreads'
+  | 'AttachReplies'
+  | 'Finalize';
+
+export type SubmitStepStatus = 'Started' | 'Succeeded' | 'Failed';
+
+export interface SubmitProgressEvent {
+  prRef: string;
+  step: SubmitStep;
+  status: SubmitStepStatus;
+  done: number;
+  total: number;
+  errorMessage: string | null;
+}
+
+export interface SubmitForeignPendingReviewEvent {
+  prRef: string;
+  pullRequestReviewId: string;
+  commitOid: string;
+  createdAt: string;
+  threadCount: number;
+  replyCount: number;
+}
+
+export interface SubmitStaleCommitOidEvent {
+  prRef: string;
+  orphanCommitOid: string;
+}
+
+export interface SubmitOrphanCleanupFailedEvent {
+  prRef: string;
+}
+
+export interface SubmitDuplicateMarkerDetectedEvent {
+  prRef: string;
+  draftId: string;
+}
