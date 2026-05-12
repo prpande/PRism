@@ -384,6 +384,15 @@ public sealed partial class GitHubReviewService
     // it survives the JsonDocument disposal). Throws GitHubGraphQLException on ANY non-empty `errors`
     // array — a mutation that reports errors did not apply — or when no `data` object came back.
     // Transport-level failures (non-2xx, DNS, etc.) surface as HttpRequestException from PostGraphQLAsync.
+    //
+    // This fail-loud-on-errors rule is applied to the submit pipeline's *queries* too
+    // (FindOwnPendingReviewAsync, ResolvePullRequestNodeIdAsync), deliberately stricter than the
+    // read-side ThrowIfGraphQLErrorsWithoutData, which tolerates errors-alongside-partial-data for
+    // the display fetches (GetPrDetailAsync etc.). The submit pipeline's detection / node-resolution
+    // steps are correctness-critical — acting on a partially-errored thread list could create a
+    // duplicate thread or drop a draft on Resume — so a partial result is treated as a failure the
+    // pipeline retries, not as data to act on. (A genuine "PR / repo not found" comes back as
+    // data:null with no `errors`, so it still flows through to a clean null return at the caller.)
     private async Task<JsonElement> PostSubmitGraphQLAsync(string query, object variables, CancellationToken ct)
     {
         var raw = await PostGraphQLAsync(query, variables, ct).ConfigureAwait(false);
