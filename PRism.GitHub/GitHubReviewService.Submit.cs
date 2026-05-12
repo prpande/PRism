@@ -230,10 +230,27 @@ public sealed partial class GitHubReviewService
             }
             """;
 
+        // Best-effort throughout: a per-comment delete that fails (already gone, transient error)
+        // is swallowed so the remaining comments are still attempted. Leaving a partially-stripped
+        // thread is harmless — it's UI noise the multi-marker defense already tolerates — and far
+        // better than aborting the cleanup of every subsequent duplicate. (A lookup-query failure
+        // above still propagates, consistent with the other submit methods.)
         foreach (var c in commentNodes.EnumerateArray())
         {
-            if (c.TryGetProperty("id", out var idEl) && idEl.GetString() is { Length: > 0 } commentId)
+            if (!(c.TryGetProperty("id", out var idEl) && idEl.GetString() is { Length: > 0 } commentId))
+                continue;
+            try
+            {
                 _ = await PostSubmitGraphQLAsync(deleteComment, new { id = commentId }, ct).ConfigureAwait(false);
+            }
+            catch (GitHubGraphQLException)
+            {
+                // Comment already deleted, or some other GraphQL-level failure — keep going.
+            }
+            catch (HttpRequestException)
+            {
+                // Transport hiccup on one delete — keep going; the leftover thread is tolerable.
+            }
         }
     }
 
@@ -248,6 +265,13 @@ public sealed partial class GitHubReviewService
         // connection, and the thread-level fields (isResolved / diffSide / line / originalLine) live
         // on PullRequestReviewThread — so threads are grouped to the pending review by their root
         // comment's pullRequestReview.id.
+        // reviews(first: 50): GitHub allows one pending review per *user* per PR, so this lists at most
+        // one pending review per active reviewer — 50 is generous headroom that the viewer's own review
+        // will always be inside (first: 1 would be wrong: a co-reviewer's pending review could sort
+        // ahead of the viewer's, making viewerDidAuthor false on node[0] and yielding a false-negative
+        // null). reviewThreads(first: 100) DOES have a realistic ceiling on a busy PR — and pagination
+        // truncation is silent (no `errors` array), so PostSubmitGraphQLAsync won't catch it; the
+        // pageInfo.hasNextPage guard below fails loud instead of returning an incomplete snapshot.
         const string query = """
             query($owner: String!, $repo: String!, $number: Int!) {
               repository(owner: $owner, name: $repo) {
@@ -256,6 +280,7 @@ public sealed partial class GitHubReviewService
                     nodes { id viewerDidAuthor commit { oid } createdAt }
                   }
                   reviewThreads(first: 100) {
+                    pageInfo { hasNextPage }
                     nodes {
                       id
                       path
@@ -301,6 +326,15 @@ public sealed partial class GitHubReviewService
             ? ca.GetDateTimeOffset()
             : default;
 
+        // Fail loud rather than return an incomplete snapshot — see the query comment above.
+        if (TryGetPath(pull, out var hasNextPage, "reviewThreads", "pageInfo", "hasNextPage")
+            && hasNextPage.ValueKind == JsonValueKind.True)
+        {
+            throw new GitHubGraphQLException(
+                $"Pull request {reference.Owner}/{reference.Repo}#{reference.Number} has more than 100 review threads; " +
+                "FindOwnPendingReviewAsync cannot return a complete pending-review snapshot. (PoC: review-thread pagination is not implemented.)");
+        }
+
         var threads = new List<PendingReviewThreadSnapshot>();
         if (TryGetPath(pull, out var threadNodes, "reviewThreads", "nodes") && threadNodes.ValueKind == JsonValueKind.Array)
         {
@@ -325,16 +359,23 @@ public sealed partial class GitHubReviewService
     private static PendingReviewThreadSnapshot ProjectPendingReviewThread(JsonElement thread, JsonElement[] comments)
     {
         var root = comments[0];
+        var threadId = thread.TryGetProperty("id", out var tid) ? tid.GetString() ?? "" : "";
         IReadOnlyList<PendingReviewCommentSnapshot> replies = comments.Length > 1
             ? comments.Skip(1).Select(c => new PendingReviewCommentSnapshot(
                 c.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
                 c.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "")).ToList()
             : Array.Empty<PendingReviewCommentSnapshot>();
 
+        // A pending-review thread is freshly created against a commit, so `line` (or at least
+        // `originalLine`) is always set. If both are absent the response is malformed — fail loud
+        // rather than emit LineNumber:0, which would poison reconciliation on Resume.
+        var lineNumber = ReadInt(thread, "line") ?? ReadInt(thread, "originalLine")
+            ?? throw new GitHubGraphQLException($"Pending-review thread {threadId} has neither line nor originalLine.");
+
         return new PendingReviewThreadSnapshot(
-            PullRequestReviewThreadId: thread.TryGetProperty("id", out var tid) ? tid.GetString() ?? "" : "",
+            PullRequestReviewThreadId: threadId,
             FilePath: thread.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "",
-            LineNumber: ReadInt(thread, "line") ?? ReadInt(thread, "originalLine") ?? 0,
+            LineNumber: lineNumber,
             Side: thread.TryGetProperty("diffSide", out var ds) ? ds.GetString() ?? "" : "",
             OriginalCommitOid: TryGetPath(root, out var ocOid, "originalCommit", "oid") ? ocOid.GetString() ?? "" : "",
             // The reconciliation pipeline's LineMatching step compares anchored content character-equal

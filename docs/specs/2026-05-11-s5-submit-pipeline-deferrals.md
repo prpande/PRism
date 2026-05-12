@@ -430,3 +430,12 @@ Decisions made while executing the plan that diverge from a literal task body or
 - **Affects:** Plan Task 19 (conditional: "run only if `GitHubReviewService.cs` has grown unwieldy after Tasks 12–18 landed").
 - **Decision:** PR1 added **zero** lines to `GitHubReviewService.cs` — all of the new GraphQL code lives in the new partial `GitHubReviewService.Submit.cs`. The original file's size (~1100 lines) is unchanged from before S5, so the split would be a refactor unrelated to "implement the submit methods" and is out of PR1's scope. Deferred per ADR-S5-2's own "optional / do it when it feels too large" framing.
 - **Revisit when:** A later slice adds another batch of methods to `GitHubReviewService.cs` proper, or a maintainer raises the file-size concern with concrete navigation pain.
+
+### [Defer] Review-thread pagination in `FindOwnPendingReviewAsync`
+
+- **Source:** PR1 execution (2026-05-12), surfaced by the `claude[bot]` PR #45 review
+- **Severity:** P3 (PoC-acceptable cap; fails loud rather than silently wrong)
+- **Date:** 2026-05-12
+- **Reason:** `FindOwnPendingReviewAsync` fetches `reviewThreads(first: 100)` (and `comments(first: 100)` per thread) on a single page. A PR with more than 100 review threads would truncate — and connection truncation is not a GraphQL `errors`-array event, so `PostSubmitGraphQLAsync`'s strict error check can't catch it. Rather than return a partial snapshot the submit pipeline would act on (risking duplicate-thread creation or dropped drafts on Resume), the method now reads `reviewThreads.pageInfo.hasNextPage` and throws `GitHubGraphQLException` when it's `true` — fail-loud, consistent with the rest of the submit pipeline. Cursor pagination (mirroring the deferred timeline pagination in `GetPrDetailAsync`) is the proper fix; 100 threads is plenty for the PoC dogfood scenario, and the loud failure makes the cap visible if a real PR ever hits it. (The analogous `comments(first: 100)` per-thread cap is left without a guard — a single thread with >100 comments is far less plausible than a PR with >100 threads, and a truncated reply chain degrades gracefully rather than risking duplicates.)
+- **Revisit when:** Dogfooding hits a PR with >100 review threads, OR a general GraphQL-connection-pagination utility lands in `PRism.GitHub` (it would naturally cover this and the timeline cap together).
+- **Where the gap lives in code:** `PRism.GitHub/GitHubReviewService.Submit.cs` — `FindOwnPendingReviewAsync`'s `reviewThreads(first: 100)` query + the `hasNextPage` guard.

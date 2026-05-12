@@ -61,7 +61,7 @@ public class GitHubReviewServiceSubmitFindOwnTests
                     "reviews": { "nodes": [
                       { "id": "PRR_mine_123", "viewerDidAuthor": true, "commit": { "oid": "abc1234" }, "createdAt": "2026-05-11T10:00:00Z" }
                     ] },
-                    "reviewThreads": { "nodes": [
+                    "reviewThreads": { "pageInfo": { "hasNextPage": false }, "nodes": [
                       {
                         "id": "PRRT_t1",
                         "path": "src/Foo.cs",
@@ -134,9 +134,79 @@ public class GitHubReviewServiceSubmitFindOwnTests
         query.Should().Contain("states: [PENDING]");
         query.Should().Contain("viewerDidAuthor");
         query.Should().Contain("reviewThreads");
+        query.Should().Contain("hasNextPage");   // truncation guard
         var vars = root.GetProperty("variables");
         vars.GetProperty("owner").GetString().Should().Be("owner");
         vars.GetProperty("repo").GetString().Should().Be("repo");
         vars.GetProperty("number").GetInt32().Should().Be(42);
+    }
+
+    [Fact]
+    public async Task FindOwnPendingReviewAsync_PrNotFound_ReturnsNull()
+    {
+        var handler = new RecordingHttpMessageHandler(
+            HttpStatusCode.OK, """{"data":{"repository":{"pullRequest":null}}}""");
+        var svc = NewService(handler);
+
+        var snapshot = await svc.FindOwnPendingReviewAsync(Ref, CancellationToken.None);
+        snapshot.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task FindOwnPendingReviewAsync_ReviewThreadsTruncated_ThrowsGitHubGraphQLException()
+    {
+        // Pagination truncation is silent (no GraphQL `errors`), so the method fails loud on hasNextPage
+        // rather than return a partial snapshot the submit pipeline would act on.
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """
+            {
+              "data": {
+                "repository": {
+                  "pullRequest": {
+                    "reviews": { "nodes": [
+                      { "id": "PRR_mine", "viewerDidAuthor": true, "commit": { "oid": "abc1234" }, "createdAt": "2026-05-11T10:00:00Z" }
+                    ] },
+                    "reviewThreads": { "pageInfo": { "hasNextPage": true }, "nodes": [] }
+                  }
+                }
+              }
+            }
+            """);
+        var svc = NewService(handler);
+
+        Func<Task> act = () => svc.FindOwnPendingReviewAsync(Ref, CancellationToken.None);
+        await act.Should().ThrowAsync<GitHubGraphQLException>().WithMessage("*more than 100 review threads*");
+    }
+
+    [Fact]
+    public async Task FindOwnPendingReviewAsync_ThreadWithNeitherLineNorOriginalLine_ThrowsGitHubGraphQLException()
+    {
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """
+            {
+              "data": {
+                "repository": {
+                  "pullRequest": {
+                    "reviews": { "nodes": [
+                      { "id": "PRR_mine", "viewerDidAuthor": true, "commit": { "oid": "abc1234" }, "createdAt": "2026-05-11T10:00:00Z" }
+                    ] },
+                    "reviewThreads": { "pageInfo": { "hasNextPage": false }, "nodes": [
+                      {
+                        "id": "PRRT_bad",
+                        "path": "src/Foo.cs",
+                        "diffSide": "RIGHT",
+                        "isResolved": false,
+                        "comments": { "nodes": [
+                          { "id": "PRRC_root", "body": "x", "originalCommit": { "oid": "abc1234" }, "pullRequestReview": { "id": "PRR_mine" } }
+                        ] }
+                      }
+                    ] }
+                  }
+                }
+              }
+            }
+            """);
+        var svc = NewService(handler);
+
+        Func<Task> act = () => svc.FindOwnPendingReviewAsync(Ref, CancellationToken.None);
+        await act.Should().ThrowAsync<GitHubGraphQLException>().WithMessage("*neither line nor originalLine*");
     }
 }

@@ -111,6 +111,23 @@ public class GitHubReviewServiceSubmitDeleteTests
     }
 
     [Fact]
+    public async Task DeletePendingReviewThreadAsync_MidLoopDeleteFails_SwallowsAndContinues()
+    {
+        // Best-effort throughout: if one per-comment delete errors, the rest are still attempted.
+        var handler = new RecordingHttpMessageHandler(new[]
+        {
+            (HttpStatusCode.OK, """{"data":{"node":{"comments":{"nodes":[{"id":"PRRC_body"},{"id":"PRRC_reply"}]}}}}"""),
+            (HttpStatusCode.OK, """{"data":null,"errors":[{"message":"Could not resolve to a node with the global id of 'PRRC_body'."}]}"""),  // first delete fails
+            (HttpStatusCode.OK, """{"data":{"deletePullRequestReviewComment":{"pullRequestReview":{"id":"PRR_x"}}}}"""),  // second delete succeeds
+        });
+        var svc = NewService(handler);
+
+        await svc.DeletePendingReviewThreadAsync(Ref, "PRRT_t", CancellationToken.None);  // does NOT throw
+
+        handler.RequestCount.Should().Be(3);  // lookup + both delete attempts
+    }
+
+    [Fact]
     public async Task DeletePendingReviewThreadAsync_OnGraphqlError_ThrowsGitHubGraphQLException()
     {
         var handler = new RecordingHttpMessageHandler(
