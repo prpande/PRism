@@ -8,6 +8,7 @@ revisions:
   - 2026-05-12: PR #43 review pass — marked Risk R1 (MigrateV3ToV4 signature mismatch) Resolved after spec § 6 was corrected to the JsonObject step shape
   - 2026-05-12: PR0a execution — added the "Implementation-time deferrals" section (IDraftReconciliator dead-code not deleted; IReviewSubmitter CA1040 suppression; GitHub-test concrete return type; PRismWebApplicationFactory override re-typed)
   - 2026-05-12: PR1 execution — R16 applied to spec § 4 (interface now 7 methods, adds DeletePendingReviewThreadAsync); added PR1 implementation-time decisions (GraphQL transport reuse; FindOwn single-query shape; DeletePendingReviewThreadAsync via comment-deletes since GitHub has no thread-delete mutation; CreatedAt → DateTimeOffset; test-fake stubs; Task 19 partial-split skipped). GraphQL input/field shapes confirmed via introspection — recorded in docs/spec/00-verification-notes.md.
+  - 2026-05-12: PR2 execution — added PR2 implementation-time decisions (DraftComment.ThreadId trailing `= null` default; PipelineMarker line-state fence detection per R10, ≤3-space cap; PendingReviewThreadSnapshot.CreatedAt added for the multi-marker earliest-adopt; PR-root drafts fail loud in StepAttachThreads; body-cap left to the composer; CA1034/CA1064/CA1032 suppressions on the new union/exception types; no logging in SubmitPipeline so R9's scrub-audit is a no-op for PR2) and PR2 preflight-review fixes (FindOwnPendingReviewAsync widened to include threads we only replied to; Step 3/4 null-snapshot → retryable failure; all overlay UpdateAsync calls wrapped → SubmitFailedException, success-clear swallows; residuals: IsParentThreadGone is fake-only, lost-Begin → foreign-prompt, reply multi-match orders by id)
 ---
 
 # Deferrals — S5 submit pipeline spec
@@ -360,6 +361,55 @@ These aren't deferred decisions — they're known unknowns the plan / implemente
 ## Implementation-time deferrals (surfaced during PR execution)
 
 Decisions made while executing the plan that diverge from a literal task body or the "Files touched" lists. Captured here so a reviewer comparing the PR to the plan sees the rationale.
+
+### [Decision] `DraftComment.ThreadId` ships with a trailing `= null` default
+
+- **Source:** PR2 execution (2026-05-12)
+- **Affects:** Plan Task 21 Step 5 (which shows `string? ThreadId);` with no default and instructs "Every existing constructor call site for `DraftComment` must pass `ThreadId` … fix each"); spec § 6's `DraftComment` code block (also no default).
+- **Decision:** Added `string? ThreadId = null` rather than a required positional parameter. Trailing defaults on persistent-state records already have precedent in the codebase (`DraftThreadRequest.{StartLine, StartSide}` are `= null` reserved fields), and `ThreadId` is *only* ever a non-null value when `SubmitPipeline.AttachThreads` stamps it — every other construction site (composer endpoints, reconciliation test fixtures, and PR2's own pipeline-test fixtures) wants `null`. The default avoids touching ~21 unrelated call sites across 9 files and keeps the pipeline-test fixtures terse. JSON-deserialization behavior is unchanged either way (absent property → `null`). `DraftReply.ReplyCommentId` stays without a default because it sits mid-list and a trailing default is the only kind C# allows — the asymmetry is mechanical, not a convention break.
+- **Revisit when:** N/A — intended end state. If a future field on `DraftComment` genuinely must be supplied at every call site, make it non-defaulted then.
+
+### [Defer] PR-root drafts are not submittable via the pending-review pipeline
+
+- **Source:** PR2 execution (2026-05-12)
+- **Affects:** Plan Task 27 Step 3 (`StepAttachThreadsAsync` — the plan's code does `FilePath: draft.FilePath ?? throw new InvalidOperationException(...)`); spec § 5.2 step 3 (iterates "each `DraftComment`" without addressing the PR-root case).
+- **Decision:** A `DraftComment` with `FilePath`/`LineNumber` null (a PR-root comment — created by `PUT /draft`'s `addPrComment` patch with `Side: "pr"`) can't be attached as an inline thread on a pending review: GitHub's `addPullRequestReviewThread` requires a path + line, and a pending review has no "PR-root comment" slot distinct from the review summary body. Rather than the plan's `InvalidOperationException` (which would escape `SubmitAsync`'s `catch (SubmitFailedException)` unhandled) or silently dropping the user's comment, `StepAttachThreadsAsync` throws `SubmitFailedException(AttachThreads, "draft … has no diff anchor; …")` — surfacing as a `SubmitOutcome.Failed` the user can act on (discard / rewrite). Folding PR-root drafts into the review summary on submit is a possible v2 behavior; it's a design choice the spec doesn't make today.
+- **Revisit when:** Dogfooding surfaces users actually creating PR-root drafts and expecting them to submit, OR a follow-up adds "merge PR-root drafts into the review summary on submit" to the spec.
+
+### [Defer] Body-cap (GitHub's ~65 536-char review-comment limit, marker overhead included) enforcement is composer-side
+
+- **Source:** PR2 execution (2026-05-12); spec § 4 ("body-cap accounting includes the marker") + the user's PR2 task summary listing it under Task 22.
+- **Affects:** Plan Task 22 (`PipelineMarker` — the plan's code has no body-cap logic); spec § 4.
+- **Decision:** `PipelineMarker.Inject` does not truncate. The plan's Task 22 implementation has no body-cap handling either; the spec's "body-cap accounting includes the marker" is satisfied by the composer's `PUT /draft` cap (PR3 Task 41) reserving room for the marker (`Prefix.Length` + draft id + `Suffix.Length` + separators + a possible fence-close). `PipelineMarker.GitHubReviewBodyMaxChars` is exposed as a public const for that composer cap to subtract from. If an over-cap body ever reaches `Inject` anyway, `AttachThreadAsync` fails GitHub-side and the pipeline returns `Failed(AttachThreads, …)` — retryable once the user trims.
+- **Revisit when:** PR3 implements the `PUT /draft` cap and decides exactly how much overhead to reserve; or dogfooding hits a "my long comment got rejected on submit with no warning" report (then move a defensive truncation into `Inject`).
+
+### [Decision] PR2 widens `FindOwnPendingReviewAsync` to include threads the pending review only replied to
+
+- **Source:** PR2 preflight adversarial review (2026-05-12) — flagged Critical: Step 4 would demote every reply to Stale in production.
+- **Affects:** `PRism.GitHub/GitHubReviewService.Submit.cs` (`FindOwnPendingReviewAsync` thread filter) — a PR1-shipped method; touched here because PR2's Step 4 depends on it being correct, and spec § 5.2 step 4 ("verify the reply comment still exists … the snapshot from Step 1 enumerates per-thread comments; check there") assumes the snapshot includes a reply's parent thread.
+- **Decision:** PR1 grouped review threads to the pending review by their *root* comment's `pullRequestReview.id`. That's right for threads the pending review *created* (Step 3's lost-response marker scan), but a `DraftReply` replies to an *existing* comment whose thread's root belongs to a *prior* review — so that thread was being filtered out, and Step 4's `parent is null` branch (intended for "the parent thread was deleted") fired for *every* reply: demote-to-Stale + `Failed(AttachReplies)`, breaking the demo's "reply to a comment, submit" flow. PR2 changes the filter to "include a thread iff our pending review owns *any* comment on it" (the query already fetches each comment's `pullRequestReview.id`). A replied-to-only thread's `BodyMarkdown` is its (foreign) root comment's body — which carries no PRism marker, so Step 3's marker scan never false-adopts it; its `Comments` include our reply (with our marker), so Step 4's verify + the lost-response reply-adoption work. `GitHubReviewServiceSubmitFindOwnTests` gains a case for this.
+- **Revisit when:** N/A — intended end state. (If PR1's narrower behavior was relied on anywhere else, this would surface; nothing in the codebase did.)
+
+### [Decision] `FindOwnPendingReviewAsync` now fails loud on a truncated per-thread comment chain
+
+- **Source:** PR2 review (2026-05-12) — Copilot flagged that widening the thread filter to "any comment is ours" made the inclusion decision depend on `comments(first: 100)` not being truncated.
+- **Affects:** `PRism.GitHub/GitHubReviewService.Submit.cs` (`FindOwnPendingReviewAsync`), and the PR1 deferral "[Defer] Review-thread pagination in `FindOwnPendingReviewAsync`" which had said the per-thread `comments(first: 100)` cap was "left without a guard … a truncated reply chain degrades gracefully".
+- **Decision:** With the filter widened, a truncated comment chain is no longer harmless — if a thread has >100 comments and our pending reply is on page 2, the inclusion test (`comments.Any(c => c.pullRequestReview.id == pendingReviewId)`) returns false → the thread is wrongly excluded → Step 4's `parent is null` branch demotes a reply we actually posted. So `FindOwnPendingReviewAsync` now reads `comments.pageInfo.hasNextPage` per thread and throws `GitHubGraphQLException` on any thread with >100 comments — same fail-loud-over-partial stance as the existing `reviewThreads.hasNextPage` guard, with the same trade-off (a submit on a PR that has *any* review thread with >100 comments fails visibly until cursor pagination lands). 100+ comments on a single review thread is exotic enough for a 1-user PoC, and the loud failure names exactly what happened. Cursor pagination on both `reviewThreads` and `comments` is the proper fix (deferred); a general GraphQL-connection-pagination utility in `PRism.GitHub` would cover this, the timeline cap, and this one together.
+- **Revisit when:** Dogfooding hits a PR with a >100-comment review thread, OR the GraphQL-connection-pagination utility lands.
+
+### [Residual] Step 4's `IsParentThreadGone` message-match is fake-only; the real adapter path self-heals in two attempts
+
+- **Source:** PR2 preflight adversarial review (2026-05-12).
+- **Affects:** `SubmitPipeline.StepAttachRepliesAsync` — the `catch (Exception ex) when (IsParentThreadGone(ex))` branch.
+- **Reason:** `IsParentThreadGone` matches `ex.Message`, but `GitHubGraphQLException` (which `PRism.Core` can't reference by type) puts the GraphQL error text in `ErrorsJson`, not `Message`. So if the parent thread is deleted *between* the Step-4 snapshot fetch and the `AttachReplyAsync` call, the catch-when filter is false → the generic catch produces `Failed(AttachReplies, "GitHub GraphQL request returned N error(s).")` without demoting. On retry the snapshot now reflects the deletion → the `parent is null` branch demotes properly. So it self-heals in two attempts with a slightly cryptic message on the first; the `IsParentThreadGone` match still works for the `InMemoryReviewSubmitter` fake (which throws `HttpRequestException("NOT_FOUND: …")`). The clean fix is a typed not-found exception in `PRism.Core` thrown by the adapter — deferred.
+- **Revisit when:** A `PRism.Core`-level "node not found" exception type is introduced, or dogfooding shows the two-attempt self-heal is confusing in practice.
+
+### [Residual] Lost `addPullRequestReview` response → the pipeline's own pending review is surfaced as "foreign"
+
+- **Source:** PR2 preflight adversarial review (2026-05-12); spec § 5.2 step 1 already chooses this.
+- **Affects:** `SubmitPipeline` Step 1's `else` branch (PendingReviewId null / mismatched → `ForeignPendingReviewPromptRequired`).
+- **Reason:** If `BeginPendingReviewAsync` succeeds server-side but the response (or the subsequent `StampPendingReview` persist) is lost, the session has `PendingReviewId == null` while a pending review exists on the PR with no threads yet (so no marker to recognise it by). Step 1 can't tell it's ours → returns `ForeignPendingReviewPromptRequired`; the endpoint's modal lets the user Resume it. Recovery exists; the modal copy should hedge ("a pending review exists that PRism has no local record of") rather than assert another author.
+- **Revisit when:** PR3/PR4 write the foreign-pending-review modal copy.
 
 ### [Decision] PR0a does NOT delete the `IDraftReconciliator` AI seam dead code
 

@@ -33,6 +33,9 @@ public sealed record PendingReviewThreadSnapshot(
                                 // MUST be enriched before any imported draft is reconciled).
     bool IsResolved,            // GraphQL PullRequestReviewThread.isResolved; surfaces a "Resolved on github.com" badge on Resume
     string BodyMarkdown,        // raw thread body returned by GraphQL (marker preserved per C7)
+    DateTimeOffset CreatedAt,   // the root comment's createdAt — PullRequestReviewThread has no createdAt
+                                // of its own; SubmitPipeline's multi-marker-match defense (§ 5.2 step 3)
+                                // adopts the earliest of N threads carrying the same draft's marker
     IReadOnlyList<PendingReviewCommentSnapshot> Comments);  // replies only — the thread body is BodyMarkdown, not Comments[0]
 
 public sealed record PendingReviewCommentSnapshot(
