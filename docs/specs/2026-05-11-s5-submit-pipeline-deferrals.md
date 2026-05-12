@@ -8,7 +8,7 @@ revisions:
   - 2026-05-12: PR #43 review pass — marked Risk R1 (MigrateV3ToV4 signature mismatch) Resolved after spec § 6 was corrected to the JsonObject step shape
   - 2026-05-12: PR0a execution — added the "Implementation-time deferrals" section (IDraftReconciliator dead-code not deleted; IReviewSubmitter CA1040 suppression; GitHub-test concrete return type; PRismWebApplicationFactory override re-typed)
   - 2026-05-12: PR1 execution — R16 applied to spec § 4 (interface now 7 methods, adds DeletePendingReviewThreadAsync); added PR1 implementation-time decisions (GraphQL transport reuse; FindOwn single-query shape; DeletePendingReviewThreadAsync via comment-deletes since GitHub has no thread-delete mutation; CreatedAt → DateTimeOffset; test-fake stubs; Task 19 partial-split skipped). GraphQL input/field shapes confirmed via introspection — recorded in docs/spec/00-verification-notes.md.
-  - 2026-05-12: PR2 execution — added PR2 implementation-time decisions (DraftComment.ThreadId trailing `= null` default; …)
+  - 2026-05-12: PR2 execution — added PR2 implementation-time decisions (DraftComment.ThreadId trailing `= null` default; PipelineMarker line-state fence detection per R10; PendingReviewThreadSnapshot.CreatedAt added for the multi-marker earliest-adopt; PR-root drafts fail loud in StepAttachThreads; body-cap left to the composer; CA1034/CA1064/CA1032 suppressions on the new union/exception types; no logging in SubmitPipeline so R9's scrub-audit is a no-op for PR2)
 ---
 
 # Deferrals — S5 submit pipeline spec
@@ -368,6 +368,20 @@ Decisions made while executing the plan that diverge from a literal task body or
 - **Affects:** Plan Task 21 Step 5 (which shows `string? ThreadId);` with no default and instructs "Every existing constructor call site for `DraftComment` must pass `ThreadId` … fix each"); spec § 6's `DraftComment` code block (also no default).
 - **Decision:** Added `string? ThreadId = null` rather than a required positional parameter. Trailing defaults on persistent-state records already have precedent in the codebase (`DraftThreadRequest.{StartLine, StartSide}` are `= null` reserved fields), and `ThreadId` is *only* ever a non-null value when `SubmitPipeline.AttachThreads` stamps it — every other construction site (composer endpoints, reconciliation test fixtures, and PR2's own pipeline-test fixtures) wants `null`. The default avoids touching ~21 unrelated call sites across 9 files and keeps the pipeline-test fixtures terse. JSON-deserialization behavior is unchanged either way (absent property → `null`). `DraftReply.ReplyCommentId` stays without a default because it sits mid-list and a trailing default is the only kind C# allows — the asymmetry is mechanical, not a convention break.
 - **Revisit when:** N/A — intended end state. If a future field on `DraftComment` genuinely must be supplied at every call site, make it non-defaulted then.
+
+### [Defer] PR-root drafts are not submittable via the pending-review pipeline
+
+- **Source:** PR2 execution (2026-05-12)
+- **Affects:** Plan Task 27 Step 3 (`StepAttachThreadsAsync` — the plan's code does `FilePath: draft.FilePath ?? throw new InvalidOperationException(...)`); spec § 5.2 step 3 (iterates "each `DraftComment`" without addressing the PR-root case).
+- **Decision:** A `DraftComment` with `FilePath`/`LineNumber` null (a PR-root comment — created by `PUT /draft`'s `addPrComment` patch with `Side: "pr"`) can't be attached as an inline thread on a pending review: GitHub's `addPullRequestReviewThread` requires a path + line, and a pending review has no "PR-root comment" slot distinct from the review summary body. Rather than the plan's `InvalidOperationException` (which would escape `SubmitAsync`'s `catch (SubmitFailedException)` unhandled) or silently dropping the user's comment, `StepAttachThreadsAsync` throws `SubmitFailedException(AttachThreads, "draft … has no diff anchor; …")` — surfacing as a `SubmitOutcome.Failed` the user can act on (discard / rewrite). Folding PR-root drafts into the review summary on submit is a possible v2 behavior; it's a design choice the spec doesn't make today.
+- **Revisit when:** Dogfooding surfaces users actually creating PR-root drafts and expecting them to submit, OR a follow-up adds "merge PR-root drafts into the review summary on submit" to the spec.
+
+### [Defer] Body-cap (GitHub's ~65 536-char review-comment limit, marker overhead included) enforcement is composer-side
+
+- **Source:** PR2 execution (2026-05-12); spec § 4 ("body-cap accounting includes the marker") + the user's PR2 task summary listing it under Task 22.
+- **Affects:** Plan Task 22 (`PipelineMarker` — the plan's code has no body-cap logic); spec § 4.
+- **Decision:** `PipelineMarker.Inject` does not truncate. The plan's Task 22 implementation has no body-cap handling either; the spec's "body-cap accounting includes the marker" is satisfied by the composer's `PUT /draft` cap (PR3 Task 41) reserving room for the marker (`Prefix.Length` + draft id + `Suffix.Length` + separators + a possible fence-close). `PipelineMarker.GitHubReviewBodyMaxChars` is exposed as a public const for that composer cap to subtract from. If an over-cap body ever reaches `Inject` anyway, `AttachThreadAsync` fails GitHub-side and the pipeline returns `Failed(AttachThreads, …)` — retryable once the user trims.
+- **Revisit when:** PR3 implements the `PUT /draft` cap and decides exactly how much overhead to reserve; or dogfooding hits a "my long comment got rejected on submit with no warning" report (then move a defensive truncation into `Inject`).
 
 ### [Decision] PR0a does NOT delete the `IDraftReconciliator` AI seam dead code
 
