@@ -13,11 +13,7 @@ interface Props {
 export function SubmitInProgressBadge({ session, onResume }: Props) {
   if (session.pendingReviewId === null) return null;
   return (
-    <button
-      type="button"
-      className="submit-in-progress-badge chip chip-warning"
-      onClick={onResume}
-    >
+    <button type="button" className="submit-in-progress-badge chip chip-warning" onClick={onResume}>
       Submit in progress — Resume?
     </button>
   );

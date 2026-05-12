@@ -31,7 +31,12 @@ export function PreSubmitValidatorCard({ results }: Props) {
             </span>
             {/* Dead link in placeholder mode — kept out of the tab order; v2
                 wires real navigation into the same slot. */}
-            <button type="button" className="ai-validator-card__show-me" disabled aria-disabled="true">
+            <button
+              type="button"
+              className="ai-validator-card__show-me"
+              disabled
+              aria-disabled="true"
+            >
               Show me
             </button>
           </li>

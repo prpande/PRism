@@ -13,7 +13,10 @@ describe('VerdictPicker', () => {
   it('marks the selected segment with aria-pressed', () => {
     render(<VerdictPicker value="approve" onChange={() => {}} />);
     expect(screen.getByRole('button', { name: 'Approve' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Comment' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: 'Comment' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
   });
 
   it('clicking an unselected segment calls onChange with that kebab verdict', () => {

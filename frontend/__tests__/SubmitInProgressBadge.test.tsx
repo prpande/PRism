@@ -17,7 +17,9 @@ const baseSession: ReviewSessionDto = {
 
 describe('SubmitInProgressBadge (R3)', () => {
   it('renders nothing when there is no pending review id', () => {
-    const { container } = render(<SubmitInProgressBadge session={baseSession} onResume={() => {}} />);
+    const { container } = render(
+      <SubmitInProgressBadge session={baseSession} onResume={() => {}} />,
+    );
     expect(container).toBeEmptyDOMElement();
   });
 

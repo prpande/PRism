@@ -58,6 +58,15 @@ describe('SubmitDialog', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('renders inside the Modal shell with the .submit-dialog marker the § 8.5 720px width keys on', () => {
+    // jsdom doesn't load tokens.css, so a getComputedStyle().maxWidth check
+    // wouldn't see the rule; this pins the structural hook the CSS
+    // (`.modal-dialog:has(.submit-dialog) { max-width: 720px }`) targets so
+    // the width contract can't drift unnoticed.
+    render(<SubmitDialog {...baseProps()} />);
+    expect(document.querySelector('.modal-dialog .submit-dialog')).not.toBeNull();
+  });
+
   it('renders body sections in spec § 8.1 order: verdict → summary → counts', () => {
     const { container } = render(<SubmitDialog {...baseProps()} />);
     const sections = Array.from(container.querySelectorAll('[data-section]')).map((el) =>
@@ -118,7 +127,11 @@ describe('SubmitDialog', () => {
 
   it('renders the summary live preview', () => {
     render(
-      <SubmitDialog {...baseProps({ session: session({ draftVerdict: 'approve', draftSummaryMarkdown: 'hello **world**' }) })} />,
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', draftSummaryMarkdown: 'hello **world**' }),
+        })}
+      />,
     );
     const preview = document.querySelector('[data-section="summary-preview"]');
     expect(preview).not.toBeNull();
@@ -136,7 +149,12 @@ describe('SubmitDialog', () => {
 
   it('in-flight Phase B: the 5-row checklist replaces the neutral indicator', () => {
     const steps = [
-      { step: 'DetectExistingPendingReview' as const, status: 'Succeeded' as const, done: 1, total: 1 },
+      {
+        step: 'DetectExistingPendingReview' as const,
+        status: 'Succeeded' as const,
+        done: 1,
+        total: 1,
+      },
       { step: 'BeginPendingReview' as const, status: 'Succeeded' as const, done: 1, total: 1 },
     ];
     render(<SubmitDialog {...baseProps({ submitState: { kind: 'in-flight', steps } })} />);
@@ -146,7 +164,11 @@ describe('SubmitDialog', () => {
   });
 
   it('success state: View on GitHub link + Close button, no Cancel', () => {
-    render(<SubmitDialog {...baseProps({ submitState: { kind: 'success', pullRequestReviewId: '' } })} />);
+    render(
+      <SubmitDialog
+        {...baseProps({ submitState: { kind: 'success', pullRequestReviewId: '' } })}
+      />,
+    );
     expect(screen.getByRole('link', { name: /view on github/i })).toHaveAttribute(
       'href',
       'https://github.com/o/r/pull/1',
@@ -179,7 +201,9 @@ describe('SubmitDialog', () => {
 
   it('stale-commit-oid state: warning banner, Recreate-and-resubmit primary, Cancel enabled', () => {
     render(
-      <SubmitDialog {...baseProps({ submitState: { kind: 'stale-commit-oid', orphanCommitOid: 'old' } })} />,
+      <SubmitDialog
+        {...baseProps({ submitState: { kind: 'stale-commit-oid', orphanCommitOid: 'old' } })}
+      />,
     );
     expect(screen.getByRole('alert')).toHaveTextContent(/head commit changed/i);
     expect(screen.getByRole('button', { name: /recreate and resubmit/i })).toBeInTheDocument();

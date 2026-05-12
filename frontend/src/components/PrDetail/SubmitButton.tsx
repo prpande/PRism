@@ -16,7 +16,13 @@ interface Props {
   disabled?: boolean;
 }
 
-export function SubmitButton({ session, headShaDrift, validatorResults, onSubmit, disabled }: Props) {
+export function SubmitButton({
+  session,
+  headShaDrift,
+  validatorResults,
+  onSubmit,
+  disabled,
+}: Props) {
   const reason = submitDisabledReason(session, headShaDrift, validatorResults);
   const isDisabled = disabled === true || reason !== null;
   return (
@@ -57,9 +63,11 @@ export function submitDisabledReason(
     s.draftReplies.some((r) => r.status === 'stale' && !r.isOverriddenStale);
   if (stale) return 'Resolve or override the stale drafts in the Drafts tab first.';
   // (c) verdict needs re-confirmation against the latest diff.
-  if (s.draftVerdictStatus === 'needs-reconfirm') return 'Re-confirm your verdict before submitting.';
+  if (s.draftVerdictStatus === 'needs-reconfirm')
+    return 'Re-confirm your verdict before submitting.';
   // (d) a validator returned a blocking result.
-  if (validators.some((v) => v.severity === 'Blocking')) return 'Resolve the blocking validator issues first.';
+  if (validators.some((v) => v.severity === 'Blocking'))
+    return 'Resolve the blocking validator issues first.';
   // (e) a Comment-verdict review with no content of any kind.
   if (s.draftVerdict === 'comment' && isEmptyContent(s)) {
     return 'A Comment review needs a summary or at least one inline comment or reply.';

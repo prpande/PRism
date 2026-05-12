@@ -36,7 +36,14 @@ function btn() {
 
 describe('SubmitButton enable rules (spec § 9)', () => {
   it('(a) no verdict + no drafts + no replies + empty summary → disabled', () => {
-    render(<SubmitButton session={emptySession} headShaDrift={false} validatorResults={[]} onSubmit={() => {}} />);
+    render(
+      <SubmitButton
+        session={emptySession}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toBeDisabled();
   });
 
@@ -46,7 +53,14 @@ describe('SubmitButton enable rules (spec § 9)', () => {
       draftVerdict: 'approve',
       draftComments: [comment({ status: 'stale', isOverriddenStale: false })],
     };
-    render(<SubmitButton session={session} headShaDrift={false} validatorResults={[]} onSubmit={() => {}} />);
+    render(
+      <SubmitButton
+        session={session}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toBeDisabled();
   });
 
@@ -56,7 +70,14 @@ describe('SubmitButton enable rules (spec § 9)', () => {
       draftVerdict: 'approve',
       draftComments: [comment({ status: 'stale', isOverriddenStale: true })],
     };
-    render(<SubmitButton session={session} headShaDrift={false} validatorResults={[]} onSubmit={() => {}} />);
+    render(
+      <SubmitButton
+        session={session}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toBeEnabled();
   });
 
@@ -66,7 +87,14 @@ describe('SubmitButton enable rules (spec § 9)', () => {
       draftVerdict: 'approve',
       draftVerdictStatus: 'needs-reconfirm',
     };
-    render(<SubmitButton session={session} headShaDrift={false} validatorResults={[]} onSubmit={() => {}} />);
+    render(
+      <SubmitButton
+        session={session}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toBeDisabled();
   });
 
@@ -98,26 +126,53 @@ describe('SubmitButton enable rules (spec § 9)', () => {
 
   it('(e) verdict Comment + no inline content + empty summary → disabled', () => {
     const session: ReviewSessionDto = { ...emptySession, draftVerdict: 'comment' };
-    render(<SubmitButton session={session} headShaDrift={false} validatorResults={[]} onSubmit={() => {}} />);
+    render(
+      <SubmitButton
+        session={session}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toBeDisabled();
   });
 
   it('(e) verdict Comment + a summary → enabled', () => {
-    const session: ReviewSessionDto = { ...emptySession, draftVerdict: 'comment', draftSummaryMarkdown: 'LGTM' };
-    render(<SubmitButton session={session} headShaDrift={false} validatorResults={[]} onSubmit={() => {}} />);
+    const session: ReviewSessionDto = {
+      ...emptySession,
+      draftVerdict: 'comment',
+      draftSummaryMarkdown: 'LGTM',
+    };
+    render(
+      <SubmitButton
+        session={session}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toBeEnabled();
   });
 
   it('(f) head-sha drift → disabled even when everything else is clear', () => {
     const session: ReviewSessionDto = { ...emptySession, draftVerdict: 'approve' };
-    render(<SubmitButton session={session} headShaDrift validatorResults={[]} onSubmit={() => {}} />);
+    render(
+      <SubmitButton session={session} headShaDrift validatorResults={[]} onSubmit={() => {}} />,
+    );
     expect(btn()).toBeDisabled();
   });
 
   it('all rules clear → enabled, clicking fires onSubmit', () => {
     const session: ReviewSessionDto = { ...emptySession, draftVerdict: 'approve' };
     const onSubmit = vi.fn();
-    render(<SubmitButton session={session} headShaDrift={false} validatorResults={[]} onSubmit={onSubmit} />);
+    render(
+      <SubmitButton
+        session={session}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={onSubmit}
+      />,
+    );
     expect(btn()).toBeEnabled();
     fireEvent.click(btn());
     expect(onSubmit).toHaveBeenCalled();
@@ -125,19 +180,41 @@ describe('SubmitButton enable rules (spec § 9)', () => {
 
   it('disabled prop (e.g. pipeline in-flight) overrides an otherwise-enabled state', () => {
     const session: ReviewSessionDto = { ...emptySession, draftVerdict: 'approve' };
-    render(<SubmitButton session={session} headShaDrift={false} validatorResults={[]} disabled onSubmit={() => {}} />);
+    render(
+      <SubmitButton
+        session={session}
+        headShaDrift={false}
+        validatorResults={[]}
+        disabled
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toBeDisabled();
   });
 
   it('disabled state carries a reason tooltip', () => {
-    render(<SubmitButton session={emptySession} headShaDrift={false} validatorResults={[]} onSubmit={() => {}} />);
+    render(
+      <SubmitButton
+        session={emptySession}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toHaveAttribute('title');
     expect(btn().getAttribute('title')!.length).toBeGreaterThan(0);
   });
 
   it('uses the primary-button vocabulary (spec § 17 #18)', () => {
     const session: ReviewSessionDto = { ...emptySession, draftVerdict: 'approve' };
-    render(<SubmitButton session={session} headShaDrift={false} validatorResults={[]} onSubmit={() => {}} />);
+    render(
+      <SubmitButton
+        session={session}
+        headShaDrift={false}
+        validatorResults={[]}
+        onSubmit={() => {}}
+      />,
+    );
     expect(btn()).toHaveClass('btn', 'btn-primary');
   });
 });

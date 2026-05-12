@@ -11,7 +11,12 @@ describe('PreSubmitValidatorCard (spec § 14.1)', () => {
   it('renders the canned Suggestion with the ai-tint card styling when results are supplied', () => {
     const { container } = render(
       <PreSubmitValidatorCard
-        results={[{ severity: 'Suggestion', message: '3 inline threads on the same file (`src/Foo.cs`) — consider consolidating?' }]}
+        results={[
+          {
+            severity: 'Suggestion',
+            message: '3 inline threads on the same file (`src/Foo.cs`) — consider consolidating?',
+          },
+        ]}
       />,
     );
     expect(screen.getByText(/3 inline threads on the same file/)).toBeInTheDocument();
@@ -34,7 +39,9 @@ describe('PreSubmitValidatorCard (spec § 14.1)', () => {
   });
 
   it('maps Concern and Blocking to their chip modifiers', () => {
-    const { rerender } = render(<PreSubmitValidatorCard results={[{ severity: 'Concern', message: 'm' }]} />);
+    const { rerender } = render(
+      <PreSubmitValidatorCard results={[{ severity: 'Concern', message: 'm' }]} />,
+    );
     expect(screen.getByText(/concern/i)).toHaveClass('chip-status-concern');
     rerender(<PreSubmitValidatorCard results={[{ severity: 'Blocking', message: 'm' }]} />);
     expect(screen.getByText(/blocking/i)).toHaveClass('chip-status-blocking');

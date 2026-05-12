@@ -54,13 +54,17 @@ function rowFor(step: SubmitStep, steps: SubmitProgressStep[]): { state: RowStat
     return { state: 'failed', text: `Submit failed${detail}` };
   }
   if (s.status === 'Succeeded') {
-    if (step === 'AttachThreads') return { state: 'done', text: `Attached ${s.done} of ${s.total} threads` };
-    if (step === 'AttachReplies') return { state: 'done', text: `Attached ${s.done} of ${s.total} replies` };
+    if (step === 'AttachThreads')
+      return { state: 'done', text: `Attached ${s.done} of ${s.total} threads` };
+    if (step === 'AttachReplies')
+      return { state: 'done', text: `Attached ${s.done} of ${s.total} replies` };
     return { state: 'done', text: DONE_LABEL[step] };
   }
   // Started / in flight.
-  if (step === 'AttachThreads') return { state: 'active', text: `Attaching thread ${s.done + 1} of ${s.total}…` };
-  if (step === 'AttachReplies') return { state: 'active', text: `Attaching reply ${s.done + 1} of ${s.total}…` };
+  if (step === 'AttachThreads')
+    return { state: 'active', text: `Attaching thread ${s.done + 1} of ${s.total}…` };
+  if (step === 'AttachReplies')
+    return { state: 'active', text: `Attaching reply ${s.done + 1} of ${s.total}…` };
   if (step === 'Finalize') return { state: 'active', text: 'Finalizing…' };
   return { state: 'active', text: PENDING_LABEL[step] };
 }

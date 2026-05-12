@@ -38,8 +38,17 @@ interface Props {
 }
 
 export function SubmitDialog(props: Props) {
-  const { open, reference, session, validatorResults, submitState, onClose, onSubmit, onRetry, onVerdictChange } =
-    props;
+  const {
+    open,
+    reference,
+    session,
+    validatorResults,
+    submitState,
+    onClose,
+    onSubmit,
+    onRetry,
+    onVerdictChange,
+  } = props;
 
   const [verdict, setVerdict] = useState<DraftVerdict | null>(session.draftVerdict);
   const [summary, setSummary] = useState(session.draftSummaryMarkdown ?? '');
@@ -50,14 +59,20 @@ export function SubmitDialog(props: Props) {
   // Re-seed local fields from the (possibly refetched) session each time the
   // dialog opens — the auto-saved summary persists across Cancel/reopen
   // (spec § 8.2) by living in the session, not in component state.
+  // Re-seed local fields only when the dialog opens — mid-session re-syncs from
+  // `session` would clobber in-progress typing (the auto-saved summary already
+  // round-trips via the session, so the value isn't lost on Cancel/reopen). The
+  // deps list is `[open]` by design; this project's eslint config carries no
+  // react-hooks/exhaustive-deps rule.
+  const openRef = useRef(open);
   useEffect(() => {
-    if (!open) return;
+    const justOpened = open && !openRef.current;
+    openRef.current = open;
+    if (!justOpened) return;
     setVerdict(session.draftVerdict);
     setSummary(session.draftSummaryMarkdown ?? '');
     setEscNotice('');
-    // Intentionally only on open — mid-session re-syncs would clobber typing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, session]);
 
   const saveSummary = useCallback(
     (value: string) => {
@@ -92,7 +107,9 @@ export function SubmitDialog(props: Props) {
       e.preventDefault();
       e.stopPropagation();
       cancelRef.current?.focus();
-      setEscNotice('Esc moved focus to Cancel — press Enter to close, or click anywhere in the dialog to continue editing.');
+      setEscNotice(
+        'Esc moved focus to Cancel — press Enter to close, or click anywhere in the dialog to continue editing.',
+      );
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -170,9 +187,15 @@ export function SubmitDialog(props: Props) {
         {foreignPrompt && (
           <div className="submit-dialog__banner banner-warning" role="alert">
             You already have a pending review on this PR (
-            {(submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>).snapshot.threadCount}{' '}
+            {
+              (submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>)
+                .snapshot.threadCount
+            }{' '}
             thread(s),{' '}
-            {(submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>).snapshot.replyCount}{' '}
+            {
+              (submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>)
+                .snapshot.replyCount
+            }{' '}
             reply(ies)). Resume / Discard handling lands in the next slice — Cancel for now and use
             the Drafts tab.
           </div>
@@ -254,7 +277,7 @@ export function SubmitDialog(props: Props) {
               type="button"
               className="btn btn-primary"
               disabled={confirmDisabled}
-              title={confirmDisabled ? confirmReason ?? undefined : undefined}
+              title={confirmDisabled ? (confirmReason ?? undefined) : undefined}
               onClick={() => void handleConfirm()}
             >
               Confirm submit

@@ -80,8 +80,7 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
       stream.on('submit-progress', (ev: SubmitProgressEvent) => {
         if (ev.prRef !== prRef || !ownsActiveSubmit.current) return;
         setState((prev) => {
-          const baseSteps =
-            prev.kind === 'in-flight' || prev.kind === 'failed' ? prev.steps : [];
+          const baseSteps = prev.kind === 'in-flight' || prev.kind === 'failed' ? prev.steps : [];
           const steps = upsertStep(baseSteps, ev);
           if (ev.status === 'Failed') {
             ownsActiveSubmit.current = false;
