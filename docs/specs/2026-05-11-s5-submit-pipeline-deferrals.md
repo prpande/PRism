@@ -7,6 +7,7 @@ revisions:
   - 2026-05-11: brainstorm + ce-doc-review pass — recorded brainstorm-time deferrals (12 items in spec § 1.2), doc-review-time deferrals routed to ce-plan, doc-review FYI observations, and forward-looking residual risks for the implementer
   - 2026-05-12: PR #43 review pass — marked Risk R1 (MigrateV3ToV4 signature mismatch) Resolved after spec § 6 was corrected to the JsonObject step shape
   - 2026-05-12: PR0a execution — added the "Implementation-time deferrals" section (IDraftReconciliator dead-code not deleted; IReviewSubmitter CA1040 suppression; GitHub-test concrete return type; PRismWebApplicationFactory override re-typed)
+  - 2026-05-12: PR1 execution — R16 applied to spec § 4 (interface now 7 methods, adds DeletePendingReviewThreadAsync); added PR1 implementation-time decisions (GraphQL transport reuse; FindOwn single-query shape; DeletePendingReviewThreadAsync via comment-deletes since GitHub has no thread-delete mutation; CreatedAt → DateTimeOffset; test-fake stubs; Task 19 partial-split skipped). GraphQL input/field shapes confirmed via introspection — recorded in docs/spec/00-verification-notes.md.
 ---
 
 # Deferrals — S5 submit pipeline spec
@@ -387,3 +388,54 @@ Decisions made while executing the plan that diverge from a literal task body or
 - **Affects:** `tests/PRism.Web.Tests/TestHelpers/PRismWebApplicationFactory.cs`.
 - **Decision:** `ReviewServiceOverride` was typed `IReviewService?` (the now-deleted composite). Re-typed to `PrDetailFakeReviewService?` (the only type ever assigned to it); that fake now implements all four capability interfaces and the factory binds the single instance to all four seams — preserving the old single-override semantics exactly. `StubReviewService` (the `ValidateOverride` branch) is narrowed to `IReviewAuth` since `ValidateCredentialsAsync` is the only method it implemented meaningfully. Added a private `ReplaceSingleton<T>` helper to dedupe the remove-then-add pattern.
 - **Revisit when:** N/A.
+
+### [Decision] PR1 reuses the adapter's existing GraphQL transport rather than the plan's greenfield `GraphqlAsync` helper
+
+- **Source:** PR1 execution (2026-05-12)
+- **Affects:** Plan Phase-2 Task 12 Step 4 (the `GraphqlAsync` helper + `application/json` Accept header + `"graphql"` relative endpoint + `HttpRequestException`-on-errors code block); Tasks 13–17 test assertions (`HttpRequestException` → `GitHubGraphQLException`).
+- **Decision:** `GitHubReviewService` already has a GraphQL transport — `PostGraphQLAsync(query, variables, ct)` + `HostUrlResolver.GraphQlEndpoint(_host)` (absolute URL, GHES-aware) + `GitHubGraphQLException` + `ThrowIfGraphQLErrorsWithoutData`. The plan's code samples were written as if the adapter were greenfield. PR1 reuses `PostGraphQLAsync` and adds one thin wrapper, `PostSubmitGraphQLAsync`, that is *stricter* about errors: it throws `GitHubGraphQLException` on ANY non-empty `errors` array (a mutation that reports errors did not apply, so partial-data tolerance — correct for the read-side multi-field fetches — would be wrong here) and on a missing `data` object. Spec § 4 § note updated to point at this. All submit-method tests assert `GitHubGraphQLException` for the GraphQL-error path.
+- **Revisit when:** N/A — this is the intended end state. The spec explicitly delegated transport choice to the implementer per `PRism.GitHub` conventions (§ 4).
+
+### [Decision] `FindOwnPendingReviewAsync` uses one schema-correct query, not the plan's two-call `viewer{login}` + `review.threads` shape
+
+- **Source:** PR1 execution (2026-05-12)
+- **Affects:** Plan Task 17 Step 3 + Step 4 (the `ResolveViewerLoginAsync` two-call sequence and the `reviews(...){nodes{... threads(first:100){...}}}` query) and Test 3's assertions (`author: { login:` → `viewerDidAuthor`).
+- **Decision:** The plan's query referenced `PullRequestReview.threads`, which does not exist in GitHub's GraphQL schema — `PullRequestReview` exposes `comments`, and the thread-level fields the snapshot needs (`isResolved`, `diffSide`, `line`, `originalLine`) live on `PullRequestReviewThread`, reachable via `pullRequest.reviewThreads`. The implementation issues one round-trip: `reviews(first: 50, states: [PENDING]){nodes{id viewerDidAuthor commit{oid} createdAt}}` + `reviewThreads(first: 100){nodes{id path line diffSide originalLine isResolved comments(first:100){nodes{id body originalCommit{oid} pullRequestReview{id}}}}}`. It picks the viewer's pending review via `viewerDidAuthor` (so no separate `viewer{login}` lookup is needed) and groups review threads to it by their root comment's `pullRequestReview.id`. `OriginalCommitOid` comes from the root comment's `originalCommit.oid`; `OriginalLineContent` stays empty for PR5's Resume endpoint to enrich (it has no file content).
+- **Revisit when:** N/A — this is the intended end state. If a future read needs richer per-thread data, extend the same query.
+
+### [Decision] `DeletePendingReviewThreadAsync` is implemented via comment-deletes — GitHub has no `deletePullRequestReviewThread` mutation
+
+- **Source:** PR1 execution (2026-05-12), surfaced by the pr-autopilot preflight review (schema introspection)
+- **Affects:** Plan Task 16 (which describes "a `deletePullRequestReviewThread` GraphQL mutation taking `pullRequestReviewThreadId`") and Task 29 (the multi-marker-match defense, which calls `DeletePendingReviewThreadAsync` to drop duplicate threads).
+- **Decision:** GitHub's GraphQL `Mutation` type has no `deletePullRequestReviewThread` (introspection confirmed: `DeletePullRequestReviewThreadInput` resolves to `null`; the only delete mutations are `deletePullRequestReview` and `deletePullRequestReviewComment`). A review thread disappears once its last comment is deleted, so the adapter implements `DeletePendingReviewThreadAsync(reference, threadId, ct)` by (1) resolving the thread's comment IDs via `node(id: $threadId){ ... on PullRequestReviewThread { comments(first:100){nodes{id}} } }`, then (2) deleting each via `deletePullRequestReviewComment(input:{id})`. A `node:null` result (thread already gone) is treated as success — the caller is best-effort. The **interface signature is unchanged** (still takes a thread ID), so PR2's Task 29 needs no rework: it still calls `DeletePendingReviewThreadAsync(reference, dupThreadId, ct)` exactly as planned. In the multi-marker scenario the duplicate threads carry only their body comment (replies are attached to the one adopted thread), so this is a single delete per duplicate; the loop covers the rare with-replies case. Spec § 4's `DeletePendingReviewThreadAsync` comment was updated to note the implementation. Also confirmed by the same introspection pass: the add/submit input shapes the plan used (`AddPullRequestReviewInput.{pullRequestId,commitOID,body}`, `AddPullRequestReviewThreadInput.{pullRequestReviewId,body,path,line,side}`, `AddPullRequestReviewThreadReplyInput.{pullRequestReviewId,pullRequestReviewThreadId,body}`, `SubmitPullRequestReviewInput.{pullRequestReviewId,event}`, `DeletePullRequestReviewInput.{pullRequestReviewId}`) are all correct, and the `FindOwnPendingReviewAsync` query's field set (`PullRequest.reviews(first,states)`, `PullRequestReview.{viewerDidAuthor,commit.oid,createdAt}`, `PullRequest.reviewThreads`, `PullRequestReviewThread.{path,line,diffSide,originalLine,isResolved,comments}`, `PullRequestReviewComment.{id,body,originalCommit.oid,pullRequestReview.id}`) all exist — recorded in `docs/spec/00-verification-notes.md`.
+- **Revisit when:** N/A — this is the intended end state. If GitHub ever adds a real thread-delete mutation, the adapter can switch to the single-call form without changing the interface.
+
+### [Decision] `OwnPendingReviewSnapshot.CreatedAt` is `DateTimeOffset`, not `DateTime`
+
+- **Source:** PR1 execution (2026-05-12), surfaced by the pr-autopilot preflight review
+- **Affects:** Spec § 4's `OwnPendingReviewSnapshot` code block (originally `DateTime CreatedAt`).
+- **Decision:** Every GitHub-sourced timestamp the `PRism.GitHub` adapter projects uses `DateTimeOffset` (e.g. `Pr.CreatedAt` via `JsonElement.GetDateTimeOffset()`, the clustering timeline records). Using `DateTime` here would be the odd one out and lose the original offset. Changed the record field to `DateTimeOffset` and the adapter to `ca.GetDateTimeOffset()`; spec § 4 updated to match. The spec text was the inconsistency, not the code intent.
+- **Revisit when:** N/A.
+
+### [Decision] PR1 temp stubs land directly in `GitHubReviewService.Submit.cs`; two test fakes get matching stubs
+
+- **Source:** PR1 execution (2026-05-12)
+- **Affects:** Plan Task 11 Step 7 (which puts `NotImplementedException` stubs in `GitHubReviewService.cs` and migrates them to `GitHubReviewService.Submit.cs` per task) and the Phase-2 "Files touched" list (which omits `PRism.Web/TestHooks/FakeReviewSubmitter.cs` and `tests/PRism.Web.Tests/TestHelpers/PrDetailFakeReviewService.cs`).
+- **Decision:** `GitHubReviewService.Submit.cs` is created in Task 11 with the seven `NotImplementedException("PR1 Task NN")` stubs; Tasks 12–17 replace each with the real implementation. Same end state as the plan's "stub in `.cs`, migrate to `.Submit.cs`" dance, with one fewer file churn. Separately, the plan's Phase-2 file list missed two test fakes that implement `IReviewSubmitter` from PR0a: `FakeReviewSubmitter` (Web, registered in dev/test mode) and `PrDetailFakeReviewService` (Web.Tests). Both got the seven methods as `NotImplementedException` stubs in Task 11 so the build stays green — nothing exercises the submit path yet (the submit endpoint arrives in PR3; a working in-memory pending review arrives with PR4/PR7's tests, plan Task 61).
+- **Revisit when:** PR7 (plan Task 61) fleshes out the Web `FakeReviewSubmitter` for the DoD E2E suite.
+
+### [Decision] PR1 skips Task 19 (ADR-S5-2 partial-class split of `GitHubReviewService.cs`)
+
+- **Source:** PR1 execution (2026-05-12)
+- **Affects:** Plan Task 19 (conditional: "run only if `GitHubReviewService.cs` has grown unwieldy after Tasks 12–18 landed").
+- **Decision:** PR1 added **zero** lines to `GitHubReviewService.cs` — all of the new GraphQL code lives in the new partial `GitHubReviewService.Submit.cs`. The original file's size (~1100 lines) is unchanged from before S5, so the split would be a refactor unrelated to "implement the submit methods" and is out of PR1's scope. Deferred per ADR-S5-2's own "optional / do it when it feels too large" framing.
+- **Revisit when:** A later slice adds another batch of methods to `GitHubReviewService.cs` proper, or a maintainer raises the file-size concern with concrete navigation pain.
+
+### [Defer] Review-thread pagination in `FindOwnPendingReviewAsync`
+
+- **Source:** PR1 execution (2026-05-12), surfaced by the `claude[bot]` PR #45 review
+- **Severity:** P3 (PoC-acceptable cap; fails loud rather than silently wrong)
+- **Date:** 2026-05-12
+- **Reason:** `FindOwnPendingReviewAsync` fetches `reviewThreads(first: 100)` (and `comments(first: 100)` per thread) on a single page. A PR with more than 100 review threads would truncate — and connection truncation is not a GraphQL `errors`-array event, so `PostSubmitGraphQLAsync`'s strict error check can't catch it. Rather than return a partial snapshot the submit pipeline would act on (risking duplicate-thread creation or dropped drafts on Resume), the method now reads `reviewThreads.pageInfo.hasNextPage` and throws `GitHubGraphQLException` when it's `true` — fail-loud, consistent with the rest of the submit pipeline. Cursor pagination (mirroring the deferred timeline pagination in `GetPrDetailAsync`) is the proper fix; 100 threads is plenty for the PoC dogfood scenario, and the loud failure makes the cap visible if a real PR ever hits it. (The analogous `comments(first: 100)` per-thread cap is left without a guard — a single thread with >100 comments is far less plausible than a PR with >100 threads, and a truncated reply chain degrades gracefully rather than risking duplicates.)
+- **Revisit when:** Dogfooding hits a PR with >100 review threads, OR a general GraphQL-connection-pagination utility lands in `PRism.GitHub` (it would naturally cover this and the timeline cap together).
+- **Where the gap lives in code:** `PRism.GitHub/GitHubReviewService.Submit.cs` — `FindOwnPendingReviewAsync`'s `reviewThreads(first: 100)` query + the `hasNextPage` guard.

@@ -40,7 +40,7 @@ The slice ships the demo: *steps 11–13 of the PoC demo end-to-end on a real gi
    - **Empirical gate runs**: C6 (`AddPullRequestReviewThreadInput` parameter shape) and C7 (HTML-comment marker round-trip durability) — see § 2.
    - **Playwright multi-spec state-leak fix** — root-cause, not another `test.fixme`. See § 2.3.
 
-2. **`IReviewSubmitter` capability seam** (PR1): six methods covering pending-review begin / attach / reply-attach / finalize / delete / find-own. `GitHubReviewService.Submit.cs` implements against real GraphQL. See § 4.
+2. **`IReviewSubmitter` capability seam** (PR1): seven methods covering pending-review begin / attach / reply-attach / finalize / delete-review / delete-thread / find-own. `GitHubReviewService.Submit.cs` implements against real GraphQL. See § 4.
 
 3. **`SubmitPipeline` state machine** (PR2): resumable, step-granular, idempotency-key-based retry. Lives in `PRism.Core/Submit/Pipeline/` per Convention-1. Tests against an `IReviewSubmitter` fake at step granularity. See § 5.
 
@@ -190,7 +190,7 @@ The legacy `SubmitReviewAsync(PrReference, DraftReview, CancellationToken)` stub
 
 ## 4. `IReviewSubmitter` capability seam (PR1)
 
-Six methods covering the GraphQL pending-review pipeline. Method shapes are at the contract level; implementer chooses Octokit GraphQL builder vs raw `HttpClient` per `PRism.GitHub` conventions.
+Seven methods covering the GraphQL pending-review pipeline. Method shapes are at the contract level; implementer chooses Octokit GraphQL builder vs raw `HttpClient` per `PRism.GitHub` conventions. (PR1 reuses the adapter's existing GraphQL transport — `PostGraphQLAsync` + `HostUrlResolver.GraphQlEndpoint` + `GitHubGraphQLException` — wrapped in a stricter mutation error check.)
 
 ```csharp
 namespace PRism.Core;
@@ -226,10 +226,22 @@ public interface IReviewSubmitter
         SubmitEvent verdict,
         CancellationToken ct);
 
-    // Discard path
+    // Discard path — delete the whole pending review
     Task DeletePendingReviewAsync(
         PrReference reference,
         string pendingReviewId,
+        CancellationToken ct);
+
+    // Best-effort cleanup of a single duplicate thread under the multi-marker-match defense (§ 5.2 step 3):
+    // when more than one server thread carries the same draft's marker, the pipeline adopts the earliest
+    // and asks to delete the rest. (Doc-review R16 — landed in PR1 so the interface is stable for PR2.)
+    // GitHub's GraphQL has no delete-thread mutation, so the adapter implements this by resolving the
+    // thread's comments via node(id:) and deleting each via deletePullRequestReviewComment — a thread
+    // disappears when its last comment goes (a duplicate thread carries only its body comment, so it's
+    // usually a single delete). See the deferrals sidecar.
+    Task DeletePendingReviewThreadAsync(
+        PrReference reference,
+        string pullRequestReviewThreadId,
         CancellationToken ct);
 
     // Detection: returns the user's pending review on this PR (if any), with attached threads + replies
@@ -260,7 +272,7 @@ public sealed record AttachReplyResult(string CommentId);
 public sealed record OwnPendingReviewSnapshot(
     string PullRequestReviewId,
     string CommitOid,
-    DateTime CreatedAt,
+    DateTimeOffset CreatedAt,    // GraphQL PullRequestReview.createdAt — DateTimeOffset to match the adapter's other GitHub timestamps
     IReadOnlyList<PendingReviewThreadSnapshot> Threads);
 
 public sealed record PendingReviewThreadSnapshot(
@@ -814,7 +826,7 @@ The container has a single Close (✕) button. No chat input bar, no message bub
 
 Per § 3, the four capability sub-interfaces each get their own fake. Existing test classes that injected `FakeReviewService` migrate to inject only the sub-interface(s) they need. Most tests touch one or two sub-interfaces; the migration is straightforward.
 
-**`FakeReviewSubmitter`** (new) implements the six methods on `IReviewSubmitter`. Carries an in-memory `Dictionary<string, FakePendingReview>` keyed by `pullRequestReviewId`. Each `FakePendingReview` carries threads, replies, `commitOID`. Configurable failure injection per method (e.g., "fail on the second `AttachThreadAsync` call with a network error"). The pipeline state-machine tests (§ 5.4) are the primary consumer.
+**`FakeReviewSubmitter`** (new) implements the seven methods on `IReviewSubmitter`. Carries an in-memory `Dictionary<string, FakePendingReview>` keyed by `pullRequestReviewId`. Each `FakePendingReview` carries threads, replies, `commitOID`. Configurable failure injection per method (e.g., "fail on the second `AttachThreadAsync` call with a network error"). The pipeline state-machine tests (§ 5.4) are the primary consumer.
 
 ### 15.2 Playwright fake (`PRISM_E2E_FAKE_REVIEW=1`)
 
@@ -864,7 +876,7 @@ Strawman cut, adjustable during `ce-plan`. PR0 is the only firm sequencing const
 
 Decisions captured during the brainstorm and folded into the spec body above. Numbering is reference-only; spec sections are the source of truth.
 
-1. **Stepwise `IReviewSubmitter`** (§ 4) — six methods, not a composite single-call. Step-granular fakes for the resumable retry tests; state machine lives in `PRism.Core` per Convention-1.
+1. **Stepwise `IReviewSubmitter`** (§ 4) — seven methods, not a composite single-call. Step-granular fakes for the resumable retry tests; state machine lives in `PRism.Core` per Convention-1.
 2. **Submit-progress over SSE** (§ 7.4) — payload is step name + counts only (no per-draft IDs); reuses existing channel infrastructure; threat-model defense for S4 deferral 12.
 3. **V4 migration step for `DraftComment.ThreadId`** (§ 6) — visible version bump with empty transform body, not silent additive field. Matches user's "document plan deviations visibly" preference and spec § 4.5's schema-versioned framing.
 4. **Verdict-clear patch wire-shape via JsonElement parsing** (§ 10) — option (b) from S4 deferral 5; generalizable to any future nullable patch field.

@@ -3,6 +3,7 @@ using System.Text;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
+using PRism.Core.Submit;
 
 namespace PRism.Web.Tests.TestHelpers;
 
@@ -71,4 +72,14 @@ public sealed class PrDetailFakeReviewService : IReviewAuth, IPrDiscovery, IPrRe
     public Task<PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
     public Task<FileChange[]> GetDiffAsync(PrReference reference, string fromSha, string toSha, CancellationToken ct) => throw new NotImplementedException();
     public Task<ExistingComment[]> GetCommentsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
+
+    // IReviewSubmitter — PR-detail/endpoint tests don't exercise the submit path (the submit endpoint
+    // arrives in PR3; a working in-memory pending review arrives with PR4/PR7's tests).
+    public Task<BeginPendingReviewResult> BeginPendingReviewAsync(PrReference reference, string commitOid, string summaryBody, CancellationToken ct) => throw new NotImplementedException();
+    public Task<AttachThreadResult> AttachThreadAsync(PrReference reference, string pendingReviewId, DraftThreadRequest draft, CancellationToken ct) => throw new NotImplementedException();
+    public Task<AttachReplyResult> AttachReplyAsync(PrReference reference, string pendingReviewId, string parentThreadId, string replyBody, CancellationToken ct) => throw new NotImplementedException();
+    public Task FinalizePendingReviewAsync(PrReference reference, string pendingReviewId, SubmitEvent verdict, CancellationToken ct) => throw new NotImplementedException();
+    public Task DeletePendingReviewAsync(PrReference reference, string pendingReviewId, CancellationToken ct) => throw new NotImplementedException();
+    public Task DeletePendingReviewThreadAsync(PrReference reference, string pullRequestReviewThreadId, CancellationToken ct) => throw new NotImplementedException();
+    public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
 }
