@@ -99,8 +99,45 @@ public sealed partial class GitHubReviewService
         return new AttachThreadResult(threadId);
     }
 
-    public Task<AttachReplyResult> AttachReplyAsync(PrReference reference, string pendingReviewId, string parentThreadId, string replyBody, CancellationToken ct)
-        => throw new NotImplementedException("PR1 Task 14");
+    public async Task<AttachReplyResult> AttachReplyAsync(
+        PrReference reference,
+        string pendingReviewId,
+        string parentThreadId,
+        string replyBody,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentException.ThrowIfNullOrEmpty(pendingReviewId);
+        ArgumentException.ThrowIfNullOrEmpty(parentThreadId);
+        ArgumentNullException.ThrowIfNull(replyBody);
+
+        // pullRequestReviewId is what binds the reply to the pending review (omit it and the reply
+        // posts immediately). pullRequestReviewThreadId is the parent thread; body carries the
+        // pipeline-injected marker the same way a thread body does.
+        const string mutation = """
+            mutation($prReviewId: ID!, $threadId: ID!, $body: String!) {
+              addPullRequestReviewThreadReply(input: {
+                pullRequestReviewId: $prReviewId,
+                pullRequestReviewThreadId: $threadId,
+                body: $body
+              }) {
+                comment { id }
+              }
+            }
+            """;
+
+        var data = await PostSubmitGraphQLAsync(
+            mutation,
+            new { prReviewId = pendingReviewId, threadId = parentThreadId, body = replyBody },
+            ct).ConfigureAwait(false);
+
+        if (!TryGetPath(data, out var idEl, "addPullRequestReviewThreadReply", "comment", "id")
+            || idEl.GetString() is not { Length: > 0 } commentId)
+        {
+            throw new GitHubGraphQLException("addPullRequestReviewThreadReply response missing comment.id.");
+        }
+        return new AttachReplyResult(commentId);
+    }
 
     public Task FinalizePendingReviewAsync(PrReference reference, string pendingReviewId, SubmitEvent verdict, CancellationToken ct)
         => throw new NotImplementedException("PR1 Task 15");
