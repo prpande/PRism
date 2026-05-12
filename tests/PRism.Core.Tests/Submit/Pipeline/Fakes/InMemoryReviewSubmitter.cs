@@ -17,6 +17,11 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
     private readonly Dictionary<string, Exception> _failureByMethod = new(StringComparer.Ordinal);
     private int _nextId = 1;
 
+    // Successful-call counters so a test can assert "AttachThreadAsync was called N times" (i.e. a
+    // stamped / adopted draft was NOT re-attached) without resorting to mid-pipeline introspection.
+    public int AttachThreadCallCount { get; private set; }
+    public int AttachReplyCallCount { get; private set; }
+
     // Inject a one-shot failure: the next call to the named method throws `ex`, then clears.
     public void InjectFailure(string methodName, Exception ex) => _failureByMethod[methodName] = ex;
 
@@ -42,6 +47,7 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
         var threadId = $"PRRT_{_nextId++}";
         pending.Threads.Add(new InMemoryThread(threadId, draft.FilePath, draft.LineNumber, draft.Side,
             CommitOid: pending.CommitOid, Body: draft.BodyMarkdown, IsResolved: false, Replies: new List<InMemoryComment>()));
+        AttachThreadCallCount++;
         return Task.FromResult(new AttachThreadResult(threadId));
     }
 
@@ -53,6 +59,7 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
             ?? throw new HttpRequestException($"NOT_FOUND: parent thread {parentThreadId}");
         var commentId = $"PRRC_{_nextId++}";
         thread.Replies.Add(new InMemoryComment(commentId, replyBody));
+        AttachReplyCallCount++;
         return Task.FromResult(new AttachReplyResult(commentId));
     }
 
