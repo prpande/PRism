@@ -29,7 +29,7 @@ export interface SubmitProgressStep {
 export type SubmitState =
   | { kind: 'idle' }
   | { kind: 'in-flight'; steps: SubmitProgressStep[] }
-  | { kind: 'success'; pullRequestReviewId: string }
+  | { kind: 'success'; pullRequestReviewId: string; steps: SubmitProgressStep[] }
   | { kind: 'failed'; failedStep: SubmitStep; errorMessage: string; steps: SubmitProgressStep[] }
   | { kind: 'foreign-pending-review-prompt'; snapshot: SubmitForeignPendingReviewEvent }
   | { kind: 'stale-commit-oid'; orphanCommitOid: string };
@@ -80,7 +80,12 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
       stream.on('submit-progress', (ev: SubmitProgressEvent) => {
         if (ev.prRef !== prRef || !ownsActiveSubmit.current) return;
         setState((prev) => {
-          const baseSteps = prev.kind === 'in-flight' || prev.kind === 'failed' ? prev.steps : [];
+          // Accumulate onto whatever steps we already have — including a terminal
+          // state we may have raced into during the in-flight POST (adversarial #1).
+          const baseSteps =
+            prev.kind === 'in-flight' || prev.kind === 'failed' || prev.kind === 'success'
+              ? prev.steps
+              : [];
           const steps = upsertStep(baseSteps, ev);
           if (ev.status === 'Failed') {
             ownsActiveSubmit.current = false;
@@ -96,7 +101,9 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
             // The submit-* SSE payloads don't carry the new review id (threat-model
             // defense, spec § 7.4 / § 17 #2 / #26); the success "View on GitHub"
             // link targets the PR page instead. Recorded in the deferrals sidecar.
-            return { kind: 'success', pullRequestReviewId: '' };
+            // `steps` (all ✓) is carried so the dialog keeps the checklist visible
+            // on success (spec § 8.3).
+            return { kind: 'success', pullRequestReviewId: '', steps };
           }
           return { kind: 'in-flight', steps };
         });
@@ -119,12 +126,17 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   }, [stream, prRef]);
 
   const fire = useCallback(
-    async (verdict: Verdict) => {
+    async (verdict: Verdict, initialSteps: SubmitProgressStep[]) => {
       lastVerdictRef.current = verdict;
       ownsActiveSubmit.current = true;
+      // Go in-flight *before* the await — the submit endpoint is fire-and-forget
+      // server-side, so SSE events (incl. Finalize:Succeeded) can land before the
+      // POST resolves; setting state afterwards would clobber them (adversarial #1).
+      // A 4xx/409 is a pre-pipeline rejection, so no events can have arrived → safe
+      // to revert to idle.
+      setState({ kind: 'in-flight', steps: initialSteps });
       try {
         await submitReviewApi(reference, verdict);
-        setState({ kind: 'in-flight', steps: [] });
       } catch (err) {
         ownsActiveSubmit.current = false;
         setState({ kind: 'idle' }); // 409 / 4xx return to idle; caller surfaces a toast
@@ -134,13 +146,18 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
     [reference],
   );
 
-  const submit = useCallback((verdict: Verdict) => fire(verdict), [fire]);
+  const submit = useCallback((verdict: Verdict) => fire(verdict, []), [fire]);
 
   const retry = useCallback(async () => {
     const verdict = lastVerdictRef.current;
     if (verdict === null) return;
-    await fire(verdict);
-  }, [fire]);
+    // Resume-from-mid-pipeline: carry the prior failed-run steps so the dialog
+    // re-enters Phase B immediately (Steps 1/2 stay ✓) instead of flashing the
+    // Phase A "checking…" row for the whole successful retry (adversarial #2).
+    // A stale-commitOID retry genuinely starts over (the orphan was deleted), so
+    // it gets [].
+    await fire(verdict, state.kind === 'failed' ? state.steps : []);
+  }, [fire, state]);
 
   const resumeForeignPendingReview = useCallback(
     async (reviewId: string) => {

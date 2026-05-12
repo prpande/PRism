@@ -88,6 +88,25 @@ describe('SubmitDialog', () => {
     expect(screen.getByRole('button', { name: /confirm submit/i })).toBeDisabled();
   });
 
+  it('Confirm re-evaluates against the live textarea — clearing the only content disables it', () => {
+    // Session's only "content" is the saved summary; the picker has no verdict.
+    render(
+      <SubmitDialog
+        {...baseProps({ session: session({ draftVerdict: null, draftSummaryMarkdown: 'LGTM' }) })}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /confirm submit/i })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText(/pr-level summary/i), { target: { value: '' } });
+    expect(screen.getByRole('button', { name: /confirm submit/i })).toBeDisabled();
+  });
+
+  it('Confirm follows rule (f) when head_sha drift develops while the dialog is open', () => {
+    const { rerender } = render(<SubmitDialog {...baseProps()} />);
+    expect(screen.getByRole('button', { name: /confirm submit/i })).toBeEnabled();
+    rerender(<SubmitDialog {...baseProps({ headShaDrift: true })} />);
+    expect(screen.getByRole('button', { name: /confirm submit/i })).toBeDisabled();
+  });
+
   it('clicking Confirm flushes the summary then fires onSubmit with the PascalCase verdict', async () => {
     const onSubmit = vi.fn();
     render(
@@ -147,6 +166,12 @@ describe('SubmitDialog', () => {
     expect(screen.getByText(/^submitting…$/i)).toBeInTheDocument();
   });
 
+  it('in-flight: keeps focus inside the dialog even though every control is disabled', () => {
+    render(<SubmitDialog {...baseProps({ submitState: { kind: 'in-flight', steps: [] } })} />);
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
   it('in-flight Phase B: the 5-row checklist replaces the neutral indicator', () => {
     const steps = [
       {
@@ -163,10 +188,21 @@ describe('SubmitDialog', () => {
     expect(screen.getByText(/finalize/i)).toBeInTheDocument();
   });
 
-  it('success state: View on GitHub link + Close button, no Cancel', () => {
+  it('success state: View on GitHub link + Close button, no Cancel, all-✓ checklist still shown', () => {
+    const doneSteps = (
+      [
+        'DetectExistingPendingReview',
+        'BeginPendingReview',
+        'AttachThreads',
+        'AttachReplies',
+        'Finalize',
+      ] as const
+    ).map((step) => ({ step, status: 'Succeeded' as const, done: 1, total: 1 }));
     render(
       <SubmitDialog
-        {...baseProps({ submitState: { kind: 'success', pullRequestReviewId: '' } })}
+        {...baseProps({
+          submitState: { kind: 'success', pullRequestReviewId: '', steps: doneSteps },
+        })}
       />,
     );
     expect(screen.getByRole('link', { name: /view on github/i })).toHaveAttribute(
@@ -175,6 +211,7 @@ describe('SubmitDialog', () => {
     );
     expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^cancel$/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/created pending review/i)).toBeInTheDocument();
   });
 
   it('failed state: Cancel re-enabled, Retry button, checklist still visible', () => {

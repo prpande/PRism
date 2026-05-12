@@ -27,6 +27,9 @@ interface Props {
   // does the gating — mirrors AiSummaryCard).
   validatorResults: ValidatorResult[];
   submitState: SubmitState;
+  // Rule (f): head_sha drift that develops while the dialog is open (the header
+  // button is already disabled, but the open dialog's Confirm must follow).
+  headShaDrift?: boolean;
   // Cancel / Close — the caller resets useSubmit.
   onClose(): void;
   // Confirm — the caller calls useSubmit.submit(verdict).
@@ -44,6 +47,7 @@ export function SubmitDialog(props: Props) {
     session,
     validatorResults,
     submitState,
+    headShaDrift = false,
     onClose,
     onSubmit,
     onRetry,
@@ -53,6 +57,7 @@ export function SubmitDialog(props: Props) {
   const [verdict, setVerdict] = useState<DraftVerdict | null>(session.draftVerdict);
   const [summary, setSummary] = useState(session.draftSummaryMarkdown ?? '');
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [escNotice, setEscNotice] = useState('');
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -99,7 +104,9 @@ export function SubmitDialog(props: Props) {
   };
 
   // Esc focuses Cancel, never dismisses (spec § 8.1) — and announces the
-  // focus shift through an aria-live region so SR users aren't surprised.
+  // focus shift through an aria-live region so SR users aren't surprised. The
+  // trailing zero-width space toggles so a *repeated* Esc still changes the
+  // region's text content and re-announces (adversarial #7).
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
@@ -107,9 +114,12 @@ export function SubmitDialog(props: Props) {
       e.preventDefault();
       e.stopPropagation();
       cancelRef.current?.focus();
-      setEscNotice(
-        'Esc moved focus to Cancel — press Enter to close, or click anywhere in the dialog to continue editing.',
-      );
+      const zwsp = String.fromCharCode(0x200b);
+      setEscNotice((prev) => {
+        const base =
+          'Esc moved focus to Cancel — press Enter to close, or click anywhere in the dialog to continue editing.';
+        return prev.endsWith(zwsp) ? base : base + zwsp;
+      });
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -122,10 +132,19 @@ export function SubmitDialog(props: Props) {
     [],
   );
 
-  if (!open) return null;
-
   const kind = submitState.kind;
   const inFlight = kind === 'in-flight';
+
+  // While the pipeline runs the dialog has no enabled controls (picker, summary,
+  // Cancel all disabled; Confirm is a non-interactive spinner) — pull focus onto
+  // the dialog container so the focus trap doesn't escape to the page behind the
+  // backdrop (adversarial #4). dialogRef is tabIndex={-1}.
+  useEffect(() => {
+    if (open && inFlight) dialogRef.current?.focus();
+  }, [open, inFlight]);
+
+  if (!open) return null;
+
   const success = kind === 'success';
   const failed = kind === 'failed';
   const staleCommitOid = kind === 'stale-commit-oid';
@@ -137,17 +156,27 @@ export function SubmitDialog(props: Props) {
   const frozen = kind !== 'idle';
 
   const progressSteps =
-    submitState.kind === 'in-flight' || submitState.kind === 'failed' ? submitState.steps : [];
-  const showProgress = inFlight || failed;
+    submitState.kind === 'in-flight' ||
+    submitState.kind === 'failed' ||
+    submitState.kind === 'success'
+      ? submitState.steps
+      : [];
+  // The all-✓ checklist stays visible on success (spec § 8.3).
+  const showProgress = inFlight || failed || success;
 
-  // Re-evaluate the § 9 rules against the *local* verdict (the picker is
-  // editable in-dialog; a clear/change here must reflect immediately, ahead of
-  // the PUT /draft round-trip). headShaDrift is always false here — drift
-  // disables the header button, so the dialog can't have opened under it.
-  const effectiveSummary = summary.trim().length > 0 ? summary : session.draftSummaryMarkdown;
+  // Re-evaluate the § 9 rules against the *local* verdict + the *live* summary
+  // (both are editable in-dialog; clearing the textarea or changing the verdict
+  // must reflect immediately, ahead of the PUT /draft round-trip — otherwise
+  // Confirm shows enabled then the server 4xx's). headShaDrift is normally false
+  // here (drift disables the header button before the dialog opens) but can flip
+  // true mid-edit, so it's threaded through.
   const confirmReason = submitDisabledReason(
-    { ...session, draftVerdict: verdict, draftSummaryMarkdown: effectiveSummary },
-    false,
+    {
+      ...session,
+      draftVerdict: verdict,
+      draftSummaryMarkdown: summary.length > 0 ? summary : null,
+    },
+    headShaDrift,
     validatorResults,
   );
   const confirmDisabled = confirmReason !== null;
@@ -176,7 +205,7 @@ export function SubmitDialog(props: Props) {
 
   return (
     <Modal open={open} title={title} onClose={onClose} disableEscDismiss>
-      <div className="submit-dialog">
+      <div className="submit-dialog" ref={dialogRef} tabIndex={-1}>
         <div className="submit-dialog__status" role="status" aria-live="polite">
           {escNotice}
         </div>

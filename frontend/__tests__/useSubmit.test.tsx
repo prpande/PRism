@@ -196,7 +196,79 @@ describe('useSubmit', () => {
       await result.current.retry();
     });
     expect(submitReviewMock).toHaveBeenCalledWith(ref, 'RequestChanges');
-    expect(result.current.state).toEqual({ kind: 'in-flight', steps: [] });
+    // retry carries the prior failed-run steps forward (so the dialog re-enters
+    // Phase B immediately instead of flashing the "checking…" row).
+    const s = result.current.state;
+    if (s.kind !== 'in-flight') throw new Error(`expected in-flight, got ${s.kind}`);
+    expect(s.steps).toEqual([
+      { step: 'AttachThreads', status: 'Failed', done: 0, total: 1, errorMessage: 'x' },
+    ]);
+  });
+
+  it('retry from failed past Phase A keeps BeginPendingReview ✓ in the carried steps', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    await act(async () => {
+      await result.current.submit('Comment');
+    });
+    act(() =>
+      emit('submit-progress', {
+        prRef: PR_REF,
+        step: 'BeginPendingReview',
+        status: 'Succeeded',
+        done: 1,
+        total: 1,
+        errorMessage: null,
+      }),
+    );
+    act(() =>
+      emit('submit-progress', {
+        prRef: PR_REF,
+        step: 'AttachThreads',
+        status: 'Failed',
+        done: 1,
+        total: 3,
+        errorMessage: 'blip',
+      }),
+    );
+    await act(async () => {
+      await result.current.retry();
+    });
+    const s = result.current.state;
+    if (s.kind !== 'in-flight') throw new Error(`expected in-flight, got ${s.kind}`);
+    expect(s.steps.some((x) => x.step === 'BeginPendingReview' && x.status === 'Succeeded')).toBe(
+      true,
+    );
+  });
+
+  it('a Finalize:Succeeded SSE arriving before the submit POST resolves still lands in success', async () => {
+    let resolvePost: (v: unknown) => void = () => {};
+    submitReviewMock.mockImplementationOnce(
+      () => new Promise((resolve) => (resolvePost = resolve)),
+    );
+    const { result } = renderHook(() => useSubmit(ref));
+    let submitPromise!: Promise<void>;
+    act(() => {
+      submitPromise = result.current.submit('Comment');
+    });
+    // POST still pending; the fire-and-forget pipeline finishes and fans out.
+    expect(result.current.state.kind).toBe('in-flight');
+    act(() =>
+      emit('submit-progress', {
+        prRef: PR_REF,
+        step: 'Finalize',
+        status: 'Succeeded',
+        done: 1,
+        total: 1,
+        errorMessage: null,
+      }),
+    );
+    expect(result.current.state.kind).toBe('success');
+    // Now the POST resolves — it must NOT clobber the success state.
+    await act(async () => {
+      resolvePost({ outcome: 'started' });
+      await submitPromise;
+    });
+    expect(result.current.state.kind).toBe('success');
   });
 
   it('ignores events for a different prRef', async () => {

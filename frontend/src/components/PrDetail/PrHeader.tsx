@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
 import { sendPatch } from '../../api/draft';
 import { verdictToSubmitWire } from '../../api/submit';
@@ -91,6 +91,15 @@ export function PrHeader({
   // be a no-op) and disables Submit Review (can't open a second dialog).
   const inSubmitFlow = submit.state.kind !== 'idle';
 
+  // A successful submit clears the session server-side; the own-tab SSE filter
+  // can swallow the pipeline's state-changed event, so refetch explicitly so the
+  // header (verdict picker, recovery badge, Submit button enable state) reflects
+  // the cleared session without a manual reload (adversarial #3). onSessionRefetch
+  // is intentionally not a dep — it's re-created each render by PrDetailPage.
+  useEffect(() => {
+    if (submit.state.kind === 'success') onSessionRefetch?.();
+  }, [submit.state.kind]);
+
   const patchVerdict = (verdict: DraftVerdict | null) => {
     void sendPatch(reference, { kind: 'draftVerdict', payload: verdict }).then(() => {
       onSessionRefetch?.();
@@ -141,7 +150,11 @@ export function PrHeader({
           </div>
         </div>
         <div className="pr-actions">
-          {session && <SubmitInProgressBadge session={session} onResume={onResume} />}
+          {/* Only when nothing is in flight in *this* tab — re-firing submit()
+              over an active pipeline would 409 and (caught) wedge the dialog. */}
+          {session && submit.state.kind === 'idle' && (
+            <SubmitInProgressBadge session={session} onResume={onResume} />
+          )}
           <VerdictPicker
             value={session?.draftVerdict ?? null}
             verdictStatus={session?.draftVerdictStatus}
@@ -172,6 +185,7 @@ export function PrHeader({
           session={session}
           validatorResults={validatorResults}
           submitState={submit.state}
+          headShaDrift={headShaDrift}
           onClose={closeDialog}
           onSubmit={(verdict) => {
             void submit.submit(verdict).catch(() => {
