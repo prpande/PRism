@@ -29,6 +29,10 @@ internal sealed class SubmitLockRegistry
     {
         ArgumentNullException.ThrowIfNull(reference);
         var key = reference.ToString();
+        // GetOrAdd may evaluate the factory on each of N racing first-callers and keep only one
+        // result; the discarded SemaphoreSlim(s) hold no unmanaged resource (ManualResetEventSlim's
+        // finalizer covers it) and are GC'd — no OS-handle leak. The race is vanishingly rare and
+        // inconsequential for a single-user PoC; noted so a future reviewer doesn't flag it.
         var sem = _locks.GetOrAdd(key, static _ => new SemaphoreSlim(1, 1));
 
         var acquired = await sem.WaitAsync(timeout, ct).ConfigureAwait(false);

@@ -16,10 +16,14 @@ namespace PRism.Web.Sse;
 // `ArgumentOutOfRangeException` doesn't fire at runtime.
 //
 // Threat-model defense (spec § 7.4/§ 7.5/§ 17 #26): the submit-* payloads carry counts + the
-// IDs the dialog UX needs and nothing more — no thread/reply bodies (those arrive only in the
-// Resume endpoint's 200 response when the user explicitly opts in), no orphan review id, no
-// pendingReviewId. The per-PR subscription is broader-than-spec (any subscribed tab sees the
-// event), so keeping the payload minimal is the defense.
+// minimum IDs the dialog UX needs and nothing more. No thread/reply bodies (those arrive only in
+// the Resume endpoint's 200 response when the user explicitly opts in). No orphan review id —
+// `submit-stale-commit-oid` carries only the orphan *commit* oid; `submit-orphan-cleanup-failed`
+// carries no id at all. The one review *node* id that does ship is on `submit-foreign-pending-
+// review` (`pullRequestReviewId`) — the dialog needs it to call `/resume` and `/discard`, and it
+// is the *foreign* review's id, not a PRism-managed `PendingReviewId` (the kind SensitiveFieldScrubber
+// redacts). The per-PR subscription is broader-than-spec (any subscribed tab sees the event), so
+// keeping the payload minimal is the defense — that one foreign-review id is the irreducible minimum.
 internal static class SseEventProjection
 {
     internal sealed record StateChangedWire(string PrRef, IReadOnlyList<string> FieldsTouched, string? SourceTabId);

@@ -82,6 +82,28 @@ public class PrSubmitEndpointsTests
     }
 
     [Fact]
+    public async Task PostSubmit_stale_but_overridden_draft_does_not_block_submit()
+    {
+        using var ctx = SubmitEndpointsTestContext.Create();
+        var session = SubmitEndpointsTestContext.ValidSession() with
+        {
+            DraftComments = new List<DraftComment>
+            {
+                // Status=Stale but IsOverriddenStale=true → rule (b) lets submit proceed (spec § 9 (b)).
+                new("d1", "src/Foo.cs", 42, "RIGHT", new string('a', 40), "x", "body", DraftStatus.Stale, IsOverriddenStale: true),
+            },
+        };
+        await ctx.SeedSessionAsync("o", "r", 12, session);
+        using var client = ctx.CreateClient();
+
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/12/submit", new { verdict = "Comment" });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("outcome").GetString().Should().Be("started");
+        await TestPoll.UntilAsync(() => ctx.Submitter.FinalizeCalled, PipelineWait);
+    }
+
+    [Fact]
     public async Task PostSubmit_needs_reconfirm_verdict_returns_400()
     {
         using var ctx = SubmitEndpointsTestContext.Create();

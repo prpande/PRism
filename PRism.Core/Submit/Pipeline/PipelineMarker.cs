@@ -105,6 +105,11 @@ internal static class PipelineMarker
     public static string StripAllMarkerPrefixes(string body)
     {
         if (string.IsNullOrEmpty(body)) return body;
+        // Replacing the marker comment with "" (rather than " ") can leave a double space where the
+        // marker sat mid-prose ("a <!-- … --> b" -> "a  b"). That's acceptable here: the imported
+        // body is Markdown (renderers collapse whitespace) and a normal embedded marker is
+        // pathological in the first place; a single-space replacement would just trade that for
+        // leading/trailing-space edge cases at the body boundaries.
         var stripped = MarkerAnywhereRegex.Replace(body, "");
         if (stripped.Contains(Prefix, StringComparison.Ordinal))
             stripped = stripped.Replace(Prefix, "", StringComparison.Ordinal);

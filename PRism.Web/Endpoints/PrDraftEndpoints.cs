@@ -140,7 +140,9 @@ internal static class PrDraftEndpoints
                     message = "Comment body cannot contain the internal marker string '<!-- prism:client-id:'",
                 }, statusCode: StatusCodes.Status400BadRequest);
 
-            var validation = ValidatePatch(op.Kind, op.Value);
+            // Deserialise + validate the operand once here; ApplyPatch reuses the typed payload
+            // (object kinds) rather than re-parsing the JsonElement inside the store transaction.
+            var validation = ValidateAndParseOperand(op.Kind, op.Value, out var operandPayload);
             if (validation is not null) return validation;
 
             PatchOutcome outcome = new PatchOutcome.NoOp();
@@ -150,7 +152,7 @@ internal static class PrDraftEndpoints
                     ? existing
                     : NewEmptySession();
 
-                outcome = ApplyPatch(op.Kind, op.Value, session, cache, prRef);
+                outcome = ApplyPatch(op.Kind, op.Value, operandPayload, session, cache, prRef);
 
                 if (outcome is PatchOutcome.Applied applied)
                 {
@@ -208,9 +210,14 @@ internal static class PrDraftEndpoints
         internal sealed record NoOp : PatchOutcome;
     }
 
+    // `payload` is the typed operand ValidateAndParseOperand already deserialised for object kinds
+    // (NewDraftCommentPayload / DeleteDraftPayload / …); it is null for the scalar kinds
+    // (draftVerdict / draftSummaryMarkdown — those read `value` directly for the null-vs-string
+    // distinction) and the bool kinds (confirmVerdict / markAllRead).
     private static PatchOutcome ApplyPatch(
         string kind,
         JsonElement value,
+        object? payload,
         ReviewSessionState session,
         IActivePrCache cache,
         PrReference prRef)
@@ -245,7 +252,7 @@ internal static class PrDraftEndpoints
 
             case "newDraftComment":
                 {
-                    if (!TryDeserialize<NewDraftCommentPayload>(value, out var n)) return new PatchOutcome.PatchShapeInvalid();
+                    if (payload is not NewDraftCommentPayload n) return new PatchOutcome.PatchShapeInvalid();
                     var id = Guid.NewGuid().ToString();
                     var draft = new DraftComment(
                         Id: id,
@@ -263,7 +270,7 @@ internal static class PrDraftEndpoints
 
             case "newPrRootDraftComment":
                 {
-                    if (!TryDeserialize<NewPrRootDraftCommentPayload>(value, out var n)) return new PatchOutcome.PatchShapeInvalid();
+                    if (payload is not NewPrRootDraftCommentPayload n) return new PatchOutcome.PatchShapeInvalid();
                     var id = Guid.NewGuid().ToString();
                     var draft = new DraftComment(
                         Id: id,
@@ -279,7 +286,7 @@ internal static class PrDraftEndpoints
 
             case "updateDraftComment":
                 {
-                    if (!TryDeserialize<UpdateDraftCommentPayload>(value, out var u)) return new PatchOutcome.PatchShapeInvalid();
+                    if (payload is not UpdateDraftCommentPayload u) return new PatchOutcome.PatchShapeInvalid();
                     var list = session.DraftComments.ToList();
                     var idx = list.FindIndex(d => d.Id == u.Id);
                     if (idx < 0) return new PatchOutcome.DraftNotFound();
@@ -291,7 +298,7 @@ internal static class PrDraftEndpoints
 
             case "deleteDraftComment":
                 {
-                    if (!TryDeserialize<DeleteDraftPayload>(value, out var d)) return new PatchOutcome.PatchShapeInvalid();
+                    if (payload is not DeleteDraftPayload d) return new PatchOutcome.PatchShapeInvalid();
                     var list = session.DraftComments.ToList();
                     var idx = list.FindIndex(x => x.Id == d.Id);
                     if (idx < 0) return new PatchOutcome.DraftNotFound();
@@ -303,7 +310,7 @@ internal static class PrDraftEndpoints
 
             case "newDraftReply":
                 {
-                    if (!TryDeserialize<NewDraftReplyPayload>(value, out var n)) return new PatchOutcome.PatchShapeInvalid();
+                    if (payload is not NewDraftReplyPayload n) return new PatchOutcome.PatchShapeInvalid();
                     var id = Guid.NewGuid().ToString();
                     var reply = new DraftReply(
                         Id: id, ParentThreadId: n.ParentThreadId, ReplyCommentId: null,
@@ -316,7 +323,7 @@ internal static class PrDraftEndpoints
 
             case "updateDraftReply":
                 {
-                    if (!TryDeserialize<UpdateDraftPayload>(value, out var u)) return new PatchOutcome.PatchShapeInvalid();
+                    if (payload is not UpdateDraftPayload u) return new PatchOutcome.PatchShapeInvalid();
                     var list = session.DraftReplies.ToList();
                     var idx = list.FindIndex(r => r.Id == u.Id);
                     if (idx < 0) return new PatchOutcome.DraftNotFound();
@@ -328,7 +335,7 @@ internal static class PrDraftEndpoints
 
             case "deleteDraftReply":
                 {
-                    if (!TryDeserialize<DeleteDraftPayload>(value, out var d)) return new PatchOutcome.PatchShapeInvalid();
+                    if (payload is not DeleteDraftPayload d) return new PatchOutcome.PatchShapeInvalid();
                     var list = session.DraftReplies.ToList();
                     var idx = list.FindIndex(r => r.Id == d.Id);
                     if (idx < 0) return new PatchOutcome.DraftNotFound();
@@ -367,7 +374,7 @@ internal static class PrDraftEndpoints
 
             case "overrideStale":
                 {
-                    if (!TryDeserialize<OverrideStalePayload>(value, out var os)) return new PatchOutcome.PatchShapeInvalid();
+                    if (payload is not OverrideStalePayload os) return new PatchOutcome.PatchShapeInvalid();
                     var commentList = session.DraftComments.ToList();
                     var commentIdx = commentList.FindIndex(d => d.Id == os.Id);
                     if (commentIdx >= 0)
@@ -420,10 +427,14 @@ internal static class PrDraftEndpoints
         }
     }
 
-    private static IResult? ValidatePatch(string kind, JsonElement value)
+    // Deserialises an object-kind operand exactly once (so ApplyPatch doesn't re-parse inside the
+    // store transaction), validates it, and yields the typed record via `payload`. Scalar kinds
+    // (draftVerdict / draftSummaryMarkdown) and bool kinds set `payload = null` — ApplyPatch reads
+    // the JsonElement directly for those. Required strings are null-checked BEFORE any .Length /
+    // regex call so a malformed payload returns 4xx instead of throwing NullReferenceException → 500.
+    private static IResult? ValidateAndParseOperand(string kind, JsonElement value, out object? payload)
     {
-        // Required strings are null-checked BEFORE any .Length / regex call so a malformed payload
-        // returns 4xx instead of throwing NullReferenceException → 500.
+        payload = null;
         switch (kind)
         {
             case "newDraftComment":
@@ -440,6 +451,7 @@ internal static class PrDraftEndpoints
                         return Results.UnprocessableEntity(new { error = "sha-format-invalid" });
                     if (!IsCanonicalFilePath(ndc.FilePath))
                         return Results.UnprocessableEntity(new { error = "file-path-invalid" });
+                    payload = ndc;
                     return null;
                 }
             case "newPrRootDraftComment":
@@ -450,6 +462,7 @@ internal static class PrDraftEndpoints
                         return Results.BadRequest(new { error = "body-empty" });
                     if (nprdc.BodyMarkdown.Length > BodyMarkdownMaxChars)
                         return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    payload = nprdc;
                     return null;
                 }
             case "newDraftReply":
@@ -464,6 +477,7 @@ internal static class PrDraftEndpoints
                         return Results.BadRequest(new { error = "parent-thread-id-missing" });
                     if (!ParentThreadId.IsMatch(ndr.ParentThreadId))
                         return Results.UnprocessableEntity(new { error = "thread-id-format-invalid" });
+                    payload = ndr;
                     return null;
                 }
             case "updateDraftComment":
@@ -474,6 +488,7 @@ internal static class PrDraftEndpoints
                         return Results.BadRequest(new { error = "body-empty" });
                     if (udc.BodyMarkdown.Length > BodyMarkdownMaxChars)
                         return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    payload = udc;
                     return null;
                 }
             case "updateDraftReply":
@@ -484,15 +499,20 @@ internal static class PrDraftEndpoints
                         return Results.BadRequest(new { error = "body-empty" });
                     if (udr.BodyMarkdown.Length > BodyMarkdownMaxChars)
                         return Results.UnprocessableEntity(new { error = "body-too-large" });
+                    payload = udr;
                     return null;
                 }
             case "deleteDraftComment":
             case "deleteDraftReply":
-                return TryDeserialize<DeleteDraftPayload>(value, out var del) && !string.IsNullOrEmpty(del.Id)
-                    ? null : Results.BadRequest(new { error = "patch-shape-invalid" });
+                if (!TryDeserialize<DeleteDraftPayload>(value, out var del) || string.IsNullOrEmpty(del.Id))
+                    return Results.BadRequest(new { error = "patch-shape-invalid" });
+                payload = del;
+                return null;
             case "overrideStale":
-                return TryDeserialize<OverrideStalePayload>(value, out var os) && !string.IsNullOrEmpty(os.Id)
-                    ? null : Results.BadRequest(new { error = "patch-shape-invalid" });
+                if (!TryDeserialize<OverrideStalePayload>(value, out var os) || string.IsNullOrEmpty(os.Id))
+                    return Results.BadRequest(new { error = "patch-shape-invalid" });
+                payload = os;
+                return null;
             case "draftSummaryMarkdown":
                 {
                     if (value.ValueKind == JsonValueKind.Null) return null;  // explicit clear is valid
@@ -511,7 +531,7 @@ internal static class PrDraftEndpoints
                     return null;
                 }
             default:
-                return null;
+                return null;  // confirmVerdict / markAllRead — operand was already constrained to `true` in op resolution
         }
     }
 
@@ -544,7 +564,11 @@ internal static class PrDraftEndpoints
         return true;
     }
 
-    private static ReviewSessionState NewEmptySession() => new(
+    // The canonical "no draft session yet" value — `PUT /draft` materialises one when a patch
+    // arrives for a PR with no session, and PrSubmitEndpoints.ResumeForeignPendingReviewAsync uses
+    // it for the same reason. Internal so both endpoint classes share the single definition: a new
+    // field on ReviewSessionState then produces one compile error, not zero.
+    internal static ReviewSessionState NewEmptySession() => new(
         LastViewedHeadSha: null, LastSeenCommentId: null,
         PendingReviewId: null, PendingReviewCommitOid: null,
         ViewedFiles: new Dictionary<string, string>(),

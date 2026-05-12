@@ -10,10 +10,12 @@ namespace PRism.Core.Events;
 // SubmitProgressEvent (PRism.Core.Submit.Pipeline) — they carry the same step/status/counts
 // but add the PrReference the per-PR fanout needs.
 //
-// Threat-model defense (spec § 7.4/§ 7.5/§ 17 #26): payloads are counts + IDs the dialog UX
-// needs and nothing more — no thread/reply bodies, no orphan review id, no pendingReviewId.
-// The per-PR subscription is broader-than-spec (any subscribed tab sees the event), so the
-// surface stays minimal.
+// Threat-model defense (spec § 7.4/§ 7.5/§ 17 #26): payloads are counts + the minimum IDs the
+// dialog UX needs and nothing more — no thread/reply bodies, no orphan review id (SubmitStaleCommitOid
+// carries only the orphan *commit* oid; SubmitOrphanCleanupFailed carries no id), no PRism-managed
+// PendingReviewId. The one review *node* id that ships is SubmitForeignPendingReview.PullRequestReviewId
+// — the *foreign* review's id the dialog needs to call /resume and /discard. The per-PR subscription
+// is broader-than-spec (any subscribed tab sees the event), so the surface stays minimal.
 
 public sealed record SubmitProgressBusEvent(
     PrReference PrRef,

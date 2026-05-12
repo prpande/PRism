@@ -31,6 +31,10 @@ internal static class PrSubmitEndpoints
         LoggerMessage.Define<string>(LogLevel.Error, new EventId(0, "SubmitPipelineThrew"),
             "Submit pipeline threw outside its outcome contract for {SessionKey}");
 
+    private static readonly Action<ILogger, string, Exception?> s_foreignDiscardDeleteFailed =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(1, "ForeignPendingReviewDiscardDeleteFailed"),
+            "deletePullRequestReview failed for the foreign-pending-review discard on {SessionKey} (returning 502); the pending review remains and will be re-detected on the next submit");
+
     public static IEndpointRouteBuilder MapPrSubmitEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -243,7 +247,7 @@ internal static class PrSubmitEndpoints
 
         await stateStore.UpdateAsync(state =>
         {
-            var existing = state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? s : EmptySession();
+            var existing = state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? s : PrDraftEndpoints.NewEmptySession();
             var merged = existing with
             {
                 DraftComments = existing.DraftComments.Concat(newDrafts).ToList(),
@@ -295,6 +299,7 @@ internal static class PrSubmitEndpoints
         IActivePrCache activePrCache,
         IReviewSubmitter submitter,
         IReviewEventBus bus,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
         var prRef = new PrReference(owner, repo, number);
@@ -321,8 +326,9 @@ internal static class PrSubmitEndpoints
             throw;
         }
 #pragma warning disable CA1031 // surface any GitHub/transport failure as a structured error rather than a bare 500
-        catch (Exception)
+        catch (Exception ex)
         {
+            s_foreignDiscardDeleteFailed(loggerFactory.CreateLogger("PRism.Web.Endpoints.PrSubmitEndpoints"), sessionKey, ex);
             return Results.Json(new SubmitErrorDto("delete-failed", "Failed to delete the pending review on GitHub. Please retry."), statusCode: StatusCodes.Status502BadGateway);
         }
 #pragma warning restore CA1031
@@ -383,15 +389,6 @@ internal static class PrSubmitEndpoints
         var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
         return state with { Reviews = state.Reviews with { Sessions = sessions } };
     }
-
-    private static ReviewSessionState EmptySession() => new(
-        LastViewedHeadSha: null, LastSeenCommentId: null,
-        PendingReviewId: null, PendingReviewCommitOid: null,
-        ViewedFiles: new Dictionary<string, string>(),
-        DraftComments: Array.Empty<DraftComment>(),
-        DraftReplies: Array.Empty<DraftReply>(),
-        DraftSummaryMarkdown: null, DraftVerdict: null,
-        DraftVerdictStatus: DraftVerdictStatus.Draft);
 
     // The pipeline's onDuplicateMarker notices look like "draft <id>: …" or "reply <id>: …". Pull
     // the id out for the submit-duplicate-marker-detected SSE payload; "unknown" if we can't.
