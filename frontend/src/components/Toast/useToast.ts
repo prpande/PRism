@@ -14,7 +14,16 @@ interface ToastApi {
   dismiss: (id: string) => void;
 }
 
-const ToastContext = createContext<ToastApi | null>(null);
+// No-op default so components that call useToast() render fine outside a
+// ToastProvider (tests, isolated renders) — mirrors useEventSource() returning
+// null and being handled gracefully. App.tsx mounts the real provider.
+const NOOP_TOAST_API: ToastApi = {
+  toasts: [],
+  show: () => {},
+  dismiss: () => {},
+};
+
+const ToastContext = createContext<ToastApi>(NOOP_TOAST_API);
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastSpec[]>([]);
@@ -30,7 +39,5 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 export function useToast(): ToastApi {
-  const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error('useToast must be used within ToastProvider');
-  return ctx;
+  return useContext(ToastContext);
 }

@@ -34,12 +34,25 @@ export type SubmitState =
   | { kind: 'foreign-pending-review-prompt'; snapshot: SubmitForeignPendingReviewEvent }
   | { kind: 'stale-commit-oid'; orphanCommitOid: string };
 
+// After a foreign-pending-review Resume, the counts the user saw in the prompt
+// (Snapshot A — from the SSE event) and what the resume 200 actually imported
+// (Snapshot B), plus whether any imported thread was resolved on github.com.
+// Drives the ImportedDraftsBanner above the imported drafts (spec § 11.1).
+export interface ResumeSummary {
+  snapshotA: { threadCount: number; replyCount: number };
+  snapshotB: { threadCount: number; replyCount: number };
+  hasResolvedImports: boolean;
+}
+
 export interface UseSubmitResult {
   state: SubmitState;
   submit(verdict: Verdict): Promise<void>;
   retry(): Promise<void>;
   resumeForeignPendingReview(reviewId: string): Promise<void>;
   discardForeignPendingReview(reviewId: string): Promise<void>;
+  // Set after a successful Resume; null until then and after clearLastResume().
+  lastResume: ResumeSummary | null;
+  clearLastResume(): void;
   reset(): void;
 }
 
@@ -62,6 +75,7 @@ function upsertStep(steps: SubmitProgressStep[], ev: SubmitProgressEvent): Submi
 
 export function useSubmit(reference: PrReference): UseSubmitResult {
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
+  const [lastResume, setLastResume] = useState<ResumeSummary | null>(null);
   const stream = useEventSource();
   const prRef = prRefString(reference);
 
@@ -73,6 +87,10 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   // Last-confirmed verdict, so retry() (stale-commitOID recovery, post-failure
   // retry) re-fires with the same value without plumbing it back through props.
   const lastVerdictRef = useRef<Verdict | null>(null);
+  // Counts the user saw in the foreign-pending-review prompt (Snapshot A),
+  // captured when the prompt state arrives so resumeForeignPendingReview can
+  // diff them against the resume 200's counts (Snapshot B) — spec § 11.1.
+  const lastForeignSnapshotRef = useRef<{ threadCount: number; replyCount: number } | null>(null);
 
   useEffect(() => {
     if (!stream) return;
@@ -115,6 +133,10 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
         // late/out-of-order event can't overwrite the prompt (like the
         // stale-commit-oid path).
         ownsActiveSubmit.current = false;
+        lastForeignSnapshotRef.current = {
+          threadCount: ev.threadCount,
+          replyCount: ev.replyCount,
+        };
         setState({ kind: 'foreign-pending-review-prompt', snapshot: ev });
       }),
       stream.on('submit-stale-commit-oid', (ev: SubmitStaleCommitOidEvent) => {
@@ -167,9 +189,17 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   const resumeForeignPendingReview = useCallback(
     async (reviewId: string) => {
       try {
-        await resumeForeignApi(reference, reviewId);
+        const resp = await resumeForeignApi(reference, reviewId);
         // Imports land in the session as Draft entries; the user adjudicates via
         // the Drafts tab, then re-clicks Submit Review. (spec § 11.1)
+        const snapshotA = lastForeignSnapshotRef.current;
+        if (snapshotA) {
+          setLastResume({
+            snapshotA,
+            snapshotB: { threadCount: resp.threadCount, replyCount: resp.replyCount },
+            hasResolvedImports: resp.threads.some((t) => t.isResolved),
+          });
+        }
         ownsActiveSubmit.current = false;
         setState({ kind: 'idle' });
       } catch (err) {
@@ -196,10 +226,21 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
     [reference],
   );
 
+  const clearLastResume = useCallback(() => setLastResume(null), []);
+
   const reset = useCallback(() => {
     ownsActiveSubmit.current = false;
     setState({ kind: 'idle' });
   }, []);
 
-  return { state, submit, retry, resumeForeignPendingReview, discardForeignPendingReview, reset };
+  return {
+    state,
+    submit,
+    retry,
+    resumeForeignPendingReview,
+    discardForeignPendingReview,
+    lastResume,
+    clearLastResume,
+    reset,
+  };
 }

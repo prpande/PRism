@@ -5,6 +5,8 @@ import { VerdictPicker } from '../VerdictPicker';
 import { CountsBlock } from './CountsBlock';
 import { PreSubmitValidatorCard } from './PreSubmitValidatorCard';
 import { SubmitProgressIndicator } from './SubmitProgressIndicator';
+import { StaleCommitOidBanner } from './StaleCommitOidBanner';
+import { ForeignPendingReviewModal } from '../ForeignPendingReviewModal/ForeignPendingReviewModal';
 import { sendPatch } from '../../../api/draft';
 import { verdictToSubmitWire } from '../../../api/submit';
 import { submitDisabledReason } from '../SubmitButton';
@@ -28,8 +30,12 @@ interface Props {
   validatorResults: ValidatorResult[];
   submitState: SubmitState;
   // Rule (f): head_sha drift that develops while the dialog is open (the header
-  // button is already disabled, but the open dialog's Confirm must follow).
+  // button is already disabled, but the open dialog's Confirm must follow). Also
+  // drives the stale-commit-oid banner's not-yet-Reloaded variant.
   headShaDrift?: boolean;
+  // The PR's currently-known head sha — shown (truncated) in the stale-commit-oid
+  // banner. May briefly lag the real new head until the user clicks Reload.
+  currentHeadSha?: string;
   // Cancel / Close — the caller resets useSubmit.
   onClose(): void;
   // Confirm — the caller calls useSubmit.submit(verdict).
@@ -38,6 +44,11 @@ interface Props {
   onRetry(): void;
   // Picker change — the caller patches PUT /draft and refetches the session.
   onVerdictChange(verdict: DraftVerdict | null): void;
+  // Foreign-pending-review prompt — Resume / Discard the foreign review.
+  // The caller wires these to useSubmit.resumeForeignPendingReview /
+  // discardForeignPendingReview (and surfaces a toast on a TOCTOU 409).
+  onResumeForeignPendingReview(pullRequestReviewId: string): void;
+  onDiscardForeignPendingReview(pullRequestReviewId: string): void;
 }
 
 export function SubmitDialog(props: Props) {
@@ -48,10 +59,13 @@ export function SubmitDialog(props: Props) {
     validatorResults,
     submitState,
     headShaDrift = false,
+    currentHeadSha = '',
     onClose,
     onSubmit,
     onRetry,
     onVerdictChange,
+    onResumeForeignPendingReview,
+    onDiscardForeignPendingReview,
   } = props;
 
   const [verdict, setVerdict] = useState<DraftVerdict | null>(session.draftVerdict);
@@ -145,10 +159,43 @@ export function SubmitDialog(props: Props) {
 
   if (!open) return null;
 
+  // The foreign-pending-review prompt is its own modal (spec § 11), not an
+  // in-dialog banner — render it instead of the submit dialog shell.
+  if (kind === 'foreign-pending-review-prompt') {
+    return (
+      <ForeignPendingReviewModal
+        open
+        snapshot={
+          (submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>).snapshot
+        }
+        onResume={onResumeForeignPendingReview}
+        onDiscard={onDiscardForeignPendingReview}
+        onCancel={onClose}
+      />
+    );
+  }
+
+  // The stale-commit-oid state collapses the dialog body to the banner — the
+  // orphan was already deleted server-side, so the verdict picker / summary /
+  // counts are moot until the user re-fires (spec § 12). The banner owns its
+  // own Cancel + "Recreate and resubmit" buttons.
+  if (kind === 'stale-commit-oid') {
+    return (
+      <Modal open={open} title="The PR’s head commit changed." onClose={onClose} disableEscDismiss>
+        <div className="submit-dialog submit-dialog--stale" ref={dialogRef} tabIndex={-1}>
+          <StaleCommitOidBanner
+            currentHeadSha={currentHeadSha}
+            notReloadedYet={headShaDrift}
+            onCancel={onClose}
+            onResubmit={onRetry}
+          />
+        </div>
+      </Modal>
+    );
+  }
+
   const success = kind === 'success';
   const failed = kind === 'failed';
-  const staleCommitOid = kind === 'stale-commit-oid';
-  const foreignPrompt = kind === 'foreign-pending-review-prompt';
   // The verdict picker + summary textarea are frozen for the whole submit flow
   // — through success, failure, and the stale-commitOID/foreign-prompt branches
   // (the retry paths re-fire with the last-confirmed verdict). Only `idle` is
@@ -187,13 +234,9 @@ export function SubmitDialog(props: Props) {
     ? 'Review submitted.'
     : failed
       ? `Submit failed at ${(submitState as Extract<SubmitState, { kind: 'failed' }>).failedStep}.`
-      : staleCommitOid
-        ? 'The PR’s head commit changed.'
-        : foreignPrompt
-          ? 'Existing pending review found.'
-          : inFlight
-            ? 'Submitting your review…'
-            : 'Submit review';
+      : inFlight
+        ? 'Submitting your review…'
+        : 'Submit review';
 
   const prUrl = `https://github.com/${reference.owner}/${reference.repo}/pull/${reference.number}`;
 
@@ -220,30 +263,6 @@ export function SubmitDialog(props: Props) {
         <div className="submit-dialog__status" role="status" aria-live="polite">
           {escNotice}
         </div>
-
-        {staleCommitOid && (
-          <div className="submit-dialog__banner banner-warning" role="alert">
-            The PR&rsquo;s head commit changed since this pending review was started. The orphan was
-            removed and your drafts are preserved; click &ldquo;Recreate and resubmit&rdquo; to
-            re-attach them against the new head.
-          </div>
-        )}
-        {foreignPrompt && (
-          <div className="submit-dialog__banner banner-warning" role="alert">
-            You already have a pending review on this PR (
-            {
-              (submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>)
-                .snapshot.threadCount
-            }{' '}
-            thread(s),{' '}
-            {
-              (submitState as Extract<SubmitState, { kind: 'foreign-pending-review-prompt' }>)
-                .snapshot.replyCount
-            }{' '}
-            reply(ies)). Resume / discard options are coming soon — for now, Cancel and adjudicate
-            it from the Drafts tab.
-          </div>
-        )}
 
         <div className="submit-dialog__body">
           <section data-section="verdict" className="submit-dialog__section">
@@ -312,7 +331,7 @@ export function SubmitDialog(props: Props) {
               disabled={inFlight}
               onClick={onClose}
             >
-              {staleCommitOid || foreignPrompt ? 'Cancel — nothing was submitted' : 'Cancel'}
+              Cancel
             </button>
           )}
 
@@ -335,11 +354,6 @@ export function SubmitDialog(props: Props) {
           {failed && (
             <button type="button" className="btn btn-primary" onClick={onRetry}>
               Retry
-            </button>
-          )}
-          {staleCommitOid && (
-            <button type="button" className="btn btn-primary" onClick={onRetry}>
-              Recreate and resubmit
             </button>
           )}
           {success && (

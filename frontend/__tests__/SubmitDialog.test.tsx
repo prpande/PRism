@@ -39,6 +39,8 @@ function baseProps(overrides: Partial<DialogProps> = {}): DialogProps {
     onSubmit: vi.fn(),
     onRetry: vi.fn(),
     onVerdictChange: vi.fn(),
+    onResumeForeignPendingReview: vi.fn(),
+    onDiscardForeignPendingReview: vi.fn(),
     ...overrides,
   };
 }
@@ -236,15 +238,63 @@ describe('SubmitDialog', () => {
     expect(screen.getByText(/boom/)).toBeInTheDocument();
   });
 
-  it('stale-commit-oid state: warning banner, Recreate-and-resubmit primary, Cancel enabled', () => {
+  it('stale-commit-oid state: StaleCommitOidBanner replaces the body, Recreate-and-resubmit + Cancel, sha shown', () => {
     render(
       <SubmitDialog
-        {...baseProps({ submitState: { kind: 'stale-commit-oid', orphanCommitOid: 'old' } })}
+        {...baseProps({
+          submitState: { kind: 'stale-commit-oid', orphanCommitOid: 'old' },
+          currentHeadSha: 'feedface1234567',
+        })}
       />,
     );
     expect(screen.getByRole('alert')).toHaveTextContent(/head commit changed/i);
-    expect(screen.getByRole('button', { name: /recreate and resubmit/i })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('feedfac');
+    expect(screen.getByRole('button', { name: /recreate and resubmit/i })).toBeEnabled();
     expect(screen.getByRole('button', { name: /cancel/i })).toBeEnabled();
+    // The body sections are gone — no verdict picker / summary while in this state.
+    expect(screen.queryByLabelText(/pr-level summary/i)).not.toBeInTheDocument();
+  });
+
+  it('stale-commit-oid with head_sha drift still pending: Recreate disabled + Reload reminder', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          submitState: { kind: 'stale-commit-oid', orphanCommitOid: 'old' },
+          currentHeadSha: 'feedface',
+          headShaDrift: true,
+        })}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /recreate and resubmit/i })).toBeDisabled();
+    expect(screen.getByText(/click reload first/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /cancel/i })).toBeEnabled();
+  });
+
+  it('foreign-pending-review-prompt state: renders the ForeignPendingReviewModal (not the submit dialog body)', () => {
+    const onResumeForeignPendingReview = vi.fn();
+    render(
+      <SubmitDialog
+        {...baseProps({
+          submitState: {
+            kind: 'foreign-pending-review-prompt',
+            snapshot: {
+              prRef: 'o/r/1',
+              pullRequestReviewId: 'PRR_a',
+              commitOid: 'c',
+              createdAt: '2026-05-11T00:00:00Z',
+              threadCount: 2,
+              replyCount: 0,
+            },
+          },
+          onResumeForeignPendingReview,
+        })}
+      />,
+    );
+    expect(screen.getByRole('button', { name: /^resume$/i })).toBeInTheDocument();
+    expect(screen.getByText(/2 thread/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/pr-level summary/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^resume$/i }));
+    expect(onResumeForeignPendingReview).toHaveBeenCalledWith('PRR_a');
   });
 
   it('Esc focuses Cancel instead of dismissing, and announces the focus shift', () => {

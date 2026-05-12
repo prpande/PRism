@@ -165,3 +165,36 @@ describe('PrHeader', () => {
     expect(filesTab.textContent).toMatch(/5/);
   });
 });
+
+describe('PrHeader — closed/merged PR (PR5 § 13)', () => {
+  it('shows "Discard all drafts", hides the verdict picker, and disables Submit on a closed PR with session content', () => {
+    render(
+      <PrHeader
+        {...baseProps}
+        session={session({ pendingReviewId: 'PRR_x', draftVerdict: 'approve' })}
+        prState="closed"
+      />,
+    );
+    expect(screen.getByRole('button', { name: /discard all drafts/i })).toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: /verdict/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /submit review/i })).toBeDisabled();
+  });
+
+  it('does not show "Discard all drafts" on a closed PR with an empty session', () => {
+    render(<PrHeader {...baseProps} session={session()} prState="closed" />);
+    expect(screen.queryByRole('button', { name: /discard all drafts/i })).not.toBeInTheDocument();
+  });
+
+  it('does not show "Discard all drafts" on an open PR even with session content; verdict picker stays', () => {
+    render(<PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_x' })} prState="open" />);
+    expect(screen.queryByRole('button', { name: /discard all drafts/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /verdict/i })).toBeInTheDocument();
+  });
+
+  it('clicking "Discard all drafts" opens the confirmation modal with the count copy', () => {
+    render(<PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_x' })} prState="merged" />);
+    fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
+    expect(screen.getByText(/discard 0 draft.+0 repl/i)).toBeInTheDocument();
+    expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+  });
+});
