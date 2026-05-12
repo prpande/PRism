@@ -42,6 +42,32 @@ public class AttachRepliesTests
     }
 
     [Fact]
+    public async Task Step4SnapshotRefetchReturnsNull_ReturnsRetryableFailure_DoesNotDemoteReplies()
+    {
+        // GitHub's reviews(...) list query can lag right after Begin/AttachThread; Step 4's re-fetch
+        // then returns null even though the pending review exists. That must NOT be mistaken for
+        // "every reply's parent thread was deleted" — it's a retryable step failure, and the reply
+        // stays Draft so the next attempt (with a settled snapshot) can post it.
+        var fake = new InMemoryReviewSubmitter();
+        fake.SeedPendingReview(Ref, PendingWithParent("PRRT_parent"));
+        fake.FindOwnReturnsNullFromCall = 2;  // Step 1's FindOwn succeeds; Step 4's re-fetch returns null.
+
+        var session = SessionFactory.With(headSha: "head1", pendingReviewId: "PRR_x",
+            replies: new[] { SessionFactory.Reply("r1", "PRRT_parent") });
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, session);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        var outcome = await pipeline.SubmitAsync(Ref, session, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        var failed = Assert.IsType<SubmitOutcome.Failed>(outcome);
+        Assert.Equal(SubmitStep.AttachReplies, failed.FailedStep);
+        Assert.Equal(DraftStatus.Draft, failed.NewSession.DraftReplies.Single(r => r.Id == "r1").Status);  // NOT demoted.
+        Assert.Equal(DraftStatus.Draft, store.Session(SessionKey)!.DraftReplies.Single(r => r.Id == "r1").Status);
+        Assert.Equal(0, fake.AttachReplyCallCount);
+    }
+
+    [Fact]
     public async Task StampedReply_PresentInSnapshot_NotRecreated()
     {
         var fake = new InMemoryReviewSubmitter();

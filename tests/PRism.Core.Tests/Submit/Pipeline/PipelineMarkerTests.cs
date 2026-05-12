@@ -101,4 +101,15 @@ public class PipelineMarkerTests
         var result = PipelineMarker.Inject(body, "d8");
         Assert.Equal(body + "\n\n<!-- prism:client-id:d8 -->", result);
     }
+
+    [Fact]
+    public void Inject_TreatsFourSpaceIndentedTripleBacktickAsIndentedCode_NotAFence()
+    {
+        // A line indented 4+ spaces is an *indented* code block per CommonMark, not a fence opener.
+        // If Inject treated `    ```` ` as opening a fence, it would append a stray ``` at column 0
+        // that itself opens an unclosed fenced block — swallowing the marker into rendered text.
+        var body = "intro line\n    ```\n    code inside the indented block\n";
+        var result = PipelineMarker.Inject(body, "d9");
+        Assert.Equal(body + "\n\n<!-- prism:client-id:d9 -->", result);
+    }
 }

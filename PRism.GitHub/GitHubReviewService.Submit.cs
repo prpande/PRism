@@ -345,9 +345,24 @@ public sealed partial class GitHubReviewService
                     : Array.Empty<JsonElement>();
                 if (comments.Length == 0) continue;
 
-                // This thread belongs to our pending review iff its root comment's review id matches.
-                var rootReviewId = TryGetPath(comments[0], out var prrId, "pullRequestReview", "id") ? prrId.GetString() : null;
-                if (!string.Equals(rootReviewId, pendingReviewId, StringComparison.Ordinal)) continue;
+                // Include this thread iff our pending review owns *any* comment on it — the thread it
+                // created (root comment is ours), OR an existing thread it merely replied to (a later
+                // comment is ours). SubmitPipeline's Step 4 verifies replies against these per-thread
+                // comment chains, so a reply's parent thread MUST be in the snapshot even though that
+                // thread's root comment belongs to a prior review. The thread's BodyMarkdown is the
+                // root comment's body — which carries no PRism marker for a replied-to-only thread, so
+                // Step 3's lost-response marker scan never false-adopts it.
+                var ownsAComment = false;
+                foreach (var c in comments)
+                {
+                    if (TryGetPath(c, out var prrId, "pullRequestReview", "id")
+                        && string.Equals(prrId.GetString(), pendingReviewId, StringComparison.Ordinal))
+                    {
+                        ownsAComment = true;
+                        break;
+                    }
+                }
+                if (!ownsAComment) continue;
 
                 threads.Add(ProjectPendingReviewThread(thread, comments));
             }

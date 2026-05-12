@@ -22,6 +22,11 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
     public int AttachThreadCallCount { get; private set; }
     public int AttachReplyCallCount { get; private set; }
 
+    // FindOwnPendingReviewAsync call counter + a knob to simulate GitHub's reviews(...) list lagging
+    // (returning null even though a pending review exists): from the Nth call onward, return null.
+    public int FindOwnCallCount { get; private set; }
+    public int FindOwnReturnsNullFromCall { get; set; } = int.MaxValue;
+
     // Inject a one-shot failure: the next call to the named method throws `ex`, then clears.
     public void InjectFailure(string methodName, Exception ex) => _failureByMethod[methodName] = ex;
 
@@ -89,6 +94,8 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
     public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct)
     {
         ConsumeFailureOrContinue(nameof(FindOwnPendingReviewAsync));
+        if (++FindOwnCallCount >= FindOwnReturnsNullFromCall)
+            return Task.FromResult<OwnPendingReviewSnapshot?>(null);  // simulate the list query lagging
         if (!_pendingByRef.TryGetValue(Key(reference), out var pending))
             return Task.FromResult<OwnPendingReviewSnapshot?>(null);
 

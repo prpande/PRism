@@ -7,9 +7,12 @@ using PRism.Core.Tests.Submit.Pipeline.Fakes;
 namespace PRism.Core.Tests.Submit.Pipeline;
 
 // DoD test (f) — Step 4's parent-thread-deleted case (spec § 5.2 step 4): the parent thread's
-// author deleted it on github.com between submit attempts, so AttachReplyAsync can't land. The
-// pipeline demotes the reply to Stale (persisted) and returns Failed(AttachReplies, …); submit then
-// blocks via rule (b) on the next attempt until the user discards or rewrites it.
+// author deleted it on github.com between submit attempts, so it's no longer in `reviewThreads` and
+// AttachReplyAsync can't land. The pipeline demotes the reply to Stale (persisted) and returns
+// Failed(AttachReplies, …); submit then blocks via rule (b) on the next attempt until the user
+// discards or rewrites it. (After the FindOwnPendingReviewAsync filter widening — a thread the
+// pending review merely replied to is now in the snapshot — `parent is null` reliably means
+// "genuinely deleted", not "we never created its root comment".)
 public class ForeignAuthorThreadDeletedTests
 {
     private static PrReference Ref => new("owner", "repo", 1);

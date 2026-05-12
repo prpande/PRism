@@ -34,6 +34,10 @@ public sealed class SubmitPipeline
         _getCurrentHeadShaAsync = getCurrentHeadShaAsync;
     }
 
+    // Endpoint contract: the caller MUST have persisted `session` under `reference.ToString()` in the
+    // state store before invoking this. Every per-stamp overlay transform re-reads the session under
+    // that key and no-ops if it's absent — so a session that was never persisted there would silently
+    // lose all the pipeline's progress on a mid-run kill, defeating resumability (spec § 5.3).
     public async Task<SubmitOutcome> SubmitAsync(
         PrReference reference,
         ReviewSessionState session,
@@ -79,7 +83,8 @@ public sealed class SubmitPipeline
                     progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Started, 0, 0));
                     await InvokeAsync(SubmitStep.DetectExistingPendingReview, 0, 0, session, progress,
                         () => _submitter.DeletePendingReviewAsync(reference, existing.PullRequestReviewId, ct)).ConfigureAwait(false);
-                    await _stateStore.UpdateAsync(state => ClearPendingReviewStamps(state, sessionKey), ct).ConfigureAwait(false);
+                    await PersistOrFailAsync(SubmitStep.DetectExistingPendingReview, session, progress,
+                        state => ClearPendingReviewStamps(state, sessionKey), ct).ConfigureAwait(false);
                     return new SubmitOutcome.StaleCommitOidRecreating(existing.PullRequestReviewId, existing.CommitOid);
                 }
 
@@ -126,7 +131,25 @@ public sealed class SubmitPipeline
             // On success — clear PendingReviewId / PendingReviewCommitOid / every draft / every reply
             // / DraftSummaryMarkdown / DraftVerdict / DraftVerdictStatus. The endpoint publishes
             // DraftSubmitted + StateChanged OUTSIDE _gate after this returns (spec § 5.2 step 5).
-            await _stateStore.UpdateAsync(state => ClearSubmittedSession(state, sessionKey), ct).ConfigureAwait(false);
+            // The review is already submitted server-side at this point, so a store/disk failure on
+            // the cleanup write is swallowed rather than turned into Failed — returning Failed would
+            // be worse: a retry would find no pending review, Begin a fresh one, and re-attach every
+            // draft → a DUPLICATE review on github.com. Stale local drafts that reference now-submitted
+            // threads are harmless; the endpoint may re-attempt the clear on its side.
+            try
+            {
+                await _stateStore.UpdateAsync(state => ClearSubmittedSession(state, sessionKey), ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+#pragma warning disable CA1031 // submit already succeeded server-side; failing the submit on a cleanup-write error would risk a duplicate review on retry
+            catch (Exception)
+            {
+                // best-effort; the review is submitted regardless.
+            }
+#pragma warning restore CA1031
 
             return new SubmitOutcome.Success(pendingReviewId);
         }
@@ -145,7 +168,13 @@ public sealed class SubmitPipeline
         var result = await InvokeAsync(SubmitStep.BeginPendingReview, 0, 1, session, progress,
             () => _submitter.BeginPendingReviewAsync(reference, currentHeadSha, session.DraftSummaryMarkdown ?? "", ct)).ConfigureAwait(false);
 
-        await _stateStore.UpdateAsync(state => StampPendingReview(state, sessionKey, result.PullRequestReviewId, currentHeadSha), ct).ConfigureAwait(false);
+        // Stamp the new pending-review id immediately (caller persisted the session under sessionKey);
+        // if this fails, the at-failure session carries the stamp so the endpoint persists it on retry
+        // — otherwise the next submit would see the server's review with no local record and treat it
+        // as a *foreign* pending review.
+        var stamped = session with { PendingReviewId = result.PullRequestReviewId, PendingReviewCommitOid = currentHeadSha };
+        await PersistOrFailAsync(SubmitStep.BeginPendingReview, stamped, progress,
+            state => StampPendingReview(state, sessionKey, result.PullRequestReviewId, currentHeadSha), ct).ConfigureAwait(false);
         progress.Report(new SubmitProgressEvent(SubmitStep.BeginPendingReview, SubmitStepStatus.Succeeded, 1, 1));
         return result.PullRequestReviewId;
     }
@@ -187,6 +216,15 @@ public sealed class SubmitPipeline
         // — a lost-response on the very first AttachThread would surface only here).
         var snapshot = detectionSnapshot ?? await InvokeAsync(SubmitStep.AttachThreads, 0, total, session, progress,
             () => _submitter.FindOwnPendingReviewAsync(reference, ct)).ConfigureAwait(false);
+        if (snapshot is null)
+        {
+            // We have a pending review (Step 1 found it, or Begin just created it) but the re-fetch
+            // returned null — GitHub's reviews(...) list query lagging. Treat as a retryable step
+            // failure rather than re-creating every thread (which would double-post on a lost-response
+            // retry); the next attempt's snapshot will reflect reality.
+            throw new SubmitFailedException(SubmitStep.AttachThreads,
+                "could not fetch the pending-review snapshot to reconcile threads; retry", session);
+        }
 
         var current = session;
         var done = 0;
@@ -208,8 +246,10 @@ public sealed class SubmitPipeline
                 var markered = MarkeredThreads(snapshot, draft.Id);
                 if (markered.Count == 1)
                 {
-                    current = StampDraftThreadId(current, draft.Id, markered[0].PullRequestReviewThreadId);
-                    await StampDraftThreadIdAsync(sessionKey, draft.Id, markered[0].PullRequestReviewThreadId, ct).ConfigureAwait(false);
+                    var adoptedId = markered[0].PullRequestReviewThreadId;
+                    current = StampDraftThreadId(current, draft.Id, adoptedId);
+                    await PersistOrFailAsync(SubmitStep.AttachThreads, current, progress,
+                        st => StampDraftThreadIdOverlay(st, sessionKey, draft.Id, adoptedId), ct).ConfigureAwait(false);
                     progress.Report(new SubmitProgressEvent(SubmitStep.AttachThreads, SubmitStepStatus.Succeeded, ++done, total));
                     continue;
                 }
@@ -223,7 +263,8 @@ public sealed class SubmitPipeline
                     // surface it through the onDuplicateMarker notice instead.
                     var earliest = markered[0];
                     current = StampDraftThreadId(current, draft.Id, earliest.PullRequestReviewThreadId);
-                    await StampDraftThreadIdAsync(sessionKey, draft.Id, earliest.PullRequestReviewThreadId, ct).ConfigureAwait(false);
+                    await PersistOrFailAsync(SubmitStep.AttachThreads, current, progress,
+                        st => StampDraftThreadIdOverlay(st, sessionKey, draft.Id, earliest.PullRequestReviewThreadId), ct).ConfigureAwait(false);
                     foreach (var dup in markered.Skip(1))
                         await TryDeleteDuplicateThreadAsync(reference, draft.Id, dup.PullRequestReviewThreadId, ct).ConfigureAwait(false);
                     _onDuplicateMarker?.Invoke(
@@ -255,7 +296,8 @@ public sealed class SubmitPipeline
                 () => _submitter.AttachThreadAsync(reference, pendingReviewId, request, ct)).ConfigureAwait(false);
 
             current = StampDraftThreadId(current, draft.Id, result.PullRequestReviewThreadId);
-            await StampDraftThreadIdAsync(sessionKey, draft.Id, result.PullRequestReviewThreadId, ct).ConfigureAwait(false);
+            await PersistOrFailAsync(SubmitStep.AttachThreads, current, progress,
+                st => StampDraftThreadIdOverlay(st, sessionKey, draft.Id, result.PullRequestReviewThreadId), ct).ConfigureAwait(false);
             progress.Report(new SubmitProgressEvent(SubmitStep.AttachThreads, SubmitStepStatus.Succeeded, ++done, total));
         }
 
@@ -311,12 +353,21 @@ public sealed class SubmitPipeline
 
         var snapshot = await InvokeAsync(SubmitStep.AttachReplies, 0, total, session, progress,
             () => _submitter.FindOwnPendingReviewAsync(reference, ct)).ConfigureAwait(false);
+        if (snapshot is null)
+        {
+            // The pending review exists (Step 1 found it / Begin created it) but the re-fetch came
+            // back null — GitHub's reviews(...) list lagging. Treat as a retryable step failure; do
+            // NOT demote replies as if their parent threads were deleted (a transient null must not
+            // permanently strand the user's replies).
+            throw new SubmitFailedException(SubmitStep.AttachReplies,
+                "could not fetch the pending-review snapshot to reconcile replies; retry", session);
+        }
 
         var current = session;
         var done = 0;
         foreach (var reply in replies)
         {
-            var parent = snapshot?.Threads.FirstOrDefault(t => string.Equals(t.PullRequestReviewThreadId, reply.ParentThreadId, StringComparison.Ordinal));
+            var parent = snapshot.Threads.FirstOrDefault(t => string.Equals(t.PullRequestReviewThreadId, reply.ParentThreadId, StringComparison.Ordinal));
 
             if (reply.ReplyCommentId is not null)
             {
@@ -334,21 +385,24 @@ public sealed class SubmitPipeline
                 var markered = MarkeredReplies(parent, reply.Id);
                 if (markered.Count == 1)
                 {
-                    current = StampReplyCommentId(current, reply.Id, markered[0].CommentId);
-                    await StampReplyCommentIdAsync(sessionKey, reply.Id, markered[0].CommentId, ct).ConfigureAwait(false);
+                    var adoptedId = markered[0].CommentId;
+                    current = StampReplyCommentId(current, reply.Id, adoptedId);
+                    await PersistOrFailAsync(SubmitStep.AttachReplies, current, progress,
+                        st => StampReplyCommentIdOverlay(st, sessionKey, reply.Id, adoptedId), ct).ConfigureAwait(false);
                     progress.Report(new SubmitProgressEvent(SubmitStep.AttachReplies, SubmitStepStatus.Succeeded, ++done, total));
                     continue;
                 }
                 if (markered.Count > 1)
                 {
-                    // Reply multi-marker-match: adopt the earliest (lowest comment id — there is no
-                    // delete-comment capability on IReviewSubmitter, so the duplicates can't be
-                    // cleaned up; surface the situation through the onDuplicateMarker notice). The
-                    // adopted reply still lands on github.com once Finalize runs; the leftover
-                    // duplicates are cosmetic and visible on the PR after submit.
+                    // Reply multi-marker-match: adopt one (the lowest comment id — PendingReviewCommentSnapshot
+                    // carries no createdAt, and the choice is cosmetic anyway: there is no delete-comment
+                    // capability on IReviewSubmitter, so the duplicates can't be cleaned up; surface the
+                    // situation through the onDuplicateMarker notice). The adopted reply still lands on
+                    // github.com once Finalize runs; the leftover duplicates are visible on the PR after submit.
                     var earliest = markered[0];
                     current = StampReplyCommentId(current, reply.Id, earliest.CommentId);
-                    await StampReplyCommentIdAsync(sessionKey, reply.Id, earliest.CommentId, ct).ConfigureAwait(false);
+                    await PersistOrFailAsync(SubmitStep.AttachReplies, current, progress,
+                        st => StampReplyCommentIdOverlay(st, sessionKey, reply.Id, earliest.CommentId), ct).ConfigureAwait(false);
                     _onDuplicateMarker?.Invoke(
                         $"reply {reply.Id}: {markered.Count} server comments carried its marker; adopted {earliest.CommentId} (duplicates can't be auto-removed)");
                     progress.Report(new SubmitProgressEvent(SubmitStep.AttachReplies, SubmitStepStatus.Succeeded, ++done, total));
@@ -394,7 +448,8 @@ public sealed class SubmitPipeline
 #pragma warning restore CA1031
 
             current = StampReplyCommentId(current, reply.Id, result.CommentId);
-            await StampReplyCommentIdAsync(sessionKey, reply.Id, result.CommentId, ct).ConfigureAwait(false);
+            await PersistOrFailAsync(SubmitStep.AttachReplies, current, progress,
+                st => StampReplyCommentIdOverlay(st, sessionKey, reply.Id, result.CommentId), ct).ConfigureAwait(false);
             progress.Report(new SubmitProgressEvent(SubmitStep.AttachReplies, SubmitStepStatus.Succeeded, ++done, total));
         }
 
@@ -406,11 +461,15 @@ public sealed class SubmitPipeline
         IProgress<SubmitProgressEvent> progress, CancellationToken ct)
     {
         var demoted = DemoteReplyToStale(current, replyId);
-        await DemoteReplyToStaleAsync(sessionKey, replyId, ct).ConfigureAwait(false);
+        await PersistOrFailAsync(SubmitStep.AttachReplies, demoted, progress,
+            st => DemoteReplyToStaleOverlay(st, sessionKey, replyId), ct).ConfigureAwait(false);
         progress.Report(new SubmitProgressEvent(SubmitStep.AttachReplies, SubmitStepStatus.Failed, done, total, "parent thread deleted"));
         return demoted;
     }
 
+    // Comments on the parent thread whose marker matches replyId, ordered by comment id (no
+    // createdAt on PendingReviewCommentSnapshot — the adapter has it but doesn't surface it; the
+    // multi-match adopt-which is cosmetic since reply duplicates can't be auto-removed anyway).
     private static List<PendingReviewCommentSnapshot> MarkeredReplies(PendingReviewThreadSnapshot? parent, string replyId)
         => parent is null
             ? new List<PendingReviewCommentSnapshot>()
@@ -463,17 +522,37 @@ public sealed class SubmitPipeline
 
     // ---- Per-stamp persistence (overlay UpdateAsync on the current session) ----
 
-    // Stamp one draft's ThreadId on the *current* persisted session, leaving every other field
-    // alone — so a PUT /draft from another tab that committed between the pipeline's snapshot-load
-    // and this call is not clobbered (revision R1 / adversarial #4).
-    private Task StampDraftThreadIdAsync(string sessionKey, string draftId, string threadId, CancellationToken ct)
-        => _stateStore.UpdateAsync(state => StampDraftThreadIdOverlay(state, sessionKey, draftId, threadId), ct);
-
-    private Task StampReplyCommentIdAsync(string sessionKey, string replyId, string commentId, CancellationToken ct)
-        => _stateStore.UpdateAsync(state => StampReplyCommentIdOverlay(state, sessionKey, replyId, commentId), ct);
-
-    private Task DemoteReplyToStaleAsync(string sessionKey, string replyId, CancellationToken ct)
-        => _stateStore.UpdateAsync(state => DemoteReplyToStaleOverlay(state, sessionKey, replyId), ct);
+    // Persists an overlay transform — re-reading the session under sessionKey and editing only the
+    // field in question, so a PUT /draft from another tab that committed between the pipeline's
+    // snapshot-load and this call is not clobbered (revision R1 / adversarial #4). On a store failure
+    // (read-only mode, disk error) translates the exception into a SubmitFailedException at `step` —
+    // so SubmitAsync still returns SubmitOutcome.Failed (with the at-failure session the endpoint
+    // should persist) rather than letting the exception escape and break the "returns an outcome"
+    // contract. (The success-path clear is intentionally NOT routed through here — see SubmitAsync.)
+    private async Task PersistOrFailAsync(
+        SubmitStep step, ReviewSessionState sessionAtFailure, IProgress<SubmitProgressEvent> progress,
+        Func<AppState, AppState> transform, CancellationToken ct)
+    {
+        try
+        {
+            await _stateStore.UpdateAsync(transform, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SubmitFailedException)
+        {
+            throw;
+        }
+#pragma warning disable CA1031 // any store/disk failure is, by design, a retryable step failure
+        catch (Exception ex)
+        {
+            progress.Report(new SubmitProgressEvent(step, SubmitStepStatus.Failed, 0, 0, ex.Message));
+            throw new SubmitFailedException(step, $"failed to persist {step} progress to state.json: {ex.Message}", sessionAtFailure, ex);
+        }
+#pragma warning restore CA1031
+    }
 
     // ---- Overlay transforms (run inside AppStateStore.UpdateAsync) ----
 

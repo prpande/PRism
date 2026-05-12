@@ -35,13 +35,15 @@ internal static class PipelineMarker
         @"<!-- prism:client-id:(?<id>[^\s>]+) -->\s*\z",
         RegexOptions.Compiled);
 
-    // A line whose first non-whitespace run is a code-fence opener (3+ backticks or 3+ tildes).
-    // CommonMark allows ≤3 leading spaces; we accept any leading whitespace (over-detection is the
-    // safe direction for both the unclosed-fence close and the strip-fenced-blocks defense). The
-    // `rest` group is the info string on an opening fence (ignored) or — on a candidate closing
-    // fence — must be whitespace-only for the line to actually close the fence.
+    // A line whose first run (after ≤3 leading spaces, per CommonMark) is a code-fence opener
+    // (3+ backticks or 3+ tildes). The ≤3-space cap matters: a line indented 4+ spaces is an
+    // *indented* code block, not a fence — treating a literal ``` on such a line as a fence opener
+    // would make Inject append a stray closing fence that itself opens an unclosed fenced block at
+    // column 0, swallowing the marker into rendered text. The `rest` group is the info string on an
+    // opening fence (ignored) or — on a candidate closing fence — must be whitespace-only for the
+    // line to actually close the fence.
     private static readonly Regex FenceLineRegex = new(
-        @"^[ \t]*(?<fence>`{3,}|~{3,})(?<rest>.*)$",
+        @"^ {0,3}(?<fence>`{3,}|~{3,})(?<rest>.*)$",
         RegexOptions.Compiled);
 
     public static string Inject(string body, string draftId)

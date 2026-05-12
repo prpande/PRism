@@ -120,6 +120,67 @@ public class GitHubReviewServiceSubmitFindOwnTests
     }
 
     [Fact]
+    public async Task FindOwnPendingReviewAsync_IncludesThreadOurPendingReviewOnlyRepliedTo()
+    {
+        // A reply to an EXISTING comment (the demo's "reply to a thread" flow) attaches our reply to
+        // a thread whose ROOT comment belongs to a prior/other review. SubmitPipeline's Step 4 must
+        // see that thread in the snapshot to verify the reply landed — so the projection includes any
+        // thread on which our pending review owns at least one comment, not just threads it created.
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.OK, """
+            {
+              "data": {
+                "repository": {
+                  "pullRequest": {
+                    "reviews": { "nodes": [
+                      { "id": "PRR_mine", "viewerDidAuthor": true, "commit": { "oid": "abc1234" }, "createdAt": "2026-05-11T10:00:00Z" }
+                    ] },
+                    "reviewThreads": { "pageInfo": { "hasNextPage": false }, "nodes": [
+                      {
+                        "id": "PRRT_replied",
+                        "path": "src/Foo.cs",
+                        "line": 9,
+                        "diffSide": "RIGHT",
+                        "originalLine": 9,
+                        "isResolved": false,
+                        "comments": { "nodes": [
+                          { "id": "PRRC_theirs", "body": "an existing comment from someone's submitted review", "createdAt": "2026-05-01T08:00:00Z", "originalCommit": { "oid": "old999" }, "pullRequestReview": { "id": "PRR_someone_else_submitted" } },
+                          { "id": "PRRC_ourreply", "body": "our pending reply\n\n<!-- prism:client-id:r1 -->", "createdAt": "2026-05-11T10:05:00Z", "originalCommit": { "oid": "abc1234" }, "pullRequestReview": { "id": "PRR_mine" } }
+                        ] }
+                      },
+                      {
+                        "id": "PRRT_unrelated",
+                        "path": "src/Bar.cs",
+                        "line": 1,
+                        "diffSide": "RIGHT",
+                        "originalLine": 1,
+                        "isResolved": false,
+                        "comments": { "nodes": [
+                          { "id": "PRRC_x", "body": "totally unrelated thread", "createdAt": "2026-05-02T08:00:00Z", "originalCommit": { "oid": "old999" }, "pullRequestReview": { "id": "PRR_another_submitted" } }
+                        ] }
+                      }
+                    ] }
+                  }
+                }
+              }
+            }
+            """);
+        var svc = NewService(handler);
+
+        var snapshot = await svc.FindOwnPendingReviewAsync(Ref, CancellationToken.None);
+
+        snapshot.Should().NotBeNull();
+        // PRRT_replied is in (we own PRRC_ourreply); PRRT_unrelated is out (we own nothing on it).
+        snapshot!.Threads.Should().HaveCount(1);
+        var t = snapshot.Threads[0];
+        t.PullRequestReviewThreadId.Should().Be("PRRT_replied");
+        t.BodyMarkdown.Should().Be("an existing comment from someone's submitted review");  // root comment's body, not ours
+        t.CreatedAt.Should().Be(new DateTimeOffset(2026, 5, 1, 8, 0, 0, TimeSpan.Zero));     // root comment's createdAt
+        t.Comments.Should().HaveCount(1);
+        t.Comments[0].CommentId.Should().Be("PRRC_ourreply");
+        t.Comments[0].BodyMarkdown.Should().Be("our pending reply\n\n<!-- prism:client-id:r1 -->");
+    }
+
+    [Fact]
     public async Task FindOwnPendingReviewAsync_QueryFiltersToPendingState_AndFetchesReviewThreads()
     {
         var handler = new RecordingHttpMessageHandler(
