@@ -59,7 +59,9 @@ internal static class TestEndpoints
         // Playwright run, so without this hook the inboxes/sessions accumulate.
         app.MapPost("/test/reset", async (IServiceProvider sp, IAppStateStore stateStore) =>
         {
-            sp.GetService<FakeReviewBackingStore>()?.Reset();
+            var store = sp.GetService<FakeReviewBackingStore>();
+            if (store is null) return StoreMissing("/test/reset");
+            store.Reset();
             // Force-wipe state.json by re-applying Default. The single overwrite
             // is the documented pattern; LoadAsync after the await sees the
             // fresh empty state because UpdateAsync holds the gate across the

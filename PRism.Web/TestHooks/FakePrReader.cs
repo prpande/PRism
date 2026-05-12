@@ -1,3 +1,5 @@
+using System.Text;
+
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
@@ -70,7 +72,7 @@ internal sealed class FakePrReader : IPrReader
                 ? c
                 : FakeReviewBackingStore.Calc3;
             var newLines = newContent.TrimEnd('\n').Split('\n');
-            var sb = new System.Text.StringBuilder();
+            var sb = new StringBuilder();
             sb.Append("@@ -0,0 +1,").Append(newLines.Length).Append(" @@\n");
             foreach (var line in newLines)
             {
@@ -120,7 +122,8 @@ internal sealed class FakePrReader : IPrReader
         {
             if (!_store.FileContent.TryGetValue((path, sha), out var content))
                 return Task.FromResult(new FileContentResult(FileContentStatus.NotFound, null, 0));
-            return Task.FromResult(new FileContentResult(FileContentStatus.Ok, content, content.Length));
+            // Match production semantics: ByteSize is a UTF-8 byte count, not a UTF-16 char count.
+            return Task.FromResult(new FileContentResult(FileContentStatus.Ok, content, Encoding.UTF8.GetByteCount(content)));
         }
     }
 
