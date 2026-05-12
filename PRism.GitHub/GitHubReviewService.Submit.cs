@@ -52,8 +52,52 @@ public sealed partial class GitHubReviewService
         return new BeginPendingReviewResult(reviewId);
     }
 
-    public Task<AttachThreadResult> AttachThreadAsync(PrReference reference, string pendingReviewId, DraftThreadRequest draft, CancellationToken ct)
-        => throw new NotImplementedException("PR1 Task 13");
+    public async Task<AttachThreadResult> AttachThreadAsync(
+        PrReference reference,
+        string pendingReviewId,
+        DraftThreadRequest draft,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentException.ThrowIfNullOrEmpty(pendingReviewId);
+        ArgumentNullException.ThrowIfNull(draft);
+
+        // C6 (verified 2026-05-12): AddPullRequestReviewThreadInput.pullRequestReviewId is present and
+        // not deprecated, so the pending-review attach uses pullRequestReviewId (not pullRequestId).
+        // StartLine / StartSide are reserved for multi-line comments and stay out of the payload.
+        const string mutation = """
+            mutation($prReviewId: ID!, $body: String!, $path: String!, $line: Int!, $side: DiffSide!) {
+              addPullRequestReviewThread(input: {
+                pullRequestReviewId: $prReviewId,
+                body: $body,
+                path: $path,
+                line: $line,
+                side: $side
+              }) {
+                thread { id }
+              }
+            }
+            """;
+
+        var data = await PostSubmitGraphQLAsync(
+            mutation,
+            new
+            {
+                prReviewId = pendingReviewId,
+                body = draft.BodyMarkdown,
+                path = draft.FilePath,
+                line = draft.LineNumber,
+                side = draft.Side,
+            },
+            ct).ConfigureAwait(false);
+
+        if (!TryGetPath(data, out var idEl, "addPullRequestReviewThread", "thread", "id")
+            || idEl.GetString() is not { Length: > 0 } threadId)
+        {
+            throw new GitHubGraphQLException("addPullRequestReviewThread response missing thread.id.");
+        }
+        return new AttachThreadResult(threadId);
+    }
 
     public Task<AttachReplyResult> AttachReplyAsync(PrReference reference, string pendingReviewId, string parentThreadId, string replyBody, CancellationToken ct)
         => throw new NotImplementedException("PR1 Task 14");
