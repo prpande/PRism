@@ -7,6 +7,7 @@ revisions:
   - 2026-05-11: brainstorm + ce-doc-review pass — recorded brainstorm-time deferrals (12 items in spec § 1.2), doc-review-time deferrals routed to ce-plan, doc-review FYI observations, and forward-looking residual risks for the implementer
   - 2026-05-12: PR #43 review pass — marked Risk R1 (MigrateV3ToV4 signature mismatch) Resolved after spec § 6 was corrected to the JsonObject step shape
   - 2026-05-12: PR0a execution — added the "Implementation-time deferrals" section (IDraftReconciliator dead-code not deleted; IReviewSubmitter CA1040 suppression; GitHub-test concrete return type; PRismWebApplicationFactory override re-typed)
+  - 2026-05-12: PR1 execution — R16 applied to spec § 4 (interface now 7 methods, adds DeletePendingReviewThreadAsync); added PR1 implementation-time decisions (GraphQL transport reuse; FindOwn single-query shape; test-fake stubs; Task 19 partial-split skipped)
 ---
 
 # Deferrals — S5 submit pipeline spec
@@ -387,3 +388,31 @@ Decisions made while executing the plan that diverge from a literal task body or
 - **Affects:** `tests/PRism.Web.Tests/TestHelpers/PRismWebApplicationFactory.cs`.
 - **Decision:** `ReviewServiceOverride` was typed `IReviewService?` (the now-deleted composite). Re-typed to `PrDetailFakeReviewService?` (the only type ever assigned to it); that fake now implements all four capability interfaces and the factory binds the single instance to all four seams — preserving the old single-override semantics exactly. `StubReviewService` (the `ValidateOverride` branch) is narrowed to `IReviewAuth` since `ValidateCredentialsAsync` is the only method it implemented meaningfully. Added a private `ReplaceSingleton<T>` helper to dedupe the remove-then-add pattern.
 - **Revisit when:** N/A.
+
+### [Decision] PR1 reuses the adapter's existing GraphQL transport rather than the plan's greenfield `GraphqlAsync` helper
+
+- **Source:** PR1 execution (2026-05-12)
+- **Affects:** Plan Phase-2 Task 12 Step 4 (the `GraphqlAsync` helper + `application/json` Accept header + `"graphql"` relative endpoint + `HttpRequestException`-on-errors code block); Tasks 13–17 test assertions (`HttpRequestException` → `GitHubGraphQLException`).
+- **Decision:** `GitHubReviewService` already has a GraphQL transport — `PostGraphQLAsync(query, variables, ct)` + `HostUrlResolver.GraphQlEndpoint(_host)` (absolute URL, GHES-aware) + `GitHubGraphQLException` + `ThrowIfGraphQLErrorsWithoutData`. The plan's code samples were written as if the adapter were greenfield. PR1 reuses `PostGraphQLAsync` and adds one thin wrapper, `PostSubmitGraphQLAsync`, that is *stricter* about errors: it throws `GitHubGraphQLException` on ANY non-empty `errors` array (a mutation that reports errors did not apply, so partial-data tolerance — correct for the read-side multi-field fetches — would be wrong here) and on a missing `data` object. Spec § 4 § note updated to point at this. All submit-method tests assert `GitHubGraphQLException` for the GraphQL-error path.
+- **Revisit when:** N/A — this is the intended end state. The spec explicitly delegated transport choice to the implementer per `PRism.GitHub` conventions (§ 4).
+
+### [Decision] `FindOwnPendingReviewAsync` uses one schema-correct query, not the plan's two-call `viewer{login}` + `review.threads` shape
+
+- **Source:** PR1 execution (2026-05-12)
+- **Affects:** Plan Task 17 Step 3 + Step 4 (the `ResolveViewerLoginAsync` two-call sequence and the `reviews(...){nodes{... threads(first:100){...}}}` query) and Test 3's assertions (`author: { login:` → `viewerDidAuthor`).
+- **Decision:** The plan's query referenced `PullRequestReview.threads`, which does not exist in GitHub's GraphQL schema — `PullRequestReview` exposes `comments`, and the thread-level fields the snapshot needs (`isResolved`, `diffSide`, `line`, `originalLine`) live on `PullRequestReviewThread`, reachable via `pullRequest.reviewThreads`. The implementation issues one round-trip: `reviews(first: 50, states: [PENDING]){nodes{id viewerDidAuthor commit{oid} createdAt}}` + `reviewThreads(first: 100){nodes{id path line diffSide originalLine isResolved comments(first:100){nodes{id body originalCommit{oid} pullRequestReview{id}}}}}`. It picks the viewer's pending review via `viewerDidAuthor` (so no separate `viewer{login}` lookup is needed) and groups review threads to it by their root comment's `pullRequestReview.id`. `OriginalCommitOid` comes from the root comment's `originalCommit.oid`; `OriginalLineContent` stays empty for PR5's Resume endpoint to enrich (it has no file content).
+- **Revisit when:** N/A — this is the intended end state. If a future read needs richer per-thread data, extend the same query.
+
+### [Decision] PR1 temp stubs land directly in `GitHubReviewService.Submit.cs`; two test fakes get matching stubs
+
+- **Source:** PR1 execution (2026-05-12)
+- **Affects:** Plan Task 11 Step 7 (which puts `NotImplementedException` stubs in `GitHubReviewService.cs` and migrates them to `GitHubReviewService.Submit.cs` per task) and the Phase-2 "Files touched" list (which omits `PRism.Web/TestHooks/FakeReviewSubmitter.cs` and `tests/PRism.Web.Tests/TestHelpers/PrDetailFakeReviewService.cs`).
+- **Decision:** `GitHubReviewService.Submit.cs` is created in Task 11 with the seven `NotImplementedException("PR1 Task NN")` stubs; Tasks 12–17 replace each with the real implementation. Same end state as the plan's "stub in `.cs`, migrate to `.Submit.cs`" dance, with one fewer file churn. Separately, the plan's Phase-2 file list missed two test fakes that implement `IReviewSubmitter` from PR0a: `FakeReviewSubmitter` (Web, registered in dev/test mode) and `PrDetailFakeReviewService` (Web.Tests). Both got the seven methods as `NotImplementedException` stubs in Task 11 so the build stays green — nothing exercises the submit path yet (the submit endpoint arrives in PR3; a working in-memory pending review arrives with PR4/PR7's tests, plan Task 61).
+- **Revisit when:** PR7 (plan Task 61) fleshes out the Web `FakeReviewSubmitter` for the DoD E2E suite.
+
+### [Decision] PR1 skips Task 19 (ADR-S5-2 partial-class split of `GitHubReviewService.cs`)
+
+- **Source:** PR1 execution (2026-05-12)
+- **Affects:** Plan Task 19 (conditional: "run only if `GitHubReviewService.cs` has grown unwieldy after Tasks 12–18 landed").
+- **Decision:** PR1 added **zero** lines to `GitHubReviewService.cs` — all of the new GraphQL code lives in the new partial `GitHubReviewService.Submit.cs`. The original file's size (~1100 lines) is unchanged from before S5, so the split would be a refactor unrelated to "implement the submit methods" and is out of PR1's scope. Deferred per ADR-S5-2's own "optional / do it when it feels too large" framing.
+- **Revisit when:** A later slice adds another batch of methods to `GitHubReviewService.cs` proper, or a maintainer raises the file-size concern with concrete navigation pain.
