@@ -2,6 +2,7 @@ using System.IO;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
@@ -69,14 +70,13 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
         });
     }
 
-    // Removes any existing registration for TService and registers the supplied instance
-    // as a singleton in its place. The WebApplicationFactory layer runs after Program.cs's
-    // AddPrism* calls, so the production registration is always present to remove first.
+    // Removes every existing registration for TService and registers the supplied instance
+    // as the sole singleton in its place. RemoveAll (vs. removing the first match) guards
+    // against the case where TService was registered more than once upstream.
     private static void ReplaceSingleton<TService>(IServiceCollection services, TService instance)
         where TService : class
     {
-        var existing = services.FirstOrDefault(d => d.ServiceType == typeof(TService));
-        if (existing is not null) services.Remove(existing);
+        services.RemoveAll<TService>();
         services.AddSingleton(instance);
     }
 

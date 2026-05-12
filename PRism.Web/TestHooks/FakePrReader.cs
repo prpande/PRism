@@ -105,7 +105,7 @@ internal sealed class FakePrReader : IPrReader
                 Message: c.Message,
                 Additions: c.Additions,
                 Deletions: c.Deletions,
-                ChangedFiles: FakeReviewBackingStore.ChangedFilesArray)).ToList();
+                ChangedFiles: FakeReviewBackingStore.ChangedFiles)).ToList();
             return Task.FromResult(new ClusteringInput(
                 Commits: commits,
                 ForcePushes: Array.Empty<ClusteringForcePush>(),

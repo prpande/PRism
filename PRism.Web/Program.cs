@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using PRism.Core;
 using PRism.Core.Hosting;
@@ -54,8 +55,9 @@ if (builder.Environment.IsEnvironment("Test")
                  typeof(IReviewAuth), typeof(IPrDiscovery), typeof(IPrReader), typeof(IReviewSubmitter),
              })
     {
-        var existing = builder.Services.FirstOrDefault(d => d.ServiceType == serviceType);
-        if (existing is not null) builder.Services.Remove(existing);
+        // RemoveAll (vs. removing the first match) in case any of these were registered
+        // more than once upstream.
+        builder.Services.RemoveAll(serviceType);
     }
     builder.Services.AddSingleton<FakeReviewBackingStore>();
     builder.Services.AddSingleton<IReviewAuth, FakeReviewAuth>();

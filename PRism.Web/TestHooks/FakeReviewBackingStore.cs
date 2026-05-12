@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 using PRism.Core.Contracts;
 
 namespace PRism.Web.TestHooks;
@@ -37,8 +39,9 @@ internal sealed class FakeReviewBackingStore
 
     internal sealed record FileContentChange(string Path, string Content);
 
-    public static readonly string[] ChangedFilesArray = new[] { "src/Calc.cs" };
-    public static readonly string[] AuthScopes = new[] { "repo" };
+    // Immutable so the shared statics can't be mutated through their array contents.
+    public static readonly ImmutableArray<string> ChangedFiles = ImmutableArray.Create("src/Calc.cs");
+    public static readonly ImmutableArray<string> AuthScopes = ImmutableArray.Create("repo");
 
     // Lock guarding every mutable field below. Public so the fakes can hold it across
     // multi-field reads.
