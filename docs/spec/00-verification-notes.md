@@ -295,15 +295,24 @@ P0-7's library-selection spike must include this verification step early. Discov
 
 ### Verification method
 
-Read the live `AddPullRequestReviewThreadInput` schema via `gh api graphql -f query='{ __type(name: "AddPullRequestReviewThreadInput") { inputFields { name description isDeprecated } } }'`. Confirm which field the spec's pipeline should use as of implementation time.
+Read the live `AddPullRequestReviewThreadInput` schema via `gh api graphql -f query='{ __type(name: "AddPullRequestReviewThreadInput") { inputFields { name description isDeprecated deprecationReason } } }'`. Confirm which field the spec's pipeline should use as of implementation time.
 
 ### Status
 
-**Pending** — to be performed before the submit pipeline implementation lands. If `pullRequestReviewId` on `AddPullRequestReviewThreadInput` is removed (rather than deprecated), step 2 of the spec's pipeline as written will fail; the spec must update the parameter shape to whatever's currently supported. If `pullRequestId` is the preferred shape, switch to that and add a one-line note documenting the schema drift.
+**Verified 2026-05-12** (S5 PR0a, Task 5): `pullRequestReviewId` is present, `isDeprecated: false`, no `deprecationReason`. The spec's default holds — `AttachThreadAsync(reference, pendingReviewId, draft, ct)` ships as written.
 
-### Implication for the submit pipeline
+Command run: `gh api graphql -f query='{ __type(name: "AddPullRequestReviewThreadInput") { inputFields { name description isDeprecated deprecationReason } } }'`
 
-Either way, the verification-notes entry serves as a tripwire: if a future `gh api` call returns a different schema shape than what's documented here, the submit pipeline implementer is alerted before they ship against a stale shape.
+Observed `inputFields` (names): `clientMutationId`, `path`, `body`, `pullRequestId`, `pullRequestReviewId`, `line`, `side`, `startLine`, `startSide`, `subjectType`. Relevant fields verbatim:
+
+```json
+{ "name": "pullRequestReviewId", "description": "The Node ID of the review to modify.", "isDeprecated": false, "deprecationReason": null }
+{ "name": "pullRequestId",       "description": "The node ID of the pull request reviewing", "isDeprecated": false, "deprecationReason": null }
+```
+
+(`pullRequestId` also exists as an alternative — the pending review implicit — but the spec's `pullRequestReviewId` shape is the one we use; no schema drift.)
+
+**Implication for PR1:** No change. Spec § 4 `AttachThreadAsync` signature and § 5.2 step 2 wording stand. The entry remains a tripwire: a future `gh api` call returning a different schema shape alerts the implementer before they ship against a stale shape.
 
 ---
 
@@ -432,7 +441,7 @@ Outstanding empirical gates (these are not spec-text updates; they are tripwires
 
 - [ ] **C4 (clean-end resume)** — verify that `claude --resume <session-id>` after a *clean* session end restores the model's full conversation context. Run as part of P0-1's acceptance gate, before P2-2 chat ships. The result determines whether the spec's cross-restart "Resumed your chat from <timestamp>" UX is achievable or degrades to fresh-with-injection. Also probe whether resume survives a CLI update between session-end and resume.
 - [ ] **C5** — verify the `--mcp-config` JSON shape (`"type": "http"` discriminator key) against the running Claude Code CLI version the project ships against. Run as the first task of P0-7.
-- [ ] **C6** — verify the live `AddPullRequestReviewThreadInput` parameter shape (whether `pullRequestReviewId` or `pullRequestId` is the correct field as of implementation time) via `gh api graphql -f query='...'`. Run before the submit-pipeline implementation lands.
+- [x] **C6** — verified 2026-05-12 (S5 PR0a): `pullRequestReviewId` present, not deprecated; spec's `AttachThreadAsync` shape stands. See § C6.
 - [ ] **C7** — verify that the `<!-- prism:client-id:<id> -->` HTML-comment marker survives `addPullRequestReviewThread` round-trips (rendered UI strips the comment; the GraphQL `body` field retains it). The lost-response adoption step in the submit pipeline matches by marker, not by body equivalence. Run before the submit-pipeline implementation lands. See § C7. Documented fallback if the marker is stripped: (a) client-side body normalization parity; (c) accept-best-effort is no longer an option.
 - [ ] **C9** — verify that `submitPullRequestReview` accepts a Comment-verdict review on a pending review with no attached threads (the "empty-pipeline finalize" path in S5 § 5.2 step 5). Run before the submit-pipeline implementation lands. See § C9. Documented fallback if the finalize 422s: (a) synthetic-thread injection at `BeginPendingReview` time, or (b) legacy REST `POST /pulls/{n}/reviews` for the summary-only path.
 - [ ] **C8** — verify the model defers to current diff over pre-shift answers when prompted with the cumulative head-shift note. Run before P2-2 chat ships. See § C8 for the test sequence and outcomes.
