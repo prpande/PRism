@@ -139,8 +139,39 @@ public sealed partial class GitHubReviewService
         return new AttachReplyResult(commentId);
     }
 
-    public Task FinalizePendingReviewAsync(PrReference reference, string pendingReviewId, SubmitEvent verdict, CancellationToken ct)
-        => throw new NotImplementedException("PR1 Task 15");
+    public async Task FinalizePendingReviewAsync(
+        PrReference reference,
+        string pendingReviewId,
+        SubmitEvent verdict,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentException.ThrowIfNullOrEmpty(pendingReviewId);
+
+        var graphqlEvent = verdict switch
+        {
+            SubmitEvent.Approve => "APPROVE",
+            SubmitEvent.RequestChanges => "REQUEST_CHANGES",
+            SubmitEvent.Comment => "COMMENT",
+            _ => throw new ArgumentOutOfRangeException(nameof(verdict), verdict, "Unknown SubmitEvent."),
+        };
+
+        // No body argument — the summary body was carried into BeginPendingReviewAsync.
+        const string mutation = """
+            mutation($prReviewId: ID!, $event: PullRequestReviewEvent!) {
+              submitPullRequestReview(input: { pullRequestReviewId: $prReviewId, event: $event }) {
+                pullRequestReview { id state }
+              }
+            }
+            """;
+
+        // Discard the response — success is the absence of a thrown exception (PostSubmitGraphQLAsync
+        // throws on any GraphQL error; SubmitPipeline maps that to a Finalize-step failure outcome).
+        _ = await PostSubmitGraphQLAsync(
+            mutation,
+            new { prReviewId = pendingReviewId, @event = graphqlEvent },
+            ct).ConfigureAwait(false);
+    }
 
     public Task DeletePendingReviewAsync(PrReference reference, string pendingReviewId, CancellationToken ct)
         => throw new NotImplementedException("PR1 Task 16");
