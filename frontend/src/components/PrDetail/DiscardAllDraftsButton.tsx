@@ -11,9 +11,6 @@ import { DiscardAllConfirmationModal } from './DiscardAllConfirmationModal';
 // shortens to "Discard" (spec § 8.5).
 
 interface Props {
-  // Display-form prRef ("owner/repo/number"); kept on the API so the button can
-  // be wired without re-deriving it, though the discard call lives in the parent.
-  prRef: string;
   prState: 'open' | 'closed' | 'merged';
   session: ReviewSessionDto;
   onDiscard(): void;
@@ -36,15 +33,12 @@ export function DiscardAllDraftsButton({ prState, session, onDiscard }: Props) {
 
   return (
     <>
-      <button
-        type="button"
-        className="btn btn-danger btn-sm"
-        onClick={() => setConfirmOpen(true)}
-      >
+      <button type="button" className="btn btn-danger btn-sm" onClick={() => setConfirmOpen(true)}>
         {narrow ? 'Discard' : 'Discard all drafts'}
       </button>
       <DiscardAllConfirmationModal
         open={confirmOpen}
+        prState={prState}
         threadCount={session.draftComments.length}
         replyCount={session.draftReplies.length}
         onConfirm={() => {

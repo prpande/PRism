@@ -25,8 +25,14 @@ export function StaleCommitOidBanner({
     <div className="stale-commit-oid-banner" role="alert">
       <p>
         The PR&rsquo;s head commit changed since this pending review was started. Recreating the
-        review{shortSha ? <> against the new head sha <code>{shortSha}</code></> : null}. Your drafts
-        are preserved and will be re-attached.
+        review
+        {shortSha ? (
+          <>
+            {' '}
+            against the new head sha <code>{shortSha}</code>
+          </>
+        ) : null}
+        . Your drafts are preserved and will be re-attached.
       </p>
       {notReloadedYet && <p>Click Reload first to re-classify your drafts against the new diff.</p>}
       <div className="stale-commit-oid-banner__buttons">

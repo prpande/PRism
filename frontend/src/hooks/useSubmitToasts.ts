@@ -1,13 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useEventSource } from './useEventSource';
-import type { PrReference } from '../api/types';
+import { prRefKey, type PrReference } from '../api/types';
 
 interface Options {
   showToast(message: string): void;
-}
-
-function prRefString(reference: PrReference): string {
-  return `${reference.owner}/${reference.repo}/${reference.number}`;
 }
 
 // Cross-cutting submit notifications that aren't dialog-state transitions
@@ -23,7 +19,7 @@ function prRefString(reference: PrReference): string {
 // than spec), so a tab for a different PR ignores them.
 export function useSubmitToasts(reference: PrReference, { showToast }: Options): void {
   const stream = useEventSource();
-  const prRef = prRefString(reference);
+  const prRef = prRefKey(reference);
   // Hold the latest callback in a ref so a fresh `showToast` closure each render
   // doesn't churn the subscriptions.
   const showToastRef = useRef(showToast);

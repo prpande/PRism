@@ -5,6 +5,7 @@ import { DiscardAllConfirmationModal } from '../src/components/PrDetail/DiscardA
 function renderModal(overrides: Partial<Parameters<typeof DiscardAllConfirmationModal>[0]> = {}) {
   const props = {
     open: true,
+    prState: 'closed' as const,
     threadCount: 2,
     replyCount: 1,
     onConfirm: vi.fn(),
@@ -19,6 +20,32 @@ describe('DiscardAllConfirmationModal', () => {
     renderModal({ threadCount: 2, replyCount: 1 });
     expect(screen.getByText(/discard 2 draft.+1 repl/i)).toBeInTheDocument();
     expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+  });
+
+  it('names the actual PR state in the copy', () => {
+    const { unmount } = render(
+      <DiscardAllConfirmationModal
+        open
+        prState="closed"
+        threadCount={1}
+        replyCount={0}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/on this closed PR/i)).toBeInTheDocument();
+    unmount();
+    render(
+      <DiscardAllConfirmationModal
+        open
+        prState="merged"
+        threadCount={1}
+        replyCount={0}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/on this merged PR/i)).toBeInTheDocument();
   });
 
   it('default focus is on Cancel (destructive precedent)', () => {
@@ -38,6 +65,7 @@ describe('DiscardAllConfirmationModal', () => {
     const { rerender } = render(
       <DiscardAllConfirmationModal
         open
+        prState="closed"
         threadCount={1}
         replyCount={0}
         onConfirm={onConfirm}
@@ -49,6 +77,7 @@ describe('DiscardAllConfirmationModal', () => {
     rerender(
       <DiscardAllConfirmationModal
         open
+        prState="closed"
         threadCount={1}
         replyCount={0}
         onConfirm={onConfirm}
@@ -77,6 +106,7 @@ describe('DiscardAllConfirmationModal', () => {
     const { container } = render(
       <DiscardAllConfirmationModal
         open={false}
+        prState="closed"
         threadCount={1}
         replyCount={1}
         onConfirm={vi.fn()}

@@ -7,6 +7,9 @@ import { Modal } from '../Modal/Modal';
 
 interface Props {
   open: boolean;
+  // 'closed' or 'merged' — the bulk-discard button only surfaces on those, so
+  // the copy names the actual state rather than the spec's literal "closed PR".
+  prState: 'closed' | 'merged';
   threadCount: number;
   replyCount: number;
   onConfirm(): void;
@@ -15,6 +18,7 @@ interface Props {
 
 export function DiscardAllConfirmationModal({
   open,
+  prState,
   threadCount,
   replyCount,
   onConfirm,
@@ -25,8 +29,8 @@ export function DiscardAllConfirmationModal({
     <Modal open title="Discard all drafts?" onClose={onCancel} defaultFocus="cancel">
       <div className="discard-all-confirmation-modal">
         <p>
-          Discard {threadCount} draft(s) and {replyCount} reply(ies) on this closed PR? This cannot
-          be undone.
+          Discard {threadCount} draft(s) and {replyCount} reply(ies) on this {prState} PR? This
+          cannot be undone.
         </p>
         <footer className="discard-all-confirmation-modal__footer">
           <button

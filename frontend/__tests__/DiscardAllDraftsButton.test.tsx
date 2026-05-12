@@ -45,29 +45,26 @@ afterEach(() => {
 describe('DiscardAllDraftsButton', () => {
   it('renders nothing on an open PR even with session content', () => {
     const { container } = render(
-      <DiscardAllDraftsButton prRef="o/r/1" prState="open" session={withDrafts} onDiscard={vi.fn()} />,
+      <DiscardAllDraftsButton prState="open" session={withDrafts} onDiscard={vi.fn()} />,
     );
     expect(container).toBeEmptyDOMElement();
   });
 
   it('renders nothing on a closed PR with an empty session', () => {
     const { container } = render(
-      <DiscardAllDraftsButton prRef="o/r/1" prState="closed" session={session()} onDiscard={vi.fn()} />,
+      <DiscardAllDraftsButton prState="closed" session={session()} onDiscard={vi.fn()} />,
     );
     expect(container).toBeEmptyDOMElement();
   });
 
   it('renders on a closed PR when the session has content', () => {
-    render(
-      <DiscardAllDraftsButton prRef="o/r/1" prState="closed" session={withDrafts} onDiscard={vi.fn()} />,
-    );
+    render(<DiscardAllDraftsButton prState="closed" session={withDrafts} onDiscard={vi.fn()} />);
     expect(screen.getByRole('button', { name: /discard all drafts/i })).toBeInTheDocument();
   });
 
   it('renders on a merged PR with only a pending review id (no drafts)', () => {
     render(
       <DiscardAllDraftsButton
-        prRef="o/r/1"
         prState="merged"
         session={session({ pendingReviewId: 'PRR_z' })}
         onDiscard={vi.fn()}
@@ -79,7 +76,6 @@ describe('DiscardAllDraftsButton', () => {
   it('renders on a closed PR with only a non-empty summary', () => {
     render(
       <DiscardAllDraftsButton
-        prRef="o/r/1"
         prState="closed"
         session={session({ draftSummaryMarkdown: 'LGTM' })}
         onDiscard={vi.fn()}
@@ -89,9 +85,7 @@ describe('DiscardAllDraftsButton', () => {
   });
 
   it('uses the btn-danger btn-sm vocabulary', () => {
-    render(
-      <DiscardAllDraftsButton prRef="o/r/1" prState="closed" session={withDrafts} onDiscard={vi.fn()} />,
-    );
+    render(<DiscardAllDraftsButton prState="closed" session={withDrafts} onDiscard={vi.fn()} />);
     const btn = screen.getByRole('button', { name: /discard all drafts/i });
     expect(btn.className).toMatch(/btn-danger/);
     expect(btn.className).toMatch(/btn-sm/);
@@ -109,25 +103,19 @@ describe('DiscardAllDraftsButton', () => {
         removeListener() {},
         dispatchEvent: () => false,
       }) as unknown as MediaQueryList) as typeof window.matchMedia;
-    render(
-      <DiscardAllDraftsButton prRef="o/r/1" prState="closed" session={withDrafts} onDiscard={vi.fn()} />,
-    );
+    render(<DiscardAllDraftsButton prState="closed" session={withDrafts} onDiscard={vi.fn()} />);
     expect(screen.getByRole('button')).toHaveTextContent(/^Discard$/);
   });
 
   it('click opens the confirmation modal with the count', () => {
-    render(
-      <DiscardAllDraftsButton prRef="o/r/1" prState="closed" session={withDrafts} onDiscard={vi.fn()} />,
-    );
+    render(<DiscardAllDraftsButton prState="closed" session={withDrafts} onDiscard={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
     expect(screen.getByText(/discard 2 draft.+1 repl/i)).toBeInTheDocument();
   });
 
   it('confirming the modal fires onDiscard', () => {
     const onDiscard = vi.fn();
-    render(
-      <DiscardAllDraftsButton prRef="o/r/1" prState="closed" session={withDrafts} onDiscard={onDiscard} />,
-    );
+    render(<DiscardAllDraftsButton prState="closed" session={withDrafts} onDiscard={onDiscard} />);
     fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
     fireEvent.click(screen.getByRole('button', { name: /^discard all$/i }));
     expect(onDiscard).toHaveBeenCalled();
@@ -135,9 +123,7 @@ describe('DiscardAllDraftsButton', () => {
 
   it('cancelling the modal does not fire onDiscard', () => {
     const onDiscard = vi.fn();
-    render(
-      <DiscardAllDraftsButton prRef="o/r/1" prState="closed" session={withDrafts} onDiscard={onDiscard} />,
-    );
+    render(<DiscardAllDraftsButton prState="closed" session={withDrafts} onDiscard={onDiscard} />);
     fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
     expect(onDiscard).not.toHaveBeenCalled();

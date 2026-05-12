@@ -5,14 +5,15 @@ import {
   resumeForeignPendingReview as resumeForeignApi,
   submitReview as submitReviewApi,
 } from '../api/submit';
-import type {
-  PrReference,
-  SubmitForeignPendingReviewEvent,
-  SubmitProgressEvent,
-  SubmitStaleCommitOidEvent,
-  SubmitStep,
-  SubmitStepStatus,
-  Verdict,
+import {
+  prRefKey,
+  type PrReference,
+  type SubmitForeignPendingReviewEvent,
+  type SubmitProgressEvent,
+  type SubmitStaleCommitOidEvent,
+  type SubmitStep,
+  type SubmitStepStatus,
+  type Verdict,
 } from '../api/types';
 
 export interface SubmitProgressStep {
@@ -56,10 +57,6 @@ export interface UseSubmitResult {
   reset(): void;
 }
 
-function prRefString(reference: PrReference): string {
-  return `${reference.owner}/${reference.repo}/${reference.number}`;
-}
-
 function upsertStep(steps: SubmitProgressStep[], ev: SubmitProgressEvent): SubmitProgressStep[] {
   const next: SubmitProgressStep = {
     step: ev.step,
@@ -77,7 +74,7 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
   const [lastResume, setLastResume] = useState<ResumeSummary | null>(null);
   const stream = useEventSource();
-  const prRef = prRefString(reference);
+  const prRef = prRefKey(reference);
 
   // Multi-tab guard: SSE events only drive transitions when THIS tab's
   // submit() / retry() call has returned 200 OK (spec § 8.4). A foreign tab's

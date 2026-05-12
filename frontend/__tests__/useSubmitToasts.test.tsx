@@ -68,8 +68,8 @@ describe('useSubmitToasts', () => {
   it('uses the latest showToast without re-subscribing', () => {
     const first: string[] = [];
     const second: string[] = [];
-    const { rerender } = renderHook(({ sink }: { sink: string[] }) =>
-      useSubmitToasts(ref, { showToast: (m) => sink.push(m) }),
+    const { rerender } = renderHook(
+      ({ sink }: { sink: string[] }) => useSubmitToasts(ref, { showToast: (m) => sink.push(m) }),
       { initialProps: { sink: first } },
     );
     rerender({ sink: second });

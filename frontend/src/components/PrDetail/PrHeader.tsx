@@ -245,7 +245,6 @@ export function PrHeader({
           {/* Read order on a closed/merged PR: [Discard all drafts | Submit (disabled)]. */}
           {session && isClosedOrMerged && (
             <DiscardAllDraftsButton
-              prRef={`${reference.owner}/${reference.repo}/${reference.number}`}
               prState={prState}
               session={session}
               onDiscard={onDiscardAllDrafts}
