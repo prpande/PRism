@@ -211,8 +211,120 @@ public sealed partial class GitHubReviewService
         _ = await PostSubmitGraphQLAsync(mutation, new { threadId = pullRequestReviewThreadId }, ct).ConfigureAwait(false);
     }
 
-    public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct)
-        => throw new NotImplementedException("PR1 Task 17");
+    public async Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(
+        PrReference reference,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+
+        // One round-trip: the PR's PENDING reviews (GitHub allows one per user — pick the viewer's
+        // via viewerDidAuthor) plus all of its review threads. PullRequestReview has no `threads`
+        // connection, and the thread-level fields (isResolved / diffSide / line / originalLine) live
+        // on PullRequestReviewThread — so threads are grouped to the pending review by their root
+        // comment's pullRequestReview.id.
+        const string query = """
+            query($owner: String!, $repo: String!, $number: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $number) {
+                  reviews(first: 50, states: [PENDING]) {
+                    nodes { id viewerDidAuthor commit { oid } createdAt }
+                  }
+                  reviewThreads(first: 100) {
+                    nodes {
+                      id
+                      path
+                      line
+                      diffSide
+                      originalLine
+                      isResolved
+                      comments(first: 100) {
+                        nodes { id body originalCommit { oid } pullRequestReview { id } }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """;
+
+        var data = await PostSubmitGraphQLAsync(
+            query,
+            new { owner = reference.Owner, repo = reference.Repo, number = reference.Number },
+            ct).ConfigureAwait(false);
+
+        if (!TryGetPath(data, out var pull, "repository", "pullRequest") || pull.ValueKind != JsonValueKind.Object)
+            return null;
+        if (!TryGetPath(pull, out var reviewNodes, "reviews", "nodes") || reviewNodes.ValueKind != JsonValueKind.Array)
+            return null;
+
+        JsonElement? viewerPending = null;
+        foreach (var r in reviewNodes.EnumerateArray())
+        {
+            if (r.TryGetProperty("viewerDidAuthor", out var v) && v.ValueKind == JsonValueKind.True)
+            {
+                viewerPending = r;
+                break;
+            }
+        }
+        if (viewerPending is not { } review) return null;
+
+        if (review.GetProperty("id").GetString() is not { Length: > 0 } pendingReviewId)
+            throw new GitHubGraphQLException("Pending review node missing id.");
+        var commitOid = TryGetPath(review, out var oidEl, "commit", "oid") ? oidEl.GetString() ?? "" : "";
+        var createdAt = review.TryGetProperty("createdAt", out var ca) && ca.ValueKind == JsonValueKind.String
+            ? ca.GetDateTime()
+            : default;
+
+        var threads = new List<PendingReviewThreadSnapshot>();
+        if (TryGetPath(pull, out var threadNodes, "reviewThreads", "nodes") && threadNodes.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var thread in threadNodes.EnumerateArray())
+            {
+                var comments = TryGetPath(thread, out var cn, "comments", "nodes") && cn.ValueKind == JsonValueKind.Array
+                    ? cn.EnumerateArray().ToArray()
+                    : Array.Empty<JsonElement>();
+                if (comments.Length == 0) continue;
+
+                // This thread belongs to our pending review iff its root comment's review id matches.
+                var rootReviewId = TryGetPath(comments[0], out var prrId, "pullRequestReview", "id") ? prrId.GetString() : null;
+                if (!string.Equals(rootReviewId, pendingReviewId, StringComparison.Ordinal)) continue;
+
+                threads.Add(ProjectPendingReviewThread(thread, comments));
+            }
+        }
+
+        return new OwnPendingReviewSnapshot(pendingReviewId, commitOid, createdAt, threads);
+    }
+
+    private static PendingReviewThreadSnapshot ProjectPendingReviewThread(JsonElement thread, JsonElement[] comments)
+    {
+        var root = comments[0];
+        IReadOnlyList<PendingReviewCommentSnapshot> replies = comments.Length > 1
+            ? comments.Skip(1).Select(c => new PendingReviewCommentSnapshot(
+                c.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
+                c.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "")).ToList()
+            : Array.Empty<PendingReviewCommentSnapshot>();
+
+        return new PendingReviewThreadSnapshot(
+            PullRequestReviewThreadId: thread.TryGetProperty("id", out var tid) ? tid.GetString() ?? "" : "",
+            FilePath: thread.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "",
+            LineNumber: ReadInt(thread, "line") ?? ReadInt(thread, "originalLine") ?? 0,
+            Side: thread.TryGetProperty("diffSide", out var ds) ? ds.GetString() ?? "" : "",
+            OriginalCommitOid: TryGetPath(root, out var ocOid, "originalCommit", "oid") ? ocOid.GetString() ?? "" : "",
+            // The reconciliation pipeline's LineMatching step compares anchored content character-equal
+            // against file lines, so an empty value matches every blank line — PR5's Resume endpoint
+            // MUST enrich this from the file content at originalCommit before any imported draft is
+            // reconciled. The GitHub adapter has no file content here, so it leaves it empty.
+            OriginalLineContent: "",
+            IsResolved: thread.TryGetProperty("isResolved", out var ir) && ir.ValueKind == JsonValueKind.True,
+            BodyMarkdown: root.TryGetProperty("body", out var rb) ? rb.GetString() ?? "" : "",
+            Comments: replies);
+    }
+
+    private static int? ReadInt(JsonElement obj, string name)
+        => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.Number && el.TryGetInt32(out var n)
+            ? n
+            : null;
 
     // ----- shared helpers -----
 
