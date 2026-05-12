@@ -12,6 +12,14 @@ namespace PRism.Web.Submit;
 /// serialization on <c>_gate</c> would block every other PR's draft writes for the duration of any
 /// one PR's submit (10–30s), and re-introduce the publication-vs-<c>_gate</c> ordering hazard the
 /// SubmitPipeline's step-5 contract defends against. Registered as a DI singleton.
+///
+/// Entries are never evicted: the dictionary holds one tiny <see cref="SemaphoreSlim"/> per
+/// distinct PR ref a submit has ever been attempted on, for the host process's lifetime. That is
+/// acceptable here — PRism is a single-user local tool and a session reviews a handful of PRs at
+/// most, so the set is bounded by realistic usage (mirrors the existing "explicit cap, no eviction"
+/// stance the per-PR poller / subscriber registry take). A timestamped-entry + periodic-sweep
+/// eviction would be the move if a long-lived multi-user variant ever lands; it is not worth the
+/// machinery for the PoC.
 /// </summary>
 internal sealed class SubmitLockRegistry
 {

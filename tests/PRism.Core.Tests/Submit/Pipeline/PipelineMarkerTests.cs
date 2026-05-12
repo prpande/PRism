@@ -128,6 +128,15 @@ public class PipelineMarkerTests
     }
 
     [Fact]
+    public void StripIfPresent_DoesNotTrimTrailingWhitespaceWhenNoEndMarkerIsPresent()
+    {
+        // The trailing-whitespace trim is the marker-separator cleanup — it must NOT run on a body
+        // that has no marker, or it would silently mutate imported user content (Copilot review).
+        Assert.Equal("plain body\n\n", PipelineMarker.StripIfPresent("plain body\n\n"));
+        Assert.Equal("trailing spaces   ", PipelineMarker.StripIfPresent("trailing spaces   "));
+    }
+
+    [Fact]
     public void StripAllMarkerPrefixes_RemovesEmbeddedWellFormedMarkers()
     {
         var result = PipelineMarker.StripAllMarkerPrefixes("before <!-- prism:client-id:embedded --> after");

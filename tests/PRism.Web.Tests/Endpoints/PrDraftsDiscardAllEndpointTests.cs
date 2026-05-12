@@ -13,6 +13,8 @@ namespace PRism.Web.Tests.Endpoints;
 // Spec § 13 — POST /api/pr/{ref}/drafts/discard-all (closed/merged-PR bulk-discard).
 public class PrDraftsDiscardAllEndpointTests
 {
+    private static readonly TimeSpan CourtesyWait = TimeSpan.FromSeconds(5);
+
     private static ReviewSessionState SessionWithDraftsAndPending(string? pendingReviewId = null) =>
         SubmitEndpointsTestContext.ValidSession() with
         {
@@ -50,7 +52,8 @@ public class PrDraftsDiscardAllEndpointTests
         var resp = await client.PostAsync(new Uri("/api/pr/o/r/2/drafts/discard-all", UriKind.Relative), null);
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
-        ctx.Submitter.DeletedPendingReviews.Should().Contain("PRR_del");
+        // The courtesy delete is fire-and-forget (spec § 13.2 step 3) — wait for it to land.
+        await TestPoll.UntilAsync(() => ctx.Submitter.DeletedPendingReviews.Contains("PRR_del"), CourtesyWait);
         ctx.Bus.Published.OfType<SubmitOrphanCleanupFailedBusEvent>().Should().BeEmpty();
     }
 
@@ -64,10 +67,12 @@ public class PrDraftsDiscardAllEndpointTests
 
         var resp = await client.PostAsync(new Uri("/api/pr/o/r/3/drafts/discard-all", UriKind.Relative), null);
 
-        resp.StatusCode.Should().Be(HttpStatusCode.OK);  // courtesy failure does not block
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);  // courtesy failure does not block — returns immediately
         var session = await ctx.LoadSessionAsync("o", "r", 3);
         session!.DraftComments.Should().BeEmpty();
         session.PendingReviewId.Should().BeNull();
+        // The fire-and-forget courtesy delete fails asynchronously → submit-orphan-cleanup-failed published.
+        await TestPoll.UntilAsync(() => ctx.Bus.Published.OfType<SubmitOrphanCleanupFailedBusEvent>().Any(), CourtesyWait);
         ctx.Bus.Published.OfType<SubmitOrphanCleanupFailedBusEvent>().Should().ContainSingle();
     }
 }

@@ -83,12 +83,16 @@ internal static class PipelineMarker
         RegexOptions.Compiled);
 
     // Removes the trailing `<!-- prism:client-id:<id> -->` end-marker the pipeline appended on
-    // submit (if present), plus the trailing whitespace that preceded it. Used by PR3's Resume
-    // endpoint when importing a foreign pending review's threads/replies as drafts — the marker is
-    // an internal-format detail, not user content.
+    // submit (if present), plus the `\n\n` separator whitespace that preceded it. Used by PR3's
+    // Resume endpoint when importing a foreign pending review's threads/replies as drafts — the
+    // marker is an internal-format detail, not user content. A markerless body is returned
+    // **unchanged** — the trailing-whitespace trim runs only when an end-marker was actually
+    // stripped, so we don't silently mutate imported user content that just happens to end with
+    // newlines/spaces.
     public static string StripIfPresent(string body)
     {
         if (string.IsNullOrEmpty(body)) return body;
+        if (!EndMarkerRegex.IsMatch(body)) return body;
         return EndMarkerRegex.Replace(body, "").TrimEnd('\n', ' ', '\t');
     }
 
