@@ -30,8 +30,8 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        // v1 → v2 (adds empty viewed-files) → v3 (rename + draft collections) chained.
-        state.Version.Should().Be(3);
+        // v1 → v2 (adds empty viewed-files) → v3 (rename + draft collections) → v4 (ThreadId field) chained.
+        state.Version.Should().Be(4);
         state.Reviews.Sessions.Should().ContainKey("owner/repo/123");
         state.Reviews.Sessions["owner/repo/123"].ViewedFiles.Should().BeEmpty();
         state.Reviews.Sessions["owner/repo/123"].LastViewedHeadSha.Should().Be("abc123");
@@ -61,8 +61,8 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        // v2 → v3 runs the rename + draft-collections migration; v1→v2 step is skipped.
-        state.Version.Should().Be(3);
+        // v2 → v3 runs the rename + draft-collections migration, then v3 → v4 adds the ThreadId field; v1→v2 step is skipped.
+        state.Version.Should().Be(4);
         var session = state.Reviews.Sessions["owner/repo/123"];
         session.ViewedFiles.Should().ContainKey("src/Foo.cs");
         // Draft-collection backfill — symmetry with MigrationStepTests.MigrateV2ToV3_BackfillsDraftFieldsPerSession.
@@ -326,7 +326,7 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(3);
+        state.Version.Should().Be(4);
         state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
     }
 

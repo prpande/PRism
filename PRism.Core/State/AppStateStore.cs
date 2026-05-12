@@ -7,7 +7,7 @@ namespace PRism.Core.State;
 
 public sealed class AppStateStore : IAppStateStore, IDisposable
 {
-    private const int CurrentVersion = 3;
+    private const int CurrentVersion = 4;
 
     // Per-step migrations applied in ascending ToVersion order. Each step takes a JsonObject
     // at version N-1 and returns the same root mutated to version N. Adding a step here is
@@ -22,6 +22,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         {
             (2, AppStateMigrations.MigrateV1ToV2),
             (3, AppStateMigrations.MigrateV2ToV3),
+            (4, AppStateMigrations.MigrateV3ToV4),  // S5 PR2 — adds DraftComment.ThreadId
         }.OrderBy(s => s.ToVersion).ToArray();
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);

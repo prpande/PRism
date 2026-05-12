@@ -30,4 +30,13 @@ internal static class AppStateMigrations
         root["version"] = 3;
         return root;
     }
+
+    public static JsonObject MigrateV3ToV4(JsonObject root)
+    {
+        // Additive-only: DraftComment.ThreadId defaults to absent (deserializes to null) on
+        // existing entries. No per-session transform needed. The version bump documents the
+        // schema change so downstream tooling can scan migrations chronologically (spec § 6).
+        root["version"] = 4;
+        return root;
+    }
 }

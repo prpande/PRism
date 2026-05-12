@@ -8,6 +8,7 @@ revisions:
   - 2026-05-12: PR #43 review pass — marked Risk R1 (MigrateV3ToV4 signature mismatch) Resolved after spec § 6 was corrected to the JsonObject step shape
   - 2026-05-12: PR0a execution — added the "Implementation-time deferrals" section (IDraftReconciliator dead-code not deleted; IReviewSubmitter CA1040 suppression; GitHub-test concrete return type; PRismWebApplicationFactory override re-typed)
   - 2026-05-12: PR1 execution — R16 applied to spec § 4 (interface now 7 methods, adds DeletePendingReviewThreadAsync); added PR1 implementation-time decisions (GraphQL transport reuse; FindOwn single-query shape; DeletePendingReviewThreadAsync via comment-deletes since GitHub has no thread-delete mutation; CreatedAt → DateTimeOffset; test-fake stubs; Task 19 partial-split skipped). GraphQL input/field shapes confirmed via introspection — recorded in docs/spec/00-verification-notes.md.
+  - 2026-05-12: PR2 execution — added PR2 implementation-time decisions (DraftComment.ThreadId trailing `= null` default; …)
 ---
 
 # Deferrals — S5 submit pipeline spec
@@ -360,6 +361,13 @@ These aren't deferred decisions — they're known unknowns the plan / implemente
 ## Implementation-time deferrals (surfaced during PR execution)
 
 Decisions made while executing the plan that diverge from a literal task body or the "Files touched" lists. Captured here so a reviewer comparing the PR to the plan sees the rationale.
+
+### [Decision] `DraftComment.ThreadId` ships with a trailing `= null` default
+
+- **Source:** PR2 execution (2026-05-12)
+- **Affects:** Plan Task 21 Step 5 (which shows `string? ThreadId);` with no default and instructs "Every existing constructor call site for `DraftComment` must pass `ThreadId` … fix each"); spec § 6's `DraftComment` code block (also no default).
+- **Decision:** Added `string? ThreadId = null` rather than a required positional parameter. Trailing defaults on persistent-state records already have precedent in the codebase (`DraftThreadRequest.{StartLine, StartSide}` are `= null` reserved fields), and `ThreadId` is *only* ever a non-null value when `SubmitPipeline.AttachThreads` stamps it — every other construction site (composer endpoints, reconciliation test fixtures, and PR2's own pipeline-test fixtures) wants `null`. The default avoids touching ~21 unrelated call sites across 9 files and keeps the pipeline-test fixtures terse. JSON-deserialization behavior is unchanged either way (absent property → `null`). `DraftReply.ReplyCommentId` stays without a default because it sits mid-list and a trailing default is the only kind C# allows — the asymmetry is mechanical, not a convention break.
+- **Revisit when:** N/A — intended end state. If a future field on `DraftComment` genuinely must be supplied at every call site, make it non-defaulted then.
 
 ### [Decision] PR0a does NOT delete the `IDraftReconciliator` AI seam dead code
 

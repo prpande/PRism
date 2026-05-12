@@ -8,7 +8,7 @@ public sealed record AppState(
     UiPreferences UiPreferences)
 {
     public static AppState Default { get; } = new(
-        Version: 3,
+        Version: 4,
         Reviews: PrSessionsState.Empty,
         AiState: new AiState(new Dictionary<string, RepoCloneEntry>(), null),
         LastConfiguredGithubHost: null,
@@ -36,7 +36,10 @@ public sealed record DraftComment(
     string? AnchoredLineContent,
     string BodyMarkdown,
     DraftStatus Status,
-    bool IsOverriddenStale);
+    bool IsOverriddenStale,
+    string? ThreadId = null);  // S5 v4 — stamped by SubmitPipeline.AttachThreads (trailing default
+                               // matches DraftThreadRequest's reserved-field pattern; pre-v4 entries
+                               // and every non-pipeline call site leave it null)
 
 public sealed record DraftReply(
     string Id,
