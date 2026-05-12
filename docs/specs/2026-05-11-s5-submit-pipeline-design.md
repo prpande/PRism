@@ -608,7 +608,9 @@ type SubmitState =
   //   - Banner copy from § 12
   // Distinct from 'in-flight' specifically because Cancel is enabled and the action is
   // explicit-click, not pending. See § 12 for the full lifecycle.
-  | { kind: 'stale-commit-oid', orphanReviewId: string };
+  // Field is `orphanCommitOid` to match the `submit-stale-commit-oid` SSE payload (§ 7.5),
+  // which carries only the commit OID — the orphan review ID is consumed server-side.
+  | { kind: 'stale-commit-oid', orphanCommitOid: string };
 
 export function useSubmit(prRef: string): {
   state: SubmitState;
