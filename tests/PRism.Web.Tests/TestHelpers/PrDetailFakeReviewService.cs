@@ -8,7 +8,11 @@ namespace PRism.Web.Tests.TestHelpers;
 // scriptable PR-detail responses so endpoint tests can assert wire-format and orchestration
 // without spinning up a real GitHub HTTP layer. Mirrors FakePrDetailReviewService in
 // PRism.Core.Tests but lives in Web.Tests because cross-test-project sharing is awkward.
-public sealed class PrDetailFakeReviewService : IReviewService
+//
+// Implements all four capability interfaces (ADR-S5-1) so PRismWebApplicationFactory can
+// bind one instance to every review-service seam — mirroring how GitHubReviewService is
+// registered in production.
+public sealed class PrDetailFakeReviewService : IReviewAuth, IPrDiscovery, IPrReader, IReviewSubmitter
 {
     public Dictionary<PrReference, ActivePrPollSnapshot> PollResponses { get; } = new();
     public Dictionary<PrReference, PrDetailDto?> DetailResponses { get; } = new();
@@ -60,5 +64,4 @@ public sealed class PrDetailFakeReviewService : IReviewService
     public Task<PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
     public Task<FileChange[]> GetDiffAsync(PrReference reference, string fromSha, string toSha, CancellationToken ct) => throw new NotImplementedException();
     public Task<ExistingComment[]> GetCommentsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
-    public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException();
 }

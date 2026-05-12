@@ -9,7 +9,7 @@ namespace PRism.GitHub.Tests;
 
 public class GitHubReviewServicePollActivePrTests
 {
-    private static IReviewService NewService(HttpMessageHandler handler)
+    private static GitHubReviewService NewService(HttpMessageHandler handler)
     {
         var factory = new FakeHttpClientFactory(handler, new Uri("https://api.github.com/"));
         return new GitHubReviewService(factory, () => Task.FromResult<string?>("ghp_test"), "https://github.com");

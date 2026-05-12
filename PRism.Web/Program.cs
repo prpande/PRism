@@ -34,20 +34,34 @@ builder.Services.AddSingleton<SessionTokenProvider>();
 
 // Test environment: opt-in swap GitHubReviewService → FakeReviewService so
 // Playwright can drive the backend without needing a real GitHub PAT. The
-// swap also makes /test/* endpoints meaningful (they downcast IReviewService
-// to FakeReviewService). See PRism.Web/TestHooks/FakeReviewService.cs.
+// swap also makes /test/* endpoints meaningful (they resolve FakeReviewService
+// to mutate scenario state). See PRism.Web/TestHooks/FakeReviewService.cs.
 //
 // Why opt-in (PRISM_E2E_FAKE_REVIEW=1) instead of just IsEnvironment("Test"):
 // the existing xUnit/WebApplicationFactory test suite already uses Test env
 // and assumes the real GitHubReviewService (or per-test overrides). Auto-
 // swapping under Test env would silently rewire those tests. The env-var
 // is set only by Playwright via playwright.config.ts.
+//
+// One FakeReviewService instance backs all four capability interfaces
+// (IReviewAuth / IPrDiscovery / IPrReader / IReviewSubmitter), mirroring how
+// GitHubReviewService is registered in AddPrismGitHub.
 if (builder.Environment.IsEnvironment("Test")
     && Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1")
 {
-    var existing = builder.Services.FirstOrDefault(d => d.ServiceType == typeof(IReviewService));
-    if (existing is not null) builder.Services.Remove(existing);
-    builder.Services.AddSingleton<IReviewService, FakeReviewService>();
+    foreach (var serviceType in new[]
+             {
+                 typeof(IReviewAuth), typeof(IPrDiscovery), typeof(IPrReader), typeof(IReviewSubmitter),
+             })
+    {
+        var existing = builder.Services.FirstOrDefault(d => d.ServiceType == serviceType);
+        if (existing is not null) builder.Services.Remove(existing);
+    }
+    builder.Services.AddSingleton<FakeReviewService>();
+    builder.Services.AddSingleton<IReviewAuth>(sp => sp.GetRequiredService<FakeReviewService>());
+    builder.Services.AddSingleton<IPrDiscovery>(sp => sp.GetRequiredService<FakeReviewService>());
+    builder.Services.AddSingleton<IPrReader>(sp => sp.GetRequiredService<FakeReviewService>());
+    builder.Services.AddSingleton<IReviewSubmitter>(sp => sp.GetRequiredService<FakeReviewService>());
 }
 
 var app = builder.Build();

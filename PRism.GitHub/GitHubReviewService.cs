@@ -9,7 +9,7 @@ using PRism.Core.Iterations;
 
 namespace PRism.GitHub;
 
-public sealed partial class GitHubReviewService : IReviewService
+public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPrReader, IReviewSubmitter
 {
     private static readonly string[] RequiredScopes = ["repo", "read:user", "read:org"];
 
@@ -259,7 +259,7 @@ public sealed partial class GitHubReviewService : IReviewService
         var timelineCapHit = HasAnyNextPage(pull);
         if (timelineCapHit) Log.TimelineCapHit(_log, reference.Owner, reference.Repo, reference.Number);
 
-        // Clustering is performed by PrDetailLoader (Task 4); IReviewService returns the
+        // Clustering is performed by PrDetailLoader (Task 4); IPrReader returns the
         // GitHub-side facts only and the loader overwrites these fields. Default to
         // ClusteringQuality.Low + Iterations:null so the DTO is internally consistent
         // before the loader runs (Ok would imply trustworthy iteration boundaries —
@@ -547,7 +547,8 @@ public sealed partial class GitHubReviewService : IReviewService
 
     private sealed record PollPullMeta(string HeadSha, string State, string Mergeability);
 
-    public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException("Submit lands in S5.");
+    // IReviewSubmitter is an empty seam in PR0a; the seven pending-review pipeline methods
+    // land in PR1 on GitHubReviewService.Submit.cs.
 
     private async Task<PullMeta> FetchPullMetaAsync(PrReference reference, CancellationToken ct)
     {

@@ -45,7 +45,7 @@ internal static partial class PrDetailEndpoints
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/file",
             async (string owner, string repo, int number,
                    [FromQuery] string? path, [FromQuery] string? sha,
-                   PrDetailLoader loader, IReviewService review, CancellationToken ct) =>
+                   PrDetailLoader loader, IPrReader review, CancellationToken ct) =>
             {
                 if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(sha))
                     return Results.Problem(type: "/file/missing-params", statusCode: 422);

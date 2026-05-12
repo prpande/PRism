@@ -38,7 +38,7 @@ internal static class TestEndpoints
 
         app.MapPost("/test/advance-head", (
             AdvanceHeadRequest req,
-            IReviewService reviewService) =>
+            IPrReader reviewService) =>
         {
             if (reviewService is not FakeReviewService fake)
                 return Results.Problem(
@@ -57,7 +57,7 @@ internal static class TestEndpoints
         // long-running for the whole Playwright run, so without this hook
         // the inboxes/sessions accumulate across tests.
         app.MapPost("/test/reset", async (
-            IReviewService reviewService,
+            IPrReader reviewService,
             IAppStateStore stateStore) =>
         {
             if (reviewService is FakeReviewService fake)
@@ -81,7 +81,7 @@ internal static class TestEndpoints
 
         app.MapPost("/test/set-commit-reachable", (
             SetCommitReachableRequest req,
-            IReviewService reviewService) =>
+            IPrReader reviewService) =>
         {
             if (reviewService is not FakeReviewService fake)
                 return Results.Problem(

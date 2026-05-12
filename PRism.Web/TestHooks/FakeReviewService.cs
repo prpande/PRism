@@ -5,9 +5,11 @@ using PRism.Core.Iterations;
 
 namespace PRism.Web.TestHooks;
 
-// Spec § 5.10 + plan Task 47. Test-only IReviewService that the .NET host boots
-// in place of GitHubReviewService when ASPNETCORE_ENVIRONMENT == "Test". Playwright
-// drives state mutation via POST /test/* endpoints (TestEndpoints.cs).
+// Spec § 5.10 + plan Task 47. Test-only review service that the .NET host boots
+// in place of GitHubReviewService when ASPNETCORE_ENVIRONMENT == "Test". It
+// implements all four capability interfaces (ADR-S5-1) so a single instance
+// backs auth, discovery, read, and the (empty) submit seam. Playwright drives
+// state mutation via POST /test/* endpoints (TestEndpoints.cs).
 //
 // Scope: per the plan deferrals, scenario data is inlined in C# rather than loaded
 // from frontend/e2e/fixtures/*.json — for the 4 E2E specs this slice ships, schema
@@ -16,7 +18,7 @@ namespace PRism.Web.TestHooks;
 //
 // Thread-safety: mutation is rare (one /test/advance-head per E2E test step) and
 // reads vastly outnumber writes; using a single lock for simplicity.
-internal sealed class FakeReviewService : IReviewService
+internal sealed class FakeReviewService : IReviewAuth, IPrDiscovery, IPrReader, IReviewSubmitter
 {
     // The canonical scenario PR. All E2E specs use this reference.
     public static readonly PrReference Scenario = new("acme", "api", 123);
@@ -146,7 +148,8 @@ internal sealed class FakeReviewService : IReviewService
     }
 
     // -----------------------------------------------------------------------
-    // IReviewService — minimal viable implementation
+    // IReviewAuth / IPrDiscovery / IPrReader — minimal viable implementation
+    // (IReviewSubmitter is an empty seam in PR0a; PR1 adds the pipeline methods)
     // -----------------------------------------------------------------------
 
     public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) =>
@@ -312,8 +315,8 @@ internal sealed class FakeReviewService : IReviewService
     }
 
     // -----------------------------------------------------------------------
-    // Legacy S0+S1 surface — unused after S3, retained on the interface for
-    // the S5 capability split per ADR-S5-1. Tests don't exercise these paths.
+    // Legacy S0+S1 surface — unused after S3, retained on IPrReader for the
+    // S5 capability split per ADR-S5-1. Tests don't exercise these paths.
     // -----------------------------------------------------------------------
 
     public Task<Pr> GetPrAsync(PrReference reference, CancellationToken ct) =>
@@ -327,7 +330,4 @@ internal sealed class FakeReviewService : IReviewService
 
     public Task<ExistingComment[]> GetCommentsAsync(PrReference reference, CancellationToken ct) =>
         throw new NotSupportedException("Legacy GetCommentsAsync not used by S3+ paths.");
-
-    public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) =>
-        throw new NotSupportedException("SubmitReviewAsync is S5 territory; not used by S4 E2E.");
 }

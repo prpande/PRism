@@ -6,9 +6,9 @@ namespace PRism.Core.Tests.PrDetail;
 
 // Test helper for ActivePrPollerBackoffTests. Lets per-PR poll responses be scripted: either
 // a snapshot (success) or an exception (failure). Records per-PR call counts so tests can
-// assert "PR B was polled twice while PR A was skipped." Other IReviewService methods throw
+// assert "PR B was polled twice while PR A was skipped." Other IPrReader methods throw
 // — the poller only calls PollActivePrAsync.
-internal sealed class FakePollerReviewService : IReviewService
+internal sealed class FakePollerReviewService : IPrReader
 {
     private readonly Dictionary<PrReference, ActivePrPollSnapshot> _snapshots = new();
     private readonly Dictionary<PrReference, Exception> _throws = new();
@@ -49,9 +49,6 @@ internal sealed class FakePollerReviewService : IReviewService
         }
     }
 
-    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) => throw new NotImplementedException();
-    public Task<InboxSection[]> GetInboxAsync(CancellationToken ct) => throw new NotImplementedException();
-    public bool TryParsePrUrl(string url, out PrReference? reference) => throw new NotImplementedException();
     public Task<Pr> GetPrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
     public Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
     public Task<PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
@@ -61,5 +58,4 @@ internal sealed class FakePollerReviewService : IReviewService
     public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException();
     public Task<CommitInfo?> GetCommitAsync(PrReference reference, string sha, CancellationToken ct) => throw new NotImplementedException();
     public Task<ExistingComment[]> GetCommentsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
-    public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException();
 }

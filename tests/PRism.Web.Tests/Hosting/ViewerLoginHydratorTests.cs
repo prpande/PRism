@@ -16,7 +16,7 @@ public class ViewerLoginHydratorTests
         var tokens = new Mock<ITokenStore>();
         tokens.Setup(t => t.HasTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
-        var review = new Mock<IReviewService>();
+        var review = new Mock<IReviewAuth>();
         review.Setup(r => r.ValidateCredentialsAsync(It.IsAny<CancellationToken>()))
               .ReturnsAsync(new AuthValidationResult(true, "octocat", new[] { "repo" }, AuthValidationError.None, null));
 
@@ -36,7 +36,7 @@ public class ViewerLoginHydratorTests
         var tokens = new Mock<ITokenStore>();
         tokens.Setup(t => t.HasTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
 
-        var review = new Mock<IReviewService>(MockBehavior.Strict);
+        var review = new Mock<IReviewAuth>(MockBehavior.Strict);
 
         var loginProvider = new ViewerLoginProvider();
 
@@ -54,7 +54,7 @@ public class ViewerLoginHydratorTests
         var tokens = new Mock<ITokenStore>();
         tokens.Setup(t => t.HasTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
-        var review = new Mock<IReviewService>();
+        var review = new Mock<IReviewAuth>();
         review.Setup(r => r.ValidateCredentialsAsync(It.IsAny<CancellationToken>()))
               .ReturnsAsync(new AuthValidationResult(false, null, null, AuthValidationError.InvalidToken, "rejected"));
 
@@ -73,7 +73,7 @@ public class ViewerLoginHydratorTests
         var tokens = new Mock<ITokenStore>();
         tokens.Setup(t => t.HasTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
-        var review = new Mock<IReviewService>();
+        var review = new Mock<IReviewAuth>();
         review.Setup(r => r.ValidateCredentialsAsync(It.IsAny<CancellationToken>()))
               .ThrowsAsync(new HttpRequestException("network down"));
 
@@ -93,7 +93,7 @@ public class ViewerLoginHydratorTests
         var tokens = new Mock<ITokenStore>();
         tokens.Setup(t => t.HasTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
-        var review = new Mock<IReviewService>(MockBehavior.Strict);
+        var review = new Mock<IReviewAuth>(MockBehavior.Strict);
 
         var loginProvider = new ViewerLoginProvider();
         loginProvider.Set("already-logged-in"); // simulate /api/auth/connect winning the race
@@ -112,7 +112,7 @@ public class ViewerLoginHydratorTests
         var tokens = new Mock<ITokenStore>();
         tokens.Setup(t => t.HasTokenAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
-        var review = new Mock<IReviewService>();
+        var review = new Mock<IReviewAuth>();
         review.Setup(r => r.ValidateCredentialsAsync(It.IsAny<CancellationToken>()))
               .ThrowsAsync(new OperationCanceledException());
 

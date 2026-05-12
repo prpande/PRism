@@ -14,7 +14,10 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
     public string DataDir { get; } = Path.Combine(Path.GetTempPath(), $"PRism-test-{Guid.NewGuid():N}");
     public Func<Task<AuthValidationResult>>? ValidateOverride { get; set; }
     public FakeInboxRefreshOrchestrator? FakeOrchestrator { get; set; }
-    public IReviewService? ReviewServiceOverride { get; set; }
+
+    // When set, this fake replaces the GitHubReviewService binding for all four
+    // capability interfaces (ADR-S5-1) — used by PR-detail endpoint tests.
+    public PrDetailFakeReviewService? ReviewServiceOverride { get; set; }
 
     // Lazily resolved per-process session token (the SessionTokenMiddleware checks
     // X-PRism-Session header / prism-session cookie against this value). Tests that
@@ -42,30 +45,39 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
-            // Replace IReviewService with a fully-scripted fake when ReviewServiceOverride
-            // is set (PR-detail tests). Falls through to the validate-only stub branch when
-            // ValidateOverride is set instead. ReviewServiceOverride takes precedence.
+            // Replace the GitHubReviewService capability bindings with a fully-scripted fake
+            // when ReviewServiceOverride is set (PR-detail tests). Falls through to the
+            // validate-only stub branch (IReviewAuth alone) when ValidateOverride is set
+            // instead. ReviewServiceOverride takes precedence.
             if (ReviewServiceOverride is not null)
             {
-                var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IReviewService));
-                if (existing is not null) services.Remove(existing);
-                services.AddSingleton(ReviewServiceOverride);
+                ReplaceSingleton<IReviewAuth>(services, ReviewServiceOverride);
+                ReplaceSingleton<IPrDiscovery>(services, ReviewServiceOverride);
+                ReplaceSingleton<IPrReader>(services, ReviewServiceOverride);
+                ReplaceSingleton<IReviewSubmitter>(services, ReviewServiceOverride);
             }
             else if (ValidateOverride is not null)
             {
-                var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IReviewService));
-                if (existing is not null) services.Remove(existing);
-                services.AddSingleton<IReviewService>(new StubReviewService(ValidateOverride));
+                ReplaceSingleton<IReviewAuth>(services, new StubReviewService(ValidateOverride));
             }
 
             // Replace IInboxRefreshOrchestrator with a fake when FakeOrchestrator is set.
             if (FakeOrchestrator is not null)
             {
-                var existing = services.FirstOrDefault(d => d.ServiceType == typeof(IInboxRefreshOrchestrator));
-                if (existing is not null) services.Remove(existing);
-                services.AddSingleton<IInboxRefreshOrchestrator>(FakeOrchestrator);
+                ReplaceSingleton<IInboxRefreshOrchestrator>(services, FakeOrchestrator);
             }
         });
+    }
+
+    // Removes any existing registration for TService and registers the supplied instance
+    // as a singleton in its place. The WebApplicationFactory layer runs after Program.cs's
+    // AddPrism* calls, so the production registration is always present to remove first.
+    private static void ReplaceSingleton<TService>(IServiceCollection services, TService instance)
+        where TService : class
+    {
+        var existing = services.FirstOrDefault(d => d.ServiceType == typeof(TService));
+        if (existing is not null) services.Remove(existing);
+        services.AddSingleton(instance);
     }
 
     // Default test client carries auto-injected session-token credentials AND a
@@ -106,28 +118,13 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
     }
 }
 
-internal sealed class StubReviewService : IReviewService
+// Auth-only stub. Wired in by PRismWebApplicationFactory.ValidateOverride for /api/auth/*
+// tests; only ValidateCredentialsAsync is meaningful. The other capability interfaces stay
+// bound to GitHubReviewService (never resolved in these tests).
+internal sealed class StubReviewService : IReviewAuth
 {
     private readonly Func<Task<AuthValidationResult>> _validate;
     public StubReviewService(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
 
     public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) => _validate();
-    public Task<InboxSection[]> GetInboxAsync(CancellationToken ct) => throw new NotImplementedException();
-    public bool TryParsePrUrl(string url, out PrReference? reference) => throw new NotImplementedException();
-
-    // Legacy S0+S1 surface — unused.
-    public Task<Pr> GetPrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
-    public Task<PRism.Core.Contracts.PrIteration[]> GetIterationsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
-    public Task<FileChange[]> GetDiffAsync(PrReference reference, string fromSha, string toSha, CancellationToken ct) => throw new NotImplementedException();
-    public Task<ExistingComment[]> GetCommentsAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
-
-    // S3 PR detail surface.
-    public Task<PrDetailDto?> GetPrDetailAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
-    public Task<DiffDto> GetDiffAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct) => throw new NotImplementedException();
-    public Task<PRism.Core.Iterations.ClusteringInput> GetTimelineAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
-    public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct) => throw new NotImplementedException();
-    public Task<ActivePrPollSnapshot> PollActivePrAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
-    public Task<CommitInfo?> GetCommitAsync(PrReference reference, string sha, CancellationToken ct) => throw new NotImplementedException();
-
-    public Task SubmitReviewAsync(PrReference reference, DraftReview review, CancellationToken ct) => throw new NotImplementedException();
 }
