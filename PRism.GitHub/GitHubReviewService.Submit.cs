@@ -173,11 +173,43 @@ public sealed partial class GitHubReviewService
             ct).ConfigureAwait(false);
     }
 
-    public Task DeletePendingReviewAsync(PrReference reference, string pendingReviewId, CancellationToken ct)
-        => throw new NotImplementedException("PR1 Task 16");
+    public async Task DeletePendingReviewAsync(
+        PrReference reference,
+        string pendingReviewId,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentException.ThrowIfNullOrEmpty(pendingReviewId);
 
-    public Task DeletePendingReviewThreadAsync(PrReference reference, string pullRequestReviewThreadId, CancellationToken ct)
-        => throw new NotImplementedException("PR1 Task 16");
+        const string mutation = """
+            mutation($prReviewId: ID!) {
+              deletePullRequestReview(input: { pullRequestReviewId: $prReviewId }) {
+                pullRequestReview { id }
+              }
+            }
+            """;
+
+        _ = await PostSubmitGraphQLAsync(mutation, new { prReviewId = pendingReviewId }, ct).ConfigureAwait(false);
+    }
+
+    public async Task DeletePendingReviewThreadAsync(
+        PrReference reference,
+        string pullRequestReviewThreadId,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentException.ThrowIfNullOrEmpty(pullRequestReviewThreadId);
+
+        const string mutation = """
+            mutation($threadId: ID!) {
+              deletePullRequestReviewThread(input: { pullRequestReviewThreadId: $threadId }) {
+                thread { id }
+              }
+            }
+            """;
+
+        _ = await PostSubmitGraphQLAsync(mutation, new { threadId = pullRequestReviewThreadId }, ct).ConfigureAwait(false);
+    }
 
     public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct)
         => throw new NotImplementedException("PR1 Task 17");
