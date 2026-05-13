@@ -165,7 +165,7 @@ The earlier draft of this section described a multi-provider abstraction with st
 | Bitbucket support (Cloud or Server) | Same — not planned. |
 | Gerrit support | Same — not planned. |
 | Provider plugin marketplace | Same — not planned, and was already rejected as overengineering. |
-| Multi-host concurrency | Single host per launch; no simultaneous github.com + GHES in one instance. Users with both can run two app instances against different data directories. |
+| Multi-host concurrency | Storage shape scaffolded in v1 (S6 PR0 — `github.accounts: [...]` + `state.json.accounts.default.*`); runtime + UX in v2 (multi-account brainstorm pending). v1 is still single-host per launch; users with both a github.com and a GHES account run two app instances against different data directories. |
 
 GitHub Enterprise Server (GHES) **is** supported via the `github.host` config field — that's first-class, not multi-platform. See `02-architecture.md` § "GitHub host configuration."
 
