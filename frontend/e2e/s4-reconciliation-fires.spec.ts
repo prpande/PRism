@@ -21,17 +21,8 @@ test.beforeEach(async () => {
 // the seven-row matrix (the new head's file content no longer contains the
 // anchored line → Stale). The other matrix rows are exercised by unit tests
 // in tests/PRism.Core.Tests/Reconciliation/MatrixTests.cs.
-//
-// DEFERRED (test.fixme) — same root cause as s4-multi-tab-consistency: the
-// `state.json` writes from a co-running spec (specifically
-// s4-drafts-survive-restart) leak in despite the per-test reset hook.
-// Reconciliation pipeline + auto-retry behavior are unit-test-covered by
-// MatrixTests / OverrideStaleTests / PrReloadEndpointTests / useReconcile
-// vitest. Run individually with
-// `npx playwright test s4-reconciliation-fires` after removing
-// `test.fixme`.
 test.setTimeout(60_000);
-test.fixme('draft reconciliation fires after a simulated head shift', async ({ page }) => {
+test('draft reconciliation fires after a simulated head shift', async ({ page }) => {
   await setupAndOpenScenarioPr(page);
   await openScenarioFilesTab(page);
 

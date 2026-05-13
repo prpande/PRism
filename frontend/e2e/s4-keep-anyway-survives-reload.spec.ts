@@ -17,11 +17,7 @@ test.beforeEach(async () => {
 // further head shift) → row stays absent from UnresolvedPanel and Drafts
 // tab keeps it with an override chip → another head shift → row reappears
 // (override cleared).
-//
-// DEFERRED — same reason as s4-multi-tab-consistency. The Keep-anyway flow
-// is unit-test-covered by `OverrideStaleTests.cs` (xUnit) and
-// `UnresolvedPanel.test.tsx` (vitest); this E2E is the integration check.
-test.fixme('Keep-anyway survives a same-head reload then re-fires on next head shift', async ({
+test('Keep-anyway survives a same-head reload then re-fires on next head shift', async ({
   page,
 }) => {
   await setupAndOpenScenarioPr(page);
@@ -59,7 +55,21 @@ test.fixme('Keep-anyway survives a same-head reload then re-fires on next head s
   await expect(page.getByRole('region', { name: /unresolved drafts/i })).toBeVisible({
     timeout: 10_000,
   });
+  // Keep anyway fires a PUT /draft (overrideStale). Wait for the 200 before
+  // moving on so the subsequent /reload doesn't race the PUT — if /reload
+  // wins, reconciliation runs against IsOverriddenStale=false and persists
+  // Status=Stale; the PUT then sets IsOverriddenStale=true on top, but the
+  // race window leaves the override flag visually attached to a stale row
+  // for the next render.
+  const overridePromise = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/pr/acme/api/123/draft') &&
+      r.request().method() === 'PUT' &&
+      r.status() === 200,
+    { timeout: 10_000 },
+  );
   await page.getByRole('button', { name: /keep anyway/i }).click();
+  await overridePromise;
 
   // Reload again with the SAME head sha → row stays absent from the panel.
   await page.request.post('/api/pr/acme/api/123/reload', {
@@ -70,7 +80,11 @@ test.fixme('Keep-anyway survives a same-head reload then re-fires on next head s
 
   await expect(page.getByRole('region', { name: /unresolved drafts/i })).not.toBeVisible();
   await page.getByRole('tab', { name: /^Drafts/i }).click();
-  await expect(page.getByText(/override/i)).toBeVisible({ timeout: 10_000 });
+  // The override chip renders as "User-overridden (was Stale)" — the original
+  // /override/i regex never matched because `overridden` doesn't contain the
+  // literal substring `override` (the `dd` breaks the `d-e` continuation).
+  // Match the chip's class directly so the assertion can't drift on copy.
+  await expect(page.locator('.chip.chip-override')).toBeVisible({ timeout: 10_000 });
 
   // Another head shift → override clears, draft re-classifies Stale.
   const newHeadSha2 = '5555555555555555555555555555555555555555';

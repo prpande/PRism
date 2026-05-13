@@ -11,27 +11,22 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
-// Spec § 5.10 + plan Task 48 Step 3. Two browser contexts open the same PR;
-// cross-tab presence banner surfaces in both; a draft saved in tab A
-// refetches in tab B via the state-changed SSE channel.
+// Spec § 5.10 + plan Task 48 Step 3. Two pages in the same browser context open
+// the same PR; cross-tab presence banner surfaces in both; a draft saved in tab
+// A refetches in tab B via the state-changed SSE channel.
 //
-// DEFERRED to a follow-up: this spec passes in isolation but interacts
-// flakily with shipped specs in the same suite run because the FakeReview
-// scenario state + state.json drafts shared across the Playwright run can
-// leak between specs (see deferrals doc § "S4 PR7 multi-spec state leak").
-// The hook + banner are exercised in vitest unit tests
-// (useCrossTabPrPresence.test.ts) — this E2E is the cross-process
-// confidence check.
-test.fixme('cross-tab presence banner + draft sync across two contexts', async ({ browser }) => {
-  // Tab A
-  const contextA = await browser.newContext();
-  const pageA = await contextA.newPage();
+// IMPORTANT: both pages share ONE BrowserContext. `BroadcastChannel` is scoped
+// to one browsing context group; Playwright's `browser.newContext()` creates
+// isolated groups that cannot share BroadcastChannel messages, so a two-context
+// shape can never see the presence banner regardless of the underlying logic.
+// Production "two tabs" maps to one context + two pages, not two contexts.
+test('cross-tab presence banner + draft sync across two pages', async ({ browser }) => {
+  const context = await browser.newContext();
+  const pageA = await context.newPage();
   await setupAndOpenScenarioPr(pageA);
   await openScenarioFilesTab(pageA);
 
-  // Tab B in a separate context (= separate browser tab in real life)
-  const contextB = await browser.newContext();
-  const pageB = await contextB.newPage();
+  const pageB = await context.newPage();
   await setupAndOpenScenarioPr(pageB);
   await openScenarioFilesTab(pageB);
 
@@ -60,6 +55,5 @@ test.fixme('cross-tab presence banner + draft sync across two contexts', async (
   // the Drafts-tab badge transitions 0 → 1.
   await expect(pageB.locator('.pr-tab-count')).toContainText('1', { timeout: 15_000 });
 
-  await contextA.close();
-  await contextB.close();
+  await context.close();
 });
