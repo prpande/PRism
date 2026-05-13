@@ -146,8 +146,17 @@ internal static class TestEndpoints
             await stateStore.UpdateAsync(state =>
             {
                 var session = state.Reviews.Sessions.GetValueOrDefault(key)
-                    ?? new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(),
-                        new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
+                    ?? new ReviewSessionState(
+                        LastViewedHeadSha: null,
+                        LastSeenCommentId: null,
+                        PendingReviewId: null,
+                        PendingReviewCommitOid: null,
+                        ViewedFiles: new Dictionary<string, string>(),
+                        DraftComments: new List<DraftComment>(),
+                        DraftReplies: new List<DraftReply>(),
+                        DraftSummaryMarkdown: null,
+                        DraftVerdict: null,
+                        DraftVerdictStatus: DraftVerdictStatus.Draft);
                 var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                 sessions[key] = session with { LastViewedHeadSha = headSha };
                 return state with { Reviews = state.Reviews with { Sessions = sessions } };
@@ -162,7 +171,16 @@ internal static class TestEndpoints
             if (store is null) return StoreMissing("/test/set-pr-state");
             if (string.IsNullOrEmpty(req.State))
                 return Results.BadRequest(new { error = "state-missing" });
-            store.SetPrState(req.State);
+            try
+            {
+                store.SetPrState(req.State);
+            }
+            catch (ArgumentException ex)
+            {
+                // store.SetPrState throws for unknown states; surface as 400 with the offending value
+                // so a typo in an E2E spec is obvious rather than landing as an opaque 500.
+                return Results.BadRequest(new { error = "state-invalid", state = req.State, message = ex.Message });
+            }
             return Results.Ok(new { ok = true, state = store.PrState });
         });
 
@@ -211,12 +229,29 @@ internal static class TestEndpoints
             if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo))
                 return Results.BadRequest(new { error = "owner-or-repo-missing" });
 
+            // Validate each thread up-front so a malformed test request lands a 400 with a clear pointer
+            // rather than a 500 from a downstream NRE on FilePath / LineNumber or a snapshot whose Side
+            // doesn't match the GraphQL DiffSide contract.
+            var threads = req.Threads ?? Array.Empty<SeedThread>();
+            for (var ti = 0; ti < threads.Count; ti++)
+            {
+                var t = threads[ti];
+                if (string.IsNullOrEmpty(t.FilePath))
+                    return Results.BadRequest(new { error = "thread-file-path-missing", index = ti });
+                if (t.LineNumber <= 0)
+                    return Results.BadRequest(new { error = "thread-line-number-invalid", index = ti, lineNumber = t.LineNumber });
+                if (t.Body is null)
+                    return Results.BadRequest(new { error = "thread-body-missing", index = ti });
+                if (!string.IsNullOrEmpty(t.Side) && t.Side is not ("LEFT" or "RIGHT"))
+                    return Results.BadRequest(new { error = "thread-side-invalid", index = ti, side = t.Side });
+            }
+
             var commitOid = string.IsNullOrEmpty(req.CommitOid) ? store.CurrentHeadSha : req.CommitOid;
             var prRef = new PrReference(req.Owner, req.Repo, req.Number);
             var review = new FakeReviewSubmitter.FakePendingReview(fake.NextId("PRR_"), commitOid, DateTimeOffset.UtcNow.AddMinutes(-3), "");
             var nowBase = DateTimeOffset.UtcNow.AddMinutes(-3);
             var i = 0;
-            foreach (var t in req.Threads ?? Array.Empty<SeedThread>())
+            foreach (var t in threads)
             {
                 var threadId = fake.NextId("PRRT_");
                 var replies = (t.Replies ?? Array.Empty<SeedReply>())
@@ -224,7 +259,7 @@ internal static class TestEndpoints
                     .ToList();
                 review.Threads.Add(new FakeReviewSubmitter.FakeThread(
                     threadId, t.FilePath, t.LineNumber, string.IsNullOrEmpty(t.Side) ? "RIGHT" : t.Side, commitOid,
-                    Body: t.Body ?? "", IsResolved: t.IsResolved, Replies: replies, CreatedAt: nowBase.AddSeconds(i++)));
+                    Body: t.Body, IsResolved: t.IsResolved, Replies: replies, CreatedAt: nowBase.AddSeconds(i++)));
             }
             fake.SeedPendingReview(prRef, review);
             return Results.Ok(new { ok = true, pullRequestReviewId = review.Id, commitOid, threadCount = review.Threads.Count });

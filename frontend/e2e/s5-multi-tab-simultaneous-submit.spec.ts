@@ -33,34 +33,36 @@ test('S5 simultaneous submits — one wins, the other is rejected by the per-PR 
   await createInlineDraft(page, 3, 'multi-tab draft');
   await recordPrViewed(page.request);
 
-  // Second tab, same context (shares cookies).
+  // Second tab, same context (shares cookies). try/finally so page2 closes even if a downstream
+  // assertion times out (otherwise an open page lingers for the rest of the suite).
   const page2 = await context.newPage();
+  try {
+    await page.goto('/pr/acme/api/123');
+    await page2.goto('/pr/acme/api/123');
 
-  await page.goto('/pr/acme/api/123');
-  await page2.goto('/pr/acme/api/123');
+    // Tab 1: Submit → Confirm. Begin is held ~4s → tab 1 keeps the lock.
+    await page.getByRole('button', { name: /^submit review$/i }).click();
+    const dialog1 = page.getByRole('dialog');
+    await dialog1.getByRole('button', { name: /^confirm submit$/i }).click();
 
-  // Tab 1: Submit → Confirm. Begin is held ~4s → tab 1 keeps the lock.
-  await page.getByRole('button', { name: /^submit review$/i }).click();
-  const dialog1 = page.getByRole('dialog');
-  await dialog1.getByRole('button', { name: /^confirm submit$/i }).click();
+    // Tab 2: Submit → Confirm right away → 409 → dialog reverts to idle.
+    await page2.getByRole('button', { name: /^submit review$/i }).click();
+    const dialog2 = page2.getByRole('dialog');
+    await dialog2.getByRole('button', { name: /^confirm submit$/i }).click();
 
-  // Tab 2: Submit → Confirm right away → 409 → dialog reverts to idle.
-  await page2.getByRole('button', { name: /^submit review$/i }).click();
-  const dialog2 = page2.getByRole('dialog');
-  await dialog2.getByRole('button', { name: /^confirm submit$/i }).click();
+    // Tab 2 loses: its dialog returns to the idle state (the "Confirm submit"
+    // button is visible again).
+    await expect(dialog2.getByRole('button', { name: /^confirm submit$/i })).toBeVisible({
+      timeout: 5000,
+    });
+    // And it never reaches the success state.
+    await expect(page2.getByRole('heading', { name: /review submitted/i })).toHaveCount(0);
 
-  // Tab 2 loses: its dialog returns to the idle state (the "Confirm submit"
-  // button is visible again).
-  await expect(dialog2.getByRole('button', { name: /^confirm submit$/i })).toBeVisible({
-    timeout: 5000,
-  });
-  // And it never reaches the success state.
-  await expect(page2.getByRole('heading', { name: /review submitted/i })).toHaveCount(0);
-
-  // Tab 1 wins: it runs to completion (Begin delay was 4s — fits in 15s).
-  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
-    timeout: 15_000,
-  });
-
-  await page2.close();
+    // Tab 1 wins: it runs to completion (Begin delay was 4s — fits in 15s).
+    await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
+      timeout: 15_000,
+    });
+  } finally {
+    await page2.close();
+  }
 });

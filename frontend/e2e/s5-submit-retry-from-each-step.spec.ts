@@ -66,9 +66,8 @@ for (const failingMethod of [
     });
 
     // No duplicates: exactly one AttachThreadAsync across both attempts; the pending review finalized.
-    const ctx = await request.newContext();
-    const after = await inspectPendingReview(ctx, PR);
-    await ctx.dispose();
+    // page.request avoids a separate context dispose around the fallible assertions.
+    const after = await inspectPendingReview(page.request, PR);
     expect(after.attachThreadCallCount).toBe(1);
     expect(after.pendingReview).toBeNull();
   });

@@ -267,7 +267,11 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
     internal sealed class FakePendingReview
     {
         public string Id { get; }
-        public string CommitOid { get; set; }   // settable — the stale-commitOID seed mutates it
+        // The stale-commitOID E2E scenario does NOT mutate this post-construction — the pending review
+        // is created by BeginPendingReviewAsync at the (then-current) head, then /test/advance-head
+        // moves the store's head forward without touching this property; the pipeline sees the OID
+        // mismatch via FindOwnPendingReviewAsync. So it's effectively init-only.
+        public string CommitOid { get; }
         public DateTimeOffset CreatedAt { get; }
         public string SummaryBody { get; }
         public List<FakeThread> Threads { get; } = new();

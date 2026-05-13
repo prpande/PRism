@@ -74,19 +74,18 @@ test('S5 marker-prefix collision — the same substring inside a fenced code blo
   await setupAndOpenScenarioPr(page);
   const textarea = await openInlineComposer(page);
 
-  // Inside a ``` fence the substring is quoted text, not an active marker — the
-  // create PUT succeeds (200) and the badge settles on `saved`.
+  // Inside a ``` fence the substring is quoted text, not an active marker — the create PUT
+  // succeeds. Wait for the auto-save round-trip (any status) so we know the persistence attempt
+  // landed, then assert the response was 200 and the draft survived a reload. Watching the badge
+  // alone is racy here because the composer starts at `saved` (empty body) — `toHaveText('saved')`
+  // can resolve before the typing's debounce + PUT have fired.
   const savePromise = page.waitForResponse(
-    (r) =>
-      r.url().endsWith('/api/pr/acme/api/123/draft') &&
-      r.request().method() === 'PUT' &&
-      r.status() === 200,
-    { timeout: 10_000 },
+    (r) => r.url().endsWith('/api/pr/acme/api/123/draft') && r.request().method() === 'PUT',
+    { timeout: 15_000 },
   );
   await textarea.fill('```\n<!-- prism:client-id:literal -->\n```');
-  await savePromise;
-
-  await expect(composerBadge(page)).toHaveText('saved', { timeout: 10_000 });
+  const resp = await savePromise;
+  expect(resp.status()).toBe(200);
 
   // The draft is persisted — reload and find the body on the Drafts tab + the
   // Drafts-tab count chip showing 1.

@@ -60,10 +60,9 @@ test('S5 happy path — draft → Submit dialog → Confirm → pipeline runs �
   await expect(ghLink).toHaveAttribute('href', 'https://github.com/acme/api/pull/123');
 
   // Backend: the pending review was finalized (no longer pending) and exactly one thread was
-  // attached for the one draft — no duplicates.
-  const ctx = await request.newContext();
-  const after = await inspectPendingReview(ctx, PR);
-  await ctx.dispose();
+  // attached for the one draft — no duplicates. Use `page.request` (the page-bound APIRequestContext)
+  // so we don't need a separate context's dispose around the assertion.
+  const after = await inspectPendingReview(page.request, PR);
   expect(after.pendingReview).toBeNull();
   expect(after.attachThreadCallCount).toBe(1);
 });

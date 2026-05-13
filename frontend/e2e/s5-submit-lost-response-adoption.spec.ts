@@ -58,9 +58,8 @@ test('S5 lost AttachThread response — Retry adopts the orphan thread, no dupli
     timeout: 15_000,
   });
 
-  const ctx = await request.newContext();
-  const after = await inspectPendingReview(ctx, PR);
-  await ctx.dispose();
+  // page.request avoids a separate APIRequestContext dispose around the fallible assertions.
+  const after = await inspectPendingReview(page.request, PR);
   // Finalized → no longer pending.
   expect(after.pendingReview).toBeNull();
   // Exactly one AttachThreadAsync (attempt 1's, before the throw); the retry

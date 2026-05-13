@@ -72,10 +72,9 @@ test('S5 foreign pending review — Resume imports its threads as drafts and ado
   await page.getByRole('tab', { name: /^Drafts/i }).click();
   await expect(page.getByText('looks good to me').first()).toBeVisible({ timeout: 10_000 });
 
-  // Resume *adopts* the review (doesn't delete it) — it's still present.
-  const ctx = await request.newContext();
-  const after = await inspectPendingReview(ctx, PR);
-  await ctx.dispose();
+  // Resume *adopts* the review (doesn't delete it) — it's still present. page.request avoids a
+  // separate APIRequestContext dispose around the fallible assertion.
+  const after = await inspectPendingReview(page.request, PR);
   expect(after.pendingReview).not.toBeNull();
 });
 
@@ -83,20 +82,20 @@ test('S5 foreign pending review — Discard deletes it on github.com', async ({ 
   const modal = await openForeignPrompt(page);
 
   await modal.getByRole('button', { name: 'Discard…' }).click();
-  const sub = page.getByRole('dialog');
-  await expect(
-    sub.getByRole('heading', { name: /delete the pending review on github\.com\?/i }),
-  ).toBeVisible();
+  // Scope the sub-modal lookup by its heading so the locator can't accidentally match the (now
+  // unmounted) parent foreign-review modal — the ForeignPendingReviewModal sets `open={!discardOpen}`
+  // so only one Modal is mounted at a time, but the scoped lookup makes the intent explicit.
+  const sub = page
+    .getByRole('dialog')
+    .filter({ has: page.getByRole('heading', { name: /delete the pending review on github\.com\?/i }) });
+  await expect(sub).toBeVisible();
   await sub.getByRole('button', { name: /^delete$/i }).click();
 
-  // The pending review is gone.
+  // The pending review is gone. page.request, polled until the discard round-trip settles.
   await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 10_000 });
-  const ctx = await request.newContext();
-  // Poll until the discard round-trip settles.
   await expect
-    .poll(async () => (await inspectPendingReview(ctx, PR)).pendingReview, { timeout: 10_000 })
+    .poll(async () => (await inspectPendingReview(page.request, PR)).pendingReview, { timeout: 10_000 })
     .toBeNull();
-  await ctx.dispose();
 });
 
 test('S5 foreign pending review — Cancel leaves the pending review untouched', async ({ page }) => {
@@ -107,8 +106,6 @@ test('S5 foreign pending review — Cancel leaves the pending review untouched',
 
   // The modal closes; nothing changed server-side.
   await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 10_000 });
-  const ctx = await request.newContext();
-  const after = await inspectPendingReview(ctx, PR);
-  await ctx.dispose();
+  const after = await inspectPendingReview(page.request, PR);
   expect(after.pendingReview).not.toBeNull();
 });
