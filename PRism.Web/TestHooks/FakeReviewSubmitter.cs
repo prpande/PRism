@@ -205,26 +205,37 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
         {
             if (TryTakeFailure(nameof(FindOwnPendingReviewAsync), afterEffectWanted: false, out var pre)) throw pre;
             _findOwnCallCount++;
+            // Build the result snapshot first, then honour an after-effect failure (the "list query
+            // succeeded server-side but the client never got the response" window — symmetric with
+            // the mutation methods' afterEffect path). Without this check an afterEffect=true
+            // injection for FindOwnPendingReviewAsync would silently stay armed forever.
+            OwnPendingReviewSnapshot? result;
             if (_findOwnCallCount >= _findOwnReturnsNullFromCall)
-                return Task.FromResult<OwnPendingReviewSnapshot?>(null);  // simulate the list query lagging
-            if (!_pendingByRef.TryGetValue(Key(reference), out var pending))
-                return Task.FromResult<OwnPendingReviewSnapshot?>(null);
-
-            var threads = pending.Threads.Select(t => new PendingReviewThreadSnapshot(
-                    PullRequestReviewThreadId: t.Id,
-                    FilePath: t.FilePath,
-                    LineNumber: t.LineNumber,
-                    Side: t.Side,
-                    OriginalCommitOid: t.CommitOid,
-                    OriginalLineContent: "",   // matches the GitHub adapter — PR5's Resume enriches it (R7)
-                    IsResolved: t.IsResolved,
-                    BodyMarkdown: t.Body,
-                    CreatedAt: t.CreatedAt,
-                    Comments: t.Replies.Select(r => new PendingReviewCommentSnapshot(r.Id, r.Body)).ToList()))
-                .ToList();
-
-            return Task.FromResult<OwnPendingReviewSnapshot?>(new OwnPendingReviewSnapshot(
-                pending.Id, pending.CommitOid, pending.CreatedAt, threads));
+            {
+                result = null;  // simulate the list query lagging
+            }
+            else if (!_pendingByRef.TryGetValue(Key(reference), out var pending))
+            {
+                result = null;
+            }
+            else
+            {
+                var threads = pending.Threads.Select(t => new PendingReviewThreadSnapshot(
+                        PullRequestReviewThreadId: t.Id,
+                        FilePath: t.FilePath,
+                        LineNumber: t.LineNumber,
+                        Side: t.Side,
+                        OriginalCommitOid: t.CommitOid,
+                        OriginalLineContent: "",   // matches the GitHub adapter — PR5's Resume enriches it (R7)
+                        IsResolved: t.IsResolved,
+                        BodyMarkdown: t.Body,
+                        CreatedAt: t.CreatedAt,
+                        Comments: t.Replies.Select(r => new PendingReviewCommentSnapshot(r.Id, r.Body)).ToList()))
+                    .ToList();
+                result = new OwnPendingReviewSnapshot(pending.Id, pending.CommitOid, pending.CreatedAt, threads);
+            }
+            if (TryTakeFailure(nameof(FindOwnPendingReviewAsync), afterEffectWanted: true, out var post)) throw post;
+            return Task.FromResult(result);
         }
     }
 

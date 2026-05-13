@@ -711,6 +711,13 @@ Decisions made while executing the plan that diverge from a literal task body or
 - **Decision:** Task 61's sketch named the seeding route `/test/submit/inject-foreign-pending-review`; PR7 ships it as `/test/submit/seed-pending-review` — the seeded review is "foreign" only relative to the session's `PendingReviewId` (which the pipeline compares against); the seed itself doesn't model viewer identity, so the generic name is more accurate. The shipped set is also a superset of the sketch: `inject-failure` (now with an `afterEffect` flag — the lost-response window), `set-begin-delay` (holds `BeginPendingReviewAsync` so the multi-tab lock test can race a 2nd tab, and so submit-progress events land after the `POST /submit` 200 — the dialog only acts on them once its POST returned), `set-find-own-null-from-call`, `seed-pending-review`, `GET /test/submit/inspect-pending-review` (returns the PR's pending review + global mutation counters), plus `/test/set-pr-state` and `/test/mark-pr-viewed` outside the `/submit/` namespace. `FakeReviewSubmitter` itself is a duplicated (not shared) mirror of the Core-Tests `InMemoryReviewSubmitter` per the plan's Task 61 step 1.
 - **Revisit when:** N/A.
 
+### [Decision] `FakeReviewSubmitter.FindOwnPendingReviewAsync` honours `afterEffect=true` injected failures too
+
+- **Source:** PR7 execution (2026-05-13), Copilot review on PR #50.
+- **Affects:** `PRism.Web/TestHooks/FakeReviewSubmitter.cs`.
+- **Decision:** Initial PR7 version of `FindOwnPendingReviewAsync` only consumed an injected failure when `afterEffect=false` — an `afterEffect=true` injection for `FindOwnPendingReviewAsync` would have stayed armed forever, silently. Fixed: the method now builds its return value first, then calls a second `TryTakeFailure(..., afterEffectWanted: true, ...)` before returning — symmetric with the mutation methods (`BeginPendingReviewAsync` / `AttachThreadAsync` / `AttachReplyAsync` / `FinalizePendingReviewAsync` / `DeletePendingReviewAsync` / `DeletePendingReviewThreadAsync`). Semantically valid even though `FindOwn` is a read: it models the lost-response window for the list query (server computed the snapshot, client never got the response). No current spec uses this knob — it's preserved for symmetry / future use.
+- **Revisit when:** N/A — test infra.
+
 ### [Resolved] PR1 "test-fake stubs" / PR3 "the shared E2E FakeReviewSubmitter stays NotImplementedException"
 
 - **Source:** PR7 execution (2026-05-13) resolves the PR1 ("test-fake stubs") and PR3 ("[Decision] PR3's `SubmitEndpointsTestContext` test harness; the shared E2E `FakeReviewSubmitter` stays `NotImplementedException`") entries above.
