@@ -96,6 +96,18 @@ const devProject = {
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
+  // Serialize across files, not just within them. The .NET backend is a single
+  // long-running process with global fake state (FakeReviewSubmitter +
+  // FakeReviewBackingStore + ActivePrCache + state.json), so concurrent
+  // Playwright workers pollute each other's scenarios — even with the
+  // /test/reset between-test hook, the reset is per-spec and cannot quiesce
+  // mutations in flight from a sibling worker. S5 PR7 worked around this with
+  // the `--workers=1` CLI flag; baking it in removes the carve-out and lets
+  // every future spec rely on a clean backend. True per-worker isolation
+  // (each worker spawning its own backend on a private port) is a larger
+  // structural change deferred to its own slice if/when e2e wall-clock
+  // becomes load-bearing.
+  workers: 1,
   retries: 1,
   globalSetup: './e2e/global-setup.ts',
   webServer: isCI ? [backendWebServer] : [backendWebServer, viteDevWebServer],

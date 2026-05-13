@@ -79,6 +79,15 @@ internal static class TestEndpoints
             if (string.IsNullOrEmpty(req.NewHeadSha))
                 return Results.BadRequest(new { error = "new-head-sha-missing" });
             store.AdvanceHead(req.NewHeadSha, req.FileChanges ?? Array.Empty<FakeReviewBackingStore.FileContentChange>());
+            // Re-seed the active-PR poll cache to the just-advanced head so a spec-
+            // immediate POST /reload (or /submit) sees the new sha synchronously rather
+            // than racing against the ~1s ActivePrPoller cadence. Symmetric to the same
+            // pattern in /test/reset above (PR7 added that; PR0b adds this so the three
+            // un-fixme'd S4 specs that exercise advanceHead → reload don't 409 on
+            // stale-head before the poller catches up).
+            sp.GetService<PRism.Core.PrDetail.IActivePrCache>()?.Update(
+                FakeReviewBackingStore.Scenario,
+                new PRism.Core.PrDetail.ActivePrSnapshot(store.CurrentHeadSha, null, DateTimeOffset.UtcNow));
             return Results.Ok(new { ok = true });
         });
 
