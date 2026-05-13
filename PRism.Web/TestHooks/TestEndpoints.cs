@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 
 using PRism.Core;
 using PRism.Core.Contracts;
+using PRism.Core.PrDetail;
 using PRism.Core.State;
 
 namespace PRism.Web.TestHooks;
@@ -83,16 +84,28 @@ internal static class TestEndpoints
 
         // Resets per-test state: the in-memory FakeReviewBackingStore (head sha,
         // reachable shas, iterations, file content, PR state), the FakeReviewSubmitter
-        // (pending reviews, injected failures, knobs, counters), AND the persisted
-        // state.json drafts. Called from each spec's beforeEach so tests don't leak
-        // state into each other. The backend process is long-running for the whole
-        // Playwright run, so without this hook the inboxes/sessions accumulate.
+        // (pending reviews, injected failures, knobs, counters), the PrDetailLoader's
+        // snapshot/diff cache (otherwise a CLOSED/MERGED or advanced-head detail cached
+        // by a prior spec leaks into the next one — the cache keys on prRef@headSha and
+        // store.Reset() rolls the head back, so a later spec re-using a head sha would
+        // hit the stale snapshot), AND the persisted state.json drafts. Called from each
+        // spec's beforeEach so tests don't leak state into each other. The backend
+        // process is long-running for the whole Playwright run, so without this hook the
+        // inboxes/sessions accumulate.
         app.MapPost("/test/reset", async (IServiceProvider sp, IAppStateStore stateStore) =>
         {
             var store = sp.GetService<FakeReviewBackingStore>();
             if (store is null) return StoreMissing("/test/reset");
             store.Reset();
             AsFake(sp)?.Reset();
+            sp.GetService<PrDetailLoader>()?.InvalidateAll();
+            // Re-seed the active-PR poll cache to the (just-reset) head so the submit head-sha-drift
+            // gate (PrSubmitEndpoints rule (f)) sees the fresh head immediately, rather than a stale
+            // advanced-head snapshot a prior spec's /test/advance-head left there until the ~1s
+            // poller cadence catches up.
+            sp.GetService<PRism.Core.PrDetail.IActivePrCache>()?.Update(
+                FakeReviewBackingStore.Scenario,
+                new PRism.Core.PrDetail.ActivePrSnapshot(store.CurrentHeadSha, null, DateTimeOffset.UtcNow));
             // Force-wipe state.json by re-applying Default. The single overwrite
             // is the documented pattern; LoadAsync after the await sees the
             // fresh empty state because UpdateAsync holds the gate across the
