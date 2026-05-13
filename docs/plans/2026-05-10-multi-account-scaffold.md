@@ -42,6 +42,8 @@
 **Created:**
 - `PRism.Core/State/AccountState.cs` — new positional record + `Default` static (3 fields: `Reviews`, `AiState`, `LastConfiguredGithubHost`).
 - `PRism.Core/State/AccountKeys.cs` — `public static class AccountKeys { public const string Default = "default"; }`.
+- `PRism.Core/Storage/AtomicFileMove.cs` — shared temp-write-then-atomic-rename helper with Windows AV/indexer retry, lifted from the private `MoveWithRetryAsync` in `AppStateStore`. Used by both `AppStateStore.SaveCoreAsync` and the new `ConfigStore.WriteToDiskAsync`. Token cache stays out — MSAL owns its own persistence.
+- `tests/PRism.Core.Tests/Storage/AtomicFileMoveTests.cs` — happy-path coverage for the lifted helper.
 - `PRism.Core/Config/GithubAccountConfig.cs` — new positional record (4 fields: `Id`, `Host`, `Login`, `LocalWorkspace`). Could be appended to `AppConfig.cs`; the plan puts it in its own file because `AppConfig.cs` is already a record-grab-bag and one more positional record + delegate-property pattern on `GithubConfig` is enough new surface to warrant a sibling file. Match `PRism.Core/State/AccountState.cs`'s placement decision for symmetry.
 - `tests/PRism.Core.Tests/State/AccountStateTests.cs` — covers `AccountState.Default`.
 - `tests/PRism.Core.Tests/State/AppStateWithDefaultHelpersTests.cs` — covers `WithDefaultReviews` / `WithDefaultAiState` / `WithDefaultLastConfiguredGithubHost`.
@@ -53,10 +55,10 @@
 
 **Modified:**
 - `PRism.Core/State/AppState.cs` — reshape `AppState` record; add `AccountState` (if not split out — see above; the plan splits it out); add delegate properties + `WithDefault*` helpers + new `Default`.
-- `PRism.Core/State/AppStateStore.cs` — bump `CurrentVersion` to 5; append `MigrateV4ToV5` to `MigrationSteps`; update `EnsureCurrentShape` to backfill `accounts.default.reviews.sessions`.
+- `PRism.Core/State/AppStateStore.cs` — bump `CurrentVersion` to 5; append `MigrateV4ToV5` to `MigrationSteps`; update `EnsureCurrentShape` to backfill `accounts.default.reviews.sessions`. Also (Task 9): remove the private `MoveWithRetryAsync` + `IsTransientMoveError` helpers; call `AtomicFileMove.MoveAsync` from `SaveCoreAsync`.
 - `PRism.Core/State/Migrations/AppStateMigrations.cs` — add `MigrateV4ToV5(JsonObject root)`.
 - `PRism.Core/Config/AppConfig.cs` — reshape `GithubConfig` (positional record now `(IReadOnlyList<GithubAccountConfig> Accounts)` with delegate `Host` / `LocalWorkspace`); update `AppConfig.Default`.
-- `PRism.Core/Config/ConfigStore.cs` — add on-load `github.host` → `github.accounts[0]` rewrite; update first-launch seed; ensure idempotent reload.
+- `PRism.Core/Config/ConfigStore.cs` — add on-load `github.host` → `github.accounts[0]` rewrite; update first-launch seed; ensure idempotent reload. Also (Task 9): replace the bare `File.Move(temp, _path, overwrite: true)` in `WriteToDiskAsync` with `AtomicFileMove.MoveAsync` for Windows AV/indexer parity with `AppStateStore`.
 - `PRism.Core/Config/IConfigStore.cs` — add `SetDefaultAccountLoginAsync` method.
 - `PRism.Core/Auth/ViewerLoginHydrator.cs` — wire the post-validation side-write into `IConfigStore.SetDefaultAccountLoginAsync`.
 - `PRism.Core/Auth/TokenStore.cs` — versioned JSON-map (de)serialization; legacy-blob migration on first read; version-discriminator branches with read-only-mode parity.
@@ -2252,7 +2254,223 @@ git commit -m "feat(s6-pr0): reshape token cache to versioned JSON map with vers
 
 ---
 
-### Task 9: Update project-standards documentation (spec § 10)
+### Task 9: Lift `MoveWithRetryAsync` into a shared atomic-file-move helper
+
+**Files:**
+- Create: `PRism.Core/Storage/AtomicFileMove.cs`
+- Modify: `PRism.Core/State/AppStateStore.cs` — remove private `MoveWithRetryAsync` + `IsTransientMoveError` helpers; call the shared one.
+- Modify: `PRism.Core/Config/ConfigStore.cs:131` — replace bare `File.Move(temp, _path, overwrite: true)` with the shared helper.
+- Create: `tests/PRism.Core.Tests/Storage/AtomicFileMoveTests.cs`
+
+**Spec:** Plan-time addition (post-ce-doc-review). The spec doesn't call for this; the trigger is ce-doc-review adversarial F4 + feasibility-style asymmetry concern, plus the user's "address the open questions" direction.
+
+**Why this lands in S6 PR0 rather than a follow-up:** Pre-slice, `ConfigStore.WriteToDiskAsync` was called from `InitAsync` (first-launch seed) and `PatchAsync` (occasional user theme/accent edit). Post-slice, Task 7's `SetDefaultAccountLoginAsync` adds a *per-launch* write call from `ViewerLoginHydrator`. The Windows Defender / Search-Indexer transient-handle race that `AppStateStore.MoveWithRetryAsync` exists to defeat now has a much wider exposure window in `ConfigStore`. Fixing the asymmetry inside this slice keeps the storage-shape work coherent — every store converges on the same atomicity guarantee at the same time. The token cache stays out of scope (MSAL owns its own persistence; wrapping `MsalCacheHelper.SaveUnencryptedTokenCache` with temp-write-then-rename would mean reimplementing MSAL's keychain dance, which the spec § 4.3 explicitly accepted as out-of-scope).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/PRism.Core.Tests/Storage/AtomicFileMoveTests.cs`:
+
+```csharp
+using FluentAssertions;
+using PRism.Core.Storage;
+using PRism.Core.Tests.TestHelpers;
+using Xunit;
+
+namespace PRism.Core.Tests.Storage;
+
+public class AtomicFileMoveTests
+{
+    [Fact]
+    public async Task MoveAsync_replaces_destination_with_source_contents()
+    {
+        using var dir = new TempDataDir();
+        var source = Path.Combine(dir.Path, "source.tmp");
+        var dest = Path.Combine(dir.Path, "dest.txt");
+        await File.WriteAllTextAsync(source, "new-contents");
+        await File.WriteAllTextAsync(dest, "old-contents");
+
+        await AtomicFileMove.MoveAsync(source, dest, CancellationToken.None);
+
+        File.Exists(source).Should().BeFalse();
+        (await File.ReadAllTextAsync(dest)).Should().Be("new-contents");
+    }
+
+    [Fact]
+    public async Task MoveAsync_creates_destination_when_it_did_not_exist()
+    {
+        using var dir = new TempDataDir();
+        var source = Path.Combine(dir.Path, "source.tmp");
+        var dest = Path.Combine(dir.Path, "dest.txt");
+        await File.WriteAllTextAsync(source, "contents");
+
+        await AtomicFileMove.MoveAsync(source, dest, CancellationToken.None);
+
+        File.Exists(source).Should().BeFalse();
+        File.Exists(dest).Should().BeTrue();
+        (await File.ReadAllTextAsync(dest)).Should().Be("contents");
+    }
+
+    [Fact]
+    public async Task MoveAsync_cleans_up_orphan_source_when_destination_write_succeeds()
+    {
+        // The retry loop's `finally` block best-effort-deletes the source on exhaustion or on
+        // non-retried-exception path. On the success path, File.Move consumes the source so the
+        // cleanup is a no-op. This test pins the happy-path no-orphan contract.
+        using var dir = new TempDataDir();
+        var source = Path.Combine(dir.Path, "source.tmp");
+        var dest = Path.Combine(dir.Path, "dest.txt");
+        await File.WriteAllTextAsync(source, "x");
+
+        await AtomicFileMove.MoveAsync(source, dest, CancellationToken.None);
+
+        Directory.GetFiles(dir.Path).Should().BeEquivalentTo(new[] { dest });
+    }
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter FullyQualifiedName~AtomicFileMoveTests`
+Expected: FAIL — `The type or namespace name 'AtomicFileMove' does not exist in the namespace 'PRism.Core.Storage'`.
+
+- [ ] **Step 3: Create the shared helper**
+
+Create `PRism.Core/Storage/AtomicFileMove.cs`:
+
+```csharp
+namespace PRism.Core.Storage;
+
+/// <summary>
+/// Temp-file-write-then-atomic-rename with Windows Defender / Search-Indexer retry. Used by
+/// every PRism on-disk store that takes the temp-write-then-rename pattern (AppStateStore,
+/// ConfigStore). Token cache stays out of scope because MSAL owns its own persistence wrap.
+///
+/// Background: on Windows, a previous File.Move can leave a transient handle on the destination
+/// (Defender real-time scanner, Search Indexer, FileSystemWatcher) that races a follow-up
+/// File.Move and causes UnauthorizedAccessException or a sharing-/lock-violation IOException.
+/// Retry only those two transient classes with exponential backoff capped near 200ms; total
+/// budget ~1.1s across 9 retries before the exception propagates on attempt 10. On final
+/// exhaustion the temp file is best-effort-deleted so it does not orphan in the data directory.
+/// The Windows AV/indexer race does not exist on Linux/macOS, so the first attempt typically
+/// succeeds there with no measurable overhead.
+/// </summary>
+public static class AtomicFileMove
+{
+    public static async Task MoveAsync(string source, string destination, CancellationToken ct)
+    {
+        const int maxAttempts = 10;
+        var delay = TimeSpan.FromMilliseconds(10);
+        try
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    File.Move(source, destination, overwrite: true);
+                    return;
+                }
+                catch (Exception ex) when (IsTransientMoveError(ex) && attempt < maxAttempts)
+                {
+                    await Task.Delay(delay, ct).ConfigureAwait(false);
+                    delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 200));
+                }
+            }
+        }
+        finally
+        {
+            // On success this is a no-op (File.Move consumed the source); on exhaustion or any
+            // non-retried exception, best-effort cleanup of the orphaned temp.
+            try { if (File.Exists(source)) File.Delete(source); }
+#pragma warning disable CA1031 // best-effort cleanup; the original move-failure exception is what matters.
+            catch { }
+#pragma warning restore CA1031
+        }
+    }
+
+    // ERROR_SHARING_VIOLATION = 0x80070020 and ERROR_LOCK_VIOLATION = 0x80070021 are the two
+    // HRESULTs that signal "another handle has the file" — exactly the AV/indexer race we want
+    // to retry. UnauthorizedAccessException covers the related ACCESS_DENIED case that File.Move's
+    // overwrite path raises when DELETE access on the destination is briefly held. Other
+    // IOException subtypes (DirectoryNotFoundException, PathTooLongException, FileNotFoundException,
+    // DriveNotFoundException) are not transient and propagate immediately.
+    private static bool IsTransientMoveError(Exception ex)
+    {
+        if (ex is UnauthorizedAccessException) return true;
+        if (ex is IOException
+            && ex is not DirectoryNotFoundException
+            && ex is not PathTooLongException
+            && ex is not FileNotFoundException
+            && ex is not DriveNotFoundException)
+        {
+            var hr = ex.HResult & 0xFFFF;
+            return hr == 0x20 || hr == 0x21;
+        }
+        return false;
+    }
+}
+```
+
+- [ ] **Step 4: Run the new tests**
+
+Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter FullyQualifiedName~AtomicFileMoveTests`
+Expected: PASS (3 tests).
+
+- [ ] **Step 5: Wire `AppStateStore` to the shared helper**
+
+Modify `PRism.Core/State/AppStateStore.cs`:
+
+```csharp
+// Add at top:
+using PRism.Core.Storage;
+
+// Replace SaveCoreAsync body's call:
+private async Task SaveCoreAsync(AppState state, CancellationToken ct)
+{
+    var temp = $"{_path}.tmp-{Guid.NewGuid():N}";
+    var json = JsonSerializer.Serialize(state, JsonSerializerOptionsFactory.Storage);
+    await File.WriteAllTextAsync(temp, json, ct).ConfigureAwait(false);
+    await AtomicFileMove.MoveAsync(temp, _path, ct).ConfigureAwait(false);
+}
+
+// Remove the private MoveWithRetryAsync method (lines ~189-218 pre-edit) AND the private
+// IsTransientMoveError predicate (lines ~227-240 pre-edit) — both are now in AtomicFileMove.
+// The MoveWithRetryAsync's comment block also moves into AtomicFileMove (already inlined above).
+```
+
+- [ ] **Step 6: Wire `ConfigStore` to the shared helper**
+
+Modify `PRism.Core/Config/ConfigStore.cs:126-132` — replace `WriteToDiskAsync`'s body:
+
+```csharp
+private async Task WriteToDiskAsync(CancellationToken ct)
+{
+    var temp = $"{_path}.tmp-{Guid.NewGuid():N}";
+    var json = JsonSerializer.Serialize(_current, JsonSerializerOptionsFactory.Storage);
+    await File.WriteAllTextAsync(temp, json, ct).ConfigureAwait(false);
+    await PRism.Core.Storage.AtomicFileMove.MoveAsync(temp, _path, ct).ConfigureAwait(false);
+}
+```
+
+Add `using PRism.Core.Storage;` to the file's imports if it isn't already there.
+
+- [ ] **Step 7: Run all tests**
+
+Run: `dotnet test`
+Expected: PASS — every existing `AppStateStore` test continues to pass because the helper is bit-for-bit equivalent to the lifted private method. `ConfigStore` tests also pass because the new `AtomicFileMove.MoveAsync` is strictly stronger than the bare `File.Move` it replaces (more failure modes handled, never fewer). If any test fails: most likely a Windows-specific flake in the test runner's temp directory; rerun once to confirm.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add PRism.Core/Storage/AtomicFileMove.cs \
+        PRism.Core/State/AppStateStore.cs \
+        PRism.Core/Config/ConfigStore.cs \
+        tests/PRism.Core.Tests/Storage/AtomicFileMoveTests.cs
+git commit -m "feat(s6-pr0): lift MoveWithRetryAsync to shared AtomicFileMove; wire AppStateStore + ConfigStore"
+```
+
+---
+
+### Task 10: Update project-standards documentation (spec § 10)
 
 **Files:**
 - Modify: `docs/spec/02-architecture.md` — three sub-section amendments.
@@ -2345,7 +2563,7 @@ git commit -m "docs(s6-pr0): amend architecture + non-goals + roadmap for storag
 
 ---
 
-### Task 10: Pre-push checklist + open the PR
+### Task 11: Pre-push checklist + open the PR
 
 **Spec:** none — this task enforces the standing user rule.
 
@@ -2418,7 +2636,7 @@ No interface changes (`ITokenStore`, `IReviewService`, `IAppStateStore` keep the
 
 ## Verification
 
-- `dotnet build` clean, `dotnet test` green (added: AccountKeysTests, AccountStateTests, AppStateWithDefaultHelpersTests, AppStateMigrationsV4ToV5Tests, GithubConfigDelegatesTests, ConfigStoreMigrationTests, ViewerLoginHydratorConfigWriteTests, TokenStoreReshapeTests).
+- `dotnet build` clean, `dotnet test` green (added: AccountKeysTests, AccountStateTests, AppStateWithDefaultHelpersTests, AppStateMigrationsV4ToV5Tests, GithubConfigDelegatesTests, ConfigStoreMigrationTests, ViewerLoginHydratorConfigWriteTests, TokenStoreReshapeTests, AtomicFileMoveTests).
 - `npm run lint` + `npm run build` (frontend) green.
 - Manual end-to-end smoke against a V4 `state.json` + legacy `config.json` + legacy token cache — all three migrate on first launch; inbox still polls against `https://github.com`.
 
@@ -2471,8 +2689,9 @@ Per the writing-plans skill, I checked the plan against the spec with fresh eyes
 | § 9.1 | Migration tests | Tasks 4, 6, 8 |
 | § 9.2 | Backwards-compat tests | Tasks 3 (read delegate test) + 5 (`GithubConfig` delegate test) |
 | § 9.3 | No interface-boundary tests | Whole plan (none authored) |
-| § 10 | Project standards updates | Task 9 |
+| § 10 | Project standards updates | Task 10 |
 | § 11 | Open question on delegate properties | Plan-time decision 3 + Task 3 (no `[Obsolete]` attribute) |
+| Plan-time addition | Shared `AtomicFileMove` helper across `AppStateStore` + `ConfigStore` | Task 9 (post-ce-doc-review; addresses adversarial F4 + the per-launch widened-exposure concern) |
 
 No gaps found.
 

@@ -7,6 +7,7 @@ status: open
 revisions:
   - 2026-05-13: plan-writing pass — recorded the V3→V4 → V4→V5 version-bump correction, the write-site undercount, the § 11 delegate-properties resolution, the new `IConfigStore.SetDefaultAccountLoginAsync` method, and the `AccountKeys.Default` placement.
   - 2026-05-13: ce-doc-review pass — corrected the write-site count from 9 to 23 (11 prod + 12 tests; original grep recipe `new AppState(` returns zero hits), promoted `TokenStore.IsReadOnlyMode` parity from P2-deferred to P0-enforced, fixed the token-cache branch-2 legacy-blob detection (real legacy bytes are bare PATs, not JSON-quoted), tightened `MigrateV4ToV5` idempotency against partial-rollback files with both root-level and `accounts` keys, promoted the `ServiceCollectionExtensions.cs` DI factory edit + `FakeConfigStore` stub from conditional to required, added two new tests (future-version V6 state.json under EnsureCurrentShape + concurrent `SetDefaultAccountLoginAsync` × `PatchAsync` with FSW debounce), added `[Risk]` entries for `ConfigStore.WriteToDiskAsync` non-atomic-rename asymmetry, `login`-as-PII handling, and Task 3's atomic-reshape alternative consideration, and revised the v2-doesn't-ship reversal estimate from 3–5d to 5–8d.
+  - 2026-05-13: open-questions resolution — landed Task 9 (shared `AtomicFileMove` helper across `AppStateStore` + `ConfigStore`), promoting the two deferred non-atomic-rename risks from P2-deferred to plan-resolved. Confirmed the `TokenStore.IsReadOnlyMode` elevation stays at P0 (security argument holds: hydrator swallows the `FutureVersionCache` exception, Setup proceeds blind, `CommitAsync` would otherwise silently overwrite a v2 cache). Token cache stays out of `AtomicFileMove` scope — MSAL owns its persistence wrap and the spec § 4.3 explicitly accepted that boundary.
 ---
 
 # Deferrals — S6 PR0 multi-account storage-shape scaffold
@@ -143,14 +144,10 @@ Items the implementing engineer should keep an eye on during Phase 1 execution; 
 - **Status update:** Plan Task 4 added the future-version V6 LoadAsync test `LoadAsync_future_version_V6_file_enters_read_only_mode_and_EnsureCurrentShape_backfills_safely` per ce-doc-review adversarial F6. The test asserts the future-version + missing-optional-sub-fields case produces a safe in-memory state and a read-only-mode-blocked `SaveAsync`. The `last-configured-github-host` field is still NOT explicitly backfilled by `EnsureCurrentShape`, but the test verifies it deserializes to null without crashing — which was the actual concern.
 - **Severity:** P2 (test-pinned).
 
-### [Risk] `ConfigStore.WriteToDiskAsync` lacks `MoveWithRetryAsync` (Windows AV/indexer race) — asymmetry with `AppStateStore`
+### [Risk] `ConfigStore.WriteToDiskAsync` lacks `MoveWithRetryAsync` (Windows AV/indexer race) — RESOLVED at plan-time
 
-- **Where:** `PRism.Core/Config/ConfigStore.cs:126-132`. Bare `File.Move(temp, _path, overwrite: true)`. Compare to `AppStateStore.cs:189-218` which has a 10-attempt exponential-backoff retry specifically for the Windows Defender / Search Indexer transient-handle race.
-- **Why this is the right place to note it:** Pre-existing asymmetry, but this slice **widens the call frequency**: `WriteToDiskAsync` is now called from `SetDefaultAccountLoginAsync`, which fires on every launch for users with a token. Pre-S6-PR0, `WriteToDiskAsync` only fired on first-launch seed + occasional user `PatchAsync` (theme/accent). Higher write frequency → higher race exposure.
-- **Mitigation in v1:** None. The `SetDefaultAccountLoginAsync` exception is caught and logged at the hydrator's `Log.ConfigLoginWriteFailed` — the in-memory login cache is still set, so the v1 user experience self-heals on the next launch.
-- **The right fix is shared infrastructure:** Lift `MoveWithRetryAsync` from `AppStateStore` into a `PRism.Core.Storage` helper and have both stores call it. ~½ day of refactor; out of v1 scope for this slice.
-- **Severity:** P2.
-- **Revisit when:** A user reports `ConfigLoginWriteFailed` warnings repeatedly across launches (indicating a persistent AV race on their machine), OR a future slice already plans to touch `ConfigStore.WriteToDiskAsync` and can include the shared-helper refactor.
+- **Status update:** Promoted from P2-deferred to plan-resolved as Task 9 during the open-questions resolution pass. Lifted `MoveWithRetryAsync` into a new shared `PRism.Core.Storage.AtomicFileMove` helper; wired both `AppStateStore.SaveCoreAsync` and `ConfigStore.WriteToDiskAsync` through it. Token cache stays out of scope (MSAL owns its own persistence wrap; spec § 4.3 explicitly accepted that boundary).
+- **Why elevated:** The original deferral trigger was "wait until a user reports repeated `ConfigLoginWriteFailed` warnings" — too weak for storage-shape correctness. The slice already **widens** the call frequency by adding a per-launch hydrator write site; widening an asymmetric primitive without fixing the asymmetry would have left a worse smell on `main`. ½ day cost; one new file + 2 call-site rewrites.
 
 ### [Risk] `ConfigStore.SetDefaultAccountLoginAsync` triggers the FSW → re-read → duplicate `Changed` raise
 
@@ -163,9 +160,9 @@ Items the implementing engineer should keep an eye on during Phase 1 execution; 
 
 - **Where:** `MsalCacheHelper.SaveUnencryptedTokenCache` is the standard MSAL write path. Both `CommitAsync` and the migration write-back inside `ParseCacheFileBytes` (branch-2) call it directly with no temp-write-then-rename wrap. A process crash between the read of the legacy PAT bytes and the migrate-write leaves the cache file in one of three states: pre-write (legacy bare PAT — next launch re-migrates), mid-write (half-written JSON — next launch surfaces `CorruptCache`), post-write (complete versioned map). The mid-write window is small but not zero.
 - **Spec acknowledged the legacy-migration crash window** (§ 4.3 branch 2, § 8.3) but the plan doubles the exposure by routing every `CommitAsync` through the same non-atomic path on every re-authentication.
-- **Mitigation in v1:** None. Out of v1 scope to wrap MSAL with temp-write-then-rename (spec explicitly accepted this trade-off). The version-discriminator + read-only-mode guard partially compensates: a half-written future-version cache surfaces as `CorruptCache`, preserving the file rather than overwriting.
-- **The right fix is the same shared-helper refactor as the previous risk** — `PRism.Core.Storage.AtomicMove` wrapping both stores' write paths.
-- **Severity:** P2.
+- **Mitigation in v1:** None — token cache is intentionally OUT of Task 9's `AtomicFileMove` scope because `MsalCacheHelper.SaveUnencryptedTokenCache` is the MSAL persistence surface and wrapping it externally would mean reimplementing MSAL's keychain dance. The version-discriminator + read-only-mode guard (also resolved at plan-time, see the `TokenStore.IsReadOnlyMode` entry above) partially compensates: a half-written future-version cache surfaces as `CorruptCache`, preserving the file rather than overwriting.
+- **Revisit when:** MSAL exposes an atomic-write extension point, OR a v2 slice replaces `MsalCacheHelper` with a custom keychain wrapper. Until then this is a known accepted risk.
+- **Severity:** P2 (accepted).
 
 ### [Risk] `login` is GitHub-supplied PII (username) — must not appear in structured-log fields
 
