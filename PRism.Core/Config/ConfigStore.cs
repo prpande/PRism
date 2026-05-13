@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using PRism.Core.Json;
 using PRism.Core.State;
+using PRism.Core.Storage;
 
 namespace PRism.Core.Config;
 
@@ -216,7 +217,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         var temp = $"{_path}.tmp-{Guid.NewGuid():N}";
         var json = JsonSerializer.Serialize(_current, JsonSerializerOptionsFactory.Storage);
         await File.WriteAllTextAsync(temp, json, ct).ConfigureAwait(false);
-        File.Move(temp, _path, overwrite: true);
+        await AtomicFileMove.MoveAsync(temp, _path, ct).ConfigureAwait(false);
     }
 
     private void TryStartWatcher()
