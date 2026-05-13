@@ -56,7 +56,9 @@ test('S5 stale commit OID — first submit fails, head moves, recreate-and-resub
 
   // First submit: stop after Begin (fail at AttachThreads) so a pending review
   // is created and anchored to the current (old) head.
-  await injectSubmitFailure(page.request, SubmitMethod.AttachThread, { message: 'stop after Begin' });
+  await injectSubmitFailure(page.request, SubmitMethod.AttachThread, {
+    message: 'stop after Begin',
+  });
   await page.goto('/pr/acme/api/123');
   await page.getByRole('button', { name: /^submit review$/i }).click();
   const dialog = page.getByRole('dialog');

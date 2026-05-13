@@ -33,7 +33,9 @@ async function openForeignPrompt(page: import('@playwright/test').Page) {
   await createInlineDraft(page, 3, 'my local draft');
   await recordPrViewed(page.request);
   await seedPendingReview(page.request, PR, {
-    threads: [{ filePath: 'src/Calc.cs', lineNumber: 3, body: 'looks good to me', isResolved: true }],
+    threads: [
+      { filePath: 'src/Calc.cs', lineNumber: 3, body: 'looks good to me', isResolved: true },
+    ],
   });
 
   await page.goto('/pr/acme/api/123');
@@ -41,7 +43,9 @@ async function openForeignPrompt(page: import('@playwright/test').Page) {
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('button', { name: /^confirm submit$/i }).click();
 
-  await expect(dialog.getByRole('heading', { name: /existing pending review on this PR/i })).toBeVisible({
+  await expect(
+    dialog.getByRole('heading', { name: /existing pending review on this PR/i }),
+  ).toBeVisible({
     timeout: 15_000,
   });
   return dialog;
@@ -57,9 +61,12 @@ test('S5 foreign pending review — Resume imports its threads as drafts and ado
   // The dialog closes; the imported thread becomes a draft. The post-Resume
   // banner notes the resolved import.
   await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 10_000 });
-  await expect(page.locator('.imported-drafts-banner')).toContainText(/were resolved on github\.com/i, {
-    timeout: 10_000,
-  });
+  await expect(page.locator('.imported-drafts-banner')).toContainText(
+    /were resolved on github\.com/i,
+    {
+      timeout: 10_000,
+    },
+  );
 
   // The imported thread body is now visible as a draft (Drafts tab).
   await page.getByRole('tab', { name: /^Drafts/i }).click();
@@ -77,7 +84,9 @@ test('S5 foreign pending review — Discard deletes it on github.com', async ({ 
 
   await modal.getByRole('button', { name: 'Discard…' }).click();
   const sub = page.getByRole('dialog');
-  await expect(sub.getByRole('heading', { name: /delete the pending review on github\.com\?/i })).toBeVisible();
+  await expect(
+    sub.getByRole('heading', { name: /delete the pending review on github\.com\?/i }),
+  ).toBeVisible();
   await sub.getByRole('button', { name: /^delete$/i }).click();
 
   // The pending review is gone.

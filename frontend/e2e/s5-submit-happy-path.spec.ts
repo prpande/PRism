@@ -24,7 +24,9 @@ test.beforeEach(async () => {
 // docs/spec/01-vision-and-acceptance.md § "The PoC demo" steps 7 + 11-13: write a draft inline
 // comment, pick a verdict / write a summary, click "Submit review", the GraphQL pending-review
 // pipeline runs to completion, and the success state surfaces a "View on GitHub" link to the PR.
-test('S5 happy path — draft → Submit dialog → Confirm → pipeline runs → success', async ({ page }) => {
+test('S5 happy path — draft → Submit dialog → Confirm → pipeline runs → success', async ({
+  page,
+}) => {
   await setupAndOpenScenarioPr(page);
   await createInlineDraft(page, 3, 'Consider naming this parameter more descriptively.');
   // The submit head-sha-drift gate needs a recorded "viewed at head" (the demo does this via Reload).
@@ -47,7 +49,9 @@ test('S5 happy path — draft → Submit dialog → Confirm → pipeline runs �
   await dialog.getByRole('button', { name: /^confirm submit$/i }).click();
 
   // Phase A → Phase B → success. The 5-row checklist stays visible in the success state.
-  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(dialog.getByText(/created pending review/i)).toBeVisible();
   await expect(dialog.locator('[data-step="Finalize"]')).toHaveAttribute('data-state', 'done');
 

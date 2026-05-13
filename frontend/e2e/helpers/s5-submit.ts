@@ -11,7 +11,11 @@ export { resetBackendState, setupAndOpenScenarioPr, openScenarioFilesTab } from 
 const BACKEND = 'http://localhost:5180';
 const ORIGIN_HEADER = { Origin: BACKEND } as const;
 
-async function postTest(request: APIRequestContext, path: string, data?: unknown): Promise<unknown> {
+async function postTest(
+  request: APIRequestContext,
+  path: string,
+  data?: unknown,
+): Promise<unknown> {
   const resp = await request.post(`${BACKEND}${path}`, {
     headers: ORIGIN_HEADER,
     data: data ?? {},
@@ -113,12 +117,16 @@ export async function inspectPendingReview(
   const resp = await request.get(
     `${BACKEND}/test/submit/inspect-pending-review?owner=${pr.owner}&repo=${pr.repo}&number=${pr.number}`,
   );
-  if (!resp.ok()) throw new Error(`GET inspect-pending-review failed: ${resp.status()} ${await resp.text()}`);
+  if (!resp.ok())
+    throw new Error(`GET inspect-pending-review failed: ${resp.status()} ${await resp.text()}`);
   return (await resp.json()) as InspectPendingReview;
 }
 
 // Flips the scenario PR's open/closed/merged state.
-export async function setPrState(request: APIRequestContext, state: 'OPEN' | 'CLOSED' | 'MERGED'): Promise<void> {
+export async function setPrState(
+  request: APIRequestContext,
+  state: 'OPEN' | 'CLOSED' | 'MERGED',
+): Promise<void> {
   await postTest(request, '/test/set-pr-state', { state });
 }
 
@@ -129,7 +137,11 @@ export async function recordPrViewed(
   request: APIRequestContext,
   pr: { owner: string; repo: string; number: number } = { owner: 'acme', repo: 'api', number: 123 },
 ): Promise<string> {
-  const body = (await postTest(request, '/test/mark-pr-viewed', { owner: pr.owner, repo: pr.repo, number: pr.number })) as {
+  const body = (await postTest(request, '/test/mark-pr-viewed', {
+    owner: pr.owner,
+    repo: pr.repo,
+    number: pr.number,
+  })) as {
     headSha: string;
   };
   return body.headSha;

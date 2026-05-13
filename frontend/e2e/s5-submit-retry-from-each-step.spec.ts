@@ -32,12 +32,20 @@ test.beforeEach(async () => {
 // Core unit test (tests/PRism.Core.Tests/Submit/Pipeline/RetryFromEachStepTests.cs): a fresh draft
 // reply has no reachable UI affordance here (replies attach only to threads already on the pending
 // review, e.g. ones imported via Resume). Recorded in the S5 deferrals sidecar.
-for (const failingMethod of [SubmitMethod.Begin, SubmitMethod.AttachThread, SubmitMethod.Finalize]) {
-  test(`S5 retry — failure at ${failingMethod} → Retry → success, no duplicate threads`, async ({ page }) => {
+for (const failingMethod of [
+  SubmitMethod.Begin,
+  SubmitMethod.AttachThread,
+  SubmitMethod.Finalize,
+]) {
+  test(`S5 retry — failure at ${failingMethod} → Retry → success, no duplicate threads`, async ({
+    page,
+  }) => {
     await setupAndOpenScenarioPr(page);
     await createInlineDraft(page, 3, 'Inline note exercising the retry path.');
     await recordPrViewed(page.request);
-    await injectSubmitFailure(page.request, failingMethod, { message: `simulated ${failingMethod} failure` });
+    await injectSubmitFailure(page.request, failingMethod, {
+      message: `simulated ${failingMethod} failure`,
+    });
 
     await page.goto('/pr/acme/api/123');
     await page.getByRole('button', { name: /^submit review$/i }).click();
@@ -45,13 +53,17 @@ for (const failingMethod of [SubmitMethod.Begin, SubmitMethod.AttachThread, Subm
     await dialog.getByRole('button', { name: /^confirm submit$/i }).click();
 
     // First attempt fails at the injected step → failed-state heading + Retry button.
-    await expect(dialog.getByRole('heading', { name: /^submit failed at /i })).toBeVisible({ timeout: 15_000 });
+    await expect(dialog.getByRole('heading', { name: /^submit failed at /i })).toBeVisible({
+      timeout: 15_000,
+    });
     const retry = dialog.getByRole('button', { name: /^retry$/i });
     await expect(retry).toBeVisible();
 
     // Second attempt: the one-shot failure is spent → converges on success.
     await retry.click();
-    await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
+      timeout: 15_000,
+    });
 
     // No duplicates: exactly one AttachThreadAsync across both attempts; the pending review finalized.
     const ctx = await request.newContext();
