@@ -110,15 +110,14 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
     {
         ArgumentNullException.ThrowIfNull(reference);
         int delay;
-        lock (_gate)
-        {
-            // A "before" failure short-circuits even the delay; an "after" failure is consumed below.
-            if (TryTakeFailure(nameof(BeginPendingReviewAsync), afterEffectWanted: false, out var pre)) throw pre;
-            delay = _beginDelayMs;
-        }
+        lock (_gate) delay = _beginDelayMs;
+        // Apply the delay BEFORE consuming any injected failure: a Begin failure should land after the
+        // POST /submit response so the dialog's submit-progress subscription is live by the time the
+        // failure event arrives (it only acts on events once its POST returned 200).
         if (delay > 0) await Task.Delay(delay, ct).ConfigureAwait(false);
         lock (_gate)
         {
+            if (TryTakeFailure(nameof(BeginPendingReviewAsync), afterEffectWanted: false, out var pre)) throw pre;
             var id = $"PRR_{_nextId++}";
             _pendingByRef[Key(reference)] = new FakePendingReview(id, commitOid, DateTimeOffset.UtcNow, summaryBody ?? "");
             if (TryTakeFailure(nameof(BeginPendingReviewAsync), afterEffectWanted: true, out var post)) throw post;
