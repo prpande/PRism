@@ -34,6 +34,8 @@ internal static class TestEndpoints
 
     internal sealed record SetPrStateRequest(string State);
 
+    internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number);
+
     // ----- /test/submit/* (plan Task 61) -----
 
     internal sealed record InjectSubmitFailureRequest(string MethodName, string? Message, bool AfterEffect = false);
@@ -114,6 +116,30 @@ internal static class TestEndpoints
                 return Results.BadRequest(new { error = "sha-missing" });
             store.SetCommitReachable(req.Sha, req.Reachable);
             return Results.Ok(new { ok = true });
+        });
+
+        // Records "viewed this PR at the current head" on the session so the submit head-sha-drift
+        // gate (PrSubmitEndpoints rule (f)) passes. The real frontend sets LastViewedHeadSha via the
+        // demo's "click Reload" step (POST /reload); E2E specs that don't exercise a reload use this
+        // hook instead. Creates the session if it doesn't exist yet.
+        app.MapPost("/test/mark-pr-viewed", async (MarkPrViewedRequest req, IServiceProvider sp, IAppStateStore stateStore) =>
+        {
+            var store = sp.GetService<FakeReviewBackingStore>();
+            if (store is null) return StoreMissing("/test/mark-pr-viewed");
+            if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo))
+                return Results.BadRequest(new { error = "owner-or-repo-missing" });
+            var key = $"{req.Owner}/{req.Repo}/{req.Number}";
+            var headSha = store.CurrentHeadSha;
+            await stateStore.UpdateAsync(state =>
+            {
+                var session = state.Reviews.Sessions.GetValueOrDefault(key)
+                    ?? new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(),
+                        new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
+                var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                sessions[key] = session with { LastViewedHeadSha = headSha };
+                return state with { Reviews = state.Reviews with { Sessions = sessions } };
+            }, CancellationToken.None).ConfigureAwait(false);
+            return Results.Ok(new { ok = true, headSha });
         });
 
         // Flips the scenario PR's open/closed/merged state (PR5 bulk-discard surface).
