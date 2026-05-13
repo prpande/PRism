@@ -160,7 +160,7 @@ internal static class PrDraftEndpoints
                     {
                         [refKey] = applied.Updated
                     };
-                    return state with { Reviews = state.Reviews with { Sessions = sessions } };
+                    return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
                 }
                 return state;
             }, ct).ConfigureAwait(false);

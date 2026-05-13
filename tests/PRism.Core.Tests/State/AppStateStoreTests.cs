@@ -14,7 +14,7 @@ public class AppStateStoreTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(4);
+        state.Version.Should().Be(5);
         state.Reviews.Sessions.Should().BeEmpty();
         state.LastConfiguredGithubHost.Should().BeNull();
         File.Exists(Path.Combine(dir.Path, "state.json")).Should().BeTrue();
@@ -42,7 +42,7 @@ public class AppStateStoreTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(4);
+        state.Version.Should().Be(5);
         Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().HaveCount(1);
     }
 
@@ -52,7 +52,7 @@ public class AppStateStoreTests
         using var dir = new TempDataDir();
         using var store = new AppStateStore(dir.Path);
         var initial = await store.LoadAsync(CancellationToken.None);
-        var updated = initial with { LastConfiguredGithubHost = "https://github.com" };
+        var updated = initial.WithDefaultLastConfiguredGithubHost("https://github.com");
 
         await store.SaveAsync(updated, CancellationToken.None);
 
@@ -69,7 +69,7 @@ public class AppStateStoreTests
         var initial = await store.LoadAsync(CancellationToken.None);
 
         var tasks = Enumerable.Range(0, 50)
-            .Select(i => store.SaveAsync(initial with { LastConfiguredGithubHost = $"https://h{i}.test" }, CancellationToken.None))
+            .Select(i => store.SaveAsync(initial.WithDefaultLastConfiguredGithubHost($"https://h{i}.test"), CancellationToken.None))
             .ToArray();
 
         await Task.WhenAll(tasks);

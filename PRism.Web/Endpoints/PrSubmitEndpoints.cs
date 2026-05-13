@@ -387,7 +387,7 @@ internal static class PrSubmitEndpoints
     private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
     {
         var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
-        return state with { Reviews = state.Reviews with { Sessions = sessions } };
+        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
     }
 
     // The pipeline's onDuplicateMarker notices look like "draft <id>: …" or "reply <id>: …". Pull

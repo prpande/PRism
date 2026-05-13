@@ -114,7 +114,7 @@ internal static partial class PrDetailEndpoints
                             LastViewedHeadSha = body.HeadSha,
                             LastSeenCommentId = body.MaxCommentId,
                         };
-                        return state with { Reviews = state.Reviews with { Sessions = sessions } };
+                        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
                     }, ct).ConfigureAwait(false);
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("read-only mode", StringComparison.Ordinal))
@@ -185,7 +185,7 @@ internal static partial class PrDetailEndpoints
 
                         var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                         sessions[key] = session with { ViewedFiles = viewedFiles };
-                        return state with { Reviews = state.Reviews with { Sessions = sessions } };
+                        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
                     }, ct).ConfigureAwait(false);
                 }
                 catch (InvalidOperationException ex) when (ex.Message.Contains("read-only mode", StringComparison.Ordinal))

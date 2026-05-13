@@ -166,7 +166,7 @@ internal static class PrReloadEndpoints
                 {
                     [refKey] = updated
                 };
-                return state with { Reviews = state.Reviews with { Sessions = sessions } };
+                return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
             }, ct).ConfigureAwait(false);
 
             if (currentHeadShaForRetry is not null)

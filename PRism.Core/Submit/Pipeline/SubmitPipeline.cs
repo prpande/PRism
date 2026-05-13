@@ -632,7 +632,7 @@ public sealed class SubmitPipeline
     private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
     {
         var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
-        return state with { Reviews = state.Reviews with { Sessions = sessions } };
+        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
     }
 
     // ---- Pure transforms on the in-pipeline working snapshot (the value SubmitAsync threads

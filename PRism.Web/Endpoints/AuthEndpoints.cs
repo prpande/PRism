@@ -84,7 +84,7 @@ internal static partial class AuthEndpoints
 
             await tokens.CommitAsync(ct).ConfigureAwait(false);
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
-            await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+            await stateStore.SaveAsync(state.WithDefaultLastConfiguredGithubHost(config.Current.Github.Host), ct).ConfigureAwait(false);
             viewerLogin.Set(result.Login ?? "");
             Log.ConnectCommitted(log, result.Login ?? "(empty)");
             return Results.Ok(new AuthConnectSuccess(Ok: true, Login: result.Login, Host: config.Current.Github.Host));
@@ -106,7 +106,7 @@ internal static partial class AuthEndpoints
             }
 
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
-            await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+            await stateStore.SaveAsync(state.WithDefaultLastConfiguredGithubHost(config.Current.Github.Host), ct).ConfigureAwait(false);
             // Mirror the connect-path Set to keep the cache in lockstep — empty string here
             // overwrites any stale login from a prior session rather than leaving it intact.
             viewerLogin.Set(login ?? "");
@@ -131,7 +131,7 @@ internal static partial class AuthEndpoints
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             if (resolution == "continue")
             {
-                await stateStore.SaveAsync(state with { LastConfiguredGithubHost = config.Current.Github.Host }, ct).ConfigureAwait(false);
+                await stateStore.SaveAsync(state.WithDefaultLastConfiguredGithubHost(config.Current.Github.Host), ct).ConfigureAwait(false);
                 return Results.Ok(new HostChangeOk(Ok: true));
             }
             if (resolution == "revert" && state.LastConfiguredGithubHost is not null)

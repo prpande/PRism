@@ -68,7 +68,7 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
         await StateStore.UpdateAsync(state =>
         {
             var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [key] = session };
-            return state with { Reviews = state.Reviews with { Sessions = sessions } };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
         }, CancellationToken.None).ConfigureAwait(false);
     }
 

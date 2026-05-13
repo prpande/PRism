@@ -5,7 +5,7 @@ namespace PRism.Core.Tests.State;
 public class MigrationChainTests
 {
     [Fact]
-    public async Task LoadsV1File_AppliesV1ToV2_ThenV2ToV3_ThenV3ToV4_ResultIsV4()
+    public async Task LoadsV1File_AppliesV1ToV2_ThenV2ToV3_ThenV3ToV4_ThenV4ToV5_ResultIsV5()
     {
         var temp = Path.GetTempPath();
         var dir = Directory.CreateDirectory(Path.Combine(temp, $"prism-test-{Guid.NewGuid():N}")).FullName;
@@ -30,7 +30,7 @@ public class MigrationChainTests
             var store = new AppStateStore(dir);
             var loaded = await store.LoadAsync(CancellationToken.None);
 
-            Assert.Equal(4, loaded.Version);
+            Assert.Equal(5, loaded.Version);
             Assert.True(loaded.Reviews.Sessions.ContainsKey("acme/api/123"));
             var session = loaded.Reviews.Sessions["acme/api/123"];
             Assert.Empty(session.DraftComments);
@@ -73,7 +73,7 @@ public class MigrationChainTests
     }
 
     [Fact]
-    public async Task LoadsV3File_AppliesV3ToV4_ResultIsV4()
+    public async Task LoadsV3File_AppliesV3ToV4_ThenV4ToV5_ResultIsV5()
     {
         var temp = Path.GetTempPath();
         var dir = Directory.CreateDirectory(Path.Combine(temp, $"prism-test-{Guid.NewGuid():N}")).FullName;
@@ -93,14 +93,14 @@ public class MigrationChainTests
             var store = new AppStateStore(dir);
             var loaded = await store.LoadAsync(CancellationToken.None);
 
-            Assert.Equal(4, loaded.Version);
+            Assert.Equal(5, loaded.Version);
             Assert.Empty(loaded.Reviews.Sessions);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
     [Fact]
-    public async Task LoadsV4File_AppliesNothing_ResultUnchanged()
+    public async Task LoadsV4File_AppliesV4ToV5_ResultIsV5()
     {
         var temp = Path.GetTempPath();
         var dir = Directory.CreateDirectory(Path.Combine(temp, $"prism-test-{Guid.NewGuid():N}")).FullName;
@@ -120,7 +120,7 @@ public class MigrationChainTests
             var store = new AppStateStore(dir);
             var loaded = await store.LoadAsync(CancellationToken.None);
 
-            Assert.Equal(4, loaded.Version);
+            Assert.Equal(5, loaded.Version);
             Assert.Empty(loaded.Reviews.Sessions);
         }
         finally { Directory.Delete(dir, recursive: true); }

@@ -7,7 +7,7 @@ namespace PRism.Core.State;
 
 public sealed class AppStateStore : IAppStateStore, IDisposable
 {
-    private const int CurrentVersion = 4;
+    private const int CurrentVersion = 5;
 
     // Per-step migrations applied in ascending ToVersion order. Each step takes a JsonObject
     // at version N-1 and returns the same root mutated to version N. Adding a step here is
@@ -23,6 +23,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             (2, AppStateMigrations.MigrateV1ToV2),
             (3, AppStateMigrations.MigrateV2ToV3),
             (4, AppStateMigrations.MigrateV3ToV4),  // S5 PR2 — adds DraftComment.ThreadId
+            (5, AppStateMigrations.MigrateV4ToV5),  // S6 PR0 — moves reviews/ai-state/last-host under accounts.default
         }.OrderBy(s => s.ToVersion).ToArray();
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -304,16 +305,42 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
     {
         if (root["ui-preferences"] is null)
             root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
-        if (root["reviews"] is null)
+
+        // Ensure the V5 accounts container exists with a default entry. A V5 file written by a
+        // newer PRism (future-version branch) that omits an optional sub-field still needs the
+        // structural backbone in place for deserialization to succeed.
+        if (root["accounts"] is not JsonObject accountsObj)
         {
-            root["reviews"] = new JsonObject { ["sessions"] = new JsonObject() };
+            accountsObj = new JsonObject();
+            root["accounts"] = accountsObj;
         }
-        else if (root["reviews"] is JsonObject reviewsObj && reviewsObj["sessions"] is null)
+        if (accountsObj["default"] is not JsonObject defaultObj)
+        {
+            defaultObj = new JsonObject();
+            accountsObj["default"] = defaultObj;
+        }
+
+        // Forward-fixup the reviews.sessions backbone under accounts.default (the V3-era
+        // equivalent applied at the root; V5 moves it under the account).
+        if (defaultObj["reviews"] is null)
+        {
+            defaultObj["reviews"] = new JsonObject { ["sessions"] = new JsonObject() };
+        }
+        else if (defaultObj["reviews"] is JsonObject reviewsObj && reviewsObj["sessions"] is null)
         {
             // Defense against partial wraps like `"reviews": {}` — without this, the
             // deserializer produces `Reviews.Sessions == null` and the next
             // state.Reviews.Sessions.TryGetValue(...) NREs at the consumer site.
             reviewsObj["sessions"] = new JsonObject();
+        }
+
+        if (defaultObj["ai-state"] is null)
+        {
+            defaultObj["ai-state"] = new JsonObject
+            {
+                ["repo-clone-map"] = new JsonObject(),
+                ["workspace-mtime-at-last-enumeration"] = null
+            };
         }
     }
 }

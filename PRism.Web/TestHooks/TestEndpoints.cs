@@ -168,7 +168,7 @@ internal static class TestEndpoints
                         DraftVerdictStatus: DraftVerdictStatus.Draft);
                 var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                 sessions[key] = session with { LastViewedHeadSha = headSha };
-                return state with { Reviews = state.Reviews with { Sessions = sessions } };
+                return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
             }, CancellationToken.None).ConfigureAwait(false);
             return Results.Ok(new { ok = true, headSha });
         });

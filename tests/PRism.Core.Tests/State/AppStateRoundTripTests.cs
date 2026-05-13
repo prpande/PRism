@@ -27,13 +27,10 @@ public class AppStateRoundTripTests
             DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 
-        var state = AppState.Default with
+        var state = AppState.Default.WithDefaultReviews(new PrSessionsState(new Dictionary<string, ReviewSessionState>
         {
-            Reviews = new PrSessionsState(new Dictionary<string, ReviewSessionState>
-            {
-                ["acme/api/123"] = session
-            })
-        };
+            ["acme/api/123"] = session
+        }));
 
         var json = JsonSerializer.Serialize(state, JsonSerializerOptionsFactory.Storage);
         var roundTripped = JsonSerializer.Deserialize<AppState>(json, JsonSerializerOptionsFactory.Storage);
