@@ -15,7 +15,10 @@
 ## How to use this plan
 
 - **One phase = one PR.** Land this slice as a single reviewable PR titled `feat(s6-pr0): multi-account storage-shape scaffold`. Storage-only scope means no follow-up sub-PRs.
-- **Every test is written red first.** Run the test, watch it fail with the expected error, then write the minimal code to make it green. The TDD discipline from `.ai/docs/development-process.md` is non-negotiable. The big-bang reshape in Task 3 is the one exception — the reshape itself doesn't fit a strict red-green cycle because the constructor change is atomic across the solution; the *outcome* is that every existing test compiles and stays green via the delegate properties.
+- **Every test is written red first.** Run the test, watch it fail with the expected error, then write the minimal code to make it green. The TDD discipline from `.ai/docs/development-process.md` ("No exceptions") is non-negotiable. Task 3's atomic reshape **looks like** an exception but isn't a violation of the rule — it expresses the red-green cycle through a different mechanism:
+  - **Red phase = compile-error cascade.** Reshaping `AppState`'s constructor signature produces `CS8852: Init-only property '...' can only be assigned in an object initializer` at every of the 23 `with`-expression sites simultaneously. The compiler is the test runner; the 23 compiler errors are the failing assertions.
+  - **Green phase = existing suite stays green via delegate properties.** Read sites (`state.Reviews.Sessions[...]`, `state.AiState.RepoCloneMap`, `state.LastConfiguredGithubHost`) keep compiling unchanged; the existing `AppStateStoreTests` / `AppStateStoreMigrationTests` / endpoint tests verify behavior preservation. No new hand-written failing test is needed for the reshape itself because the existing suite already encodes the contract.
+  - **Where TDD discipline still applies inside Task 3:** the new `WithDefault*` write helpers DO get red-green coverage via `AppStateWithDefaultHelpersTests` (Task 3 step 1 — failing test first, then implementation). Task 4's V4→V5 migration is also red-first. The dev-process.md "No exceptions" rule guards against skipping TDD when it's *hard*; this case is categorically different because the failing-assertion mechanism already exists (type system + existing suite).
 - **Use a worktree.** Per the user's standing rule (`~/src/config/claude/CLAUDE.md` "Git Worktrees"), create `.claude/worktrees/feat-s6-pr0` (separate from this plan's worktree). Implementation never lands on `main`.
 - **Pre-push checklist is mandatory.** Per `~/src/config/claude/CLAUDE.md` "feedback_run_full_pre_push_checklist": run every step in `.ai/docs/development-process.md` verbatim — `npm run lint` and `npm run build` in `frontend/` are not optional even for backend-only PRs (TypeScript types may shift if SSE payloads were touched; this slice doesn't, but verify). `dotnet build` + `dotnet test` for the whole solution. One foreground sequence, never `run_in_background`. Timeout ≥ 300000ms.
 - **No silent deviations from the spec.** Per `~/src/config/claude/CLAUDE.md` "feedback_document_plan_deviations": when implementation surfaces a gap or forces a change to the spec, capture the decision in the deferrals sidecar — never silently.
@@ -1704,7 +1707,7 @@ services.AddHostedService<ViewerLoginHydrator>(sp =>
 
 DI lifetime check: `IConfigStore` is registered as a singleton elsewhere in `ServiceCollectionExtensions.cs`; the hydrator is a hosted service, also effectively singleton in lifetime. Same scope; no captive-dependency concern.
 
-DI ordering check: `ConfigStore.InitAsync` is awaited in `Program.cs` before `app.Run()`, which is before any `IHostedService.StartAsync` fires. So `ViewerLoginHydrator.StartAsync` sees a fully-initialized `_config.Current`. Confirm this is still true in `Program.cs` (search for `await configStore.InitAsync` or similar); if the host has changed to an unawaited init, surface to the user before proceeding.
+DI ordering check: `ConfigStore.InitAsync` is invoked **synchronously inside the DI factory** at `PRism.Core/ServiceCollectionExtensions.cs:122-127` via `store.InitAsync(CancellationToken.None).GetAwaiter().GetResult()` (the file carries a `CA1849` suppression with the rationale baked in). `Program.cs` does NOT call `InitAsync` explicitly. The sync DI-time init completes before any `services.AddHostedService<...>` registration's `StartAsync` fires (hosted services start after `WebApplication.Build()` returns, which is after the DI container is fully constructed). So `ViewerLoginHydrator.StartAsync` sees a fully-initialized `_config.Current`. Confirm both invariants hold during execution: (a) `CreateConfigStore` still calls `InitAsync(...).GetAwaiter().GetResult()`; (b) `ViewerLoginHydrator` registration sits after the `IConfigStore` registration in `ServiceCollectionExtensions.AddPRismCore` so DI-graph construction order matches hosted-service start order. If either invariant has changed, surface to the user before proceeding.
 
 - [ ] **Step 7: Stub `SetDefaultAccountLoginAsync` on `FakeConfigStore` (REQUIRED to keep tests compiling)**
 
@@ -2233,7 +2236,7 @@ public sealed class TokenStore : ITokenStore
 }
 ```
 
-A subtle point: `Encoding.UTF8.GetString(bytes)` returns the JSON literal `"<pat>"` (with surrounding quotes) for a legacy-blob cache. The branch-2 detection looks for a leading `"` *after trimming whitespace*. If the keychain wrapper has added any byte-order-mark or whitespace that fails this heuristic, branch 5 fires instead. Verify on a manual smoke against a real legacy cache file before merging.
+A subtle point: real legacy caches were written by the pre-S6-PR0 `CommitAsync` via `Encoding.UTF8.GetBytes(_transient)` — raw PAT bytes (`ghp_xxx`), with NO JSON encoding and NO surrounding quotes. The branch-2 detection above runs the PAT-pattern regex `^[A-Za-z0-9_\-]{20,255}$` *first* on the trimmed content, then falls back to `JsonValue<string>` parsing for hand-edited JSON-quoted caches. (An earlier draft of this plan used a leading-`"` heuristic that would have missed every real legacy cache; ce-doc-review caught it. See the deferrals sidecar entry **"Token-cache branch-2 legacy detection rewritten to match real legacy bytes"** for the full rationale.) Verify both shapes on a manual smoke against a real legacy cache file before merging.
 
 - [ ] **Step 5: Run tests**
 
@@ -2569,23 +2572,27 @@ git commit -m "docs(s6-pr0): amend architecture + non-goals + roadmap for storag
 
 - [ ] **Step 1: Run the full pre-push checklist**
 
-Per `.ai/docs/development-process.md`, run every step in order, foreground only, ≥300000ms timeout:
+Run every step in `.ai/docs/development-process.md` § "Pre-push checklist" verbatim — in this order, foreground only, ≥300000ms timeout. The sequence mirrors `.github/workflows/ci.yml` so anything CI catches, you catch first:
 
 ```bash
-# 1. .NET build (no warnings allowed; project enables TreatWarningsAsErrors)
-dotnet build PRism.sln --no-incremental
+# 1. Frontend lint (eslint + prettier --check)
+cd frontend && npm run lint
 
-# 2. .NET tests (whole solution)
-dotnet test PRism.sln
+# 2. Frontend build (tsc -b is stricter than --noEmit)
+npm run build
 
-# 3. Frontend lint (mandatory even for backend-only PRs — TS types may have drifted)
-npm --prefix frontend run lint
+# 3. Frontend unit tests (vitest)
+npm test
 
-# 4. Frontend build (same rationale)
-npm --prefix frontend run build
+# 4. Backend build + tests (--configuration Release matters — TreatWarningsAsErrors behaviour differs from Debug)
+cd .. && dotnet build --configuration Release
+dotnet test --no-build --configuration Release
+
+# 5. Frontend e2e (Playwright) — conditional, see README.md § Pre-push checklist
+cd frontend && npx playwright test
 ```
 
-Expected: all four green.
+Expected: all green. Step 5 is only required when the README's criteria apply (UI-touching changes); this PR is backend-only so step 5 can be skipped if step 5's gate doesn't fire — verify against the README before skipping. Frontend lint + build + npm test are mandatory even for backend-only PRs (TypeScript types may have drifted; vitest may catch a shared type contract regression).
 
 - [ ] **Step 2: Manual smoke against a legacy fixture**
 
@@ -2625,7 +2632,7 @@ Deferrals: `docs/specs/2026-05-10-multi-account-scaffold-deferrals.md`
 
 ## Changes
 
-- **State V4 → V5 migration** moves `Reviews` / `AiState` / `LastConfiguredGithubHost` under `accounts.default`. Delegate read properties preserve every existing `state.Reviews` / `state.AiState` / `state.LastConfiguredGithubHost` call site. New `WithDefaultReviews` / `WithDefaultAiState` / `WithDefaultLastConfiguredGithubHost` helpers replace `state with { Reviews = ... }` write patterns across 9 production sites.
+- **State V4 → V5 migration** moves `Reviews` / `AiState` / `LastConfiguredGithubHost` under `accounts.default`. Delegate read properties preserve every existing `state.Reviews` / `state.AiState` / `state.LastConfiguredGithubHost` call site. New `WithDefaultReviews` / `WithDefaultAiState` / `WithDefaultLastConfiguredGithubHost` helpers replace `state with { Reviews = ... }` write patterns across 11 production + 12 test sites (23 total).
 - **Config rewrite**: `github.host: string` → `github.accounts: [{ "id", "host", "login", "local-workspace" }]`. `AppConfig.Github.Host` / `LocalWorkspace` preserved as delegates over `Accounts[0]`.
 - **Token cache**: legacy single-string blob → `{ "version": 1, "tokens": { "default": "<pat>" } }` with a version-discriminator load path (future-version → read-only mode error; corrupt → re-validate at Setup with no overwrite).
 - **`ViewerLoginHydrator`** now writes the validated login into `config.github.accounts[0].login` via new `IConfigStore.SetDefaultAccountLoginAsync`.
