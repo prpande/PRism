@@ -87,14 +87,18 @@ test('S5 foreign pending review — Discard deletes it on github.com', async ({ 
   // so only one Modal is mounted at a time, but the scoped lookup makes the intent explicit.
   const sub = page
     .getByRole('dialog')
-    .filter({ has: page.getByRole('heading', { name: /delete the pending review on github\.com\?/i }) });
+    .filter({
+      has: page.getByRole('heading', { name: /delete the pending review on github\.com\?/i }),
+    });
   await expect(sub).toBeVisible();
   await sub.getByRole('button', { name: /^delete$/i }).click();
 
   // The pending review is gone. page.request, polled until the discard round-trip settles.
   await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 10_000 });
   await expect
-    .poll(async () => (await inspectPendingReview(page.request, PR)).pendingReview, { timeout: 10_000 })
+    .poll(async () => (await inspectPendingReview(page.request, PR)).pendingReview, {
+      timeout: 10_000,
+    })
     .toBeNull();
 });
 
