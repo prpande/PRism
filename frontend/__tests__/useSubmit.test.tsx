@@ -324,6 +324,110 @@ describe('useSubmit', () => {
     expect(result.current.state).toEqual({ kind: 'idle' });
   });
 
+  function emitForeignPrompt(threadCount = 1, replyCount = 0) {
+    emit('submit-foreign-pending-review', {
+      prRef: PR_REF,
+      pullRequestReviewId: 'PRR_x',
+      commitOid: 'c',
+      createdAt: '2026-05-11T00:00:00Z',
+      threadCount,
+      replyCount,
+    });
+  }
+
+  it('resumeForeignPendingReview captures Snapshot A→B + hasResolvedImports into lastResume', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    await act(async () => {
+      await result.current.submit('Comment');
+    });
+    act(() => emitForeignPrompt(2, 1));
+    resumeForeignMock.mockResolvedValueOnce({
+      pullRequestReviewId: 'PRR_x',
+      commitOid: 'c',
+      createdAt: '2026-05-11T00:00:00Z',
+      threadCount: 3,
+      replyCount: 1,
+      threads: [
+        {
+          id: 't1',
+          filePath: 'a',
+          lineNumber: 1,
+          side: 'RIGHT',
+          isResolved: true,
+          body: 'b',
+          replies: [],
+        },
+      ],
+    });
+    await act(async () => {
+      await result.current.resumeForeignPendingReview('PRR_x');
+    });
+    expect(result.current.state).toEqual({ kind: 'idle' });
+    expect(result.current.lastResume).toEqual({
+      snapshotA: { threadCount: 2, replyCount: 1 },
+      snapshotB: { threadCount: 3, replyCount: 1 },
+      hasResolvedImports: true,
+    });
+    act(() => result.current.clearLastResume());
+    expect(result.current.lastResume).toBeNull();
+  });
+
+  it('resumeForeignPendingReview ignores a re-entrant call while one is in flight (double-click guard)', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    await act(async () => {
+      await result.current.submit('Comment');
+    });
+    act(() => emitForeignPrompt());
+    let release!: () => void;
+    resumeForeignMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        release = () => resolve();
+      }),
+    );
+    await act(async () => {
+      const p1 = result.current.resumeForeignPendingReview('PRR_x');
+      const p2 = result.current.resumeForeignPendingReview('PRR_x');
+      release();
+      await Promise.all([p1, p2]);
+    });
+    expect(resumeForeignMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumeForeignPendingReview 409 (TOCTOU) re-throws and resets to idle (no stuck prompt)', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    await act(async () => {
+      await result.current.submit('Comment');
+    });
+    act(() => emitForeignPrompt());
+    resumeForeignMock.mockRejectedValueOnce(
+      Object.assign(new Error('changed'), { code: 'pending-review-state-changed' }),
+    );
+    await act(async () => {
+      await expect(result.current.resumeForeignPendingReview('PRR_x')).rejects.toMatchObject({
+        code: 'pending-review-state-changed',
+      });
+    });
+    expect(result.current.state).toEqual({ kind: 'idle' });
+    expect(result.current.lastResume).toBeNull();
+  });
+
+  it('discardForeignPendingReview 409 (TOCTOU) re-throws and resets to idle', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    await act(async () => {
+      await result.current.submit('Comment');
+    });
+    act(() => emitForeignPrompt());
+    discardForeignMock.mockRejectedValueOnce(
+      Object.assign(new Error('changed'), { code: 'pending-review-state-changed' }),
+    );
+    await act(async () => {
+      await expect(result.current.discardForeignPendingReview('PRR_x')).rejects.toMatchObject({
+        code: 'pending-review-state-changed',
+      });
+    });
+    expect(result.current.state).toEqual({ kind: 'idle' });
+  });
+
   it('unsubscribes its SSE listeners on unmount', async () => {
     const { unmount } = renderHook(() => useSubmit(ref));
     await waitFor(() => expect(listeners.get('submit-progress')?.size).toBe(1));

@@ -143,6 +143,8 @@ function PrDetailPageInner({
         draftsCount={draftsCount}
         session={draftSession.session}
         headShaDrift={updates.headShaChanged}
+        currentHeadSha={data?.pr.headSha}
+        prState={data?.pr.isMerged ? 'merged' : data?.pr.isClosed ? 'closed' : 'open'}
         onSessionRefetch={() => void draftSession.refetch()}
       />
       <CrossTabPresenceBanner

@@ -5,14 +5,15 @@ import {
   resumeForeignPendingReview as resumeForeignApi,
   submitReview as submitReviewApi,
 } from '../api/submit';
-import type {
-  PrReference,
-  SubmitForeignPendingReviewEvent,
-  SubmitProgressEvent,
-  SubmitStaleCommitOidEvent,
-  SubmitStep,
-  SubmitStepStatus,
-  Verdict,
+import {
+  prRefKey,
+  type PrReference,
+  type SubmitForeignPendingReviewEvent,
+  type SubmitProgressEvent,
+  type SubmitStaleCommitOidEvent,
+  type SubmitStep,
+  type SubmitStepStatus,
+  type Verdict,
 } from '../api/types';
 
 export interface SubmitProgressStep {
@@ -34,17 +35,26 @@ export type SubmitState =
   | { kind: 'foreign-pending-review-prompt'; snapshot: SubmitForeignPendingReviewEvent }
   | { kind: 'stale-commit-oid'; orphanCommitOid: string };
 
+// After a foreign-pending-review Resume, the counts the user saw in the prompt
+// (Snapshot A — from the SSE event) and what the resume 200 actually imported
+// (Snapshot B), plus whether any imported thread was resolved on github.com.
+// Drives the ImportedDraftsBanner above the imported drafts (spec § 11.1).
+export interface ResumeSummary {
+  snapshotA: { threadCount: number; replyCount: number };
+  snapshotB: { threadCount: number; replyCount: number };
+  hasResolvedImports: boolean;
+}
+
 export interface UseSubmitResult {
   state: SubmitState;
   submit(verdict: Verdict): Promise<void>;
   retry(): Promise<void>;
   resumeForeignPendingReview(reviewId: string): Promise<void>;
   discardForeignPendingReview(reviewId: string): Promise<void>;
+  // Set after a successful Resume; null until then and after clearLastResume().
+  lastResume: ResumeSummary | null;
+  clearLastResume(): void;
   reset(): void;
-}
-
-function prRefString(reference: PrReference): string {
-  return `${reference.owner}/${reference.repo}/${reference.number}`;
 }
 
 function upsertStep(steps: SubmitProgressStep[], ev: SubmitProgressEvent): SubmitProgressStep[] {
@@ -62,8 +72,9 @@ function upsertStep(steps: SubmitProgressStep[], ev: SubmitProgressEvent): Submi
 
 export function useSubmit(reference: PrReference): UseSubmitResult {
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
+  const [lastResume, setLastResume] = useState<ResumeSummary | null>(null);
   const stream = useEventSource();
-  const prRef = prRefString(reference);
+  const prRef = prRefKey(reference);
 
   // Multi-tab guard: SSE events only drive transitions when THIS tab's
   // submit() / retry() call has returned 200 OK (spec § 8.4). A foreign tab's
@@ -73,6 +84,15 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
   // Last-confirmed verdict, so retry() (stale-commitOID recovery, post-failure
   // retry) re-fires with the same value without plumbing it back through props.
   const lastVerdictRef = useRef<Verdict | null>(null);
+  // Counts the user saw in the foreign-pending-review prompt (Snapshot A),
+  // captured when the prompt state arrives so resumeForeignPendingReview can
+  // diff them against the resume 200's counts (Snapshot B) — spec § 11.1.
+  const lastForeignSnapshotRef = useRef<{ threadCount: number; replyCount: number } | null>(null);
+  // Re-entry guard for the foreign-pending-review Resume/Discard buttons (they
+  // aren't disabled mid-flight): a rapid double-click would otherwise fire two
+  // POSTs, the second 409-ing on the already-consumed pending review and
+  // surfacing a spurious "state changed" toast.
+  const foreignActionInFlightRef = useRef(false);
 
   useEffect(() => {
     if (!stream) return;
@@ -115,6 +135,10 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
         // late/out-of-order event can't overwrite the prompt (like the
         // stale-commit-oid path).
         ownsActiveSubmit.current = false;
+        lastForeignSnapshotRef.current = {
+          threadCount: ev.threadCount,
+          replyCount: ev.replyCount,
+        };
         setState({ kind: 'foreign-pending-review-prompt', snapshot: ev });
       }),
       stream.on('submit-stale-commit-oid', (ev: SubmitStaleCommitOidEvent) => {
@@ -166,16 +190,28 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
 
   const resumeForeignPendingReview = useCallback(
     async (reviewId: string) => {
+      if (foreignActionInFlightRef.current) return;
+      foreignActionInFlightRef.current = true;
       try {
-        await resumeForeignApi(reference, reviewId);
+        const resp = await resumeForeignApi(reference, reviewId);
         // Imports land in the session as Draft entries; the user adjudicates via
         // the Drafts tab, then re-clicks Submit Review. (spec § 11.1)
+        const snapshotA = lastForeignSnapshotRef.current;
+        if (snapshotA) {
+          setLastResume({
+            snapshotA,
+            snapshotB: { threadCount: resp?.threadCount ?? 0, replyCount: resp?.replyCount ?? 0 },
+            hasResolvedImports: (resp?.threads ?? []).some((t) => t.isResolved),
+          });
+        }
         ownsActiveSubmit.current = false;
         setState({ kind: 'idle' });
       } catch (err) {
         ownsActiveSubmit.current = false;
         setState({ kind: 'idle' });
         throw err;
+      } finally {
+        foreignActionInFlightRef.current = false;
       }
     },
     [reference],
@@ -183,6 +219,8 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
 
   const discardForeignPendingReview = useCallback(
     async (reviewId: string) => {
+      if (foreignActionInFlightRef.current) return;
+      foreignActionInFlightRef.current = true;
       try {
         await discardForeignApi(reference, reviewId);
         ownsActiveSubmit.current = false;
@@ -191,15 +229,28 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
         ownsActiveSubmit.current = false;
         setState({ kind: 'idle' });
         throw err;
+      } finally {
+        foreignActionInFlightRef.current = false;
       }
     },
     [reference],
   );
+
+  const clearLastResume = useCallback(() => setLastResume(null), []);
 
   const reset = useCallback(() => {
     ownsActiveSubmit.current = false;
     setState({ kind: 'idle' });
   }, []);
 
-  return { state, submit, retry, resumeForeignPendingReview, discardForeignPendingReview, reset };
+  return {
+    state,
+    submit,
+    retry,
+    resumeForeignPendingReview,
+    discardForeignPendingReview,
+    lastResume,
+    clearLastResume,
+    reset,
+  };
 }

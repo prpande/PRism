@@ -111,5 +111,11 @@ export async function discardForeignPendingReview(
 }
 
 export async function discardAllDrafts(prRef: PrReference): Promise<void> {
-  await apiClient.post<unknown>(`${prPath(prRef)}/drafts/discard-all`, undefined, tabIdHeaders());
+  try {
+    await apiClient.post<unknown>(`${prPath(prRef)}/drafts/discard-all`, undefined, tabIdHeaders());
+  } catch (e) {
+    const conflict = asConflict(e);
+    if (conflict) throw conflict;
+    throw e;
+  }
 }

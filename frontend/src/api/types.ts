@@ -46,6 +46,14 @@ export interface PrReference {
   number: number;
 }
 
+// Canonical "owner/repo/number" string form of a PrReference. This is the
+// shape the backend's SSE `prRef` field uses, so every place that matches an
+// SSE event against the current PR (useSubmit, useSubmitToasts, …) must derive
+// it the same way — centralized here so the format can't drift.
+export function prRefKey(reference: PrReference): string {
+  return `${reference.owner}/${reference.repo}/${reference.number}`;
+}
+
 export interface PrInboxItem {
   reference: PrReference;
   title: string;
