@@ -13,6 +13,7 @@ internal sealed class FakeConfigStore : IConfigStore
 
     public Task InitAsync(CancellationToken ct) => Task.CompletedTask;
     public Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct) => Task.CompletedTask;
+    public Task SetDefaultAccountLoginAsync(string login, CancellationToken ct) => Task.CompletedTask;
 
     public void RaiseChanged() => Changed?.Invoke(this, new ConfigChangedEventArgs(Current));
 }

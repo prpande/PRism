@@ -89,4 +89,38 @@ public class ConfigStoreMigrationTests
         store.Current.Github.Accounts.Should().HaveCount(1);
         store.Current.Github.Accounts[0].LocalWorkspace.Should().BeNull();
     }
+
+    [Fact]
+    public async Task SetDefaultAccountLoginAsync_concurrent_with_PatchAsync_preserves_both_writes()
+    {
+        // ce-doc-review adversarial F3: SetDefaultAccountLoginAsync triggers ConfigStore's
+        // FileSystemWatcher → HandleFileChangedAsync feedback loop, which re-reads the file
+        // under the same _gate and raises Changed a second time. If a concurrent PatchAsync
+        // (theme=dark) hits between the write and the watcher re-read, both writes must
+        // survive — the test pins this contract so a future "let's suppress the watcher event
+        // after our own write" optimization doesn't accidentally drop a concurrent change.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), """
+        {
+          "ui": { "theme": "light", "accent": "indigo", "ai-preview": false },
+          "github": {
+            "accounts": [ { "id": "default", "host": "https://github.com", "login": null, "local-workspace": null } ]
+          }
+        }
+        """);
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        // Drive both writes nearly concurrently. The store's _gate serializes them so the
+        // result is deterministic regardless of ordering — but the FSW re-read fires for each
+        // and could overwrite the in-memory _current with the latest on-disk shape. Drain
+        // pending FSW events before asserting (the debounce delay is 100ms in HandleFileChangedAsync).
+        var loginWrite = store.SetDefaultAccountLoginAsync("alice", CancellationToken.None);
+        var themeWrite = store.PatchAsync(new Dictionary<string, object?> { ["theme"] = "dark" }, CancellationToken.None);
+        await Task.WhenAll(loginWrite, themeWrite);
+        await Task.Delay(250);  // drain debounced FSW events
+
+        store.Current.Ui.Theme.Should().Be("dark");
+        store.Current.Github.Accounts[0].Login.Should().Be("alice");
+    }
 }

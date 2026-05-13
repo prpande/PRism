@@ -86,6 +86,7 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ITokenStore>(),
                 sp.GetRequiredService<IReviewAuth>(),
                 sp.GetRequiredService<IViewerLoginProvider>(),
+                sp.GetRequiredService<IConfigStore>(),
                 sp.GetRequiredService<ILogger<ViewerLoginHydrator>>()));
 
         services.AddHostedService<InboxPoller>(sp =>

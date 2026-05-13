@@ -38,6 +38,39 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         TryStartWatcher();
     }
 
+    public async Task SetDefaultAccountLoginAsync(string login, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(login);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var accounts = _current.Github.Accounts.ToList();
+            if (accounts.Count == 0)
+            {
+                // Defensive: a misshapen config that somehow reached this point gets a fresh
+                // default-account entry rather than tripping IndexOutOfRange. The on-disk write
+                // below persists the seeded shape.
+                accounts.Add(new GithubAccountConfig(
+                    Id: AccountKeys.Default,
+                    Host: AppConfig.Default.Github.Host,
+                    Login: login,
+                    LocalWorkspace: null));
+            }
+            else
+            {
+                accounts[0] = accounts[0] with { Login = login };
+            }
+            _current = _current with { Github = new GithubConfig(accounts) };
+            await WriteToDiskAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        RaiseChanged();
+    }
+
     public async Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(patch);
