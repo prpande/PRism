@@ -1,5 +1,7 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using PRism.Core.Json;
+using PRism.Core.State;
 
 namespace PRism.Core.Config;
 
@@ -82,6 +84,41 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             using (var reader = new StreamReader(fs))
                 raw = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
 
+            // S6 PR0 — legacy-shape rewrite. If the on-disk config still has the pre-S6 shape
+            // (`github.host` / `github.local-workspace` directly under github, no accounts list),
+            // rewrite it to the new accounts shape before deserialization. This is a JsonNode-
+            // level rewrite (no strongly-typed AppConfig allocated yet) so we can rewrite without
+            // tripping the new GithubConfig constructor mismatch. The atomic-rename write below
+            // ensures partial writes can't leave the file with both shapes.
+            var rootNode = JsonNode.Parse(raw, documentOptions: new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+            bool rewritten = false;
+            if (rootNode is JsonObject rootObj
+                && rootObj["github"] is JsonObject github
+                && github["accounts"] is null
+                && github["host"] is JsonNode hostNode)
+            {
+                var host = hostNode.GetValue<string>();
+                var localWorkspaceNode = github["local-workspace"];
+                string? localWorkspace = localWorkspaceNode is null ? null : localWorkspaceNode.GetValue<string?>();
+
+                var account = new JsonObject
+                {
+                    ["id"] = AccountKeys.Default,
+                    ["host"] = host,
+                    ["login"] = null,
+                    ["local-workspace"] = localWorkspace,
+                };
+                github.Remove("host");
+                github.Remove("local-workspace");
+                github["accounts"] = new JsonArray(account);
+                rewritten = true;
+                raw = rootNode.ToJsonString();
+            }
+
             var parsed = JsonSerializer.Deserialize<AppConfig>(raw, JsonSerializerOptionsFactory.Storage);
             if (parsed is null)
             {
@@ -112,8 +149,26 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 Github     = parsed.Github     ?? AppConfig.Default.Github,
                 Llm        = parsed.Llm        ?? AppConfig.Default.Llm,
             };
+
+            // Defensive: a partial on-disk shape with `github: {}` deserializes to a
+            // GithubConfig with a null/empty Accounts list. Backfill the default-account entry
+            // so the delegate property `config.Github.Host` doesn't NRE/IndexOutOfRange on
+            // `Accounts[0]`. Symmetric to the per-sub-record null backfill above; the only
+            // reason it's separate is the check is on a nested property, not the sub-record itself.
+            if (parsed.Github.Accounts is null || parsed.Github.Accounts.Count == 0)
+            {
+                parsed = parsed with { Github = AppConfig.Default.Github };
+            }
+
             _current = parsed;
             LastLoadError = null;
+
+            // If we rewrote the legacy shape, persist the new shape to disk so subsequent loads
+            // skip the rewrite path. Atomic-rename via WriteToDiskAsync.
+            if (rewritten)
+            {
+                await WriteToDiskAsync(ct).ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {

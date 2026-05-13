@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using PRism.Core.State;
 
 namespace PRism.Core.Config;
 
@@ -21,7 +22,14 @@ public sealed record AppConfig(
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
         new UiConfig("system", "indigo", false),
-        new GithubConfig("https://github.com", null),
+        new GithubConfig(new[]
+        {
+            new GithubAccountConfig(
+                Id: AccountKeys.Default,
+                Host: "https://github.com",
+                Login: null,
+                LocalWorkspace: null)
+        }),
         new LlmConfig());
 }
 
@@ -40,5 +48,18 @@ public sealed record ReviewConfig(bool BlockSubmitOnStaleDrafts, bool RequireVer
 public sealed record IterationsConfig(int ClusterGapSeconds, bool ClusteringDisabled = false);
 public sealed record LoggingConfig(string Level, bool StateEvents, int StateEventsRetentionFiles);
 public sealed record UiConfig(string Theme, string Accent, bool AiPreview);
-public sealed record GithubConfig(string Host, string? LocalWorkspace);
+
+public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
+{
+    // Read delegate properties — preserved so existing AppConfig.Github.Host /
+    // AppConfig.Github.LocalWorkspace call sites compile unchanged. v2 removes these when
+    // host-dependent DI registrations gain per-account awareness.
+    //
+    // NB: not marked [Obsolete] in v1 (spec § 11, plan-time decision 3). There is nothing
+    // for callers to migrate to until v2 ships the parameterized interfaces; [Obsolete]
+    // would flood the build with warnings under TreatWarningsAsErrors at zero benefit.
+    public string Host => Accounts[0].Host;
+    public string? LocalWorkspace => Accounts[0].LocalWorkspace;
+}
+
 public sealed record LlmConfig();
