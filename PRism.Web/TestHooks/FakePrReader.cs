@@ -29,15 +29,15 @@ internal sealed class FakePrReader : IPrReader
                 Title: "Calc utilities",
                 Body: "Adds Calc helper methods.",
                 Author: "e2e-user",
-                State: "OPEN",
+                State: _store.PrState,
                 HeadSha: _store.CurrentHeadSha,
                 BaseSha: FakeReviewBackingStore.BaseSha,
                 HeadBranch: "feat/calc",
                 BaseBranch: "main",
                 Mergeability: "MERGEABLE",
                 CiSummary: "none",
-                IsMerged: false,
-                IsClosed: false,
+                IsMerged: _store.IsMerged,
+                IsClosed: _store.IsClosed,
                 OpenedAt: _store.Now.AddHours(-1));
             var detail = new PrDetailDto(
                 Pr: pr,
@@ -133,7 +133,7 @@ internal sealed class FakePrReader : IPrReader
             return Task.FromResult(new ActivePrPollSnapshot("", "UNKNOWN", "OPEN", 0, 0));
         lock (_store.Gate)
         {
-            return Task.FromResult(new ActivePrPollSnapshot(_store.CurrentHeadSha, "MERGEABLE", "OPEN", 0, 0));
+            return Task.FromResult(new ActivePrPollSnapshot(_store.CurrentHeadSha, "MERGEABLE", _store.PrState, 0, 0));
         }
     }
 

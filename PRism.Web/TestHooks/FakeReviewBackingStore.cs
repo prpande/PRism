@@ -50,6 +50,13 @@ internal sealed class FakeReviewBackingStore
     public string CurrentHeadSha { get; private set; }
     public DateTimeOffset Now { get; private set; }
 
+    // PR open/closed/merged state — "OPEN" | "CLOSED" | "MERGED". Mutated by POST /test/set-pr-state
+    // to drive the closed/merged bulk-discard surface (PR5: DiscardAllDraftsButton mounts only when
+    // the PR is no longer open). Surfaced by FakePrReader.GetPrDetailAsync + PollActivePrAsync.
+    public string PrState { get; private set; }
+    public bool IsClosed => !string.Equals(PrState, "OPEN", StringComparison.Ordinal);
+    public bool IsMerged => string.Equals(PrState, "MERGED", StringComparison.Ordinal);
+
     // (path, sha) → file content. Populated for each (path, sha) the reconciliation
     // pipeline might query. AdvanceHead adds new (path, newHead) entries.
     public Dictionary<(string Path, string Sha), string> FileContent { get; } = new();
@@ -66,9 +73,10 @@ internal sealed class FakeReviewBackingStore
     public FakeReviewBackingStore()
     {
         // Initial-state assignments happen inside Reset(); ctor stays a thin delegate.
-        // CurrentHeadSha needs a non-null seed for the null-safety analyzer, so Reset()
+        // CurrentHeadSha / PrState need a non-null seed for the null-safety analyzer, so Reset()
         // is the single source of truth for the canonical initial state.
         CurrentHeadSha = string.Empty;
+        PrState = "OPEN";
         Reset();
     }
 
@@ -81,6 +89,7 @@ internal sealed class FakeReviewBackingStore
         {
             Now = DateTimeOffset.UtcNow;
             CurrentHeadSha = Sha3;
+            PrState = "OPEN";
 
             FileContent.Clear();
             FileContent[("src/Calc.cs", Sha1)] = Calc1;
@@ -141,5 +150,17 @@ internal sealed class FakeReviewBackingStore
             if (reachable) ReachableShas.Add(sha);
             else ReachableShas.Remove(sha);
         }
+    }
+
+    // Sets the PR's open/closed/merged state. "OPEN" leaves the demo flow as-is; "CLOSED" / "MERGED"
+    // make PrDetailDto.Pr.IsClosed/IsMerged true so the frontend swaps the (disabled) Submit button
+    // for the bulk-discard surface (PR5).
+    public void SetPrState(string state)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(state);
+        var normalized = state.ToUpperInvariant();
+        if (normalized is not ("OPEN" or "CLOSED" or "MERGED"))
+            throw new ArgumentException($"Unknown PR state '{state}'; expected OPEN | CLOSED | MERGED.", nameof(state));
+        lock (Gate) PrState = normalized;
     }
 }
