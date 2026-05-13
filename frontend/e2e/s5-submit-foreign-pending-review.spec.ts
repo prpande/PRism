@@ -85,11 +85,9 @@ test('S5 foreign pending review — Discard deletes it on github.com', async ({ 
   // Scope the sub-modal lookup by its heading so the locator can't accidentally match the (now
   // unmounted) parent foreign-review modal — the ForeignPendingReviewModal sets `open={!discardOpen}`
   // so only one Modal is mounted at a time, but the scoped lookup makes the intent explicit.
-  const sub = page
-    .getByRole('dialog')
-    .filter({
-      has: page.getByRole('heading', { name: /delete the pending review on github\.com\?/i }),
-    });
+  const sub = page.getByRole('dialog').filter({
+    has: page.getByRole('heading', { name: /delete the pending review on github\.com\?/i }),
+  });
   await expect(sub).toBeVisible();
   await sub.getByRole('button', { name: /^delete$/i }).click();
 
