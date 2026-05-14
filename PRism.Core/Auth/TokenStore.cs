@@ -212,7 +212,25 @@ public sealed class TokenStore : ITokenStore
             throw new TokenStoreException(TokenStoreFailure.CorruptCache,
                 $"PRism.tokens.cache has no `tokens.{AccountKeys.Default}` entry. Re-validate the PAT at Setup.");
         }
-        var pat = defaultNode.GetValue<string>();
+
+        // Same defensive pattern as the version-discriminator branch above (lines 178-186):
+        // a hand-edited or corrupt cache with a non-string `tokens.default` value (e.g.,
+        // {"version":1,"tokens":{"default":42}} or {"default":null}) makes
+        // `JsonNode.GetValue<string>()` throw `InvalidOperationException`, which would
+        // propagate out of ReadAsync rather than surfacing as the documented
+        // `TokenStoreException(CorruptCache)`. Map it to the correct contract. Caught by
+        // Copilot post-open code review on PR #53.
+        string? pat;
+        try
+        {
+            pat = defaultNode.GetValue<string>();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+        {
+            throw new TokenStoreException(TokenStoreFailure.CorruptCache,
+                $"PRism.tokens.cache `tokens.{AccountKeys.Default}` is not a string. Re-validate the PAT at Setup.", ex);
+        }
+
         if (string.IsNullOrEmpty(pat))
         {
             throw new TokenStoreException(TokenStoreFailure.CorruptCache,

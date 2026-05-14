@@ -166,6 +166,12 @@ public class TokenStoreReshapeTests
     [InlineData("{\"version\":\"one\",\"tokens\":{\"default\":\"ghp_abc\"}}")]
     [InlineData("{\"tokens\":{\"default\":\"ghp_abc\"}}")]
     [InlineData("{\"version\":1,\"tokens\":{}}")]
+    // Caught by Copilot post-open review on PR #53: defaultNode.GetValue<string>()
+    // previously threw InvalidOperationException on non-string values (silently leaking
+    // out of ReadAsync); now mapped to TokenStoreException(CorruptCache).
+    [InlineData("{\"version\":1,\"tokens\":{\"default\":42}}")]
+    [InlineData("{\"version\":1,\"tokens\":{\"default\":null}}")]
+    [InlineData("{\"version\":1,\"tokens\":{\"default\":[\"ghp_arr\"]}}")]
     public async Task ReadAsync_invalid_version_discriminator_or_missing_default_throws_TokenStoreException_and_does_not_overwrite(string fileContents)
     {
         using var dir = new TempDataDir();
