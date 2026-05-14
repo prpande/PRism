@@ -92,7 +92,7 @@ internal static class AppStateMigrations
         root.Remove("ai-state");
         root.Remove("last-configured-github-host");
 
-        root["accounts"] = new JsonObject { ["default"] = defaultAccount };
+        root["accounts"] = new JsonObject { [AccountKeys.Default] = defaultAccount };
         root["version"] = 5;
         return root;
     }

@@ -253,10 +253,10 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             accountsObj = new JsonObject();
             root["accounts"] = accountsObj;
         }
-        if (accountsObj["default"] is not JsonObject defaultObj)
+        if (accountsObj[AccountKeys.Default] is not JsonObject defaultObj)
         {
             defaultObj = new JsonObject();
-            accountsObj["default"] = defaultObj;
+            accountsObj[AccountKeys.Default] = defaultObj;
         }
 
         // Forward-fixup the reviews.sessions backbone under accounts.default (the V3-era

@@ -118,7 +118,12 @@ public class ConfigStoreMigrationTests
         var loginWrite = store.SetDefaultAccountLoginAsync("alice", CancellationToken.None);
         var themeWrite = store.PatchAsync(new Dictionary<string, object?> { ["theme"] = "dark" }, CancellationToken.None);
         await Task.WhenAll(loginWrite, themeWrite);
-        await Task.Delay(250);  // drain debounced FSW events
+        // Drain debounced FSW events. HandleFileChangedAsync's debounce is 100ms; with two
+        // disk writes plus OS notification delivery the tail can run ~150-300ms on a healthy
+        // machine. 500ms gives clear headroom for slow CI runners without converting this
+        // into a poll loop (preflight adversarial review flagged 250ms as tight; 500ms is
+        // 5× the documented debounce window — adequate margin without test churn).
+        await Task.Delay(500);
 
         store.Current.Ui.Theme.Should().Be("dark");
         store.Current.Github.Accounts[0].Login.Should().Be("alice");
