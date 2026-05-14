@@ -8,7 +8,7 @@ public class InMemoryAppStateStoreTests
     public async Task UpdateAsync_AppliesTransform_AndLoadAsyncSeesIt()
     {
         var store = new InMemoryAppStateStore();
-        await store.UpdateAsync(s => s with { LastConfiguredGithubHost = "https://github.com" }, CancellationToken.None);
+        await store.UpdateAsync(s => s.WithDefaultLastConfiguredGithubHost("https://github.com"), CancellationToken.None);
         var loaded = await store.LoadAsync(CancellationToken.None);
         Assert.Equal("https://github.com", loaded.LastConfiguredGithubHost);
     }

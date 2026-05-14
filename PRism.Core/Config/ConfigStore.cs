@@ -1,5 +1,8 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using PRism.Core.Json;
+using PRism.Core.State;
+using PRism.Core.Storage;
 
 namespace PRism.Core.Config;
 
@@ -34,6 +37,39 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             _gate.Release();
         }
         TryStartWatcher();
+    }
+
+    public async Task SetDefaultAccountLoginAsync(string login, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(login);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var accounts = _current.Github.Accounts.ToList();
+            if (accounts.Count == 0)
+            {
+                // Defensive: a misshapen config that somehow reached this point gets a fresh
+                // default-account entry rather than tripping IndexOutOfRange. The on-disk write
+                // below persists the seeded shape.
+                accounts.Add(new GithubAccountConfig(
+                    Id: AccountKeys.Default,
+                    Host: AppConfig.Default.Github.Host,
+                    Login: login,
+                    LocalWorkspace: null));
+            }
+            else
+            {
+                accounts[0] = accounts[0] with { Login = login };
+            }
+            _current = _current with { Github = new GithubConfig(accounts) };
+            await WriteToDiskAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        RaiseChanged();
     }
 
     public async Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct)
@@ -82,6 +118,34 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             using (var reader = new StreamReader(fs))
                 raw = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
 
+            // S6 PR0 — legacy-shape rewrite. If the on-disk config still has the pre-S6 shape
+            // (`github.host` / `github.local-workspace` directly under github, no accounts list),
+            // rewrite it to the new accounts shape before deserialization. This is a JsonNode-
+            // level rewrite (no strongly-typed AppConfig allocated yet) so we can rewrite without
+            // tripping the new GithubConfig constructor mismatch. The atomic-rename write below
+            // ensures partial writes can't leave the file with both shapes.
+            var rootNode = JsonNode.Parse(raw, documentOptions: new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+            // Defensive type-checked legacy-shape extraction. The original draft used
+            // `hostNode.GetValue<string>()` directly, which throws InvalidOperationException
+            // on type mismatch (e.g., a hand-edited `"host": 42` or `"local-workspace": []`).
+            // The catch below covers only JsonException / IOException / UnauthorizedAccess
+            // Exception, so an InvalidOperationException would escape ReadFromDiskAsync /
+            // InitAsync and crash startup. Pre-S6 deserialization raised JsonException for
+            // the same mistyped values and was absorbed into LastLoadError; the migration
+            // shim must preserve that startup-doesn't-crash invariant. Solution: extract
+            // both fields via TryGetValue<string>; on type mismatch, skip the rewrite and
+            // let the strongly-typed Deserialize below surface the shape through the
+            // existing JsonException catch. Caught by Copilot post-open code review (PR #53).
+            bool rewritten = TryRewriteLegacyGithubShape(rootNode);
+            if (rewritten)
+            {
+                raw = rootNode!.ToJsonString();
+            }
+
             var parsed = JsonSerializer.Deserialize<AppConfig>(raw, JsonSerializerOptionsFactory.Storage);
             if (parsed is null)
             {
@@ -112,8 +176,26 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 Github     = parsed.Github     ?? AppConfig.Default.Github,
                 Llm        = parsed.Llm        ?? AppConfig.Default.Llm,
             };
+
+            // Defensive: a partial on-disk shape with `github: {}` deserializes to a
+            // GithubConfig with a null/empty Accounts list. Backfill the default-account entry
+            // so the delegate property `config.Github.Host` doesn't NRE/IndexOutOfRange on
+            // `Accounts[0]`. Symmetric to the per-sub-record null backfill above; the only
+            // reason it's separate is the check is on a nested property, not the sub-record itself.
+            if (parsed.Github.Accounts is null || parsed.Github.Accounts.Count == 0)
+            {
+                parsed = parsed with { Github = AppConfig.Default.Github };
+            }
+
             _current = parsed;
             LastLoadError = null;
+
+            // If we rewrote the legacy shape, persist the new shape to disk so subsequent loads
+            // skip the rewrite path. Atomic-rename via WriteToDiskAsync.
+            if (rewritten)
+            {
+                await WriteToDiskAsync(ct).ConfigureAwait(false);
+            }
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -128,7 +210,69 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         var temp = $"{_path}.tmp-{Guid.NewGuid():N}";
         var json = JsonSerializer.Serialize(_current, JsonSerializerOptionsFactory.Storage);
         await File.WriteAllTextAsync(temp, json, ct).ConfigureAwait(false);
-        File.Move(temp, _path, overwrite: true);
+        await AtomicFileMove.MoveAsync(temp, _path, ct).ConfigureAwait(false);
+    }
+
+    // Legacy-shape detection for pre-S6 configs (`github.host` / `github.local-workspace`
+    // directly under `github`, no `accounts` list). Three outcomes:
+    //   - No match (already V5, no `host` key, structurally different): return false,
+    //     tree untouched.
+    //   - Match with valid string types: rewrite tree in place, return true.
+    //   - Match-shape but type mismatch (host or local-workspace present but not a string,
+    //     e.g., a hand-edited `"host": 42`): throw JsonException. The caller's catch
+    //     clause records it into LastLoadError and falls back to AppConfig.Default —
+    //     same surface as pre-S6 deserialization for the same corruption. Without this
+    //     the original `hostNode.GetValue<string>()` would have thrown
+    //     InvalidOperationException, which the catch does NOT cover, escaping startup.
+    //     Caught by Copilot post-open code review (PR #53).
+    private static bool TryRewriteLegacyGithubShape(JsonNode? rootNode)
+    {
+        if (rootNode is not JsonObject rootObj
+            || rootObj["github"] is not JsonObject github
+            || github["accounts"] is not null
+            || github["host"] is null)
+        {
+            return false;
+        }
+
+        // host present but non-string → this is a legacy-shape config (host key exists at
+        // the github level) with a malformed value. Surface as JsonException — same error
+        // class pre-S6 deserialization would have raised for the same payload.
+        if (github["host"] is not JsonValue hostValue
+            || !hostValue.TryGetValue<string>(out var host))
+        {
+            throw new JsonException(
+                "config.json `github.host` must be a string when no `accounts` list is present " +
+                "(legacy single-host shape).");
+        }
+
+        // local-workspace is optional. Missing key → null. Present key with non-string
+        // type → JsonException (same rationale as above). Present string → use it.
+        string? localWorkspace = null;
+        var localWorkspaceNode = github["local-workspace"];
+        if (localWorkspaceNode is not null)
+        {
+            if (localWorkspaceNode is not JsonValue localValue
+                || !localValue.TryGetValue<string>(out var lw))
+            {
+                throw new JsonException(
+                    "config.json `github.local-workspace` must be a string or null when no " +
+                    "`accounts` list is present (legacy single-host shape).");
+            }
+            localWorkspace = lw;
+        }
+
+        var account = new JsonObject
+        {
+            ["id"] = AccountKeys.Default,
+            ["host"] = host,
+            ["login"] = null,
+            ["local-workspace"] = localWorkspace,
+        };
+        github.Remove("host");
+        github.Remove("local-workspace");
+        github["accounts"] = new JsonArray(account);
+        return true;
     }
 
     private void TryStartWatcher()

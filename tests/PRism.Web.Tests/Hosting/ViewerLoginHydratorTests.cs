@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PRism.Core;
 using PRism.Core.Auth;
+using PRism.Core.Config;
 using PRism.Core.Contracts;
 using Xunit;
 
@@ -22,7 +23,7 @@ public class ViewerLoginHydratorTests
 
         var loginProvider = new ViewerLoginProvider();
 
-        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, NullLogger<ViewerLoginHydrator>.Instance);
+        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, new Mock<IConfigStore>().Object, NullLogger<ViewerLoginHydrator>.Instance);
 
         await hydrator.StartAsync(CancellationToken.None);
 
@@ -40,7 +41,7 @@ public class ViewerLoginHydratorTests
 
         var loginProvider = new ViewerLoginProvider();
 
-        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, NullLogger<ViewerLoginHydrator>.Instance);
+        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, new Mock<IConfigStore>().Object, NullLogger<ViewerLoginHydrator>.Instance);
 
         await hydrator.StartAsync(CancellationToken.None);
 
@@ -60,7 +61,7 @@ public class ViewerLoginHydratorTests
 
         var loginProvider = new ViewerLoginProvider();
 
-        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, NullLogger<ViewerLoginHydrator>.Instance);
+        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, new Mock<IConfigStore>().Object, NullLogger<ViewerLoginHydrator>.Instance);
 
         await hydrator.StartAsync(CancellationToken.None);
 
@@ -79,7 +80,7 @@ public class ViewerLoginHydratorTests
 
         var loginProvider = new ViewerLoginProvider();
 
-        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, NullLogger<ViewerLoginHydrator>.Instance);
+        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, new Mock<IConfigStore>().Object, NullLogger<ViewerLoginHydrator>.Instance);
 
         // Must not throw — startup is forgiving; the next /api/auth/connect or refresh tick can recover.
         await hydrator.StartAsync(CancellationToken.None);
@@ -98,7 +99,7 @@ public class ViewerLoginHydratorTests
         var loginProvider = new ViewerLoginProvider();
         loginProvider.Set("already-logged-in"); // simulate /api/auth/connect winning the race
 
-        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, NullLogger<ViewerLoginHydrator>.Instance);
+        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, new Mock<IConfigStore>().Object, NullLogger<ViewerLoginHydrator>.Instance);
 
         await hydrator.StartAsync(CancellationToken.None);
 
@@ -118,7 +119,7 @@ public class ViewerLoginHydratorTests
 
         var loginProvider = new ViewerLoginProvider();
 
-        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, NullLogger<ViewerLoginHydrator>.Instance);
+        var hydrator = new ViewerLoginHydrator(tokens.Object, review.Object, loginProvider, new Mock<IConfigStore>().Object, NullLogger<ViewerLoginHydrator>.Instance);
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();

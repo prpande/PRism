@@ -1,32 +1,36 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using PRism.Core.Config;
 
 namespace PRism.Core.Auth;
 
 /// <summary>
-/// On startup, if a stored token exists, validates credentials once and caches the
-/// resulting viewer login in <see cref="IViewerLoginProvider"/>. Without this, a
-/// post-restart user with an existing token never re-calls <c>/api/auth/connect</c>,
-/// the login stays <c>""</c>, and the awaiting-author inbox section silently
-/// returns empty (every PR review's user mismatches the empty viewer login).
+/// On startup, if a stored token exists, validates credentials once, caches the resulting
+/// viewer login in <see cref="IViewerLoginProvider"/>, and side-writes the login into
+/// <c>config.github.accounts[0].login</c> via <see cref="IConfigStore.SetDefaultAccountLoginAsync"/>.
+/// The config write keeps v1's per-account login field populated for v2's eventual display
+/// logic without coupling that surface to the in-memory <see cref="IViewerLoginProvider"/> cache.
 /// </summary>
 public sealed partial class ViewerLoginHydrator : IHostedService
 {
     private readonly ITokenStore _tokens;
     private readonly IReviewAuth _review;
     private readonly IViewerLoginProvider _loginCache;
+    private readonly IConfigStore _config;
     private readonly ILogger<ViewerLoginHydrator> _log;
 
     public ViewerLoginHydrator(
         ITokenStore tokens,
         IReviewAuth review,
         IViewerLoginProvider loginCache,
+        IConfigStore config,
         ILogger<ViewerLoginHydrator> log)
     {
         _tokens = tokens;
         _review = review;
         _loginCache = loginCache;
+        _config = config;
         _log = log;
     }
 
@@ -57,6 +61,19 @@ public sealed partial class ViewerLoginHydrator : IHostedService
             if (result.Ok && !string.IsNullOrEmpty(result.Login))
             {
                 _loginCache.Set(result.Login);
+                try
+                {
+                    await _config.SetDefaultAccountLoginAsync(result.Login, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    // Best-effort: failure to write the per-account login into config must not block
+                    // hydration. The in-memory IViewerLoginProvider already has the login, so v1's
+                    // single-account runtime continues to work; v2 will surface this gap if it relies
+                    // on the config-side login as a hard source of truth (see spec § 7 advisory).
+                    Log.ConfigLoginWriteFailed(_log, ex);
+                }
             }
             else
             {
@@ -82,5 +99,8 @@ public sealed partial class ViewerLoginHydrator : IHostedService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Viewer login hydration: ValidateCredentialsAsync threw; awaiting-author section may be empty until next /api/auth/connect")]
         internal static partial void ValidationFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Viewer login hydration: config.github.accounts[0].login write failed; the in-memory login cache is set but the on-disk login is stale until next successful connect")]
+        internal static partial void ConfigLoginWriteFailed(ILogger logger, Exception ex);
     }
 }

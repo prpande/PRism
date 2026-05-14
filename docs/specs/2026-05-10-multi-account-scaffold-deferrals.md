@@ -183,6 +183,61 @@ Items the implementing engineer should keep an eye on during Phase 1 execution; 
 
 ---
 
+## Implementation-time deferrals
+
+Decisions and discoveries that surfaced during execution of the plan. Each entry follows the same format as the plan-time entries above: severity, date, source, reason, where-the-gap-lives, revisit-trigger.
+
+### [Decision] Tasks 3 and 4 combined into one commit (load-bearing for green-test discipline)
+
+- **Source:** Implementation 2026-05-13 — first test-suite run after Task 3 step 6 surfaced 34 runtime failures.
+- **Severity:** P0 — without combining, Task 3's commit leaves the codebase unable to load any existing state.json.
+- **Date:** 2026-05-13
+- **Reason:** The plan's Task 3 step 6 claims `dotnet test` is green after the reshape alone. That claim is wrong: after Task 3, `AppState` requires `ImmutableDictionary<string, AccountState> Accounts` as a positional constructor parameter. `LoadCoreAsync` deserializes existing V4 files (which have top-level `reviews/ai-state/last-configured-github-host` and no `accounts` key) directly into the new shape — `Accounts` deserializes to null, and the record's non-nullable param rejects construction. `MigrationSteps` still stops at `MigrateV3ToV4`, so the chain never produces a V5 shape. `EnsureCurrentShape` still backfills the V3-era root-level `reviews`. Result: every load against a non-empty state.json throws, every test that round-trips state.json fails, every endpoint that calls `AppStateStore.LoadAsync` returns 500. The plan author appears to have missed this when claiming Task 3 step 6 was green; the most-likely-culprits hint in the same step is "missed constructor-call rewrite or a `with`-expression at a write site you didn't update (compile error)" — both of which would have been caught at build time, not test time.
+- **Why combine rather than split:** The user's standing rule favors green-at-every-commit (TDD discipline + pre-push checklist). Two correct options were on the table: (a) commit Task 3 with known-broken intermediate state and trust Task 4 to follow immediately; (b) bundle Tasks 3 and 4 into one commit. Option (b) preserves intermediate-commit hygiene and matches what the plan's body claims about Task 3 step 6 anyway. The PR diff still shows one logical PR; only the commit granularity differs.
+- **Where the gap lives in code:** Task 3 step 6's "Expected: PASS" line in the plan body. The plan body's "Critical-path check before opening the PR" section (just before "Task 1") implicitly accepts that Task 3+Task 4 land together — but the per-task step 6 expectations do not.
+- **Revisit when:** Never — this is a permanent fact about the V4→V5 reshape. If a future S6/S7 slice splits an atomic record reshape across two commits, surface the same concern in plan-writing.
+
+### [Decision] 24th write site found at AppStateStoreUpdateAsyncTests.cs:41-47 (plan undercount by 1)
+
+- **Source:** Implementation 2026-05-13 — `git grep -nA3 ' with$' -- '*.cs'` multi-line scan during Task 3 step 5.
+- **Severity:** P1 — would have caused a `CS8852` compile error if missed; the grep recipe surfaced it.
+- **Date:** 2026-05-13
+- **Reason:** The plan's plan-time-decision 2 + Task 3 step 5 enumerate 23 write sites (11 prod + 12 test). The actual count is 24 — the plan's enumerated multi-line list (`AppStateRoundTripTests.cs:30`, `InboxRefreshOrchestratorTests.cs:506`, `InMemoryAppStateStore.cs:48-57`) missed a second multi-line `with` block in `tests/PRism.Core.Tests/State/AppStateStoreUpdateAsyncTests.cs` at lines 41-47 (an `await store.UpdateAsync(s => s with { Reviews = new PrSessionsState(...) }, ...)` call inside the concurrent-transforms test). The plan listed AppStateStoreUpdateAsyncTests.cs:23 (single-line `LastConfiguredGithubHost`) and :57 (single-line `Reviews`) but missed the multi-line `Reviews` site sandwiched between them.
+- **Why the recount matters:** Documenting the 24-site total prevents a future grep-driven verification from concluding "I got all 23 the plan listed, I must be done" — the plan's count itself was wrong.
+- **Where the gap lives in code:** The plan's plan-time-decision 2 + Task 3 step 5 enumeration. The grep recipes in step 5 (single-line + multi-line) caught the site correctly; the issue was the manual cross-check against the plan's enumerated list.
+- **Revisit when:** Never — already corrected at execution time.
+
+### [Decision] LoadAsync_resets_read_only test fixture updated from V3-era to V5-era malformed body
+
+- **Source:** Implementation 2026-05-13 — `LoadAsync_resets_read_only_when_future_version_body_quarantined` failed after Task 4's EnsureCurrentShape changes.
+- **Severity:** P2 — test intent preserved; one fixture line changed.
+- **Date:** 2026-05-13
+- **Reason:** The original test fixture used `"reviews": "not-a-dict"` at the root level to break Deserialize and trigger the quarantine path. Under V5, root-level `reviews` is an unknown member (silently ignored by Deserialize) and the new EnsureCurrentShape aggressively backfills `accounts.default.reviews` from scratch — so the original malformed shape passes Deserialize with version=99 + IsReadOnlyMode=true and never triggers quarantine. The test's INTENT is "verify the quarantine path resets IsReadOnlyMode"; the fixture just needs a V5-relevant malformed body that EnsureCurrentShape doesn't repair. Updated to `"ui-preferences": "not-an-object"` plus a valid `accounts.default.*` body — EnsureCurrentShape only backfills `ui-preferences` when missing (doesn't type-check existing values), so a string survives EnsureCurrentShape and breaks Deserialize as intended.
+- **Where the fix lives in code:** `tests/PRism.Core.Tests/State/AppStateStoreMigrationTests.cs` ~line 176, the `LoadAsync_resets_read_only_when_future_version_body_quarantined` test fixture's JSON.
+- **Revisit when:** If a future spec hardens EnsureCurrentShape to type-check existing values (e.g., reject `ui-preferences: <string>` and quarantine), update the fixture again. For now, the malformed-body trigger relies on Deserialize-level type validation, not EnsureCurrentShape-level.
+
+### [Risk] TokenStore.LegacyPatPattern is a best-effort regex heuristic, not a hard correctness boundary
+
+- **Source:** Implementation 2026-05-14 — claude[bot] post-open code review on PR #53.
+- **Severity:** P3 (advisory).
+- **Date:** 2026-05-14
+- **Reason:** `TokenStore.LegacyPatPattern = ^[A-Za-z0-9_\-]{20,255}$` covers GitHub's two current PAT formats (`ghp_*` classic + `github_pat_*` fine-grained). If GitHub ever issues PATs with characters outside `[A-Za-z0-9_\-]` (e.g., `.`, `@`, `+`, `/`), legacy on-disk caches containing such tokens would fall through the legacy-blob detection, hit `JsonNode.Parse`, fail, and surface as `CorruptCache` on first read. Affected users would lose their cached PAT on upgrade and need to re-Setup.
+- **Why not tighten the regex:** PAT shape is GitHub-controlled. Any character class we choose is an external invariant we can't enforce. The current regex is a pragmatic match for what's been stable for years; extending it pre-emptively would just move the boundary, not eliminate it.
+- **Mitigation in v1:** None code-side. The branch-2 detection in `ParseCacheFileBytes` already accepts JSON-quoted PATs as a defense-in-depth fallback for hand-edited caches. Documented here so future incident triage points at the regex if upgrade reports surface this failure mode.
+- **Revisit when:** GitHub changes PAT format, OR a user reports `CorruptCache` on a v1 → S6 upgrade with a known-good PAT, OR a v2 slice replaces the regex with a richer detection path.
+
+### [Risk] EnsureCurrentShape future-version backfill is now more aggressive than V3/V4
+
+- **Source:** Implementation 2026-05-13 — observed while diagnosing the failing test above.
+- **Severity:** P2 (accepted, plan-aligned).
+- **Date:** 2026-05-13
+- **Reason:** The V3/V4-era `EnsureCurrentShape` only backfilled root-level `reviews` when missing — non-object existing values (e.g., `reviews: "not-a-dict"`) survived and broke Deserialize, triggering quarantine. The plan's Task 4 step 5 code uses `if (root["accounts"] is not JsonObject accountsObj) { ... root["accounts"] = accountsObj; }` — which OVERWRITES non-object existing values with a fresh empty `JsonObject`. Same for `accounts["default"]`. Result: a future-version state.json with `accounts: "broken"` or `accounts.default: "broken"` is silently repaired into an empty accounts container, the user enters IsReadOnlyMode (good), but the corruption signal is hidden — no quarantine, no `.corrupt-*` file. Net effect: cleaner read-only-mode UX for future-version files at the cost of a narrower quarantine trigger.
+- **Why this is acceptable in v1:** Future-version files are by definition produced by a binary the v1 binary doesn't understand; the safer default is "load best-effort into read-only mode" rather than "quarantine aggressively." If a future v2 binary writes a malformed accounts container, that's a v2 bug, not a v1 corruption to surface. The malformed-shape quarantine path still fires for shapes EnsureCurrentShape doesn't touch (top-level required fields like `ui-preferences` with type mismatch, or any deeper sub-object the deserializer rejects).
+- **Mitigation in v1:** None code-side. The replaced fixture in `LoadAsync_resets_read_only_when_future_version_body_quarantined` documents the V5-era trigger pattern for future regression tests.
+- **Revisit when:** If a v2 release accidentally writes a malformed accounts container (e.g., a serialization bug) and v1 users silently lose state, harden EnsureCurrentShape to surface that corruption.
+
+---
+
 ## Note on the deferrals format
 
 This sidecar mirrors the format of [`2026-05-11-s5-submit-pipeline-deferrals.md`](2026-05-11-s5-submit-pipeline-deferrals.md): top-level `[Decision]` and `[Risk]` entries, severity tag, date, reason, revisit-trigger, where-the-gap-lives. The plan body's "Plan-time decisions" section (top of `docs/plans/2026-05-10-multi-account-scaffold.md`) is the in-plan summary; this sidecar is the durable per-decision record.

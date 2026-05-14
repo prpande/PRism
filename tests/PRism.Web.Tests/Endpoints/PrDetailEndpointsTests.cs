@@ -458,7 +458,7 @@ public class PrDetailEndpointsTests
             {
                 ["octo/repo/1"] = new ReviewSessionState(null, null, null, null, viewedFiles, new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
             };
-            await seedStore.SaveAsync(initial with { Reviews = initial.Reviews with { Sessions = sessions } }, CancellationToken.None);
+            await seedStore.SaveAsync(initial.WithDefaultReviews(initial.Reviews with { Sessions = sessions }), CancellationToken.None);
         }
 
         var client = factory.CreateClient();

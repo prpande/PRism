@@ -30,8 +30,8 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        // v1 → v2 (adds empty viewed-files) → v3 (rename + draft collections) → v4 (ThreadId field) chained.
-        state.Version.Should().Be(4);
+        // v1 → v2 (adds empty viewed-files) → v3 (rename + draft collections) → v4 (ThreadId field) → v5 (accounts container) chained.
+        state.Version.Should().Be(5);
         state.Reviews.Sessions.Should().ContainKey("owner/repo/123");
         state.Reviews.Sessions["owner/repo/123"].ViewedFiles.Should().BeEmpty();
         state.Reviews.Sessions["owner/repo/123"].LastViewedHeadSha.Should().Be("abc123");
@@ -61,8 +61,8 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        // v2 → v3 runs the rename + draft-collections migration, then v3 → v4 adds the ThreadId field; v1→v2 step is skipped.
-        state.Version.Should().Be(4);
+        // v2 → v3 runs the rename + draft-collections migration, then v3 → v4 adds the ThreadId field, then v4 → v5 moves under accounts; v1→v2 step is skipped.
+        state.Version.Should().Be(5);
         var session = state.Reviews.Sessions["owner/repo/123"];
         session.ViewedFiles.Should().ContainKey("src/Foo.cs");
         // Draft-collection backfill — symmetry with MigrationStepTests.MigrateV2ToV3_BackfillsDraftFieldsPerSession.
@@ -160,7 +160,7 @@ public class AppStateStoreMigrationTests
                         ["lower/case/path.ts"] = "head1",
                     })
             };
-            await writeStore.SaveAsync(initial with { Reviews = initial.Reviews with { Sessions = sessions } }, CancellationToken.None);
+            await writeStore.SaveAsync(initial.WithDefaultReviews(initial.Reviews with { Sessions = sessions }), CancellationToken.None);
         }
 
         using var readStore = new AppStateStore(dir.Path);
@@ -178,15 +178,23 @@ public class AppStateStoreMigrationTests
         using var dir = new TempDataDir();
         var statePath = Path.Combine(dir.Path, "state.json");
         // version=99 trips the future-version branch (IsReadOnlyMode=true), but the
-        // structurally-incompatible body (`reviews` as a string) makes Deserialize
-        // throw JsonException — the catch quarantines and writes a fresh current-version
-        // default. After that, the on-disk file IS current-version and saves must work again.
+        // structurally-incompatible body (`ui-preferences` as a string where an object is
+        // required) makes Deserialize throw JsonException — the catch quarantines and writes
+        // a fresh current-version default. After that, the on-disk file IS current-version
+        // and saves must work again.
+        //
+        // S6 PR0: prior to V5, this fixture used `reviews: "not-a-dict"` at the root level.
+        // V5 moves reviews under accounts.default and EnsureCurrentShape backfills the
+        // accounts container aggressively for the future-version branch, so a malformed
+        // root-level `reviews` is now silently ignored as an unknown member. The malformed
+        // shape that still triggers the quarantine path under V5 is a type mismatch on a
+        // top-level required field that EnsureCurrentShape does not overwrite when present
+        // — `ui-preferences` is the cleanest choice (added-if-missing, not type-checked).
         await File.WriteAllTextAsync(statePath, """
         {
           "version": 99,
-          "reviews": "not-a-dict",
-          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
-          "last-configured-github-host": "https://github.com"
+          "ui-preferences": "not-an-object",
+          "accounts": { "default": { "reviews": { "sessions": {} }, "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null }, "last-configured-github-host": "https://github.com" } }
         }
         """);
 
@@ -326,7 +334,7 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(4);
+        state.Version.Should().Be(5);
         state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
     }
 
@@ -424,7 +432,7 @@ public class AppStateStoreMigrationTests
                     DraftVerdict: null,
                     DraftVerdictStatus: DraftVerdictStatus.Draft)
             };
-            await writeStore.SaveAsync(initial with { Reviews = initial.Reviews with { Sessions = sessions } }, CancellationToken.None);
+            await writeStore.SaveAsync(initial.WithDefaultReviews(initial.Reviews with { Sessions = sessions }), CancellationToken.None);
             await writeStore.ResetToDefaultAsync(CancellationToken.None);
         }
 
@@ -504,5 +512,84 @@ public class AppStateStoreMigrationTests
 
         state.Should().BeEquivalentTo(AppState.Default);
         Directory.GetFiles(dir.Path, "state.json.corrupt-*").Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_migrates_v4_state_file_to_v5_and_moves_reviews_under_accounts_default()
+    {
+        // S6 PR0 — end-to-end V4 → V5 LoadAsync coverage. The chain runs MigrateV4ToV5 against
+        // a real on-disk V4 file (top-level reviews/ai-state/last-host) and proves the resulting
+        // in-memory state surfaces the migrated fields via the delegate properties.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 4,
+          "ui-preferences": { "diff-mode": "unified" },
+          "reviews": {
+            "sessions": {
+              "owner/repo/7": {
+                "last-viewed-head-sha": "head7",
+                "last-seen-comment-id": "c1",
+                "pending-review-id": null,
+                "pending-review-commit-oid": null,
+                "viewed-files": { "src/Foo.cs": "abc" },
+                "draft-comments": [],
+                "draft-replies": [],
+                "draft-summary-markdown": null,
+                "draft-verdict": null,
+                "draft-verdict-status": "Draft"
+              }
+            }
+          },
+          "ai-state": { "repo-clone-map": {}, "workspace-mtime-at-last-enumeration": null },
+          "last-configured-github-host": "https://github.com"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        state.Version.Should().Be(5);
+        state.Reviews.Sessions.Should().ContainKey("owner/repo/7");
+        state.Reviews.Sessions["owner/repo/7"].ViewedFiles.Should().ContainKey("src/Foo.cs");
+        state.LastConfiguredGithubHost.Should().Be("https://github.com");
+        state.UiPreferences.Should().NotBeNull();
+        state.Accounts.Should().ContainKey("default");
+        store.IsReadOnlyMode.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task LoadAsync_future_version_V6_file_enters_read_only_mode_and_EnsureCurrentShape_backfills_safely()
+    {
+        // Future-version coverage (ce-doc-review adversarial F6): a V6 file with extra keys + missing
+        // optional sub-fields under accounts.default must NOT trip EnsureCurrentShape's backfill into
+        // a deserialization NRE, AND must enter read-only mode so SaveAsync is blocked.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
+        {
+          "version": 6,
+          "ui-preferences": { "diff-mode": "side-by-side" },
+          "accounts": {
+            "default": {
+              "v6-future-account-metadata": { "extra": "ignored-by-deserializer" }
+            }
+          },
+          "v6-future-root-key": "ignored-by-deserializer"
+        }
+        """);
+
+        using var store = new AppStateStore(dir.Path);
+        var state = await store.LoadAsync(CancellationToken.None);
+
+        store.IsReadOnlyMode.Should().BeTrue();
+        state.Version.Should().Be(6);                  // version preserved for the surfacing message
+        state.Reviews.Sessions.Should().BeEmpty();     // backfilled by EnsureCurrentShape
+        state.AiState.RepoCloneMap.Should().BeEmpty(); // backfilled by EnsureCurrentShape
+        state.LastConfiguredGithubHost.Should().BeNull(); // nullable; missing key deserializes to null safely
+
+        // SaveAsync MUST refuse — proves read-only mode enforcement, not just the surfacing message.
+        Func<Task> save = () => store.SaveAsync(state, CancellationToken.None);
+        await save.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*read-only mode*");
     }
 }

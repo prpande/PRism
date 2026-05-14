@@ -45,14 +45,11 @@ internal sealed class InMemoryAppStateStore : IAppStateStore
         => _state.Reviews.Sessions.TryGetValue(sessionKey, out var s) ? s : null;
 
     public void SeedSession(string sessionKey, ReviewSessionState session)
-        => _state = _state with
+        => _state = _state.WithDefaultReviews(_state.Reviews with
         {
-            Reviews = _state.Reviews with
+            Sessions = new Dictionary<string, ReviewSessionState>(_state.Reviews.Sessions, StringComparer.Ordinal)
             {
-                Sessions = new Dictionary<string, ReviewSessionState>(_state.Reviews.Sessions, StringComparer.Ordinal)
-                {
-                    [sessionKey] = session,
-                },
+                [sessionKey] = session,
             },
-        };
+        });
 }

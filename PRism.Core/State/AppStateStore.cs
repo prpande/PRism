@@ -2,12 +2,13 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using PRism.Core.Json;
 using PRism.Core.State.Migrations;
+using PRism.Core.Storage;
 
 namespace PRism.Core.State;
 
 public sealed class AppStateStore : IAppStateStore, IDisposable
 {
-    private const int CurrentVersion = 4;
+    private const int CurrentVersion = 5;
 
     // Per-step migrations applied in ascending ToVersion order. Each step takes a JsonObject
     // at version N-1 and returns the same root mutated to version N. Adding a step here is
@@ -23,6 +24,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             (2, AppStateMigrations.MigrateV1ToV2),
             (3, AppStateMigrations.MigrateV2ToV3),
             (4, AppStateMigrations.MigrateV3ToV4),  // S5 PR2 — adds DraftComment.ThreadId
+            (5, AppStateMigrations.MigrateV4ToV5),  // S6 PR0 — moves reviews/ai-state/last-host under accounts.default
         }.OrderBy(s => s.ToVersion).ToArray();
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -174,69 +176,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
         var temp = $"{_path}.tmp-{Guid.NewGuid():N}";
         var json = JsonSerializer.Serialize(state, JsonSerializerOptionsFactory.Storage);
         await File.WriteAllTextAsync(temp, json, ct).ConfigureAwait(false);
-        await MoveWithRetryAsync(temp, _path, ct).ConfigureAwait(false);
-    }
-
-    // On Windows, a previous File.Move can leave a transient handle on the destination
-    // (Defender real-time scanner, Search Indexer, FileSystemWatcher) that races a
-    // follow-up File.Move and causes UnauthorizedAccessException or a sharing-/lock-
-    // violation IOException. Retry only those two transient classes with exponential
-    // backoff capped near 200ms; total budget ~1.1s across 9 retries before the
-    // exception propagates on attempt 10. On final exhaustion the temp file is
-    // best-effort-deleted so it does not orphan in the data directory. The Windows
-    // AV/indexer race does not exist on Linux/macOS, so the first attempt typically
-    // succeeds there with no measurable overhead.
-    private static async Task MoveWithRetryAsync(string source, string destination, CancellationToken ct)
-    {
-        const int maxAttempts = 10;
-        var delay = TimeSpan.FromMilliseconds(10);
-        try
-        {
-            for (var attempt = 1; ; attempt++)
-            {
-                try
-                {
-                    File.Move(source, destination, overwrite: true);
-                    return;
-                }
-                catch (Exception ex) when (IsTransientMoveError(ex) && attempt < maxAttempts)
-                {
-                    await Task.Delay(delay, ct).ConfigureAwait(false);
-                    delay = TimeSpan.FromMilliseconds(Math.Min(delay.TotalMilliseconds * 2, 200));
-                }
-            }
-        }
-        finally
-        {
-            // On success this is a no-op (File.Move consumed the source); on exhaustion
-            // or any non-retried exception, best-effort cleanup of the orphaned temp.
-            try { if (File.Exists(source)) File.Delete(source); }
-#pragma warning disable CA1031 // best-effort cleanup; the original move-failure exception is what matters.
-            catch { }
-#pragma warning restore CA1031
-        }
-    }
-
-    // ERROR_SHARING_VIOLATION = 0x80070020 and ERROR_LOCK_VIOLATION = 0x80070021 are the
-    // two HRESULTs that signal "another handle has the file" — exactly the AV/indexer race
-    // we want to retry. UnauthorizedAccessException covers the related ACCESS_DENIED case
-    // that File.Move's overwrite path raises when DELETE access on the destination is
-    // briefly held. Other IOException subtypes (DirectoryNotFoundException,
-    // PathTooLongException, FileNotFoundException, DriveNotFoundException) are not
-    // transient and propagate immediately.
-    private static bool IsTransientMoveError(Exception ex)
-    {
-        if (ex is UnauthorizedAccessException) return true;
-        if (ex is IOException
-            && ex is not DirectoryNotFoundException
-            && ex is not PathTooLongException
-            && ex is not FileNotFoundException
-            && ex is not DriveNotFoundException)
-        {
-            var hr = ex.HResult & 0xFFFF;
-            return hr == 0x20 || hr == 0x21;
-        }
-        return false;
+        await AtomicFileMove.MoveAsync(temp, _path, ct).ConfigureAwait(false);
     }
 
     private JsonObject MigrateIfNeeded(JsonNode root)
@@ -304,16 +244,42 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
     {
         if (root["ui-preferences"] is null)
             root["ui-preferences"] = new JsonObject { ["diff-mode"] = "side-by-side" };
-        if (root["reviews"] is null)
+
+        // Ensure the V5 accounts container exists with a default entry. A V5 file written by a
+        // newer PRism (future-version branch) that omits an optional sub-field still needs the
+        // structural backbone in place for deserialization to succeed.
+        if (root["accounts"] is not JsonObject accountsObj)
         {
-            root["reviews"] = new JsonObject { ["sessions"] = new JsonObject() };
+            accountsObj = new JsonObject();
+            root["accounts"] = accountsObj;
         }
-        else if (root["reviews"] is JsonObject reviewsObj && reviewsObj["sessions"] is null)
+        if (accountsObj[AccountKeys.Default] is not JsonObject defaultObj)
+        {
+            defaultObj = new JsonObject();
+            accountsObj[AccountKeys.Default] = defaultObj;
+        }
+
+        // Forward-fixup the reviews.sessions backbone under accounts.default (the V3-era
+        // equivalent applied at the root; V5 moves it under the account).
+        if (defaultObj["reviews"] is null)
+        {
+            defaultObj["reviews"] = new JsonObject { ["sessions"] = new JsonObject() };
+        }
+        else if (defaultObj["reviews"] is JsonObject reviewsObj && reviewsObj["sessions"] is null)
         {
             // Defense against partial wraps like `"reviews": {}` — without this, the
             // deserializer produces `Reviews.Sessions == null` and the next
             // state.Reviews.Sessions.TryGetValue(...) NREs at the consumer site.
             reviewsObj["sessions"] = new JsonObject();
+        }
+
+        if (defaultObj["ai-state"] is null)
+        {
+            defaultObj["ai-state"] = new JsonObject
+            {
+                ["repo-clone-map"] = new JsonObject(),
+                ["workspace-mtime-at-last-enumeration"] = null
+            };
         }
     }
 }

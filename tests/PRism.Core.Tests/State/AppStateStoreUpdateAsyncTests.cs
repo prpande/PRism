@@ -20,7 +20,7 @@ public class AppStateStoreUpdateAsyncTests
         using var dir = new TempDataDir();
         IAppStateStore store = new AppStateStore(dir.Path);
 
-        await store.UpdateAsync(state => state with { LastConfiguredGithubHost = "https://updated.test" }, CancellationToken.None);
+        await store.UpdateAsync(state => state.WithDefaultLastConfiguredGithubHost("https://updated.test"), CancellationToken.None);
 
         using var roundTrip = new AppStateStore(dir.Path);
         var loaded = await roundTrip.LoadAsync(CancellationToken.None);
@@ -38,13 +38,10 @@ public class AppStateStoreUpdateAsyncTests
         IAppStateStore store = new AppStateStore(dir.Path);
 
         // Seed an initial session so transforms have somewhere to accumulate.
-        await store.UpdateAsync(s => s with
+        await store.UpdateAsync(s => s.WithDefaultReviews(new PrSessionsState(new Dictionary<string, ReviewSessionState>
         {
-            Reviews = new PrSessionsState(new Dictionary<string, ReviewSessionState>
-            {
-                ["o/r/1"] = new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
-            })
-        }, CancellationToken.None);
+            ["o/r/1"] = new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
+        })), CancellationToken.None);
 
         var tasks = Enumerable.Range(0, 50)
             .Select(i => store.UpdateAsync(s =>
@@ -54,7 +51,7 @@ public class AppStateStoreUpdateAsyncTests
                 viewedFiles[$"file-{i}.cs"] = "head1";
                 var sessions = s.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                 sessions["o/r/1"] = session with { ViewedFiles = viewedFiles };
-                return s with { Reviews = s.Reviews with { Sessions = sessions } };
+                return s.WithDefaultReviews(s.Reviews with { Sessions = sessions });
             }, CancellationToken.None))
             .ToArray();
 

@@ -49,9 +49,10 @@ public class MigrateV3ToV4Tests
     }
 
     [Fact]
-    public void AppStateDefault_IsAtVersion4()
+    public void AppStateDefault_IsAtVersion5()
     {
         // Documentation pin: the in-memory default and the migration target stay in lockstep.
-        Assert.Equal(4, AppState.Default.Version);
+        // S6 PR0 — bumped from 4 to 5 alongside the multi-account scaffold migration.
+        Assert.Equal(5, AppState.Default.Version);
     }
 }

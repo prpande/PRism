@@ -503,13 +503,10 @@ public sealed class InboxRefreshOrchestratorTests
             DraftSummaryMarkdown: null,
             DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
-        var appState = AppState.Default with
+        var appState = AppState.Default.WithDefaultReviews(new PrSessionsState(new Dictionary<string, ReviewSessionState>
         {
-            Reviews = new PrSessionsState(new Dictionary<string, ReviewSessionState>
-            {
-                [sessionKey] = sessionState
-            })
-        };
+            [sessionKey] = sessionState
+        }));
 
         var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
         {

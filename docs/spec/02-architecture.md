@@ -105,15 +105,24 @@ Provider DTOs:
 
 ### GitHub host configuration (cloud + GHES)
 
-PoC supports both **github.com cloud** and **GitHub Enterprise Server (GHES)** through a single config field:
+PoC supports both **github.com cloud** and **GitHub Enterprise Server (GHES)** through a per-account config entry. As of **S6 PR0** the canonical shape is `github.accounts: [{...}]` — a list of per-account entries; v1 always has one entry under `id: "default"`, and the runtime is single-account. v2's slice introduces additional entries when the multi-account runtime + UX lands. The C# property `AppConfig.Github.Host` is preserved as a delegate over `Accounts[0].Host` for v1 read-site compatibility, so endpoint and DI code stays unchanged across the reshape.
 
 ```jsonc
 {
   "github": {
-    "host": "https://github.com"           // default; for GHES, set to your instance host (e.g., "https://github.acmecorp.com")
+    "accounts": [
+      {
+        "id": "default",                       // v1 single-account literal — see PRism.Core.State.AccountKeys.Default
+        "host": "https://github.com",          // for GHES, set to your instance host (e.g., "https://github.acmecorp.com")
+        "login": null,                         // populated by ViewerLoginHydrator on first PAT validation
+        "local-workspace": null                // per-account local clone root; null falls back to <dataDir>/.prism/
+      }
+    ]
   }
 }
 ```
+
+Pre-S6-PR0 configs with the flat `{ "github": { "host": "...", "local-workspace": "..." } }` shape are rewritten on load by `ConfigStore.ReadFromDiskAsync` into the new accounts list and persisted atomically; the migration is idempotent on subsequent launches.
 
 Implementation:
 - **Octokit** is constructed with a base API URL derived from `github.host`. For `https://github.com`, the API URL is `https://api.github.com` (cloud's special case). For any other host, the API URL is `<host>/api/v3` (GHES's standard pattern).
@@ -121,7 +130,7 @@ Implementation:
 - The **URL-paste escape hatch** parser accepts any URL whose host equals `github.host`'s host. Pasting `https://github.acmecorp.com/owner/repo/pull/123` works when `github.host` is set to `https://github.acmecorp.com`; pasting a github.com URL when configured for GHES (or vice versa) fails with a clear error.
 - The **GraphQL endpoint** is `<api_url>/graphql` per Octokit's convention.
 
-**One host per launch.** Multi-host (a single instance talking to both github.com and a GHES instance simultaneously, or to multiple GHES instances) is not supported in PoC. Users with both a personal github.com account and a corporate GHES account can run two instances of PRism with different `<dataDir>` values, or restart the app to switch hosts. Multi-account / multi-host is a P4 backlog item if demand warrants it; for v1 the single-host constraint keeps the auth and config surfaces small.
+**One host per launch.** Multi-host (a single instance talking to both github.com and a GHES instance simultaneously, or to multiple GHES instances) is not supported in PoC. Users with both a personal github.com account and a corporate GHES account can run two instances of PRism with different `<dataDir>` values, or restart the app to switch hosts. Multi-account / multi-host is a P4 backlog item if demand warrants it; for v1 the single-host constraint keeps the auth and config surfaces small. As of **S6 PR0**, the constraint holds for v1 runtime (one active host, one PAT in scope) but the on-disk storage shape scaffolds multiple accounts for v2's multi-account work (see [`docs/specs/2026-05-10-multi-account-scaffold-design.md`](../specs/2026-05-10-multi-account-scaffold-design.md)). The constraint is amended, not lifted — v1 still loads one host into DI at startup.
 
 ### Local workspace and the `.prism/` subroot
 
@@ -198,7 +207,7 @@ Background polling never touches the worktree. This preserves "banner-not-mutati
 
 **No prefetch.** Cloning and worktree creation happen lazily, only after the user explicitly authorizes via the consent modal at chat-open time. Speculatively cloning a repo because the user *might* open chat is rejected — the disk cost is non-negligible, and most chat-skip cases would never reclaim it. The resulting "preparing chat…" spinner at first-time-on-this-repo chat-open is the honest UX for the wait.
 
-**Changing `github.host` between launches.** The pending-review GraphQL Node IDs and `pendingReviewId` values stored in `state.json` are issued by a *specific* host's GraphQL endpoint and are meaningless against a different host. On startup, the backend compares the configured `github.host` against the host recorded in `state.json.lastConfiguredGithubHost` (a top-level field added for this purpose):
+**Changing `github.host` between launches.** The pending-review GraphQL Node IDs and `pendingReviewId` values stored in `state.json` are issued by a *specific* host's GraphQL endpoint and are meaningless against a different host. On startup, the backend compares the configured `github.host` against the host recorded in `state.json.lastConfiguredGithubHost`. As of **S6 PR0**, `LastConfiguredGithubHost` lives under `state.json` at `accounts.default.last-configured-github-host`; the C# delegate property `AppState.LastConfiguredGithubHost` preserves the existing access pattern. The modal logic and host-change-resolution endpoint are unchanged. The startup comparison is:
 - **First launch / matching host** — record / confirm the configured host, continue normally.
 - **Mismatch** — surface a one-time modal: *"You changed `github.host` from `<old>` to `<new>`. Pending reviews and draft thread/comment IDs in your local state were issued by the old host and won't match the new one. Continue (your draft text is preserved; pending-review IDs and per-thread server stamps will be cleared) or revert to `<old>`?"* On Continue, the backend clears every `pendingReviewId`, `pendingReviewCommitOid`, every per-draft `threadId` and `replyCommentId` stamp, and updates `lastConfiguredGithubHost`. Draft *bodies* and anchors are preserved — the user's text is sacred. The next submit on each PR re-creates a pending review against the new host. On Revert, the backend reverts `github.host` in `config.json` to the previous value and exits with a message asking the user to relaunch (the FileSystemWatcher rewrite is committed before exit). This treats a host change with the same conservative posture as the multi-account model — different host = different identity space.
 
