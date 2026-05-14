@@ -91,6 +91,53 @@ public class ConfigStoreMigrationTests
     }
 
     [Fact]
+    public async Task InitAsync_does_not_crash_when_legacy_github_host_is_non_string_type()
+    {
+        // Caught by Copilot post-open code review on PR #53. The legacy-shape rewrite
+        // originally called `hostNode.GetValue<string>()` directly, which throws
+        // InvalidOperationException on a hand-edited `"host": 42`. ReadFromDiskAsync's
+        // catch clause covers JsonException / IOException / UnauthorizedAccessException
+        // but NOT InvalidOperationException — the exception would escape InitAsync and
+        // crash startup. Pre-S6 deserialization raised JsonException for the same
+        // mistyped values and was caught into LastLoadError; this test pins the
+        // startup-doesn't-crash invariant the migration shim must preserve.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), """
+        { "github": { "host": 42, "local-workspace": null } }
+        """);
+
+        using var store = new ConfigStore(dir.Path);
+        var act = async () => await store.InitAsync(CancellationToken.None);
+        await act.Should().NotThrowAsync();
+
+        // Falls back to AppConfig.Default (the malformed shape was quarantined-equivalent
+        // — JsonException from the strongly-typed Deserialize was caught into
+        // LastLoadError, _current stays at AppConfig.Default).
+        store.LastLoadError.Should().NotBeNull();
+        store.Current.Github.Accounts.Should().HaveCount(1);
+        store.Current.Github.Accounts[0].Host.Should().Be("https://github.com");
+    }
+
+    [Fact]
+    public async Task InitAsync_does_not_crash_when_legacy_local_workspace_is_array_type()
+    {
+        // Companion to the above — same defect, separate field. Confirms TryGetValue
+        // covers both code paths.
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), """
+        { "github": { "host": "https://github.com", "local-workspace": [] } }
+        """);
+
+        using var store = new ConfigStore(dir.Path);
+        var act = async () => await store.InitAsync(CancellationToken.None);
+        await act.Should().NotThrowAsync();
+
+        store.LastLoadError.Should().NotBeNull();
+        store.Current.Github.Accounts.Should().HaveCount(1);
+        store.Current.Github.Accounts[0].Host.Should().Be("https://github.com");
+    }
+
+    [Fact]
     public async Task SetDefaultAccountLoginAsync_concurrent_with_PatchAsync_preserves_both_writes()
     {
         // ce-doc-review adversarial F3: SetDefaultAccountLoginAsync triggers ConfigStore's
