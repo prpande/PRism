@@ -126,6 +126,40 @@ public class TokenStoreReshapeTests
         raw.Should().Be(original);
     }
 
+    [Fact]
+    public async Task CommitAsync_defensive_check_refuses_overwrite_when_disk_cache_is_future_version_even_if_ReadAsync_was_skipped()
+    {
+        // claude[bot] post-open review: the original IsReadOnlyMode guard relied on
+        // ParseCacheFileBytes having run first (via ReadAsync against the persisted cache).
+        // The Setup flow is: WriteTransientAsync(pat) → ValidateCredentialsAsync →
+        // ReadAsync (which short-circuits on `_transient is not null`, skipping
+        // ParseCacheFileBytes) → CommitAsync. If ViewerLoginHydrator.StartAsync is lazy-
+        // loaded or short-circuits (because _loginCache was already populated), the
+        // persisted future-version cache never sets _isReadOnlyMode, and the cached-flag
+        // guard in CommitAsync returns false → SaveUnencryptedTokenCache silently
+        // overwrites a v2 cache. This test models that exact sequence and pins the
+        // defensive in-CommitAsync re-read that closes the gap.
+        using var dir = new TempDataDir();
+        var path = Path.Combine(dir.Path, "PRism.tokens.cache");
+        var original = "{\"version\":2,\"tokens\":{\"default\":\"ghp_v2_default\",\"secondary\":\"ghp_v2_second\"}}";
+        await File.WriteAllTextAsync(path, original);
+
+        var store = new TokenStore(dir.Path, useFileCacheForTests: true);
+
+        // Setup-flow ordering: WriteTransient FIRST (sets _transient), then Commit.
+        // ReadAsync is never called against the persisted bytes — _isReadOnlyMode is
+        // therefore false at the start of CommitAsync. The defensive layer must catch it.
+        await store.WriteTransientAsync("ghp_v1_freshly_set", CancellationToken.None);
+        Func<Task> commit = () => store.CommitAsync(CancellationToken.None);
+
+        var commitEx = await commit.Should().ThrowAsync<TokenStoreException>();
+        commitEx.Which.Failure.Should().Be(TokenStoreFailure.FutureVersionCache);
+
+        // File still intact — v2 cache preserved.
+        var raw = await File.ReadAllTextAsync(path);
+        raw.Should().Be(original);
+    }
+
     [Theory]
     [InlineData("{\"version\":0,\"tokens\":{\"default\":\"ghp_abc\"}}")]
     [InlineData("{\"version\":null,\"tokens\":{\"default\":\"ghp_abc\"}}")]

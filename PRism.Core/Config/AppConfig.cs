@@ -58,8 +58,23 @@ public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
     // NB: not marked [Obsolete] in v1 (spec § 11, plan-time decision 3). There is nothing
     // for callers to migrate to until v2 ships the parameterized interfaces; [Obsolete]
     // would flood the build with warnings under TreatWarningsAsErrors at zero benefit.
-    public string Host => Accounts[0].Host;
-    public string? LocalWorkspace => Accounts[0].LocalWorkspace;
+    //
+    // Empty-Accounts guard: production load paths backfill the default account
+    // (ConfigStore.ReadFromDiskAsync's null/empty-Accounts check + AppConfig.Default's
+    // seeded entry), so Accounts[0] is safe in v1's runtime. Test code or future v2 code
+    // constructing `new GithubConfig([])` directly would otherwise propagate an
+    // IndexOutOfRangeException — surface a clear InvalidOperationException at the call
+    // site instead. Caught by claude[bot] post-open code review on PR #53.
+    public string Host => RequireDefaultAccount().Host;
+    public string? LocalWorkspace => RequireDefaultAccount().LocalWorkspace;
+
+    private GithubAccountConfig RequireDefaultAccount() =>
+        Accounts.Count > 0
+            ? Accounts[0]
+            : throw new InvalidOperationException(
+                "GithubConfig has no accounts; v1 requires at least one entry under " +
+                "AccountKeys.Default. Use AppConfig.Default.Github or supply a populated " +
+                "Accounts list.");
 }
 
 public sealed record LlmConfig();

@@ -2,6 +2,13 @@ namespace PRism.Core.Auth;
 
 public enum TokenStoreFailure
 {
+    // Sentinel for `default(TokenStoreFailure)`. Without an explicit zero value, the
+    // default would silently be the first ordinal entry below — historically
+    // `KeychainLibraryMissing`, which is a misleading classification for a
+    // failure-mode-not-yet-classified state. Caught by claude[bot] post-open code
+    // review on PR #53. The three message-only TokenStoreException constructors leave
+    // Failure unset; that now means Unknown rather than masquerading as a real failure.
+    Unknown = 0,
     KeychainLibraryMissing,
     KeychainAgentUnavailable,
     Generic,

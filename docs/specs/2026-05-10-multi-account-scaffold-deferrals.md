@@ -216,6 +216,16 @@ Decisions and discoveries that surfaced during execution of the plan. Each entry
 - **Where the fix lives in code:** `tests/PRism.Core.Tests/State/AppStateStoreMigrationTests.cs` ~line 176, the `LoadAsync_resets_read_only_when_future_version_body_quarantined` test fixture's JSON.
 - **Revisit when:** If a future spec hardens EnsureCurrentShape to type-check existing values (e.g., reject `ui-preferences: <string>` and quarantine), update the fixture again. For now, the malformed-body trigger relies on Deserialize-level type validation, not EnsureCurrentShape-level.
 
+### [Risk] TokenStore.LegacyPatPattern is a best-effort regex heuristic, not a hard correctness boundary
+
+- **Source:** Implementation 2026-05-14 — claude[bot] post-open code review on PR #53.
+- **Severity:** P3 (advisory).
+- **Date:** 2026-05-14
+- **Reason:** `TokenStore.LegacyPatPattern = ^[A-Za-z0-9_\-]{20,255}$` covers GitHub's two current PAT formats (`ghp_*` classic + `github_pat_*` fine-grained). If GitHub ever issues PATs with characters outside `[A-Za-z0-9_\-]` (e.g., `.`, `@`, `+`, `/`), legacy on-disk caches containing such tokens would fall through the legacy-blob detection, hit `JsonNode.Parse`, fail, and surface as `CorruptCache` on first read. Affected users would lose their cached PAT on upgrade and need to re-Setup.
+- **Why not tighten the regex:** PAT shape is GitHub-controlled. Any character class we choose is an external invariant we can't enforce. The current regex is a pragmatic match for what's been stable for years; extending it pre-emptively would just move the boundary, not eliminate it.
+- **Mitigation in v1:** None code-side. The branch-2 detection in `ParseCacheFileBytes` already accepts JSON-quoted PATs as a defense-in-depth fallback for hand-edited caches. Documented here so future incident triage points at the regex if upgrade reports surface this failure mode.
+- **Revisit when:** GitHub changes PAT format, OR a user reports `CorruptCache` on a v1 → S6 upgrade with a known-good PAT, OR a v2 slice replaces the regex with a richer detection path.
+
 ### [Risk] EnsureCurrentShape future-version backfill is now more aggressive than V3/V4
 
 - **Source:** Implementation 2026-05-13 — observed while diagnosing the failing test above.

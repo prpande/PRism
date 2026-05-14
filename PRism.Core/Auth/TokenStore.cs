@@ -253,21 +253,84 @@ public sealed class TokenStore : ITokenStore
     public async Task CommitAsync(CancellationToken ct)
     {
         if (_transient is null) throw new InvalidOperationException("No transient token to commit.");
+
+        // Two-layer read-only-mode check:
+        //
+        // (1) The cached _isReadOnlyMode flag set by a prior ParseCacheFileBytes (via
+        //     ReadAsync against the persisted cache, typically from ViewerLoginHydrator
+        //     .StartAsync at process startup). This is the fast path.
+        //
+        // (2) A defensive re-read of the on-disk cache, parsed for version. The Setup
+        //     flow calls WriteTransientAsync(pat) FIRST, then ValidateCredentialsAsync →
+        //     ReadAsync, which short-circuits on `_transient is not null` and skips
+        //     ParseCacheFileBytes entirely. So if Setup is the FIRST code path to touch
+        //     the cache (e.g., ViewerLoginHydrator was lazy-loaded, never invoked, or
+        //     short-circuited because _loginCache was already populated by an earlier
+        //     /api/auth/connect), the persisted future-version cache wouldn't have
+        //     been parsed and _isReadOnlyMode would still be false. Without (2), the
+        //     SaveUnencryptedTokenCache below would silently overwrite a v2 cache —
+        //     exactly the silent-v2-PAT-destruction window the spec § 4.3 read-only
+        //     guard is supposed to close. Caught by claude[bot] post-open code review
+        //     on PR #53.
         if (_isReadOnlyMode)
         {
-            // Once ReadAsync has seen a future-version cache, never overwrite. Setup-bypass for
-            // recovery is "wipe PRism.tokens.cache" (surfaced via the FutureVersionCache message),
-            // not a CommitAsync that destroys the v2 cache. Setup must catch this and refuse the
-            // connect-flow rather than retrying transparently.
+            // Once ReadAsync has seen a future-version cache, never overwrite.
             throw new TokenStoreException(TokenStoreFailure.FutureVersionCache,
                 "PRism was downgraded and the cache is in read-only mode. " +
                 "Upgrade or wipe PRism.tokens.cache before connecting.");
         }
+
         var helper = await GetHelperAsync().ConfigureAwait(false);
+
+        // Defensive layer (2): re-read the on-disk cache and check its version
+        // independently of whether ReadAsync was ever called. Cheap (one disk read,
+        // one JsonNode.Parse on a small payload).
+        var existingBytes = helper.LoadUnencryptedTokenCache();
+        if (existingBytes.Length > 0)
+        {
+            var existingRaw = Encoding.UTF8.GetString(existingBytes);
+            if (TryDetectFutureVersionCache(existingRaw))
+            {
+                _isReadOnlyMode = true;  // sticky for any subsequent CommitAsync calls
+                throw new TokenStoreException(TokenStoreFailure.FutureVersionCache,
+                    "PRism was downgraded and the cache is in read-only mode. " +
+                    "Upgrade or wipe PRism.tokens.cache before connecting.");
+            }
+        }
+
         var payload = SerializeVersionedMap(_transient);
         helper.SaveUnencryptedTokenCache(Encoding.UTF8.GetBytes(payload));
         _transient = null;
         _transientLogin = null;
+    }
+
+    // Lightweight version probe used by CommitAsync's defensive read-only check. Returns
+    // true ONLY if the on-disk bytes parse as `{"version": <int>}` with version >
+    // CurrentVersion. Any parse failure / non-object root / missing version / non-integer
+    // version / version <= CurrentVersion returns false — those cases either (a) are
+    // legitimate caches we can overwrite (versioned at current, or legacy bare PAT) or
+    // (b) will surface via the ParseCacheFileBytes path on the next ReadAsync. The probe
+    // is intentionally narrower than ParseCacheFileBytes: its only job is to NOT
+    // overwrite a cache that's clearly newer than this binary understands.
+    private static bool TryDetectFutureVersionCache(string raw)
+    {
+        var trimmed = raw.Trim();
+        if (LegacyPatPattern.IsMatch(trimmed)) return false;  // legacy bare PAT — not future
+        try
+        {
+            if (JsonNode.Parse(raw) is JsonObject obj
+                && obj["version"] is JsonNode versionNode
+                && versionNode.GetValue<int>() > CurrentVersion)
+            {
+                return true;
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or OverflowException)
+        {
+            // Any parse failure → not a recognizable future-version shape; let the
+            // existing ParseCacheFileBytes path classify it on next ReadAsync.
+        }
+        return false;
     }
 
     public Task RollbackTransientAsync(CancellationToken ct)
