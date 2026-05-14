@@ -86,6 +86,10 @@ internal static class AppStateMigrations
         };
         // last-configured-github-host is nullable on the C# side; preserve null as an explicit
         // JSON null so the post-migration shape's deserializer doesn't trip on missing keys.
+        // Deliberate: pre-V4 files with the field genuinely ABSENT (vs explicitly null) round-
+        // trip to a present-but-null value, NOT a missing key. Always-present keeps the shape
+        // uniform across the migrated population — don't "fix" this back to a conditional
+        // assignment thinking the missing case should preserve absence.
         defaultAccount["last-configured-github-host"] = lastHost?.DeepClone();
 
         root.Remove("reviews");
