@@ -10,6 +10,51 @@
 
 ---
 
+## Plan conventions and corrections (applied after round-1 ce-doc-review)
+
+Round-1 ce-doc-review on this plan caught several test-infrastructure idioms and codebase references that the initial draft got wrong. These conventions apply globally — when an inline task example uses an older idiom, translate to the convention below:
+
+| Topic | Plan's initial draft (WRONG) | Use this instead |
+|---|---|---|
+| xUnit version | `TestContext.Current.CancellationToken`, `public async ValueTask InitializeAsync()` (xUnit v3) | `CancellationToken.None` in test bodies; `IAsyncLifetime` with `public Task InitializeAsync()` + `public Task DisposeAsync()` (xUnit 2.9.3, pinned in `Directory.Packages.props`) |
+| Endpoint test fixture | `class FooTests : EndpointTestBase` + `Host.CreateClient()` + `Host.Services` | `using var factory = new PRismWebApplicationFactory(); using var client = factory.CreateClient();` — pattern from `tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs`. Resolve services via `factory.Services.GetRequiredService<T>()`. |
+| Log capture in tests | `LogCapture.AllEntries`, `LogCapture.EntriesWithMessage(...)` | Use an `InMemoryLoggerProvider` registered on the `PRismWebApplicationFactory`'s `ConfigureServices` (or the existing equivalent — grep `tests/` for `ILoggerProvider` to find the established pattern; create one if absent). |
+| `SubmitLockRegistry.TryAcquireAsync` signature | `await registry.TryAcquireAsync(prRef, ct)` (two args) | `await registry.TryAcquireAsync(prRef, TimeSpan.FromSeconds(0), ct)` — the real signature is `(PrReference, TimeSpan, CancellationToken)`. Use `TimeSpan.Zero` in tests for immediate try-acquire. |
+| Visibility — `SubmitLockRegistry` is `internal sealed` | Direct `Host.Services.GetRequiredService<SubmitLockRegistry>()` | `PRism.Web.Tests` already has `InternalsVisibleTo`; resolve via `factory.Services` works as-is. Don't change the access modifier. |
+| `SubmitLockHandle` carries the key | Plan implied a `_heldLocks.TryRemove(prRef.ToString(), out _)` on `Dispose` with the handle "knowing" the key | The current handle (`SubmitLockHandle`) holds only `_sem`, not the key. PR1 Task 1.2 must give `SubmitLockHandle` a `_prRefKey` field set during `TryAcquireAsync` AND a back-pointer to the registry's `_heldLocks` (or a `Func<string, bool>` closure injected by `TryAcquireAsync`). The held-set approach is correct; the wiring needs the extra plumbing. |
+| Inbox orchestrator interface name | `IInboxOrchestrator` | `IInboxRefreshOrchestrator` (see `PRism.Core/Inbox/IInboxRefreshOrchestrator.cs`). Test helper `FakeInboxRefreshOrchestrator` lives in `tests/PRism.Web.Tests/TestHelpers/`. If reused from `PRism.Core.Tests`, copy/relocate the fake. |
+| Toast `'success'` auto-dismiss | Plan implied adding to the union enables auto-dismiss | The existing `Toast.tsx` `useEffect` predicate is `if (toast.kind === 'info')`. Task 3.2 must ALSO change this to `if (toast.kind === 'info' || toast.kind === 'success')` for the 5s auto-dismiss to fire. |
+| `IConfigStore.ConfigPath` interface addition | Plan only modified `ConfigStore` | Plan must ALSO add a `ConfigPath` implementation to `tests/PRism.Core.Tests/PrDetail/FakeConfigStore.cs` (and any other `IConfigStore` implementations the grep surfaces). The PR1 Files block is updated below to add this. |
+| `SseChannel.TryWriteFrame` doesn't exist | Plan calls `TryWriteFrame(sub, eventName, data)` | The existing handler writes via `WriteAndEvictOnFailureAsync(SseSubscriber s, string frame)` taking a pre-formatted frame string. PR2 Task 2.5 must either (a) build the raw frame string (`$"event: identity-changed\ndata: {payload}\n\n"`) and call `WriteAndEvictOnFailureAsync`, OR (b) extract a helper with signature `Task WriteAsync(SseSubscriber sub, string eventName, string data)` and refactor the existing handlers to use it. Default: (a) — minimum scope. |
+| SSE test seam | Plan claimed an "existing harness" of subscriber-mocking | Existing SSE tests cover `SseEventProjection` (a static class) via reflection — NOT `SseChannel`. PR2 Task 2.5 should test the projection-side wire shape (assert `SseEventProjection` projects `IdentityChanged` → `("identity-changed", "{\"type\":\"identity-change\"}")`). Confirm payload contains no login strings by string-search. SseChannel fan-out itself is verified by a separate integration-style test that uses `WebApplicationFactory` to open an actual SSE connection — defer to a follow-up if too heavy. |
+| `Log.LogIdentityChanged(...)` invocation site | Plan called from "the new endpoint handler" | The handler MUST be inside the same `AuthEndpoints` partial class as the existing `Log` nested partial (i.e., inside `MapAuth`). The new endpoint shares the `MapAuth` extension method scope, not a separate `MapAuthReplace`. |
+| `usePreferences.set()` rollback | Plan's snippet had no error handling | The hook MUST capture `preferences` before the POST, on `catch` restore via `setPreferences(prior)` and call `useToast().show({ kind: 'error', message: \`Couldn't save — ${fieldLabel} reverted.\` })`. Task 3.1 Step 3 (`usePreferences`) is rewritten below to include this. |
+| AuthSection "tooltip" | Plan rendered an always-visible `<span role="note">` | Spec § 3.1 specifies a hover/focus tooltip. Implement via `title` attribute on the disabled link plus a visually-hidden `<span className="sr-only">` for SR users so keyboard users without mouse hover still get the message. The plan's test should assert the `title` attribute equals the message; remove the unconditional inline span. |
+| Cheatsheet visible after `Cmd+R` | Plan's e2e bullet was incompatible with React-state-only `isOpen` | Spec § 4.4 wording ("cheatsheet still visible after reload settles") cannot hold with `useState(false)` — reload re-mounts the tree. Task 5.4's fifth e2e bullet changes to: "`Cmd+R` with overlay open → reload runs; overlay is RESET to closed after reload (state does not persist)." If persistence is desired later, add `sessionStorage` backing; for the PoC, the simpler closed-on-reload behavior matches React-state semantics. |
+| `InboxPoller.RequestImmediateRefresh()` redesign | Plan's "drop-in Task.WhenAny replacement" understated the refactor | The current loop is `WaitForSubscriberAsync → RefreshAsync → Task.Delay`. The `Task.WhenAny` replaces ONLY the `Task.Delay` step. Both branches must respect `stoppingToken`. Use `CancellationTokenSource.CreateLinkedTokenSource(stoppingToken)`; on either branch completing, dispose the linked CTS to release the loser. Surface `RequestImmediateRefresh()` on the existing `BackgroundService` instance — `InboxPoller` is registered as `IHostedService` plus `InboxPoller` itself in DI (add the `services.AddSingleton<InboxPoller>()` line if the existing registration is hosted-only). |
+| TOCTOU residual window in `/api/auth/replace` | Plan documents the re-check but doesn't pin the cross-transform race | A concurrent submit's `UpdateAsync` can interleave with identity-change's `UpdateAsync`. Accepted contract: rely on AppStateStore last-transform-wins. If the submit's transform wins, identity-change re-runs and re-clears Node IDs (UpdateAsync retries until the version stabilizes); if identity-change wins, the submit then sees null Node IDs and falls into the foreign-pending-review path on next attempt. Add a test asserting this behavior. |
+| CSRF/Origin on `/api/auth/replace` | Not asserted | The existing `OriginCheckMiddleware` covers all `/api/*` POST routes via `Program.cs`. PR2 Task 2.9 (new) asserts this with a test that posts from a forbidden Origin and expects 403; if the existing middleware does NOT cover the new endpoint, add it. |
+| Third LoadingScreen call site | Plan listed two; spec lists three | PR6 Task 6.2 Step 3 also updates the host-mismatch path in `App.tsx` (the inline `<div>` that renders before `<HostChangeModal>`). |
+| `assets/icons/README.md` update | Missing from PR9 | PR9 Task 9.3 adds a note: "frontend uses copies at `frontend/public/{prism-logo.png, favicon.ico}`; when canonical icons change, re-copy." Include in the Step 5 `git add`. |
+| GitHub Actions SHA-pinning | Manual "look up the SHA" | Use the following gh-api recipe in PR8 Task 8.2 to resolve each tag to a SHA at PR-open time:<br/>`gh api repos/actions/checkout/git/ref/tags/v4 --jq .object.sha`<br/>`gh api repos/actions/setup-dotnet/git/ref/tags/v4 --jq .object.sha`<br/>`gh api repos/actions/setup-node/git/ref/tags/v4 --jq .object.sha`<br/>`gh api repos/softprops/action-gh-release/git/ref/tags/v2 --jq .object.sha`<br/>Substitute the four resolved SHAs for the `<commit-sha>` placeholders. Add a CI lint step (`grep -r '<commit-sha>' .github/ && exit 1 \|\| exit 0`) to mechanically reject any unresolved placeholder. |
+| Viewport screenshot threshold | `maxDiffPixelRatio: 0.001` is too tight cross-platform | Reframe PR9 Task 9.1: instead of byte-equality screenshot comparison, assert layout invariance directly via `getBoundingClientRect()` on every fixed-position element above the banner zone. Pre-trigger and post-trigger bounding boxes must be identical (within 1px tolerance for browser rounding). This directly tests "no layout shift" without depending on font-rendering determinism. The screenshot can remain as a supplementary signal with a looser threshold (`maxDiffPixelRatio: 0.01`) on a per-platform-pinned snapshot directory. |
+| PAT-not-logged test scenario | Plan didn't specify scenario shape | The PAT-not-logged test MUST use a different-login replace scenario so the `LogIdentityChanged` code path is exercised. Same-login replace short-circuits before the log line. |
+
+The inline task content below is the original draft preserved as illustration. When in doubt, the conventions table above wins.
+
+**P2 / smaller gaps deferred to Open Questions (do not block execution):**
+- PR4 `useEventSource` reconnect wiring under-specified — implementer extends the existing reconnect handler to also dispatch a `prism-reconnect` event; `useAuth` listens and calls `refetch()`.
+- PR7 a11y fix scope — bound to "serious/critical violations in the new S6 surfaces" (Settings, Cheatsheet, LoadingScreen, FirstRunDisclosure); pre-existing violations elsewhere → sidecar deferral with a tracking issue per rule×selector.
+- PR4 back-out edge case e2e — add to `replace-token-back-out.spec.ts` covering `?replace=1` → Cancel → old PAT still authoritative.
+- PR4 SSE-permanently-broken comment in `useSubmitInFlight` — add code comment citing spec § 3.1 explicit acceptance.
+- PR4 `replaceToken` error-path PAT masking — mirror the existing `connect` flow error handling; explicitly never log `pat` or include in toast messages.
+- PR1 `configPath` logging suppression — defense-in-depth observation; verify response-body logging middleware (if any) excludes the field.
+- PR3 AppearanceSection label association — use `<label htmlFor="theme-select"><select id="theme-select">` pattern; verified in PR7 a11y audit.
+- PR6 `prefers-reduced-motion` Playwright verification — add to PR6 e2e or accept as PR7 VoiceOver manual coverage.
+- PR3 → PR4 Toast scope move (success kind in PR3 instead of PR4) — deliberate (PR3 GithubSection needs `'success'`); deviation from spec § 3.1.1 noted, no action.
+
+---
+
 ## Source-spec sections this plan implements
 
 | Spec § | Implements via |
@@ -74,6 +119,7 @@
 - Test: `tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs`
 - Test: `tests/PRism.Web.Tests/Endpoints/SubmitInFlightEndpointTests.cs`
 - Test: `tests/PRism.Web.Tests/Submit/SubmitLockRegistryAnyHeldTests.cs`
+- Modify: `tests/PRism.Core.Tests/PrDetail/FakeConfigStore.cs` (round-1 ce-doc-review fix: add `string ConfigPath { get; }` implementation alongside the existing fake methods so `dotnet test` continues to compile after the interface gains the property — see conventions table)
 
 ### Task 1.1: `SubmitLockRegistry.AnyHeld()` — RED
 
@@ -655,9 +701,10 @@ EOF
 - Modify: `PRism.Web/Sse/SseChannel.cs` (subscribe + handler + dispose for `IdentityChanged`)
 - Modify: `PRism.Core/PrDetail/IActivePrCache.cs` + `ActivePrCache.cs` (add `Clear()`)
 - Modify: `PRism.Core/PrDetail/ActivePrSubscriberRegistry.cs` (add `RemoveAll()`)
-- Modify: `PRism.Core/Inbox/InboxPoller.cs` (race `Task.Delay` against signal)
-- Modify: `PRism.Web/Endpoints/AuthEndpoints.cs` (add `POST /api/auth/replace` + `LogIdentityChanged`)
+- Modify: `PRism.Core/Inbox/InboxPoller.cs` (race `Task.Delay` against signal — see conventions table for the full WaitForSubscriberAsync interaction)
+- Modify: `PRism.Web/Endpoints/AuthEndpoints.cs` (add `POST /api/auth/replace` + `LogIdentityChanged` — handler MUST live inside `MapAuth` extension method, same scope as the existing nested `Log` class)
 - Modify: `PRism.Web/Endpoints/AuthDtos.cs` (request/response shapes)
+- Modify: `PRism.Web/Composition/ServiceCollectionExtensions.cs` if `InboxPoller` is currently `IHostedService`-only (`services.AddSingleton<InboxPoller>()` plus `.AddHostedService(sp => sp.GetRequiredService<InboxPoller>())` so the endpoint can inject the concrete type to call `RequestImmediateRefresh()`)
 - Test: `tests/PRism.Core.Tests/Events/IdentityChangedTests.cs`
 - Test: `tests/PRism.Core.Tests/PrDetail/ActivePrCacheClearTests.cs`
 - Test: `tests/PRism.Core.Tests/PrDetail/ActivePrSubscriberRegistryRemoveAllTests.cs`
@@ -843,9 +890,47 @@ git commit -m "feat(s6-pr2): InboxPoller.RequestImmediateRefresh races Task.Dela
 
 ### Task 2.5: `SseChannel` wiring for `IdentityChanged` — RED → GREEN
 
-- [ ] **Step 1: Test**
+- [ ] **Step 1: Test (projection-side wire shape — round-1 ce-doc-review correction)**
 
-Create `tests/PRism.Web.Tests/Sse/SseChannelIdentityChangedTests.cs`. Use the existing SSE test harness pattern from `tests/PRism.Web.Tests/Sse/` (mock subscribers + capture written frames). Assert: every connected subscriber receives an `event: identity-changed` frame with data `{"type":"identity-change"}`; the payload contains NO `priorLogin`/`newLogin` strings.
+The existing SSE tests in `tests/PRism.Web.Tests/Sse/` cover `SseEventProjection` (a static class) via reflection — NOT `SseChannel` subscriber fan-out (SseChannel is `internal sealed` with no test seam). The right place to test the wire-shape contract is the projection layer; SseChannel fan-out is an integration concern.
+
+Create `tests/PRism.Web.Tests/Sse/SseEventProjectionIdentityChangedTests.cs`:
+
+```csharp
+using System.Text.Json;
+using FluentAssertions;
+using PRism.Core.Events;
+using PRism.Web.Sse;
+using Xunit;
+
+namespace PRism.Web.Tests.Sse;
+
+public class SseEventProjectionIdentityChangedTests
+{
+    [Fact]
+    public void Project_IdentityChanged_EmitsMinimalWirePayload()
+    {
+        var evt = new IdentityChanged("default", "alice", "bob");
+
+        // Use the same reflection helper the existing StateChangedSseTests / SseEventProjectionSubmitEventsTests use
+        // (look for `ProjectEventForTest` or similar in the existing tests; reuse the established invocation pattern).
+        var projection = SseEventProjection.Project(evt);
+
+        projection.EventName.Should().Be("identity-changed");
+        projection.Data.Should().Contain("\"type\":\"identity-change\"");
+
+        // Spec § 3.2.1 wire-shape contract: NO login strings on the wire.
+        projection.Data.Should().NotContain("alice");
+        projection.Data.Should().NotContain("bob");
+        projection.Data.Should().NotContain("priorLogin");
+        projection.Data.Should().NotContain("newLogin");
+    }
+}
+```
+
+This requires extending `SseEventProjection`'s internal switch to recognize `IdentityChanged`. The projection emits `("identity-changed", "{\"type\":\"identity-change\"}")` — the login strings stay server-side, picked up by the structured-log emission in § 3.6, never on the SSE wire.
+
+**SseChannel fan-out itself** is verified by an integration test under `PrismWebApplicationFactory` that opens a real `EventSource` connection and asserts the frame arrives — deferred to a follow-up if too heavy for PR2's scope.
 
 - [ ] **Step 2: Implement** — Modify `PRism.Web/Sse/SseChannel.cs`:
   - Add `private readonly IDisposable _busIdentityChanged;` field.
@@ -1074,6 +1159,44 @@ git add PRism.Web/Endpoints/AuthEndpoints.cs PRism.Web/Endpoints/AuthDtos.cs tes
 git commit -m "feat(s6-pr2): POST /api/auth/replace with identity-change rule, structured log, SSE fan-out"
 ```
 
+### Task 2.9-pre: Assert CSRF/Origin coverage on `/api/auth/replace` (round-1 ce-doc-review)
+
+- [ ] **Step 1: Verify middleware coverage** — read `PRism.Web/Program.cs` and `PRism.Web/Middleware/OriginCheckMiddleware.cs` to confirm the middleware runs for all `/api/*` mutating routes. If the existing middleware's path filter excludes the new endpoint, add `/api/auth/replace` to the covered set OR move the registration to a global Use().
+
+- [ ] **Step 2: Write the assertion test**
+
+Add to `AuthReplaceEndpointTests.cs`:
+
+```csharp
+[Fact]
+public async Task POST_replace_ForbiddenOrigin_Returns403()
+{
+    SeedPriorLogin("alice");
+    FakeReviewAuth.SetNextValidationResult(login: "alice");
+
+    using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+
+    var req = new HttpRequestMessage(HttpMethod.Post, "/api/auth/replace")
+    {
+        Content = JsonContent.Create(new { pat = "ghp_x" })
+    };
+    req.Headers.Add("Origin", "https://evil.example.com");
+
+    var resp = await client.SendAsync(req, CancellationToken.None);
+
+    resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+}
+```
+
+- [ ] **Step 3: Run + commit**
+
+```bash
+dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~AuthReplaceEndpointTests" --no-restore
+git add tests/PRism.Web.Tests/Endpoints/AuthReplaceEndpointTests.cs PRism.Web/Program.cs PRism.Web/Middleware/OriginCheckMiddleware.cs
+git commit -m "test(s6-pr2): assert OriginCheckMiddleware rejects cross-origin POST to /api/auth/replace"
+```
+
 ### Task 2.9: PR2 push + PR
 
 - [ ] **Step 1: Push**
@@ -1199,13 +1322,14 @@ export interface UiPreferences {
 }
 ```
 
-- [ ] **Step 3: Update `usePreferences.ts`**
+- [ ] **Step 3: Update `usePreferences.ts` (with optimistic rollback per spec § 2.6)**
 
-Replace the hook body so `preferences` returns the new shape; `set(key, value)` accepts either the bare `ui.*` keys (back-compat) or the dotted `inbox.sections.*` keys:
+Replace the hook body so `preferences` returns the new shape; `set(key, value)` accepts either the bare `ui.*` keys (back-compat) or the dotted `inbox.sections.*` keys; **and rolls back optimistically on POST failure**:
 
 ```ts
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
+import { useToast } from '../components/Toast';
 import type { UiPreferences } from '../api/types';
 
 type PreferenceKey =
@@ -1215,6 +1339,7 @@ type PreferenceKey =
 export function usePreferences() {
   const [preferences, setPreferences] = useState<UiPreferences | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const { show } = useToast();
 
   const refetch = useCallback(async () => {
     try { setPreferences(await apiClient.get<UiPreferences>('/api/preferences')); }
@@ -1228,15 +1353,27 @@ export function usePreferences() {
     return () => window.removeEventListener('focus', handler);
   }, [refetch]);
 
+  // Optimistic update + rollback on failure (spec § 2.6 save semantics).
   const set = useCallback(async (key: PreferenceKey, value: unknown) => {
-    const next = await apiClient.post<UiPreferences>('/api/preferences', { [key]: value });
-    setPreferences(next);
-    return next;
-  }, []);
+    const prior = preferences;   // captured for rollback
+    // No optimistic local mutation here because PATCH returns the new full state;
+    // we wait for the response and apply it. Failure → roll back to prior + toast.
+    try {
+      const next = await apiClient.post<UiPreferences>('/api/preferences', { [key]: value });
+      setPreferences(next);
+      return next;
+    } catch (e) {
+      if (prior) setPreferences(prior);
+      show({ kind: 'error', message: `Couldn't save — ${key} reverted.` });
+      throw e;
+    }
+  }, [preferences, show]);
 
   return { preferences, error, refetch, set };
 }
 ```
+
+Add a Vitest test that mocks the POST to reject and asserts (a) `preferences` is restored to its pre-call value, (b) `show` is called with `kind: 'error'`. This closes spec § 2.6 "rollback on 4xx/5xx/network failure" — round-1 ce-doc-review caught the original snippet had no error handling.
 
 - [ ] **Step 4: Update existing `HeaderControls.tsx` callers**
 
@@ -1814,28 +1951,40 @@ import { useSubmitInFlight } from '../../hooks/useSubmitInFlight';
 export function AuthSection() {
   const { inFlight, prRef } = useSubmitInFlight();
 
+  const tooltipMsg = inFlight ? `Submit on ${prRef} in progress` : undefined;
+  // Spec § 3.1 calls for hover/focus tooltip — implemented via `title` attribute
+  // on the disabled link (browser-native tooltip on hover/focus) plus a visually-
+  // hidden span for SR users so keyboard-only users get the message too.
+  // Round-1 ce-doc-review caught the original always-visible inline span.
+
+  if (inFlight) {
+    return (
+      <section aria-labelledby="auth-heading">
+        <h2 id="auth-heading">Auth</h2>
+        <Link
+          to="/setup?replace=1"
+          aria-disabled="true"
+          aria-describedby="replace-disabled-help"
+          tabIndex={-1}
+          title={tooltipMsg}
+          style={{ pointerEvents: 'none', opacity: 0.5 }}
+        >
+          Replace token
+        </Link>
+        <span id="replace-disabled-help" className="sr-only">{tooltipMsg}</span>
+      </section>
+    );
+  }
   return (
     <section aria-labelledby="auth-heading">
       <h2 id="auth-heading">Auth</h2>
-      {inFlight ? (
-        <>
-          <Link
-            to="/setup?replace=1"
-            aria-disabled="true"
-            tabIndex={-1}
-            style={{ pointerEvents: 'none', opacity: 0.5 }}
-          >
-            Replace token
-          </Link>
-          <span role="note">A submit is in progress on {prRef}. Replace token after it finishes.</span>
-        </>
-      ) : (
-        <Link to="/setup?replace=1">Replace token</Link>
-      )}
+      <Link to="/setup?replace=1">Replace token</Link>
     </section>
   );
 }
 ```
+
+The Vitest test asserts the `title` attribute equals the tooltip message (not just that the message renders in the document), so the tooltip-vs-always-visible distinction is enforced.
 
 - [ ] **Step 3: Run + commit**
 
@@ -2398,7 +2547,7 @@ git commit -m "feat(s6-pr5): Cheatsheet overlay with ARIA APG focus + visible cl
 - `?` inside a textarea → literal `?` typed, overlay NOT visible.
 - `Cmd+/` inside a textarea → overlay visible; composer text unchanged.
 - `Esc` with overlay open and a composer also open → overlay closes; composer untouched.
-- `Cmd+R` with overlay open → reload runs; overlay still visible after reload.
+- `Cmd+R` with overlay open → reload runs; overlay is **reset to closed** after reload (React state does not persist across page reload). Round-1 ce-doc-review resolved the spec § 4.4 contradiction: the spec's "still visible after reload" wording is incompatible with `useState(false)`. Closed-on-reload matches React semantics; if persistence is desired later, add `sessionStorage` backing.
 
 - [ ] **Step 2: Run + commit**
 
@@ -2590,7 +2739,13 @@ export { LoadingScreen } from './LoadingScreen';
 
 - [ ] **Step 3: Swap call sites in `App.tsx` and `SetupPage.tsx`**
 
-Replace `<div aria-busy="true">Loading…</div>` with `<LoadingScreen />`. Two call sites: App.tsx initial auth-state-loading + SetupPage authState-null branch.
+Replace `<div aria-busy="true">Loading…</div>` with `<LoadingScreen />`. **Three call sites** per spec § 5.5 (round-1 ce-doc-review caught the missing third site):
+
+1. `App.tsx` initial `authState === null` branch.
+2. `App.tsx` host-mismatch path before `HostChangeModal` renders (the inline `<div>` that lives between `if (authState.hostMismatch)` and the `return <HostChangeModal>...`).
+3. `SetupPage.tsx` `authState === null` waiting branch.
+
+Verify all three swap locations via grep: `grep -rn "aria-busy" frontend/src/` before the swap and confirm zero remain after.
 
 - [ ] **Step 4: Run + commit**
 
@@ -2907,7 +3062,28 @@ jobs:
             publish/osx-arm64/PRism-osx-arm64
 ```
 
-**Pin SHAs**: before opening the PR, look up the current commit SHA for each action's most recent stable release and substitute it in for `<commit-sha>`. Example: `actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11` (verify against the action's release page).
+**Pin SHAs**: before opening the PR, resolve each `<commit-sha>` placeholder using `gh api` (round-1 ce-doc-review supplied the recipe):
+
+```bash
+# Resolve each action's tag to its current commit SHA
+gh api repos/actions/checkout/git/ref/tags/v4 --jq .object.sha
+gh api repos/actions/setup-dotnet/git/ref/tags/v4 --jq .object.sha
+gh api repos/actions/setup-node/git/ref/tags/v4 --jq .object.sha
+gh api repos/softprops/action-gh-release/git/ref/tags/v2 --jq .object.sha
+
+# Manually substitute each result for the matching <commit-sha> placeholder in publish.yml.
+```
+
+**CI lint guard**: add a step to `.github/workflows/ci.yml` (or a pre-push hook) that mechanically rejects any unresolved placeholder:
+
+```bash
+if grep -r '<commit-sha>' .github/; then
+  echo "ERROR: unresolved <commit-sha> placeholder in .github/" >&2
+  exit 1
+fi
+```
+
+This prevents merging a workflow with a literal `<commit-sha>` string (which would fail at workflow-run time with an opaque error). The gh-api recipe gives the implementer a single-step reproducible lookup rather than the open-ended "look up the action's release page."
 
 - [ ] **Step 2: Add `.github/dependabot.yml`** for the SHA-pin upkeep
 
@@ -3091,41 +3267,79 @@ Verify `frontend/src/components/PrDetail/PrHeader.tsx` carries `data-testid="pr-
 ```ts
 import { test, expect } from '@playwright/test';
 
-test('PR detail viewport bytes-equal before and after banner trigger', async ({ page }) => {
+// Round-1 ce-doc-review reframe: instead of byte-equality screenshot comparison
+// (fragile across OSes due to font hinting + GPU subpixel rendering), assert
+// layout invariance directly via getBoundingClientRect() on every fixed-position
+// element in the content region. The screenshot remains as supplementary signal
+// at a loose threshold on per-platform snapshot directories.
+
+test('PR detail layout invariant before and after banner trigger', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
 
   await page.goto('/pr/octocat/Hello-World/1');
   await page.locator('[data-testid="pr-header"]').waitFor();
-
-  // Disable CSS animations to remove pixel drift sources
   await page.addStyleTag({
     content: '*, *::before, *::after { animation: none !important; transition: none !important; }',
   });
-
-  // Wait for any in-flight network
   await page.waitForLoadState('networkidle');
 
-  // Baseline
-  await expect(page).toHaveScreenshot('pr-detail-no-banner.png', {
-    mask: [page.locator('[data-testid="reload-banner"]')],
-    maxDiffPixelRatio: 0.001,
-  });
+  // Capture bounding boxes of the structural elements that must not shift
+  const targets = ['[data-testid="pr-header"]', '[data-testid="files-tab"]', 'main h1'];
+  const before = await page.evaluate((sels) => {
+    return sels.map((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return { sel, missing: true } as const;
+      const r = el.getBoundingClientRect();
+      return { sel, top: r.top, left: r.left, width: r.width, height: r.height } as const;
+    });
+  }, targets);
 
   // Trigger banner via the S5 test hook
   const resp = await page.request.post('/test/advance-head', {
     data: { prRef: 'octocat/Hello-World/1', newHeadSha: 'feedfacedeadbeef' },
   });
   expect(resp.ok()).toBeTruthy();
-
   await page.locator('[data-testid="reload-banner"]').waitFor({ state: 'visible' });
 
-  // Compare against the same baseline; banner masked
+  const after = await page.evaluate((sels) => {
+    return sels.map((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return { sel, missing: true } as const;
+      const r = el.getBoundingClientRect();
+      return { sel, top: r.top, left: r.left, width: r.width, height: r.height } as const;
+    });
+  }, targets);
+
+  // Bounding boxes must match within 1px tolerance for browser rounding
+  for (let i = 0; i < before.length; i++) {
+    const b = before[i], a = after[i];
+    expect(a.sel).toBe(b.sel);
+    if ('missing' in b || 'missing' in a) {
+      expect(a).toEqual(b);
+      continue;
+    }
+    expect(Math.abs(a.top    - b.top   )).toBeLessThanOrEqual(1);
+    expect(Math.abs(a.left   - b.left  )).toBeLessThanOrEqual(1);
+    expect(Math.abs(a.width  - b.width )).toBeLessThanOrEqual(1);
+    expect(Math.abs(a.height - b.height)).toBeLessThanOrEqual(1);
+  }
+
+  // Supplementary visual signal — looser threshold, banner masked.
+  // Per-platform snapshot directory keeps OS rendering differences out of the diff.
   await expect(page).toHaveScreenshot('pr-detail-no-banner.png', {
     mask: [page.locator('[data-testid="reload-banner"]')],
-    maxDiffPixelRatio: 0.001,
+    maxDiffPixelRatio: 0.01,
   });
 });
 ```
+
+Configure Playwright's per-platform snapshot directories in `playwright.config.ts`:
+
+```ts
+expect: { toHaveScreenshot: { pathTemplate: '{testDir}/__screenshots__/{platform}/{arg}{ext}' } }
+```
+
+This separates `darwin`, `linux`, `win32` baselines so cross-platform font hinting doesn't fail the diff.
 
 - [ ] **Step 3: Generate the baseline screenshot**
 
@@ -3246,11 +3460,25 @@ Change status cell from "PR0 shipped..." to "Shipped — PR0 (#53), PR1 (#X), PR
 
 Move the S6 spec entry from "Not started" / "In progress" to "Implemented". Add references to all 9 PRs.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add `assets/icons/README.md` duplication-contract note** (per spec § 12, round-1 ce-doc-review caught the missing file)
+
+Append to `assets/icons/README.md` (or create the file if it doesn't exist):
+
+```markdown
+## Frontend asset duplication
+
+The frontend ships copies of these icons at `frontend/public/`:
+- `assets/icons/PRismOG.png` → `frontend/public/prism-logo.png`
+- `assets/icons/PRism256.ico` → `frontend/public/favicon.ico`
+
+If the canonical icons change, **re-copy** to the frontend `public/` directory in the same PR. There's no automated sync.
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
-git add docs/spec/03-poc-features.md docs/spec/02-architecture.md docs/roadmap.md docs/specs/README.md
-git commit -m "docs(s6-pr9): spec doc updates — § 11 Settings, § Distribution, roadmap Shipped, spec index"
+git add docs/spec/03-poc-features.md docs/spec/02-architecture.md docs/roadmap.md docs/specs/README.md assets/icons/README.md
+git commit -m "docs(s6-pr9): spec doc updates + asset-duplication contract — § 11 Settings, § Distribution, roadmap Shipped, spec index"
 ```
 
 ### Task 9.4: PR9 push + PR + Release promotion
