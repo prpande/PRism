@@ -83,7 +83,7 @@ The multi-account storage scaffold ([`2026-05-10-multi-account-scaffold-design.m
 | Inbox sections | Mentioned | bool | `inbox.sections.mentioned` | Next inbox poll tick |
 | Inbox sections | CI failing on my PRs | bool | `inbox.sections.ci-failing` | Next inbox poll tick |
 | GitHub | Host (read-only display) | string | n/a — reads `config.github.accounts[0].host` via the multi-account scaffold delegate property | n/a |
-| GitHub | "Copy `config.json` path" button | button → clipboard | n/a — copies `<dataDir>/config.json` to clipboard via `navigator.clipboard.writeText`. On success: brief `show({ kind: 'success', message: 'Path copied — paste into your editor' })`. On rejection (insecure context, Permissions-Policy denial, missing user activation, browser policy block): `show({ kind: 'error', message: 'Could not copy path. Select it manually below.' })` — and the path is rendered alongside the button as a read-only `<input type="text" readOnly value={configPath}>` that the user can triple-click to select. The visible path doubles as the fallback for accessibility (screen readers read it directly; the button is a convenience, not the only path). Browsers block `<a href="file:///...">` for security, so we render this as a button-with-clipboard-action rather than a hyperlink. | n/a |
+| GitHub | "Copy `config.json` path" button + always-visible read-only `<input>` | button → clipboard | n/a — the path is **always** rendered alongside the button as a read-only `<input type="text" readOnly value={configPath} aria-label="Path to config.json">` (selectable on triple-click; visible to all users including SR users on every render — not conditional on clipboard failure). The button is a convenience: on click, calls `navigator.clipboard.writeText(configPath)`. On success: `show({ kind: 'success', message: 'Path copied — paste into your editor' })`. On rejection (insecure context, Permissions-Policy denial, missing user activation, browser policy block): `show({ kind: 'error', message: 'Could not copy path. Select it from the field next to the button.' })`. Because the field is always present, the SR user's path is identical regardless of clipboard success — the button never *gates* access to the path. Browsers block `<a href="file:///...">` for security, so we never render this as a hyperlink. | n/a |
 | Auth | Replace token | link → § 3 lazy-swap flow | n/a | n/a |
 
 **Inbox-tick hot-reload caveat.** The inbox poller reads `config.Current.Inbox.Sections` per fetch cycle, not on `IConfigStore.Changed`. A user toggling an inbox section in Settings sees the change apply on the next 120s poll, not immediately. Surfacing this in Settings helper text:
@@ -246,7 +246,7 @@ The Replace token flow reuses the existing Toast component family at `frontend/s
 
 **Already-integrated note (corrects round-1 spec text):** `useSubmitToasts` already delegates to `useToast`'s `show()`. PR4 does NOT contain a refactor of that hook; the prior round-1 spec phrasing was wrong on this point. The only Toast-related work in PR4 is the new `'success'` kind plus the identity-change `show()` call site.
 
-**A11y:** the existing component renders `role="status"` for every toast and ships a Dismiss-labeled close button (verified in `Toast.tsx`). For `'error'` kind specifically — which persists until manual dismiss — the close button is keyboard-reachable via the normal page tab order; the existing `aria-label="Dismiss"` on the close button covers SR announcement.
+**A11y:** the existing component renders `role="status"` for every toast and ships a Dismiss-labeled close button (verified in `Toast.tsx`). **All three kinds (`info`, `success`, `error`) render the same close button** — even on auto-dismissing kinds where the button is rarely used, keeping the rendered shape consistent matches the existing pattern (the existing `'info'` toasts already render the close button despite auto-dismissing at 5s) and gives users who want to dismiss faster than the timer a way to do so. For `'error'` kind — which persists until manual dismiss — the close button is keyboard-reachable via the normal page tab order; the existing `aria-label="Dismiss"` on the close button covers SR announcement.
 
 ### 3.2 Identity-change rule
 
@@ -339,10 +339,25 @@ else:
     // We publish a new IReviewEvent — `IdentityChanged` — rather than reusing
     // `StateChanged`, because `StateChanged.PrRef` is non-nullable and `SseChannel.OnStateChanged`
     // fans out via `_activeRegistry.SubscribersFor(evt.PrRef)` (per-PR only). Identity-change
-    // is global; it needs every subscriber, not a per-PR set. The precedent is `InboxUpdated`,
-    // which is already a global event (no PrRef field) fanned out to every subscriber.
+    // is global; it needs every subscriber, not a per-PR set. Concrete wiring spec follows
+    // in § 3.2.1 below — this is NOT a free "publish and fan-out happens" path.
     sse.Publish(new IdentityChanged(AccountKeys.Default, priorLogin, newLogin));
 ```
+
+### 3.2.1 `IdentityChanged` SSE wiring (concrete, not generic)
+
+`SseChannel.cs` does NOT have a generic "any `IReviewEvent` without a `PrRef` fans out to all subscribers" code path. Every existing event type — `InboxUpdated`, `ActivePrUpdated`, `StateChanged`, `DraftSaved`, `DraftDiscarded`, `SubmitProgressBusEvent`, etc. — has its own bespoke wiring: a `_busXxx = bus.Subscribe<TEvent>(OnTEvent)` field set in the constructor, a per-type handler method that writes a named SSE frame (e.g., `event: inbox-updated`, `event: pr-updated`), and a corresponding `Dispose()` entry. The "follow the `InboxUpdated` precedent" framing in § 3.2 refers to this *pattern*, not a built-in capability. PR2 must add the following concrete code to `SseChannel.cs`:
+
+1. **Constructor field + subscribe**: `private readonly IDisposable _busIdentityChanged; ... _busIdentityChanged = bus.Subscribe<IdentityChanged>(OnIdentityChanged);`
+2. **Handler method**: `private void OnIdentityChanged(IdentityChanged evt) { foreach (var sub in _subscribers.Values) { WriteEventFrame(sub, "identity-changed", payload); } }` — iterates `_subscribers.Values` (the entire connected set), not `_activeRegistry.SubscribersFor(...)` (which is per-PR).
+3. **Wire event name**: `identity-changed` (kebab-case, matching the existing convention used by `inbox-updated` and `pr-updated`).
+4. **`Dispose()` entry**: `_busIdentityChanged.Dispose();` alongside the existing `_busInbox`, `_busActivePr`, etc. lines.
+
+**SSE wire payload — minimal.** The frame data is `{ "type": "identity-change" }` only — no `priorLogin`, no `newLogin`, no `accountKey`. The only consumer action is "re-fetch `/api/auth/state`" (§ 3.4); the consumer doesn't need the login strings, and omitting them from the wire keeps GitHub identity information out of the browser event stream (closes the SEC-007 wire-exposure concern). The `priorLogin` / `newLogin` values continue to be available in the structured `IdentityChanged` log line (§ 3.6) for forensic reconstruction.
+
+**Reconnect-replay handling.** SSE has no built-in event replay; a tab that's disconnected at the moment `OnIdentityChanged` writes its frame silently misses it. Defense: the frontend's existing SSE-reconnect handshake (`useEventSource.tsx`) re-fetches `/api/auth/state` on every reconnect-after-disconnect, treating each connect as a fresh sync. PR2 doesn't add a server-side identityVersion handshake — the cheap frontend re-fetch covers the gap. The READUS pattern is: any tab that disconnected during an identity change will pick up the new login from `/api/auth/state` immediately on reconnect, the same as if it had received the SSE event live.
+
+**Frontend handler.** `App.tsx` (or `useAuth.ts`) registers an EventSource listener for the `identity-changed` event name; on receipt, calls `useAuth().refetch()` (existing helper). No payload parsing needed — the discriminator-only frame is the signal.
 
 **What is preserved.** Every text field: `DraftComment.BodyMarkdown`, `DraftReply.BodyMarkdown`, `DraftSummaryMarkdown`. Every non-Node-ID per-session field: `DraftVerdict`, `DraftVerdictStatus`, `ViewedFiles`, `IterationOverrides`, `LastViewedHeadSha`, `LastSeenCommentId`. "The reviewer's text is sacred" — applied verbatim.
 
@@ -1298,7 +1313,7 @@ Single slice, nine-PR plan. Sequencing respects dependencies; orthogonal PRs can
 | **PR9** | Viewport screenshot regression test (`e2e/no-layout-shift-on-banner.spec.ts`) + README graduation + spec doc updates (`02-architecture.md`, `03-poc-features.md` § 11, `docs/roadmap.md`, `docs/specs/README.md`). | PR8 (Release exists for the README to link) | Final PR — flips slice status to Shipped. |
 
 **Sequencing notes:**
-- PR1 and PR2 are backend-only and can land in either order; PR2 internally uses PR1's `/api/submit/in-flight` so landing PR1 first is the cheaper sequencing.
+- PR1 and PR2 are backend-only. PR2 has a **soft dependency** on PR1 (PR2's endpoint internally calls `SubmitLockRegistry.AnyHeld()` which is the same primitive PR1's `/api/submit/in-flight` exposes; PR2 can compile without PR1 because `AnyHeld()` is the underlying registry method, but landing PR1 first means PR2's endpoint test fixtures share the same in-flight semantics with the frontend integration that follows in PR4). The "Depends on" column lists PR1 to capture this preference; either order works.
 - PR5, PR6, PR8 are independent of everything else and can land in any order.
 - PR7 should land AFTER PR3 + PR5 + PR6 so the audit sees the final surfaces.
 - PR9 lands LAST — the README Status section update references the Release tag, which is produced by PR8's workflow dispatch.
@@ -1314,5 +1329,7 @@ Single slice, nine-PR plan. Sequencing respects dependencies; orthogonal PRs can
 2. **Release draft vs prerelease vs published.** The workflow creates a draft Release. Alternative: `prerelease: true` so the Release appears immediately under the "Pre-releases" tab without manual promotion. Default: draft (more cautious — maintainer verifies binaries before any user sees them).
 
 3. **Dependabot Actions config location.** Round-2 ce-doc-review flagged the `.github/dependabot.yml` entry in § 7.6 as out-of-scope-for-S6 — supply-chain hygiene is real but is a recurring-maintenance concern that doesn't close a DoD line. Two paths: (a) keep the Dependabot entry in S6 PR8 alongside the SHA-pinned actions, since the pin is the thing that makes Dependabot useful; (b) defer to a standalone "repo-hygiene" PR that lands after S6 ships. Default: keep in PR8 because the cost is trivial (one YAML file) and decoupling adds coordination overhead. Decide during writing-plans.
+
+4. **`log.LogIdentityChanged(...)` failure mid-replace.** Round-3 ce-doc-review flagged that `ILogger.LogIdentityChanged` runs after `UpdateAsync` commits but before cache eviction + SSE fan-out. If the logger throws (rolling text logger out of disk space, IO error), the endpoint returns 500 with a half-applied state: `state.json` mutation persisted, in-memory caches still serving prior-login data, no SSE notification. `Microsoft.Extensions.Logging`'s default pipeline generally swallows provider exceptions, but the `LoggerMessage` source-generator path can surface argument-binding errors. Two paths: (a) wrap `log.LogIdentityChanged(...)` in a `try/catch` that swallows the exception and continues to cache eviction + SSE fan-out (forensic-log loss is acceptable for the PoC; partial state is not); (b) move cache eviction + SSE fan-out BEFORE the log line so even a logger failure leaves the system fully reconciled at the cost of losing forensic traceability. Default: (a) — wrap the log call. Decide during writing-plans.
 
 I'll commit to defaults during writing-plans unless you pull on any.
