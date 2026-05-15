@@ -39,6 +39,8 @@ Round-1 ce-doc-review on this plan caught several test-infrastructure idioms and
 | GitHub Actions SHA-pinning | Manual "look up the SHA" | Use the following gh-api recipe in PR8 Task 8.2 to resolve each tag to a SHA at PR-open time:<br/>`gh api repos/actions/checkout/git/ref/tags/v4 --jq .object.sha`<br/>`gh api repos/actions/setup-dotnet/git/ref/tags/v4 --jq .object.sha`<br/>`gh api repos/actions/setup-node/git/ref/tags/v4 --jq .object.sha`<br/>`gh api repos/softprops/action-gh-release/git/ref/tags/v2 --jq .object.sha`<br/>Substitute the four resolved SHAs for the `<commit-sha>` placeholders. Add a CI lint step (`grep -r '<commit-sha>' .github/ && exit 1 \|\| exit 0`) to mechanically reject any unresolved placeholder. |
 | Viewport screenshot threshold | `maxDiffPixelRatio: 0.001` is too tight cross-platform | Reframe PR9 Task 9.1: instead of byte-equality screenshot comparison, assert layout invariance directly via `getBoundingClientRect()` on every fixed-position element above the banner zone. Pre-trigger and post-trigger bounding boxes must be identical (within 1px tolerance for browser rounding). This directly tests "no layout shift" without depending on font-rendering determinism. The screenshot can remain as a supplementary signal with a looser threshold (`maxDiffPixelRatio: 0.01`) on a per-platform-pinned snapshot directory. |
 | PAT-not-logged test scenario | Plan didn't specify scenario shape | The PAT-not-logged test MUST use a different-login replace scenario so the `LogIdentityChanged` code path is exercised. Same-login replace short-circuits before the log line. |
+| Spec § 14 OQ 4 — `LogIdentityChanged` failure handling | Spec deferred to writing-plans | **Resolved: wrap the log call in `try/catch` so a logger IO failure does NOT leave the system partially reconciled.** Forensic-log loss is acceptable for the PoC; partial state is not. The `try/catch` filter excludes `OutOfMemoryException` and `StackOverflowException` so genuinely fatal errors still propagate. Cache eviction + `InboxPoller.RequestImmediateRefresh()` + `ActivePrSubscriberRegistry.RemoveAll()` + SSE fan-out run after the catch. **Implemented inline in PR2 Task 2.8 Step 1 (around line 1112 of this plan); covered by the "logger throws → state still fully reconciled" test added to Task 2.7.** |
+| Spec § 14 OQ 1 — `navigator.platform` deprecation | Spec deferred to writing-plans | **Resolved: stay with single-source `navigator.platform` + the "unknown → render both blocks" fallback.** PR8 Task 8.3 keeps `detectPlatform()` reading only `navigator.platform`; the unknown-platform branch already renders both Windows and macOS blocks, so a missing `userAgentData` probe degrades to "show both" rather than to silent omission. Adding a `userAgentData` probe is deferred (small win at the cost of branch complexity for a PoC user base). |
 
 The inline task content below is the original draft preserved as illustration. When in doubt, the conventions table above wins.
 
@@ -127,6 +129,8 @@ The inline task content below is the original draft preserved as illustration. W
 
 Create `tests/PRism.Web.Tests/Submit/SubmitLockRegistryAnyHeldTests.cs`:
 
+> **TRAP — illustration only.** The block below preserves the original draft for context, but contains TWO idioms the conventions table overrides: `TestContext.Current.CancellationToken` (xUnit v3 — the project pins xUnit 2.9.3, use `CancellationToken.None`) and the 2-arg `TryAcquireAsync(prRef, ct)` (real signature is 3-arg `(PrReference, TimeSpan, CancellationToken)` — use `TimeSpan.Zero` in tests). Translate per the conventions table BEFORE pasting.
+
 ```csharp
 using FluentAssertions;
 using PRism.Core.Contracts;
@@ -155,6 +159,7 @@ public class SubmitLockRegistryAnyHeldTests
     public async Task AnyHeld_LockHeld_ReturnsTrueWithRef()
     {
         var registry = new SubmitLockRegistry();
+        // WRONG — see conventions table; use TryAcquireAsync(Pr1, TimeSpan.Zero, CancellationToken.None)
         await using var handle = await registry.TryAcquireAsync(Pr1, TestContext.Current.CancellationToken);
         handle.Should().NotBeNull();
 
@@ -170,6 +175,7 @@ public class SubmitLockRegistryAnyHeldTests
         // Defends against the naive `_locks.Any()` regression: the entry stays in _locks
         // forever after release, but AnyHeld must report not-held.
         var registry = new SubmitLockRegistry();
+        // WRONG — see conventions table; use TryAcquireAsync(Pr1, TimeSpan.Zero, CancellationToken.None)
         var handle = await registry.TryAcquireAsync(Pr1, TestContext.Current.CancellationToken);
         handle.Should().NotBeNull();
         await handle!.DisposeAsync();
@@ -184,7 +190,9 @@ public class SubmitLockRegistryAnyHeldTests
     public async Task AnyHeld_MultipleLocksHeld_ReturnsOneOfThem()
     {
         var registry = new SubmitLockRegistry();
+        // WRONG — see conventions table; use TryAcquireAsync(Pr1, TimeSpan.Zero, CancellationToken.None)
         await using var h1 = await registry.TryAcquireAsync(Pr1, TestContext.Current.CancellationToken);
+        // WRONG — see conventions table; use TryAcquireAsync(Pr2, TimeSpan.Zero, CancellationToken.None)
         await using var h2 = await registry.TryAcquireAsync(Pr2, TestContext.Current.CancellationToken);
 
         var (held, prRef) = registry.AnyHeld();
@@ -225,6 +233,38 @@ public (bool Held, string? PrRef) AnyHeld()
 
 Update the existing `TryAcquireAsync` to add `_heldLocks[prRef.ToString()] = 0` on successful acquire, and the disposable handle's `DisposeAsync` to call `_heldLocks.TryRemove(prRef.ToString(), out _)`.
 
+The current `SubmitLockHandle` only carries `_sem`. It needs two additions: the PR-ref key (stamped at construction) and a back-pointer to the registry's `_heldLocks` so `DisposeAsync` can remove the entry. Sketch:
+
+```csharp
+internal sealed class SubmitLockHandle : IAsyncDisposable
+{
+    private readonly SemaphoreSlim _sem;
+    private readonly string _prRefKey;                              // NEW
+    private readonly ConcurrentDictionary<string, byte> _heldLocks; // NEW (back-reference)
+    private int _disposed;
+
+    internal SubmitLockHandle(
+        SemaphoreSlim sem,
+        string prRefKey,
+        ConcurrentDictionary<string, byte> heldLocks)
+    {
+        _sem = sem;
+        _prRefKey = prRefKey;
+        _heldLocks = heldLocks;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+        _heldLocks.TryRemove(_prRefKey, out _);   // NEW — removes from held-set
+        _sem.Release();                            // existing
+        return ValueTask.CompletedTask;
+    }
+}
+```
+
+`TryAcquireAsync` constructs the handle with `new SubmitLockHandle(sem, prRef.ToString(), _heldLocks)` after the held-set entry is added. The `Func<string, bool>` closure is an alternative if you'd rather not pass the dictionary directly — pick whichever surfaces cleaner in the existing class shape; both meet the contract. The held-set (`_heldLocks`) is the single source of truth for `AnyHeld()`, so test that disposing every acquired handle leaves it empty (the round-trip test in Task 1.1's `AnyHeld_LockAcquiredAndReleased_ReturnsFalseNull` exercises this).
+
 - [ ] **Step 2: Run tests to verify pass**
 
 ```
@@ -246,6 +286,8 @@ git commit -m "feat(s6-pr1): add SubmitLockRegistry.AnyHeld() with held-set trac
 
 Create `tests/PRism.Web.Tests/Endpoints/SubmitInFlightEndpointTests.cs`. Use the existing `WebApplicationFactory` test pattern from `PreferencesEndpointsTests` (extend its base test-host setup):
 
+> **TRAP — illustration only.** The block below uses THREE idioms the conventions table overrides: `class FooTests : EndpointTestBase` + `Host.CreateClient()` + `Host.Services` (use `using var factory = new PRismWebApplicationFactory(); using var client = factory.CreateClient();` and `factory.Services.GetRequiredService<T>()`); `TestContext.Current.CancellationToken` (xUnit v3 — use `CancellationToken.None`); `TryAcquireAsync(prRef, ct)` 2-arg (real signature is 3-arg `(PrReference, TimeSpan, CancellationToken)` — use `TimeSpan.Zero`). Translate per the conventions table BEFORE pasting.
+
 ```csharp
 using System.Net;
 using System.Net.Http.Json;
@@ -256,16 +298,20 @@ using Xunit;
 
 namespace PRism.Web.Tests.Endpoints;
 
+// WRONG — see conventions table; use `using var factory = new PRismWebApplicationFactory();` per-test, NOT a shared `EndpointTestBase` parent
 public class SubmitInFlightEndpointTests : EndpointTestBase   // shared test base; see existing
 {
     [Fact]
     public async Task GET_inFlight_EmptyRegistry_ReturnsFalse()
     {
+        // WRONG — see conventions table; use `using var factory = new PRismWebApplicationFactory(); using var client = factory.CreateClient();`
         using var client = Host.CreateClient();
 
+        // WRONG — see conventions table; use CancellationToken.None
         var resp = await client.GetAsync("/api/submit/in-flight", TestContext.Current.CancellationToken);
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        // WRONG — see conventions table; use CancellationToken.None
         var body = await resp.Content.ReadFromJsonAsync<SubmitInFlightResponse>(TestContext.Current.CancellationToken);
         body!.InFlight.Should().BeFalse();
         body.PrRef.Should().BeNull();
@@ -274,15 +320,20 @@ public class SubmitInFlightEndpointTests : EndpointTestBase   // shared test bas
     [Fact]
     public async Task GET_inFlight_LockHeld_ReturnsTrueWithRef()
     {
+        // WRONG — see conventions table; use `factory.Services.GetRequiredService<SubmitLockRegistry>()`
         var registry = Host.Services.GetRequiredService<SubmitLockRegistry>();
+        // WRONG — see conventions table; use TryAcquireAsync(prRef, TimeSpan.Zero, CancellationToken.None)
         await using var handle = await registry.TryAcquireAsync(
             new PrReference("octocat", "Hello-World", 1),
             TestContext.Current.CancellationToken);
 
+        // WRONG — see conventions table; use `using var client = factory.CreateClient();`
         using var client = Host.CreateClient();
+        // WRONG — see conventions table; use CancellationToken.None
         var resp = await client.GetAsync("/api/submit/in-flight", TestContext.Current.CancellationToken);
 
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        // WRONG — see conventions table; use CancellationToken.None
         var body = await resp.Content.ReadFromJsonAsync<SubmitInFlightResponse>(TestContext.Current.CancellationToken);
         body!.InFlight.Should().BeTrue();
         body.PrRef.Should().Be("octocat/Hello-World/1");
@@ -359,6 +410,8 @@ git commit -m "feat(s6-pr1): add GET /api/submit/in-flight endpoint"
 
 Add to `tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncTests.cs` (create if absent):
 
+> **TRAP — illustration only.** The block below uses TWO idioms the conventions table overrides: xUnit v3 `IAsyncLifetime` returning `ValueTask` (the project pins xUnit 2.9.3 — implement `IAsyncLifetime` with `public Task InitializeAsync()` + `public Task DisposeAsync()` instead) and `TestContext.Current.CancellationToken` (use `CancellationToken.None`). Translate per the conventions table BEFORE pasting.
+
 ```csharp
 using FluentAssertions;
 using PRism.Core.Config;
@@ -371,14 +424,17 @@ public class ConfigStorePatchAsyncDottedPathTests : IAsyncLifetime
     private string _dir = null!;
     private ConfigStore _store = null!;
 
+    // WRONG — see conventions table; xUnit 2.9.3 uses `public Task InitializeAsync()` (NOT `async ValueTask`)
     public async ValueTask InitializeAsync()
     {
         _dir = Path.Combine(Path.GetTempPath(), "prism-test-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
         _store = new ConfigStore(_dir);
+        // WRONG — see conventions table; use CancellationToken.None
         await _store.InitAsync(TestContext.Current.CancellationToken);
     }
 
+    // WRONG — see conventions table; xUnit 2.9.3 uses `public Task DisposeAsync()` (NOT `ValueTask`)
     public ValueTask DisposeAsync()
     {
         try { Directory.Delete(_dir, recursive: true); } catch { /* best-effort */ }
@@ -395,6 +451,7 @@ public class ConfigStorePatchAsyncDottedPathTests : IAsyncLifetime
     {
         await _store.PatchAsync(
             new Dictionary<string, object?> { [key] = false },
+            // WRONG — see conventions table; use CancellationToken.None
             TestContext.Current.CancellationToken);
 
         var sections = _store.Current.Inbox.Sections;
@@ -415,6 +472,7 @@ public class ConfigStorePatchAsyncDottedPathTests : IAsyncLifetime
     {
         var act = async () => await _store.PatchAsync(
             new Dictionary<string, object?> { ["inbox.sections.unknown"] = true },
+            // WRONG — see conventions table; use CancellationToken.None
             TestContext.Current.CancellationToken);
 
         await act.Should().ThrowAsync<ConfigPatchException>();
@@ -425,6 +483,7 @@ public class ConfigStorePatchAsyncDottedPathTests : IAsyncLifetime
     {
         await _store.PatchAsync(
             new Dictionary<string, object?> { ["theme"] = "dark" },
+            // WRONG — see conventions table; use CancellationToken.None
             TestContext.Current.CancellationToken);
 
         _store.Current.Ui.Theme.Should().Be("dark");
@@ -522,15 +581,20 @@ git commit -m "feat(s6-pr1): extend ConfigStore.PatchAsync allowlist to inbox.se
 
 Extend `tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs` (or create a new file):
 
+> **TRAP — illustration only.** The block below uses two idioms the conventions table overrides: `Host.CreateClient()` (use `using var factory = new PRismWebApplicationFactory(); using var client = factory.CreateClient();`) and `TestContext.Current.CancellationToken` (use `CancellationToken.None`). Translate per the conventions table BEFORE pasting.
+
 ```csharp
 [Fact]
 public async Task GET_preferences_ReturnsRicherShape_WithInboxAndGithub()
 {
+    // WRONG — see conventions table; use `using var factory = new PRismWebApplicationFactory(); using var client = factory.CreateClient();`
     using var client = Host.CreateClient();
 
+    // WRONG — see conventions table; use CancellationToken.None
     var resp = await client.GetAsync("/api/preferences", TestContext.Current.CancellationToken);
 
     resp.StatusCode.Should().Be(HttpStatusCode.OK);
+    // WRONG — see conventions table; use CancellationToken.None
     var body = await resp.Content.ReadFromJsonAsync<JsonElement>(TestContext.Current.CancellationToken);
 
     body.GetProperty("ui").GetProperty("theme").GetString().Should().Be("system");
@@ -861,6 +925,8 @@ public class ActivePrSubscriberRegistryRemoveAllTests
 
 - [ ] **Step 2: Implement** — add `public void RemoveAll() { _bySubscriber.Clear(); _byPr.Clear(); }`.
 
+**Concurrency contract.** `ActivePrSubscriberRegistry` uses two `ConcurrentDictionary` fields (`_bySubscriber` and `_byPr`) with no surrounding lock — every existing mutator (`Add`, `Remove`, `RemoveSubscriber`) operates on each map independently and accepts brief between-line inconsistency. `RemoveAll()` follows that same posture: the two `Clear()` calls are not atomic w.r.t. each other, so a concurrent reader landing between them can briefly observe an empty `_bySubscriber` but a still-populated `_byPr` (or vice versa). For the identity-change use case this is acceptable — the registry is being wiped wholesale, the next inbox refresh re-subscribes from the new login's view, and any in-flight read against stale `_byPr` entries returns subscriber IDs that the next `RemoveSubscriber` call (or the next subscriber heartbeat) reconciles. **Add a header comment on `RemoveAll()` documenting this posture so a future maintainer doesn't introduce a `lock` block under the assumption that bidirectional atomicity was intended.** If atomicity is ever required, every mutator must be moved under the same lock at once — partial locking would create a strictly worse contract than the current "best-effort, eventually consistent" one.
+
 - [ ] **Step 3: Run + commit**
 
 ```bash
@@ -880,11 +946,46 @@ Create `tests/PRism.Core.Tests/Inbox/InboxPollerImmediateRefreshTests.cs` using 
   - Replace `await Task.Delay(nextDelay, stoppingToken)` with `Task.WhenAny(Task.Delay(nextDelay, linkedCt.Token), _refreshSignal.WaitAsync(linkedCt.Token))`; linked CTS so the losing branch cancels.
   - Add `public void RequestImmediateRefresh()` that calls `_refreshSignal.Release()` inside a `try/catch (SemaphoreFullException)` to coalesce duplicate signals.
 
-- [ ] **Step 3: Run + commit**
+- [ ] **Step 3: Verify the concrete `InboxPoller` is resolvable from DI**
+
+The `/api/auth/replace` endpoint resolves `InboxPoller` directly (`InboxPoller inboxPoller` in the handler signature, see Task 2.8) so it can call `RequestImmediateRefresh()`. If `InboxPoller` is registered only as `IHostedService`, that resolution throws at request time. Concrete steps:
+
+```bash
+# Find the existing registration.
+rg -n "InboxPoller|AddHostedService" PRism.Web/Program.cs PRism.Web/Composition/ServiceCollectionExtensions.cs PRism.Core/Inbox/
+```
+
+Two possibilities:
+
+1. The existing registration is `services.AddHostedService<InboxPoller>()` only — that registers it as `IHostedService` but NOT as `InboxPoller`. **Fix**: switch to the singleton-then-hosted-service pattern so both DI keys resolve to the same instance:
+
+```csharp
+services.AddSingleton<InboxPoller>();
+services.AddHostedService(sp => sp.GetRequiredService<InboxPoller>());
+```
+
+2. The existing registration is already `services.AddSingleton<InboxPoller>()` + `AddHostedService(sp => sp.GetRequiredService<InboxPoller>())` (or the equivalent two-line pair). **No change needed.**
+
+In either case, add an integration assertion to PR2's test suite that resolves `InboxPoller` from `factory.Services` and calls `RequestImmediateRefresh()` — this fails fast at test-time if a future refactor regresses the registration:
+
+```csharp
+[Fact]
+public void InboxPoller_IsResolvable_AsConcreteType()
+{
+    using var factory = new PRismWebApplicationFactory();
+    var poller = factory.Services.GetRequiredService<InboxPoller>();
+    poller.RequestImmediateRefresh();   // does not throw
+}
+```
+
+- [ ] **Step 4: Run + commit**
 
 ```bash
 dotnet test tests/PRism.Core.Tests --filter "FullyQualifiedName~InboxPollerImmediateRefreshTests" --no-restore
+dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~InboxPoller_IsResolvable" --no-restore
 git add PRism.Core/Inbox/InboxPoller.cs tests/PRism.Core.Tests/Inbox/InboxPollerImmediateRefreshTests.cs
+# Stage Program.cs / ServiceCollectionExtensions.cs ONLY if Step 3's grep found case 1.
+git add PRism.Web/Program.cs PRism.Web/Composition/ServiceCollectionExtensions.cs 2>/dev/null || true
 git commit -m "feat(s6-pr2): InboxPoller.RequestImmediateRefresh races Task.Delay against signal"
 ```
 
@@ -1000,6 +1101,8 @@ Create `tests/PRism.Web.Tests/Endpoints/AuthReplaceEndpointTests.cs` covering ev
 5. PAT-not-logged discipline: capture all log entries during a happy-path call with `secretPat = "ghp_super_secret_xyz123"`; assert no entry contains the secret as a substring.
 6. Validation failure → `RollbackTransientAsync` called; old PAT readable from `TokenStore`; no state mutation; no `Identity changed` log line.
 7. `SubmitLockRegistry.AnyHeld() == true` → 409 with body `{ ok: false, error: "submit-in-flight", prRef: "<owner>/<repo>/<n>" }`; no transient written.
+8. **Logger-failure isolation (spec § 14 OQ 4 resolution)**: replace the `ILogger` for `AuthEndpoints` with a fake whose `Log(...)` throws `IOException("disk full")`; run a different-login replace; assert (a) `IActivePrCache.Clear()` ran, (b) `ActivePrSubscriberRegistry.RemoveAll()` ran, (c) `IReviewEventBus.Publish<IdentityChanged>` was called, (d) the response is still `200 OK` with the standard success body, (e) the `state.json` mutation persisted. Defends the contract that forensic-log loss MUST NOT leave the system half-reconciled.
+9. `NoReposSelected` warning treated as success (spec § 3.5 + § 3.8): stub `IReviewService.ValidateCredentialsAsync` to return `ok: true` with `NoReposSelected`. Assert the endpoint commits, runs the identity-change rule, and returns `200 OK`.
 
 Use the existing `EndpointTestBase` + seed helpers; add new seed helpers (`SeedPriorLogin`, `SeedReviewSession`) as needed.
 
@@ -1231,6 +1334,9 @@ S6 PR2 of 9. Backend Replace-token + identity-change rule. Implements spec § 3 
 - [x] PAT-not-logged: secret PAT never in any log entry
 - [x] Validation failure rolls back; old PAT intact
 - [x] Submit-lock 409 path with prRef
+- [x] **OriginCheckMiddleware coverage** on `/api/auth/replace` verified: forbidden-Origin POST returns 403 (Task 2.9-pre). Confirms the existing middleware in `Program.cs` covers the new route; if the grep in Task 2.9-pre Step 1 surfaced a gap, the registration was extended in this PR — note which case applied in the description body before merging.
+- [x] Logger-failure isolation (spec § 14 OQ 4): even when `ILogger.LogIdentityChanged` throws, cache eviction + SSE fan-out still run; response is 200 OK.
+- [x] `NoReposSelected` validation warning treated as success (spec § 3.5)
 EOF
 )"
 ```
@@ -1251,7 +1357,7 @@ EOF
 - Modify: `frontend/src/components/Toast/Toast.tsx` (add `'success'` kind)
 - Modify: `frontend/src/components/Toast/Toast.module.css` (add `.success` rule)
 - Create: `frontend/src/pages/SettingsPage.tsx`
-- Create: `frontend/src/components/Settings/SettingsPage.module.css`
+- Create: `frontend/src/pages/SettingsPage.module.css` (co-located with the page component, not under `components/Settings/`, so the page-level layout CSS lives next to its only consumer)
 - Create: `frontend/src/components/Settings/AppearanceSection.tsx`
 - Create: `frontend/src/components/Settings/InboxSectionsSection.tsx`
 - Create: `frontend/src/components/Settings/GithubSection.tsx`
@@ -1519,7 +1625,7 @@ import { AppearanceSection } from '../components/Settings/AppearanceSection';
 import { InboxSectionsSection } from '../components/Settings/InboxSectionsSection';
 import { GithubSection } from '../components/Settings/GithubSection';
 import { AuthSection } from '../components/Settings/AuthSection';
-import styles from '../components/Settings/SettingsPage.module.css';
+import styles from './SettingsPage.module.css';
 
 export function SettingsPage() {
   return (
@@ -1534,7 +1640,7 @@ export function SettingsPage() {
 }
 ```
 
-Create `frontend/src/components/Settings/SettingsPage.module.css`:
+Create `frontend/src/pages/SettingsPage.module.css` (co-located with `SettingsPage.tsx`):
 
 ```css
 .page {
@@ -1909,6 +2015,8 @@ git commit -m "feat(s6-pr4): useSubmitInFlight hook polls /api/submit/in-flight"
 
 ### Task 4.2: AuthSection Replace token link with in-flight guard
 
+> **Cleanup (carried from PR3):** PR3 Task 3.3 stubs `AuthSection.tsx` with a disabled link reading `"Replace token (lands in PR4)"`. This task REPLACES the stub with the real implementation below. After Step 2's edit, grep `frontend/src/` and `frontend/__tests__/` for the literal string `"Replace token (lands in PR4)"` and confirm zero remaining occurrences before committing — leaving the placeholder string in any tree (component, test, snapshot, story) ships stale copy.
+
 - [ ] **Step 1: Test**
 
 ```tsx
@@ -1986,7 +2094,15 @@ export function AuthSection() {
 
 The Vitest test asserts the `title` attribute equals the tooltip message (not just that the message renders in the document), so the tooltip-vs-always-visible distinction is enforced.
 
-- [ ] **Step 3: Run + commit**
+- [ ] **Step 3: Verify the PR3 placeholder string is gone**
+
+```bash
+rg -n "Replace token \(lands in PR4\)" frontend/
+```
+
+Expected: **zero matches.** If any remain (component, test, snapshot, story), update them to use the real `Replace token` copy before committing.
+
+- [ ] **Step 4: Run + commit**
 
 ```bash
 cd frontend && npm test -- AuthSection
@@ -3143,6 +3259,13 @@ describe('FirstRunDisclosure', () => {
 
 ```tsx
 // frontend/src/components/Setup/FirstRunDisclosure.tsx
+
+// Spec § 14 OQ 1 resolution: single-source `navigator.platform`. The deprecation
+// warning is real, but the modern `navigator.userAgentData.platform` is gated
+// behind secure-context + spotty cross-browser support, and the unknown-platform
+// branch already renders BOTH Windows and macOS blocks — degrading gracefully
+// rather than silently hiding the trust copy. Adding a `userAgentData` probe is
+// deferred (see plan corrections preamble for the audit trail).
 function detectPlatform(): 'windows' | 'macos' | 'unknown' {
   const p = navigator.platform.toLowerCase();
   if (p.includes('win')) return 'windows';

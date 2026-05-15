@@ -187,7 +187,7 @@ New under `frontend/src/`:
   - `InboxSectionsSection.tsx` — five toggle rows with helper text about the 2-minute propagation caveat. The helper text renders as a single `<span id="inbox-section-help">` once at the top of the section; every toggle in the section sets `aria-describedby="inbox-section-help"` so screen reader users hear the propagation caveat as part of each control's announcement.
   - `GithubSection.tsx` — read-only host display + "Edit `config.json`" link.
   - `AuthSection.tsx` — Replace token link with the in-flight-submit guard logic from § 3.
-  - `SettingsPage.module.css` — section styling, max-width 720px container, group dividers.
+- `pages/SettingsPage.module.css` — page-level layout CSS (section styling, max-width 720px container, group dividers); co-located with `SettingsPage.tsx` so the page-only styles live next to their only consumer rather than under `components/Settings/`.
 
 Each component is a thin presentational shell over `usePreferences`. Patching follows the existing one-field-at-a-time pattern from `HeaderControls.tsx`.
 
@@ -479,6 +479,7 @@ Backend unit (`PRism.Web.Tests`):
 - `/api/auth/replace` case-insensitive login match → `identityChanged === false`.
 - `/api/auth/replace` with validation failure → `RollbackTransientAsync` called; no commit; old PAT still readable; no state mutation; no `IdentityChanged` log line.
 - `/api/auth/replace` with `SubmitLockRegistry.AnyHeld() === true` → 409; no transient written; no commit; no state mutation.
+- `/api/auth/replace` **`NoReposSelected` validation warning treated as success**: stub `IReviewService.ValidateCredentialsAsync` to return `ok: true` with a `NoReposSelected` warning (the user previously connected; they know what they're doing — see § 3.5). Assert the endpoint commits the new PAT, runs the identity-change rule (different login → `identityChanged: true`; same login → `identityChanged: false`), and returns `200 OK` with the standard success body. Does NOT short-circuit to a warning response shape (that's `/api/auth/connect` first-Setup behaviour).
 - `/api/auth/replace` **PAT-not-logged discipline**: capture the structured log output of a happy-path call; assert no log message contains the request body's PAT value as a substring. The endpoint must log `PatLength` only, mirroring `/api/auth/connect`. Defends against an implementer who copies `/connect`'s skeleton but passes the raw PAT into the logger.
 - `/api/submit/in-flight` returns `{ inFlight: false }` when registry empty.
 - `/api/submit/in-flight` returns `{ inFlight: true, prRef: <ref> }` when a lock is held; matches one of the held refs.
@@ -554,8 +555,10 @@ function onKeyDown(e: KeyboardEvent) {
     close();
     return;
   }
-  // Cmd/Ctrl+R intentionally NOT intercepted — existing reload handler fires and the
-  // cheatsheet stays open (spec § 9 explicit rule).
+  // Cmd/Ctrl+R intentionally NOT intercepted — existing reload handler fires.
+  // The cheatsheet is React-state-only (`useState(false)`); reload re-mounts the
+  // tree, so the overlay resets to closed after reload settles. (Persistence via
+  // sessionStorage is deferred — see plan corrections table for rationale.)
 }
 ```
 
@@ -570,7 +573,7 @@ export const SHORTCUTS: ReadonlyArray<{ group: string; rows: ReadonlyArray<{ key
   {
     group: 'Global',
     rows: [
-      { keys: 'Cmd/Ctrl + R', context: 'Anywhere',                action: 'Reload current view' },
+      { keys: 'Cmd/Ctrl + R', context: 'Anywhere',                action: 'Reload current view (closes the cheatsheet)' },
       { keys: 'Cmd/Ctrl + /', context: 'Anywhere',                action: 'Toggle this cheatsheet' },
       { keys: '?',            context: 'Outside text inputs',     action: 'Toggle this cheatsheet' },
       { keys: 'Esc',          context: 'Cheatsheet open',         action: 'Close cheatsheet' },
@@ -622,7 +625,7 @@ Frontend e2e (Playwright):
 - Press `?` inside a composer → literal `?` typed into the textarea; overlay NOT visible.
 - Press `Cmd/Ctrl+/` inside a composer → overlay visible; `document.activeElement` still the composer textarea; composer body unchanged.
 - Press `Esc` with both cheatsheet and a non-empty composer open → cheatsheet closes; composer NOT prompted for discard.
-- Press `Cmd/Ctrl+R` with cheatsheet open → reload runs (banner clears, page re-renders); cheatsheet still visible after reload settles.
+- Press `Cmd/Ctrl+R` with cheatsheet open → reload runs (banner clears, page re-renders); cheatsheet is RESET to closed after reload (state does not persist; React-state-only).
 
 ---
 
@@ -1047,51 +1050,79 @@ DoD line 131 (`01-vision-and-acceptance.md`):
 
 New file `frontend/e2e/no-layout-shift-on-banner.spec.ts`.
 
+The DoD bullet's "viewport bytes-equal" wording is interpreted as **layout invariance**, not literal pixel equality. Per round-1 ce-doc-review on the plan, byte-equality screenshots at `maxDiffPixelRatio: 0.001` are too tight to survive cross-platform font-rendering differences. The primary assertion is bounding-box equality on every fixed-position element above the banner zone (banner mounts in its own reserved sticky region; nothing else moves). A platform-pinned screenshot snapshot at a looser threshold remains as a supplementary signal.
+
 ```ts
-test('PR detail viewport bytes-equal before and after banner trigger', async ({ page }) => {
+test('PR detail layout invariant before and after banner trigger', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // Seed: PR loaded into PR detail view via existing test hooks.
   await page.goto('/pr/owner/repo/123');
   await page.locator('[data-testid="pr-header"]').waitFor();
 
-  // Disable animations to remove pixel drift sources.
+  // Disable animations to remove timing-dependent measurement drift.
   await page.addStyleTag({
     content: '*, *::before, *::after { animation: none !important; transition: none !important; }'
   });
 
-  // Mask the banner's sticky region (top 48px under the header).
-  const bannerRegion = { x: 0, y: 56, width: 1440, height: 48 };
+  // Selectors for every fixed-position element above the banner's sticky zone.
+  // If any of these shift, the DoD line is violated.
+  const fixedSelectors = [
+    '[data-testid="app-header"]',
+    '[data-testid="pr-header"]',
+    '[data-testid="file-tree"]',
+    '[data-testid="diff-pane"]',
+  ];
 
-  // Baseline.
-  await expect(page).toHaveScreenshot('pr-detail-before-banner.png', {
-    mask: [page.locator('[data-testid="reload-banner"]')],
-    maxDiffPixelRatio: 0.001,
-  });
+  async function captureBoxes(): Promise<Record<string, DOMRect>> {
+    const result: Record<string, DOMRect> = {};
+    for (const sel of fixedSelectors) {
+      const box = await page.locator(sel).evaluate(el => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height, top: r.top, left: r.left, right: r.right, bottom: r.bottom } as DOMRect;
+      });
+      result[sel] = box;
+    }
+    return result;
+  }
+
+  const before = await captureBoxes();
 
   // Trigger banner via existing S5 test hook.
   await page.request.post('/test/advance-head', {
     data: { prRef: 'owner/repo/123', newHeadSha: 'feed...' },
   });
-
-  // Wait for banner to appear.
   await page.locator('[data-testid="reload-banner"]').waitFor({ state: 'visible' });
 
-  // Compare against the same baseline; banner is masked.
-  await expect(page).toHaveScreenshot('pr-detail-before-banner.png', {
+  const after = await captureBoxes();
+
+  // Layout invariance: every tracked element's bounding box must be identical
+  // (within 1px tolerance for sub-pixel browser rounding).
+  for (const sel of fixedSelectors) {
+    expect(Math.abs(after[sel].x      - before[sel].x))      .toBeLessThanOrEqual(1);
+    expect(Math.abs(after[sel].y      - before[sel].y))      .toBeLessThanOrEqual(1);
+    expect(Math.abs(after[sel].width  - before[sel].width))  .toBeLessThanOrEqual(1);
+    expect(Math.abs(after[sel].height - before[sel].height)) .toBeLessThanOrEqual(1);
+  }
+
+  // Supplementary signal: platform-pinned screenshot at a looser threshold so
+  // wholesale rendering regressions still get noticed; the bounding-box check
+  // above is what fails the build for layout shift.
+  await expect(page).toHaveScreenshot('pr-detail-with-banner.png', {
     mask: [page.locator('[data-testid="reload-banner"]')],
-    maxDiffPixelRatio: 0.001,
+    maxDiffPixelRatio: 0.01,
   });
 });
 ```
 
-The masking approach uses Playwright's built-in `mask` option on `toHaveScreenshot` — pixels under the masked locator are not compared. Both calls use the same baseline filename so the second call asserts equality against the first.
+The bounding-box approach directly asserts "no layout shift" without depending on font-rendering determinism. The supplementary screenshot is a softer cross-check that catches non-layout rendering drift (color, typography, image swaps) on the pinned CI platform.
 
 ### 8.3 Caveats
 
-- **Platform scope**: CI runs on `windows-latest` → screenshots are Windows-only. macOS gets a manual-verify checkbox in the publish checklist (run the spec locally on macOS before each release). Cross-platform pixel comparison is impossible due to font-hinting differences; the test catches *layout* regressions, not rendering drift.
-- **Animation disablement**: required to avoid in-flight animation pixels at capture time.
-- **Anti-aliasing tolerance**: `maxDiffPixelRatio: 0.001` absorbs sub-pixel rendering noise (~1300 pixels out of 1.3M).
+- **Platform scope**: CI runs on `windows-latest` → the supplementary screenshot is Windows-only. macOS gets a manual-verify checkbox in the publish checklist (run the spec locally on macOS before each release). The bounding-box assertions ARE cross-platform safe (DOM measurements don't depend on font hinting), so the layout-shift signal works on either OS.
+- **Animation disablement**: required so bounding-box measurements aren't taken mid-transition.
+- **Tolerance window**: `≤ 1px` on each box dimension absorbs sub-pixel browser rounding without masking real shifts (a real banner-pushes-content regression moves elements by ≥ 48px).
+- **Supplementary screenshot tolerance**: `maxDiffPixelRatio: 0.01` is intentionally looser than the original `0.001` — the bounding-box check is what enforces the DoD; the screenshot just flags cosmetic regressions.
 - **Baseline storage**: Playwright stores baselines under `frontend/e2e/__screenshots__/`. First run creates the baseline; CI fails if no baseline exists, so the first PR shipping this test must include the baseline.
 
 ### 8.4 Tests
@@ -1330,6 +1361,6 @@ Single slice, nine-PR plan. Sequencing respects dependencies; orthogonal PRs can
 
 3. **Dependabot Actions config location.** Round-2 ce-doc-review flagged the `.github/dependabot.yml` entry in § 7.6 as out-of-scope-for-S6 — supply-chain hygiene is real but is a recurring-maintenance concern that doesn't close a DoD line. Two paths: (a) keep the Dependabot entry in S6 PR8 alongside the SHA-pinned actions, since the pin is the thing that makes Dependabot useful; (b) defer to a standalone "repo-hygiene" PR that lands after S6 ships. Default: keep in PR8 because the cost is trivial (one YAML file) and decoupling adds coordination overhead. Decide during writing-plans.
 
-4. **`log.LogIdentityChanged(...)` failure mid-replace.** Round-3 ce-doc-review flagged that `ILogger.LogIdentityChanged` runs after `UpdateAsync` commits but before cache eviction + SSE fan-out. If the logger throws (rolling text logger out of disk space, IO error), the endpoint returns 500 with a half-applied state: `state.json` mutation persisted, in-memory caches still serving prior-login data, no SSE notification. `Microsoft.Extensions.Logging`'s default pipeline generally swallows provider exceptions, but the `LoggerMessage` source-generator path can surface argument-binding errors. Two paths: (a) wrap `log.LogIdentityChanged(...)` in a `try/catch` that swallows the exception and continues to cache eviction + SSE fan-out (forensic-log loss is acceptable for the PoC; partial state is not); (b) move cache eviction + SSE fan-out BEFORE the log line so even a logger failure leaves the system fully reconciled at the cost of losing forensic traceability. Default: (a) — wrap the log call. Decide during writing-plans.
+4. **`log.LogIdentityChanged(...)` failure mid-replace.** Round-3 ce-doc-review flagged that `ILogger.LogIdentityChanged` runs after `UpdateAsync` commits but before cache eviction + SSE fan-out. If the logger throws (rolling text logger out of disk space, IO error), the endpoint returns 500 with a half-applied state: `state.json` mutation persisted, in-memory caches still serving prior-login data, no SSE notification. `Microsoft.Extensions.Logging`'s default pipeline generally swallows provider exceptions, but the `LoggerMessage` source-generator path can surface argument-binding errors. Two paths: (a) wrap `log.LogIdentityChanged(...)` in a `try/catch` that swallows the exception and continues to cache eviction + SSE fan-out (forensic-log loss is acceptable for the PoC; partial state is not); (b) move cache eviction + SSE fan-out BEFORE the log line so even a logger failure leaves the system fully reconciled at the cost of losing forensic traceability. **Resolved in writing-plans: (a) — wrap the log call in `try/catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)` that swallows so cache eviction + SSE fan-out still run.** Implemented in PR2 Task 2.8 Step 1; tested by an explicit "logger throws → state still fully reconciled" test added to Task 2.7 (see plan).
 
-I'll commit to defaults during writing-plans unless you pull on any.
+(Resolution status: OQ 1, OQ 3, OQ 4 resolved in writing-plans; OQ 2 — draft vs prerelease — kept as draft per stated default. See plan corrections preamble for the audit trail.)
