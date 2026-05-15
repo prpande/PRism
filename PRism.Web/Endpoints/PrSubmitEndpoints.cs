@@ -35,6 +35,22 @@ internal static class PrSubmitEndpoints
         LoggerMessage.Define<string>(LogLevel.Warning, new EventId(1, "ForeignPendingReviewDiscardDeleteFailed"),
             "deletePullRequestReview failed for the foreign-pending-review discard on {SessionKey} (returning 502); the pending review remains and will be re-detected on the next submit");
 
+    // Logged at Warning because LastViewedHeadSha being null is a server-detectable
+    // FE wire-up gap (the frontend's PR-detail load path failed to call POST
+    // /api/pr/{ref}/mark-viewed). Without this log, the symptom — silent flash of
+    // the submit button — required client-side debugging to diagnose. See
+    // docs/solutions/ if this persists; the FE wire-up lives in usePrDetail.
+    private static readonly Action<ILogger, string, Exception?> s_headShaNotStamped =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(2, "SubmitRejectedHeadShaNotStamped"),
+            "POST /submit rejected for {SessionKey}: session.LastViewedHeadSha is null. The frontend must call POST /api/pr/{{ref}}/mark-viewed when PR detail loads; see PrDetailEndpoints.MarkViewed.");
+
+    // Logged at Information because real drift is a UX concern (the user's
+    // viewport is stale), not a wire-up bug. Surfacing it lets operators
+    // distinguish "user took too long" from "wire-up regressed."
+    private static readonly Action<ILogger, string, string, string, Exception?> s_headShaDrift =
+        LoggerMessage.Define<string, string, string>(LogLevel.Information, new EventId(3, "SubmitRejectedHeadShaDrift"),
+            "POST /submit rejected for {SessionKey}: head SHA drifted (last viewed {LastViewed}, current {Current}). The user must Reload before retrying.");
+
     public static IEndpointRouteBuilder MapPrSubmitEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -90,14 +106,24 @@ internal static class PrSubmitEndpoints
             && string.IsNullOrWhiteSpace(session.DraftSummaryMarkdown))
             return Results.Json(new SubmitErrorDto("no-content", "A Comment-verdict review needs at least one draft, reply, or summary."), statusCode: StatusCodes.Status400BadRequest);
 
-        // Rule (f): head_sha drift. Compare the session's last-viewed head against the most recent
-        // active-PR poll snapshot (when one exists). Also require a known last-viewed head so the
-        // pipeline always Begins against a real commit oid.
+        // Rule (f): head_sha drift. Two distinct sub-cases — kept separate so the frontend's
+        // toast can pick a useful remedy, and so a wire-up regression (FE never stamping
+        // last-viewed-head-sha) shows up as a Warning in the logs instead of being mistaken
+        // for a stale-viewport UX issue.
         if (string.IsNullOrEmpty(session.LastViewedHeadSha))
-            return Results.Json(new SubmitErrorDto("head-sha-drift", "Reload the PR before submitting."), statusCode: StatusCodes.Status400BadRequest);
+        {
+            s_headShaNotStamped(loggerFactory.CreateLogger("PRism.Web.Endpoints.PrSubmitEndpoints"), sessionKey, null);
+            return Results.Json(
+                new SubmitErrorDto("head-sha-not-stamped",
+                    "PR detail has not been marked viewed yet (frontend never called POST /api/pr/{ref}/mark-viewed). Reload the PR; if this persists the frontend wire-up is broken."),
+                statusCode: StatusCodes.Status400BadRequest);
+        }
         var pollSnapshot = activePrCache.GetCurrent(prRef);
         if (pollSnapshot is not null && !string.Equals(pollSnapshot.HeadSha, session.LastViewedHeadSha, StringComparison.Ordinal))
+        {
+            s_headShaDrift(loggerFactory.CreateLogger("PRism.Web.Endpoints.PrSubmitEndpoints"), sessionKey, session.LastViewedHeadSha, pollSnapshot.HeadSha, null);
             return Results.Json(new SubmitErrorDto("head-sha-drift", "Reload the PR before submitting."), statusCode: StatusCodes.Status400BadRequest);
+        }
 
         // --- Per-PR submit lock. NOT `await using` — the lock must remain held for the duration of
         // the fire-and-forget pipeline; the Task.Run lambda's finally is the sole release site, so

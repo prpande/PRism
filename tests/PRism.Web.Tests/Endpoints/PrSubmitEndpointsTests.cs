@@ -5,6 +5,8 @@ using System.Text.Json;
 
 using FluentAssertions;
 
+using Microsoft.Extensions.Logging;
+
 using PRism.Core.Events;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
@@ -141,6 +143,48 @@ public class PrSubmitEndpointsTests
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase)).GetProperty("code").GetString().Should().Be("head-sha-drift");
+    }
+
+    // Regression: production debugging on 2026-05-15 found the FE never calls
+    // POST /mark-viewed, so LastViewedHeadSha was always null and submit
+    // returned the misleading code "head-sha-drift" with the message "Reload
+    // the PR" — but Reload only fires after drift is detected, so the user
+    // had no way out. The new code "head-sha-not-stamped" distinguishes the
+    // wire-up gap from a real drift; the FE maps it to a different message.
+    [Fact]
+    public async Task PostSubmit_last_viewed_head_sha_null_returns_400_head_sha_not_stamped()
+    {
+        using var ctx = SubmitEndpointsTestContext.Create();
+        var session = SubmitEndpointsTestContext.ValidSession() with { LastViewedHeadSha = null };
+        await ctx.SeedSessionAsync("o", "r", 50, session);
+        using var client = ctx.CreateClient();
+
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/50/submit", new { verdict = "Comment" });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("head-sha-not-stamped");
+        body.GetProperty("message").GetString().Should().Contain("mark-viewed");
+    }
+
+    [Fact]
+    public async Task PostSubmit_last_viewed_head_sha_null_logs_warning_with_pr_ref()
+    {
+        // Logging the wire-up gap helps diagnose the problem in production
+        // (the user can grep `<dataDir>/logs/` instead of round-tripping
+        // through DevTools to read the response body).
+        using var ctx = SubmitEndpointsTestContext.Create();
+        var session = SubmitEndpointsTestContext.ValidSession() with { LastViewedHeadSha = null };
+        await ctx.SeedSessionAsync("o", "r", 51, session);
+        using var client = ctx.CreateClient();
+
+        await client.PostAsJsonAsync("/api/pr/o/r/51/submit", new { verdict = "Comment" });
+
+        ctx.Logs.Records.Should().Contain(r =>
+            r.Level == LogLevel.Warning &&
+            r.Category.Contains("PrSubmit", StringComparison.Ordinal) &&
+            r.FormattedMessage.Contains("o/r/51", StringComparison.Ordinal) &&
+            r.FormattedMessage.Contains("mark-viewed", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

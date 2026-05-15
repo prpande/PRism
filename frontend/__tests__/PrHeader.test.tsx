@@ -1,6 +1,10 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PrHeader } from '../src/components/PrDetail/PrHeader';
+import { ToastProvider } from '../src/components/Toast/useToast';
+import { ToastContainer } from '../src/components/Toast/ToastContainer';
+import { SubmitConflictError } from '../src/api/submit';
+import type { ReactNode } from 'react';
 import type {
   AiCapabilities,
   PrReference,
@@ -10,9 +14,10 @@ import type {
 
 // vi.hoisted so the mock factories (themselves hoisted above the imports) can
 // read these mutable containers without a TDZ error.
-const { capabilitiesValue, preferencesValue } = vi.hoisted(() => ({
+const { capabilitiesValue, preferencesValue, submitReviewMock } = vi.hoisted(() => ({
   capabilitiesValue: { capabilities: null as AiCapabilities | null },
   preferencesValue: { preferences: null as UiPreferences | null },
+  submitReviewMock: vi.fn(),
 }));
 
 vi.mock('../src/hooks/useCapabilities', () => ({
@@ -29,6 +34,26 @@ vi.mock('../src/hooks/usePreferences', () => ({
     refetch: () => {},
     set: () => {},
   }),
+}));
+
+// Real SubmitConflictError + verdictToSubmitWire kept; only the network call is
+// stubbed so the catch in PrHeader runs against a real thrown error type.
+vi.mock('../src/api/submit', async () => {
+  const actual = await vi.importActual<typeof import('../src/api/submit')>('../src/api/submit');
+  return {
+    ...actual,
+    submitReview: (...args: unknown[]) => submitReviewMock(...args),
+    resumeForeignPendingReview: vi.fn().mockResolvedValue({ threadCount: 0, replyCount: 0, threads: [] }),
+    discardForeignPendingReview: vi.fn().mockResolvedValue(undefined),
+    discardAllDrafts: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
+// Drains the PUT /draft summary-flush + any other fire-and-forget calls fired
+// from SubmitDialog.handleConfirm so they don't error in tests.
+vi.mock('../src/api/draft', () => ({
+  sendPatch: vi.fn().mockResolvedValue(undefined),
+  getTabId: () => 'test-tab',
 }));
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
@@ -63,6 +88,17 @@ beforeEach(() => {
   preferencesValue.preferences = null;
   vi.clearAllMocks();
 });
+
+// Wraps the SUT in a real ToastProvider + ToastContainer so tests can assert
+// on the rendered toast nodes after PrHeader's catch handlers fire `show`.
+function renderWithToast(node: ReactNode) {
+  return render(
+    <ToastProvider>
+      {node}
+      <ToastContainer />
+    </ToastProvider>,
+  );
+}
 
 describe('PrHeader', () => {
   it('renders the PR title', () => {
@@ -163,6 +199,78 @@ describe('PrHeader', () => {
     render(<PrHeader {...baseProps} fileCount={5} />);
     const filesTab = screen.getByRole('tab', { name: /files/i });
     expect(filesTab.textContent).toMatch(/5/);
+  });
+});
+
+describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swallow)', () => {
+  // Root cause from production debugging: PrHeader.tsx's onSubmit catch was
+  // empty with a comment claiming useSubmitToasts handled the toast — but
+  // useSubmitToasts only listens for two SSE events, NOT HTTP errors. Result:
+  // every 4xx from /submit (head-sha-drift, unauthorized, no-session, ...)
+  // produced an in-flight "flash" with no user feedback. These tests assert
+  // each known SubmitConflictError code surfaces a useful toast.
+
+  async function clickSubmitAndConfirm() {
+    fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
+    const confirm = await screen.findByRole('button', { name: /confirm submit/i });
+    fireEvent.click(confirm);
+  }
+
+  it('surfaces head-sha-drift as an error toast naming the Reload remedy', async () => {
+    submitReviewMock.mockRejectedValueOnce(
+      new SubmitConflictError('head-sha-drift', 'Reload the PR before submitting.'),
+    );
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    expect(await screen.findByText(/head commit changed.*reload the PR/i)).toBeInTheDocument();
+  });
+
+  it('surfaces head-sha-not-stamped with a server-side wire-up phrasing', async () => {
+    submitReviewMock.mockRejectedValueOnce(
+      new SubmitConflictError(
+        'head-sha-not-stamped',
+        'PR detail has not been marked viewed yet — reload the PR.',
+      ),
+    );
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    expect(await screen.findByText(/PR view hasn't been stamped yet/i)).toBeInTheDocument();
+  });
+
+  it('surfaces unauthorized as an error toast naming subscription loss', async () => {
+    submitReviewMock.mockRejectedValueOnce(
+      new SubmitConflictError('unauthorized', 'Subscribe to this PR before submitting.'),
+    );
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    expect(await screen.findByText(/subscription to this PR was lost/i)).toBeInTheDocument();
+  });
+
+  it('surfaces stale-drafts as an error toast pointing at the Drafts tab', async () => {
+    submitReviewMock.mockRejectedValueOnce(
+      new SubmitConflictError('stale-drafts', 'Resolve stale drafts before submitting.'),
+    );
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    expect(await screen.findByText(/stale drafts.*Drafts tab/i)).toBeInTheDocument();
+  });
+
+  it('falls through to the server-supplied message on an unknown SubmitConflictError code', async () => {
+    submitReviewMock.mockRejectedValueOnce(
+      new SubmitConflictError('something-new-from-future-spec', 'New thing.'),
+    );
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    // Server-supplied message reaches the user even for codes the FE doesn't
+    // know about, so a future backend code is at least visible, not silent.
+    expect(await screen.findByText(/new thing/i)).toBeInTheDocument();
+  });
+
+  it('surfaces a generic error toast when submit throws a non-SubmitConflictError', async () => {
+    submitReviewMock.mockRejectedValueOnce(new Error('network down'));
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    expect(await screen.findByText(/unexpected error.*Try again/i)).toBeInTheDocument();
   });
 });
 

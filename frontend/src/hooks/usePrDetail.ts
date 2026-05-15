@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { getPrDetail } from '../api/prDetail';
+import { postMarkViewed } from '../api/markViewed';
 import type { PrDetailDto, PrReference } from '../api/types';
 import { useDelayedLoading } from './useDelayedLoading';
+
+// Highest IssueComment.id across the PR's root conversation, stringified.
+// Mirrors the markAllRead patch's HighestIssueCommentId semantics so the
+// active-PR poll's comment-count-delta tracks against the same baseline.
+function maxRootCommentId(detail: PrDetailDto): string | null {
+  if (detail.rootComments.length === 0) return null;
+  let maxId = detail.rootComments[0].id;
+  for (const c of detail.rootComments) {
+    if (c.id > maxId) maxId = c.id;
+  }
+  return String(maxId);
+}
 
 export interface UsePrDetailResult {
   data: PrDetailDto | null;
@@ -37,6 +50,18 @@ export function usePrDetail(prRef: PrReference): UsePrDetailResult {
         if (cancelled) return;
         setData(result);
         setIsLoading(false);
+        // Best-effort stamp of last-viewed-head-sha + last-seen-comment-id on
+        // the backend session. Without this, /api/pr/{ref}/submit returns 400
+        // head-sha-drift on every first-time submit (PrSubmitEndpoints rule f).
+        // Fire-and-forget: a failure (snapshot evicted, transient network) must
+        // not block the page from rendering; the next reload re-stamps. The
+        // .catch swallows so an unhandled-promise-rejection doesn't surface.
+        void postMarkViewed(prRef, {
+          headSha: result.pr.headSha,
+          maxCommentId: maxRootCommentId(result),
+        }).catch(() => {
+          /* see comment above — best-effort */
+        });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
