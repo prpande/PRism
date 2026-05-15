@@ -83,7 +83,7 @@ The multi-account storage scaffold ([`2026-05-10-multi-account-scaffold-design.m
 | Inbox sections | Mentioned | bool | `inbox.sections.mentioned` | Next inbox poll tick |
 | Inbox sections | CI failing on my PRs | bool | `inbox.sections.ci-failing` | Next inbox poll tick |
 | GitHub | Host (read-only display) | string | n/a — reads `config.github.accounts[0].host` via the multi-account scaffold delegate property | n/a |
-| GitHub | "Copy `config.json` path" button | button → clipboard | n/a — copies `<dataDir>/config.json` to clipboard via `navigator.clipboard.writeText`; surfaces a brief success toast ("Path copied — paste into your editor"). Browsers block `<a href="file:///...">` for security, so we render this as a button-with-clipboard-action rather than a hyperlink. Works cross-browser; doesn't require shell-out APIs. | n/a |
+| GitHub | "Copy `config.json` path" button | button → clipboard | n/a — copies `<dataDir>/config.json` to clipboard via `navigator.clipboard.writeText`. On success: brief `show({ kind: 'success', message: 'Path copied — paste into your editor' })`. On rejection (insecure context, Permissions-Policy denial, missing user activation, browser policy block): `show({ kind: 'error', message: 'Could not copy path. Select it manually below.' })` — and the path is rendered alongside the button as a read-only `<input type="text" readOnly value={configPath}>` that the user can triple-click to select. The visible path doubles as the fallback for accessibility (screen readers read it directly; the button is a convenience, not the only path). Browsers block `<a href="file:///...">` for security, so we render this as a button-with-clipboard-action rather than a hyperlink. | n/a |
 | Auth | Replace token | link → § 3 lazy-swap flow | n/a | n/a |
 
 **Inbox-tick hot-reload caveat.** The inbox poller reads `config.Current.Inbox.Sections` per fetch cycle, not on `IConfigStore.Changed`. A user toggling an inbox section in Settings sees the change apply on the next 120s poll, not immediately. Surfacing this in Settings helper text:
@@ -181,7 +181,7 @@ Each Settings toggle/dropdown fires its own one-field PATCH on change; the page 
 
 New under `frontend/src/`:
 
-- `pages/SettingsPage.tsx` — top-level page; uses `usePreferences` hook (extended to read the new GET shape) and `useConfigPath` (new hook hitting `/api/preferences`'s `github.configPath`).
+- `pages/SettingsPage.tsx` — top-level page; uses the existing `usePreferences` hook (extended to read the new GET shape, including `github.configPath`). No separate `useConfigPath` hook — `configPath` flows through `usePreferences().preferences.github.configPath` and is passed to `GithubSection.tsx` as a prop.
 - `components/Settings/`
   - `AppearanceSection.tsx` — three rows (theme dropdown, accent radio group, AI preview switch).
   - `InboxSectionsSection.tsx` — five toggle rows with helper text about the 2-minute propagation caveat. The helper text renders as a single `<span id="inbox-section-help">` once at the top of the section; every toggle in the section sets `aria-describedby="inbox-section-help"` so screen reader users hear the propagation caveat as part of each control's announcement.
@@ -232,19 +232,21 @@ Each component is a thin presentational shell over `usePreferences`. Patching fo
 
 9. Frontend on validation failure → existing failure UI in `SetupForm` (same as connect path).
 
-### 3.1.1 Toast component (new — first toast in the product)
+### 3.1.1 Toast component (extend existing)
 
-The Replace token flow introduces the first toast surface in the product. No toast pattern exists in the design handoff or `tokens.css`, so S6 ships a small `<Toast>` component family alongside the Replace token flow.
+The Replace token flow reuses the existing Toast component family at `frontend/src/components/Toast/` (already shipped: `Toast.tsx`, `useToast.ts`, `ToastContainer.tsx`, `Toast.module.css`, `index.ts`; `ToastProvider` already mounted in `App.tsx`). S5's `useSubmitToasts` already routes through it. S6 extends the existing surface to support success-kind notifications.
 
-- **Component**: new under `frontend/src/components/Toast/{Toast.tsx, ToastProvider.tsx, useToast.ts, Toast.module.css}`. Provider mounted at App root as a sibling to `CheatsheetProvider`.
-- **API**: `const toast = useToast()` exposes `toast.success(message)`, `toast.error(message)`, `toast.info(message)`. Each call returns a `dismiss()` handle so callers can programmatically close.
-- **Layout**: bottom-right of the viewport (16px margin); max-width 360px; single-line headline with an optional second-line body; close button (X icon) in the top-right corner of the toast.
-- **Styling**: `--surface-2` background with a colored left border per kind — `--accent-success` (green; success), `--accent-warning` (amber; warning), `--accent-danger` (red; error). New tokens to add in `tokens.css`: `--toast-bg`, `--toast-border-success`, `--toast-border-warning`, `--toast-border-danger`, `--toast-shadow`. All derived from the existing oklch base palette.
-- **Duration**: success and info toasts auto-dismiss at 5s; error toasts persist until the user clicks the close button (failure visibility matters more than auto-dismiss).
-- **Stacking**: up to 3 concurrent toasts stack vertically (newest at the bottom). A 4th displaces the oldest with a brief fade.
-- **A11y**: `role="status"` + `aria-live="polite"` for success/info; `role="alert"` + `aria-live="assertive"` for error. Close button carries `aria-label="Dismiss <kind> toast"`. The pulse animation respects `prefers-reduced-motion` (no fade-in animation if the user has reduced-motion enabled — toast renders instantly).
+**Extensions to land in PR4:**
 
-Other Replace-token-flow surfaces (submit-in-flight 409, validation failure on the new PAT) reuse the same component with `toast.error`. Future surfaces (S5's `submit-duplicate-marker-detected` toast already ships under a separate `useSubmitToasts` hook — that hook is refactored in PR4 to use `useToast` so all toasts share one surface).
+- **`ToastSpec.kind`** grows from `'info' | 'error'` to `'info' | 'error' | 'success'`. The existing auto-dismiss timer in `Toast.tsx` (currently 5s for `'info'` only) extends to also auto-dismiss `'success'` after 5s; `'error'` continues to persist until the close button is clicked. Identical 5s window for `'info'` and `'success'` keeps the existing pattern; no new duration logic.
+- **CSS rule** in `Toast.module.css` for `.success` (colored left border, green; matches the existing `.info` / `.error` colored-border idiom). No new token set — reuse whatever oklch hue is already in scope; the existing tokens.css contract for `--accent-success` (if absent today) is added in the same PR.
+- **API stays as-is**: callers use `const { show, dismiss, toasts } = useToast()` and `show({ kind, message, requestId? })`. Identity-change confirmation lands as `show({ kind: 'success', message: 'Connected as <newLogin>. Drafts preserved; pending review IDs cleared so the new login can re-submit.' })`. Other Replace-flow surfaces (validation failure, 409 submit-in-flight) use `show({ kind: 'error', message: ... })`.
+
+**Rendering contract (security):** `message` is rendered as a React text node (JSX `{message}`); never `dangerouslySetInnerHTML`. The existing `Toast.tsx` already renders `<span>{toast.message}</span>` (verified in repo); the contract is locked by current code. If any future caller needs rich markup, add a separate `node?: ReactNode` prop — do NOT change the `message` string path.
+
+**Already-integrated note (corrects round-1 spec text):** `useSubmitToasts` already delegates to `useToast`'s `show()`. PR4 does NOT contain a refactor of that hook; the prior round-1 spec phrasing was wrong on this point. The only Toast-related work in PR4 is the new `'success'` kind plus the identity-change `show()` call site.
+
+**A11y:** the existing component renders `role="status"` for every toast and ships a Dismiss-labeled close button (verified in `Toast.tsx`). For `'error'` kind specifically — which persists until manual dismiss — the close button is keyboard-reachable via the normal page tab order; the existing `aria-label="Dismiss"` on the close button covers SR announcement.
 
 ### 3.2 Identity-change rule
 
@@ -272,6 +274,15 @@ else:
     var repliesAffected  = 0;
 
     await stateStore.UpdateAsync(state => {
+        // Reset closure-captured counters at the top of every transform invocation.
+        // UpdateAsync's last-transform-wins semantics may re-run this lambda on contention
+        // (e.g., a concurrent draft save lands between read and CAS-write); without the
+        // reset, `++` operations from a losing run would accumulate into the next run's
+        // totals, inflating the forensic counts emitted post-commit.
+        sessionsAffected = 0;
+        draftsAffected   = 0;
+        repliesAffected  = 0;
+
         var sessions = state.Reviews.Sessions;
         var newSessions = new Dictionary<string, ReviewSessionState>(sessions.Count);
         foreach (var (refKey, session) in sessions) {
@@ -325,7 +336,12 @@ else:
     activePrSubscriberRegistry.RemoveAll();
 
     // SSE fan-out so other tabs re-fetch (see § 3.4)
-    sse.Publish(new StateChanged(prRef: null, fieldsTouched: ["identity-change"]));
+    // We publish a new IReviewEvent — `IdentityChanged` — rather than reusing
+    // `StateChanged`, because `StateChanged.PrRef` is non-nullable and `SseChannel.OnStateChanged`
+    // fans out via `_activeRegistry.SubscribersFor(evt.PrRef)` (per-PR only). Identity-change
+    // is global; it needs every subscriber, not a per-PR set. The precedent is `InboxUpdated`,
+    // which is already a global event (no PrRef field) fanned out to every subscriber.
+    sse.Publish(new IdentityChanged(AccountKeys.Default, priorLogin, newLogin));
 ```
 
 **What is preserved.** Every text field: `DraftComment.BodyMarkdown`, `DraftReply.BodyMarkdown`, `DraftSummaryMarkdown`. Every non-Node-ID per-session field: `DraftVerdict`, `DraftVerdictStatus`, `ViewedFiles`, `IterationOverrides`, `LastViewedHeadSha`, `LastSeenCommentId`. "The reviewer's text is sacred" — applied verbatim.
@@ -340,11 +356,11 @@ else:
 
 Three caches need eviction when `identityChanged === true`:
 
-- **`IActivePrCache`** — in-memory cache of the currently-active PR's details (file tree, comment list, etc.). Holds token-A-fetched data that may include PRs token B can't see (404), or shows comment counts that differ between authors. Add new method `void Clear()` to the interface (single line, no parameters in v1; v2 generalizes to `ClearForAccount(accountKey)`).
+- **`IActivePrCache`** — in-memory map of `PrReference → ActivePrSnapshot(HeadSha, HighestIssueCommentId?, ObservedAt)` populated by the active-PR poller (see `PRism.Core/PrDetail/IActivePrCache.cs`). The cache does NOT hold the full PR detail (file tree, comment list — those are fetched on demand by frontend pages); it holds the head-shift / unread-bookmark anchors. Token-A-fetched snapshots can still be stale or refer to PRs token B can't reach after Replace, so we evict them: add a new method `void Clear()` to the interface so the next active-PR poll re-fetches every snapshot under the new identity. (v2 generalizes to `ClearForAccount(accountKey)` per § 10.)
 - **Inbox poller** — last-result cache. Add `void RequestImmediateRefresh()` that wakes the poller before its next 120s tick. The current `InboxPoller.ExecuteAsync` loop is `WaitForSubscriberAsync → orchestrator.RefreshAsync → Task.Delay(nextDelay, stoppingToken)` — a semaphore checked "each iteration" would only fire at the next 120s boundary. The fix is to race the delay against a signal. Recommended implementation: a private `SemaphoreSlim _refreshSignal = new(0, 1)`; replace `await Task.Delay(delay, stoppingToken)` with `await Task.WhenAny(Task.Delay(delay, linkedCt.Token), _refreshSignal.WaitAsync(linkedCt.Token))` where `linkedCt` is a `CancellationTokenSource.CreateLinkedTokenSource(stoppingToken)` so either branch can cancel the other. `RequestImmediateRefresh` calls `_refreshSignal.Release()` (semaphore stays at capacity 1 — duplicate signals coalesce). Unit test: signal mid-delay, assert next `RefreshAsync` lands within 100ms.
 - **`ActivePrSubscriberRegistry`** (`PRism.Core/PrDetail/`) — drops every active per-PR subscription. Frontend tabs hear the `state-changed` event with `identity-change` field tag and re-subscribe naturally on next PR-detail navigation. Implementation: add a new `void RemoveAll()` method to the existing `Add` / `Remove` / `RemoveSubscriber` surface; iterate and clear both `_bySubscriber` and `_byPr` dictionaries under their existing concurrency discipline. No synthetic disconnect event is needed — the frontend's existing SSE-reconnect logic detects subscription absence on the next per-PR poll cycle (which now returns no events for the dropped PR) and re-subscribes when the user navigates to that PR.
 
-Identity-change is the ONLY trigger that calls `Clear()` / `UnsubscribeAll()` in v1. Other auth state transitions (initial connect, host change) handle their own state via separate paths.
+Identity-change is the ONLY trigger that calls `Clear()` / `RemoveAll()` in v1. Other auth state transitions (initial connect, host change) handle their own state via separate paths.
 
 ### 3.4 Multi-tab and 404-on-current-PR
 
@@ -402,28 +418,33 @@ Distinct from `/api/auth/connect` because the post-validate behavior differs (id
 
 The endpoint does NOT support a `Warning` path (the `no-repos-selected` warning from `/api/auth/connect`) because the user previously connected — they're not in a first-Setup posture. If the new PAT happens to validate with `NoReposSelected`, treat it as success (the user knows what they're doing). The same posture applies to other warnings v2 might add.
 
-### 3.6 Forensic event log
+### 3.6 Identity-change logging (scoped to ILogger; forensic event log deferred)
 
-The `IdentityChanged` event is appended to `<dataDir>/state-events.jsonl`:
+**Current state of the forensic event log infrastructure.** S0+S1 deferred the `state-events.jsonl` rolling writer to S4; S4 didn't deliver it. The DI graph today registers `NoopStateEventLog`, whose `AppendAsync` returns `Task.CompletedTask` — so any call site that emits via `IStateEventLog` silently writes nothing. Promoting `NoopStateEventLog` to a real implementation (rolling JSONL with retention) is a v2 / post-PoC backlog item; S6 does not absorb that scope.
 
-```jsonc
-{
-  "ts": "2026-05-15T12:34:56Z",
-  "kind": "IdentityChanged",
-  "payload": {
-    "accountKey": "default",
-    "priorLogin": "alice",
-    "newLogin": "bob",
-    "sessionsAffected": 7,
-    "draftsAffected": 23,
-    "repliesAffected": 5
-  }
-}
+**S6's identity-change logging.** Until the dedicated forensic log exists, the identity-change event lands as an `ILogger` structured-log entry (Info level) in `<dataDir>/logs/` — which IS writing today (existing rolling text logger). The structured payload mirrors what the eventual JSONL event would carry, so promoting `NoopStateEventLog` later is a no-op for this call site beyond swapping the sink:
+
+```csharp
+log.LogIdentityChanged(
+    accountKey: AccountKeys.Default,
+    priorLogin: priorLogin,
+    newLogin:   newLogin,
+    sessionsAffected: sessionsAffected,
+    draftsAffected:   draftsAffected,
+    repliesAffected:  repliesAffected);
 ```
 
-The `accountKey` field is `"default"` in v1 but **present in the schema** so v2's per-account scoping is a structural extension rather than a re-keying migration. The counts let a maintainer doing "where did this draft go" reconstruction grep by date and account.
+The `LogIdentityChanged` source-generator method (one of the `PRism.Web.Endpoints.AuthEndpoints.Log.*` family) emits a line like:
 
-The event is emitted only when `identityChanged === true`. Same-login Replace is silent (no event — same posture as no-op state mutations elsewhere).
+```
+[2026-05-15T12:34:56Z] [Information] AuthEndpoints: Identity changed accountKey=default priorLogin=alice newLogin=bob sessions=7 drafts=23 replies=5
+```
+
+The `accountKey` field is `"default"` in v1 but **present in the structured payload** so v2's per-account scoping is a structural extension rather than a re-keying migration. The counts let a maintainer doing "where did this draft go" reconstruction grep `<dataDir>/logs/` by date.
+
+The event is logged only when `identityChanged === true`. Same-login Replace is silent (no log line — same posture as no-op state mutations elsewhere).
+
+**Migration path to the real forensic log (v2 / post-PoC).** When `NoopStateEventLog` is promoted to a real `JsonlStateEventLog` writer, the identity-change call site swaps from `log.LogIdentityChanged(...)` to `stateEventLog.AppendAsync(new StateEvent("IdentityChanged", payload), ct)`. The README's "Recovering a lost draft" troubleshooting section (§ 9.4) updates at the same time to point at the new file. The two sinks are deliberately incompatible (one is text-logs, the other is JSONL) — promoting is a one-PR swap, not a parallel-run period.
 
 ### 3.7 Edge cases
 
@@ -439,9 +460,9 @@ The event is emitted only when `identityChanged === true`. Same-login Replace is
 
 Backend unit (`PRism.Web.Tests`):
 - `/api/auth/replace` happy path with same login → `identityChanged === false`; no state mutation.
-- `/api/auth/replace` happy path with different login → `identityChanged === true`; every session's Node IDs cleared; every draft body byte-for-byte preserved; forensic `IdentityChanged` event recorded with correct counts.
+- `/api/auth/replace` happy path with different login → `identityChanged === true`; every session's Node IDs cleared; every draft body byte-for-byte preserved; structured `IdentityChanged` log line recorded with the documented payload (account key, prior+new login, three counts).
 - `/api/auth/replace` case-insensitive login match → `identityChanged === false`.
-- `/api/auth/replace` with validation failure → `RollbackTransientAsync` called; no commit; old PAT still readable; no state mutation; no forensic event.
+- `/api/auth/replace` with validation failure → `RollbackTransientAsync` called; no commit; old PAT still readable; no state mutation; no `IdentityChanged` log line.
 - `/api/auth/replace` with `SubmitLockRegistry.AnyHeld() === true` → 409; no transient written; no commit; no state mutation.
 - `/api/auth/replace` **PAT-not-logged discipline**: capture the structured log output of a happy-path call; assert no log message contains the request body's PAT value as a substring. The endpoint must log `PatLength` only, mirroring `/api/auth/connect`. Defends against an implementer who copies `/connect`'s skeleton but passes the raw PAT into the logger.
 - `/api/submit/in-flight` returns `{ inFlight: false }` when registry empty.
@@ -451,7 +472,7 @@ Backend unit (`PRism.Web.Tests`):
 Backend unit (`PRism.Core.Tests`):
 - `IActivePrCache.Clear()` evicts every entry.
 - `activePrSubscriberRegistry.RemoveAll()` removes every subscription.
-- Forensic event shape: `accountKey: "default"`, counts match the cleared content.
+- `IdentityChanged` structured-log payload shape: `accountKey: "default"`, counts match the cleared content. Asserted via in-memory log capture (the same pattern used in the PAT-not-logged test above).
 - `InboxPoller.RequestImmediateRefresh()`: signal the poller mid-`Task.Delay`; assert next `RefreshAsync` invocation lands within 100ms (not 120s).
 
 Frontend unit (Vitest):
@@ -479,7 +500,11 @@ New under `frontend/src/components/Cheatsheet/`:
 
 The overlay is `role="dialog"` with `aria-modal="false"` per spec § 9 non-modal contract. Visually: fixed-position centered panel, soft backdrop dim (no pointer events on the backdrop — clicks fall through). Width `min(640px, calc(100vw - 32px))` so it shrinks gracefully below 672px without horizontal scroll; max-height 80vh with internal scroll if content overflows. The panel has an `<h2 id="cheatsheet-heading">Keyboard shortcuts</h2>` and the overlay's `role="dialog"` carries `aria-labelledby="cheatsheet-heading"` so screen readers announce the panel by name.
 
-**Focus management.** On open, focus moves to the panel's `<h2>` heading (which has `tabIndex={-1}` for programmatic focusability). This is the ARIA APG pattern for non-modal dialogs — NVDA and JAWS users may not discover the overlay via the virtual cursor without focus movement, so opening on `?` while keeping focus in the composer would silently fail for AT users. On close (Esc, `?`, or `Cmd/Ctrl+/`), focus returns to the previously-focused element captured in a ref at open time. Composer text in any open composer is preserved across the focus dance — the composer's DOM state is untouched; we only move `document.activeElement`. Tab through the cheatsheet's own interactive elements is allowed but optional; the cheatsheet ships without an explicit close button (users use `Esc`, `?`, or `Cmd/Ctrl+/` to close).
+**Focus management.** On open, focus moves to the panel's `<h2>` heading (which has `tabIndex={-1}` for programmatic focusability). This is the ARIA APG pattern for non-modal dialogs — NVDA and JAWS users may not discover the overlay via the virtual cursor without focus movement, so opening on `?` while keeping focus in the composer would silently fail for AT users.
+
+The cheatsheet ships with a visible **× close button** in the panel header (positioned absolute, top-right of the panel, `aria-label="Close cheatsheet"`). Keyboard-only users who don't know the close shortcuts can Tab from the heading to the close button and Enter to close — the cheatsheet teaches the shortcuts but never requires the user to already know them. Mouse users click the same affordance. Keyboard users who DO know the shortcut can still use `Esc`, `?`, or `Cmd/Ctrl+/` from anywhere in the panel.
+
+On close, focus returns to the previously-focused element captured in a ref at open time, with a **liveness guard**: if `document.contains(returnFocusRef.current)` is false (the originally-focused element unmounted while the cheatsheet was open — possible because the cheatsheet is non-modal and the user could have navigated routes, force-pushed the page, etc.), fall back to focusing `document.body`. Skipping this guard would call `.focus()` on a detached DOM node, which silently no-ops in most browsers and leaves a keyboard user dumped at `<body>` with no announcement — the guard makes the fallback explicit. Composer text in any open composer is preserved across the focus dance — the composer's DOM state is untouched; we only move `document.activeElement`.
 
 ### 4.2 Shortcut handlers
 
@@ -1122,13 +1147,13 @@ Added below Process (the outer fence uses four backticks because the example its
 
 ### Recovering a lost draft
 
-PRism writes a forensic event log at `<dataDir>/state-events.jsonl` (rolling, 30 files × 10 MB cap = ~300 MB ceiling). Every `DraftSaved` event includes the full body markdown at the time of explicit save (`Cmd/Ctrl+Enter`, "Save draft" button, etc.). To recover a lost draft:
+PRism's dedicated forensic event log (`state-events.jsonl`) is not yet implemented — the DI graph registers a no-op writer for the PoC (promoting it is a v2 / post-PoC backlog item). For now, the most useful forensic surface is the structured logs in `<dataDir>/logs/`. Specifically, identity-change events log there with the prior + new login and the count of affected sessions/drafts/replies:
 
 ```
-grep 'DraftSaved' "<dataDir>/state-events.jsonl"* | grep 'owner/repo/123'
+grep 'Identity changed' "<dataDir>/logs/"*.log
 ```
 
-If recent events are missing, check `<dataDir>/logs/` for `event-loss warning` entries — these signal a window where the forensic log was unable to write (disk full or similar).
+`DraftSaved` events do NOT currently land in any forensic log (the v2 backlog item). If you need to recover a draft body in the PoC, the safest path is to copy it out of the composer BEFORE any destructive action (Replace token, Discard, foreign-pending-review Discard). After the action, the draft body is only recoverable from `state.json` if the destructive action did not mutate that session.
 
 ### Replace token
 
@@ -1164,6 +1189,8 @@ The multi-account storage scaffold (`2026-05-10-multi-account-scaffold-design.md
 | `IViewerLoginProvider.Set(login)` | Single-value provider | Per-account: `SetForAccount(accountKey, login)` and `GetForAccount(accountKey)` | Interface signature change + every call site (8–10 sites total) |
 | `IActivePrCache.Clear()` (§ 3.3) | Evicts all entries globally | `ClearForAccount(accountKey)`; cache key shape grows from `PrRef` to `(accountKey, PrRef)` | Cache key shape change + identity-change rule call site |
 | `SubmitLockRegistry.AnyHeld()` (§ 3.5) | Global check | `AnyHeldForAccount(accountKey)`; lock key becomes `(accountKey, PrRef)` because the same PR could be reachable via two different accounts | Lock key shape change + `/api/auth/replace` call site |
+| `IdentityChanged` IReviewEvent (§ 3.2) | Carries `accountKey: "default"` + prior/new login | v2 fills in the real account key from the user's account list; the `priorLogin` / `newLogin` fields stay | Wire-shape unchanged — the field is already in the payload |
+| `NoopStateEventLog` (§ 3.6) | Registered today; identity-change goes through `ILogger` to `<dataDir>/logs/` | v2 promotes `NoopStateEventLog` → real `JsonlStateEventLog` (rolling, retention); identity-change call site swaps from `log.LogIdentityChanged(...)` to `stateEventLog.AppendAsync(...)` | DI swap + one call-site change + README troubleshooting update (§ 9.4) |
 | `state-changed` SSE event with `fieldsTouched: ["identity-change"]` (§ 3.3) | No account scope | Adds `accountKey` payload field | Wire-shape extension (additive — old consumers ignore the field) |
 | Settings page Auth section (§ 2.2) | Single global "Replace token" link | Per-account row with per-row Replace button; "Add account" / "Remove account" affordances | UI redesign of one section; no other Settings sections affected |
 | Forensic `IdentityChanged` event (§ 3.6) | Payload includes `accountKey: "default"` already | v2 reads the field as the real account key; schema unchanged | No migration needed — v1 emits the schema-compatible shape |
@@ -1188,8 +1215,8 @@ The multi-account storage scaffold (`2026-05-10-multi-account-scaffold-design.md
 - `/api/auth/replace`:
   - Happy path, same login (case-sensitive match) → `identityChanged === false`; no mutation.
   - Happy path, same login (case-insensitive: `Alice` → `alice`) → `identityChanged === false`.
-  - Happy path, different login → `identityChanged === true`; every session's Node IDs cleared; every draft body preserved; forensic event recorded with correct counts.
-  - Validation failure → `RollbackTransientAsync` invoked; no commit; no state mutation; no forensic event.
+  - Happy path, different login → `identityChanged === true`; every session's Node IDs cleared; every draft body preserved; structured `IdentityChanged` log line recorded with correct counts.
+  - Validation failure → `RollbackTransientAsync` invoked; no commit; no state mutation; no `IdentityChanged` log line.
   - `SubmitLockRegistry.AnyHeld() === true` → 409; transient rolled back (or never written); no commit; no state mutation.
 - `/api/submit/in-flight`:
   - Empty registry → `{ inFlight: false }`.
@@ -1261,7 +1288,7 @@ Single slice, nine-PR plan. Sequencing respects dependencies; orthogonal PRs can
 | PR | Scope | Depends on | Notes |
 |---|---|---|---|
 | **PR1** | Backend: `ConfigStore.PatchAsync` allowlist extension + richer `/api/preferences` GET shape + `/api/submit/in-flight` endpoint. | none | xUnit tests for every new allowlist branch + endpoint shape. |
-| **PR2** | Backend: `/api/auth/replace` endpoint + identity-change rule + `IActivePrCache.Clear()` + `SsePerPrRegistry.UnsubscribeAll()` + forensic `IdentityChanged` event with `accountKey: "default"` carry-forward. | PR1 (uses in-flight check internally) | xUnit tests for every identity-change branch + forensic shape + cache eviction. |
+| **PR2** | Backend: `/api/auth/replace` endpoint + identity-change rule + `IActivePrCache.Clear()` + `ActivePrSubscriberRegistry.RemoveAll()` + new global `IdentityChanged` `IReviewEvent` (follows the `InboxUpdated` precedent — no `PrRef`) + structured-log emission of identity-change for forensic recovery (since `NoopStateEventLog` is current state — see § 3.6). | PR1 (uses in-flight check internally) | xUnit tests for every identity-change branch + forensic shape + cache eviction. |
 | **PR3** | Frontend: Settings page (`/settings` route, four section components, `usePreferences` hook extension). | PR1 (richer GET shape) | Vitest + Playwright `settings-flow.spec.ts`. |
 | **PR4** | Frontend: Replace token UX — footer link, lazy-swap flow, route gating on `?replace=1`, multi-tab `state-changed` reaction. | PR2 (uses new endpoint) | Playwright same-login / different-login / submit-in-flight specs. |
 | **PR5** | Frontend: Cheatsheet overlay + shortcut handlers (`useCheatsheetShortcut`, `<CheatsheetProvider>`, `<Cheatsheet>`, `shortcuts.ts`, `data-composer="true"` markers on existing composers). | none | Vitest hook tests + Playwright `cheatsheet.spec.ts`. |
@@ -1286,4 +1313,6 @@ Single slice, nine-PR plan. Sequencing respects dependencies; orthogonal PRs can
 
 2. **Release draft vs prerelease vs published.** The workflow creates a draft Release. Alternative: `prerelease: true` so the Release appears immediately under the "Pre-releases" tab without manual promotion. Default: draft (more cautious — maintainer verifies binaries before any user sees them).
 
-I'll commit to defaults during writing-plans unless you pull on either.
+3. **Dependabot Actions config location.** Round-2 ce-doc-review flagged the `.github/dependabot.yml` entry in § 7.6 as out-of-scope-for-S6 — supply-chain hygiene is real but is a recurring-maintenance concern that doesn't close a DoD line. Two paths: (a) keep the Dependabot entry in S6 PR8 alongside the SHA-pinned actions, since the pin is the thing that makes Dependabot useful; (b) defer to a standalone "repo-hygiene" PR that lands after S6 ships. Default: keep in PR8 because the cost is trivial (one YAML file) and decoupling adds coordination overhead. Decide during writing-plans.
+
+I'll commit to defaults during writing-plans unless you pull on any.
