@@ -65,8 +65,9 @@ The multi-account storage scaffold ([`2026-05-10-multi-account-scaffold-design.m
 ### 2.1 Surface
 
 - Route: `/settings`, gated like other authed routes (`hasToken === true`). The route handler in `App.tsx` adds a `<Route path="/settings" element={isAuthed ? <SettingsPage /> : <Navigate to="/setup" replace />} />`.
-- A new `<NavLink to="/settings">Settings</NavLink>` lands in the Header between `Inbox` and `Setup`. The Setup tab stays for explicit re-entry (mostly first-run; Replace token also reaches Setup via `?replace=1`).
-- Layout: single column with `max-width: 720px`, centered, vertical sections grouped by category with a section heading and supporting helper text.
+- A new `<NavLink to="/settings">Settings</NavLink>` lands in the Header between `Inbox` and `Setup`. The Settings tab reuses identical CSS to the existing Inbox tab (no new styling tokens). The Setup tab stays for explicit re-entry (mostly first-run); when `!hasToken`, a leading `·` indicator renders before the "Setup" label to communicate first-run-needed status without altering tab weight. The indicator disappears once a PAT is connected.
+- **Active-state on `/setup?replace=1`**: when the user reaches Setup via the Replace token flow (the URL carries `?replace=1`), the **Settings** tab is rendered active and the Setup tab is NOT — because the user got there from Settings and "Replace token" is a Settings affordance, not a re-onboarding action. Implement via a custom `isActive` predicate on `NavLink` that checks `pathname === '/setup' && !searchParams.has('replace')` for the Setup tab and `(pathname === '/settings') || (pathname === '/setup' && searchParams.has('replace'))` for the Settings tab.
+- Layout: single column with `max-width: 720px`, centered, vertical sections grouped by category with a section heading and supporting helper text. The 720px max-width is mobile-narrow-friendly — the column centers within any viewport ≥720px and naturally shrinks below that down to ~375px without horizontal scroll.
 - Header chips (theme cycle, accent picker, AI preview toggle) remain visible while on `/settings`. The chips give instant-flip; Settings is the comprehensive surface. Both coexist per roadmap framing.
 
 ### 2.2 Field set
@@ -76,13 +77,13 @@ The multi-account storage scaffold ([`2026-05-10-multi-account-scaffold-design.m
 | Appearance | Theme | enum `system` / `light` / `dark` | `ui.theme` | Applied on next render; existing `usePreferences` flow |
 | Appearance | Accent | enum `indigo` / `amber` / `teal` | `ui.accent` | Applied on next render |
 | Appearance | AI preview | bool | `ui.aiPreview` | Frontend refetches `/api/capabilities` after toggle (existing pattern) |
-| Inbox sections | Review-requested | bool | `inbox.sections.review-requested` | Next inbox poll tick (120s default) |
+| Inbox sections | Review requested | bool | `inbox.sections.review-requested` | Next inbox poll tick (120s default) |
+| Inbox sections | Awaiting author | bool | `inbox.sections.awaiting-author` | Next inbox poll tick |
+| Inbox sections | Authored by me | bool | `inbox.sections.authored-by-me` | Next inbox poll tick |
 | Inbox sections | Mentioned | bool | `inbox.sections.mentioned` | Next inbox poll tick |
-| Inbox sections | My PRs | bool | `inbox.sections.my-prs` | Next inbox poll tick |
-| Inbox sections | Follow-up | bool | `inbox.sections.follow-up` | Next inbox poll tick |
-| Inbox sections | Recently active | bool | `inbox.sections.recently-active` | Next inbox poll tick |
+| Inbox sections | CI failing on my PRs | bool | `inbox.sections.ci-failing` | Next inbox poll tick |
 | GitHub | Host (read-only display) | string | n/a — reads `config.github.accounts[0].host` via the multi-account scaffold delegate property | n/a |
-| GitHub | "Edit `config.json`" link | display | n/a — links to `<dataDir>/config.json` path (computed at startup) | n/a |
+| GitHub | "Copy `config.json` path" button | button → clipboard | n/a — copies `<dataDir>/config.json` to clipboard via `navigator.clipboard.writeText`; surfaces a brief success toast ("Path copied — paste into your editor"). Browsers block `<a href="file:///...">` for security, so we render this as a button-with-clipboard-action rather than a hyperlink. Works cross-browser; doesn't require shell-out APIs. | n/a |
 | Auth | Replace token | link → § 3 lazy-swap flow | n/a | n/a |
 
 **Inbox-tick hot-reload caveat.** The inbox poller reads `config.Current.Inbox.Sections` per fetch cycle, not on `IConfigStore.Changed`. A user toggling an inbox section in Settings sees the change apply on the next 120s poll, not immediately. Surfacing this in Settings helper text:
@@ -103,12 +104,14 @@ private static readonly HashSet<string> _allowedFields = new(StringComparer.Ordi
     "theme",
     "accent",
     "aiPreview",
-    // inbox.sections.* (new in S6)
+    // inbox.sections.* (new in S6) — keys map to InboxSectionsConfig
+    // (ReviewRequested, AwaitingAuthor, AuthoredByMe, Mentioned, CiFailing) in
+    // PRism.Core/Config/AppConfig.cs. Canonical section set: docs/spec/03-poc-features.md § 11.
     "inbox.sections.review-requested",
+    "inbox.sections.awaiting-author",
+    "inbox.sections.authored-by-me",
     "inbox.sections.mentioned",
-    "inbox.sections.my-prs",
-    "inbox.sections.follow-up",
-    "inbox.sections.recently-active",
+    "inbox.sections.ci-failing",
 };
 ```
 
@@ -141,10 +144,10 @@ The mechanical expansion is acceptable for five keys. If a future slice adds man
   "inbox": {
     "sections": {
       "review-requested": true,
+      "awaiting-author": true,
+      "authored-by-me": true,
       "mentioned": true,
-      "my-prs": true,
-      "follow-up": true,
-      "recently-active": true
+      "ci-failing": true
     }
   },
   "github": {
@@ -165,14 +168,23 @@ The `github.configPath` field is read-only; it's there so the Settings page can 
 - **Unknown keys**: 400 (existing path).
 - **Multi-field patches**: 400 (existing path; the single-field contract is preserved).
 
-### 2.6 Frontend components
+### 2.6 Save semantics (per-field auto-save)
+
+Each Settings toggle/dropdown fires its own one-field PATCH on change; the page never has a Save button. The interaction states this introduces:
+
+- **Save mode**: **optimistic update with rollback**. The UI flips immediately on click; the PATCH fires in the background; on `2xx` the in-memory `usePreferences` state is reconciled against the response (in-place — no flicker on success); on `4xx`/`5xx`/network failure the UI flips back to its prior value and surfaces an inline error toast: *"Couldn't save — `<field>` reverted."* This matches the header-chip pattern and keeps perceived latency at zero on the happy path.
+- **Per-field error isolation**: failures on one field do NOT roll back unrelated fields. The toast names the specific field; the user can retry by clicking again.
+- **Navigate-away during in-flight PATCH**: the PATCH continues — it's `fetch` not `XHR`, so it runs to completion regardless of route changes. On return to `/settings`, `usePreferences` re-fetches via the existing focus-refetch path (`useEffect` + `focus` listener in `usePreferences.ts`) and the page reflects the persisted state. No flicker because the optimistic update already landed in memory.
+- **Multiple in-flight PATCHes**: each toggle fires its own request; they don't serialize on the frontend. Backend `ConfigStore.PatchAsync` serializes via its internal `_gate` (existing). Concurrent PATCHes therefore land in arrival order at the backend; no client-side coordination needed.
+
+### 2.7 Frontend components
 
 New under `frontend/src/`:
 
 - `pages/SettingsPage.tsx` — top-level page; uses `usePreferences` hook (extended to read the new GET shape) and `useConfigPath` (new hook hitting `/api/preferences`'s `github.configPath`).
 - `components/Settings/`
   - `AppearanceSection.tsx` — three rows (theme dropdown, accent radio group, AI preview switch).
-  - `InboxSectionsSection.tsx` — five toggle rows with helper text about the 2-minute propagation caveat.
+  - `InboxSectionsSection.tsx` — five toggle rows with helper text about the 2-minute propagation caveat. The helper text renders as a single `<span id="inbox-section-help">` once at the top of the section; every toggle in the section sets `aria-describedby="inbox-section-help"` so screen reader users hear the propagation caveat as part of each control's announcement.
   - `GithubSection.tsx` — read-only host display + "Edit `config.json`" link.
   - `AuthSection.tsx` — Replace token link with the in-flight-submit guard logic from § 3.
   - `SettingsPage.module.css` — section styling, max-width 720px container, group dividers.
@@ -190,10 +202,10 @@ Each component is a thin presentational shell over `usePreferences`. Patching fo
 
    > A submit is in progress on `<owner>/<repo>/<n>`. Replace token after it finishes.
 
-   The Replace link disables. Frontend re-polls `/api/submit/in-flight` on the next `state-changed` SSE event so the link re-enables once the lock clears.
+   The Replace link disables: rendered as a greyed-out anchor with `aria-disabled="true"`, `tabIndex={-1}`, and `pointer-events: none`. A tooltip on hover/focus repeats the same message ("Submit on `<prRef>` in progress"). Frontend re-polls `/api/submit/in-flight` on the next `state-changed` SSE event so the link re-enables once the lock clears. **If the SSE channel is permanently broken** (per the S3 deferral "no user-visible signal when SSE is permanently broken"), the link stays disabled until the user reloads the page; this is acceptable for the PoC because (a) SSE breakage is itself a regression that surfaces via other paths (no live updates anywhere), and (b) a permanent disable is preferable to a stale-enabled link that 409s on click.
 
 3. Otherwise, frontend navigates to `/setup?replace=1`. The `/setup` route guard in `App.tsx` is loosened: today `isAuthed && pathname === '/setup'` redirects to `/`; the new rule is `isAuthed && pathname === '/setup' && !searchParams.has('replace')` redirects to `/`. Reaching `/setup?replace=1` while authenticated is allowed.
-4. `SetupForm` renders identically (same component, same UI). The host displayed is `config.github.accounts[0].host` (unchanged).
+4. `SetupForm` renders identically (same component, same UI) plus a **Cancel** link rendered only when `searchParams.has('replace')` is true. The Cancel link is styled as a secondary action below the Continue button and calls `navigate('/settings')` (explicit destination, not history-dependent — back-button history may carry the user further than intended). The host displayed is `config.github.accounts[0].host` (unchanged).
 5. User pastes new PAT. Frontend POSTs `/api/auth/replace` (new endpoint; see § 3.5).
 6. Backend on `/api/auth/replace`:
    - Re-check `SubmitLockRegistry.AnyHeld()`. If held → return `409 Conflict` with body `{ ok: false, error: "submit-in-flight", prRef: "<owner>/<repo>/<n>" }`. Closes the TOCTOU race between step 2's check and the user's paste-and-submit.
@@ -208,7 +220,7 @@ Each component is a thin presentational shell over `usePreferences`. Patching fo
 7. Frontend on 200:
    - Fire `prism-auth-recovered` event (existing pattern in `App.tsx`).
    - `navigate('/')`.
-   - If `identityChanged === true`, surface a toast:
+   - If `identityChanged === true`, surface a toast via the new `<Toast>` component family (see § 3.1.1 below):
 
      > Connected as `<newLogin>`. Drafts preserved; pending review IDs cleared so the new login can re-submit.
 
@@ -219,6 +231,20 @@ Each component is a thin presentational shell over `usePreferences`. Patching fo
    Stays on `/setup?replace=1`; the user can retry. The old PAT is still in the keychain (no `CommitAsync` happened); the transient was never written if the 409 fires before `WriteTransientAsync`. If the 409 fires after `WriteTransientAsync` but before `CommitAsync` (the only window where the transient exists), `RollbackTransientAsync` is invoked.
 
 9. Frontend on validation failure → existing failure UI in `SetupForm` (same as connect path).
+
+### 3.1.1 Toast component (new — first toast in the product)
+
+The Replace token flow introduces the first toast surface in the product. No toast pattern exists in the design handoff or `tokens.css`, so S6 ships a small `<Toast>` component family alongside the Replace token flow.
+
+- **Component**: new under `frontend/src/components/Toast/{Toast.tsx, ToastProvider.tsx, useToast.ts, Toast.module.css}`. Provider mounted at App root as a sibling to `CheatsheetProvider`.
+- **API**: `const toast = useToast()` exposes `toast.success(message)`, `toast.error(message)`, `toast.info(message)`. Each call returns a `dismiss()` handle so callers can programmatically close.
+- **Layout**: bottom-right of the viewport (16px margin); max-width 360px; single-line headline with an optional second-line body; close button (X icon) in the top-right corner of the toast.
+- **Styling**: `--surface-2` background with a colored left border per kind — `--accent-success` (green; success), `--accent-warning` (amber; warning), `--accent-danger` (red; error). New tokens to add in `tokens.css`: `--toast-bg`, `--toast-border-success`, `--toast-border-warning`, `--toast-border-danger`, `--toast-shadow`. All derived from the existing oklch base palette.
+- **Duration**: success and info toasts auto-dismiss at 5s; error toasts persist until the user clicks the close button (failure visibility matters more than auto-dismiss).
+- **Stacking**: up to 3 concurrent toasts stack vertically (newest at the bottom). A 4th displaces the oldest with a brief fade.
+- **A11y**: `role="status"` + `aria-live="polite"` for success/info; `role="alert"` + `aria-live="assertive"` for error. Close button carries `aria-label="Dismiss <kind> toast"`. The pulse animation respects `prefers-reduced-motion` (no fade-in animation if the user has reduced-motion enabled — toast renders instantly).
+
+Other Replace-token-flow surfaces (submit-in-flight 409, validation failure on the new PAT) reuse the same component with `toast.error`. Future surfaces (S5's `submit-duplicate-marker-detected` toast already ships under a separate `useSubmitToasts` hook — that hook is refactored in PR4 to use `useToast` so all toasts share one surface).
 
 ### 3.2 Identity-change rule
 
@@ -237,42 +263,51 @@ elif string.Equals(priorLogin, newLogin, OrdinalIgnoreCase):
 else:
     identityChanged = true
 
-    var state = await stateStore.LoadAsync(ct);
-    var sessions = state.Reviews.Sessions;          // reads via delegate property → Accounts[default].Reviews.Sessions
+    // Counts captured by the transform closure so the forensic event below can read them.
+    // The transform runs under IAppStateStore's internal lock — concurrent draft saves
+    // (PrDraftEndpoints, PrReloadEndpoints, etc., which all use UpdateAsync) serialize
+    // against the same lock, so no in-flight write is lost during the identity-change pass.
     var sessionsAffected = 0;
-    var draftsAffected = 0;
-    var repliesAffected = 0;
+    var draftsAffected   = 0;
+    var repliesAffected  = 0;
 
-    var newSessions = new Dictionary<string, ReviewSessionState>(sessions.Count);
-    foreach (var (refKey, session) in sessions):
-        var hadPendingOrIds =
-            session.PendingReviewId is not null ||
-            session.DraftComments.Any(d => d.ThreadId is not null) ||
-            session.DraftReplies.Any(r => r.ReplyCommentId is not null);
+    await stateStore.UpdateAsync(state => {
+        var sessions = state.Reviews.Sessions;
+        var newSessions = new Dictionary<string, ReviewSessionState>(sessions.Count);
+        foreach (var (refKey, session) in sessions) {
+            var hadPendingOrIds =
+                session.PendingReviewId is not null ||
+                session.DraftComments.Any(d => d.ThreadId is not null) ||
+                session.DraftReplies.Any(r => r.ReplyCommentId is not null);
 
-        var clearedDraftComments = session.DraftComments
-            .Select(d => d.ThreadId is null ? d : d with { ThreadId = null })
-            .ToImmutableList();
-        var clearedDraftReplies = session.DraftReplies
-            .Select(r => r.ReplyCommentId is null ? r : r with { ReplyCommentId = null })
-            .ToImmutableList();
+            var clearedDraftComments = session.DraftComments
+                .Select(d => d.ThreadId is null ? d : d with { ThreadId = null })
+                .ToImmutableList();
+            var clearedDraftReplies = session.DraftReplies
+                .Select(r => r.ReplyCommentId is null ? r : r with { ReplyCommentId = null })
+                .ToImmutableList();
 
-        newSessions[refKey] = session with {
-            PendingReviewId        = null,
-            PendingReviewCommitOid = null,
-            DraftComments          = clearedDraftComments,
-            DraftReplies           = clearedDraftReplies,
-            // DraftVerdict, DraftVerdictStatus, DraftSummaryMarkdown,
-            // ViewedFiles, IterationOverrides, LastViewedHeadSha,
-            // LastSeenCommentId — all preserved.
-        };
+            newSessions[refKey] = session with {
+                PendingReviewId        = null,
+                PendingReviewCommitOid = null,
+                DraftComments          = clearedDraftComments,
+                DraftReplies           = clearedDraftReplies,
+                // DraftVerdict, DraftVerdictStatus, DraftSummaryMarkdown,
+                // ViewedFiles, IterationOverrides, LastViewedHeadSha,
+                // LastSeenCommentId — all preserved.
+            };
 
-        if hadPendingOrIds: sessionsAffected++;
-        draftsAffected  += session.DraftComments.Count(d => d.ThreadId is not null);
-        repliesAffected += session.DraftReplies.Count(r => r.ReplyCommentId is not null);
+            if (hadPendingOrIds) sessionsAffected++;
+            draftsAffected  += session.DraftComments.Count(d => d.ThreadId is not null);
+            repliesAffected += session.DraftReplies.Count(r => r.ReplyCommentId is not null);
+        }
 
-    state = state.WithDefaultReviews(state.Reviews with { Sessions = newSessions.ToImmutableDictionary() });
-    await stateStore.SaveAsync(state, ct);
+        return state.WithDefaultReviews(state.Reviews with { Sessions = newSessions.ToImmutableDictionary() });
+    }, ct);
+
+    // Forensic event + cache eviction + SSE fan-out are side-effects of the successful
+    // UpdateAsync — they run AFTER the transform commits so a transform retry (last-
+    // transform-wins under contention) doesn't double-fire them.
 
     // Forensic event (see § 3.6)
     forensic.Emit("IdentityChanged", new {
@@ -306,7 +341,7 @@ else:
 Three caches need eviction when `identityChanged === true`:
 
 - **`IActivePrCache`** — in-memory cache of the currently-active PR's details (file tree, comment list, etc.). Holds token-A-fetched data that may include PRs token B can't see (404), or shows comment counts that differ between authors. Add new method `void Clear()` to the interface (single line, no parameters in v1; v2 generalizes to `ClearForAccount(accountKey)`).
-- **Inbox poller** — last-result cache. Add `void RequestImmediateRefresh()` that schedules a poll on the next 1s tick rather than waiting up to 120s. Implementation: a `SemaphoreSlim` the poller checks each loop iteration; `RequestImmediateRefresh` signals the semaphore.
+- **Inbox poller** — last-result cache. Add `void RequestImmediateRefresh()` that wakes the poller before its next 120s tick. The current `InboxPoller.ExecuteAsync` loop is `WaitForSubscriberAsync → orchestrator.RefreshAsync → Task.Delay(nextDelay, stoppingToken)` — a semaphore checked "each iteration" would only fire at the next 120s boundary. The fix is to race the delay against a signal. Recommended implementation: a private `SemaphoreSlim _refreshSignal = new(0, 1)`; replace `await Task.Delay(delay, stoppingToken)` with `await Task.WhenAny(Task.Delay(delay, linkedCt.Token), _refreshSignal.WaitAsync(linkedCt.Token))` where `linkedCt` is a `CancellationTokenSource.CreateLinkedTokenSource(stoppingToken)` so either branch can cancel the other. `RequestImmediateRefresh` calls `_refreshSignal.Release()` (semaphore stays at capacity 1 — duplicate signals coalesce). Unit test: signal mid-delay, assert next `RefreshAsync` lands within 100ms.
 - **`ActivePrSubscriberRegistry`** (`PRism.Core/PrDetail/`) — drops every active per-PR subscription. Frontend tabs hear the `state-changed` event with `identity-change` field tag and re-subscribe naturally on next PR-detail navigation. Implementation: add a new `void RemoveAll()` method to the existing `Add` / `Remove` / `RemoveSubscriber` surface; iterate and clear both `_bySubscriber` and `_byPr` dictionaries under their existing concurrency discipline. No synthetic disconnect event is needed — the frontend's existing SSE-reconnect logic detects subscription absence on the next per-PR poll cycle (which now returns no events for the dropped PR) and re-subscribes when the user navigates to that PR.
 
 Identity-change is the ONLY trigger that calls `Clear()` / `UnsubscribeAll()` in v1. Other auth state transitions (initial connect, host change) handle their own state via separate paths.
@@ -326,6 +361,13 @@ We don't auto-redirect-on-404 because the standard 404 banner is the right UX �
 #### `GET /api/submit/in-flight` (new)
 
 Read-only, idempotent. Returns the current state of `SubmitLockRegistry`.
+
+**`SubmitLockRegistry.AnyHeld()` implementation note.** The registry stores `ConcurrentDictionary<string, SemaphoreSlim>` whose entries are never evicted (per the class comment). A naive `_locks.Any()` would return `true` forever after the first submit, breaking Replace token entirely. Two acceptable implementations:
+
+- **Probe each lock** — iterate `_locks`, call `WaitAsync(TimeSpan.Zero)` on each `SemaphoreSlim`; if it succeeds, the lock was free → immediately `Release()` (we only needed to probe, not hold). If it returns `false`, the lock is held → that's the answer; return `(true, prRef)`. Loop has an inherent TOCTOU window (a lock can be released between check-i and check-i+1) but the same window already applies to the post-paste re-check, and the worst case is a false-negative that resolves on the next call.
+- **Maintain a separate held-set** — add a `ConcurrentDictionary<string, byte> _heldLocks` populated inside `TryAcquireAsync` on success and cleared in the disposable `IDisposable` handle's `Dispose`. `AnyHeld()` becomes `_heldLocks.Any() ? (true, _heldLocks.Keys.First()) : (false, null)`. Same TOCTOU window; simpler enumeration.
+
+Implementer picks; spec doesn't pre-commit. Test must cover both the "no submit ever ran" baseline and the "submit completed; lock returned" path (the naive probe must not report it as held).
 
 ```jsonc
 // 200 — no lock held
@@ -391,6 +433,7 @@ The event is emitted only when `identityChanged === true`. Same-login Replace is
 - **Tab A in Settings → Replace; Tab B viewing PR detail**: Tab B receives `state-changed` with `identity-change` → re-fetches PR detail → either 404s (if no access) or renders fresh data (if access). Composer text preserved if any was being typed.
 - **Replace fires immediately after a submit completes**: race between Tab A's `GET /api/submit/in-flight` (returns `false`) and Tab B's submit starting. Defense: the backend re-checks `AnyHeld()` inside `/api/auth/replace` itself (step 6 above); a submit that grabbed the lock between Tab A's check and Tab A's submit-paste loses the race and returns 409. The TOCTOU window is closed.
 - **First-launch user with `priorLogin === null`**: identity-change rule short-circuits to `identityChanged = false`. This branch is unreachable via Replace (Replace requires `hasToken === true`, which only happens after a successful connect that has populated `accounts[0].login`). Defensive nonetheless.
+- **Dangling `DraftReply.ParentThreadId` after foreign-pending Discard.** If `priorLogin` had a pending review with attached threads at the moment of Replace, AND the user authored replies to those attached threads (so `DraftReply.ParentThreadId` is populated from snapshotted threads, per S5 `ResumeForeignPendingReview`), AND `newLogin` then chooses **Discard** on the foreign-pending-review modal on next visit to that PR → the backend's `DeletePendingReviewAsync` removes the pending review and its attached threads server-side, and the preserved `DraftReply.ParentThreadId` now references a thread that no longer exists. **Detection**: next submit attempts `addPullRequestReviewReplyComment` against the dangling thread id; GitHub returns a not-found error; the submit pipeline's retry path surfaces a generic "attach failed" toast. **Recovery**: user manually discards the orphan reply via the existing Drafts tab UI; subsequent submit succeeds. **Accepted as a rare edge case** (requires the specific four-event sequence above); deliberate mitigation deferred to v2 alongside the broader multi-account brainstorm. The S6 spec documents the path so an implementer triaging "submit failed after Replace" reports has the recipe; a v2 hardening could null `ParentThreadId` on the Discard path when its thread id is in the discarded set.
 
 ### 3.8 Tests
 
@@ -400,13 +443,16 @@ Backend unit (`PRism.Web.Tests`):
 - `/api/auth/replace` case-insensitive login match → `identityChanged === false`.
 - `/api/auth/replace` with validation failure → `RollbackTransientAsync` called; no commit; old PAT still readable; no state mutation; no forensic event.
 - `/api/auth/replace` with `SubmitLockRegistry.AnyHeld() === true` → 409; no transient written; no commit; no state mutation.
+- `/api/auth/replace` **PAT-not-logged discipline**: capture the structured log output of a happy-path call; assert no log message contains the request body's PAT value as a substring. The endpoint must log `PatLength` only, mirroring `/api/auth/connect`. Defends against an implementer who copies `/connect`'s skeleton but passes the raw PAT into the logger.
 - `/api/submit/in-flight` returns `{ inFlight: false }` when registry empty.
 - `/api/submit/in-flight` returns `{ inFlight: true, prRef: <ref> }` when a lock is held; matches one of the held refs.
+- `/api/submit/in-flight` **post-submit-completion**: register a submit, complete and dispose the lock, call `AnyHeld()` — must return `(false, null)`, not `(true, <stale-ref>)`. Defends against the naive `_locks.Any()` regression described in `SubmitLockRegistry.AnyHeld()` implementation note above.
 
 Backend unit (`PRism.Core.Tests`):
 - `IActivePrCache.Clear()` evicts every entry.
 - `activePrSubscriberRegistry.RemoveAll()` removes every subscription.
 - Forensic event shape: `accountKey: "default"`, counts match the cleared content.
+- `InboxPoller.RequestImmediateRefresh()`: signal the poller mid-`Task.Delay`; assert next `RefreshAsync` invocation lands within 100ms (not 120s).
 
 Frontend unit (Vitest):
 - Settings page renders all four sections.
@@ -431,9 +477,9 @@ New under `frontend/src/components/Cheatsheet/`:
 - `shortcuts.ts` — static `SHORTCUTS` constant (same content as `03-poc-features.md` § 9).
 - `Cheatsheet.module.css` — overlay styling.
 
-The overlay is `role="dialog"` with `aria-modal="false"` per spec § 9 non-modal contract. Visually: fixed-position centered panel, soft backdrop dim (no pointer events on the backdrop — clicks fall through). Width ~640px; max-height 80vh with internal scroll if content overflows.
+The overlay is `role="dialog"` with `aria-modal="false"` per spec § 9 non-modal contract. Visually: fixed-position centered panel, soft backdrop dim (no pointer events on the backdrop — clicks fall through). Width `min(640px, calc(100vw - 32px))` so it shrinks gracefully below 672px without horizontal scroll; max-height 80vh with internal scroll if content overflows. The panel has an `<h2 id="cheatsheet-heading">Keyboard shortcuts</h2>` and the overlay's `role="dialog"` carries `aria-labelledby="cheatsheet-heading"` so screen readers announce the panel by name.
 
-**Focus is NOT trapped.** The composer (or whatever element had focus before open) keeps `document.activeElement`. Tab through the cheatsheet's own interactive elements (close button, if any) is allowed but optional; the cheatsheet ships without an explicit close button (users use `Esc` or `?` again).
+**Focus management.** On open, focus moves to the panel's `<h2>` heading (which has `tabIndex={-1}` for programmatic focusability). This is the ARIA APG pattern for non-modal dialogs — NVDA and JAWS users may not discover the overlay via the virtual cursor without focus movement, so opening on `?` while keeping focus in the composer would silently fail for AT users. On close (Esc, `?`, or `Cmd/Ctrl+/`), focus returns to the previously-focused element captured in a ref at open time. Composer text in any open composer is preserved across the focus dance — the composer's DOM state is untouched; we only move `document.activeElement`. Tab through the cheatsheet's own interactive elements is allowed but optional; the cheatsheet ships without an explicit close button (users use `Esc`, `?`, or `Cmd/Ctrl+/` to close).
 
 ### 4.2 Shortcut handlers
 
@@ -659,6 +705,8 @@ CSS:
 
 The watermark and pulse logo both reference the same image. The `alt=""` + `aria-hidden="true"` combination on both `<img>` elements ensures screen readers don't announce them; the `role="status"` + `aria-live="polite"` on the outer div + the visible `Loading…` label handles SR announcement.
 
+**Timeout fallback.** `<LoadingScreen>` shouldn't display indefinitely if the backend never responds (binary startup failure, port collision, network partition on the localhost socket). The component accepts an optional `timeoutMs` prop (default 10000) and a `timeoutLabel` prop (default `"Taking longer than expected — check the terminal output."`). After `timeoutMs`, the `Loading…` label swaps to `timeoutLabel`, the pulse animation stops, and an inline "Reload" button appears under the label that calls `window.location.reload()`. The timeout is purely visual — it doesn't cancel any in-flight request; it gives the user agency when the spinner clearly isn't progressing.
+
 ### 5.5 Scope — which loading states get `<LoadingScreen>`
 
 | Location | Today | After |
@@ -771,11 +819,11 @@ Add (gated on `$(PublishProfile)` to keep dev builds untouched):
 ### 7.2 Build steps per target
 
 ```
-# Build frontend assets first (publish workflow does this in CI)
+# Build frontend assets first (publish workflow does this in CI).
+# Vite is configured with `build.outDir: '../PRism.Web/wwwroot'` in `frontend/vite.config.ts`,
+# so `npm run build` writes the SPA assets directly into PRism.Web/wwwroot — no copy step
+# needed. `emptyOutDir: true` also clears any stale assets first.
 cd frontend && npm ci && npm run build
-
-# Copy frontend dist/ into PRism.Web/wwwroot/ (CI uses xcopy or robocopy)
-# After this, PRism.Web includes the React bundle as static content.
 
 # Publish per target
 dotnet publish PRism.Web/PRism.Web.csproj \
@@ -812,13 +860,15 @@ jobs:
   build-and-publish:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
+      # Third-party actions pinned to commit SHAs (not version tags). A mutable tag
+      # like `@v4` can be force-pushed; pinned SHAs cannot. Required because this
+      # workflow runs with `contents: write`. Bump deliberately via Dependabot
+      # Actions configuration (see § 7.6).
+      - uses: actions/checkout@<commit-sha>          # actions/checkout v4.x
+      - uses: actions/setup-dotnet@<commit-sha>      # actions/setup-dotnet v4.x
         with:
           dotnet-version: '10.0.x'
-
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@<commit-sha>        # actions/setup-node v4.x
         with:
           node-version: '24'
           cache: 'npm'
@@ -830,14 +880,9 @@ jobs:
 
       - name: Frontend build
         working-directory: frontend
+        # Writes directly to ../PRism.Web/wwwroot per vite.config.ts `build.outDir`;
+        # `emptyOutDir: true` clears stale assets first. No copy step needed.
         run: npm run build
-
-      - name: Copy frontend dist to wwwroot
-        run: |
-          if (Test-Path PRism.Web/wwwroot) { Remove-Item PRism.Web/wwwroot -Recurse -Force }
-          New-Item -ItemType Directory -Force -Path PRism.Web/wwwroot | Out-Null
-          Copy-Item -Path frontend/dist/* -Destination PRism.Web/wwwroot -Recurse
-        shell: pwsh
 
       - name: Publish win-x64
         run: >
@@ -862,7 +907,7 @@ jobs:
         shell: pwsh
 
       - name: Create draft Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@<commit-sha>   # softprops/action-gh-release v2.x — SHA-pinned per supply-chain discipline
         with:
           tag_name: ${{ github.event.inputs.tag }}
           name: PRism ${{ github.event.inputs.tag }}
@@ -933,6 +978,8 @@ function FirstRunDisclosure() {
 
 The disclosure defaults to closed. First-runners see the summary "First run on this machine?" and expand if they hit a warning; return users (most cases) skip it. Spec § 13 (DoD line 121) explicitly requires the SmartScreen and Keychain copy on Setup.
 
+**Browser-default `<details>` styling is acceptable.** The native `<details>` element renders with the browser's default chevron and animation; the result will not match the rest of the product's token-derived design language. Accepted deliberately for this surface — the first-run disclosure is a transient, first-runners-only artifact; cross-browser custom styling of `<details>` requires CSS that handles the marker pseudo-element differently on each browser, and the maintenance cost outweighs the visual polish gain. If a future slice promotes the disclosure to a more prominent surface, it can switch to a custom `<DisclosureGroup>` component at that point.
+
 ### 7.6 Tests
 
 The publish workflow itself is verified by:
@@ -944,6 +991,8 @@ The first-run copy is verified by:
 - Vitest unit test: renders both blocks when `navigator.platform === ''`.
 
 No e2e for the publish workflow itself — CI minutes are expensive and the workflow runs maybe 5 times in the PoC lifetime. Manual verification per dispatch is the right cadence.
+
+**Supply-chain hygiene for the workflow.** Add a `.github/dependabot.yml` entry for `package-ecosystem: "github-actions"` so Dependabot opens PRs when the pinned actions release new versions. The maintainer reviews and approves each bump — the SHA pin is what makes the workflow safe; Dependabot is the tooling that keeps the pin current without manual hunting.
 
 ---
 
