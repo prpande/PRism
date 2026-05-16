@@ -33,6 +33,10 @@ export function usePrDetail(prRef: PrReference): UsePrDetailResult {
 
   useEffect(() => {
     let cancelled = false;
+    // Cancellable AbortSignal scoped to this effect run — passed to the
+    // fire-and-forget mark-viewed POST so a slow stamp from PR-A can't land
+    // after a fast stamp from PR-B once the user navigates between PRs.
+    const markViewedAbort = new AbortController();
     // Clear stale data on PR navigation only — React Router reuses this
     // component instance across PR routes, so data from the previous PR would
     // briefly render under the new URL. On reload (same prRef), keep the
@@ -52,15 +56,26 @@ export function usePrDetail(prRef: PrReference): UsePrDetailResult {
         setIsLoading(false);
         // Best-effort stamp of last-viewed-head-sha + last-seen-comment-id on
         // the backend session. Without this, /api/pr/{ref}/submit returns 400
-        // head-sha-drift on every first-time submit (PrSubmitEndpoints rule f).
-        // Fire-and-forget: a failure (snapshot evicted, transient network) must
-        // not block the page from rendering; the next reload re-stamps. The
-        // .catch swallows so an unhandled-promise-rejection doesn't surface.
-        void postMarkViewed(prRef, {
-          headSha: result.pr.headSha,
-          maxCommentId: maxRootCommentId(result),
-        }).catch(() => {
-          /* see comment above — best-effort */
+        // head-sha-not-stamped on every first-time submit (PrSubmitEndpoints
+        // rule f, never-stamped branch). Fire-and-forget: a failure (snapshot
+        // evicted, transient network) must not block the page from rendering;
+        // the next reload re-stamps. The catch logs to console.warn so the
+        // failure mode is *visible* in DevTools (a sustained failure would
+        // otherwise produce a silent submit→"reload"→submit loop with zero
+        // diagnostic signal — the original bug class this PR exists to fix).
+        void postMarkViewed(
+          prRef,
+          {
+            headSha: result.pr.headSha,
+            maxCommentId: maxRootCommentId(result),
+          },
+          { signal: markViewedAbort.signal },
+        ).catch((e: unknown) => {
+          if (e instanceof DOMException && e.name === 'AbortError') return;
+          console.warn(
+            `[usePrDetail] POST /api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/mark-viewed failed; submit will return head-sha-not-stamped until next reload.`,
+            e,
+          );
         });
       })
       .catch((e: unknown) => {
@@ -70,6 +85,7 @@ export function usePrDetail(prRef: PrReference): UsePrDetailResult {
       });
     return () => {
       cancelled = true;
+      markViewedAbort.abort();
     };
   }, [prRef.owner, prRef.repo, prRef.number, reloadCounter]);
 

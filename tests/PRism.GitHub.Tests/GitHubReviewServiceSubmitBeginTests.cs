@@ -87,6 +87,60 @@ public class GitHubReviewServiceSubmitBeginTests
     }
 
     [Fact]
+    public async Task BeginPendingReviewAsync_OnGraphqlError_ExceptionMessageCarriesParsedError_NotBareCount()
+    {
+        // Regression: pre-fix, the exception's Message was "GitHub GraphQL
+        // request returned 1 error(s)." and the actual reason ("Resource not
+        // accessible by integration", etc.) was discarded because SubmitPipeline
+        // only forwarded ex.Message to the SSE event. Now the message must be
+        // the formatted first error including the [CODE] and (path: ...) hints.
+        var handler = new RecordingHttpMessageHandler(new[]
+        {
+            (HttpStatusCode.OK, NodeIdResponse),
+            (HttpStatusCode.OK, """
+              {
+                "data": null,
+                "errors": [{
+                  "message": "Resource not accessible by integration",
+                  "extensions": { "code": "FORBIDDEN" },
+                  "path": ["addPullRequestReview"]
+                }]
+              }
+              """),
+        });
+        var svc = NewService(handler);
+
+        var ex = await Assert.ThrowsAsync<GitHubGraphQLException>(
+            () => svc.BeginPendingReviewAsync(Ref, "abc1234", "Summary", CancellationToken.None));
+
+        ex.Message.Should().Contain("[FORBIDDEN]");
+        ex.Message.Should().Contain("Resource not accessible by integration");
+        ex.Message.Should().Contain("addPullRequestReview");
+        // Raw payload still on the exception for diagnostic logging.
+        ex.ErrorsJson.Should().Contain("Resource not accessible by integration");
+    }
+
+    [Fact]
+    public async Task BeginPendingReviewAsync_OnHttp401_ThrowsHttpRequestException_WithBodyInMessage()
+    {
+        // Regression: pre-fix, EnsureSuccessStatusCode() discarded the response
+        // body — but GitHub's 401 body is `{"message": "Bad credentials", ...}`,
+        // exactly the diagnostic the user needs to know the PAT is invalid.
+        // Now the wrapper reads the body first and includes it in the exception.
+        var handler = new RecordingHttpMessageHandler(
+            HttpStatusCode.Unauthorized,
+            """{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"}""");
+        var svc = NewService(handler);
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(
+            () => svc.BeginPendingReviewAsync(Ref, "abc1234", "Summary", CancellationToken.None));
+
+        ex.Message.Should().Contain("401");
+        ex.Message.Should().Contain("Bad credentials");
+        ex.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
     public async Task BeginPendingReviewAsync_WhenPullRequestNodeIdNotFound_ThrowsGitHubGraphQLException()
     {
         var handler = new RecordingHttpMessageHandler(

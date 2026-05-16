@@ -331,7 +331,7 @@ export function PrHeader({
             void submit.submit(verdict).catch(surfaceSubmitError);
           }}
           onRetry={() => {
-            void submit.retry();
+            void submit.retry().catch(surfaceSubmitError);
           }}
           onVerdictChange={patchVerdict}
           onResumeForeignPendingReview={onResumeForeignPendingReview}

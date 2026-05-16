@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using PRism.Core.Contracts;
 using PRism.Core.Submit;
 
@@ -478,14 +479,37 @@ public sealed partial class GitHubReviewService
             && errors.ValueKind == JsonValueKind.Array
             && errors.GetArrayLength() > 0)
         {
+            var errorsJson = errors.GetRawText();
+            // Log the FULL errors array before throwing so the structured log
+            // always carries every error even though the exception's Message
+            // only renders the first. The user-facing toast surfaces the
+            // formatted Message (now actually useful); operators grepping
+            // logs get the raw payload.
+            s_graphqlSubmitFailed(_log, errors.GetArrayLength(), errorsJson, null);
             throw new GitHubGraphQLException(
-                $"GitHub GraphQL request returned {errors.GetArrayLength()} error(s).",
-                errors.GetRawText());
+                GitHubGraphQLException.FormatErrorsMessage(errorsJson),
+                errorsJson);
         }
 
         if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        {
+            s_graphqlSubmitNoData(_log, null);
             throw new GitHubGraphQLException("GitHub GraphQL response carried no usable data object.");
+        }
 
         return data.Clone();
     }
+
+    // Logged at Error because submit-pipeline GraphQL failures always abort the
+    // pipeline — there's no "partial data" path here (queries that tolerate
+    // errors-alongside-data go through ThrowIfGraphQLErrorsWithoutData, not
+    // this method). The full errors JSON is included as a parameter so the
+    // operator sees every error, not just the first one rendered in the toast.
+    private static readonly Action<ILogger, int, string, Exception?> s_graphqlSubmitFailed =
+        LoggerMessage.Define<int, string>(LogLevel.Error, new EventId(2, "GraphQLSubmitFailed"),
+            "Submit-pipeline GraphQL call returned {ErrorCount} error(s). Raw errors: {ErrorsJson}");
+
+    private static readonly Action<ILogger, Exception?> s_graphqlSubmitNoData =
+        LoggerMessage.Define(LogLevel.Error, new EventId(3, "GraphQLSubmitNoData"),
+            "Submit-pipeline GraphQL call succeeded with no errors but no `data` object — server contract violation.");
 }

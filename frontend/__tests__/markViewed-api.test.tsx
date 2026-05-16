@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { postMarkViewed } from '../src/api/markViewed';
+import { ApiError } from '../src/api/client';
 import type { PrReference } from '../src/api/types';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
@@ -45,7 +46,11 @@ describe('postMarkViewed', () => {
     await expect(postMarkViewed(ref, { headSha: 'x', maxCommentId: null })).resolves.toBeUndefined();
   });
 
-  it('throws ApiError on 422', async () => {
+  it('throws ApiError on 422 with the parsed body and status preserved', async () => {
+    // Stronger than `.rejects.toThrow('HTTP 422')` — that substring also
+    // matches a plain `Error('HTTP 422 something')`. Future callers
+    // discriminating snapshot-evicted from other 422s need ApiError.body.type
+    // and ApiError.status to be intact, not just the message string.
     globalThis.fetch = vi.fn().mockImplementation(() =>
       Promise.resolve(
         new Response(JSON.stringify({ type: '/viewed/snapshot-evicted' }), {
@@ -54,8 +59,42 @@ describe('postMarkViewed', () => {
         }),
       ),
     ) as typeof fetch;
-    await expect(postMarkViewed(ref, { headSha: 'x', maxCommentId: null })).rejects.toThrow(
-      'HTTP 422',
-    );
+    let caught: unknown;
+    try {
+      await postMarkViewed(ref, { headSha: 'x', maxCommentId: null });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ApiError);
+    const apiErr = caught as ApiError;
+    expect(apiErr.status).toBe(422);
+    expect(apiErr.body).toEqual({ type: '/viewed/snapshot-evicted' });
+  });
+
+  it('sends the X-PRism-Tab-Id header so the backend cross-tab signal stays consistent', async () => {
+    // Other writers (PUT /draft, POST /submit, POST /reload) all send the
+    // tab-id; mark-viewed not sending it caused header drift the next time the
+    // BE wanted to use the signal. Mirror via tabIdHeaders() in markViewed.ts.
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(new Response(null, { status: 204 })));
+    globalThis.fetch = fetchMock as typeof fetch;
+    await postMarkViewed(ref, { headSha: 'x', maxCommentId: null });
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>;
+    expect(headers['X-PRism-Tab-Id']).toBeTruthy();
+  });
+
+  it('forwards an AbortSignal to fetch so callers can cancel in-flight stamps', async () => {
+    // usePrDetail relies on this to prevent a slow A-stamp landing after a fast
+    // B-stamp on rapid PR navigation. Without forwarding the signal, the abort
+    // is a no-op and the race window stays open.
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(new Response(null, { status: 204 })));
+    globalThis.fetch = fetchMock as typeof fetch;
+    const controller = new AbortController();
+    await postMarkViewed(ref, { headSha: 'x', maxCommentId: null }, { signal: controller.signal });
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBe(controller.signal);
   });
 });

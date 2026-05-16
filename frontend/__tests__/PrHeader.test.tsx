@@ -216,44 +216,33 @@ describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swa
     fireEvent.click(confirm);
   }
 
-  it('surfaces head-sha-drift as an error toast naming the Reload remedy', async () => {
-    submitReviewMock.mockRejectedValueOnce(
-      new SubmitConflictError('head-sha-drift', 'Reload the PR before submitting.'),
-    );
-    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
-    await clickSubmitAndConfirm();
-    expect(await screen.findByText(/head commit changed.*reload the PR/i)).toBeInTheDocument();
-  });
+  // Every known SubmitConflictError code → expected toast substring (regex).
+  // The list mirrors KNOWN_SUBMIT_ERROR_CODES in frontend/src/api/submit.ts;
+  // when a code is added there, add a row here so the per-code toast copy is
+  // covered. Each row exists because pre-fix the catch was empty and produced
+  // no toast at all — covering every arm prevents a copy-paste regression in
+  // submitErrorMessage from shipping invisibly.
+  const codeToastCases: ReadonlyArray<readonly [string, RegExp]> = [
+    ['head-sha-drift', /head commit changed.*reload the PR/i],
+    ['head-sha-not-stamped', /PR view hasn't been stamped yet/i],
+    ['unauthorized', /subscription to this PR was lost/i],
+    ['no-session', /no draft session for this PR/i],
+    ['stale-drafts', /stale drafts.*Drafts tab/i],
+    ['verdict-needs-reconfirm', /re-confirm your verdict/i],
+    ['no-content', /Comment-verdict review needs at least one/i],
+    ['verdict-invalid', /verdict must be Approve, Request changes, or Comment/i],
+    ['submit-in-progress', /A submit is already in flight/i],
+  ];
 
-  it('surfaces head-sha-not-stamped with a server-side wire-up phrasing', async () => {
-    submitReviewMock.mockRejectedValueOnce(
-      new SubmitConflictError(
-        'head-sha-not-stamped',
-        'PR detail has not been marked viewed yet — reload the PR.',
-      ),
-    );
-    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
-    await clickSubmitAndConfirm();
-    expect(await screen.findByText(/PR view hasn't been stamped yet/i)).toBeInTheDocument();
-  });
-
-  it('surfaces unauthorized as an error toast naming subscription loss', async () => {
-    submitReviewMock.mockRejectedValueOnce(
-      new SubmitConflictError('unauthorized', 'Subscribe to this PR before submitting.'),
-    );
-    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
-    await clickSubmitAndConfirm();
-    expect(await screen.findByText(/subscription to this PR was lost/i)).toBeInTheDocument();
-  });
-
-  it('surfaces stale-drafts as an error toast pointing at the Drafts tab', async () => {
-    submitReviewMock.mockRejectedValueOnce(
-      new SubmitConflictError('stale-drafts', 'Resolve stale drafts before submitting.'),
-    );
-    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
-    await clickSubmitAndConfirm();
-    expect(await screen.findByText(/stale drafts.*Drafts tab/i)).toBeInTheDocument();
-  });
+  it.each(codeToastCases)(
+    'surfaces SubmitConflictError(%s) via a per-code toast',
+    async (code, expected) => {
+      submitReviewMock.mockRejectedValueOnce(new SubmitConflictError(code, 'server-supplied'));
+      renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+      await clickSubmitAndConfirm();
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+    },
+  );
 
   it('falls through to the server-supplied message on an unknown SubmitConflictError code', async () => {
     submitReviewMock.mockRejectedValueOnce(
@@ -272,6 +261,26 @@ describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swa
     await clickSubmitAndConfirm();
     expect(await screen.findByText(/unexpected error.*Try again/i)).toBeInTheDocument();
   });
+
+  it('surfaces 4xx via toast on the SubmitInProgressBadge Resume path (parallel onResume catch)', async () => {
+    // Regression: PR #55 wired surfaceSubmitError into onSubmit but the parallel
+    // onResume path sat untested. The recovery flow is the higher-stakes silent-
+    // failure surface — the user already failed once. Asserts the catch wires
+    // through surfaceSubmitError, not the empty .catch(() => {}) that shipped
+    // originally on the dialog onSubmit.
+    submitReviewMock.mockRejectedValueOnce(
+      new SubmitConflictError('submit-in-progress', 'A submit is already in flight.'),
+    );
+    renderWithToast(
+      <PrHeader
+        {...baseProps}
+        session={session({ pendingReviewId: 'PRR_recover', draftVerdict: 'approve' })}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /submit in progress.*resume/i }));
+    expect(await screen.findByText(/A submit is already in flight/i)).toBeInTheDocument();
+  });
+
 });
 
 describe('PrHeader — closed/merged PR (PR5 § 13)', () => {

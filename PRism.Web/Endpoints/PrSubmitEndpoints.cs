@@ -22,6 +22,10 @@ namespace PRism.Web.Endpoints;
 // three routes are wired via the pre-routing UseWhen middleware in Program.cs.
 internal static class PrSubmitEndpoints
 {
+    // Single source of the ILogger category so the literal isn't duplicated at
+    // every site (PR #55 doubled the count from 2 to 4 — refactored here).
+    private static readonly string LoggerCategory = typeof(PrSubmitEndpoints).FullName!;
+
     // FieldsTouched lists for the StateChanged events this endpoint publishes. The frontend
     // re-fetches the whole session on state-changed regardless; these are informational.
     private static readonly string[] SubmittedFields = { "draft-comments", "draft-replies", "draft-summary", "draft-verdict", "draft-verdict-status", "pending-review" };
@@ -112,16 +116,19 @@ internal static class PrSubmitEndpoints
         // for a stale-viewport UX issue.
         if (string.IsNullOrEmpty(session.LastViewedHeadSha))
         {
-            s_headShaNotStamped(loggerFactory.CreateLogger("PRism.Web.Endpoints.PrSubmitEndpoints"), sessionKey, null);
+            // Diagnostic detail (named missing call, hint that the FE wire-up regressed)
+            // lives in the structured Warning log via s_headShaNotStamped; the response
+            // body stays terse so an unauthenticated viewer can't infer the route shape.
+            s_headShaNotStamped(loggerFactory.CreateLogger(LoggerCategory), sessionKey, null);
             return Results.Json(
                 new SubmitErrorDto("head-sha-not-stamped",
-                    "PR detail has not been marked viewed yet (frontend never called POST /api/pr/{ref}/mark-viewed). Reload the PR; if this persists the frontend wire-up is broken."),
+                    "PR detail has not been marked viewed yet. Reload the PR and try again."),
                 statusCode: StatusCodes.Status400BadRequest);
         }
         var pollSnapshot = activePrCache.GetCurrent(prRef);
         if (pollSnapshot is not null && !string.Equals(pollSnapshot.HeadSha, session.LastViewedHeadSha, StringComparison.Ordinal))
         {
-            s_headShaDrift(loggerFactory.CreateLogger("PRism.Web.Endpoints.PrSubmitEndpoints"), sessionKey, session.LastViewedHeadSha, pollSnapshot.HeadSha, null);
+            s_headShaDrift(loggerFactory.CreateLogger(LoggerCategory), sessionKey, session.LastViewedHeadSha, pollSnapshot.HeadSha, null);
             return Results.Json(new SubmitErrorDto("head-sha-drift", "Reload the PR before submitting."), statusCode: StatusCodes.Status400BadRequest);
         }
 
@@ -199,7 +206,7 @@ internal static class PrSubmitEndpoints
                 // SubmitAsync's contract returns SubmitOutcome.Failed for step failures; reaching here
                 // means a store crash / programming error. Log and swallow — re-throwing would only
                 // surface an unobserved-task exception.
-                s_pipelineThrew(loggerFactory.CreateLogger("PRism.Web.Endpoints.PrSubmitEndpoints"), sessionKey, ex);
+                s_pipelineThrew(loggerFactory.CreateLogger(LoggerCategory), sessionKey, ex);
             }
 #pragma warning restore CA1031
             finally
@@ -354,7 +361,7 @@ internal static class PrSubmitEndpoints
 #pragma warning disable CA1031 // surface any GitHub/transport failure as a structured error rather than a bare 500
         catch (Exception ex)
         {
-            s_foreignDiscardDeleteFailed(loggerFactory.CreateLogger("PRism.Web.Endpoints.PrSubmitEndpoints"), sessionKey, ex);
+            s_foreignDiscardDeleteFailed(loggerFactory.CreateLogger(LoggerCategory), sessionKey, ex);
             return Results.Json(new SubmitErrorDto("delete-failed", "Failed to delete the pending review on GitHub. Please retry."), statusCode: StatusCodes.Status502BadGateway);
         }
 #pragma warning restore CA1031
