@@ -55,7 +55,7 @@ A separate Playwright config (`playwright.real.config.ts`) boots PRism.Web on po
 `PRism.Web/TestHooks/TestFailureInjectionHandler.cs` — a `DelegatingHandler` that sits in the GraphQL `HttpClient` pipeline (the `"github"` named client registered in `PRism.GitHub/ServiceCollectionExtensions.cs:31`). On each `SendAsync`:
 
 1. Read the request body (buffered `StringContent` — safe to re-read).
-2. **Sniff the top-level selection-set field name** by scanning the GraphQL query text for the first identifier inside the outer braces. For PRism's anonymous mutations (verified — every mutation in `PRism.GitHub/GitHubReviewService.Submit.cs` is of the form `mutation($vars) { selectionField(input: ...) { ... } }`), this yields the field name itself (e.g., `addPullRequestReviewThread`). The mutation-name token (`mutation Foo(...)`) is **not** the key, because PRism's call sites all use anonymous form.
+2. **Sniff the top-level selection-set field name** by scanning the GraphQL query text. Concrete regex contract (pin in implementation): `\{\s*([A-Za-z_][A-Za-z0-9_]*)` capturing group 1, anchored after the outer brace following the anonymous `mutation($vars)` header. For PRism's mutations (current state — see §10 sniff-brittleness risk), this yields the field name (e.g., `addPullRequestReviewThread`). **Match using exact string equality, never substring/prefix**, because `addPullRequestReviewThread` is a strict prefix of `addPullRequestReviewThreadReply` (the AttachReply mutation at `GitHubReviewService.Submit.cs:118-128`). A naive `body.Contains(fieldName)` impl would silently mis-route. Identifier-boundary parsing is load-bearing; the handler carries an inline comment naming this. **Scope of the sniff:** works for the four mutations the four scenarios inject into. Read queries (e.g., `FindOwnPendingReviewAsync`) wrap their actual data field inside `repository { pullRequest { reviews { ... } } }`, so the regex would yield `repository` — not useful as an injection key. If a future scenario needs to inject into a query, the handler grows a per-query-name lookup; out of scope today.
 3. Consult `RealTransportFailureInjector.TryConsume(fieldName, afterEffectWanted: false, out var preEx)`. If matched, throw `preEx` **before** forwarding (simulates client-side fault — GitHub never sees the call).
 4. `await base.SendAsync(request, ct)` to forward.
 5. Consult `TryConsume(fieldName, afterEffectWanted: true, out var postEx)`. If matched, throw `postEx` **after** the response is received (simulates the "lost response" window — GitHub committed; PRism never saw the result).
@@ -98,12 +98,14 @@ Origin: http://localhost:5181
 { "owner": "prpande", "repo": "prism-sandbox", "number": 42 }
 ```
 
-Gated on `Test` env only (no new env gate). The handler does **two** things, both inside one `IAppStateStore.UpdateAsync` to avoid races:
+Gated on `Test` env only (no new env gate). The handler does **two** things; they touch different concurrency surfaces so they aren't actually one `UpdateAsync` (an earlier draft of this spec claimed they were — that was wrong):
 
-1. Nukes the PR's session in `state.json` (drafts, `PendingReviewId`, `LastViewedHeadSha`, `DraftSummary`, `DraftVerdict`) without touching auth state.
-2. **Removes the PR from `IActivePrCache` subscription**, which prevents the `ActivePrPoller` (running at 1s cadence in test env) from re-stamping `LastViewedHeadSha` between the clear and the next spec's mark-viewed.
+1. Nukes the PR's session in `state.json` (drafts, `PendingReviewId`, `LastViewedHeadSha`, `DraftSummary`, `DraftVerdict`) via `IAppStateStore.UpdateAsync` — without touching auth state.
+2. **Removes every subscriber for this PR from `ActivePrSubscriberRegistry`** by calling `Remove(subscriberId, prRef)` for each id returned by the registry's `SubscribersFor(prRef)` query. (`IActivePrCache` itself doesn't expose unsubscribe; subscription state lives in the sibling `ActivePrSubscriberRegistry` — verified against `PRism.Core/PrDetail/ActivePrSubscriberRegistry.cs`. If `SubscribersFor` isn't a public method on the registry today, the implementation adds it — single ConcurrentDictionary lookup; ~5 LOC.)
 
-Returns 204. ~30 LOC. Reusable beyond the real-flow suite if a future fake-mode spec wants per-PR session reset.
+The race closure isn't "one UpdateAsync" — it's the poller's own snapshot pattern: `ActivePrPoller` reads `UniquePrRefs()` at tick-start, so any subscriber removed between ticks is observed on the next tick. The cost of NOT closing this race would be a poller-emitted `pr-updated` SSE event landing on a spec that's already trying to assert a clean state — annoying but not corrupting. The race-closure motivation is determinism of `resetSandboxFixture`'s wall-clock, not data correctness.
+
+Returns 204. ~40 LOC across handler + registry helper. Reusable beyond the real-flow suite if a future fake-mode spec wants per-PR session reset.
 
 ### 4.5 `Program.cs` changes
 
@@ -133,6 +135,8 @@ if (builder.Environment.IsEnvironment("Test")
 // (c) Endpoint map. Extension method self-guards on (Test env + REAL_INJECT); called unconditionally.
 app.MapRealInjectEndpoints();
 ```
+
+**One non-obvious Program.cs edit:** the existing `UseStaticWebAssets()` block is currently gated on `PRISM_E2E_FAKE_REVIEW=1`. Real-flow mode doesn't set that env var, so without an update the SPA bundle would serve as 0-byte assets and the browser would never bootstrap. The gate needs to widen to `IsEnvironment("Test") && (PRISM_E2E_FAKE_REVIEW=1 || PRISM_E2E_REAL_INJECT=1)`. One-line change; called out in §12.
 
 Total production-code LOC introduced: ~90, all gated. No edits to `GitHubReviewService.*`.
 
@@ -197,7 +201,14 @@ export async function resetSandboxFixture(
   //    (GitHub doesn't delete submitted review threads when their commit OID becomes unreachable —
   //    50 prior happy-path runs leave 50 reviews on the fixture PR. Scoping by timestamp avoids
   //    needing a "delete all viewer-submitted reviews" sweep we don't otherwise need.)
-  return { sinceTs: new Date().toISOString() };
+  //
+  //    sinceTs is read from GitHub's server clock — NOT `new Date().toISOString()` —
+  //    so test-runner clock skew (NTP outage, suspend/resume, dual-boot) can't flip
+  //    the comparison. Cheapest source: `Date` HTTP response header on any gh-api call
+  //    we'd make anyway, OR a quick `gh api graphql` returning `{ rateLimit { resetAt } }`
+  //    and a known anchor. Concrete impl: capture the Date header from the final
+  //    `forceResetBranch` REST response and parse it as ISO-8601.
+  return { sinceTs: serverClockFromResponseHeader };
 }
 ```
 
@@ -253,7 +264,12 @@ Assertions:
 ```
 beforeEach extension: gh.createPendingReview(foreignFixture, {threadBody: "Pre-seeded foreign thread."})
                       — pre-seeds a pending review the FE session has never stamped.
-                      (Runs AFTER resetSandboxFixture so it's not deleted by the reset.)
+                      (Runs AFTER resetSandboxFixture so it's not deleted by the reset.
+                       Spec asserts gh.listOwnPendingReviews(prNumber).length === 1
+                       immediately after the seed call — load-bearing ordering invariant;
+                       a future refactor that moves the seed earlier should trip this
+                       assertion rather than fail silently as if FindOwnPendingReview
+                       had a real bug.)
 
 1. setupAndOpenScenarioPrReal(page, foreignFixture)
 2. Wait for mark-viewed
@@ -434,7 +450,9 @@ export default defineConfig({
 
 ### 7.5 `frontend/e2e/real/global-setup.ts`
 
-PAT loading respects the `02-architecture.md:711` invariant ("PAT stored in OS keychain, never in `state.json`"). Pre-injection into `state.json` was in the first draft of this design and was wrong — `TokenStore` writes to MSAL-wrapped `PRism.tokens.cache` (DPAPI/keychain-protected); writing plaintext JSON to `state.json` would both fail to be picked up AND violate the architectural contract. We instead drive PRism's real `/setup` flow programmatically once per session:
+PAT loading respects the `02-architecture.md:711` invariant ("PAT stored in OS keychain, never in `state.json`"). Pre-injection into `state.json` was in the first draft of this design and was wrong — `TokenStore` writes to MSAL-wrapped `PRism.tokens.cache` (DPAPI/keychain-protected); writing plaintext JSON to `state.json` would both fail to be picked up AND violate the architectural contract. We instead drive PRism's real `/setup` flow programmatically once per session.
+
+**Important auth-middleware constraint:** `playwright.real.config.ts` runs the backend under `ASPNETCORE_ENVIRONMENT=Test`. `SessionTokenMiddleware._enforced = !env.IsDevelopment()` (verified in `PRism.Web/Middleware/SessionTokenMiddleware.cs:43`), so it enforces session-token + cookie on every `/api/*` mutating request. `/api/auth/connect` is **not** in the `/test/*` exempt namespace. Additionally, `OriginCheckMiddleware` (`PRism.Web/Middleware/OriginCheckMiddleware.cs:34-39`) rejects any POST with missing/non-loopback `Origin`. A bare `request.post('/api/auth/connect', {data: {pat}})` from an APIRequestContext that's never navigated PRism's HTML will 403 (no Origin) or 401 (no session token). globalSetup must complete the bootstrap dance first.
 
 ```
 1. Read fixtures.json. If missing → throw with actionable message
@@ -445,11 +463,26 @@ PAT loading respects the `02-architecture.md:711` invariant ("PAT stored in OS k
 4. Read viewer.login via gh, assert it matches fixtures.json's owning login (defends against
    a teammate accidentally running with a different gh-auth context — e.g., a bot identity —
    from the one that created their fixtures).
-5. Wait for backend health. Use page.request to POST PAT through the real /api/auth/connect
-   + /api/auth/connect/commit flow (same path the /setup UI uses) — this routes through
-   TokenStore.CommitAsync and lands the PAT in PRism.tokens.cache with keychain protection.
-6. Run `npm run build` + `dotnet build PRism.Web` (same as the existing global-setup.ts —
-   ensures wwwroot manifest matches built assets).
+5. Wait for backend health (GET /api/health — the one path exempt from SessionTokenMiddleware).
+6. Bootstrap the auth context: launch chromium, open a page, GET / (HTML response — backend stamps
+   prism-session cookie via Program.cs' text/html cookie-stamping middleware). Capture the
+   cookie value from the browser context. From here on, use the BROWSER PAGE'S request context
+   (page.request) — it auto-includes the cookie AND auto-includes Origin: http://localhost:5181
+   on POSTs. (The bare APIRequestContext from request.newContext() does neither; use the
+   page-bound one.)
+7. POST PAT through /api/auth/connect:
+     - On 200 AuthConnectSuccess → TokenStore.CommitAsync ran inline; done.
+     - On 200 AuthConnectWithWarning (currently only NoReposSelected; a fine-grained
+       sandbox-scoped PAT trips this) → POST /api/auth/connect/commit to accept the warning
+       and complete the commit.
+     - On AuthConnectValidationFailed / AuthConnectError → throw with the error code; the
+       PAT is bad.
+   Verified shape against PRism.Web/Endpoints/AuthEndpoints.cs:38-115; the "/connect + /commit"
+   pattern from an earlier draft of this doc was wrong — /commit fires only on warning.
+8. Run `npm run build` + `dotnet build PRism.Web` (mirrors the existing fake-mode
+   global-setup at frontend/e2e/global-setup.ts — same reasoning: regenerate the wwwroot
+   manifest so MapStaticAssets serves real bytes rather than the prior cached 0-byte
+   bundle. If frontend/e2e/global-setup.ts changes, update both setups in lockstep).
 ```
 
 Each spec's `beforeEach` then navigates to the fixture PR directly (no `/setup` navigation per spec — the PAT is already committed for the run).
@@ -488,7 +521,7 @@ Each spec is paired with a one-line production-code edit that should make it fai
 
 1. **Test-only seam in a production assembly (PRism.Web).** ~90 LOC of gated code under `PRism.Web/TestHooks/`. Co-gated on `ASPNETCORE_ENVIRONMENT=Test` AND `PRISM_E2E_REAL_INJECT=1`. Placement was moved out of `PRism.GitHub` to keep the production GraphQL adapter clean of test infra. Alternatives considered and rejected:
    - **`protected virtual` seams in `GitHubReviewService.Submit.cs`** — pollutes the production class with a subclass-only surface and misses the actual transport layer (only intercepts at our boundary).
-   - **`mitmproxy`-style local intercept process** — would leave production code 100% unmodified and allow byte-perfect transport-level simulation (including TCP-reset cases the exception-throwing handler can't simulate). Real alternative but adds a second process to the `webServer` config, ~300 LOC of proxy harness, and operational complexity (Python/Node proxy boot, port management). Cost is comparable to the seam choice but the production-code blast radius is zero. Rejected for now in favor of the simpler DI-registered handler. Worth revisiting if the seam needs to grow (e.g., latency injection, byte-corruption tests).
+   - **`mitmproxy`-style local intercept process** — would leave production code 100% unmodified and allow byte-perfect transport-level simulation (including TCP-reset cases the exception-throwing handler can't simulate). The chosen seam is materially cheaper: ~90 LOC of gated handler + zero new runtime dependencies, vs ~300 LOC of proxy harness + a Python/Node process the rest of the test infra doesn't need. The mitmproxy win is narrowly *"zero production-code blast radius and byte-level transport fidelity"* — not a cost-parity story. Rejected for now in favor of the cheaper DI-registered handler. Worth revisiting if the seam needs to grow (e.g., latency injection, byte-corruption tests) where the production-code-blast-radius cost starts to compound.
 2. **Four long-lived PRs per teammate on the sandbox.** Sandbox is throwaway (description says so). Branch names are obviously dedicated. Easy to GC manually if a teammate leaves.
 3. **PAT identity = real reviewer.** Comments and reviews land under whoever's `gh` is authenticated. Acceptable on a dedicated sandbox. Mitigation: fine-grained PATs scoped to `prism-sandbox` only (recommended in §7.1).
 4. **Real-flow not in CI.** Local-dev / pre-release gate only. The 15 fake-mode specs continue to be the CI merge gate. See §10 for the rot risk this opens up.
@@ -498,7 +531,7 @@ Each spec is paired with a one-line production-code edit that should make it fai
 
 ## 10. Risks
 
-- **Rot from opt-in disuse.** Real-flow is local-dev / pre-release only with four prereq steps. If the suite isn't run regularly, fixture metadata drifts, `gh` CLI flags evolve, and re-running becomes archeology. Mitigation: add a pre-release checkbox to `.ai/docs/development-process.md` requiring the suite to pass before any version tag. Worth tracking as a separate small follow-up; not blocking this design but if rot materializes it's the failure mode this section calls out first.
+- **Rot from opt-in disuse.** Real-flow is local-dev / pre-release only with four prereq steps. If the suite isn't run regularly, fixture metadata drifts, `gh` CLI flags evolve, and re-running becomes archeology. Mitigation: a "pre-release sanity" section in `docs/e2e/real-flow.md` (which is in §11 DoD) documenting the suite as a release-tag prereq. If governance ever wants this enforced beyond a runbook entry, a follow-up edit to `.ai/docs/development-process.md` adds the checkbox; deferring that to a separate PR keeps governance-doc changes out of this feature PR.
 - **GitHub API contract changes.** Most are additive; mutation-shape breaks are rare. Real-flow specs are our canary — failing immediately on contract drift, which is one of the values of this suite.
 - **HTML-comment marker stripping.** If GitHub ever strips them, `s5-real-lost-response-adoption` fails as the live C7 empirical gate. That's a feature, not a bug.
 - **Stale-OID spec poller-cadence + replica-propagation sensitivity.** GitHub's GraphQL read replicas can serve stale data for 5-15s after a mutation lands on the primary. Combined with the 1s poller cadence + SSE emit, the 30s budget in §6.4 should be sufficient on typical days, but a slow-API window can exceed it. Mitigated by SSE event-wait rather than time-based polling; if the SSE never arrives, the spec fails loudly with a clearly-named timeout surface (see §7.6 flake-vs-regression).
@@ -523,7 +556,8 @@ Each spec is paired with a one-line production-code edit that should make it fai
 | `PRism.Web/TestHooks/RealTransportFailureInjector.cs` | NEW |
 | `PRism.Web/TestHooks/RealInjectEndpoints.cs` | NEW |
 | `PRism.Web/TestHooks/TestEndpoints.cs` | + `/test/clear-pr-session` endpoint (clears session AND `IActivePrCache` subscription in one `UpdateAsync`) |
-| `PRism.Web/Program.cs` | + 3 conditional blocks (mutex check, handler registration co-gated on Test+REAL_INJECT, endpoint map) |
+| `PRism.Web/Program.cs` | + 3 conditional blocks (mutex check, handler registration co-gated on Test+REAL_INJECT, endpoint map); also widen the existing `UseStaticWebAssets()` gate to engage under REAL_INJECT=1 as well (one-line OR) |
+| `PRism.Core/PrDetail/ActivePrSubscriberRegistry.cs` | If `SubscribersFor(prRef)` isn't already public, + one ConcurrentDictionary lookup method (~5 LOC) so `/test/clear-pr-session` can iterate-and-Remove subscribers for a PR |
 | `frontend/playwright.real.config.ts` | NEW |
 | `frontend/scripts/setup-real-e2e-fixtures.ts` | NEW |
 | `frontend/e2e/real/global-setup.ts` | NEW |
