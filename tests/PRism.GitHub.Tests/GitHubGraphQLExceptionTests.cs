@@ -92,6 +92,24 @@ public class GitHubGraphQLExceptionTests
     }
 
     [Fact]
+    public void FormatErrorsMessage_HandlesNullFirstElement_WithoutThrowing()
+    {
+        // Defensive: a `null` first element in the errors array used to flow into
+        // first.TryGetProperty, which throws InvalidOperationException on a non-object
+        // ValueKind. Guard with ValueKind == Object — return a stable count message
+        // rather than letting the never-throw fallback itself throw.
+        GitHubGraphQLException.FormatErrorsMessage("[null]")
+            .Should().Be("GitHub GraphQL request returned 1 error (non-object element).");
+    }
+
+    [Fact]
+    public void FormatErrorsMessage_HandlesNonObjectFirstElement_AmongOthers()
+    {
+        GitHubGraphQLException.FormatErrorsMessage("""["a string", {"message":"x"}]""")
+            .Should().Be("GitHub GraphQL request returned errors (first element non-object; total 2).");
+    }
+
+    [Fact]
     public void Exception_PreservesRawErrorsJson_ForDiagnosticLogging()
     {
         const string raw = """[{"message": "oops"}]""";

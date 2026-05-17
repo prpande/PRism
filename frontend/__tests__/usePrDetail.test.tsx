@@ -110,7 +110,9 @@ describe('usePrDetail', () => {
       initialProps: { prRef: ref },
     });
     const detailCalls = () =>
-      fetchMock.mock.calls.filter((c) => typeof c[0] === 'string' && !c[0].endsWith('/mark-viewed'));
+      fetchMock.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && !c[0].endsWith('/mark-viewed'),
+      );
     await waitFor(() => expect(detailCalls()).toHaveLength(1));
     rerender({ prRef: { owner: 'foo', repo: 'bar', number: 99 } });
     await waitFor(() => expect(detailCalls()).toHaveLength(2));
@@ -249,9 +251,7 @@ describe('usePrDetail', () => {
       );
       expect(call).toBeDefined();
     });
-    const call = fetchMock.mock.calls.find(
-      (c) => c[0] === '/api/pr/octocat/hello/42/mark-viewed',
-    )!;
+    const call = fetchMock.mock.calls.find((c) => c[0] === '/api/pr/octocat/hello/42/mark-viewed')!;
     const body = JSON.parse((call[1] as RequestInit).body as string);
     expect(body.maxCommentId).toBeNull();
   });

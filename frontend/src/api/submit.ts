@@ -1,5 +1,5 @@
 import { apiClient, ApiError } from './client';
-import { getTabId } from './draft';
+import { TAB_ID_HEADER, getTabId } from './draft';
 import type {
   DraftVerdict,
   PrReference,
@@ -48,8 +48,6 @@ export class SubmitConflictError extends Error {
     this.code = code;
   }
 }
-
-const TAB_ID_HEADER = 'X-PRism-Tab-Id';
 
 function prPath(prRef: PrReference): string {
   return `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;

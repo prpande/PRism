@@ -1,8 +1,6 @@
 import { apiClient } from './client';
-import { getTabId } from './draft';
+import { TAB_ID_HEADER, getTabId } from './draft';
 import type { PrReference } from './types';
-
-const TAB_ID_HEADER = 'X-PRism-Tab-Id';
 
 // POST /api/pr/{ref}/mark-viewed stamps the session's last-viewed-head-sha and
 // last-seen-comment-id. Without it, /api/pr/{ref}/submit returns 400

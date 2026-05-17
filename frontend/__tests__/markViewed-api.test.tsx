@@ -43,7 +43,9 @@ describe('postMarkViewed', () => {
       .mockImplementation(() =>
         Promise.resolve(new Response(null, { status: 204 })),
       ) as typeof fetch;
-    await expect(postMarkViewed(ref, { headSha: 'x', maxCommentId: null })).resolves.toBeUndefined();
+    await expect(
+      postMarkViewed(ref, { headSha: 'x', maxCommentId: null }),
+    ).resolves.toBeUndefined();
   });
 
   it('throws ApiError on 422 with the parsed body and status preserved', async () => {

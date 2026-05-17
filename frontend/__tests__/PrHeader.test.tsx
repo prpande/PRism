@@ -43,7 +43,9 @@ vi.mock('../src/api/submit', async () => {
   return {
     ...actual,
     submitReview: (...args: unknown[]) => submitReviewMock(...args),
-    resumeForeignPendingReview: vi.fn().mockResolvedValue({ threadCount: 0, replyCount: 0, threads: [] }),
+    resumeForeignPendingReview: vi
+      .fn()
+      .mockResolvedValue({ threadCount: 0, replyCount: 0, threads: [] }),
     discardForeignPendingReview: vi.fn().mockResolvedValue(undefined),
     discardAllDrafts: vi.fn().mockResolvedValue(undefined),
   };
@@ -280,7 +282,6 @@ describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swa
     fireEvent.click(screen.getByRole('button', { name: /submit in progress.*resume/i }));
     expect(await screen.findByText(/A submit is already in flight/i)).toBeInTheDocument();
   });
-
 });
 
 describe('PrHeader — closed/merged PR (PR5 § 13)', () => {

@@ -69,6 +69,15 @@ public sealed class GitHubGraphQLException : Exception
             if (count == 0) return "GitHub GraphQL request returned 0 error(s).";
 
             var first = root[0];
+            // Spec is "array of error *objects*" but a buggy proxy / test double / future
+            // schema bump could send `null` or a bare string. Guard explicitly — without
+            // this, TryGetProperty on a non-object element throws InvalidOperationException
+            // and the formatter (intended as a never-throw fallback) becomes the failure.
+            if (first.ValueKind != JsonValueKind.Object)
+                return count == 1
+                    ? "GitHub GraphQL request returned 1 error (non-object element)."
+                    : $"GitHub GraphQL request returned errors (first element non-object; total {count}).";
+
             var sb = new StringBuilder("GitHub GraphQL: ");
 
             // .extensions.code carries machine-readable categories (FORBIDDEN, NOT_FOUND, ...) —

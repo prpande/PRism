@@ -755,6 +755,12 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             {
                 body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             }
+            catch (OperationCanceledException)
+            {
+                // Caller cancellation / shutdown must propagate — matches the
+                // convention in SubmitPipeline.cs and ViewerLoginHydrator.cs.
+                throw;
+            }
 #pragma warning disable CA1031 // best-effort body read; original status is what matters most
             catch (Exception)
             {

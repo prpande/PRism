@@ -1,7 +1,7 @@
 ---
 source-doc: docs/specs/2026-05-11-s5-submit-pipeline-design.md
 created: 2026-05-11
-last-updated: 2026-05-15
+last-updated: 2026-05-17
 status: open
 revisions:
   - 2026-05-11: brainstorm + ce-doc-review pass — recorded brainstorm-time deferrals (12 items in spec § 1.2), doc-review-time deferrals routed to ce-plan, doc-review FYI observations, and forward-looking residual risks for the implementer
@@ -16,6 +16,7 @@ revisions:
   - 2026-05-13: PR5 preflight + PR-#49 review fixes — ce-adversarial-reviewer (2 Important: Resume/Discard flash+focus-jump → PrHeader closes the dialog synchronously before awaiting; double-click → spurious 409 toast → `foreignActionInFlightRef` re-entry guard in useSubmit. 4 Minor: discardAllDrafts→SubmitConflictError parity; Esc handler skipped while delegating; malformed-resume-response defends; createdAt NaN guard). Copilot ×1 round (5 inline: Esc-handler already fixed in the preflight commit; removed the unused `prRef` prop from DiscardAllDraftsButton; threaded `prState` into DiscardAllConfirmationModal so the copy names "closed"/"merged" PR accurately rather than the spec's literal "closed PR"; extracted `prRefKey()` to `api/types.ts` and reuse it in useSubmit + useSubmitToasts; the no-in-flight-state concern is covered by the re-entry guard + synchronous dialog close). Claude Code Review Action: no findings on this PR.
   - 2026-05-13: PR7 execution (DoD E2E test sweep, plan Phase 7 Tasks 61–70) — added the PR7 subsection under "Implementation-time deferrals": the PR0b-vs-PR7-first decision (chose defensive PR7 + `--workers=1`), the `--workers=1` requirement for the e2e suite, the `/test/mark-pr-viewed` + `/test/reset` hardening, the retry-from-each-step E2E covering Begin/AttachThreads/Finalize (not AttachReplies — Core-unit-tested), the marker-collision composer-`unsaved`-not-`rejected` observation, the multi-tab-409-reverts-to-idle observation, the closed-merged loader-cache-bust + stale-commitOID `/reload`-poll flow artifacts, and the `/test/submit/*` endpoint naming/superset vs the plan's Task 61 sketch. Marked the PR1 "test-fake stubs" decision and the PR3 "the shared E2E FakeReviewSubmitter stays NotImplementedException" decision Resolved (FakeReviewSubmitter is now a working in-memory submitter). PR7 is the last S5 PR — S5's demo + DoD-test scope is complete; `status:` stays `open` because the remaining entries here are forward-looking (S6 / P0+) or PR0b (off the demo critical path).
   - 2026-05-13: PR0b execution (Playwright multi-spec state-leak fix + un-fixme of three S4 specs) — set `workers: 1` in `playwright.config.ts` (closes the `--workers=1` carve-out PR7 worked around); un-fixme'd `s4-keep-anyway-survives-reload`, `s4-multi-tab-consistency`, `s4-reconciliation-fires` and fixed three real bugs each had been hiding (added `IActivePrCache.Update` to `/test/advance-head` symmetric to PR7's `/test/reset` hardening; rewrote the multi-tab spec from `browser.newContext() × 2` to one context + two pages since `BroadcastChannel` is scoped to one browsing context group; replaced the `getByText(/override/i)` regex with `.locator('.chip.chip-override')` — the regex was incorrect, `overridden` doesn't contain the literal `override` substring). Marked `[Known issue] Pre-existing Playwright e2e failures on main` Resolved (verified all 8 reds now pass under `workers: 1`); marked `[Decision] The S5 e2e specs must run --workers=1` Resolved. Added a PR0b "Implementation-time deferrals" section below. Full e2e suite green: 26 passed, 1 skipped (the existing `no-browser.spec.ts` skip), 0 failed under `CI=1 npx playwright test --project=prod`.
+  - 2026-05-17: PR #55 review-round-2 sweep — Copilot inline findings + claude-bot summary findings + CI prettier fix. Applied: `FormatErrorsMessage` non-object-first-element guard (defensive against `[null]`/`["str"]`); `PostGraphQLAsync` body-read catch rethrows `OperationCanceledException` first (matches `SubmitPipeline.cs`/`ViewerLoginHydrator.cs` convention); `isKnownSubmitErrorCode` actually wired into `PrHeader.submitErrorMessage` as an exhaustive `KnownSubmitErrorCode` switch (no `default` — compile error if a new code is added without handling, fulfilling the comment's earlier claim); `TAB_ID_HEADER` deduped to a single export in `api/draft.ts` (removed redundant declarations in `submit.ts` + `markViewed.ts`); `surfaceForeignReviewError` TOCTOU 409 toast promoted from `info` → `error` (the user action failed, blue banner mis-reads as confirmation); toast suite gained de-dup test + fake-timer auto-dismiss tests for both 5s info and 10s error windows; `GitHubGraphQLExceptionTests` gained two new tests for the non-object-element guard. Prettier-fixed the four CI-flagged files. No new deferrals — every item from review-2 either applied or already deferred via the original PR #55 entry. `status:` stays `open` until the architectural deferrals (cross-tab, on-disk logger, real-flow e2e) land.
   - 2026-05-15: PR #55 — post-shipment submit-stuck-on-mark-viewed fix + ce-code-review fixes + GraphQL error-detail surfacing. Three coupled bugs (FE never called /mark-viewed; PrHeader silently swallowed every submit 4xx; backend conflated never-stamped with real drift). Plus the broader pattern: GitHubGraphQLException.Message now carries the parsed first error, full errors[] logged via ILogger, PostGraphQLAsync surfaces response body on transport failures (401 "Bad credentials" etc.). Added the PR #55 implementation-time deferrals subsection below capturing what landed and what's deferred (cross-tab stamp poisoning, broader external-API logging beyond PRism.GitHub, no on-disk log writer in PRism.Web). Marked the S5 e2e seed-bypass as a documented gap rather than a defect — it's covered by the new `docs/solutions/integration-issues/submit-review-silent-flash-mark-viewed-wireup-2026-05-15.md` learning. `status:` stays `open` because the cross-tab and on-disk-logger items remain forward-looking.
 ---
 
@@ -862,3 +863,72 @@ PR #55 ships after S5 + S6 PR0 are already in main. It fixes three coupled bugs 
 - **Affects:** `frontend/src/components/Toast/Toast.tsx`.
 - **Decision:** PR #55 closes the two highest-value gaps (auto-dismiss for `error` kind, de-dup on `(kind, message)`). Two pre-existing gaps stay: (a) the generic-error toast fallback discards `ApiError.requestId` even though `Toast` has a built-in "Copy diagnostic info" button for exactly this case; (b) `apiClient.request` has no `AbortController`/timeout, so any fire-and-forget consumer (including the new `mark-viewed`) can hang indefinitely on a misbehaving network. Both are fixable in 10 lines but neither was the root cause of the bug being fixed; deferred to a "Toast + apiClient polish" pass.
 - **Revisit when:** Next toast-touching change, or a hung-request user report.
+
+---
+
+## Implementation-time deferrals — S5 PR #55 review-round-2 (2026-05-17)
+
+Captures decisions made while applying Copilot inline + claude-bot summary findings on PR #55 after the round-1 commit. Three Copilot inline findings + two claude-bot summary findings + CI prettier failure addressed in one commit.
+
+### [Decision] `FormatErrorsMessage` guards against non-object first element
+
+- **Source:** Copilot inline review on `PRism.GitHub/GitHubGraphQLException.cs:71` (round-2).
+- **Affects:** `PRism.GitHub/GitHubGraphQLException.cs:71-79`; `tests/PRism.GitHub.Tests/GitHubGraphQLExceptionTests.cs` (two new tests).
+- **Decision:** GraphQL spec mandates an array of error *objects*, but a buggy proxy / test double / future schema bump could send `null` or a bare string. The previous code called `first.TryGetProperty(...)` directly, which throws `InvalidOperationException` on a non-object `ValueKind` — turning the never-throw fallback into the failure. Added explicit `first.ValueKind != JsonValueKind.Object` guard returning a stable count message. Pinned via `[null]` and `["str", {...}]` unit tests.
+- **Revisit when:** N/A — defensive guard.
+
+### [Decision] `PostGraphQLAsync` body-read rethrows `OperationCanceledException` first
+
+- **Source:** Copilot inline review on `PRism.GitHub/GitHubReviewService.cs:759` (round-2).
+- **Affects:** `PRism.GitHub/GitHubReviewService.cs:758-766`.
+- **Decision:** The body-read had a broad `catch (Exception)` that swallowed caller cancellation / shutdown into a synthetic `HttpRequestException`. Other best-effort catches in the codebase (`PRism.Core/Submit/Pipeline/SubmitPipeline.cs:514-516`, `PRism.Core/Auth/ViewerLoginHydrator.cs:49`) rethrow `OperationCanceledException` first; this site now matches that convention. The `CA1031` suppression for the broad catch stays — body-read failure with a real status code is genuinely best-effort.
+- **Revisit when:** N/A — convention parity.
+
+### [Decision] `isKnownSubmitErrorCode` actually wired into `PrHeader.submitErrorMessage` switch
+
+- **Source:** Copilot inline review on `frontend/src/api/submit.ts:33-35` (round-2) — flagged the comment claim "downstream switch logic narrows via `isKnownSubmitErrorCode` to get exhaustiveness" without an actual call site.
+- **Affects:** `frontend/src/components/PrDetail/PrHeader.tsx:159-204`; `frontend/src/api/submit.ts` (import surface).
+- **Decision:** `submitErrorMessage` now narrows `err.code` to `KnownSubmitErrorCode` via the type guard, then switches over the narrowed type with no `default` clause — TypeScript compile-error if a new code is added to `KNOWN_SUBMIT_ERROR_CODES` without a switch arm. The two codes normally routed elsewhere (`pending-review-state-changed` → `surfaceForeignReviewError`; `delete-failed` → `onDiscardAllDrafts`) fall back to the server message if they ever flow through this path, since neither has dedicated copy here. The unknown-code path (server schema bump arriving before the FE) still falls through to `err.message` — visible, not silent. The PrHeader test for the unknown-code fallthrough (`"something-new-from-future-spec"`) stays green because it covers the `!isKnownSubmitErrorCode(err.code)` branch.
+- **Revisit when:** N/A — landed.
+
+### [Decision] `TAB_ID_HEADER` exported from `api/draft.ts` as the single source of truth
+
+- **Source:** Claude-bot summary issue #1 on PR #55 round-2 review — found the same `const TAB_ID_HEADER = 'X-PRism-Tab-Id'` declared in three files (`api/draft.ts`, `api/submit.ts`, `api/markViewed.ts`).
+- **Affects:** `frontend/src/api/draft.ts:19-22`; `frontend/src/api/submit.ts:1-2` (import surface); `frontend/src/api/markViewed.ts:1-3` (import surface).
+- **Decision:** Promoted `TAB_ID_HEADER` from a `const` to an `export const` in `api/draft.ts` (where `getTabId()` already lives). The other two files import it directly. Considered a separate `api/headers.ts` module — rejected since `draft.ts` already owns the tab-id concept (`getTabId()`, `__resetTabIdForTest`) and the constant naturally co-locates with the function that produces the value being sent.
+- **Revisit when:** N/A — single source of truth restored.
+
+### [Decision] Foreign-pending-review TOCTOU 409 toast promoted from `info` to `error`
+
+- **Source:** Claude-bot summary issue #2 on PR #55 round-2 review.
+- **Affects:** `frontend/src/components/PrDetail/PrHeader.tsx:199-210`.
+- **Decision:** `surfaceForeignReviewError` previously surfaced the TOCTOU `pending-review-state-changed` toast as `kind: 'info'` (blue). The user just clicked Resume or Discard explicitly and the action *didn't go through* — a blue banner reads as confirmation, not failure. Switched to `kind: 'error'` (red) for consistency with `surfaceSubmitError` and the generic-foreign fallback. No test asserted the previous kind, so no test change needed.
+- **Revisit when:** A separate "soft information" toast tier is added for state-change-but-action-still-completed cases.
+
+### [Decision] Toast suite gains de-dup + auto-dismiss coverage (Copilot inline #3 + #4)
+
+- **Source:** Copilot inline review on `frontend/src/components/Toast/useToast.ts:38-41` and `Toast.tsx:22-25` (round-2).
+- **Affects:** `frontend/__tests__/toast.test.tsx` (now 5 tests, was 1).
+- **Decision:** Added (i) de-dup test: three rapid `show()` calls with identical `(kind, message)` render once; (ii) distinct-toasts test: different messages still render separately so dedup is scoped; (iii) fake-timer test pinning info dismisses at 5s (visible at 4999ms, gone at 5001ms); (iv) fake-timer test pinning error dismisses at 10s (visible at 5000ms when info would already be gone, gone at 10001ms). The fake-timer tests use a direct `show()` capture rather than `userEvent.click()` because `userEvent` awaits real microtasks even with `advanceTimers`, deadlocking the test under `vi.useFakeTimers`. Documented in test comments.
+- **Revisit when:** N/A — coverage landed.
+
+### [Acknowledge] Claude-bot summary issue #3 (`ThrowIfGraphQLErrorsWithoutData` static → instance) is documentation-only
+
+- **Source:** Claude-bot summary issue #3 on PR #55 round-2 review.
+- **Affects:** `PRism.GitHub/GitHubReviewService.cs:880` (no change required).
+- **Decision:** Claude-bot called out the static-to-instance change as worth noting but explicitly "Low concern on a partial class with a clean constructor." Confirmed — the method needs `_log` to satisfy the round-1 structured-logging change. No action.
+- **Revisit when:** N/A — not actually a finding.
+
+### [Defer] On-disk log writer for `PRism.Web` (carried forward)
+
+- **Source:** Round-1 deferral (PR #55, 2026-05-15) — restated here so a reader skimming the PR-#55 review-2 section doesn't think it was addressed.
+- **Affects:** `PRism.Web/Program.cs`; `<dataDir>/logs/`.
+- **Decision:** Still deferred. Round-2 did not change the logging composition. The improved `s_graphqlSubmitFailed` / `s_graphqlTransportFailed` / `s_graphqlReadFailed` delegates land structured data on the console-only sink today; a file sink is its own PR.
+- **Revisit when:** As round-1.
+
+### [Defer] Cross-tab stamp poisoning, real-flow Playwright e2e, `Toast.requestId` polish (carried forward)
+
+- **Source:** Round-1 deferrals — restated for visibility.
+- **Affects:** As round-1 — see entries above this subsection.
+- **Decision:** None landed in round-2; review-2 was scoped to the inline + summary findings only. All three remain on the "Toast + apiClient polish" / "S6 multi-account" / "next slice touching usePrDetail" triggers.
+- **Revisit when:** As round-1.
