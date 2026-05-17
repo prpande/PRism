@@ -1,6 +1,10 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PrHeader } from '../src/components/PrDetail/PrHeader';
+import { ToastProvider } from '../src/components/Toast/useToast';
+import { ToastContainer } from '../src/components/Toast/ToastContainer';
+import { SubmitConflictError } from '../src/api/submit';
+import type { ReactNode } from 'react';
 import type {
   AiCapabilities,
   PrReference,
@@ -10,9 +14,10 @@ import type {
 
 // vi.hoisted so the mock factories (themselves hoisted above the imports) can
 // read these mutable containers without a TDZ error.
-const { capabilitiesValue, preferencesValue } = vi.hoisted(() => ({
+const { capabilitiesValue, preferencesValue, submitReviewMock } = vi.hoisted(() => ({
   capabilitiesValue: { capabilities: null as AiCapabilities | null },
   preferencesValue: { preferences: null as UiPreferences | null },
+  submitReviewMock: vi.fn(),
 }));
 
 vi.mock('../src/hooks/useCapabilities', () => ({
@@ -29,6 +34,28 @@ vi.mock('../src/hooks/usePreferences', () => ({
     refetch: () => {},
     set: () => {},
   }),
+}));
+
+// Real SubmitConflictError + verdictToSubmitWire kept; only the network call is
+// stubbed so the catch in PrHeader runs against a real thrown error type.
+vi.mock('../src/api/submit', async () => {
+  const actual = await vi.importActual<typeof import('../src/api/submit')>('../src/api/submit');
+  return {
+    ...actual,
+    submitReview: (...args: unknown[]) => submitReviewMock(...args),
+    resumeForeignPendingReview: vi
+      .fn()
+      .mockResolvedValue({ threadCount: 0, replyCount: 0, threads: [] }),
+    discardForeignPendingReview: vi.fn().mockResolvedValue(undefined),
+    discardAllDrafts: vi.fn().mockResolvedValue(undefined),
+  };
+});
+
+// Drains the PUT /draft summary-flush + any other fire-and-forget calls fired
+// from SubmitDialog.handleConfirm so they don't error in tests.
+vi.mock('../src/api/draft', () => ({
+  sendPatch: vi.fn().mockResolvedValue(undefined),
+  getTabId: () => 'test-tab',
 }));
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
@@ -63,6 +90,17 @@ beforeEach(() => {
   preferencesValue.preferences = null;
   vi.clearAllMocks();
 });
+
+// Wraps the SUT in a real ToastProvider + ToastContainer so tests can assert
+// on the rendered toast nodes after PrHeader's catch handlers fire `show`.
+function renderWithToast(node: ReactNode) {
+  return render(
+    <ToastProvider>
+      {node}
+      <ToastContainer />
+    </ToastProvider>,
+  );
+}
 
 describe('PrHeader', () => {
   it('renders the PR title', () => {
@@ -163,6 +201,86 @@ describe('PrHeader', () => {
     render(<PrHeader {...baseProps} fileCount={5} />);
     const filesTab = screen.getByRole('tab', { name: /files/i });
     expect(filesTab.textContent).toMatch(/5/);
+  });
+});
+
+describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swallow)', () => {
+  // Root cause from production debugging: PrHeader.tsx's onSubmit catch was
+  // empty with a comment claiming useSubmitToasts handled the toast — but
+  // useSubmitToasts only listens for two SSE events, NOT HTTP errors. Result:
+  // every 4xx from /submit (head-sha-drift, unauthorized, no-session, ...)
+  // produced an in-flight "flash" with no user feedback. These tests assert
+  // each known SubmitConflictError code surfaces a useful toast.
+
+  async function clickSubmitAndConfirm() {
+    fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
+    const confirm = await screen.findByRole('button', { name: /confirm submit/i });
+    fireEvent.click(confirm);
+  }
+
+  // Every known SubmitConflictError code → expected toast substring (regex).
+  // The list mirrors KNOWN_SUBMIT_ERROR_CODES in frontend/src/api/submit.ts;
+  // when a code is added there, add a row here so the per-code toast copy is
+  // covered. Each row exists because pre-fix the catch was empty and produced
+  // no toast at all — covering every arm prevents a copy-paste regression in
+  // submitErrorMessage from shipping invisibly.
+  const codeToastCases: ReadonlyArray<readonly [string, RegExp]> = [
+    ['head-sha-drift', /head commit changed.*reload the PR/i],
+    ['head-sha-not-stamped', /PR view hasn't been stamped yet/i],
+    ['unauthorized', /subscription to this PR was lost/i],
+    ['no-session', /no draft session for this PR/i],
+    ['stale-drafts', /stale drafts.*Drafts tab/i],
+    ['verdict-needs-reconfirm', /re-confirm your verdict/i],
+    ['no-content', /Comment-verdict review needs at least one/i],
+    ['verdict-invalid', /verdict must be Approve, Request changes, or Comment/i],
+    ['submit-in-progress', /A submit is already in flight/i],
+  ];
+
+  it.each(codeToastCases)(
+    'surfaces SubmitConflictError(%s) via a per-code toast',
+    async (code, expected) => {
+      submitReviewMock.mockRejectedValueOnce(new SubmitConflictError(code, 'server-supplied'));
+      renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+      await clickSubmitAndConfirm();
+      expect(await screen.findByText(expected)).toBeInTheDocument();
+    },
+  );
+
+  it('falls through to the server-supplied message on an unknown SubmitConflictError code', async () => {
+    submitReviewMock.mockRejectedValueOnce(
+      new SubmitConflictError('something-new-from-future-spec', 'New thing.'),
+    );
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    // Server-supplied message reaches the user even for codes the FE doesn't
+    // know about, so a future backend code is at least visible, not silent.
+    expect(await screen.findByText(/new thing/i)).toBeInTheDocument();
+  });
+
+  it('surfaces a generic error toast when submit throws a non-SubmitConflictError', async () => {
+    submitReviewMock.mockRejectedValueOnce(new Error('network down'));
+    renderWithToast(<PrHeader {...baseProps} session={readySession} headShaDrift={false} />);
+    await clickSubmitAndConfirm();
+    expect(await screen.findByText(/unexpected error.*Try again/i)).toBeInTheDocument();
+  });
+
+  it('surfaces 4xx via toast on the SubmitInProgressBadge Resume path (parallel onResume catch)', async () => {
+    // Regression: PR #55 wired surfaceSubmitError into onSubmit but the parallel
+    // onResume path sat untested. The recovery flow is the higher-stakes silent-
+    // failure surface — the user already failed once. Asserts the catch wires
+    // through surfaceSubmitError, not the empty .catch(() => {}) that shipped
+    // originally on the dialog onSubmit.
+    submitReviewMock.mockRejectedValueOnce(
+      new SubmitConflictError('submit-in-progress', 'A submit is already in flight.'),
+    );
+    renderWithToast(
+      <PrHeader
+        {...baseProps}
+        session={session({ pendingReviewId: 'PRR_recover', draftVerdict: 'approve' })}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /submit in progress.*resume/i }));
+    expect(await screen.findByText(/A submit is already in flight/i)).toBeInTheDocument();
   });
 });
 

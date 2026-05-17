@@ -743,13 +743,50 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
 
         using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
-        // EnsureSuccessStatusCode throws HttpRequestException with the status code on
-        // non-2xx — distinguishes transport / auth / 5xx failures from a 200 response that
-        // legitimately reports `pullRequest: null` (PR doesn't exist). Without this, every
-        // failure mode would collapse to "PR not found" at the caller.
-        resp.EnsureSuccessStatusCode();
+        if (!resp.IsSuccessStatusCode)
+        {
+            // EnsureSuccessStatusCode throws HttpRequestException with the status code
+            // on non-2xx but DISCARDS the response body — for GitHub that body usually
+            // carries the actual reason ({"message": "Bad credentials", "documentation_url":
+            // "..."} for 401, abuse / rate-limit details for 403, etc.). Read it first
+            // so the caller's exception message includes the actionable detail.
+            string body = string.Empty;
+            try
+            {
+                body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Caller cancellation / shutdown must propagate — matches the
+                // convention in SubmitPipeline.cs and ViewerLoginHydrator.cs.
+                throw;
+            }
+#pragma warning disable CA1031 // best-effort body read; original status is what matters most
+            catch (Exception)
+            {
+                // ignored — fall through with empty body
+            }
+#pragma warning restore CA1031
+            s_graphqlTransportFailed(_log, (int)resp.StatusCode, resp.ReasonPhrase ?? "", Truncate(body, 1024), null);
+            throw new HttpRequestException(
+                $"GitHub GraphQL HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}: {Truncate(body, 512)}",
+                inner: null,
+                statusCode: resp.StatusCode);
+        }
         return await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
     }
+
+    private static string Truncate(string s, int max)
+        => string.IsNullOrEmpty(s) ? string.Empty : (s.Length <= max ? s : string.Concat(s.AsSpan(0, max), "…"));
+
+    // Transport-level failures are logged at Warning because rate-limits and auth
+    // expiry are recoverable conditions — distinct from execution errors (Warning
+    // for read, Error for submit). Body is truncated in the log to 1024 chars so a
+    // pathological 5xx body doesn't bloat the log file; the response code +
+    // first 512 chars in the exception's Message are what callers surface.
+    private static readonly Action<ILogger, int, string, string, Exception?> s_graphqlTransportFailed =
+        LoggerMessage.Define<int, string, string>(LogLevel.Warning, new EventId(5, "GraphQLTransportFailed"),
+            "GraphQL HTTP request failed: {StatusCode} {ReasonPhrase}. Body: {Body}");
 
     private static List<ClusteringCommit> ParseTimelineCommits(JsonElement pull)
     {
@@ -846,7 +883,12 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
     // usable data (data missing entirely, or data:null). Per GraphQL spec, partial
     // data is legitimately delivered alongside non-fatal field errors — we let those
     // through and the per-field parsers fall back to empty/default.
-    private static void ThrowIfGraphQLErrorsWithoutData(JsonElement root)
+    //
+    // The thrown exception's Message uses the shared formatter so users see
+    // "[CODE] message (path: x/y/z)" rather than the bare count — same pattern
+    // as the submit pipeline's PostSubmitGraphQLAsync. Full errors JSON is
+    // available on the exception's ErrorsJson property for diagnostic logging.
+    private void ThrowIfGraphQLErrorsWithoutData(JsonElement root)
     {
         if (!root.TryGetProperty("errors", out var errors)) return;
         if (errors.ValueKind != JsonValueKind.Array || errors.GetArrayLength() == 0) return;
@@ -855,10 +897,21 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             && data.ValueKind == JsonValueKind.Object;
         if (hasUsableData) return;
 
+        var errorsJson = errors.GetRawText();
+        s_graphqlReadFailed(_log, errors.GetArrayLength(), errorsJson, null);
         throw new GitHubGraphQLException(
-            $"GitHub GraphQL request returned {errors.GetArrayLength()} error(s) and no data.",
-            errors.GetRawText());
+            GitHubGraphQLException.FormatErrorsMessage(errorsJson) + " (no data)",
+            errorsJson);
     }
+
+    // Logged at Warning (not Error) because the read-side queries can legitimately
+    // run against repos the user no longer has access to or PRs that have been
+    // deleted — those produce errors-without-data legitimately and the UI surfaces
+    // an empty state. The structured log lets an operator distinguish "real GitHub
+    // failure" from "expected absence" without crawling stack traces.
+    private static readonly Action<ILogger, int, string, Exception?> s_graphqlReadFailed =
+        LoggerMessage.Define<int, string>(LogLevel.Warning, new EventId(4, "GraphQLReadFailed"),
+            "Read-side GraphQL call returned {ErrorCount} error(s) with no usable data. Raw errors: {ErrorsJson}");
 
     // Walks a chain of property names defensively. Returns false on any missing key,
     // any non-object intermediate, or short-circuits at the first JSON null.

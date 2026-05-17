@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
 import { sendPatch } from '../../api/draft';
-import { SubmitConflictError, discardAllDrafts, verdictToSubmitWire } from '../../api/submit';
+import {
+  SubmitConflictError,
+  discardAllDrafts,
+  isKnownSubmitErrorCode,
+  verdictToSubmitWire,
+  type KnownSubmitErrorCode,
+} from '../../api/submit';
 import { useCapabilities } from '../../hooks/useCapabilities';
 import { usePreferences } from '../../hooks/usePreferences';
 import { useSubmit } from '../../hooks/useSubmit';
@@ -145,9 +151,64 @@ export function PrHeader({
     // R3 — re-enter the pipeline at Step 1's "match by ID" outcome via the
     // persisted pendingReviewId; default to Comment if no verdict was set.
     setDialogOpen(true);
-    void submit.submit(verdictToSubmitWire(session?.draftVerdict ?? 'comment')).catch(() => {
-      // 409 / 4xx: useSubmit already reset to idle; PR5's useSubmitToasts
-      // surfaces the code. The dialog stays open in idle.
+    void submit
+      .submit(verdictToSubmitWire(session?.draftVerdict ?? 'comment'))
+      .catch(surfaceSubmitError);
+  };
+
+  // Maps backend SubmitErrorDto.code values to user-facing toast copy. Keep in
+  // sync with PrSubmitEndpoints.cs (the SubmitAsync rule a–f rejections + the
+  // submit-in-progress 409). An unknown code (forward-compat: server schema
+  // bump arriving before the FE knows about it) falls through to the
+  // server-supplied message so it's still visible, not silent. A *known* code
+  // missing from the switch is a compile-time error — no `default` clause +
+  // exhaustive narrowing via `KnownSubmitErrorCode` enforces parity.
+  // Regression: prior to this map, the catch was empty with a comment claiming
+  // useSubmitToasts handled it — that hook only listens for two SSE events,
+  // not HTTP 4xx, which made every pre-pipeline rejection invisible.
+  const submitErrorMessage = (err: SubmitConflictError): string => {
+    if (!isKnownSubmitErrorCode(err.code)) return err.message;
+    const code: KnownSubmitErrorCode = err.code;
+    switch (code) {
+      case 'head-sha-not-stamped':
+        return "Couldn't submit — the PR view hasn't been stamped yet. Reload the PR and try again.";
+      case 'head-sha-drift':
+        return "Couldn't submit — the PR's head commit changed since you last viewed it. Reload the PR.";
+      case 'unauthorized':
+        return "Couldn't submit — your subscription to this PR was lost. Reload the PR.";
+      case 'no-session':
+        return "Couldn't submit — no draft session for this PR. Reload the PR.";
+      case 'stale-drafts':
+        return "Couldn't submit — there are stale drafts. Resolve or override them in the Drafts tab first.";
+      case 'verdict-needs-reconfirm':
+        return "Couldn't submit — re-confirm your verdict before submitting.";
+      case 'no-content':
+        return "Couldn't submit — a Comment-verdict review needs at least one inline comment, reply, or summary.";
+      case 'verdict-invalid':
+        return "Couldn't submit — verdict must be Approve, Request changes, or Comment.";
+      case 'submit-in-progress':
+        return 'A submit is already in flight for this PR. Wait for it to finish or refresh the page.';
+      case 'pending-review-state-changed':
+        // Normally handled by surfaceForeignReviewError on the Resume/Discard
+        // path. If a submit ever surfaces it (race between submit and a peer
+        // changing pending-review state), fall back to the server message.
+        return err.message;
+      case 'delete-failed':
+        // 502 from cleanup of the foreign pending review on discardAll —
+        // user-visible copy lives in onDiscardAllDrafts; if it ever flows here,
+        // honour the server message.
+        return err.message;
+    }
+  };
+
+  const surfaceSubmitError = (err: unknown) => {
+    if (err instanceof SubmitConflictError) {
+      show({ kind: 'error', message: submitErrorMessage(err) });
+      return;
+    }
+    show({
+      kind: 'error',
+      message: "Couldn't submit — an unexpected error occurred. Try again.",
     });
   };
 
@@ -155,11 +216,13 @@ export function PrHeader({
   // review's threads as Draft entries (adjudicated from the Drafts tab) and
   // closes the dialog; Discard deletes it on github.com. A TOCTOU 409
   // (`pending-review-state-changed`) surfaces a toast and useSubmit resets to
-  // idle (spec § 11.4).
+  // idle (spec § 11.4). Surfaced as `error` because the user's explicit
+  // Resume/Discard action *failed* — a blue info banner reads as confirmation
+  // when the truth is "your action did nothing; retry submit".
   const surfaceForeignReviewError = (err: unknown) => {
     if (err instanceof SubmitConflictError && err.code === 'pending-review-state-changed') {
       show({
-        kind: 'info',
+        kind: 'error',
         message: 'Your pending review state changed during the prompt. Please retry submit.',
       });
       return;
@@ -288,12 +351,10 @@ export function PrHeader({
           currentHeadSha={currentHeadSha}
           onClose={closeDialog}
           onSubmit={(verdict) => {
-            void submit.submit(verdict).catch(() => {
-              // See onResume — PR5's useSubmitToasts handles the 409 toast.
-            });
+            void submit.submit(verdict).catch(surfaceSubmitError);
           }}
           onRetry={() => {
-            void submit.retry();
+            void submit.retry().catch(surfaceSubmitError);
           }}
           onVerdictChange={patchVerdict}
           onResumeForeignPendingReview={onResumeForeignPendingReview}

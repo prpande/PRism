@@ -1,5 +1,5 @@
 import { apiClient, ApiError } from './client';
-import { getTabId } from './draft';
+import { TAB_ID_HEADER, getTabId } from './draft';
 import type {
   DraftVerdict,
   PrReference,
@@ -7,11 +7,38 @@ import type {
   Verdict,
 } from './types';
 
+// Known SubmitErrorDto.code values from PRism.Web/Endpoints. Kept in sync with
+// PrSubmitEndpoints.cs's pre-pipeline rejections + the foreign-pending-review
+// resume/discard 409s. Server may send a code outside this set during a
+// schema-bump window — `SubmitConflictError.code` keeps the looser `string`
+// type so that case round-trips cleanly; PrHeader's switch narrows via
+// isKnownSubmitErrorCode and falls through to the server message when narrow
+// fails (so an unrecognised code is visible, not silent).
+export const KNOWN_SUBMIT_ERROR_CODES = [
+  'stale-drafts',
+  'verdict-needs-reconfirm',
+  'no-content',
+  'head-sha-drift',
+  'head-sha-not-stamped',
+  'submit-in-progress',
+  'unauthorized',
+  'no-session',
+  'verdict-invalid',
+  'pending-review-state-changed',
+  'delete-failed',
+] as const;
+
+export type KnownSubmitErrorCode = (typeof KNOWN_SUBMIT_ERROR_CODES)[number];
+
+export function isKnownSubmitErrorCode(code: string): code is KnownSubmitErrorCode {
+  return (KNOWN_SUBMIT_ERROR_CODES as readonly string[]).includes(code);
+}
+
 // 4xx/409 from the submit endpoints carry a `{ code, message }` body. Callers
 // (useSubmit → PrHeader toast) branch on `.code` rather than re-parsing the body.
-// Codes: stale-drafts / verdict-needs-reconfirm / no-content / head-sha-drift /
-// submit-in-progress (409) / unauthorized (401) / no-session / verdict-invalid /
-// pending-review-state-changed (TOCTOU, 409) / delete-failed (502).
+// `code` stays typed as `string` rather than `KnownSubmitErrorCode` so an
+// unknown future code from the server doesn't crash construction; downstream
+// switch logic narrows via `isKnownSubmitErrorCode` to get exhaustiveness.
 export class SubmitConflictError extends Error {
   readonly code: string;
 
@@ -21,8 +48,6 @@ export class SubmitConflictError extends Error {
     this.code = code;
   }
 }
-
-const TAB_ID_HEADER = 'X-PRism-Tab-Id';
 
 function prPath(prRef: PrReference): string {
   return `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;

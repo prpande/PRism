@@ -16,7 +16,11 @@ export function __resetTabIdForTest(): void {
   _tabId = null;
 }
 
-const TAB_ID_HEADER = 'X-PRism-Tab-Id';
+// Single source of truth for the cross-tab header name. Re-exported so the
+// other api/*.ts writers (submit.ts, markViewed.ts) don't each redeclare their
+// own constant and drift apart on a future rename. The BE accepts this header
+// on every writer endpoint as the SSE filter dimension.
+export const TAB_ID_HEADER = 'X-PRism-Tab-Id';
 
 function tabIdHeader(): Record<string, string> {
   return { [TAB_ID_HEADER]: getTabId() };

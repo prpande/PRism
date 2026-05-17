@@ -3,6 +3,7 @@ using System.Net.Http;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 
 using PRism.Core;
 using PRism.Core.Events;
@@ -27,6 +28,7 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
     public TestPrReader PrReader { get; } = new();
     public FakeReviewEventBus Bus { get; } = new();
     public AllSubscribedActivePrCache ActivePrCache { get; } = new();
+    public ListLoggerProvider Logs { get; } = new();
 
     private SubmitEndpointsTestContext()
     {
@@ -41,6 +43,7 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
             s.AddSingleton<IReviewEventBus>(Bus);
             s.RemoveAll<IActivePrCache>();
             s.AddSingleton<IActivePrCache>(ActivePrCache);
+            s.AddSingleton<ILoggerProvider>(Logs);
         }));
         // Force server (and DataDir/state.json) creation.
         _ = _derived.Services;

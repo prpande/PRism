@@ -32,6 +32,10 @@ export interface RequestOptions {
   // Content-Type) override on collision. Used by api/draft.ts to attach
   // X-PRism-Tab-Id without duplicating session-cookie logic.
   headers?: Record<string, string>;
+  // Optional AbortSignal forwarded to fetch — lets fire-and-forget callers
+  // (usePrDetail's mark-viewed) cancel an in-flight request when the React
+  // effect cleans up, avoiding a slow A-stamp landing after a fast B-stamp.
+  signal?: AbortSignal;
 }
 
 async function request<T>(
@@ -49,6 +53,7 @@ async function request<T>(
     method,
     headers: Object.keys(headers).length ? headers : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: options?.signal,
   });
   const requestId = resp.headers.get('X-Request-Id');
   if (!resp.ok) {

@@ -1,7 +1,7 @@
 ---
 source-doc: docs/specs/2026-05-11-s5-submit-pipeline-design.md
 created: 2026-05-11
-last-updated: 2026-05-13
+last-updated: 2026-05-17
 status: open
 revisions:
   - 2026-05-11: brainstorm + ce-doc-review pass — recorded brainstorm-time deferrals (12 items in spec § 1.2), doc-review-time deferrals routed to ce-plan, doc-review FYI observations, and forward-looking residual risks for the implementer
@@ -16,6 +16,8 @@ revisions:
   - 2026-05-13: PR5 preflight + PR-#49 review fixes — ce-adversarial-reviewer (2 Important: Resume/Discard flash+focus-jump → PrHeader closes the dialog synchronously before awaiting; double-click → spurious 409 toast → `foreignActionInFlightRef` re-entry guard in useSubmit. 4 Minor: discardAllDrafts→SubmitConflictError parity; Esc handler skipped while delegating; malformed-resume-response defends; createdAt NaN guard). Copilot ×1 round (5 inline: Esc-handler already fixed in the preflight commit; removed the unused `prRef` prop from DiscardAllDraftsButton; threaded `prState` into DiscardAllConfirmationModal so the copy names "closed"/"merged" PR accurately rather than the spec's literal "closed PR"; extracted `prRefKey()` to `api/types.ts` and reuse it in useSubmit + useSubmitToasts; the no-in-flight-state concern is covered by the re-entry guard + synchronous dialog close). Claude Code Review Action: no findings on this PR.
   - 2026-05-13: PR7 execution (DoD E2E test sweep, plan Phase 7 Tasks 61–70) — added the PR7 subsection under "Implementation-time deferrals": the PR0b-vs-PR7-first decision (chose defensive PR7 + `--workers=1`), the `--workers=1` requirement for the e2e suite, the `/test/mark-pr-viewed` + `/test/reset` hardening, the retry-from-each-step E2E covering Begin/AttachThreads/Finalize (not AttachReplies — Core-unit-tested), the marker-collision composer-`unsaved`-not-`rejected` observation, the multi-tab-409-reverts-to-idle observation, the closed-merged loader-cache-bust + stale-commitOID `/reload`-poll flow artifacts, and the `/test/submit/*` endpoint naming/superset vs the plan's Task 61 sketch. Marked the PR1 "test-fake stubs" decision and the PR3 "the shared E2E FakeReviewSubmitter stays NotImplementedException" decision Resolved (FakeReviewSubmitter is now a working in-memory submitter). PR7 is the last S5 PR — S5's demo + DoD-test scope is complete; `status:` stays `open` because the remaining entries here are forward-looking (S6 / P0+) or PR0b (off the demo critical path).
   - 2026-05-13: PR0b execution (Playwright multi-spec state-leak fix + un-fixme of three S4 specs) — set `workers: 1` in `playwright.config.ts` (closes the `--workers=1` carve-out PR7 worked around); un-fixme'd `s4-keep-anyway-survives-reload`, `s4-multi-tab-consistency`, `s4-reconciliation-fires` and fixed three real bugs each had been hiding (added `IActivePrCache.Update` to `/test/advance-head` symmetric to PR7's `/test/reset` hardening; rewrote the multi-tab spec from `browser.newContext() × 2` to one context + two pages since `BroadcastChannel` is scoped to one browsing context group; replaced the `getByText(/override/i)` regex with `.locator('.chip.chip-override')` — the regex was incorrect, `overridden` doesn't contain the literal `override` substring). Marked `[Known issue] Pre-existing Playwright e2e failures on main` Resolved (verified all 8 reds now pass under `workers: 1`); marked `[Decision] The S5 e2e specs must run --workers=1` Resolved. Added a PR0b "Implementation-time deferrals" section below. Full e2e suite green: 26 passed, 1 skipped (the existing `no-browser.spec.ts` skip), 0 failed under `CI=1 npx playwright test --project=prod`.
+  - 2026-05-17: PR #55 review-round-2 sweep — Copilot inline findings + claude-bot summary findings + CI prettier fix. Applied: `FormatErrorsMessage` non-object-first-element guard (defensive against `[null]`/`["str"]`); `PostGraphQLAsync` body-read catch rethrows `OperationCanceledException` first (matches `SubmitPipeline.cs`/`ViewerLoginHydrator.cs` convention); `isKnownSubmitErrorCode` actually wired into `PrHeader.submitErrorMessage` as an exhaustive `KnownSubmitErrorCode` switch (no `default` — compile error if a new code is added without handling, fulfilling the comment's earlier claim); `TAB_ID_HEADER` deduped to a single export in `api/draft.ts` (removed redundant declarations in `submit.ts` + `markViewed.ts`); `surfaceForeignReviewError` TOCTOU 409 toast promoted from `info` → `error` (the user action failed, blue banner mis-reads as confirmation); toast suite gained de-dup test + fake-timer auto-dismiss tests for both 5s info and 10s error windows; `GitHubGraphQLExceptionTests` gained two new tests for the non-object-element guard. Prettier-fixed the four CI-flagged files. No new deferrals — every item from review-2 either applied or already deferred via the original PR #55 entry. `status:` stays `open` until the architectural deferrals (cross-tab, on-disk logger, real-flow e2e) land.
+  - 2026-05-15: PR #55 — post-shipment submit-stuck-on-mark-viewed fix + ce-code-review fixes + GraphQL error-detail surfacing. Three coupled bugs (FE never called /mark-viewed; PrHeader silently swallowed every submit 4xx; backend conflated never-stamped with real drift). Plus the broader pattern: GitHubGraphQLException.Message now carries the parsed first error, full errors[] logged via ILogger, PostGraphQLAsync surfaces response body on transport failures (401 "Bad credentials" etc.). Added the PR #55 implementation-time deferrals subsection below capturing what landed and what's deferred (cross-tab stamp poisoning, broader external-API logging beyond PRism.GitHub, no on-disk log writer in PRism.Web). Marked the S5 e2e seed-bypass as a documented gap rather than a defect — it's covered by the new `docs/solutions/integration-issues/submit-review-silent-flash-mark-viewed-wireup-2026-05-15.md` learning. `status:` stays `open` because the cross-tab and on-disk-logger items remain forward-looking.
 ---
 
 # Deferrals — S5 submit pipeline spec
@@ -759,3 +761,174 @@ PR0b is the carve-out PR7 deferred (see `[Decision] PR7 ships defensively…` ab
 - **Affects:** `frontend/e2e/s4-keep-anyway-survives-reload.spec.ts`.
 - **Decision:** The original assertion was `await expect(page.getByText(/override/i)).toBeVisible({ timeout: 10_000 })`. The override chip's actual text is `"User-overridden (was Stale)"`. The regex `/override/i` does NOT match `overridden` — `override` requires `d-e` consecutively, `overridden` has `d-d-e` (the double-d breaks the continuation). The spec was looking for a string the chip never had. Switched the assertion to `expect(page.locator('.chip.chip-override')).toBeVisible({...})` — matching the chip's className gives a stable selector that won't drift on copy edits. Same spec also gained a `waitForResponse` around the Keep-anyway click (the original spec relied on the click returning before the PUT had even been dispatched — fine in solo isolation, fragile under any backend latency, fixed regardless for hygiene).
 - **Revisit when:** N/A — class-based assertion is the correct shape for chip-style affordances.
+
+## Implementation-time deferrals — S5 PR #55 (post-shipment submit-stuck-on-mark-viewed fix + ce-code-review fixes + GraphQL error-detail surfacing)
+
+PR #55 ships after S5 + S6 PR0 are already in main. It fixes three coupled bugs that together made review submission silently fail end-to-end on every fresh PR (FE never called `/mark-viewed`; `PrHeader.tsx` swallowed every submit 4xx; backend conflated never-stamped with real drift), applies every actionable finding from the ce-code-review pass on that fix, and extends the GitHub-adapter error pattern so the actual GraphQL error reaches the toast instead of "returned 1 error(s)." The shipped scope, the deferred scope, and the rationale behind each are recorded below.
+
+### [Decision] Submit pre-pipeline 4xx codes split: `head-sha-drift` narrowed; new `head-sha-not-stamped` carved out
+
+- **Source:** PR #55 production-debugging session (2026-05-15) — surfaced when DevTools showed every `/submit` returning 400 `head-sha-drift` with the user-actionable message "Reload the PR" pointing at a button (the Reload banner) that only renders *after* drift is detected. The frontend grep for `mark-viewed` / `markViewed` / `MarkViewed` returned zero production call sites — only a test-only POST shape in `api-client.test.tsx`. The backend endpoint at `PrDetailEndpoints.cs:89` was orphaned; `LastViewedHeadSha` stayed null on every fresh PR and rule (f) deterministically rejected.
+- **Affects:** `PRism.Web/Endpoints/PrSubmitEndpoints.cs:109-130`; `PRism.Web/Endpoints/PrSubmitDtos.cs:10-15`; `frontend/src/api/submit.ts` `KNOWN_SUBMIT_ERROR_CODES` list.
+- **Decision:** The 400 path now distinguishes the two cases. Null `LastViewedHeadSha` returns `head-sha-not-stamped` and fires a `Warning` log via `s_headShaNotStamped` (server-detectable wire-up gap — the FE should have called `/mark-viewed` on PR-detail load). Real poll-snapshot mismatch keeps `head-sha-drift` and fires an `Information` log via `s_headShaDrift` carrying both SHAs. The user-facing 400 message stays terse ("Reload the PR and try again"); diagnostic detail (named missing call, FE wire-up hint) lives in the structured log so an unauthenticated viewer can't infer the route shape from the response body. Three options were weighed: (A) just fix the FE wire-up and leave the BE code unsplit, (B) split the codes (chosen), (C) split + add a separate response field (`reason: "wire-up-gap" | "user-stale"`). (A) was rejected because the misleading "Reload" message would persist forever even though it never had the intended remedy; (C) was rejected because adding wire fields for a single-discrimination case is over-engineered when an enum already does it.
+- **Revisit when:** A multi-account / GHES-only deployment ships and the diagnostic phrasing in the Warning log needs to reference per-account state; the split itself stays.
+
+### [Decision] Frontend wire-up of `POST /mark-viewed` lives in `usePrDetail`, not in `PrDetailPage.tsx`
+
+- **Source:** PR #55 implementation (2026-05-15) — placement was the open question in my pre-implementation post; I picked (a) usePrDetail over (b) PrDetailPage useEffect for cohesion.
+- **Affects:** `frontend/src/hooks/usePrDetail.ts`.
+- **Decision:** `postMarkViewed` fires inside `usePrDetail`'s `getPrDetail.then(...)` block — same effect that owns the fetch lifecycle. Cohesion outweighs the "data hook stays pure GET" argument: the POST is logically a "tell server I've now seen this version" — tightly coupled to the data load and the cancellation/cleanup story. A separate `useMarkPrViewed` hook would duplicate the effect cleanup, the AbortController plumbing, and the prKey-change handling. If we ever need to opt-out per-call (e.g., read-only viewer mode), extract then.
+- **Revisit when:** The hook grows a third side-effect concern (it already owns fetch + mark-viewed); a third would tip the cohesion balance the other way.
+
+### [Decision] `mark-viewed` is fire-and-forget with `console.warn` + AbortController, not surfaced to the toast
+
+- **Source:** PR #55 implementation + ce-reliability-reviewer finding (the `.catch(() => {})` was genuinely silent; sustained failure would loop submit→"head-sha-not-stamped"→user reload→submit with no diagnostic signal).
+- **Affects:** `frontend/src/hooks/usePrDetail.ts:48-78`; `frontend/src/api/markViewed.ts` (now accepts optional `{ signal }`); `frontend/src/api/client.ts` `RequestOptions.signal`.
+- **Decision:** Failure of `/mark-viewed` is logged to `console.warn` with a phrasing that names the consequence ("submit will return head-sha-not-stamped until next reload") so the developer/user can self-diagnose from DevTools. Toast surfacing was deferred: a transient blip is genuinely best-effort; a sustained failure surfaces via the *submit* toast (which now carries the rich error) one step later. The AbortController is scoped to the `useEffect` cleanup so a slow A-stamp can't land after a fast B-stamp on rapid PR navigation. `AbortError` is filtered from the console.warn so cancellation isn't noisy.
+- **Revisit when:** Telemetry shows users hitting sustained mark-viewed failures (e.g., snapshot-evicted churn). At that point the right move is probably a toast + remediation copy.
+
+### [Decision] `SubmitConflictError.code` stays typed `string`; FE narrows via `isKnownSubmitErrorCode()` for switch exhaustiveness
+
+- **Source:** ce-maintainability-reviewer + ce-kieran-typescript-reviewer agreement on the code-review pass.
+- **Affects:** `frontend/src/api/submit.ts` (`KNOWN_SUBMIT_ERROR_CODES` const + `KnownSubmitErrorCode` type + type guard); `frontend/src/components/PrDetail/PrHeader.tsx` switch.
+- **Decision:** `SubmitConflictError.code` is wire data — server may send an unknown code during a schema-bump window. Typing it as `KnownSubmitErrorCode` directly would either crash construction or force every server-bump to be a synchronized FE+BE deploy. Instead, the class keeps `code: string`, and the FE narrows via `isKnownSubmitErrorCode()` before switching. The switch is then exhaustive (TS catches a missed case at compile time) and the unknown-code path falls through to the server-supplied `err.message` (so future codes are visible, not silent). Two options were weighed: (A) string-literal union directly on the class field, (B) the type-guard + narrowed switch (chosen). (A) was rejected because it breaks the forward-compat contract.
+- **Revisit when:** N/A — this is the idiomatic shape for "wire data with known + unknown values."
+
+### [Decision] Error toast auto-dismiss = 10s; de-dup on `(kind, message)` identity
+
+- **Source:** ce-reliability-reviewer finding (P2, conf 90) — spam-clicking Submit during a sticky failure stacked identical banners that never cleared, because pre-fix only `kind === 'info'` auto-dismissed and `show()` had no de-dup.
+- **Affects:** `frontend/src/components/Toast/Toast.tsx` (per-kind `AUTO_DISMISS_MS` table); `frontend/src/components/Toast/useToast.ts` (de-dup on `kind + message` in `show()`).
+- **Decision:** Errors auto-dismiss after 10s (longer than info's 5s — error copy is one full sentence and users want to read twice). De-dup keeps the first toast and ignores re-adds with the same `(kind, message)` even if `requestId` differs — the first request ID is more useful than the latest because both refer to the same root cause. Toast-stacking-with-delay was rejected as too clever; a hard de-dup matches the user's mental model ("I just saw this").
+- **Revisit when:** A failure mode emerges where different request IDs matter for diagnosis on otherwise-identical toasts (e.g., per-PR drift correlation). At that point, dedup keyed on `(kind, message, prRef)` is the next step.
+
+### [Decision] BE error-message diagnostic detail moves to the structured `Warning` log, not the response body
+
+- **Source:** ce-api-contract-reviewer + ce-reliability-reviewer (both flagged the info-leak in "frontend never called POST /api/pr/{ref}/mark-viewed" reaching the response body; ce-security would have flagged it too if selected).
+- **Affects:** `PRism.Web/Endpoints/PrSubmitEndpoints.cs:113-130`; the `s_headShaNotStamped` and `s_headShaDrift` LoggerMessage delegates carry the full diagnostic phrasing.
+- **Decision:** Response body is terse and user-actionable; log line is verbose and operator-actionable. PoC threat model already accepts the route shape being inferrable, but consistency is cheaper than special-casing.
+- **Revisit when:** N/A — this is the standard split for error responses vs. operational logs.
+
+### [Decision] `head-sha-not-stamped` exit code rejected in favour of staying inside `400` family
+
+- **Source:** ce-api-contract-reviewer.
+- **Affects:** `PRism.Web/Endpoints/PrSubmitEndpoints.cs`.
+- **Decision:** Considered using a distinct HTTP status (`409 Conflict` or `422 Unprocessable Entity`) for the never-stamped case to make it programmatically distinct from a real-drift 400. Rejected: the existing FE catch path already discriminates on `SubmitConflictError.code`, which is what the FE acts on. Changing the status would force a parallel discrimination at every catch site without adding signal.
+- **Revisit when:** A non-PRism client (e.g., a future CLI or agent) consumes the submit endpoint and wants status-level discrimination without parsing the JSON body.
+
+### [Decision] `GitHubGraphQLException.Message` carries the parsed first error (G1)
+
+- **Source:** PR #55 user-debugging session — toast read "Submit failed: GitHub GraphQL request returned 1 error(s)." with the real reason (e.g., FORBIDDEN, NOT_FOUND, draft-PR-rejects-reviews) discarded. `SubmitPipeline.cs:160-162` forwards `ex.Message` to the SSE event; `ex.Message` was the count.
+- **Affects:** `PRism.GitHub/GitHubGraphQLException.cs` (`FormatErrorsMessage` static helper); `PRism.GitHub/GitHubReviewService.Submit.cs:476-510` (submit-side throw site); `PRism.GitHub/GitHubReviewService.cs:868-890` (read-side throw site).
+- **Decision:** New `FormatErrorsMessage(errorsJson)` parses the first error and renders `GitHub GraphQL: [CODE] message (path: x/y/z) (+ N more)`. Both throw sites use it. Defensive: a malformed errors array never throws from the formatter — it falls back to "returned 0 error(s)." or "returned errors (unparseable payload)." so an exception construction can't turn into a thrown formatter exception. `ErrorsJson` still holds the raw array for tests and diagnostic logging.
+- **Revisit when:** A failure shape emerges where the FIRST error isn't the actionable one (e.g., GitHub returns a header-level error first, then the real one second). At that point either order-by-severity or render all N inline.
+
+### [Decision] Structured ILogger calls at every GraphQL throw site, including transport failures (G2 + G3)
+
+- **Source:** PR #55 user-asked-for broader "logging improvement across all downstream external APIs."
+- **Affects:** `PRism.GitHub/GitHubReviewService.Submit.cs` (`s_graphqlSubmitFailed`, `s_graphqlSubmitNoData`); `PRism.GitHub/GitHubReviewService.cs` (`s_graphqlReadFailed`, `s_graphqlTransportFailed`).
+- **Decision:** Four new LoggerMessage delegates, each with an EventId. Submit-pipeline GraphQL failures log at `Error` (always abort the pipeline); read-side log at `Warning` (deleted PRs / lost-access legitimately produce errors-without-data); transport failures log at `Warning` (rate-limit / auth expiry are recoverable). Body is truncated in the log to 1024 chars so a pathological 5xx body doesn't bloat the log file; in the exception's `Message` it's truncated to 512 chars. The `PostGraphQLAsync` wrapper reads the response body on non-2xx and includes it in the thrown `HttpRequestException` — so a 401 "Bad credentials" body reaches the user instead of being discarded by `EnsureSuccessStatusCode()`.
+- **Revisit when:** A second external API (beyond GitHub) gets added to the codebase — the pattern (formatter on exception + ILogger at throw site + body-on-transport-failure wrapper) should generalize cleanly.
+
+### [Decision] Same pattern not applied to TokenStore (OS keychain) or AppStateStore (filesystem)
+
+- **Source:** PR #55 pre-implementation scope alignment.
+- **Affects:** `PRism.Core/TokenStore.cs`, `PRism.Core/State/AppStateStore.cs` — explicitly NOT touched by PR #55.
+- **Decision:** "All downstream external APIs" was scoped to `PRism.GitHub` (the actual external HTTP surface). OS keychain and filesystem have different error models — `CredentialManager.NotFound`, `IOException`, `UnauthorizedAccessException` — and PRism's existing handling there already uses typed-exception patterns. Extending the GitHub pattern uniformly would be a real refactor, not a small fix.
+- **Revisit when:** A token-store or state-store failure shows up in a user report with discarded detail. At that point, apply the same `FormatErrorsMessage` analog (extract structured detail into `Exception.Message`) + ILogger-at-throw-site pattern.
+
+### [Defer] Cross-tab stamp poisoning (F3 from ce-code-review)
+
+- **Source:** ce-adversarial-reviewer (P1, conf 75) — confirmed real architectural gap.
+- **Affects:** `PRism.Core/State/ReviewSessionState.cs` (session key shape); `PRism.Web/Endpoints/PrDetailEndpoints.cs:89-131` (the `mark-viewed` write site).
+- **Decision:** The session is keyed only on `owner/repo/number` (no tab dimension). Tab A's `mark-viewed` at headSha=B silently overwrites Tab B's stamp at headSha=A → Tab B can submit at headSha=B without ever having reviewed B's diff. The whole gate rule (f) enforces is bypassable when two tabs are open on the same PR. PR #55 does NOT fix this — the right fix needs either (i) adding a tab dimension to `LastViewedHeadSha` (per-tab map), (ii) per-tab session keys, or (iii) reverting to "stamp on first PR-detail GET, then locked" semantics. All three are architectural changes that change the data shape on disk; not a one-line addition. Tracked here so the next maintainer (or the multi-account scaffold work) can pick it up with the rationale in hand.
+- **Revisit when:** Multi-account / multi-tab work hits this — pre-decision sketch is "store LastViewedHeadSha as `Dictionary<string, string>` keyed by `X-PRism-Tab-Id`, and rule (f) checks the caller's tab's entry; eviction LRU at N=8."
+
+### [Defer] On-disk log writer for `PRism.Web`
+
+- **Source:** PR #55 user-debugging session — when the user looked for backend logs, there were none. Default ASP.NET Core logging is console-only and `Program.cs` doesn't override that. The submit pipeline's failure path additionally dropped detail (now fixed via G1), but even after the GraphQL-detail fix, console-only output means a user who closed the `.\run.ps1` terminal has lost the diagnostic.
+- **Affects:** `PRism.Web/Program.cs` (logging composition); `<dataDir>/logs/` directory layout (to be defined).
+- **Decision:** Adding a file logger is a real scope expansion — needs a rolling policy, retention, redaction discipline for PAT / GitHub usernames, log-shape stability for `gh issue` filing flows. PR #55 ships the structured `ILogger` calls so the data is *available* whenever a file sink is wired; the sink itself is its own PR.
+- **Revisit when:** Next time a user reports a failure that needs server-side diagnosis. The natural shape is a rolling daily text file at `<dataDir>/logs/prism-YYYY-MM-DD.log` with `Microsoft.Extensions.Logging.Console`'s simple formatter — minimal new dependencies.
+
+### [Defer] e2e Playwright test driving the real `usePrDetail` → mark-viewed → submit → Finalize chain
+
+- **Source:** PR #55 PR description; ce-testing-reviewer (Residual R1, "directly on-point").
+- **Affects:** `frontend/e2e/` — would be a new spec, likely `s5-submit-real-wire-up.spec.ts`.
+- **Decision:** PR #55 ships Vitest coverage for each layer in isolation (markViewed-api, usePrDetail, PrHeader surfacing, BE rule split + log assertions). The S5 e2e suite uses `/test/submit/seed-pending-review` to bypass the FE wire-up — that's exactly why the bug shipped undetected. A real-flow e2e covers the integration gap end-to-end (open PR detail → wait for mark-viewed POST to land → click Submit → assert Finalize SSE event). Deferred from PR #55 because it requires either a real-GitHub Playwright project or extending FakeReviewSubmitter to assert it was actually reached (which is closer to an integration test than an e2e). Either way, it's its own scoped change.
+- **Revisit when:** Next slice that touches `usePrDetail` or `PrSubmitEndpoints` — that PR should ship with the e2e to lock the wire-up.
+
+### [Acknowledge] Pre-existing `Toast` lifecycle gaps not fixed by PR #55
+
+- **Source:** ce-reliability-reviewer finding.
+- **Affects:** `frontend/src/components/Toast/Toast.tsx`.
+- **Decision:** PR #55 closes the two highest-value gaps (auto-dismiss for `error` kind, de-dup on `(kind, message)`). Two pre-existing gaps stay: (a) the generic-error toast fallback discards `ApiError.requestId` even though `Toast` has a built-in "Copy diagnostic info" button for exactly this case; (b) `apiClient.request` has no `AbortController`/timeout, so any fire-and-forget consumer (including the new `mark-viewed`) can hang indefinitely on a misbehaving network. Both are fixable in 10 lines but neither was the root cause of the bug being fixed; deferred to a "Toast + apiClient polish" pass.
+- **Revisit when:** Next toast-touching change, or a hung-request user report.
+
+---
+
+## Implementation-time deferrals — S5 PR #55 review-round-2 (2026-05-17)
+
+Captures decisions made while applying Copilot inline + claude-bot summary findings on PR #55 after the round-1 commit. Three Copilot inline findings + two claude-bot summary findings + CI prettier failure addressed in one commit.
+
+### [Decision] `FormatErrorsMessage` guards against non-object first element
+
+- **Source:** Copilot inline review on `PRism.GitHub/GitHubGraphQLException.cs:71` (round-2).
+- **Affects:** `PRism.GitHub/GitHubGraphQLException.cs:71-79`; `tests/PRism.GitHub.Tests/GitHubGraphQLExceptionTests.cs` (two new tests).
+- **Decision:** GraphQL spec mandates an array of error *objects*, but a buggy proxy / test double / future schema bump could send `null` or a bare string. The previous code called `first.TryGetProperty(...)` directly, which throws `InvalidOperationException` on a non-object `ValueKind` — turning the never-throw fallback into the failure. Added explicit `first.ValueKind != JsonValueKind.Object` guard returning a stable count message. Pinned via `[null]` and `["str", {...}]` unit tests.
+- **Revisit when:** N/A — defensive guard.
+
+### [Decision] `PostGraphQLAsync` body-read rethrows `OperationCanceledException` first
+
+- **Source:** Copilot inline review on `PRism.GitHub/GitHubReviewService.cs:759` (round-2).
+- **Affects:** `PRism.GitHub/GitHubReviewService.cs:758-766`.
+- **Decision:** The body-read had a broad `catch (Exception)` that swallowed caller cancellation / shutdown into a synthetic `HttpRequestException`. Other best-effort catches in the codebase (`PRism.Core/Submit/Pipeline/SubmitPipeline.cs:514-516`, `PRism.Core/Auth/ViewerLoginHydrator.cs:49`) rethrow `OperationCanceledException` first; this site now matches that convention. The `CA1031` suppression for the broad catch stays — body-read failure with a real status code is genuinely best-effort.
+- **Revisit when:** N/A — convention parity.
+
+### [Decision] `isKnownSubmitErrorCode` actually wired into `PrHeader.submitErrorMessage` switch
+
+- **Source:** Copilot inline review on `frontend/src/api/submit.ts:33-35` (round-2) — flagged the comment claim "downstream switch logic narrows via `isKnownSubmitErrorCode` to get exhaustiveness" without an actual call site.
+- **Affects:** `frontend/src/components/PrDetail/PrHeader.tsx:159-204`; `frontend/src/api/submit.ts` (import surface).
+- **Decision:** `submitErrorMessage` now narrows `err.code` to `KnownSubmitErrorCode` via the type guard, then switches over the narrowed type with no `default` clause — TypeScript compile-error if a new code is added to `KNOWN_SUBMIT_ERROR_CODES` without a switch arm. The two codes normally routed elsewhere (`pending-review-state-changed` → `surfaceForeignReviewError`; `delete-failed` → `onDiscardAllDrafts`) fall back to the server message if they ever flow through this path, since neither has dedicated copy here. The unknown-code path (server schema bump arriving before the FE) still falls through to `err.message` — visible, not silent. The PrHeader test for the unknown-code fallthrough (`"something-new-from-future-spec"`) stays green because it covers the `!isKnownSubmitErrorCode(err.code)` branch.
+- **Revisit when:** N/A — landed.
+
+### [Decision] `TAB_ID_HEADER` exported from `api/draft.ts` as the single source of truth
+
+- **Source:** Claude-bot summary issue #1 on PR #55 round-2 review — found the same `const TAB_ID_HEADER = 'X-PRism-Tab-Id'` declared in three files (`api/draft.ts`, `api/submit.ts`, `api/markViewed.ts`).
+- **Affects:** `frontend/src/api/draft.ts:19-22`; `frontend/src/api/submit.ts:1-2` (import surface); `frontend/src/api/markViewed.ts:1-3` (import surface).
+- **Decision:** Promoted `TAB_ID_HEADER` from a `const` to an `export const` in `api/draft.ts` (where `getTabId()` already lives). The other two files import it directly. Considered a separate `api/headers.ts` module — rejected since `draft.ts` already owns the tab-id concept (`getTabId()`, `__resetTabIdForTest`) and the constant naturally co-locates with the function that produces the value being sent.
+- **Revisit when:** N/A — single source of truth restored.
+
+### [Decision] Foreign-pending-review TOCTOU 409 toast promoted from `info` to `error`
+
+- **Source:** Claude-bot summary issue #2 on PR #55 round-2 review.
+- **Affects:** `frontend/src/components/PrDetail/PrHeader.tsx:199-210`.
+- **Decision:** `surfaceForeignReviewError` previously surfaced the TOCTOU `pending-review-state-changed` toast as `kind: 'info'` (blue). The user just clicked Resume or Discard explicitly and the action *didn't go through* — a blue banner reads as confirmation, not failure. Switched to `kind: 'error'` (red) for consistency with `surfaceSubmitError` and the generic-foreign fallback. No test asserted the previous kind, so no test change needed.
+- **Revisit when:** A separate "soft information" toast tier is added for state-change-but-action-still-completed cases.
+
+### [Decision] Toast suite gains de-dup + auto-dismiss coverage (Copilot inline #3 + #4)
+
+- **Source:** Copilot inline review on `frontend/src/components/Toast/useToast.ts:38-41` and `Toast.tsx:22-25` (round-2).
+- **Affects:** `frontend/__tests__/toast.test.tsx` (now 5 tests, was 1).
+- **Decision:** Added (i) de-dup test: three rapid `show()` calls with identical `(kind, message)` render once; (ii) distinct-toasts test: different messages still render separately so dedup is scoped; (iii) fake-timer test pinning info dismisses at 5s (visible at 4999ms, gone at 5001ms); (iv) fake-timer test pinning error dismisses at 10s (visible at 5000ms when info would already be gone, gone at 10001ms). The fake-timer tests use a direct `show()` capture rather than `userEvent.click()` because `userEvent` awaits real microtasks even with `advanceTimers`, deadlocking the test under `vi.useFakeTimers`. Documented in test comments.
+- **Revisit when:** N/A — coverage landed.
+
+### [Acknowledge] Claude-bot summary issue #3 (`ThrowIfGraphQLErrorsWithoutData` static → instance) is documentation-only
+
+- **Source:** Claude-bot summary issue #3 on PR #55 round-2 review.
+- **Affects:** `PRism.GitHub/GitHubReviewService.cs:880` (no change required).
+- **Decision:** Claude-bot called out the static-to-instance change as worth noting but explicitly "Low concern on a partial class with a clean constructor." Confirmed — the method needs `_log` to satisfy the round-1 structured-logging change. No action.
+- **Revisit when:** N/A — not actually a finding.
+
+### [Defer] On-disk log writer for `PRism.Web` (carried forward)
+
+- **Source:** Round-1 deferral (PR #55, 2026-05-15) — restated here so a reader skimming the PR-#55 review-2 section doesn't think it was addressed.
+- **Affects:** `PRism.Web/Program.cs`; `<dataDir>/logs/`.
+- **Decision:** Still deferred. Round-2 did not change the logging composition. The improved `s_graphqlSubmitFailed` / `s_graphqlTransportFailed` / `s_graphqlReadFailed` delegates land structured data on the console-only sink today; a file sink is its own PR.
+- **Revisit when:** As round-1.
+
+### [Defer] Cross-tab stamp poisoning, real-flow Playwright e2e, `Toast.requestId` polish (carried forward)
+
+- **Source:** Round-1 deferrals — restated for visibility.
+- **Affects:** As round-1 — see entries above this subsection.
+- **Decision:** None landed in round-2; review-2 was scoped to the inline + summary findings only. All three remain on the "Toast + apiClient polish" / "S6 multi-account" / "next slice touching usePrDetail" triggers.
+- **Revisit when:** As round-1.
