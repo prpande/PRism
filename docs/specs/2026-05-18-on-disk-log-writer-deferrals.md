@@ -6,6 +6,7 @@ status: open
 revisions:
   - 2026-05-18: brainstorm pass — initial deferrals from the design session (universal decorator, size-based rotation, NDJSON, scope dispatch, exception-message regex, hot-reload, flush-batching). Source-of-truth for each entry is the design doc § 11.
   - 2026-05-18: ce-doc-review pass 1 applied — four new deferrals added (Serilog as alternative, run.ps1-tee as alternative, Playwright Test-env file-sink hook, dedicated stderr-replacement self-diagnostic file). Two new "[Decision] not applied" entries added (PL-3/PL-5 regex-over-formatter alternative — rejected; PL-1/PL-2 premise-evidence acceptance — recorded as deliberate choice). One "[Risk]" entry tightened: § 12.6 PR #55 body double-write path.
+  - 2026-05-18: ce-doc-review pass 2 applied — two material new defects landed in the design doc (post-Build `AddProvider` wiring inverted to pre-Build with internal env-gate; `EmitSessionStartLine` reordered after `OpenAppendStream`). Smaller fixes also applied (broad catch in LogTemplateFormatter; ScrubFieldName scoped internal; counter-race acknowledged; coherence references cleaned). Two new "[Risk]" entries added below (SEC-6 session-start PII when logs are shared; SEC-7 compile-time RetentionDays as operational-security constraint).
 ---
 
 # Deferrals — On-disk log writer for PRism.Web
@@ -147,6 +148,24 @@ Items the implementer should keep an eye on. Not deferred decisions — known ha
 - **Revisit when:** A CI run flakes on the shutdown-drain test, OR a real-incident report mentions "shutdown lost my last few log lines."
 
 ---
+
+### [Risk] Session-start line emits processId + assembly version — both travel off-machine when log excerpts are shared in a `gh issue`
+
+- **Source:** ce-doc-review pass 2 (SEC-6).
+- **Severity:** P3 (informational).
+- **Date:** 2026-05-18.
+- **Reason:** `EmitSessionStartLine` writes `session started, processId=<N>, version=<assembly version>` as the first event in each file. The processId is per-run and harmless in isolation but is a correlation key against OS-level audit logs (Windows Security Event Log, ETW) for any reader who has them. The version string is a fingerprinting signal — an attacker who knows a specific build has a known vulnerability can target users who pasted version-tagged log excerpts. Both fields land in any `gh issue` body when a user pastes log lines, leaving the user's machine. Neither is PII in the classic sense; both are system metadata.
+- **Mitigation in v1:** None code-side. The risk only materializes on voluntary log-sharing, and the diagnostic value (which build was running, which process) outweighs the redaction value at the current threat model. Captured here so a future contributor doesn't add hostname / username / directory paths to the session-start line without security review.
+- **Revisit when:** A future site adds machine-identifying fields to the session-start line, OR a real incident demonstrates the version-fingerprinting risk.
+
+### [Risk] `FileLoggerConstants.RetentionDays` is compile-time — no operational path to lower retention in a security-hardening sweep
+
+- **Source:** ce-doc-review pass 2 (SEC-7).
+- **Severity:** P3 (informational).
+- **Date:** 2026-05-18.
+- **Reason:** § 4.5 uses compile-time constants (`RetentionDays = 14`). If a future audit concludes the 14-day window represents unnecessary retention of diagnostic data (GitHub usernames, PR identifiers — all in the carve-out per § 6.2), the corrective action requires editing source, building, and shipping a new binary. The "hot-reload of file-sink constants" deferral (§ 11) frames this as a config-convenience concern; the security framing was not previously named. For a PoC with one developer, the trade is fine; the constraint is acknowledged here so a future security reviewer is not surprised.
+- **Mitigation in v1:** None — the compile-time approach is the deliberate choice. PRism's release cadence makes a recompile-to-reduce-retention realistic.
+- **Revisit when:** A security audit concludes 14 days is too long for the data category, OR a deployment scenario emerges where retention is per-tenant configurable.
 
 ## Considered alternatives, decided not to apply
 

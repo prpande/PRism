@@ -5,6 +5,7 @@ status: design
 revisions:
   - 2026-05-18: brainstorm pass — design committed for ce-doc-review + human review
   - 2026-05-18: ce-doc-review pass 1 applied — 6-persona review (coherence + feasibility + product-lens + security-lens + scope-guardian + adversarial). Applied: (a) split `SensitiveFieldScrubber.Scrub` into `ScrubFieldName` (redaction-only, file-sink uses) + `Scrub` (combined redact-and-truncate, existing direct callers keep); (b) pinned `LogTemplateFormatter` impl to single-pass `string.Format` positional re-map — explicitly forbid `.Replace`-style parser (closes the recursion hazard); (c) replaced naïve `ToDictionary` over KV list with manual `dict[k] = v` loop (last-wins on duplicate template keys; closes the `ArgumentException → fallback unscrubbed` defect); (d) collapsed `FileLoggerLifecycle` into `FileLoggerProvider.DisposeAsync` (no separate `IHostedService`); (e) replaced `FileLoggerOptions` + `BindConfiguration` ceremony with compile-time `FileLoggerConstants` (PoC has zero consumers); (f) gated `Program.cs` registration on `!IsEnvironment("Test")` to sidestep 111 × test-factory drain budget; (g) split drop counter into `_droppedDueToBackpressure` + `_droppedDuringShutdown` so the session-end summary names the right cause; (h) added a session-start marker line as the first event in every file (operator boundary marker for multi-session files); (i) added § 1.2 alternatives-considered section covering Serilog + run.ps1-tee (the original draft only weighed the universal-decorator alternative); (j) added § 6.2 field-redaction-policy table (resolves the broken `§ 6.2 P2.8` cross-reference); (k) tightened the `login` framing to "preventive extension" (no current log site emits it); (l) tightened § 12.6's gap acknowledgement with the `login` blocklist addition; (m) updated test list to ~30 tests covering the four new correctness fixes. Deferred-considered: regex-over-formatter scrub alternative, opportunity-cost analysis, premise-evidence justification (user explicitly chose this work; the post-mortem framing holds for PoC scope). New deferrals appended to the sidecar: Serilog as alternative, run.ps1-tee as alternative, Playwright env-var hook, dedicated stderr file.
+  - 2026-05-18: ce-doc-review pass 2 applied — 4-persona pass (coherence + feasibility + security-lens + adversarial). **Two material new defects found and fixed:** (1) FEAS-1 / ADV2-1 / SEC-8 (3-persona agreement, conf 100+75+75): the post-Build `AddProvider` wiring in § 9 doesn't work — `LoggerFactory.AddProvider` after `Build()` doesn't propagate to already-resolved `Logger<T>` instances, and `LoggerFactory.Dispose()` invokes sync `Dispose()` not `DisposeAsync()`, breaking the drain contract. Inverted to pre-Build registration with the `IsEnvironment("Test")` gate moved INSIDE the extension method itself; § 9 now documents the pre-Build shape as canonical with the lockfile-ordering acknowledgement that lockfile cannot enforce the single-writer invariant for the file sink (OS-level `FileShare.Read` semantics do). (2) FEAS-2 (conf 100): `EmitSessionStartLine` was called before `_currentStream` was opened in the § 5 pseudocode — reordered. Also applied: § 4.4 broad `catch (Exception)` instead of `catch (FormatException)` (ADV2-3 — `string.Format` doesn't wrap value-`ToString()` throws as `FormatException` on .NET 10); § 4.7 `ScrubFieldName` scoped to `internal sealed` with code-review-discipline note (SEC-5); § 4.1 counter-race acknowledgement as "best-effort under shutdown contention" (ADV2-2); § 12.5 `opts.LogsDir → _logsDir` and dropped stale "Add this test to § 8.1's list" parenthetical (Coherence CO-2/CO-3); fixed broken `§ 4.8` reference in § 4.2 to `§ 4.7` (Coherence CO-1 — section renumbered when Lifecycle was collapsed); added tests `OpenAppendStream_OnLockedDailyFile_IncrementsWriteFailureCount_AndContinues` (ADV2-4 — lockfile-file-sink coupling) and `ValueWhoseToStringThrows_FallsBackToFormatter_AndIncrementsParserFailureCounter` (ADV2-3). Deferred (low-priority): SEC-6 session-start PII (processId + version travels off-machine when logs are shared) — documented as informational; SEC-7 compile-time RetentionDays as operational-security constraint — acknowledged in § 4.5 phrasing already.
 related:
   - 2026-05-11-s5-submit-pipeline-deferrals.md   # closes the [Defer] on-disk log writer entry (lines 848, 926)
   - 2026-05-06-s3-pr-detail-read-deferrals.md    # partially addresses the SensitiveFieldScrubber wire-up deferral
@@ -62,7 +63,7 @@ A new `PRism.Web.Logging.FileLoggerProvider` registers as an additional `ILogger
 - Current `FileStream` (initialised on first event; never null after startup).
 - Current file's `DateOnly` (local date).
 - `_droppedDueToBackpressure` (`long`, `Interlocked` increment) — events that failed `TryWrite` because the channel was full while the host was running normally.
-- `_droppedDuringShutdown` (`long`, `Interlocked` increment) — events that failed `TryWrite` because the channel writer had already been completed (host shutting down). Reported separately so the operator's post-mortem reads the correct cause.
+- `_droppedDuringShutdown` (`long`, `Interlocked` increment) — events that failed `TryWrite` because the channel writer had already been completed (host shutting down). Reported separately so the operator's post-mortem reads the correct cause. **Best-effort under shutdown contention**: a request thread that calls `TryWrite` exactly between `_shutdownStarted = 1` and `channel.Writer.Complete()` may attribute a backpressure drop to the shutdown counter (small race window). The split is intended as a normal-operation vs shutdown-elision disambiguation, not a strict count under concurrent shutdown — sufficient for post-mortem operator-readability.
 - `_writeFailureCount` (`long`) — writer-task I/O failures.
 - `_retentionFailureCount` (`long`) — retention-sweep `File.Delete` failures (reported in the shutdown stderr summary).
 - `_shutdownStarted` (`int` used as bool via `Interlocked`) — set to 1 by `DisposeAsync` before completing the channel writer; the request-thread path reads it to decide which counter to bump on `TryWrite` returning false.
@@ -85,7 +86,7 @@ A new `PRism.Web.Logging.FileLoggerProvider` registers as an additional `ILogger
   3. Build `new FileLogEvent(DateTimeOffset.UtcNow, level, category, eventId, formatted, exception?.ToString())`.
   4. `parent.TryEnqueue(evt)` — non-blocking. On `TryWrite` returning false, increment `_droppedDuringShutdown` if `_shutdownStarted == 1`, else `_droppedDueToBackpressure`. The two counters report different operator-actionable causes (drained-by-shutdown vs channel-overflowing-while-running).
 
-**Important:** the file sink uses `SensitiveFieldScrubber.ScrubFieldName` (redaction-only) — NOT the existing `SensitiveFieldScrubber.Scrub` which ALSO truncates strings > 1024 chars (see § 4.8 for the API split). The file sink's job is redaction; truncation is a separate concern that direct callers (e.g., `PrDraftsDiscardAllEndpoint.cs:97`) opt into explicitly.
+**Important:** the file sink uses `SensitiveFieldScrubber.ScrubFieldName` (redaction-only) — NOT the existing `SensitiveFieldScrubber.Scrub` which ALSO truncates strings > 1024 chars (see § 4.7 for the API split). The file sink's job is redaction; truncation is a separate concern that direct callers (e.g., `PrDraftsDiscardAllEndpoint.cs:97`) opt into explicitly. `ScrubFieldName` is `internal sealed`-scoped — direct external callers should use `Scrub` (which carries the size guard); future code that wants the redaction-only path inside `PRism.Web` should use `ScrubFieldName` but acknowledge in code review that the size guard is theirs to handle.
 
 ### 4.3 `FileLogEvent`
 
@@ -114,7 +115,7 @@ The single-pass scan recognises M.E.Logging template grammar:
 - `{Name,alignment:format}` → BCL `{0,alignment:format}`
 - `{{` and `}}` — preserved as literal escaped braces (BCL `{{` / `}}` semantics)
 
-For each named placeholder, the scanner appends `values[name]` (or `null` if missing) to the positional `args[]` array in the order encountered. Missing-key behavior: pass `null` as the corresponding arg (renders as empty string under `string.Format`). Misformed template: catch `FormatException`, return the template verbatim, increment a parser-failure counter, write one stderr line per session.
+For each named placeholder, the scanner appends `values[name]` (or `null` if missing) to the positional `args[]` array in the order encountered. Missing-key behavior: pass `null` as the corresponding arg (renders as empty string under `string.Format`). Misformed template OR a value's `ToString()` / `IFormattable.ToString(format, IFormatProvider)` throws: catch `Exception` (broad — `string.Format` does NOT wrap value-formatter exceptions in `FormatException` on .NET 10), return the template verbatim, increment a parser-failure counter, write one stderr line per session. The broad catch is deliberate: a narrow `catch (FormatException)` would let a `NullReferenceException` from a value's `ToString()` propagate out of `FileLogger.Log<TState>` — a silent-drop attack surface that the framework's per-provider wrapper only partially mitigates.
 
 `string.Format` is single-pass — once a positional placeholder is substituted, the result is not re-scanned. A scrubbed value of `"{login}"` (literal string) substituted into the first position renders verbatim; the second positional substitution operates on a fresh segment. Recursion hazard closed by construction.
 
@@ -228,9 +229,9 @@ ILogger.Log<TState>(level, eventId, state, exception, formatter)
 on entry:
     Directory.CreateDirectory(_logsDir);
     RunRetentionSweep();
-    EmitSessionStartLine();        // see below
     _currentFileDate = DateOnly.FromDateTime(DateTime.Now);
     _currentStream  = OpenAppendStream(_currentFileDate);
+    EmitSessionStartLine();        // writes to _currentStream — must run AFTER OpenAppendStream
 
 await foreach FileLogEvent in channel.Reader.ReadAllAsync(stoppingToken):
     var today = DateOnly.FromDateTime(evt.Timestamp.LocalDateTime);
@@ -360,6 +361,8 @@ The recursion rule: **the writer task never calls `ILogger`.** All writer-task s
 - `RecreatesLogsDirectory_IfDeletedAtRuntime` *(see § 12.5)*
 - `WriterTask_DoesNotCallILogger_OnAnyFailurePath` *(introspection on a `ListLoggerProvider` records to confirm no recursion)*
 - `ZeroArgLoggerMessageDefine_StateHasNoOriginalFormat_FallsBackToFormatter_Unscrubbed` *(ADV-1 — documents the zero-arg case behavior so a future site adding args doesn't silently land in the fallback)*
+- `OpenAppendStream_OnLockedDailyFile_IncrementsWriteFailureCount_AndContinues` *(ADV2-4 — pins the second-PRism-process behavior; the lockfile prevents PRism startup but doesn't prevent the file-open attempt; the sink's failure path handles it cleanly)*
+- `ValueWhoseToStringThrows_FallsBackToFormatter_AndIncrementsParserFailureCounter` *(ADV2-3 — pins the broad-catch behavior in LogTemplateFormatter when a value's ToString throws)*
 
 ### 8.2 `LogTemplateFormatterTests` — focused on the substitution path
 
@@ -394,42 +397,42 @@ Total new tests: ~30 new test cases + 2 theory data rows. The count grew from th
 
 ## 9. Wiring change in `Program.cs`
 
-Two additions. The first acquires the lockfile (already in place); the second registers the file sink **only** when not in Test environment, **after** the lockfile acquisition so the lockfile invariant the file sink leans on (single PRism writer per dataDir) is already enforced before any FileStream opens:
+**Single change:** `AddPRismFileLogger` runs **pre-Build** with the test-environment gate inside the extension method itself. The pre-Build shape is the documented path because (a) `Microsoft.Extensions.Logging.LoggerFactory.AddProvider` calls invoked AFTER `Build()` do not retroactively propagate to `ILogger<T>` instances already resolved during DI composition — startup-time log sites would silently bypass the file sink; (b) `LoggerFactory.Dispose()` invokes provider `Dispose()` synchronously, not `DisposeAsync()`, so a post-Build-injected provider loses the async-drain contract the rest of the spec depends on. The pre-Build singleton registration delivers both: the provider is in every `Logger<T>`'s initial `MessageLogger[]`, and the DI container holds the singleton as an `IAsyncDisposable` whose `DisposeAsync` runs during host teardown.
+
+The extension method gates internally on the environment so callers don't have to duplicate the check:
+
+```csharp
+public static ILoggingBuilder AddPRismFileLogger(this ILoggingBuilder builder, string dataDir, IHostEnvironment env)
+{
+    if (env.IsEnvironment("Test")) return builder;   // Test-host carve-out (see § 9.1)
+
+    var logsDir = Path.Combine(dataDir, "logs");
+    builder.Services.AddSingleton<FileLoggerProvider>(_ => new FileLoggerProvider(logsDir));
+    builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLoggerProvider>());
+    return builder;
+}
+```
+
+Call site in `Program.cs`, after `dataDir` resolution (`PRism.Web/Program.cs:39`) and BEFORE `builder.Build()`:
 
 ```csharp
 var dataDir = builder.Configuration["DataDir"] ?? DataDirectoryResolver.Resolve();
 
+builder.Logging.AddPRismFileLogger(dataDir, builder.Environment);  // <-- new, pre-Build
+
 builder.Services.AddPrismCore(dataDir);
-builder.Services.AddPrismGitHub();
-// ... rest of service registration unchanged ...
-
-var app = builder.Build();
-
-// Production-only: lockfile + URL binding + browser launch  (existing block).
-if (!isTest)
-{
-    // ... existing lockfile acquisition at PRism.Web/Program.cs:116 ...
-    var lockHandle = LockfileManager.Acquire(dataDir, binaryPath, Environment.ProcessId);
-    app.Lifetime.ApplicationStopping.Register(() => lockHandle.Dispose());
-
-    // New: file-sink registration. After lockfile so the single-writer invariant is enforced.
-    // We register against the app's services collection at this point — equivalent to calling
-    // builder.Logging.AddPRismFileLogger(dataDir) before Build() and is the simplest way to
-    // express "production only" without duplicating the gate.
-    app.Services.GetRequiredService<ILoggerFactory>().AddProvider(new FileLoggerProvider(Path.Combine(dataDir, "logs")));
-    // ... rest of production block unchanged.
-}
+// ... rest unchanged.
 ```
 
-(If the post-Build `AddProvider` shape proves awkward at implementation time — e.g., the framework rejects it after the host has started — fall back to registering pre-Build with a `IsEnvironment("Test")` gate inside the extension method itself; both shapes deliver the same invariant.)
+**Note on lockfile ordering.** The existing `LockfileManager.Acquire` call happens post-Build inside the `if (!isTest)` block (`PRism.Web/Program.cs:116`). After this change the file sink's `FileStream` opens BEFORE the lockfile acquires (because the writer task starts in `FileLoggerProvider`'s constructor, which fires during DI singleton resolution at first `ILogger<T>` resolution or at host startup — earlier than `Program.cs:116`). The "single-writer invariant" the spec leans on at § 10 is therefore not enforced by the lockfile FOR the file sink specifically; it's enforced by the OS-level `FileShare.Read` semantics (a second PRism process opening the same daily file gets `IOException`, increments `_writeFailureCount`, surfaces one stderr line). The lockfile prevents the second process from completing its own startup but doesn't prevent the file-open attempt. This is acceptable: the second process's file sink is a no-op (writes fail, drain on shutdown), and the lockfile mechanism still keeps the rest of PRism off the keyboard. The test `OpenAppendStream_OnLockedDailyFile_IncrementsWriteFailureCount_AndContinues` (added to § 8.1) pins this behavior.
 
 No other production-code touchpoints. The Console + Debug providers stay registered (`WebApplication.CreateBuilder` adds them by default); the file sink is additive.
 
 ### 9.1 Test-host implications
 
-`WebApplicationFactory<Program>`-based xUnit tests **do not inherit the file sink** by default — the `!isTest` gate above ensures 111 test factories × 31 test files × parallel xUnit workers don't all spin up writer tasks against temp DataDirs and burn drain budget on disposal. The integration tests in § 8.3 explicitly opt in via `WithWebHostBuilder(b => b.ConfigureServices(s => s.AddSingleton<ILoggerProvider>(...)))` with a per-test `Guid`-named temp DataDir.
+`WebApplicationFactory<Program>`-based xUnit tests **do not inherit the file sink** because the extension method's `env.IsEnvironment("Test")` short-circuit fires before any registration. 111 test factories × 31 test files × parallel xUnit workers no longer spin up writer tasks against temp DataDirs. The integration tests in § 8.3 explicitly opt in via `WithWebHostBuilder(b => b.ConfigureServices(s => s.AddSingleton<ILoggerProvider>(sp => new FileLoggerProvider(testLogsDir))))` with a per-test `Guid`-named temp DataDir — bypassing the extension method entirely.
 
-Playwright projects (`PRISM_E2E_FAKE_REVIEW=1` / `PRISM_E2E_REAL_INJECT=1`) launch the real binary with `ASPNETCORE_ENVIRONMENT=Test` — they would NOT get the file sink. If Playwright wants on-disk diagnostics, set `PRism__FileSink__ForceEnable=1` (or equivalent) and have the gate check that env var as well. v1 leaves the env-var hook unwired; the deferral list captures it. The unit-test integration suite (§ 8.3) gets the sink via explicit DI registration regardless.
+Playwright projects (`PRISM_E2E_FAKE_REVIEW=1` / `PRISM_E2E_REAL_INJECT=1`) launch the real binary with `ASPNETCORE_ENVIRONMENT=Test` and therefore lose the file sink. If a real-flow incident needs backend log capture, the deferral list (§ 11) tracks the env-var hook (`PRism__FileSink__ForceEnable=1`) as the fix — small one-line extension to the gate when needed.
 
 ## 10. Architectural invariants this slice maintains
 
@@ -476,7 +479,7 @@ The 2-second drain timeout on `Dispose` means a slow disk could leave the tail o
 
 ### 12.5 `<dataDir>/logs/` directory removed under us
 
-If a user manually deletes the logs directory while the host runs, the next stream open would fail. Fix: `OpenAppendStream(DateOnly d)` calls `Directory.CreateDirectory(opts.LogsDir)` before opening the FileStream (idempotent; cheap). The rotation path therefore self-heals against a manually-deleted directory. Test `RecreatesLogsDirectory_IfDeletedAtRuntime` pins this. (Add this test to § 8.1's list.)
+If a user manually deletes the logs directory while the host runs, the next stream open would fail. Fix: `OpenAppendStream(DateOnly d)` calls `Directory.CreateDirectory(_logsDir)` before opening the FileStream (idempotent; cheap). The rotation path therefore self-heals against a manually-deleted directory. Test `RecreatesLogsDirectory_IfDeletedAtRuntime` pins this (listed in § 8.1).
 
 ### 12.6 PR #55 log delegates touch live identifiers (acknowledged gap with the `login` blocklist addition)
 
