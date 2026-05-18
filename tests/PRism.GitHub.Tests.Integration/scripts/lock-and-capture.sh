@@ -14,7 +14,9 @@ OUTPUT_DIR="${2:?usage: $0 PR_NUMBER OUTPUT_DIR}"
 mkdir -p "$OUTPUT_DIR"
 
 # Idempotency — see PowerShell variant for rationale.
-LOCKED=$(gh api "repos/prpande/PRism/issues/$PR_NUMBER" | jq -r '.locked')
+# Use `gh api --jq` (gh's embedded jq engine) instead of piping to external jq — gh ships its
+# own jq, which means the script has zero external dependencies beyond gh itself.
+LOCKED=$(gh api "repos/prpande/PRism/issues/$PR_NUMBER" --jq '.locked')
 if [ "$LOCKED" = "true" ]; then
     echo "[lock] PR #$PR_NUMBER already locked — skipping PUT (idempotent)."
 else

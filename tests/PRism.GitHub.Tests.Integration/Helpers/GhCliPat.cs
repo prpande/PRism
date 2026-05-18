@@ -45,13 +45,19 @@ public static class GhCliPat
     /// <summary>Returns the PAT for the test run. Cached for the test session.</summary>
     public static RedactedSecret Get() => _cached.Value;
 
+    private const int GhAuthTimeoutMs = 5_000;
+
     private static RedactedSecret Resolve()
     {
         // CI path: PRISM_INTEGRATION_PAT env var.
         var fromEnv = Environment.GetEnvironmentVariable("PRISM_INTEGRATION_PAT");
         if (!string.IsNullOrWhiteSpace(fromEnv)) return new RedactedSecret(fromEnv);
 
-        // Local path: gh CLI.
+        // Local path: gh CLI. Read stdout+stderr ASYNCHRONOUSLY so a hung `gh` process can be
+        // killed at the timeout — the previous form called ReadToEnd() then WaitForExit(timeout),
+        // which deadlocked when gh hung forever because ReadToEnd blocks until stdout closes
+        // (i.e., until process exit). Now: start reading concurrently, wait on process exit
+        // with timeout, kill the process on timeout, then surface stdout + sanitized stderr.
         using var p = new Process
         {
             StartInfo = new ProcessStartInfo("gh", "auth token --hostname github.com")
@@ -62,12 +68,27 @@ public static class GhCliPat
             }
         };
         p.Start();
-        var token = p.StandardOutput.ReadToEnd().Trim();
-        p.WaitForExit(5_000);
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+        if (!p.WaitForExit(GhAuthTimeoutMs))
+        {
+            try { p.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* already exited between check and kill — fine */ }
+            throw new InvalidOperationException(
+                $"`gh auth token` did not exit within {GhAuthTimeoutMs}ms and was killed. " +
+                "Either `gh` is hung or your network is unreachable; resolve and retry.");
+        }
+        var token = stdoutTask.GetAwaiter().GetResult().Trim();
+        var stderr = stderrTask.GetAwaiter().GetResult().Trim();
         if (p.ExitCode != 0 || string.IsNullOrWhiteSpace(token))
         {
+            // stderr is included sanitized — no PAT material ever flows through `gh auth token`'s
+            // stderr by design (it only writes diagnostics like "not logged in"); keep the
+            // sanitization explicit so a future gh release that violates that promise still
+            // gets the redaction treatment.
+            var stderrPreview = string.IsNullOrWhiteSpace(stderr) ? "(no stderr)" : stderr;
             throw new InvalidOperationException(
-                "No PRISM_INTEGRATION_PAT env var and `gh auth token` failed. " +
+                "No PRISM_INTEGRATION_PAT env var and `gh auth token` failed " +
+                $"(exit {p.ExitCode}, stderr: {stderrPreview}). " +
                 "Run `gh auth login --scopes \"repo,read:org\"` (or set the env var with a " +
                 "fine-grained PAT scoped to prpande/PRism) and retry.");
         }
