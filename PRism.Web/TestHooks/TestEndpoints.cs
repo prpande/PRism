@@ -37,6 +37,8 @@ internal static class TestEndpoints
 
     internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number);
 
+    internal sealed record ClearPrSessionRequest(string Owner, string Repo, int Number);
+
     // ----- /test/submit/* (plan Task 61) -----
 
     internal sealed record InjectSubmitFailureRequest(string MethodName, string? Message, bool AfterEffect = false);
@@ -171,6 +173,52 @@ internal static class TestEndpoints
                 return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
             }, CancellationToken.None).ConfigureAwait(false);
             return Results.Ok(new { ok = true, headSha });
+        });
+
+        // Nukes the PR's session in state.json (drafts, PendingReviewId, LastViewedHeadSha,
+        // DraftSummary, DraftVerdict) without touching auth state, AND removes every subscriber
+        // for this PR from ActivePrSubscriberRegistry so the ActivePrPoller stops ticking it
+        // between specs. Required by the real-flow Playwright suite's resetSandboxFixture;
+        // reusable elsewhere if a future fake-mode spec wants per-PR session reset.
+        //
+        // Unlike /test/reset, this endpoint deliberately does NOT touch FakeReviewBackingStore /
+        // FakeReviewSubmitter / PrDetailLoader / IActivePrCache — those are not present in the
+        // real-flow composition (PRISM_E2E_FAKE_REVIEW is OFF). The state.json wipe + subscriber-
+        // registry mutation are the only two surfaces shared between real-flow and fake-flow
+        // PoC sessions, and both are always wired into DI regardless of env-var gating.
+        app.MapPost("/test/clear-pr-session", async (ClearPrSessionRequest req, IAppStateStore stateStore, ActivePrSubscriberRegistry registry) =>
+        {
+            if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo))
+                return Results.BadRequest(new { error = "owner-or-repo-missing" });
+
+            var key = $"{req.Owner}/{req.Repo}/{req.Number}";
+            var prRef = new PrReference(req.Owner, req.Repo, req.Number);
+
+            await stateStore.UpdateAsync(state =>
+            {
+                if (!state.Reviews.Sessions.ContainsKey(key)) return state;
+                var sessions = state.Reviews.Sessions
+                    .Where(kv => kv.Key != key)
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+                return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+            }, CancellationToken.None).ConfigureAwait(false);
+
+            // Subscriber-registry mutation is concurrent-dict; iterate snapshot and Remove each.
+            // ActivePrPoller takes UniquePrRefs() at tick-start, so any Remove between ticks is
+            // observed on the next tick — no shared lock needed across state-store and registry.
+            //
+            // SubscribersFor returns a materialized snapshot (Keys.ToList in
+            // ActivePrSubscriberRegistry), not a lazy IEnumerable backed by the underlying
+            // ConcurrentDictionary — otherwise the mid-iteration Remove either throws
+            // InvalidOperationException or silently skips subscribers depending on the underlying
+            // enumeration semantics, leaving the registry partially cleaned (exactly the race
+            // this endpoint exists to close).
+            foreach (var subscriberId in registry.SubscribersFor(prRef))
+            {
+                registry.Remove(subscriberId, prRef);
+            }
+
+            return Results.NoContent();
         });
 
         // Flips the scenario PR's open/closed/merged state (PR5 bulk-discard surface).
