@@ -699,7 +699,7 @@ The plan's task list must enumerate these so the implementation pass doesn't get
 
 [`useReconcile.test.tsx`](../../frontend/__tests__/useReconcile.test.tsx) (or sibling) — add a test for the new 422 `tab-id-missing` branch: assert `BANNER_TAB_ID_MISSING` surfaces with refresh-tab copy and that no auto-retry fires.
 
-### 8.6 Playwright mocked-mode helper plumbing (the seven specs)
+### 8.6 Playwright mocked-mode helper plumbing (the eight specs)
 
 Tests in this slice's plan that MUST land before the Playwright suite is green:
 

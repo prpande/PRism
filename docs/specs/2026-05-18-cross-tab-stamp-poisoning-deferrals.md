@@ -43,9 +43,9 @@ Companion to [`2026-05-18-cross-tab-stamp-poisoning-design.md`](2026-05-18-cross
 ### [Decision] Tab-id allowlist `^[a-zA-Z0-9_-]{1,64}$` applied at both endpoint sites
 
 - **Source:** Q5 of the brainstorm session; reuses [S6 PR0 § 7 binding constraint #2](2026-05-10-multi-account-scaffold-design.md#binding-constraints-v1-places-on-v2).
-- **Affects:** `PRism.Web/Endpoints/PrDetailEndpoints.cs` (mark-viewed); `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (submit).
-- **Decision:** Header value validated before use as a JSON map key, dictionary lookup key, or log field. Same threat shape as `accountKey`: CRLF injection in logs, escape-character injection in JSON, path injection if v2 ever shards. Inline regex via `[GeneratedRegex]` at each call site. If a third call site appears, factor to `PRism.Core/State/TabIds.cs` with a single `IsValid(string)` method.
-- **Revisit when:** A third call site appears. v1 has two (mark-viewed + submit), so the shared helper is premature.
+- **Affects:** `PRism.Web/Endpoints/PrDetailEndpoints.cs` (mark-viewed); `PRism.Web/Endpoints/PrReloadEndpoints.cs` (reload); `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (submit); `PRism.Web/TestHooks/TestEndpoints.cs` (`/test/mark-pr-viewed`).
+- **Decision:** Header value validated before use as a JSON map key, dictionary lookup key, or log field. Same threat shape as `accountKey`: CRLF injection in logs, escape-character injection in JSON, path injection if v2 ever shards. Inline regex via `[GeneratedRegex]` at each production call site; the test-hook uses a runtime `Regex.IsMatch` (test-only code, perf cost irrelevant). If consolidation becomes worth the indirection, factor to `PRism.Core/State/TabIds.cs` with a single `IsValid(string)` method.
+- **Revisit when:** Cross-site allowlist drift becomes a real risk (e.g., a future change tightens one regex without the others). v1 has four sites with the same string — the spec-level threat-equivalence is documented, but enforcement is by code review, not by a shared helper.
 
 ### [Decision] `MarkViewedRequest` and `SubmitRequestDto` bodies unchanged
 
@@ -102,12 +102,12 @@ Companion to [`2026-05-18-cross-tab-stamp-poisoning-design.md`](2026-05-18-cross
 
 Captured after the user-authorized second ce-doc-review pass. The pass surfaced four high-confidence design gaps + several smaller ones; the spec was revised in place. New decisions:
 
-### [Decision] `markAllRead` gains the same `MonotonicMaxCommentId` guard as mark-viewed
+### [Decision] `markAllRead` does NOT need a monotone guard — value is server-derived from `IActivePrCache.HighestIssueCommentId`
 
-- **Source:** Pass-2 coherence finding 3 — `markAllRead` was originally specified as "no V6 reshape" but writes `LastSeenCommentId = newId` (last-writer-wins), which regresses the monotone-high-water invariant § 2 promises.
-- **Affects:** `PRism.Web/Endpoints/PrDraftEndpoints.cs:355-373`.
-- **Decision:** markAllRead writes `LastSeenCommentId = MonotonicMaxCommentId(current.LastSeenCommentId, newId)` instead of `LastSeenCommentId = newId`. Helper shared with mark-viewed (lifted to a `PRism.Core/State` static or inlined per plan choice). Preserves the cross-tab high-water invariant the inbox unread badge depends on.
-- **Revisit when:** N/A — landed in pass-2 revision.
+- **Source:** Pass-2 coherence finding 3 reversed by pass-1 plan-review feasibility-F6. The original concern ("two tabs fire markAllRead with different ids and last-writer-wins regresses the high-water") was based on a wrong model of the wire shape. The actual `markAllRead` handler at `PrDraftEndpoints.cs:355-373` reads `newId` from `cache.GetCurrent(prRef)?.HighestIssueCommentId` (server-side `IActivePrCache` value), NOT from the patch body — the FE patch is bool-only (`markAllRead = true`).
+- **Affects:** `PRism.Web/Endpoints/PrDraftEndpoints.cs:355-373` — NO CHANGE.
+- **Decision:** GitHub comment IDs are append-only, so the cache value monotonically increases. Both tabs firing `markAllRead` within the same poll cycle read the same cache value; the write is inherently monotone. No guard needed. The only writer that DOES need the guard is mark-viewed, whose `body.MaxCommentId` is genuinely tab-supplied (the FE computes it from each tab's PR-detail-load response, and Tab B at a lower load-time max could regress 999 → 50 without a guard). Spec § 5.6 documents this correctly.
+- **Revisit when:** A future code path supplies `newId` from a tab-side source instead of the server-side cache. At that point the guard becomes load-bearing.
 
 ### [Decision] `ReconcileAsync` `callerTabId` is a REQUIRED parameter, not optional default-null
 
@@ -133,7 +133,7 @@ Captured after the user-authorized second ce-doc-review pass. The pass surfaced 
 ### [Decision] Mocked-mode Playwright suite plumbs the page's `getTabId()` into `recordPrViewed`
 
 - **Source:** Pass-2 adversarial finding F1 — `recordPrViewed` calls `/test/mark-pr-viewed` via `APIRequestContext`, which has a different tab-id context than the page's browser context that fires the subsequent UI submit.
-- **Affects:** `PRism.Web/TestHooks/TestEndpoints.cs` (hook accepts `tabId` body field); `frontend/e2e/helpers/s5-submit.ts` (`recordPrViewed` accepts `tabId` param); seven mocked-mode submit specs (each adds one line); FE test-mode hook to expose `getTabId()` to `page.evaluate` OR fixture-injection.
+- **Affects:** `PRism.Web/TestHooks/TestEndpoints.cs` (hook accepts `tabId` body field); `frontend/e2e/helpers/s5-submit.ts` (`recordPrViewed` accepts `tabId` param); eight mocked-mode submit specs (each adds one line; `s5-marker-prefix-collision.spec.ts` is the eighth caller of `recordPrViewed`); FE test-mode hook to expose `getTabId()` to `page.evaluate` OR fixture-injection.
 - **Decision:** Hook accepts `tabId` as a body field (explicit over header-implicit — test code benefits from explicit coordination); helper accepts `tabId: string`; each spec captures the page's tab id before calling `recordPrViewed`. Body-field over header to make the coordination visible at every call site; mismatched ids in mocked-mode tests are now a typo at the spec author's call, not a silent header-context divergence.
 - **Revisit when:** N/A — landed in pass-2 revision.
 
