@@ -47,6 +47,7 @@ MODIFY:
 | `README.md` | + brief "Integration tests" section pointing at the runbook |
 | `docs/specs/README.md` | + new spec entry under "In progress" |
 | `PRism.Core/Iterations/ForcePushMultiplier.cs` | + XML docstring mirroring spec § 4.1 (PL-R2-4 mitigation) |
+| `PRism.GitHub/GitHubReviewService.cs` | Refactor inlined PR-detail GraphQL query to `internal const string PrDetailGraphQLQuery` so test 7g (§ 11 / Task 11) can replay the SAME query the production code issues. Plus `[InternalsVisibleTo("PRism.GitHub.Tests.Integration")]` in the csproj or AssemblyInfo. |
 
 ---
 
@@ -88,6 +89,11 @@ Three phases:
   <ItemGroup>
     <ProjectReference Include="..\..\PRism.GitHub\PRism.GitHub.csproj" />
     <ProjectReference Include="..\..\PRism.Core\PRism.Core.csproj" />
+    <!-- ClusteringQuality, PrDetailDto, DiffDto, PrReference, DiffRangeRequest, ReviewThreadDto,
+         AuthValidationResult, and the rest of the DTO surface live in PRism.Core.Contracts.
+         Reference it explicitly so the test code resolves these types directly rather than via
+         transitive availability (which is not guaranteed under TreatWarningsAsErrors=true). -->
+    <ProjectReference Include="..\..\PRism.Core.Contracts\PRism.Core.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Fixture must travel with the test bin so capture mode and assertions both see the same path -->
@@ -672,7 +678,7 @@ public class FixtureStripAllowlistTests
     [Fact]
     public void Keeps_structural_fields_strips_body()
     {
-        // PR body is a freeform-text field per spec § 7 — must be stripped.
+        // PR body is NOT in the allowlist (allowlist design — spec § 7) — must be stripped.
         var stripped = Strip("""
         {
           "data": {
@@ -689,6 +695,31 @@ public class FixtureStripAllowlistTests
         stripped.Should().Contain("\"number\":19").And.Contain("\"state\":\"MERGED\"");
         stripped.Should().NotContain("Lots of internal critique here");
         stripped.Should().Contain("\"body\":null");  // shape preserved as null
+    }
+
+    [Fact]
+    public void Unknown_fields_default_to_stripped_under_allowlist_design()
+    {
+        // Spec § 7 mandates allowlist over denylist so a future GraphQL field addition doesn't
+        // silently include sensitive content. A field never seen before — e.g. "avatarUrl",
+        // "databaseId", "secretToken" — must default to stripped, not pass through.
+        var stripped = Strip("""
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "number": 19,
+                "author": { "login": "someone", "avatarUrl": "https://example.com/a", "databaseId": 12345, "secretToken": "ghp_abc" }
+              }
+            }
+          }
+        }
+        """);
+        stripped.Should().Contain("\"number\":19");
+        stripped.Should().NotContain("someone");
+        stripped.Should().NotContain("example.com");
+        stripped.Should().NotContain("12345");
+        stripped.Should().NotContain("ghp_abc");
     }
 
     [Fact]
@@ -794,27 +825,56 @@ using System.Text.Json.Nodes;
 namespace PRism.GitHub.Tests.Integration.Helpers;
 
 /// <summary>
-/// Applies the spec § 7 category rule to a captured GraphQL response:
-///   KEPT:     structural and schema fields — counts (totalCount, changedFiles), enums (state,
-///             reviewType), type names, JsonValueKind, presence indicators.
-///   STRIPPED: freeform text (body, bodyText, bodyHTML, message, title), identity (email, login, name).
+/// Applies the spec § 7 category rule to a captured GraphQL response as an ALLOWLIST
+/// (not a denylist — spec § 7 line 237 mandates this for security). Listed fields survive;
+/// everything else is stripped to null. New GraphQL fields default to stripped — adding
+/// them is an explicit, reviewable change to AllowedFieldNames below.
+///
+///   KEPT (structural + enum + count + presence indicators): see AllowedFieldNames.
+///   STRIPPED: every field not on the allowlist (freeform text, identity, URLs, anything new).
 /// </summary>
 public static class FixtureStripAllowlist
 {
-    // Strip rule is a denylist of FIELD NAMES (not paths) — applied recursively. Spec § 7's category
-    // rule maps to: "freeform text" + "identity" field-name sets below. Adding a new GraphQL field
-    // is safe: it survives by default. To strip a new sensitive field, add its name here.
-    private static readonly HashSet<string> StrippedFieldNames = new(StringComparer.Ordinal)
+    // Allowlist of FIELD NAMES (not JSON-pointer paths). Applied recursively — a kept field
+    // name kept at every level it appears. This matches the spec § 7 category rule's "Kept"
+    // bullet:
+    //   - Structural enums:        state, reviewType, mergeable, mergeStateStatus, __typename
+    //   - Structural identifiers:  oid, headRefOid, baseRefOid, beforeCommit, afterCommit
+    //   - Structural counts:       totalCount, changedFiles, additions, deletions
+    //   - Structural booleans:     isDraft, isResolved, hasNextPage
+    //   - Structural numbering:    number, line
+    //   - Structural envelopes:    pageInfo, endCursor (cursor IS opaque schema-shape, not PII)
+    //   - Structural containers:   repository, pullRequest, comments, reviewThreads, commits,
+    //                              timelineItems, nodes, commit, data
+    //   - Structural pathing:      path, headRefName, baseRefName
+    //   - Structural timestamps:   createdAt, closedAt, mergedAt, committedDate, submittedAt,
+    //                              lastEditedAt
+    // EVERYTHING NOT IN THIS SET is stripped — title, body, message, login, email, name,
+    // avatarUrl, url, databaseId, id, etc. all become null.
+    private static readonly HashSet<string> AllowedFieldNames = new(StringComparer.Ordinal)
     {
-        // Freeform text
-        "body", "bodyText", "bodyHTML", "bodyHtml", "message", "title",
-        // Identity
-        "email", "login", "name",
+        // Container/envelope fields — must survive so the differ can walk into them
+        "data", "repository", "pullRequest", "comments", "reviewThreads", "commits",
+        "timelineItems", "nodes", "edges", "node", "commit", "pageInfo",
+        // Identifier fields that carry structural meaning (SHAs, type discriminators)
+        "__typename", "oid", "headRefOid", "baseRefOid", "beforeCommit", "afterCommit",
+        // Enum-valued and boolean structural fields
+        "state", "reviewType", "mergeable", "mergeStateStatus", "isDraft", "isResolved",
+        "hasNextPage",
+        // Count/numeric structural fields
+        "totalCount", "changedFiles", "additions", "deletions", "number", "line",
+        // Path/name fields that describe SHAPE (file paths in diffs, branch names) — these
+        // are not personally identifying, they describe the repo structure
+        "path", "headRefName", "baseRefName",
+        // Cursor — opaque schema-shape, not PII
+        "endCursor",
+        // Timestamp fields — structural; the differ uses these to assert presence
+        "createdAt", "closedAt", "mergedAt", "committedDate", "submittedAt", "lastEditedAt",
     };
 
-    public static JsonNode Apply(JsonElement element) => Apply(element, depth: 0);
+    public static JsonNode? Apply(JsonElement element) => Apply(element, depth: 0);
 
-    private static JsonNode Apply(JsonElement element, int depth)
+    private static JsonNode? Apply(JsonElement element, int depth)
     {
         return element.ValueKind switch
         {
@@ -824,7 +884,7 @@ public static class FixtureStripAllowlist
             JsonValueKind.Number => JsonNode.Parse(element.GetRawText())!,
             JsonValueKind.True   => JsonValue.Create(true),
             JsonValueKind.False  => JsonValue.Create(false),
-            JsonValueKind.Null   => null!,
+            JsonValueKind.Null   => null,
             _ => throw new InvalidOperationException($"Unhandled JsonValueKind {element.ValueKind}"),
         };
     }
@@ -834,15 +894,17 @@ public static class FixtureStripAllowlist
         var result = new JsonObject();
         foreach (var prop in obj.EnumerateObject())
         {
-            if (StrippedFieldNames.Contains(prop.Name))
+            if (AllowedFieldNames.Contains(prop.Name))
             {
-                // Preserve the field's presence (so the differ doesn't flag it as removed) but
-                // replace its content with null. The shape-drift detector cares about shape, not value.
-                result[prop.Name] = null;
+                // Allowed: recurse with stripping still applied at deeper levels.
+                result[prop.Name] = Apply(prop.Value, depth + 1);
             }
             else
             {
-                result[prop.Name] = Apply(prop.Value, depth + 1);
+                // Not allowlisted: preserve the field's presence (so the differ doesn't flag
+                // it as removed) but replace its content with null. The shape-drift detector
+                // cares about shape, not value.
+                result[prop.Name] = null;
             }
         }
         return result;
@@ -1019,9 +1081,17 @@ $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir | Out-Null }
 
-Write-Host "[lock] Locking conversation on PR #$PrNumber ..."
-& gh api -X PUT "repos/prpande/PRism/issues/$PrNumber/lock" --silent
-if ($LASTEXITCODE -ne 0) { throw "gh api lock failed for PR #$PrNumber (exit $LASTEXITCODE)" }
+# Idempotency: if the PR is already locked, skip the PUT call (saves an API request and
+# keeps the script re-runnable on partial-failure recovery). Spec § 9.8 — unlock is by
+# explicit DELETE; we never auto-unlock here.
+$prMeta = (& gh api "repos/prpande/PRism/issues/$PrNumber") | ConvertFrom-Json
+if ($prMeta.locked) {
+    Write-Host "[lock] PR #$PrNumber already locked — skipping PUT (idempotent)."
+} else {
+    Write-Host "[lock] Locking conversation on PR #$PrNumber ..."
+    & gh api -X PUT "repos/prpande/PRism/issues/$PrNumber/lock" --silent
+    if ($LASTEXITCODE -ne 0) { throw "gh api lock failed for PR #$PrNumber (exit $LASTEXITCODE). To roll back any PRs locked earlier in the sequence, run: gh api -X DELETE repos/prpande/PRism/issues/{N}/lock for each affected PR (see docs/contract-tests.md § 8)." }
+}
 
 Write-Host "[capture] Fetching commits + files + mergedAt for PR #$PrNumber ..."
 $prJson = & gh pr view $PrNumber --repo prpande/PRism --json commits,files,mergedAt
@@ -1054,8 +1124,14 @@ OUTPUT_DIR="${2:?usage: $0 PR_NUMBER OUTPUT_DIR}"
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "[lock] Locking conversation on PR #$PR_NUMBER ..."
-gh api -X PUT "repos/prpande/PRism/issues/$PR_NUMBER/lock" --silent
+# Idempotency — see PowerShell variant for rationale.
+LOCKED=$(gh api "repos/prpande/PRism/issues/$PR_NUMBER" | jq -r '.locked')
+if [ "$LOCKED" = "true" ]; then
+    echo "[lock] PR #$PR_NUMBER already locked — skipping PUT (idempotent)."
+else
+    echo "[lock] Locking conversation on PR #$PR_NUMBER ..."
+    gh api -X PUT "repos/prpande/PRism/issues/$PR_NUMBER/lock" --silent
+fi
 
 echo "[capture] Fetching commits + files + mergedAt for PR #$PR_NUMBER ..."
 gh pr view "$PR_NUMBER" --repo prpande/PRism --json commits,files,mergedAt > "$OUTPUT_DIR/pr$PR_NUMBER.pr.json"
@@ -1063,7 +1139,7 @@ gh pr view "$PR_NUMBER" --repo prpande/PRism --json commits,files,mergedAt > "$O
 echo "[capture] Fetching review comments for PR #$PR_NUMBER ..."
 gh api "repos/prpande/PRism/pulls/$PR_NUMBER/comments" > "$OUTPUT_DIR/pr$PR_NUMBER.comments.json"
 
-echo "[done] PR #$PR_NUMBER captured to $OutputDir"
+echo "[done] PR #$PR_NUMBER captured to $OUTPUT_DIR"
 ```
 
 - [ ] **Step 3: Smoke-test the PowerShell script against a non-corpus PR to verify it runs end-to-end without actually locking a corpus PR yet**
@@ -1175,40 +1251,9 @@ git commit -m "test(integration): populate FrozenPrCorpus with captured live-PR 
 
 ---
 
-## Task 9: Capture the PR #19 GraphQL fixture (capture mode)
+## Task 9: (Folded into Task 11)
 
-This requires the fixture-write code path to exist before it can be used. Strategy: write a temporary capture program inline in this task, then move the production capture logic into the test method in Task 11.
-
-**Alternative (recommended):** Skip the temporary program — write the production test 7g first with both assert AND capture branches (Task 11), then run it once with `PRISM_FROZEN_PR_CAPTURE_FIXTURE=1` to generate the fixture. The two are interdependent. Mark Task 9 as "deferred until Task 11 lands the test method; then run capture-mode once."
-
-- [ ] **Step 1: Mark this task as a placeholder dependency**
-
-The actual capture happens after Task 11. Leave this task as the documentation anchor: when Task 11's `Frozen_pr_graphql_shape_unchanged` test method exists, run:
-
-```powershell
-$env:PRISM_FROZEN_PR_CAPTURE_FIXTURE='1'
-dotnet test tests\PRism.GitHub.Tests.Integration --configuration Release --filter "FullyQualifiedName~Frozen_pr_graphql_shape_unchanged"
-Remove-Item env:PRISM_FROZEN_PR_CAPTURE_FIXTURE
-```
-
-Expected: the test logs "Captured fixture for PR #19 → ..." and passes. The fixture JSON is written to `tests/PRism.GitHub.Tests.Integration/Fixtures/pr19-graphql-response.json`.
-
-- [ ] **Step 2: Inspect the generated fixture against the FixtureStripAllowlist category rule**
-
-Open `tests/PRism.GitHub.Tests.Integration/Fixtures/pr19-graphql-response.json` in your editor. Scan for:
-
-- Any non-null `body`, `bodyText`, `bodyHTML`, `message`, `title` — should all be `null` (stripped).
-- Any non-null `email`, `login`, `name` — should all be `null` (stripped).
-- All structural fields (`number`, `state`, `totalCount`, `oid`, etc.) — should retain real values.
-
-If any sensitive field survived, add its name to `FixtureStripAllowlist.StrippedFieldNames` (Task 5) and re-capture.
-
-- [ ] **Step 3: Commit the fixture**
-
-```powershell
-git add tests/PRism.GitHub.Tests.Integration/Fixtures/pr19-graphql-response.json
-git commit -m "test(integration): capture stripped PR #19 GraphQL fixture for shape-drift baseline"
-```
+Round-1 ce-doc-review (AV-R2-6) flagged Task 9 / Task 11 redundancy — both documented the same capture command, with Task 9 acting as a forward reference to Task 11. Folded entirely into Task 11: the fixture-write code path lands AND the capture command runs there. Task 9 retains this anchor only so existing references to "Task 9" elsewhere in the plan don't dangle; do not perform Task 9 — go straight to Task 11.
 
 ---
 
@@ -1217,18 +1262,115 @@ git commit -m "test(integration): capture stripped PR #19 GraphQL fixture for sh
 Tests 7a (iteration count), 7b (files set-equality), 7c (comment anchors subset on #19), 7f (clusteringQuality), 7h (PR #16 rebased committedDate). Test 7g (shape-drift) is in Task 11 because it depends on the fixture being writable in capture mode.
 
 **Files:**
+- Create: `tests/PRism.GitHub.Tests.Integration/LiveGitHubFixture.cs`
 - Create: `tests/PRism.GitHub.Tests.Integration/FrozenPrismPrTests.cs`
 
-- [ ] **Step 1: Write the test file with all 5 tests**
+- [ ] **Step 1: Implement the `LiveGitHubFixture` via DI composition**
+
+`LiveGitHubFixture` builds an `IServiceCollection` exactly the way production builds it (via `AddPrismGitHub()`), overrides only the token source to point at `GhCliPat`, and resolves `PrDetailLoader` + the capability-interface services from the container. xUnit's `IClassFixture` semantics give us one instance per test class — sharing the container across the 5+ tests in the class amortizes both DI startup and HttpClient pool.
+
+This dodges the entire class of "constructor-signature drift" problems: when production wiring grows a new dependency, the test fixture inherits the change automatically. Verified production composition lives at `PRism.GitHub/ServiceCollectionExtensions.cs:27-88`.
+
+Create `tests/PRism.GitHub.Tests.Integration/LiveGitHubFixture.cs`:
 
 ```csharp
-using System.Net.Http.Headers;
-using FluentAssertions;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using PRism.Core;
+using PRism.Core.Auth;
+using PRism.Core.Config;
+using PRism.Core.Contracts;
 using PRism.Core.Iterations;
 using PRism.Core.PrDetail;
 using PRism.GitHub;
 using PRism.GitHub.Tests.Integration.Helpers;
+
+namespace PRism.GitHub.Tests.Integration;
+
+public sealed class LiveGitHubFixture : IDisposable
+{
+    private readonly ServiceProvider _sp;
+    public PrDetailLoader Loader { get; }
+    public IPrReader Reader { get; }
+    public IReviewAuth Auth { get; }
+
+    public LiveGitHubFixture()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        // Production wiring needs IConfigStore (for the github host) and ITokenStore (for the
+        // PAT). Both are normally registered by PRism.Web's startup; here we provide minimal
+        // test stubs so AddPrismGitHub() can resolve them without dragging in PRism.Web.
+        services.AddSingleton<IConfigStore>(new InMemoryConfigStoreForIntegrationTests());
+        services.AddSingleton<ITokenStore>(new GhCliBackedTokenStore());
+
+        // Plus the iteration-clustering pieces PrDetailLoader requires. PrDetailLoader is in
+        // PRism.Core but its registration site lives in PRism.Web — re-register here to keep
+        // the test project free of PRism.Web's full DI surface. Verify the exact wiring at
+        // implementation time against PRism.Web/Program.cs or PRism.Core's bootstrap helpers.
+        services.AddSingleton<IIterationClusteringStrategy, WeightedDistanceClusteringStrategy>();
+        services.AddSingleton<IterationClusteringCoefficients>(new IterationClusteringCoefficients());
+        services.AddSingleton<PrDetailLoader>();
+
+        // Production capability registration — pulls in GitHubReviewService bound to all four
+        // capability interfaces, the named "github" HttpClient, and the inbox pipeline.
+        services.AddPrismGitHub();
+
+        _sp = services.BuildServiceProvider();
+        Loader = _sp.GetRequiredService<PrDetailLoader>();
+        Reader = _sp.GetRequiredService<IPrReader>();
+        Auth   = _sp.GetRequiredService<IReviewAuth>();
+    }
+
+    public void Dispose() => _sp.Dispose();
+}
+
+/// <summary>
+/// Minimal IConfigStore for integration tests — exposes `github.host = "github.com"` only.
+/// Used by AddPrismGitHub() to compute the API base URL. The Changed event is unused here
+/// (PrDetailLoader subscribes but the test never triggers config changes).
+/// </summary>
+internal sealed class InMemoryConfigStoreForIntegrationTests : IConfigStore
+{
+    public AppConfig Current { get; } = new AppConfig
+    {
+        Github = new GithubConfig { Host = "github.com" }
+        // Plus any other required AppConfig fields — verify against AppConfig record shape at impl time.
+    };
+
+    public event EventHandler<AppConfig>? Changed { add { } remove { } }
+
+    public Task WriteAsync(AppConfig config, CancellationToken ct) => throw new NotSupportedException(
+        "Integration tests do not write config. If this throws, a code path under test is mutating config.");
+}
+
+/// <summary>
+/// ITokenStore implementation that returns the PAT from `gh auth token` or the
+/// `PRISM_INTEGRATION_PAT` env var (CI). The actual production ITokenStore writes to the
+/// OS keychain via MSAL; this stub bypasses that for tests. The PAT is revealed once per
+/// call inside the Func<Task<string?>> closure passed by AddPrismGitHub.
+/// </summary>
+internal sealed class GhCliBackedTokenStore : ITokenStore
+{
+    public Task<string?> ReadAsync(CancellationToken ct) => Task.FromResult<string?>(GhCliPat.Get().Reveal());
+    public Task WriteAsync(string token, CancellationToken ct) => throw new NotSupportedException(
+        "Integration tests do not write tokens.");
+    public Task ClearAsync(CancellationToken ct) => throw new NotSupportedException(
+        "Integration tests do not clear tokens.");
+    // Adapt member names to match the real ITokenStore surface at impl time — verify against PRism.Core/Auth/ITokenStore.cs.
+}
+```
+
+**Implementation note — verify wiring against production at impl time.** The exact shape of `IConfigStore.Current`, `AppConfig`, `GithubConfig`, `ITokenStore`'s interface members, and `WeightedDistanceClusteringStrategy`'s constructor all need to match production. The fixture above is the SHAPE the test needs (a DI container that produces a working `PrDetailLoader`); the implementer adapts member names to whatever the production interfaces actually expose at the time of implementation. If `AddPrismGitHub()` requires additional `services.AddX()` calls to satisfy its internal DI graph, add them here.
+
+- [ ] **Step 2: Write the test file with all 5 tests**
+
+```csharp
+using FluentAssertions;
+using PRism.Core;
+using PRism.Core.Contracts;
+using PRism.Core.PrDetail;
 using Xunit;
 
 namespace PRism.GitHub.Tests.Integration;
@@ -1239,12 +1381,17 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
     private readonly LiveGitHubFixture _fixture;
     public FrozenPrismPrTests(LiveGitHubFixture fixture) => _fixture = fixture;
 
+    private static PrReference Ref(FrozenPrEntry entry) => new("prpande", "PRism", entry.PrNumber);
+
     // 7a — iteration count per the corpus's expected range/equality contract.
     [Theory]
     [MemberData(nameof(FrozenPrCorpus.AllAsTheoryData), MemberType = typeof(FrozenPrCorpus))]
     public async Task Frozen_pr_returns_expected_iteration_count(FrozenPrEntry entry)
     {
-        var dto = await _fixture.LoadPrDetailAsync(entry);
+        var snap = await _fixture.Loader.LoadAsync(Ref(entry), CancellationToken.None);
+        snap.Should().NotBeNull($"PR #{entry.PrNumber} must load — PrDetailLoader returned null");
+        var dto = snap!.Detail;
+
         if (entry.ExpectedQuality == ClusteringQualityExpectation.Low)
         {
             dto.Iterations.Should().BeNull(
@@ -1265,12 +1412,19 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
     }
 
     // 7b — files list set-equality. Locked + SHA-pinned makes the file list deterministic;
-    // see spec § 5 row 7b on why this is set-equality, not superset.
+    // spec § 5 row 7b — set-equality, not superset.
     [Theory]
     [MemberData(nameof(FrozenPrCorpus.AllAsTheoryData), MemberType = typeof(FrozenPrCorpus))]
     public async Task Frozen_pr_returns_expected_files_in_diff(FrozenPrEntry entry)
     {
-        var diff = await _fixture.LoadDiffAsync(entry);
+        // GetDiffAsync takes a DiffRangeRequest — canonical PR diff is base..head.
+        // We don't know the base SHA here; fetch the PR to discover it via PollActivePr.
+        // (Spec § 6.1's loader already does this; we recreate the same flow here for the
+        // diff probe because PrDetailLoader doesn't expose the loaded DiffDto by reference.)
+        var poll = await _fixture.Reader.PollActivePrAsync(Ref(entry), CancellationToken.None);
+        var range = new DiffRangeRequest(BaseSha: poll.BaseSha, HeadSha: entry.HeadSha);
+        var diff = await _fixture.Reader.GetDiffAsync(Ref(entry), range, CancellationToken.None);
+
         var actualFiles = diff.Files.Select(f => f.Path).OrderBy(p => p, StringComparer.Ordinal).ToArray();
         var expectedFiles = entry.ExpectedFiles.OrderBy(p => p, StringComparer.Ordinal).ToArray();
         actualFiles.Should().Equal(expectedFiles,
@@ -1278,12 +1432,17 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
     }
 
     // 7c — anchored on PR #19 only (2 documented review rounds per spec § 4).
+    // Uses ReviewThreadDto (real type from PRism.Core.Contracts/ReviewThreadDto.cs) — FilePath + LineNumber
+    // are the anchor fields. No fictional ReviewCommentAnchor type required.
     [Fact]
     public async Task Frozen_pr_existing_comments_have_expected_anchors()
     {
         var pr19 = FrozenPrCorpus.Pr19;
-        var comments = await _fixture.LoadCommentAnchorsAsync(pr19);
-        var actualAnchors = comments.Select(c => new CommentAnchor(c.Path, c.Line)).ToHashSet();
+        var snap = await _fixture.Loader.LoadAsync(Ref(pr19), CancellationToken.None);
+        snap.Should().NotBeNull();
+        var actualAnchors = snap!.Detail.ReviewComments
+            .Select(t => new CommentAnchor(t.FilePath, t.LineNumber))
+            .ToHashSet();
         foreach (var expected in pr19.ExpectedCommentAnchors)
         {
             actualAnchors.Should().Contain(expected,
@@ -1297,11 +1456,12 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
     [MemberData(nameof(FrozenPrCorpus.AllAsTheoryData), MemberType = typeof(FrozenPrCorpus))]
     public async Task Frozen_pr_returns_clustering_quality_ok(FrozenPrEntry entry)
     {
-        var dto = await _fixture.LoadPrDetailAsync(entry);
+        var snap = await _fixture.Loader.LoadAsync(Ref(entry), CancellationToken.None);
+        snap.Should().NotBeNull();
         var expected = entry.ExpectedQuality == ClusteringQualityExpectation.Low
             ? ClusteringQuality.Low
             : ClusteringQuality.Ok;
-        dto.ClusteringQuality.Should().Be(expected,
+        snap!.Detail.ClusteringQuality.Should().Be(expected,
             $"PR #{entry.PrNumber} ({entry.ShapeCategory}) expects {expected}");
     }
 
@@ -1310,7 +1470,9 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
     public async Task Frozen_pr_handles_rebased_committedDate_collision()
     {
         var pr16 = FrozenPrCorpus.Pr16;
-        var dto = await _fixture.LoadPrDetailAsync(pr16);
+        var snap = await _fixture.Loader.LoadAsync(Ref(pr16), CancellationToken.None);
+        snap.Should().NotBeNull();
+        var dto = snap!.Detail;
         dto.Iterations.Should().NotBeNull();
         dto.Iterations!.Count.Should().BeInRange(1, 2,
             "PR #16's 9 commits share identical committedDate; algorithm must degrade gracefully");
@@ -1320,54 +1482,7 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
 }
 ```
 
-- [ ] **Step 2: Implement the `LiveGitHubFixture` adapter**
-
-`LiveGitHubFixture` instantiates `GitHubReviewService` against live GitHub. xUnit's `IClassFixture` semantics give us one instance per test class — sharing the HttpClient + PrDetailLoader across the 5+ tests in the class amortizes TCP setup.
-
-Create `tests/PRism.GitHub.Tests.Integration/LiveGitHubFixture.cs`:
-
-```csharp
-using System.Net.Http.Headers;
-using Microsoft.Extensions.Logging.Abstractions;
-using PRism.Core.PrDetail;
-using PRism.GitHub;
-using PRism.GitHub.Tests.Integration.Helpers;
-
-namespace PRism.GitHub.Tests.Integration;
-
-public sealed class LiveGitHubFixture : IDisposable
-{
-    private readonly HttpClient _http;
-    private readonly GitHubReviewService _svc;
-    private readonly PrDetailLoader _loader;
-
-    public LiveGitHubFixture()
-    {
-        _http = new HttpClient { BaseAddress = new Uri("https://api.github.com/") };
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GhCliPat.Get().Reveal());
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("PRism.GitHub.Tests.Integration");
-        _http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
-
-        // GitHubReviewService construction follows the production wiring in
-        // PRism.GitHub/ServiceCollectionExtensions.cs — keep the constructor args matched.
-        _svc = new GitHubReviewService(_http, NullLogger<GitHubReviewService>.Instance);
-        _loader = new PrDetailLoader(_svc, /* other deps per production wiring */ NullLogger<PrDetailLoader>.Instance);
-    }
-
-    public Task<PrDetailDto> LoadPrDetailAsync(FrozenPrEntry entry) =>
-        _loader.LoadAsync(new PrReference("prpande", "PRism", entry.PrNumber), entry.HeadSha, CancellationToken.None);
-
-    public Task<DiffDto> LoadDiffAsync(FrozenPrEntry entry) =>
-        _svc.GetPrDiffAsync(new PrReference("prpande", "PRism", entry.PrNumber), entry.HeadSha, CancellationToken.None);
-
-    public Task<IReadOnlyList<ReviewCommentAnchor>> LoadCommentAnchorsAsync(FrozenPrEntry entry) =>
-        _svc.GetReviewCommentAnchorsAsync(new PrReference("prpande", "PRism", entry.PrNumber), entry.HeadSha, CancellationToken.None);
-
-    public void Dispose() => _http.Dispose();
-}
-```
-
-**Note on the fixture's exact method names and signatures:** verify against the actual `GitHubReviewService` / `PrDetailLoader` API at implementation time. The spec assumes these methods exist in shape close to the names above; if the names differ in the current codebase, adapt to the production names rather than introducing new methods on the production classes.
+**Note on `PrDetailSnapshot` vs `PrDetailDto`.** `PrDetailLoader.LoadAsync` returns `Task<PrDetailSnapshot?>` (verified at `PRism.Core/PrDetail/PrDetailLoader.cs:69`). `PrDetailSnapshot` is a wrapper `(PrDetailDto Detail, string HeadSha, int CoefficientsGeneration)` — the `Iterations` / `ClusteringQuality` / `ReviewComments` fields live on `snap.Detail`, not on `snap`. The null check is load-bearing — `LoadAsync` returns null when the PR is not accessible (e.g. token expired mid-test).
 
 - [ ] **Step 3: Run the integration suite against live GitHub**
 
@@ -1435,7 +1550,7 @@ public async Task Frozen_pr_graphql_shape_unchanged()
     GhCliPat.EnsureCaptureModeNotInCi();
 
     var pr19 = FrozenPrCorpus.Pr19;
-    var liveResponse = await _fixture.LoadRawGraphQLResponseAsync(pr19);  // returns JsonElement
+    var liveResponse = await _fixture.LoadRawGraphQLResponseAsync(pr19.PrNumber);  // returns JsonElement
     var stripped = FixtureStripAllowlist.Apply(liveResponse);
     var strippedJson = stripped.ToJsonString();
 
@@ -1460,62 +1575,70 @@ public async Task Frozen_pr_graphql_shape_unchanged()
 }
 ```
 
-- [ ] **Step 3: Add `LoadRawGraphQLResponseAsync` to `LiveGitHubFixture`**
+- [ ] **Step 3: Wire test 7g to capture from the production GraphQL query, not a duplicate**
+
+**Critical:** test 7g must capture the shape of the GraphQL query that PRism ACTUALLY ISSUES in production. Round-1 ce-doc-review (FEAS-R1-6 / ADV-2) flagged that a hand-authored query in the test is a fabrication — fixture drift caught would be drift for a query nothing in production sends. Resolution: lift the production query string from `GitHubReviewService.GetPrDetailAsync` to an internal-visible constant, then have the test issue THAT string verbatim.
+
+**Pre-step: production-side change.** Refactor `PRism.GitHub/GitHubReviewService.cs` (the `GetPrDetailAsync` method at ~line 225) to extract the inlined query string into a named `internal` constant on the partial class, then add an `internal` accessor:
 
 ```csharp
-public async Task<JsonElement> LoadRawGraphQLResponseAsync(FrozenPrEntry entry)
+// In PRism.GitHub/GitHubReviewService.cs (or a new partial-class file alongside it):
+internal const string PrDetailGraphQLQuery =
+    "query($owner:String!,$repo:String!,$number:Int!){" +
+    "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+    "title body url state isDraft mergeable mergeStateStatus " +
+    "headRefName baseRefName headRefOid baseRefOid " +
+    "author{login} createdAt closedAt mergedAt changedFiles " +
+    "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login} createdAt body}}" +
+    "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
+    "comments(first:100){nodes{id author{login} createdAt body lastEditedAt}}}}" +
+    "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
+    "pageInfo{hasNextPage endCursor} nodes{__typename " +
+    "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
+    "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
+    "... on PullRequestReview{submittedAt}" +
+    "}}" +
+    "}}}";
+```
+
+Replace the inlined `const string query = "..."` inside `GetPrDetailAsync` with a reference to `PrDetailGraphQLQuery`. Add an `[InternalsVisibleTo("PRism.GitHub.Tests.Integration")]` attribute to `PRism.GitHub.csproj` (or the project's `AssemblyInfo`):
+
+```xml
+<ItemGroup>
+  <InternalsVisibleTo Include="PRism.GitHub.Tests.Integration" />
+</ItemGroup>
+```
+
+Verify nothing else in the production codebase regressed — the existing PRism.GitHub.Tests should still pass.
+
+**Then add `LoadRawGraphQLResponseAsync` to `LiveGitHubFixture`** (extends Task 10's Step 1 fixture):
+
+```csharp
+// Add to LiveGitHubFixture class. Resolves an HttpClient from the same named "github" pool
+// AddPrismGitHub() set up — same BaseAddress, same connection reuse.
+public async Task<JsonElement> LoadRawGraphQLResponseAsync(int prNumber)
 {
-    // Replays the same GraphQL query GitHubReviewService uses for PR detail. The query body
-    // mirrors GitHubReviewService.LoadPrDetailGraphQLAsync; spec § 5 row 7g asserts the
-    // structural shape of THIS response is stable across schema changes.
-    var query = @"query($owner: String!, $repo: String!, $number: Int!) {
-      repository(owner: $owner, name: $repo) {
-        pullRequest(number: $number) {
-          number title state body headRefOid baseRefOid
-          author { login }
-          mergedAt mergedBy { login }
-          changedFiles
-          commits(first: 100) {
-            totalCount
-            nodes {
-              commit {
-                oid message authoredDate committedDate
-                author { name email }
-              }
-            }
-          }
-          reviews(first: 50) {
-            totalCount
-            nodes {
-              state body author { login } submittedAt
-              comments(first: 50) {
-                nodes { path line body }
-              }
-            }
-          }
-          timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) {
-            nodes {
-              __typename
-              ... on HeadRefForcePushedEvent {
-                createdAt
-                beforeCommit { oid }
-                afterCommit { oid }
-              }
-            }
-          }
-        }
-      }
-    }";
-    using var req = new HttpRequestMessage(HttpMethod.Post, "graphql")
+    var factory = _sp.GetRequiredService<IHttpClientFactory>();
+    using var http = factory.CreateClient("github");
+
+    var token = GhCliPat.Get().Reveal();
+    using var req = new HttpRequestMessage(HttpMethod.Post, "graphql");
+    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+    req.Headers.UserAgent.ParseAdd("PRism.GitHub.Tests.Integration");
+    req.Content = JsonContent.Create(new
     {
-        Content = JsonContent.Create(new
-        {
-            query,
-            variables = new { owner = "prpande", repo = "PRism", number = entry.PrNumber }
-        })
-    };
-    using var resp = await _http.SendAsync(req);
-    resp.EnsureSuccessStatusCode();
+        query = GitHubReviewService.PrDetailGraphQLQuery,   // <-- the lifted production constant
+        variables = new { owner = "prpande", repo = "PRism", number = prNumber }
+    });
+
+    using var resp = await http.SendAsync(req);
+    if (!resp.IsSuccessStatusCode)
+    {
+        // Sanitized — never include Authorization header value in exception message (SEC-001).
+        throw new InvalidOperationException(
+            $"GraphQL request to GitHub failed with {(int)resp.StatusCode} for PR #{prNumber}. " +
+            $"(Authorization header omitted.)");
+    }
     var stream = await resp.Content.ReadAsStreamAsync();
     using var doc = await JsonDocument.ParseAsync(stream);
     return doc.RootElement.Clone();
@@ -1591,7 +1714,7 @@ public class PatScopeContractTests
 
         // Assertion (a): credential validates and returns Ok with a non-empty Login.
         AuthValidationResult result = await svc.ValidateCredentialsAsync(CancellationToken.None);
-        result.Ok.Should().BeTrue($"validation failed with: {result.ErrorMessage}");
+        result.Ok.Should().BeTrue($"validation failed with: {result.ErrorDetail}");
         result.Login.Should().NotBeNullOrWhiteSpace("ViewerLogin is load-bearing for the suite");
 
         // Assertion (b): one live read against prpande/PRism succeeds — confirms repo authorization,
@@ -1679,17 +1802,21 @@ public class CanonicalIterationCountTests : IClassFixture<LiveGitHubFixture>
 }
 ```
 
-- [ ] **Step 3: Update `.runsettings` to also exclude `Canonical=Strict` from the standard `Category=Integration` filter**
+- [ ] **Step 3: Verify the `Canonical=Strict` separation works in practice**
 
-The existing `.runsettings` already excludes both via `Category!=Integration&Canonical!=Strict` (Task 1 Step 2). Confirm by reading the file.
-
-Verify Canonical=Strict tests don't run on the default integration filter:
+**Important VSTest semantics:** the `--filter` CLI flag REPLACES the `.runsettings` `TestCaseFilter`, it does NOT AND-merge with it (FEAS round-1 / ADV-R1-3). So the default integration-test command needs to explicitly exclude `Canonical=Strict`:
 
 ```powershell
-dotnet test tests\PRism.GitHub.Tests.Integration --configuration Release --filter "Category=Integration"
+# Default integration sweep — must explicitly exclude Canonical=Strict
+dotnet test tests\PRism.GitHub.Tests.Integration --configuration Release --filter "Category=Integration&Canonical!=Strict"
+
+# Triage-only canonical-strict run
+dotnet test tests\PRism.GitHub.Tests.Integration --configuration Release --filter "Canonical=Strict"
 ```
 
-Expected: the count of run tests does NOT include Pr16_canonical / Pr19_canonical.
+Expected: the first command runs the 7 integration tests + does NOT include `Pr16_canonical` / `Pr19_canonical`. The second command runs only the two canonical-strict tests.
+
+The CI workflow (Task 17) and the runbook (Task 19) also need to use the AND-form filter, not the plain `Category=Integration` shorthand.
 
 - [ ] **Step 4: Run the canonical-strict tests on demand**
 
@@ -1900,11 +2027,21 @@ jobs:
         with:
           dotnet-version: '10.0.x'   # matches Directory.Build.props TargetFramework=net10.0
 
-      - name: Mask PAT in subsequent log output
+      - name: Fail fast if PRISM_INTEGRATION_PAT secret is missing (ADV-9)
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PRISM_INTEGRATION_PAT)) {
+            Write-Error "PRISM_INTEGRATION_PAT secret is not set. See docs/contract-tests.md § Prereqs to create the secret before re-dispatching this workflow."
+            exit 1
+          }
+        env:
+          PRISM_INTEGRATION_PAT: ${{ secrets.PRISM_INTEGRATION_PAT }}
+
+      - name: Mask PAT in all subsequent log output (must run BEFORE any step that could surface it)
         shell: pwsh
         run: |
           $token = $env:PRISM_INTEGRATION_PAT
-          if (-not [string]::IsNullOrWhiteSpace($token)) { Write-Output "::add-mask::$token" }
+          Write-Output "::add-mask::$token"
         env:
           PRISM_INTEGRATION_PAT: ${{ secrets.PRISM_INTEGRATION_PAT }}
 
@@ -1914,7 +2051,7 @@ jobs:
           dotnet build --no-restore --configuration Release
 
       - name: Run integration tests
-        run: dotnet test tests/PRism.GitHub.Tests.Integration --configuration Release --no-build --filter "Category=Integration" --logger "console;verbosity=detailed"
+        run: dotnet test tests/PRism.GitHub.Tests.Integration --configuration Release --no-build --filter "Category=Integration&Canonical!=Strict" --logger "console;verbosity=detailed"
         env:
           PRISM_INTEGRATION_PAT: ${{ secrets.PRISM_INTEGRATION_PAT }}
           PRISM_FROZEN_PR_CAPTURE_FIXTURE: ''   # explicit override — capture mode MUST NOT engage in CI (spec § 7)
@@ -1933,10 +2070,15 @@ If the owner is not the implementing agent, document this as a pre-merge require
 
 ```powershell
 gh workflow run integration-tests.yml
-gh run watch  # wait for completion
+# Wait a few seconds for the new run to register, then capture its id:
+Start-Sleep -Seconds 5
+$runId = (gh run list --workflow=integration-tests.yml --limit 1 --json databaseId | ConvertFrom-Json)[0].databaseId
+gh run watch $runId
 ```
 
-Expected: the workflow runs successfully against live GitHub; all 7 Category=Integration tests pass.
+(`gh run watch` with no args is interactive — it prompts the user to pick a run; the explicit run-id keeps it scriptable. Note: `gh run watch` may not work with fine-grained PATs that lack `checks:read` — if it errors, use `gh run view $runId --log` after waiting for completion instead.)
+
+Expected: the workflow runs successfully against live GitHub; all 7 Category=Integration tests pass (Canonical=Strict tests are excluded by the AND-filter).
 
 - [ ] **Step 4: Commit**
 
@@ -2013,7 +2155,7 @@ Spec § 9.
 
 ## What this suite is for
 
-`PRism.GitHub.Tests.Integration` exercises `GitHubReviewService` against five locked, SHA-pinned PRs in `prpande/PRism`. It catches parsing/derivation drift on the read path (PR detail, diff, comments, timeline) and GraphQL shape drift on the queries PRism issues. The suite is opt-in — `workflow_dispatch` only in CI, manual `dotnet test --filter "Category=Integration"` locally. Design rationale and architecture: see `docs/specs/2026-05-18-frozen-pr-contract-tests-design.md`.
+`PRism.GitHub.Tests.Integration` exercises `GitHubReviewService` against five locked, SHA-pinned PRs in `prpande/PRism`. It catches parsing/derivation drift on the read path (PR detail, diff, comments, timeline) and GraphQL shape drift on the queries PRism issues. The suite is opt-in — `workflow_dispatch` only in CI, manual `dotnet test --filter "Category=Integration&Canonical!=Strict"` locally. Design rationale and architecture: see `docs/specs/2026-05-18-frozen-pr-contract-tests-design.md`.
 
 ## Prereqs
 
@@ -2024,7 +2166,7 @@ Spec § 9.
 ## Running locally
 
 ```powershell
-dotnet test --filter "Category=Integration"
+dotnet test --filter "Category=Integration&Canonical!=Strict"
 ```
 
 Run from repo root. The `.runsettings` filter ensures the default `dotnet test` (without `--filter`) excludes the integration suite.
@@ -2069,6 +2211,8 @@ When an intentional GitHub GraphQL schema change lands, refresh `Fixtures/pr19-g
 - **bash:** `PRISM_FROZEN_PR_CAPTURE_FIXTURE=1 dotnet test --filter "FullyQualifiedName~Frozen_pr_graphql_shape_unchanged"`
 
 Capture mode runs only locally — the CI workflow blocks it with a two-layer guard (spec § 7). The capture flow strips freeform-text and identity fields against `FixtureStripAllowlist`; review the resulting fixture diff in the PR.
+
+**⚠️ Trap: do NOT export `PRISM_FROZEN_PR_CAPTURE_FIXTURE=1` in your shell profile** (`.bashrc`, `$PROFILE`, `.zshrc`, etc.) for convenience. The capture branch logs a banner and passes silently, so a leaked env var means every routine `dotnet test --filter "Category=Integration&Canonical!=Strict"` rewrites the fixture with the current live API response. The test always reports green because expected == actual == now, and real shape drift is silently captured into the baseline instead of detected. Always use the inline `$env:X=...; ...; Remove-Item env:X` (or `unset`) idiom shown above so the variable's lifetime is scoped to the one capture command.
 
 ## Triaging a shape-drift failure
 
@@ -2129,7 +2273,7 @@ Add to README.md under the Development workflow section:
 A separate suite at `tests/PRism.GitHub.Tests.Integration/` exercises `GitHubReviewService` against five locked PRs in this repo. Opt-in — excluded from default `dotnet test` via `.runsettings`.
 
 ```powershell
-dotnet test --filter "Category=Integration"
+dotnet test --filter "Category=Integration&Canonical!=Strict"
 ```
 
 Requires `PRISM_INTEGRATION_PAT` env var or `gh auth login`. Full operator runbook: [`docs/contract-tests.md`](docs/contract-tests.md). Design: [`docs/specs/2026-05-18-frozen-pr-contract-tests-design.md`](docs/specs/2026-05-18-frozen-pr-contract-tests-design.md).
