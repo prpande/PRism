@@ -13,15 +13,26 @@ var builder = WebApplication.CreateBuilder(args);
 // Static Web Assets (the build manifest that maps /assets/* URLs to files
 // under wwwroot) are auto-enabled only in Development. The Playwright E2E
 // suite runs the host under Test env (to engage the fake-review swap
-// below) and would otherwise serve every JS/CSS asset as 200 OK with 0
-// bytes — the SPA never bootstraps. We gate this on the same opt-in env
-// var as the fake-review swap (PRISM_E2E_FAKE_REVIEW=1) so the existing
-// xUnit WebApplicationFactory suite (also Test env) keeps using its per-
-// test UseWebRoot stub instead of the real wwwroot manifest.
+// below, or the real-inject seam) and would otherwise serve every JS/CSS
+// asset as 200 OK with 0 bytes — the SPA never bootstraps. We gate this
+// on EITHER opt-in env var (PRISM_E2E_FAKE_REVIEW=1 or PRISM_E2E_REAL_INJECT=1)
+// so the existing xUnit WebApplicationFactory suite (also Test env) keeps
+// using its per-test UseWebRoot stub instead of the real wwwroot manifest.
 if (builder.Environment.IsEnvironment("Test")
-    && Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1")
+    && (Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1"
+     || Environment.GetEnvironmentVariable("PRISM_E2E_REAL_INJECT") == "1"))
 {
     builder.WebHost.UseStaticWebAssets();
+}
+
+// FAKE_REVIEW and REAL_INJECT are mutually exclusive — fake backend with injection
+// would intercept calls that never reach GitHub, producing confusing behavior.
+if (Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1"
+ && Environment.GetEnvironmentVariable("PRISM_E2E_REAL_INJECT") == "1")
+{
+    throw new InvalidOperationException(
+      "PRISM_E2E_FAKE_REVIEW and PRISM_E2E_REAL_INJECT are mutually exclusive — " +
+      "injection only makes sense against the real GitHub backend.");
 }
 
 // Resolve dataDir from configuration (test sets it via UseSetting; production uses SpecialFolder).
@@ -64,6 +75,19 @@ if (builder.Environment.IsEnvironment("Test")
     builder.Services.AddSingleton<IPrDiscovery, FakePrDiscovery>();
     builder.Services.AddSingleton<IPrReader, FakePrReader>();
     builder.Services.AddSingleton<IReviewSubmitter, FakeReviewSubmitter>();
+}
+
+// Test env + REAL_INJECT: attach TestFailureInjectionHandler to the "github" named HttpClient.
+// MUST run after AddPrismGitHub() so the named "github" client is already configured by
+// PRism.GitHub.ServiceCollectionExtensions.AddPrismGitHub; this call is additive on the
+// same client name (preserves BaseAddress).
+if (builder.Environment.IsEnvironment("Test")
+ && Environment.GetEnvironmentVariable("PRISM_E2E_REAL_INJECT") == "1")
+{
+    builder.Services.AddSingleton<RealTransportFailureInjector>();
+    builder.Services.AddTransient<TestFailureInjectionHandler>();
+    builder.Services.AddHttpClient("github")
+        .AddHttpMessageHandler<TestFailureInjectionHandler>();
 }
 
 var app = builder.Build();
@@ -213,6 +237,7 @@ if (builder.Environment.IsEnvironment("Test"))
 // Method itself env-guards at registration; the call here keeps Program.cs symmetric
 // with the other endpoint map* calls.
 app.MapTestEndpoints();
+app.MapRealInjectEndpoints();   // self-gates on Test env + REAL_INJECT
 
 // Unknown /api/* paths return 404 (more specific pattern wins over the SPA fallback).
 app.MapFallback("/api/{*rest}", () => Microsoft.AspNetCore.Http.Results.NotFound());
