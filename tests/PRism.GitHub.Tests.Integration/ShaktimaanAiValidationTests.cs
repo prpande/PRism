@@ -31,7 +31,8 @@ namespace PRism.GitHub.Tests.Integration;
 /// </summary>
 [Trait("Category", "Validation")]
 [Trait("Category", "Integration")]
-public class ShaktimaanAiValidationTests : IClassFixture<LiveGitHubFixture>
+[Collection(LiveGitHubCollection.Name)]
+public class ShaktimaanAiValidationTests
 {
     private readonly LiveGitHubFixture _fixture;
     private readonly ITestOutputHelper _output;

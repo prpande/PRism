@@ -13,7 +13,8 @@ namespace PRism.GitHub.Tests.Integration;
 /// captured assertions remain stable across rebases and force-pushes.
 /// </summary>
 [Trait("Category", "Integration")]
-public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
+[Collection(LiveGitHubCollection.Name)]
+public class FrozenPrismPrTests
 {
     private readonly LiveGitHubFixture _fixture;
     public FrozenPrismPrTests(LiveGitHubFixture fixture) => _fixture = fixture;
@@ -78,12 +79,13 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
         var actualAnchors = snap!.Detail.ReviewComments
             .Select(t => new CommentAnchor(t.FilePath, t.LineNumber))
             .ToHashSet();
-        foreach (var expected in pr19.ExpectedCommentAnchors)
-        {
-            actualAnchors.Should().Contain(expected,
-                "If Frozen_pr_graphql_shape_unchanged is also failing, fix the fixture first; " +
-                "this assertion runs against parsed shape.");
-        }
+
+        // Subset assertion as a single set comparison so a failure surfaces EVERY missing
+        // anchor in one diagnostic — the per-item foreach pattern would throw on the first
+        // miss and hide the rest, which forces multiple triage round-trips.
+        pr19.ExpectedCommentAnchors.Should().BeSubsetOf(actualAnchors,
+            "If Frozen_pr_graphql_shape_unchanged is also failing, fix the fixture first; " +
+            "this assertion runs against parsed shape.");
     }
 
     // 7f — clusteringQuality classification.

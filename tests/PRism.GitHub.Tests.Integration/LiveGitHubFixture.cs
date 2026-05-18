@@ -10,8 +10,28 @@ using PRism.Core.Iterations;
 using PRism.Core.PrDetail;
 using PRism.GitHub;
 using PRism.GitHub.Tests.Integration.Helpers;
+using Xunit;
 
 namespace PRism.GitHub.Tests.Integration;
+
+/// <summary>
+/// xUnit collection definition that pins every test class touching live GitHub into one
+/// non-parallel collection. xUnit's default parallelizes test classes within the same
+/// assembly on separate threads; for the live-GitHub suite that means four classes
+/// (FrozenPrismPrTests + PatScopeContractTests + ShaktimaanAiValidationTests +
+/// CanonicalIterationCountTests) hitting GitHub concurrently with four separate DI
+/// containers, each amplifying rate-limit pressure and quadrupling DI startup cost.
+/// Disabling parallelization at the collection level forces sequential execution + lets the
+/// single LiveGitHubFixture instance be reused (via ICollectionFixture on each class) instead
+/// of being re-instantiated per class.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix",
+    Justification = "xUnit convention — types implementing ICollectionFixture<T> are named *Collection and matched by name by the [Collection(...)] attribute.")]
+public sealed class LiveGitHubCollection : ICollectionFixture<LiveGitHubFixture>
+{
+    public const string Name = "LiveGitHub";
+}
 
 /// <summary>
 /// xUnit class fixture that builds a DI container mirroring production wiring
@@ -86,7 +106,7 @@ public sealed class LiveGitHubFixture : IDisposable
     /// <see cref="HostUrlResolver.GraphQlEndpoint"/> (matches the production
     /// <c>PostGraphQLAsync</c> path) to keep parity with how the SUT reaches GitHub.
     /// </remarks>
-    public async Task<JsonElement> LoadRawGraphQLResponseAsync(int prNumber)
+    public async Task<JsonElement> LoadRawGraphQLResponseAsync(int prNumber, CancellationToken ct = default)
     {
         var factory = _sp.GetRequiredService<IHttpClientFactory>();
         var config = _sp.GetRequiredService<IConfigStore>();
@@ -96,14 +116,20 @@ public sealed class LiveGitHubFixture : IDisposable
         var endpoint = HostUrlResolver.GraphQlEndpoint(config.Current.Github.Host);
         using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism.GitHub.Tests.Integration");
+        // Header parity with production PostGraphQLAsync (GitHubReviewService.cs:752-753):
+        // the SUT sets UserAgent "PRism/0.1" and Accept "application/vnd.github+json", and the
+        // shape-drift suite must replay those exact headers — otherwise we'd be testing a
+        // different request shape than production issues, and GitHub's response-header-driven
+        // shape variations (per-Accept content negotiation) would slip past 7g.
+        req.Headers.UserAgent.ParseAdd("PRism/0.1");
+        req.Headers.Accept.ParseAdd("application/vnd.github+json");
         req.Content = JsonContent.Create(new
         {
             query = GitHubReviewService.PrDetailGraphQLQuery,
             variables = new { owner = "prpande", repo = "PRism", number = prNumber }
         });
 
-        using var resp = await http.SendAsync(req);
+        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
             // Sanitized — never echo the Authorization header value back through the exception.
@@ -111,8 +137,8 @@ public sealed class LiveGitHubFixture : IDisposable
                 $"GraphQL request to GitHub failed with {(int)resp.StatusCode} for PR #{prNumber}. " +
                 "(Authorization header omitted.)");
         }
-        var stream = await resp.Content.ReadAsStreamAsync();
-        using var doc = await JsonDocument.ParseAsync(stream);
+        var stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
         return doc.RootElement.Clone();
     }
 

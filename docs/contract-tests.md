@@ -24,7 +24,7 @@ Validation tests against `prpande/ShaktimaanAI` PRs run under the same `Category
 
 | PR | Shape category | Why it tests |
 |---|---|---|
-| #1 | Single-iteration baseline | 2 commits 2 seconds apart. `clusteringQuality === Low` short-circuit path. |
+| #1 | Single-iteration baseline | 2 commits 2 seconds apart. Resolves to `Ok` + 1 iteration after the 2026-05-18 calibration relaxed `DetermineQuality`'s 1-commit short-circuit to 0-commit only — two adjacent commits introducing two related YAML files is genuinely "one unit of work." Pins the canonical baseline against future `DetermineQuality` regressions. |
 | #16 | Rebased-history `committedDate` collision | 9 commits with identical `committedDate` after rebase. Algorithm graceful-degradation when primary time signal is collapsed. |
 | #19 | Multi-burst with review-fix tail | 12 commits over ~1h36m in 2-3 natural bursts. Default boundary detection + comment-anchor subset. |
 | #22 | Overnight time-gap boundary | 9-commit evening session + 1 next-morning fix. Time-gap boundary signal. |

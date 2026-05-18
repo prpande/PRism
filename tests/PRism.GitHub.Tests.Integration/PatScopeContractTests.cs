@@ -6,7 +6,8 @@ using Xunit;
 namespace PRism.GitHub.Tests.Integration;
 
 [Trait("Category", "Integration")]
-public class PatScopeContractTests : IClassFixture<LiveGitHubFixture>
+[Collection(LiveGitHubCollection.Name)]
+public class PatScopeContractTests
 {
     private readonly LiveGitHubFixture _fixture;
     public PatScopeContractTests(LiveGitHubFixture fixture) => _fixture = fixture;

@@ -13,7 +13,8 @@ namespace PRism.GitHub.Tests.Integration;
 // A coefficient retune that shifts a canonical only changes the constant, not the name.
 [Trait("Canonical", "Strict")]
 [Trait("Category", "Integration")]
-public class CanonicalIterationCountTests : IClassFixture<LiveGitHubFixture>
+[Collection(LiveGitHubCollection.Name)]
+public class CanonicalIterationCountTests
 {
     // Update these constants when the algorithm's canonical iteration counts shift.
     private const int Pr16Canonical = 1;
