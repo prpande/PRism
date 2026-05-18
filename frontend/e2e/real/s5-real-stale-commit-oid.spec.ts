@@ -52,9 +52,11 @@ test('S5 real flow — stale commit OID triggers recreate on second submit', asy
   // /failed/i would also match transient step-progress text and risk a false-positive pass if the
   // injector misfires (see SubmitProgressIndicator.tsx:80,98 for the data-state surface).
   await expect(dialog1.locator('[data-state="failed"]').first()).toBeVisible({ timeout: 20_000 });
-  // Deterministic close — assert hidden after Escape so a missing close affordance fails loudly
-  // rather than silently leaving the modal blocking the next Submit click.
-  await page.keyboard.press('Escape');
+  // Click Cancel as the deterministic close affordance — Escape moves focus to Cancel but
+  // does NOT close the dialog (SubmitDialog UX: Esc moves focus, Enter on Cancel closes).
+  // Clicking the visible Cancel button is the single-action equivalent; toBeHidden still
+  // turns a missing button into a loud failure.
+  await dialog1.getByRole('button', { name: /^cancel$/i }).click();
   await expect(dialog1).toBeHidden({ timeout: 5_000 });
 
   // Push a real commit to the branch via createCommitOnBranch. The Reload-banner-visibility

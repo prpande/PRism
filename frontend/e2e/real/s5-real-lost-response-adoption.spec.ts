@@ -54,9 +54,11 @@ test('S5 real flow — lost-response adoption skips re-attach and finalizes clea
   // injector misfires (see SubmitProgressIndicator.tsx:80,98 for the data-state surface).
   await expect(dialog1.locator('[data-state="failed"]').first()).toBeVisible({ timeout: 20_000 });
 
-  // Deterministic close — assert hidden after Escape so a missing close affordance fails loudly
-  // rather than silently leaving the modal blocking the next Submit click.
-  await page.keyboard.press('Escape');
+  // Click Cancel as the deterministic close affordance — Escape moves focus to Cancel but
+  // does NOT close the dialog (SubmitDialog UX: Esc moves focus, Enter on Cancel closes).
+  // Clicking the visible Cancel button is the single-action equivalent; toBeHidden still
+  // turns a missing button into a loud failure.
+  await dialog1.getByRole('button', { name: /^cancel$/i }).click();
   await expect(dialog1).toBeHidden({ timeout: 5_000 });
 
   // Second submit → adoption: FindOwnPendingReviewAsync finds the previously-attached pending review,
