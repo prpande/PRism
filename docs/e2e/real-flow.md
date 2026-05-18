@@ -20,7 +20,7 @@ Design doc: [`docs/specs/2026-05-18-real-flow-e2e-playwright-design.md`](../spec
    ```bash
    cd frontend && npm run setup-real-e2e-fixtures
    ```
-   This creates 4 long-lived branches+PRs on the sandbox under `e2e-real-{happy,foreign,lost-response,stale-oid}-fixture-<your-login>`. The script is idempotent; re-run any time to repair drift.
+   This creates 4 long-lived branches+PRs on the sandbox under `e2e-real-{happy,foreign,lost-response,stale-oid}-fixture-<your-login>`. The script is idempotent: re-running with existing branches/PRs is a no-op (it reads the current branch tip as `baseOid`). To repair a drifted branch, delete the branch and PR on GitHub and re-run the script, or call `forceResetBranch` from `e2e/real/helpers/gh-sandbox.ts` directly.
 
 ## Running
 
@@ -66,13 +66,13 @@ Per design §8 DoD: before merging a PR that touches the submit pipeline, run ea
 - **"fixtures.json not found"** → run `npm run setup-real-e2e-fixtures`.
 - **"gh: not authenticated"** → `gh auth login --scopes repo`.
 - **"viewer login mismatch"** → your `gh` is authed as a different account than the one that generated `fixtures.json`. Re-run setup or switch context.
-- **PR exists but branch is at unexpected SHA** → re-run setup script (idempotent: force-resets the branch).
+- **PR exists but branch is at unexpected SHA** → the setup script does not force-reset existing branches. Delete the branch via `gh api -X DELETE /repos/prpande/prism-sandbox/git/refs/heads/<branch>` and re-run the setup script to recreate it, or call `forceResetBranch` from `e2e/real/helpers/gh-sandbox.ts` for a programmatic reset.
 - **Dangling pending review you can't delete via PRism** → `gh api graphql -f query='mutation { deletePullRequestReview(input: { pullRequestReviewId: "PRR_..." }) { pullRequestReview { id } } }'`
 
 ## Operator runbook (owner)
 
 - **Onboarding a new teammate:** `gh api -X PUT repos/prpande/prism-sandbox/collaborators/<login> -F permission=push`. Share this doc.
-- **Refreshing master if anchor file drifts:** any teammate's setup-script run handles it (the script reads master's current head as the new fixture base).
+- **Refreshing fixtures if master / anchor file drifts:** the setup script only reads master's head when creating a *new* fixture branch, so existing fixture branches keep their original anchor content. To refresh anchors, delete the affected fixture branch + PR and re-run the setup script.
 - **GC'ing stale fixtures for a teammate who left:** list their `e2e-real-*-fixture-<login>` branches via `gh api repos/prpande/prism-sandbox/branches` and delete via `gh api -X DELETE`.
 
 ## Pre-release sanity gate
