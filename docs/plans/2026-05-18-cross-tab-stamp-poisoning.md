@@ -4,7 +4,7 @@
 
 **Goal:** Close the submit-gate bypass class identified in [PR #55 deferrals § "Cross-tab stamp poisoning"](../specs/2026-05-11-s5-submit-pipeline-deferrals.md#defer-cross-tab-stamp-poisoning-f3-from-ce-code-review) by partitioning `LastViewedHeadSha` per-tab inside `ReviewSessionState`, keyed by `X-PRism-Tab-Id`.
 
-**Architecture:** Promote `LastViewedHeadSha` into a per-tab `TabStamp` map (`TabStamps: IReadOnlyDictionary<string, TabStamp>`) inside `ReviewSessionState`; `LastSeenCommentId` stays session-flat as a monotone high-water (preserves the inbox unread badge). V5→V6 schema migration drops legacy `last-viewed-head-sha` keys; cap N=8 with LRU-by-`StampedAtUtc`. Submit gate, mark-viewed, reload, reconciliation pipeline, markAllRead, the `/test/mark-pr-viewed` hook, the inbox projection, and the FE error/banner copy all get wired through.
+**Architecture:** Promote `LastViewedHeadSha` into a per-tab `TabStamp` map (`TabStamps: IReadOnlyDictionary<string, TabStamp>`) inside `ReviewSessionState`; `LastSeenCommentId` stays session-flat as a monotone high-water (preserves the inbox unread badge). V5→V6 schema migration drops legacy `last-viewed-head-sha` keys; cap N=8 with LRU-by-`StampedAtUtc`. Submit gate, mark-viewed, reload, reconciliation pipeline, the `/test/mark-pr-viewed` hook, the inbox projection, and the FE error/banner copy all get wired through.
 
 **Tech Stack:** .NET 10 minimal API (`PRism.Web` / `PRism.Core` / `PRism.GitHub`), React 18 + Vite + TS frontend, Playwright e2e, xUnit BE tests + Vitest FE tests.
 
@@ -14,23 +14,106 @@
 
 ---
 
+## Pre-task — Verify test infrastructure
+
+Before any code change, confirm two enabling facts. Both are quick reads; their outcomes shape Task 0.
+
+- `tests/PRism.Web.Tests/AssemblyInfo.cs` (or `.csproj`) declares `[InternalsVisibleTo("PRism.Web.Tests")]` exposing `PRism.Web`'s internals (the existing pattern; the spec relies on `SubmitErrorDto` being readable from test code).
+- Existing `PrSubmitEndpointsTests.cs` uses `PRismWebApplicationFactory` directly (no per-endpoint TestContext class). That is the pattern this plan follows — **do not invent `PrDetailEndpointsTestContext` / `PrReloadEndpointsTestContext` / etc.**
+
+---
+
+## Task 0: Add header-aware HTTP test helper
+
+Existing tests on `PRismWebApplicationFactory.CreateClient()` use `client.PostAsJsonAsync(url, body)` — a two-arg form that **does not** accept request-specific headers. Every per-tab test in this plan needs a different `X-PRism-Tab-Id` per call, so an `HttpClient.DefaultRequestHeaders.Add(...)` approach is wrong (one client serves many tests; mutation leaks across tests). Build a small extension method that constructs an `HttpRequestMessage` with the header, then calls `SendAsync`.
+
+**Files:**
+- Create: `tests/PRism.Web.Tests/TestHelpers/HttpClientHeaderExtensions.cs`
+
+- [ ] **Step 1: Write the helper**
+
+```csharp
+using System.Net.Http.Json;
+
+namespace PRism.Web.Tests.TestHelpers;
+
+internal static class HttpClientHeaderExtensions
+{
+    /// <summary>
+    /// POST JSON with caller-specified request headers. The per-test header semantics that
+    /// the cross-tab-stamp tests need: each test sends its own X-PRism-Tab-Id without
+    /// mutating the shared HttpClient.DefaultRequestHeaders (which would leak across tests).
+    /// </summary>
+    public static Task<HttpResponseMessage> PostAsJsonWithHeadersAsync<T>(
+        this HttpClient client,
+        string requestUri,
+        T body,
+        IDictionary<string, string>? headers = null,
+        CancellationToken ct = default)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Post, requestUri)
+        {
+            Content = JsonContent.Create(body),
+        };
+        if (headers is not null)
+            foreach (var (k, v) in headers)
+                req.Headers.TryAddWithoutValidation(k, v);
+        return client.SendAsync(req, ct);
+    }
+
+    public static Task<HttpResponseMessage> PatchAsJsonWithHeadersAsync<T>(
+        this HttpClient client,
+        string requestUri,
+        T body,
+        IDictionary<string, string>? headers = null,
+        CancellationToken ct = default)
+    {
+        var req = new HttpRequestMessage(HttpMethod.Patch, requestUri)
+        {
+            Content = JsonContent.Create(body),
+        };
+        if (headers is not null)
+            foreach (var (k, v) in headers)
+                req.Headers.TryAddWithoutValidation(k, v);
+        return client.SendAsync(req, ct);
+    }
+}
+```
+
+- [ ] **Step 2: Build**
+
+```
+dotnet build PRism.sln
+```
+
+Expected: 0 errors.
+
+- [ ] **Step 3: Commit**
+
+```
+git -C D:/src/prism-cross-tab-stamp add tests/PRism.Web.Tests/TestHelpers/HttpClientHeaderExtensions.cs
+git -C D:/src/prism-cross-tab-stamp commit -m "test(helpers): add PostAsJsonWithHeadersAsync extension for per-request headers"
+```
+
+---
+
 ## Phase 1 — Schema + types
 
-Foundation. Once this phase lands, the new `TabStamps` field exists, V6 migration runs, and every position-constructor site compiles against the new shape.
+Foundation. Tasks 1+2 land as one commit so the build stays green at the commit boundary.
 
 ### Task 1: Add `TabStamp` record and reshape `ReviewSessionState`
 
 **Files:**
-- Modify: `PRism.Core/State/AppState.cs:47-57`
+- Modify: `PRism.Core/State/AppState.cs`
 - Test: `tests/PRism.Core.Tests/State/AppStateRoundTripTests.cs`
 
 - [ ] **Step 1: Write the failing round-trip test**
 
-In `tests/PRism.Core.Tests/State/AppStateRoundTripTests.cs`, add:
+In `tests/PRism.Core.Tests/State/AppStateRoundTripTests.cs` (add a new test method):
 
 ```csharp
 [Fact]
-public void TabStamps_round_trips_through_state_serializer()
+public void TabStamps_round_trips_through_state_serializer_with_kebab_case_keys()
 {
     var stamp = new TabStamp(HeadSha: "abc123", StampedAtUtc: new DateTime(2026, 5, 18, 14, 23, 45, DateTimeKind.Utc));
     var session = new ReviewSessionState(
@@ -46,9 +129,11 @@ public void TabStamps_round_trips_through_state_serializer()
         DraftVerdictStatus: DraftVerdictStatus.Draft);
 
     var json = JsonSerializer.Serialize(session, JsonSerializerOptionsFactory.Storage);
-    var deserialized = JsonSerializer.Deserialize<ReviewSessionState>(json, JsonSerializerOptionsFactory.Storage)!;
+    Assert.Contains("\"tab-stamps\"", json);
+    Assert.Contains("\"head-sha\"", json);
+    Assert.Contains("\"stamped-at-utc\"", json);
 
-    Assert.Single(deserialized.TabStamps);
+    var deserialized = JsonSerializer.Deserialize<ReviewSessionState>(json, JsonSerializerOptionsFactory.Storage)!;
     Assert.True(deserialized.TabStamps.ContainsKey("tab-A"));
     Assert.Equal("abc123", deserialized.TabStamps["tab-A"].HeadSha);
     Assert.Equal(stamp.StampedAtUtc, deserialized.TabStamps["tab-A"].StampedAtUtc);
@@ -56,17 +141,9 @@ public void TabStamps_round_trips_through_state_serializer()
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Reshape `ReviewSessionState` + add `TabStamp`**
 
-```
-dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "TabStamps_round_trips_through_state_serializer"
-```
-
-Expected: BUILD ERROR — `TabStamp` not defined; `ReviewSessionState` constructor signature mismatch.
-
-- [ ] **Step 3: Reshape `ReviewSessionState` + add `TabStamp`**
-
-In `PRism.Core/State/AppState.cs`, replace lines 47-57 (the `ReviewSessionState` record) with:
+In `PRism.Core/State/AppState.cs`, replace the `ReviewSessionState` record (lines 47-57) with:
 
 ```csharp
 public sealed record ReviewSessionState(
@@ -86,106 +163,94 @@ public sealed record TabStamp(
     DateTime StampedAtUtc);
 ```
 
-The `LastViewedHeadSha` field is gone. `TabStamps` is the new first positional argument.
+Build will fail at every call site — that's expected. Task 2 fixes them.
 
-- [ ] **Step 4: Run the round-trip test to verify it passes (after Task 2 fixes the call sites)**
+- [ ] **Step 3: Hold the commit**
 
-The test stays red until Task 2 is done — that's expected. Don't try to make this test pass in isolation; the build error at every call site is the signal to proceed to Task 2.
-
-- [ ] **Step 5: Do not commit yet**
-
-Hold the commit until Task 2's call-site sweep lands together. Otherwise the repository is in a non-compiling state.
+Do not commit until Task 2's sweep lands. Otherwise the repository is in a non-compiling state.
 
 ---
 
-### Task 2: Update all positional `ReviewSessionState` constructions
+### Task 2: Sweep every `LastViewedHeadSha` site
 
-**Files (all in this task — sweep):**
-- Modify: `PRism.Web/Endpoints/PrDetailEndpoints.cs:110, 169`
-- Modify: `PRism.Web/Endpoints/PrDraftEndpoints.cs:571-578` (`NewEmptySession`)
-- Modify: `PRism.Web/TestHooks/TestEndpoints.cs:160-170`
-- Modify: `tests/PRism.Core.Tests/Submit/Pipeline/PipelineTestHelpers.cs:25-49`
-- Modify: `tests/PRism.Core.Tests/Submit/Pipeline/PipelineTypesTests.cs:22`
-- Modify: `tests/PRism.Core.Tests/Submit/Pipeline/SuccessClearsSessionTests.cs:53` (assertion rewrite, see step below)
-- Modify: all reconciliation tests that build `ReviewSessionState` directly — find via `grep -r "new ReviewSessionState(" tests/`
+The Task 1 reshape breaks five categories of sites. Enumerate all of them, fix each, then commit Tasks 1+2 together.
 
-- [ ] **Step 1: Find every positional constructor site**
+**Files (categorized; verify exact set via `git grep -nl "LastViewedHeadSha"`):**
+
+| Category | Sites |
+|---|---|
+| Positional / named-arg constructor sites | `PRism.Web/Endpoints/PrDetailEndpoints.cs:110, 169`; `PRism.Web/Endpoints/PrDraftEndpoints.cs:567-578` (`NewEmptySession`); `PRism.Web/TestHooks/TestEndpoints.cs:~160-170`; `tests/PRism.Core.Tests/Submit/Pipeline/PipelineTestHelpers.cs:25-49`; `tests/PRism.Core.Tests/Submit/Pipeline/PipelineTypesTests.cs:~22`; `tests/PRism.Core.Tests/Submit/Pipeline/Fakes/InMemoryAppStateStoreTests.cs`; `tests/PRism.Core.Tests/State/AppStateStoreMigrationTests.cs:~146, ~423`; `tests/PRism.Core.Tests/State/AppStateRoundTripTests.cs`; `tests/PRism.Core.Tests/State/AppStateWithDefaultHelpersTests.cs`; `tests/PRism.Core.Tests/State/PrSessionsStateTests.cs`; `tests/PRism.Web.Tests/TestHelpers/SubmitEndpointsTestContext.cs:~87, ~100`; `tests/PRism.Web.Tests/TestHooks/ClearPrSessionEndpointTests.cs:~27` |
+| `with { LastViewedHeadSha = ... }` writes | `PRism.Web/Endpoints/PrDetailEndpoints.cs:~114`; `PRism.Web/Endpoints/PrReloadEndpoints.cs:~161`; `PRism.Web/TestHooks/TestEndpoints.cs:~172` |
+| `session.LastViewedHeadSha` reads | `PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs:33, ~216`; `PRism.Core/Inbox/InboxRefreshOrchestrator.cs:~244`; `PRism.Web/Endpoints/PrSubmitEndpoints.cs:117, 129, 131, 144` |
+| Reconciliation tests with named-arg `LastViewedHeadSha:` seeds | `tests/PRism.Core.Tests/Reconciliation/{BoundaryPermutation, Delete, ForcePushFallback, Matrix, OverrideStale, PipelineGuard, Rename, Reply, VerdictReconfirm, Whitespace}Tests.cs` |
+| Inbox test | `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs` |
+
+- [ ] **Step 1: Confirm the full set via grep**
 
 ```
-git -C D:/src/prism-cross-tab-stamp grep -n "new ReviewSessionState("
+git -C D:/src/prism-cross-tab-stamp grep -nl "LastViewedHeadSha" -- "*.cs"
 ```
 
-Expected: ~15 hits across production + tests. Treat the grep output as the worklist.
+Expected: ~32 files. Cross-check against the table above; the table is the workplan but the grep is the authority.
 
-- [ ] **Step 2: At each site, swap the first positional argument**
+- [ ] **Step 2: Rewrite positional / named-arg constructor sites**
 
-Old shape (was second positional):
+Every `new ReviewSessionState(...)` (positional) or `new ReviewSessionState(LastViewedHeadSha: ..., ...)` (named-arg with the old field name) needs `TabStamps: new Dictionary<string, TabStamp>()` (or a seeded map) as the first positional / first named arg. `LastViewedHeadSha` arg goes away. Prefer named-arg form everywhere for grep-able call sites.
+
+For tests that previously seeded `LastViewedHeadSha: "head1"` and expected reconciliation to see head-shift behavior: swap to seed `TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp("head1", DateTime.UtcNow.AddMinutes(-1)) }`. Use the constant `"tab-test"` consistently — most reconciliation tests get a `callerTabId: "tab-test"` parameter (Task 10) and the stamp must be under that key for the head-shift derivation to engage.
+
+- [ ] **Step 3: Rewrite `with { LastViewedHeadSha = ... }` writes**
+
+Three sites — mark-viewed, reload, test-hook. Each gets a placeholder write that the relevant Phase-2 task will replace. For now, write to `TabStamps` via a temporary direct assignment so the build compiles:
+
+For mark-viewed (`PrDetailEndpoints.cs:~114`):
 ```csharp
-new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), …)
-//                     ^^^ LastViewedHeadSha
+sessions[key] = session with
+{
+    TabStamps = AddOrUpdateStamp(session.TabStamps, /* tabId placeholder — Task 4 wires the header */ "tab-PLACEHOLDER", body.HeadSha),
+    LastSeenCommentId = body.MaxCommentId,
+};
 ```
 
-New shape:
+Mark each placeholder with a `// TASK4` / `// TASK5` / `// TASK6` comment so the implementer can grep them once those tasks run. Same for reload + test-hook.
+
+If easier: comment out the body of these three endpoint handlers entirely with a `throw new NotImplementedException("Wired in Task N");`, and the relevant tests stay red until that task lands. Pick whichever pattern produces less churn.
+
+- [ ] **Step 4: Rewrite `session.LastViewedHeadSha` reads with sentinels**
+
+Four sites in `PrSubmitEndpoints` (lines 117, 129, 131, 144), two in `DraftReconciliationPipeline` (33, 216), one in `InboxRefreshOrchestrator` (244). Each currently uses `session.LastViewedHeadSha` as a `string?` value. Until the per-tab logic lands (Tasks 9, 10, 11), replace each with a placeholder that compiles but throws at runtime:
+
 ```csharp
-new ReviewSessionState(new Dictionary<string, TabStamp>(), null, null, null, new Dictionary<string, string>(), …)
-//                     ^^^ TabStamps                       ^^^ LastSeenCommentId
+// TASK9 (or 10 / 11): per-tab readout
+throw new InvalidOperationException("Phase-1 placeholder — wired in Task N");
 ```
 
-Or with named arguments (preferred for clarity):
+The four `PrSubmitEndpoints` sites are inside rule (f) which is fully replaced in Task 9; same for the two reconciliation sites (Task 10) and the inbox site (Task 11). The placeholders are short-lived.
 
-```csharp
-new ReviewSessionState(
-    TabStamps: new Dictionary<string, TabStamp>(),
-    LastSeenCommentId: null,
-    PendingReviewId: null,
-    PendingReviewCommitOid: null,
-    ViewedFiles: new Dictionary<string, string>(),
-    DraftComments: new List<DraftComment>(),
-    DraftReplies: new List<DraftReply>(),
-    DraftSummaryMarkdown: null,
-    DraftVerdict: null,
-    DraftVerdictStatus: DraftVerdictStatus.Draft);
-```
-
-`NewEmptySession()` at `PrDraftEndpoints.cs:571-578` already uses named args — just swap the field.
-
-- [ ] **Step 3: Rewrite `SuccessClearsSessionTests.cs:53`**
-
-The existing assertion:
-```csharp
-Assert.Equal("head1", persisted.LastViewedHeadSha);
-```
-
-becomes:
-```csharp
-Assert.True(persisted.TabStamps.ContainsKey("tab-X"));
-Assert.Equal("head1", persisted.TabStamps["tab-X"].HeadSha);
-```
-
-Test setup must seed `TabStamps: new Dictionary<string, TabStamp> { ["tab-X"] = new TabStamp("head1", DateTime.UtcNow) }` instead of `LastViewedHeadSha: "head1"`.
-
-- [ ] **Step 4: Verify build**
+- [ ] **Step 5: Build**
 
 ```
 dotnet build PRism.sln
 ```
 
-Expected: 0 errors. Warnings are OK to fix in passing but not required.
+Expected: 0 errors. Tests will fail at runtime (NotImplementedException) for any path that exercises a placeholder; that's expected until the next phase.
 
-- [ ] **Step 5: Run the round-trip test from Task 1**
-
-```
-dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "TabStamps_round_trips_through_state_serializer"
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Commit Task 1 + Task 2 together**
+- [ ] **Step 6: Run the round-trip test from Task 1**
 
 ```
-git -C D:/src/prism-cross-tab-stamp add PRism.Core/State/AppState.cs PRism.Web/Endpoints/PrDetailEndpoints.cs PRism.Web/Endpoints/PrDraftEndpoints.cs PRism.Web/TestHooks/TestEndpoints.cs tests/
+dotnet test tests/PRism.Core.Tests/ --filter "TabStamps_round_trips_through_state_serializer"
+```
+
+Expected: PASS. The round-trip test doesn't touch any placeholder; it exercises pure serialization.
+
+- [ ] **Step 7: Commit Tasks 1 + 2 together**
+
+```
+git -C D:/src/prism-cross-tab-stamp add PRism.Core/State/AppState.cs PRism.Web/Endpoints/ PRism.Web/TestHooks/ tests/
 git -C D:/src/prism-cross-tab-stamp commit -m "feat(state): reshape ReviewSessionState — TabStamps replaces LastViewedHeadSha"
 ```
+
+The commit is large by design — the type reshape and its sweep are atomic. Don't attempt to land Task 1 in isolation.
 
 ---
 
@@ -193,12 +258,12 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(state): reshape ReviewSessio
 
 **Files:**
 - Modify: `PRism.Core/State/Migrations/AppStateMigrations.cs`
-- Modify: `PRism.Core/State/AppStateStore.cs` (CurrentVersion bump + MigrationSteps add + EnsureCurrentShape extension)
+- Modify: `PRism.Core/State/AppStateStore.cs`
 - Create: `tests/PRism.Core.Tests/State/Migrations/AppStateMigrationsV5ToV6Tests.cs`
 
 - [ ] **Step 1: Write the failing migration tests**
 
-Create `tests/PRism.Core.Tests/State/Migrations/AppStateMigrationsV5ToV6Tests.cs`:
+Create `tests/PRism.Core.Tests/State/Migrations/AppStateMigrationsV5ToV6Tests.cs`. The five tests below cover legacy-session migration, idempotency, partial-rollback throw, empty `accounts`, and already-populated `tab-stamps`.
 
 ```csharp
 using System.Text.Json;
@@ -314,10 +379,10 @@ public class AppStateMigrationsV5ToV6Tests
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run tests to verify failure**
 
 ```
-dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "AppStateMigrationsV5ToV6Tests"
+dotnet test tests/PRism.Core.Tests/ --filter "AppStateMigrationsV5ToV6Tests"
 ```
 
 Expected: BUILD ERROR — `MigrateV5ToV6` doesn't exist.
@@ -367,10 +432,14 @@ public static JsonObject MigrateV5ToV6(JsonObject root)
 
 In `PRism.Core/State/AppStateStore.cs`:
 
-- Line 11: change `private const int CurrentVersion = 5;` to `private const int CurrentVersion = 6;`
-- Around line 27: append `(6, AppStateMigrations.MigrateV5ToV6),  // S6+1 — per-tab LastViewedHeadSha` to the `MigrationSteps` initializer.
+- Line 11: `private const int CurrentVersion = 5;` → `private const int CurrentVersion = 6;`
+- Inside the `MigrationSteps` array initializer (after the `(5, AppStateMigrations.MigrateV4ToV5)` line, before the closing `}`):
 
-Extend `EnsureCurrentShape` (after the existing `accounts.default.reviews.sessions` backfill block) to backfill missing `tab-stamps`:
+```csharp
+(6, AppStateMigrations.MigrateV5ToV6),  // V5→V6 — per-tab LastViewedHeadSha
+```
+
+Extend `EnsureCurrentShape` after the existing `accounts.default.reviews.sessions` backfill block:
 
 ```csharp
 if (defaultObj["reviews"] is JsonObject reviewsObj &&
@@ -384,27 +453,19 @@ if (defaultObj["reviews"] is JsonObject reviewsObj &&
 }
 ```
 
-- [ ] **Step 5: Run all migration tests + the existing chain test**
+- [ ] **Step 5: Run migration tests + chain tests**
 
 ```
-dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "Migration"
-```
-
-Expected: PASS (V5→V6 tests + the existing V1→V5 chain tests still pass with the new CurrentVersion=6).
-
-- [ ] **Step 6: Extend `MigrationChainTests` for V1→V6**
-
-In `tests/PRism.Core.Tests/State/MigrationChainTests.cs`, find the longest existing chain test (V1→V5 today). Add a new test that starts at V1 and asserts V6 shape. The chain runs through all five migration steps sequentially via `AppStateStore`'s load path.
-
-- [ ] **Step 7: Run all tests**
-
-```
-dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj
+dotnet test tests/PRism.Core.Tests/ --filter "Migration"
 ```
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Extend `MigrationChainTests` for V1→V6**
+
+Find the longest existing chain test in `tests/PRism.Core.Tests/State/MigrationChainTests.cs`. Add a `V1_through_V6_chain_loads_clean` test that seeds a V1 file, loads through `AppStateStore`, and asserts the resulting `AppState` has empty `TabStamps` on the default session.
+
+- [ ] **Step 7: Commit**
 
 ```
 git -C D:/src/prism-cross-tab-stamp add PRism.Core/State/Migrations/AppStateMigrations.cs PRism.Core/State/AppStateStore.cs tests/PRism.Core.Tests/State/
@@ -415,7 +476,7 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(state): V5→V6 migration dr
 
 ## Phase 2 — Write sites
 
-mark-viewed, reload, test-hook, and markAllRead all write to the new `TabStamps` (or in markAllRead's case, gain the monotone guard).
+mark-viewed, reload, and the test-hook write to `TabStamps`. markAllRead is **not** in this phase — its server-derived cache value is monotone by construction (see spec § 5.6).
 
 ### Task 4: mark-viewed writes `TabStamps[tabId]` + monotone `LastSeenCommentId`
 
@@ -423,24 +484,23 @@ mark-viewed, reload, test-hook, and markAllRead all write to the new `TabStamps`
 - Modify: `PRism.Web/Endpoints/PrDetailEndpoints.cs:89-131`
 - Modify: `tests/PRism.Web.Tests/Endpoints/PrDetailEndpointsTests.cs`
 
-- [ ] **Step 1: Write the failing happy-path test**
-
-In `tests/PRism.Web.Tests/Endpoints/PrDetailEndpointsTests.cs`:
+- [ ] **Step 1: Write the failing happy-path test using the header helper from Task 0**
 
 ```csharp
 [Fact]
 public async Task MarkViewed_writes_tab_stamp_under_caller_tab_id()
 {
-    using var ctx = new PrDetailEndpointsTestContext();
-    ctx.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/mark-viewed",
         new { headSha = "abc123", maxCommentId = (string?)"42" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
 
     Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
-    var state = await ctx.StateStore.LoadAsync(default);
+    var state = await factory.StateStore.LoadAsync(default);
     var session = state.Reviews.Sessions["owner/repo/1"];
     Assert.True(session.TabStamps.ContainsKey("tab-A"));
     Assert.Equal("abc123", session.TabStamps["tab-A"].HeadSha);
@@ -448,19 +508,11 @@ public async Task MarkViewed_writes_tab_stamp_under_caller_tab_id()
 }
 ```
 
-If `PrDetailEndpointsTestContext` doesn't expose a header-on-POST helper, add one in the test-helpers file (search `tests/PRism.Web.Tests/TestHelpers/` for the closest existing pattern).
+`SeedSnapshot` and `StateStore` are existing helpers/properties on `PRismWebApplicationFactory` (or add them by following the same pattern the existing `PrSubmitEndpointsTests` uses to seed state). Do not introduce a per-endpoint TestContext class.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 2: Replace the mark-viewed handler**
 
-```
-dotnet test tests/PRism.Web.Tests/ --filter "MarkViewed_writes_tab_stamp_under_caller_tab_id"
-```
-
-Expected: FAIL — endpoint either ignores the header or writes to `LastViewedHeadSha` (which doesn't exist post-Phase 1, so this is a compile error first).
-
-- [ ] **Step 3: Replace the mark-viewed handler**
-
-In `PRism.Web/Endpoints/PrDetailEndpoints.cs:89-131`, swap the route handler:
+In `PRism.Web/Endpoints/PrDetailEndpoints.cs:89-131`:
 
 ```csharp
 app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
@@ -488,7 +540,7 @@ app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
         {
             await stateStore.UpdateAsync(state =>
             {
-                var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? NewEmptySession();
+                var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? PrDraftEndpoints.NewEmptySession();
 
                 var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
                 tabStamps[tabId] = new TabStamp(body.HeadSha, DateTime.UtcNow);
@@ -514,38 +566,26 @@ app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
     }).WithMetadata(new RequestSizeLimitAttribute(16384));
 ```
 
-`NewEmptySession()` — for now define inline in the class (lift from `PrDraftEndpoints.NewEmptySession` or duplicate). Phase 6 task 18 unifies the helper.
-
-Add inside the class (anywhere the existing helpers live):
+Add (inside the partial class) and `using System.Text.RegularExpressions;` at the top of the file:
 
 ```csharp
 [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
 private static partial Regex TabIdAllowlistRegex();
 
+// Numeric monotone-max of two stringified comment IDs. Unparseable → "no signal."
+// Inlined here (not a shared helper) — only mark-viewed needs this guard; markAllRead
+// reads from the IActivePrCache value which is monotone-by-construction (spec § 5.6).
 private static string? MonotonicMaxCommentId(string? current, string? incoming)
 {
     if (!long.TryParse(incoming, out var inc)) return current;
     if (!long.TryParse(current, out var cur)) return incoming;
     return inc > cur ? incoming : current;
 }
-
-private static ReviewSessionState NewEmptySession() =>
-    new(
-        TabStamps: new Dictionary<string, TabStamp>(),
-        LastSeenCommentId: null,
-        PendingReviewId: null,
-        PendingReviewCommitOid: null,
-        ViewedFiles: new Dictionary<string, string>(),
-        DraftComments: new List<DraftComment>(),
-        DraftReplies: new List<DraftReply>(),
-        DraftSummaryMarkdown: null,
-        DraftVerdict: null,
-        DraftVerdictStatus: DraftVerdictStatus.Draft);
 ```
 
-Add `using System.Text.RegularExpressions;` at the top of the file. `PrDetailEndpoints` is already `internal static partial class` so `[GeneratedRegex]` works directly.
+**Use `PrDraftEndpoints.NewEmptySession()` directly** — do not duplicate the factory. The existing comment in `PrDraftEndpoints.cs:567-571` explicitly documents the single-definition invariant. The `internal` visibility is already in place.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 3: Run happy-path test**
 
 ```
 dotnet test tests/PRism.Web.Tests/ --filter "MarkViewed_writes_tab_stamp_under_caller_tab_id"
@@ -553,7 +593,7 @@ dotnet test tests/PRism.Web.Tests/ --filter "MarkViewed_writes_tab_stamp_under_c
 
 Expected: PASS.
 
-- [ ] **Step 5: Add the remaining mark-viewed scenarios**
+- [ ] **Step 4: Add the remaining mark-viewed scenarios**
 
 Append to `PrDetailEndpointsTests.cs`:
 
@@ -561,10 +601,11 @@ Append to `PrDetailEndpointsTests.cs`:
 [Fact]
 public async Task MarkViewed_returns_422_when_tab_id_header_missing()
 {
-    using var ctx = new PrDetailEndpointsTestContext();
-    ctx.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/mark-viewed",
         new { headSha = "abc123", maxCommentId = (string?)null });
 
@@ -577,13 +618,14 @@ public async Task MarkViewed_returns_422_when_tab_id_header_missing()
 [InlineData("")]
 public async Task MarkViewed_rejects_invalid_tab_id_header(string tabId)
 {
-    using var ctx = new PrDetailEndpointsTestContext();
-    ctx.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/mark-viewed",
         new { headSha = "abc123", maxCommentId = (string?)null },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tabId });
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tabId });
 
     Assert.Equal(HttpStatusCode.UnprocessableEntity, resp.StatusCode);
 }
@@ -591,14 +633,15 @@ public async Task MarkViewed_rejects_invalid_tab_id_header(string tabId)
 [Fact]
 public async Task MarkViewed_rejects_tab_id_over_64_chars()
 {
-    using var ctx = new PrDetailEndpointsTestContext();
-    ctx.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
     var tooLong = new string('a', 65);
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/mark-viewed",
         new { headSha = "abc123", maxCommentId = (string?)null },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tooLong });
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tooLong });
 
     Assert.Equal(HttpStatusCode.UnprocessableEntity, resp.StatusCode);
 }
@@ -606,13 +649,13 @@ public async Task MarkViewed_rejects_tab_id_over_64_chars()
 [Fact]
 public async Task MarkViewed_evicts_oldest_stamp_at_cap_N_8()
 {
-    using var ctx = new PrDetailEndpointsTestContext();
-    ctx.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
 
-    // Seed 8 stamps with ascending StampedAtUtc.
-    await ctx.StateStore.UpdateAsync(state =>
+    await factory.StateStore.UpdateAsync(state =>
     {
-        var session = NewEmptySessionLikeProduction();
+        var session = PrDraftEndpoints.NewEmptySession();
         var stamps = new Dictionary<string, TabStamp>();
         for (int i = 0; i < 8; i++)
             stamps[$"tab-{i}"] = new TabStamp($"sha-{i}", new DateTime(2026, 5, 18, 0, 0, i, DateTimeKind.Utc));
@@ -621,61 +664,43 @@ public async Task MarkViewed_evicts_oldest_stamp_at_cap_N_8()
         return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
     }, default);
 
-    // 9th tab mark-viewed.
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/mark-viewed",
         new { headSha = "abc123", maxCommentId = (string?)null },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-NEW" });
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-NEW" });
 
     Assert.Equal(HttpStatusCode.NoContent, resp.StatusCode);
-    var state = await ctx.StateStore.LoadAsync(default);
+    var state = await factory.StateStore.LoadAsync(default);
     var stamps = state.Reviews.Sessions["owner/repo/1"].TabStamps;
     Assert.Equal(8, stamps.Count);
     Assert.True(stamps.ContainsKey("tab-NEW"));
-    Assert.False(stamps.ContainsKey("tab-0"));  // oldest evicted
-}
-
-[Fact]
-public async Task MarkViewed_re_stamp_from_existing_tab_updates_in_place()
-{
-    using var ctx = new PrDetailEndpointsTestContext();
-    ctx.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
-
-    await ctx.Client.PostAsJsonAsync(
-        "/api/pr/owner/repo/1/mark-viewed",
-        new { headSha = "abc123", maxCommentId = (string?)"10" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
-    await ctx.Client.PostAsJsonAsync(
-        "/api/pr/owner/repo/1/mark-viewed",
-        new { headSha = "abc123", maxCommentId = (string?)"20" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
-
-    var state = await ctx.StateStore.LoadAsync(default);
-    Assert.Single(state.Reviews.Sessions["owner/repo/1"].TabStamps);
-    Assert.Equal("20", state.Reviews.Sessions["owner/repo/1"].LastSeenCommentId);
+    Assert.False(stamps.ContainsKey("tab-0"));
 }
 
 [Fact]
 public async Task MarkViewed_monotone_lastSeenCommentId_does_not_rewind()
 {
-    using var ctx = new PrDetailEndpointsTestContext();
-    ctx.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
 
-    await ctx.Client.PostAsJsonAsync(
+    await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/mark-viewed",
         new { headSha = "abc123", maxCommentId = (string?)"999" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
-    await ctx.Client.PostAsJsonAsync(
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
+    await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/mark-viewed",
         new { headSha = "abc123", maxCommentId = (string?)"50" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-B" });
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-B" });
 
-    var state = await ctx.StateStore.LoadAsync(default);
+    var state = await factory.StateStore.LoadAsync(default);
     Assert.Equal("999", state.Reviews.Sessions["owner/repo/1"].LastSeenCommentId);
 }
 ```
 
-- [ ] **Step 6: Run all mark-viewed tests**
+If `PRismWebApplicationFactory` doesn't already expose `SeedSnapshot` / `StateStore`, add them as `internal` methods on the factory class following the seed pattern in the existing submit tests. Do not create a separate context class.
+
+- [ ] **Step 5: Run all mark-viewed tests**
 
 ```
 dotnet test tests/PRism.Web.Tests/ --filter "MarkViewed"
@@ -683,10 +708,10 @@ dotnet test tests/PRism.Web.Tests/ --filter "MarkViewed"
 
 Expected: all PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```
-git -C D:/src/prism-cross-tab-stamp add PRism.Web/Endpoints/PrDetailEndpoints.cs tests/PRism.Web.Tests/Endpoints/PrDetailEndpointsTests.cs
+git -C D:/src/prism-cross-tab-stamp add PRism.Web/Endpoints/PrDetailEndpoints.cs tests/PRism.Web.Tests/
 git -C D:/src/prism-cross-tab-stamp commit -m "feat(mark-viewed): write per-tab TabStamps with N=8 LRU + monotone LastSeenCommentId"
 ```
 
@@ -696,7 +721,7 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(mark-viewed): write per-tab 
 
 **Files:**
 - Modify: `PRism.Web/Endpoints/PrReloadEndpoints.cs`
-- Modify: `tests/PRism.Web.Tests/Endpoints/PrReloadEndpointsTests.cs` (or create if absent)
+- Modify: `tests/PRism.Web.Tests/Endpoints/PrReloadEndpointTests.cs` (note: singular — that's the existing file name)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -704,50 +729,42 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(mark-viewed): write per-tab 
 [Fact]
 public async Task Reload_writes_tab_stamp_under_caller_tab_id()
 {
-    using var ctx = new PrReloadEndpointsTestContext();
-    ctx.SeedSessionWithDrafts("owner", "repo", 1);
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSessionWithDrafts("owner", "repo", 1, currentHeadSha: "oldhead00000000000000000000000000000000");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/reload",
-        new { headSha = "newhead0000000000000000000000000000000000" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-X" });
+        new { headSha = "newhead00000000000000000000000000000000" },
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-X" });
 
     Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-    var state = await ctx.StateStore.LoadAsync(default);
+    var state = await factory.StateStore.LoadAsync(default);
     var stamps = state.Reviews.Sessions["owner/repo/1"].TabStamps;
     Assert.True(stamps.ContainsKey("tab-X"));
-    Assert.Equal("newhead0000000000000000000000000000000000", stamps["tab-X"].HeadSha);
+    Assert.Equal("newhead00000000000000000000000000000000", stamps["tab-X"].HeadSha);
 }
 
 [Fact]
 public async Task Reload_returns_422_when_tab_id_header_missing()
 {
-    using var ctx = new PrReloadEndpointsTestContext();
-    ctx.SeedSessionWithDrafts("owner", "repo", 1);
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSessionWithDrafts("owner", "repo", 1, currentHeadSha: "oldhead00000000000000000000000000000000");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/reload",
-        new { headSha = "newhead0000000000000000000000000000000000" });
+        new { headSha = "newhead00000000000000000000000000000000" });
 
     Assert.Equal(HttpStatusCode.UnprocessableEntity, resp.StatusCode);
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [ ] **Step 2: Add `partial` to `PrReloadEndpoints`**
 
-```
-dotnet test tests/PRism.Web.Tests/ --filter "Reload"
-```
+`PRism.Web/Endpoints/PrReloadEndpoints.cs:13`: `internal static class PrReloadEndpoints` → `internal static partial class PrReloadEndpoints`.
 
-Expected: FAIL — the endpoint either ignores the header or doesn't validate it.
-
-- [ ] **Step 3: Add `partial` to `PrReloadEndpoints`**
-
-`PRism.Web/Endpoints/PrReloadEndpoints.cs:13`:
-
-Change `internal static class PrReloadEndpoints` to `internal static partial class PrReloadEndpoints`.
-
-- [ ] **Step 4: Add tab-id allowlist regex + validation**
+- [ ] **Step 3: Add the allowlist regex + 422 validation**
 
 After the existing `Sha40` / `Sha64` static fields:
 
@@ -756,20 +773,20 @@ After the existing `Sha40` / `Sha64` static fields:
 private static partial Regex TabIdAllowlistRegex();
 ```
 
-In `PostReload`, after the existing `sourceTabId` read at line 63, add:
+In `PostReload`, after the existing `sourceTabId` read at line 63:
 
 ```csharp
 if (string.IsNullOrEmpty(sourceTabId) || !TabIdAllowlistRegex().IsMatch(sourceTabId))
     return Results.UnprocessableEntity(new { error = "tab-id-missing" });
 ```
 
-- [ ] **Step 5: Replace the Phase-2 apply block to write `TabStamps` instead of `LastViewedHeadSha`**
+- [ ] **Step 4: Replace the Phase-2 apply block**
 
-Lines 156-162, the `updated = current with { ... }` block becomes:
+Lines 156-162 (the `updated = current with { ... }` block) becomes:
 
 ```csharp
 var tabStamps = current.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-tabStamps[sourceTabId] = new TabStamp(request.HeadSha, DateTime.UtcNow);
+tabStamps[sourceTabId!] = new TabStamp(request.HeadSha, DateTime.UtcNow);
 if (tabStamps.Count > 8)
 {
     var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
@@ -785,7 +802,9 @@ var updated = current with
 };
 ```
 
-- [ ] **Step 6: Run reload tests**
+The `!` on `sourceTabId` asserts non-null after the 422 gate in Step 3.
+
+- [ ] **Step 5: Run reload tests**
 
 ```
 dotnet test tests/PRism.Web.Tests/ --filter "Reload"
@@ -793,10 +812,10 @@ dotnet test tests/PRism.Web.Tests/ --filter "Reload"
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```
-git -C D:/src/prism-cross-tab-stamp add PRism.Web/Endpoints/PrReloadEndpoints.cs tests/PRism.Web.Tests/Endpoints/PrReloadEndpointsTests.cs
+git -C D:/src/prism-cross-tab-stamp add PRism.Web/Endpoints/PrReloadEndpoints.cs tests/PRism.Web.Tests/Endpoints/PrReloadEndpointTests.cs
 git -C D:/src/prism-cross-tab-stamp commit -m "feat(reload): write per-tab TabStamps + 422 tab-id-missing"
 ```
 
@@ -804,9 +823,11 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(reload): write per-tab TabSt
 
 ### Task 6: `/test/mark-pr-viewed` hook accepts `tabId`
 
+The hook currently uses `MarkPrViewedRequest(string Owner, string Repo, int Number)` — 3 fields, no `HeadSha`; the existing handler reads headSha from `store.CurrentHeadSha`. **Keep that path.** Add only `TabId`.
+
 **Files:**
 - Modify: `PRism.Web/TestHooks/TestEndpoints.cs:149-176`
-- Modify: `tests/PRism.Web.Tests/TestHooks/...` (find the existing hook test file via grep)
+- Modify: `tests/PRism.Web.Tests/TestHooks/` (find the existing hook test file)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -814,47 +835,41 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(reload): write per-tab TabSt
 [Fact]
 public async Task TestMarkPrViewed_writes_tab_stamp_under_provided_tab_id()
 {
-    using var ctx = new TestEndpointsContext();
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedActivePrCache("owner", "repo", 1, currentHeadSha: "abc123");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/test/mark-pr-viewed",
-        new { owner = "owner", repo = "repo", number = 1, headSha = "abc123", tabId = "tab-X" });
+        new { owner = "owner", repo = "repo", number = 1, tabId = "tab-X" });
 
     Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
-    var state = await ctx.StateStore.LoadAsync(default);
+    var state = await factory.StateStore.LoadAsync(default);
     Assert.True(state.Reviews.Sessions["owner/repo/1"].TabStamps.ContainsKey("tab-X"));
+    Assert.Equal("abc123", state.Reviews.Sessions["owner/repo/1"].TabStamps["tab-X"].HeadSha);
 }
 
 [Fact]
 public async Task TestMarkPrViewed_rejects_missing_tab_id()
 {
-    using var ctx = new TestEndpointsContext();
-    var resp = await ctx.Client.PostAsJsonAsync(
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedActivePrCache("owner", "repo", 1, currentHeadSha: "abc123");
+
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/test/mark-pr-viewed",
-        new { owner = "owner", repo = "repo", number = 1, headSha = "abc123" });
+        new { owner = "owner", repo = "repo", number = 1 });
     Assert.Equal(HttpStatusCode.UnprocessableEntity, resp.StatusCode);
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
-
-```
-dotnet test tests/PRism.Web.Tests/ --filter "TestMarkPrViewed"
-```
-
-Expected: FAIL — hook doesn't accept tabId.
-
-- [ ] **Step 3: Reshape the hook**
-
-In `PRism.Web/TestHooks/TestEndpoints.cs:149-176`:
-
-Change the request record:
+- [ ] **Step 2: Extend the request record + handler**
 
 ```csharp
-internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number, string HeadSha, string TabId);
+internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number, string TabId);
 ```
 
-Inside the route handler, after the existing parameter validation:
+In the handler, BEFORE the existing logic that derives `headSha` from the active-PR cache, add:
 
 ```csharp
 if (string.IsNullOrEmpty(body.TabId) ||
@@ -862,11 +877,13 @@ if (string.IsNullOrEmpty(body.TabId) ||
     return Results.UnprocessableEntity(new { error = "tab-id-missing" });
 ```
 
-In the `UpdateAsync` transform, replace the `LastViewedHeadSha = body.HeadSha` assignment with:
+(Inline `Regex.IsMatch` here is fine — this is test-only code; the perf cost is irrelevant and adding `partial` to a test-mode class is over-engineering.)
+
+In the `UpdateAsync` transform, replace the existing write that uses `LastViewedHeadSha` (already converted to a placeholder in Task 2) with:
 
 ```csharp
 var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-tabStamps[body.TabId] = new TabStamp(body.HeadSha, DateTime.UtcNow);
+tabStamps[body.TabId] = new TabStamp(headSha, DateTime.UtcNow);  // headSha from active-PR cache, existing logic
 if (tabStamps.Count > 8)
 {
     var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
@@ -875,7 +892,7 @@ if (tabStamps.Count > 8)
 session = session with { TabStamps = tabStamps };
 ```
 
-- [ ] **Step 4: Run tests**
+- [ ] **Step 3: Run tests**
 
 ```
 dotnet test tests/PRism.Web.Tests/ --filter "TestMarkPrViewed"
@@ -883,149 +900,65 @@ dotnet test tests/PRism.Web.Tests/ --filter "TestMarkPrViewed"
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```
-git -C D:/src/prism-cross-tab-stamp add PRism.Web/TestHooks/TestEndpoints.cs tests/PRism.Web.Tests/TestHooks/
+git -C D:/src/prism-cross-tab-stamp add PRism.Web/TestHooks/TestEndpoints.cs tests/PRism.Web.Tests/
 git -C D:/src/prism-cross-tab-stamp commit -m "feat(test-hook): /test/mark-pr-viewed accepts tabId for V6 per-tab stamping"
-```
-
----
-
-### Task 7: markAllRead gains `MonotonicMaxCommentId` guard
-
-**Files:**
-- Modify: `PRism.Web/Endpoints/PrDraftEndpoints.cs:355-373`
-- Modify: `tests/PRism.Web.Tests/Endpoints/PrDraftEndpointsTests.cs`
-
-- [ ] **Step 1: Write the failing monotone test**
-
-```csharp
-[Fact]
-public async Task MarkAllRead_monotone_does_not_rewind_last_seen_comment_id()
-{
-    using var ctx = new PrDraftEndpointsTestContext();
-    await ctx.SeedSession("owner", "repo", 1, lastSeenCommentId: "999");
-
-    var resp = await ctx.Client.PatchAsJsonAsync(
-        "/api/pr/owner/repo/1/draft",
-        new { markAllRead = true, lastSeenCommentId = "500" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
-
-    Assert.True(resp.IsSuccessStatusCode);
-    var state = await ctx.StateStore.LoadAsync(default);
-    Assert.Equal("999", state.Reviews.Sessions["owner/repo/1"].LastSeenCommentId);
-}
-```
-
-(The exact patch wire shape depends on `ReviewSessionPatch`'s `markAllRead` operation. Use whatever the existing markAllRead-patch tests use for invocation; assert the post-state `LastSeenCommentId`.)
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Expected: FAIL — last-writer-wins regresses 999 → 500.
-
-- [ ] **Step 3: Lift `MonotonicMaxCommentId` to a shared helper**
-
-Create `PRism.Core/State/MonotonicCommentId.cs`:
-
-```csharp
-namespace PRism.Core.State;
-
-internal static class MonotonicCommentId
-{
-    /// <summary>
-    /// Numeric monotone-max of two stringified comment IDs. Unparseable strings are
-    /// treated as "no signal" — the parseable side wins; both unparseable returns current.
-    /// Preserves the inbox unread-badge's monotone high-water invariant across the
-    /// two writers (mark-viewed and markAllRead) without coupling them by file.
-    /// </summary>
-    internal static string? Max(string? current, string? incoming)
-    {
-        if (!long.TryParse(incoming, out var inc)) return current;
-        if (!long.TryParse(current, out var cur)) return incoming;
-        return inc > cur ? incoming : current;
-    }
-}
-```
-
-Update `PrDetailEndpoints.cs` to use `MonotonicCommentId.Max` (delete the local `MonotonicMaxCommentId` helper from Task 4).
-
-- [ ] **Step 4: Apply the guard inside the markAllRead handler**
-
-Find the markAllRead patch handler in `PrDraftEndpoints.cs:355-373`. Replace:
-
-```csharp
-session = session with { LastSeenCommentId = newId };
-```
-
-with:
-
-```csharp
-session = session with { LastSeenCommentId = MonotonicCommentId.Max(session.LastSeenCommentId, newId) };
-```
-
-- [ ] **Step 5: Run tests**
-
-```
-dotnet test tests/PRism.Web.Tests/ --filter "MarkAllRead"
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Add coverage for the lifted helper**
-
-Create `tests/PRism.Core.Tests/State/MonotonicCommentIdTests.cs`:
-
-```csharp
-public class MonotonicCommentIdTests
-{
-    [Theory]
-    [InlineData("999", "500", "999")]
-    [InlineData("500", "999", "999")]
-    [InlineData(null, "100", "100")]
-    [InlineData("100", null, "100")]
-    [InlineData(null, null, null)]
-    [InlineData("garbage", "100", "100")]
-    [InlineData("100", "garbage", "100")]
-    [InlineData("garbage", "garbage", "garbage")]
-    public void Max_preserves_monotone_high_water(string? current, string? incoming, string? expected)
-    {
-        Assert.Equal(expected, MonotonicCommentId.Max(current, incoming));
-    }
-}
-```
-
-- [ ] **Step 7: Run all state tests**
-
-```
-dotnet test tests/PRism.Core.Tests/ --filter "MonotonicCommentId"
-```
-
-Expected: PASS.
-
-- [ ] **Step 8: Commit**
-
-```
-git -C D:/src/prism-cross-tab-stamp add PRism.Core/State/MonotonicCommentId.cs PRism.Web/Endpoints/PrDetailEndpoints.cs PRism.Web/Endpoints/PrDraftEndpoints.cs tests/
-git -C D:/src/prism-cross-tab-stamp commit -m "feat(markAllRead): monotone LastSeenCommentId via shared MonotonicCommentId.Max"
 ```
 
 ---
 
 ## Phase 3 — Submit gate
 
-The bypass-closing change. Touches one endpoint + new error code + FE switch arm.
+The bypass-closing change. Single task that combines `partial`/regex addition with the rule-(f) rewrite (no separate prep-only commit — folded per scope-guardian finding).
 
-### Task 8: `PrSubmitEndpoints` becomes `partial` + new LoggerMessage
+### Task 7: `PrSubmitEndpoints` becomes `partial` + new logger + rule (f) rewrite
 
 **Files:**
 - Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs`
+- Modify: `tests/PRism.Web.Tests/Endpoints/PrSubmitEndpointsTests.cs`
 
-- [ ] **Step 1: Add `partial` keyword**
+- [ ] **Step 1: Write the two-tab bypass test (the named regression)**
 
-Line 23: `internal static class PrSubmitEndpoints` → `internal static partial class PrSubmitEndpoints`.
+```csharp
+[Fact]
+public async Task Submit_rejects_caller_tab_without_own_stamp_even_if_other_tab_stamped_current_head()
+{
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedActivePrCache("owner", "repo", 1, currentHeadSha: "shaB");
+    await factory.StateStore.UpdateAsync(state =>
+    {
+        var session = PrDraftEndpoints.NewEmptySession() with
+        {
+            TabStamps = new Dictionary<string, TabStamp> { ["tab-A"] = new TabStamp("shaB", DateTime.UtcNow) },
+            DraftSummaryMarkdown = "lgtm",
+        };
+        return state.WithDefaultReviews(state.Reviews with
+        {
+            Sessions = new Dictionary<string, ReviewSessionState> { ["owner/repo/1"] = session }
+        });
+    }, default);
 
-- [ ] **Step 2: Add the new LoggerMessage delegate**
+    var resp = await client.PostAsJsonWithHeadersAsync(
+        "/api/pr/owner/repo/1/submit",
+        new { verdict = "Comment" },
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-B" });
+
+    Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    var body = await resp.Content.ReadFromJsonAsync<SubmitErrorDto>();
+    Assert.Equal("head-sha-not-stamped", body!.Code);
+}
+```
+
+If `SubmitErrorDto` is `internal`, confirm `InternalsVisibleTo("PRism.Web.Tests")` is set on `PRism.Web` (it is, per the pre-task check). If not, the alternative is `var body = await resp.Content.ReadFromJsonAsync<Dictionary<string, string>>(); Assert.Equal("head-sha-not-stamped", body!["code"]);`.
+
+- [ ] **Step 2: Make the class `partial` and add the new infrastructure**
+
+`PRism.Web/Endpoints/PrSubmitEndpoints.cs:23`: `internal static class PrSubmitEndpoints` → `internal static partial class PrSubmitEndpoints`.
+
+Add `using System.Text.RegularExpressions;` at the top.
 
 Near the existing `s_headShaNotStamped` (around line 47):
 
@@ -1036,98 +969,27 @@ private static readonly Action<ILogger, string, Exception?> s_tabIdMissing =
         "The frontend must always send this header; see frontend/src/api/draft.ts:TAB_ID_HEADER.");
 ```
 
-- [ ] **Step 3: Update the `s_headShaNotStamped` message string**
-
-Replace the existing format string at lines 47-49 with:
+Update the existing `s_headShaNotStamped` format string from `"... session.LastViewedHeadSha is null. ..."` to:
 
 ```csharp
 "POST /submit rejected for {SessionKey}: session.TabStamps has no entry for the caller's tab. " +
 "The frontend must call POST /api/pr/{{ref}}/mark-viewed when PR detail loads; see PrDetailEndpoints.MarkViewed."
 ```
 
-- [ ] **Step 4: Add the allowlist regex**
+Add the regex:
 
 ```csharp
 [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
 private static partial Regex TabIdAllowlistRegex();
 ```
 
-Add `using System.Text.RegularExpressions;` at the top.
-
-- [ ] **Step 5: Build**
-
-```
-dotnet build PRism.sln
-```
-
-Expected: 0 errors. Logger delegate is defined but not yet referenced.
-
-- [ ] **Step 6: Commit**
-
-```
-git -C D:/src/prism-cross-tab-stamp add PRism.Web/Endpoints/PrSubmitEndpoints.cs
-git -C D:/src/prism-cross-tab-stamp commit -m "refactor(submit): partial class + new s_tabIdMissing logger + allowlist regex"
-```
-
----
-
-### Task 9: Submit-gate rule (f) reads `TabStamps[tabId]`
-
-**Files:**
-- Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs:113-144`
-- Modify: `tests/PRism.Web.Tests/Endpoints/PrSubmitEndpointsTests.cs`
-
-- [ ] **Step 1: Write the two-tab bypass test (the named regression)**
-
-```csharp
-[Fact]
-public async Task Submit_rejects_caller_tab_without_own_stamp_even_if_other_tab_stamped_current_head()
-{
-    using var ctx = new PrSubmitEndpointsTestContext();
-    ctx.SeedActivePrPoll("owner", "repo", 1, currentHeadSha: "shaB");
-    await ctx.StateStore.UpdateAsync(state =>
-    {
-        var session = NewEmptySessionLikeProduction();
-        session = session with
-        {
-            TabStamps = new Dictionary<string, TabStamp>
-            {
-                ["tab-A"] = new TabStamp("shaB", DateTime.UtcNow)
-            },
-            DraftSummaryMarkdown = "lgtm",
-        };
-        return state.WithDefaultReviews(state.Reviews with
-        {
-            Sessions = new Dictionary<string, ReviewSessionState> { ["owner/repo/1"] = session }
-        });
-    }, default);
-
-    var resp = await ctx.Client.PostAsJsonAsync(
-        "/api/pr/owner/repo/1/submit",
-        new { verdict = "Comment" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-B" });
-
-    Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-    var body = await resp.Content.ReadFromJsonAsync<SubmitErrorDto>();
-    Assert.Equal("head-sha-not-stamped", body!.Code);
-}
-```
-
-- [ ] **Step 2: Run to verify it fails (currently passes only because all sessions are pre-Phase-2 unstamped)**
-
-Expected: Either compile error (`LastViewedHeadSha` still referenced) or wrong status code.
-
 - [ ] **Step 3: Replace rule (f) in `SubmitAsync`**
 
-In `PRism.Web/Endpoints/PrSubmitEndpoints.cs`, add `HttpContext httpContext` to the parameter list. Replace lines 113-144 with the spec § 5.3 code:
+Add `HttpContext httpContext` to the `SubmitAsync` parameter list. Replace lines 113-144 (the rule-(f) block + the `var headSha = session.LastViewedHeadSha;` line) with:
 
 ```csharp
-// Authorization: IsSubscribed(prRef) already gates this endpoint at the top, so the
-// rule (f) error-code differential is NOT reachable by unauthenticated probes.
-//
-// Rule (f) — per-tab. The 422 tab-id-missing branch is split from the 400
-// head-sha-not-stamped branch because recoveries differ: missing header is a FE
-// wire-up regression (Reload doesn't fix), missing map entry is "Reload the PR".
+// Authorization: IsSubscribed(prRef) already gates this endpoint at the top (line 85-86),
+// so the rule (f) error-code differential is NOT reachable by unauthenticated probes.
 var tabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
 if (string.IsNullOrEmpty(tabId) || !TabIdAllowlistRegex().IsMatch(tabId))
 {
@@ -1153,32 +1015,27 @@ if (pollSnapshot is not null && !string.Equals(pollSnapshot.HeadSha, stamp.HeadS
         "Reload the PR before submitting."),
         statusCode: StatusCodes.Status400BadRequest);
 }
-```
 
-Replace line 144 (`var headSha = session.LastViewedHeadSha;`) with:
+// Lock acquisition unchanged ...
 
-```csharp
 var headSha = stamp.HeadSha;
 ```
 
-- [ ] **Step 4: Add the remaining submit-gate scenarios**
-
-Append to `PrSubmitEndpointsTests.cs`:
+- [ ] **Step 4: Add the remaining submit tests**
 
 ```csharp
 [Fact]
 public async Task Submit_returns_422_when_tab_id_header_missing()
 {
-    using var ctx = new PrSubmitEndpointsTestContext();
-    await ctx.SeedSessionWithStamp("owner", "repo", 1, tabId: "tab-A", headSha: "shaA");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSubmittableSessionWithStamp("owner", "repo", 1, tabId: "tab-A", headSha: "shaA");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/submit",
         new { verdict = "Comment" });
 
     Assert.Equal(HttpStatusCode.UnprocessableEntity, resp.StatusCode);
-    var body = await resp.Content.ReadFromJsonAsync<SubmitErrorDto>();
-    Assert.Equal("tab-id-missing", body!.Code);
 }
 
 [Theory]
@@ -1186,50 +1043,54 @@ public async Task Submit_returns_422_when_tab_id_header_missing()
 [InlineData("tab with space")]
 public async Task Submit_returns_422_on_invalid_tab_id(string tabId)
 {
-    using var ctx = new PrSubmitEndpointsTestContext();
-    await ctx.SeedSessionWithStamp("owner", "repo", 1, tabId: "tab-A", headSha: "shaA");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSubmittableSessionWithStamp("owner", "repo", 1, tabId: "tab-A", headSha: "shaA");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/submit",
         new { verdict = "Comment" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tabId });
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tabId });
 
     Assert.Equal(HttpStatusCode.UnprocessableEntity, resp.StatusCode);
 }
 
 [Fact]
-public async Task Submit_happy_path_single_tab()
+public async Task Submit_happy_path_single_tab_runs_pipeline()
 {
-    using var ctx = new PrSubmitEndpointsTestContext();
-    ctx.SeedActivePrPoll("owner", "repo", 1, currentHeadSha: "shaA");
-    await ctx.SeedSessionWithStamp("owner", "repo", 1, tabId: "tab-A", headSha: "shaA");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedActivePrCache("owner", "repo", 1, currentHeadSha: "shaA");
+    await factory.SeedSubmittableSessionWithStamp("owner", "repo", 1, tabId: "tab-A", headSha: "shaA");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/submit",
         new { verdict = "Comment" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
 
     Assert.True(resp.IsSuccessStatusCode);
-    // Further pipeline assertions per the existing happy-path test.
 }
 
 [Fact]
 public async Task Submit_returns_400_head_sha_drift_when_poll_observes_different_head()
 {
-    using var ctx = new PrSubmitEndpointsTestContext();
-    ctx.SeedActivePrPoll("owner", "repo", 1, currentHeadSha: "shaB");
-    await ctx.SeedSessionWithStamp("owner", "repo", 1, tabId: "tab-A", headSha: "shaA");
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedActivePrCache("owner", "repo", 1, currentHeadSha: "shaB");
+    await factory.SeedSubmittableSessionWithStamp("owner", "repo", 1, tabId: "tab-A", headSha: "shaA");
 
-    var resp = await ctx.Client.PostAsJsonAsync(
+    var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/submit",
         new { verdict = "Comment" },
-        headers: new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
 
     Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     var body = await resp.Content.ReadFromJsonAsync<SubmitErrorDto>();
     Assert.Equal("head-sha-drift", body!.Code);
 }
 ```
+
+Add `SeedSubmittableSessionWithStamp` as an `internal` method on `PRismWebApplicationFactory` — it seeds a session with the given tab-id stamp + a non-empty `DraftSummaryMarkdown` so rule (e) doesn't reject. Pattern matches existing `SubmitEndpointsTestContext` helpers; lift them onto the factory if needed.
 
 - [ ] **Step 5: Run all submit tests**
 
@@ -1242,114 +1103,101 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```
-git -C D:/src/prism-cross-tab-stamp add PRism.Web/Endpoints/PrSubmitEndpoints.cs tests/PRism.Web.Tests/Endpoints/PrSubmitEndpointsTests.cs
-git -C D:/src/prism-cross-tab-stamp commit -m "feat(submit): rule (f) reads TabStamps[tabId] + distinct error codes"
+git -C D:/src/prism-cross-tab-stamp add PRism.Web/Endpoints/PrSubmitEndpoints.cs tests/PRism.Web.Tests/
+git -C D:/src/prism-cross-tab-stamp commit -m "feat(submit): rule (f) reads TabStamps[tabId] + distinct error codes + partial+regex+logger"
 ```
 
 ---
 
 ## Phase 4 — Reconciliation pipeline
 
-Required `callerTabId` + three-branch `headShifted` + verdict-reconcile second site.
-
-### Task 10: `ReconcileAsync` signature gains required `callerTabId`
+### Task 8: `ReconcileAsync` requires `callerTabId` + three-branch `headShifted`
 
 **Files:**
 - Modify: `PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs`
 - Modify: `PRism.Web/Endpoints/PrReloadEndpoints.cs:91-93` (caller)
-- Modify: `tests/PRism.Core.Tests/Reconciliation/*.cs` (every test that calls `ReconcileAsync`)
+- Modify: all `tests/PRism.Core.Tests/Reconciliation/*.cs` (10 files; enumerated below)
 
-- [ ] **Step 1: Write the failing per-tab headShifted test**
+- [ ] **Step 1: Write the failing per-tab headShifted tests**
 
-Add to `tests/PRism.Core.Tests/Reconciliation/MatrixTests.cs` (or a new `HeadShiftedPerTabTests.cs`):
+Add a new test file `tests/PRism.Core.Tests/Reconciliation/HeadShiftedPerTabTests.cs`:
 
 ```csharp
-[Fact]
-public async Task HeadShifted_true_when_caller_tab_has_prior_stamp_at_different_head()
+namespace PRism.Core.Tests.Reconciliation;
+
+public class HeadShiftedPerTabTests
 {
-    var session = NewEmptySessionLikeProduction() with
+    private static ReviewSessionState SessionWithOverriddenStaleDraft(IReadOnlyDictionary<string, TabStamp> stamps) =>
+        new(
+            TabStamps: stamps,
+            LastSeenCommentId: null,
+            PendingReviewId: null,
+            PendingReviewCommitOid: null,
+            ViewedFiles: new Dictionary<string, string>(),
+            DraftComments: new List<DraftComment>
+            {
+                new("d1", "Foo.cs", 10, "RIGHT", "sha-A", "line", "body", DraftStatus.Stale, IsOverriddenStale: true)
+            },
+            DraftReplies: new List<DraftReply>(),
+            DraftSummaryMarkdown: null,
+            DraftVerdict: null,
+            DraftVerdictStatus: DraftVerdictStatus.Draft);
+
+    [Fact]
+    public async Task Per_tab_branch_clears_override_when_caller_tab_has_prior_stamp_at_different_head()
     {
-        TabStamps = new Dictionary<string, TabStamp>
+        var stamps = new Dictionary<string, TabStamp>
         {
             ["tab-X"] = new TabStamp("sha-A", DateTime.UtcNow.AddMinutes(-1))
-        },
-        DraftComments = new List<DraftComment>
-        {
-            new("d1", "Foo.cs", 10, "RIGHT", "sha-A", "line", "body", DraftStatus.Stale, IsOverriddenStale: true)
-        }
-    };
-    var pipeline = new DraftReconciliationPipeline();
-    var result = await pipeline.ReconcileAsync(session, "sha-B", callerTabId: "tab-X", new FakeFileContentSource(), default);
-    // Override clears.
-    Assert.False(result.Drafts.Single(d => d.Id == "d1").IsOverriddenStale);
-}
+        };
+        var session = SessionWithOverriddenStaleDraft(stamps);
+        var pipeline = new DraftReconciliationPipeline();
+        var result = await pipeline.ReconcileAsync(session, "sha-B", "tab-X", new FakeFileContentSource(), default);
+        Assert.False(result.Drafts.Single(d => d.Id == "d1").IsOverriddenStale);
+    }
 
-[Fact]
-public async Task HeadShifted_false_when_caller_tab_missing_and_no_other_stamps()
-{
-    var session = NewEmptySessionLikeProduction() with
+    [Fact]
+    public async Task Empty_map_fallback_preserves_override_first_reload_semantic()
     {
-        TabStamps = new Dictionary<string, TabStamp>(),  // empty
-        DraftComments = new List<DraftComment>
-        {
-            new("d1", "Foo.cs", 10, "RIGHT", "sha-A", "line", "body", DraftStatus.Stale, IsOverriddenStale: true)
-        }
-    };
-    var pipeline = new DraftReconciliationPipeline();
-    var result = await pipeline.ReconcileAsync(session, "sha-B", callerTabId: "tab-Y", new FakeFileContentSource(), default);
-    Assert.True(result.Drafts.Single(d => d.Id == "d1").IsOverriddenStale);  // preserved
-}
+        var session = SessionWithOverriddenStaleDraft(new Dictionary<string, TabStamp>());
+        var pipeline = new DraftReconciliationPipeline();
+        var result = await pipeline.ReconcileAsync(session, "sha-B", "tab-Y", new FakeFileContentSource(), default);
+        Assert.True(result.Drafts.Single(d => d.Id == "d1").IsOverriddenStale);
+    }
 
-[Fact]
-public async Task HeadShifted_true_via_session_level_fallback_when_caller_tab_missing()
-{
-    var session = NewEmptySessionLikeProduction() with
+    [Fact]
+    public async Task Session_level_fallback_clears_override_when_caller_missing_but_other_stamps_differ()
     {
-        TabStamps = new Dictionary<string, TabStamp>
+        var stamps = new Dictionary<string, TabStamp>
         {
             ["tab-A"] = new TabStamp("sha-A", DateTime.UtcNow.AddMinutes(-1)),
             ["tab-B"] = new TabStamp("sha-A", DateTime.UtcNow.AddMinutes(-2)),
-        },
-        DraftComments = new List<DraftComment>
-        {
-            new("d1", "Foo.cs", 10, "RIGHT", "sha-A", "line", "body", DraftStatus.Stale, IsOverriddenStale: true)
-        }
-    };
-    var pipeline = new DraftReconciliationPipeline();
-    var result = await pipeline.ReconcileAsync(session, "sha-B", callerTabId: "tab-X-evicted", new FakeFileContentSource(), default);
-    Assert.False(result.Drafts.Single(d => d.Id == "d1").IsOverriddenStale);  // session-level shift detected
-}
+        };
+        var session = SessionWithOverriddenStaleDraft(stamps);
+        var pipeline = new DraftReconciliationPipeline();
+        var result = await pipeline.ReconcileAsync(session, "sha-B", "tab-X-evicted", new FakeFileContentSource(), default);
+        Assert.False(result.Drafts.Single(d => d.Id == "d1").IsOverriddenStale);
+    }
 
-[Fact]
-public async Task HeadShifted_false_via_session_level_fallback_when_all_stamps_at_new_head()
-{
-    var session = NewEmptySessionLikeProduction() with
+    [Fact]
+    public async Task Session_level_fallback_preserves_override_when_all_other_stamps_match_new_head()
     {
-        TabStamps = new Dictionary<string, TabStamp>
+        var stamps = new Dictionary<string, TabStamp>
         {
             ["tab-A"] = new TabStamp("sha-B", DateTime.UtcNow.AddMinutes(-1)),
             ["tab-B"] = new TabStamp("sha-B", DateTime.UtcNow.AddMinutes(-2)),
-        },
-        DraftComments = new List<DraftComment>
-        {
-            new("d1", "Foo.cs", 10, "RIGHT", "sha-A", "line", "body", DraftStatus.Stale, IsOverriddenStale: true)
-        }
-    };
-    var pipeline = new DraftReconciliationPipeline();
-    var result = await pipeline.ReconcileAsync(session, "sha-B", callerTabId: "tab-X-new", new FakeFileContentSource(), default);
-    Assert.True(result.Drafts.Single(d => d.Id == "d1").IsOverriddenStale);  // no shift — session already at sha-B
+        };
+        var session = SessionWithOverriddenStaleDraft(stamps);
+        var pipeline = new DraftReconciliationPipeline();
+        var result = await pipeline.ReconcileAsync(session, "sha-B", "tab-X-new", new FakeFileContentSource(), default);
+        Assert.True(result.Drafts.Single(d => d.Id == "d1").IsOverriddenStale);
+    }
 }
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+`FakeFileContentSource` exists in the test assembly; reuse it.
 
-```
-dotnet test tests/PRism.Core.Tests/ --filter "HeadShifted"
-```
-
-Expected: BUILD ERROR — `ReconcileAsync` doesn't have `callerTabId`.
-
-- [ ] **Step 3: Reshape `ReconcileAsync` signature**
+- [ ] **Step 2: Reshape `ReconcileAsync` signature**
 
 In `PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs:12-18`:
 
@@ -1357,7 +1205,7 @@ In `PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs:12-18`:
 public async Task<ReconciliationResult> ReconcileAsync(
     ReviewSessionState session,
     string newHeadSha,
-    string callerTabId,                                       // new — REQUIRED
+    string callerTabId,
     IFileContentSource fileSource,
     CancellationToken ct,
     IReadOnlyDictionary<string, string>? renames = null,
@@ -1370,29 +1218,28 @@ public async Task<ReconciliationResult> ReconcileAsync(
 
     // ... existing renames/deletedPaths defaults ...
 
-    // Per-tab head shift, with session-level fallback for the LRU-eviction case.
-    bool headShifted;
-    if (session.TabStamps.TryGetValue(callerTabId, out var priorStamp))
+    bool headShifted = ComputeHeadShifted(session, callerTabId, newHeadSha);
+    if (headShifted)
     {
-        headShifted = priorStamp.HeadSha != newHeadSha;
-    }
-    else if (session.TabStamps.Count == 0)
-    {
-        headShifted = false;
-    }
-    else
-    {
-        headShifted = session.TabStamps.Values.Any(s => s.HeadSha != newHeadSha);
+        // ... existing override-clear block ...
     }
 
-    if (headShifted) { /* existing override-clear block, unchanged */ }
+    // ... rest of method ...
+}
+
+private static bool ComputeHeadShifted(ReviewSessionState session, string callerTabId, string newHeadSha)
+{
+    if (session.TabStamps.TryGetValue(callerTabId, out var priorStamp))
+        return priorStamp.HeadSha != newHeadSha;
+    if (session.TabStamps.Count == 0)
+        return false;
+    return session.TabStamps.Values.Any(s => s.HeadSha != newHeadSha);
+}
 ```
 
-- [ ] **Step 4: Update the verdict-reconcile site at line ~216**
+Replace the line-33 `headShifted` derivation with the helper call. Replace the line-216 verdict-reconcile derivation (`verdictHeadShifted = session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha`) with `var verdictHeadShifted = ComputeHeadShifted(session, callerTabId, newHeadSha);` — the helper is reused, no separate branch shape.
 
-Find the existing `verdictHeadShifted` derivation (search the file for `LastViewedHeadSha`). Replace with the same three-branch shape as above (or refactor to reuse the `headShifted` local from line 33 if the logic is identical).
-
-- [ ] **Step 5: Update the caller in `PrReloadEndpoints.cs:91-93`**
+- [ ] **Step 3: Update the caller in `PrReloadEndpoints.cs:91-93`**
 
 ```csharp
 var result = await pipeline.ReconcileAsync(
@@ -1400,17 +1247,25 @@ var result = await pipeline.ReconcileAsync(
     renames: null, deletedPaths: null).ConfigureAwait(false);
 ```
 
-(`sourceTabId` is non-null after the 422 gate from Task 5; the `!` asserts that.)
+- [ ] **Step 4: Update every test caller (10 files)**
 
-- [ ] **Step 6: Update every test caller**
+The enumerated set:
+- `tests/PRism.Core.Tests/Reconciliation/BoundaryPermutationTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/DeleteTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/ForcePushFallbackTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/MatrixTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/OverrideStaleTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/PipelineGuardTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/RenameTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/ReplyTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/VerdictReconfirmTests.cs`
+- `tests/PRism.Core.Tests/Reconciliation/WhitespaceTests.cs`
 
-```
-git -C D:/src/prism-cross-tab-stamp grep -nl "pipeline.ReconcileAsync(" tests/
-```
+For each `pipeline.ReconcileAsync(session, newHeadSha, fileSource, ct, ...)` call, insert `callerTabId: "tab-test"` as the third positional argument. **For tests that previously seeded `LastViewedHeadSha: "head1"` and depended on head-shift behavior**, the Task-2 sweep already converted those seeds to `TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp("head1", t) }`. The `"tab-test"` value flowing through `callerTabId` matches the seeded key, so the per-tab branch fires — preserving the original test semantics.
 
-For each hit, add `callerTabId: "tab-test"` as the third positional argument (after `newHeadSha`). Most reconciliation tests don't exercise the per-tab branch, so any tab id works; use `"tab-test"` consistently.
+For reconciliation tests that don't care about head-shift (most of them — they exercise rename/move/delete logic), `"tab-test"` with an unseeded `TabStamps` map means the helper returns `false` (no shift), which matches the pre-V6 behavior when `LastViewedHeadSha` was `null`.
 
-- [ ] **Step 7: Run all reconciliation tests**
+- [ ] **Step 5: Run all reconciliation tests**
 
 ```
 dotnet test tests/PRism.Core.Tests/ --filter "Reconciliation"
@@ -1418,7 +1273,7 @@ dotnet test tests/PRism.Core.Tests/ --filter "Reconciliation"
 
 Expected: PASS (including the four new HeadShifted tests).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Commit**
 
 ```
 git -C D:/src/prism-cross-tab-stamp add PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs PRism.Web/Endpoints/PrReloadEndpoints.cs tests/
@@ -1429,77 +1284,50 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(reconcile): ReconcileAsync r
 
 ## Phase 5 — Inbox projection
 
-### Task 11: Inbox projects most-recent stamp + keeps session-flat `LastSeenCommentId`
+### Task 9: Inbox projects most-recent `TabStamp` + keeps session-flat `LastSeenCommentId`
 
 **Files:**
-- Modify: `PRism.Core/Inbox/InboxRefreshOrchestrator.cs:244-247`
+- Modify: `PRism.Core/Inbox/InboxRefreshOrchestrator.cs:~244`
 - Modify: `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs`
 
-- [ ] **Step 1: Write the failing projection test**
+- [ ] **Step 1: Locate the projection site**
+
+Read `PRism.Core/Inbox/InboxRefreshOrchestrator.cs` around lines 230-260. The `MaterializePrInboxItem` (or similarly-named) function constructs `new PrInboxItem(...)` positionally; line 244 currently reads `session.LastViewedHeadSha`. Replace that read with the most-recent-stamp projection.
+
+- [ ] **Step 2: Update the projection (in-place, positional construction unchanged)**
 
 ```csharp
-[Fact]
-public void InboxProjection_lastViewedHeadSha_is_most_recent_TabStamp_HeadSha()
-{
-    var session = NewEmptySessionLikeProduction() with
-    {
-        TabStamps = new Dictionary<string, TabStamp>
-        {
-            ["tab-old"] = new TabStamp("sha-old", new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc)),
-            ["tab-new"] = new TabStamp("sha-new", new DateTime(2026, 5, 18, 0, 0, 0, DateTimeKind.Utc)),
-        },
-        LastSeenCommentId = "999",
-    };
-
-    // Invoke the projection (signature depends on the orchestrator's existing API surface).
-    var item = InboxItemMapper.FromSession(session, /* other args */);
-
-    Assert.Equal("sha-new", item.LastViewedHeadSha);
-    Assert.Equal(999L, item.LastSeenCommentId);
-}
-
-[Fact]
-public void InboxProjection_lastViewedHeadSha_is_null_when_no_tab_stamped()
-{
-    var session = NewEmptySessionLikeProduction() with
-    {
-        TabStamps = new Dictionary<string, TabStamp>(),
-        LastSeenCommentId = null,
-    };
-
-    var item = InboxItemMapper.FromSession(session, /* other args */);
-
-    Assert.Null(item.LastViewedHeadSha);
-    Assert.Null(item.LastSeenCommentId);
-}
-```
-
-- [ ] **Step 2: Run tests to verify failure**
-
-```
-dotnet test tests/PRism.Core.Tests/ --filter "InboxProjection"
-```
-
-Expected: BUILD ERROR or wrong value.
-
-- [ ] **Step 3: Update the orchestrator's session-to-DTO projection**
-
-In `PRism.Core/Inbox/InboxRefreshOrchestrator.cs` (around lines 244-247 — the existing `session.LastViewedHeadSha` / `session.LastSeenCommentId` reads), replace with:
-
-```csharp
-var mostRecent = session.TabStamps
+// Before the new PrInboxItem(...) construction:
+var lastViewedHeadSha = session.TabStamps
     .Values
     .OrderByDescending(s => s.StampedAtUtc)
+    .Select(s => (string?)s.HeadSha)
     .FirstOrDefault();
+var lastSeenCommentId = session.LastSeenCommentId is { } id && long.TryParse(id, out var parsed) ? (long?)parsed : null;
 
-inboxItem = inboxItem with
-{
-    LastViewedHeadSha = mostRecent?.HeadSha,
-    LastSeenCommentId = session.LastSeenCommentId is { } id && long.TryParse(id, out var parsed) ? parsed : null,
-};
+// Then existing positional construction with these as the values:
+return new PrInboxItem(
+    /* ... existing args ... */,
+    LastViewedHeadSha: lastViewedHeadSha,
+    LastSeenCommentId: lastSeenCommentId);
 ```
 
-(The exact site shape depends on the orchestrator's existing init pattern. Match the existing style.)
+- [ ] **Step 3: Add the test**
+
+In `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs`, add:
+
+```csharp
+[Fact]
+public async Task InboxProjection_lastViewedHeadSha_is_most_recent_TabStamp_HeadSha()
+{
+    // Drive the orchestrator end-to-end. Seed two stamps with different StampedAtUtc;
+    // assert the projected PrInboxItem.LastViewedHeadSha is the more-recent one's HeadSha.
+    // (Use the existing test pattern in this file as the template — usually a fake IAppStateStore
+    // + IPrDiscovery + invoke RefreshAsync, then assert the published inbox item shape.)
+}
+```
+
+(Exact test wiring depends on the existing fixture pattern; the principle is to drive `RefreshAsync` with seeded state and assert the projection, not to test an extracted `InboxItemMapper.FromSession` — that helper does not exist.)
 
 - [ ] **Step 4: Run tests**
 
@@ -1520,7 +1348,7 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(inbox): project most-recent 
 
 ## Phase 6 — Frontend
 
-### Task 12: `tab-id-missing` arm for submit error
+### Task 10: `tab-id-missing` arm for submit error
 
 **Files:**
 - Modify: `frontend/src/api/submit.ts`
@@ -1529,20 +1357,25 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(inbox): project most-recent 
 
 - [ ] **Step 1: Add `'tab-id-missing'` to `KNOWN_SUBMIT_ERROR_CODES`**
 
-In `frontend/src/api/submit.ts`, find the `KNOWN_SUBMIT_ERROR_CODES` const. Add `'tab-id-missing'` as a new entry.
+In `frontend/src/api/submit.ts`, find the `KNOWN_SUBMIT_ERROR_CODES` const and append `'tab-id-missing'`.
 
-- [ ] **Step 2: Write failing test for the new switch arm**
+- [ ] **Step 2: Write the failing component-rendering test**
 
-In `frontend/__tests__/PrHeader.test.tsx`:
+`submitErrorMessage` is a closure inside the `PrHeader` component (not exported). Test it via the rendered component, using the pattern that already exists in `PrHeader.test.tsx` for the other submit errors (mock `submitReview` to reject with the new code; assert the toast surfaces the right copy).
 
 ```tsx
-test('surfaces tab-id-missing as refresh-tab copy', () => {
-  const submitError = { code: 'tab-id-missing', message: 'whatever' };
-  // Invoke whatever utility produces the toast copy, e.g.:
-  const copy = submitErrorMessage(submitError as any);
-  expect(copy).toContain('Refresh the browser tab');
+test('surfaces tab-id-missing as refresh-tab toast copy', async () => {
+  submitReviewMock.mockRejectedValueOnce(new SubmitConflictError('tab-id-missing', 'whatever'));
+  // Render PrHeader with submittable props
+  render(<PrHeader {...props} />);
+  // Click Submit Review
+  await userEvent.click(screen.getByText('Submit Review'));
+  // Toast copy appears
+  expect(await screen.findByText(/Refresh the browser tab/)).toBeInTheDocument();
 });
 ```
+
+(Match the exact pattern of the existing tests in `PrHeader.test.tsx`; the imports + mock setup should mirror the closest sibling test.)
 
 - [ ] **Step 3: Run test to verify failure**
 
@@ -1550,7 +1383,7 @@ test('surfaces tab-id-missing as refresh-tab copy', () => {
 cd D:/src/prism-cross-tab-stamp/frontend && npm run test -- PrHeader
 ```
 
-Expected: FAIL — switch doesn't recognize the new code.
+Expected: FAIL — switch has no arm for the new code.
 
 - [ ] **Step 4: Add the switch arm**
 
@@ -1578,31 +1411,35 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(fe): tab-id-missing submit e
 
 ---
 
-### Task 13: useReconcile arm for reload 422 `tab-id-missing`
+### Task 11: useReconcile arm for reload 422 `tab-id-missing`
 
 **Files:**
-- Modify: `frontend/src/api/draft.ts` (`PostReloadResult` union + `postReload` body discriminator)
-- Modify: `frontend/src/hooks/useReconcile.ts` (state machine arm + banner constant)
-- Modify: `frontend/__tests__/useReconcile.test.tsx`
+- Modify: `frontend/src/api/draft.ts` (`PostReloadResult` union + `postReload` 422 branch)
+- Modify: `frontend/src/hooks/useReconcile.ts`
+- Modify: `frontend/__tests__/useReconcile.test.tsx` (or equivalent)
 
-- [ ] **Step 1: Write failing test for the reload 422 arm**
+- [ ] **Step 1: Locate the two reload call sites in useReconcile**
 
-In `frontend/__tests__/useReconcile.test.tsx`:
+Read `frontend/src/hooks/useReconcile.ts`. It has TWO `postReload` calls: one initial, one as the retry after 409 reload-stale-head. Both need the new 422 arm.
+
+- [ ] **Step 2: Write failing test**
 
 ```tsx
 test('reload 422 tab-id-missing surfaces refresh-tab banner with no auto-retry', async () => {
-  // Mock postReload to return 422 tab-id-missing
-  // Render useReconcile
-  // Assert banner == BANNER_TAB_ID_MISSING
-  // Assert no second fetch occurred (no auto-retry)
+  postReloadMock.mockResolvedValueOnce({
+    ok: false,
+    status: 422,
+    kind: 'tab-id-missing',
+    body: { error: 'tab-id-missing' },
+  });
+  // Render useReconcile (via the existing test wrapper)
+  // Trigger a reload
+  // Assert banner === BANNER_TAB_ID_MISSING
+  // Assert postReloadMock was called exactly once (no auto-retry)
 });
 ```
 
-(Concrete shape depends on the existing useReconcile test patterns — match them.)
-
-- [ ] **Step 2: Run test to verify failure**
-
-Expected: FAIL — useReconcile doesn't have the arm.
+Use the existing test wrapper pattern from `useReconcile.test.tsx`.
 
 - [ ] **Step 3: Extend `PostReloadResult`**
 
@@ -1617,7 +1454,7 @@ export type PostReloadResult =
   | { ok: false; status: number; kind: 'other'; body: unknown };
 ```
 
-In `postReload` (around lines 166-191), add a 422 branch:
+In `postReload` (lines 166-191), add the 422 branch:
 
 ```ts
 if (e instanceof ApiError) {
@@ -1631,7 +1468,7 @@ if (e instanceof ApiError) {
 }
 ```
 
-Add helper `hasErrorField` if it doesn't exist:
+Add `hasErrorField` if it doesn't already exist:
 
 ```ts
 function hasErrorField(body: unknown, value: string): boolean {
@@ -1640,15 +1477,15 @@ function hasErrorField(body: unknown, value: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Add the useReconcile arm**
+- [ ] **Step 4: Add the arm in useReconcile — at BOTH call sites**
 
-In `frontend/src/hooks/useReconcile.ts`, add a new banner constant:
+Add the banner constant:
 
 ```ts
 export const BANNER_TAB_ID_MISSING = "Couldn't reload — refresh the browser tab and retry.";
 ```
 
-In the reload result handler, add:
+After each `postReload` call (both the initial and the post-409-retry), add:
 
 ```ts
 if (result.ok === false && result.status === 422 && result.kind === 'tab-id-missing') {
@@ -1670,12 +1507,12 @@ Expected: PASS.
 
 ```
 git -C D:/src/prism-cross-tab-stamp add frontend/src/api/draft.ts frontend/src/hooks/useReconcile.ts frontend/__tests__/useReconcile.test.tsx
-git -C D:/src/prism-cross-tab-stamp commit -m "feat(fe): useReconcile arm for reload 422 tab-id-missing (no auto-retry)"
+git -C D:/src/prism-cross-tab-stamp commit -m "feat(fe): useReconcile arm for reload 422 tab-id-missing (no auto-retry, both call sites)"
 ```
 
 ---
 
-### Task 14: Tab-id mutability invariant comment + markViewed comment block update
+### Task 12: Tab-id mutability invariant comment + markViewed comment block update
 
 **Files:**
 - Modify: `frontend/src/api/draft.ts:5-12`
@@ -1683,7 +1520,7 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(fe): useReconcile arm for re
 
 - [ ] **Step 1: Add invariant comment to `_tabId`**
 
-In `frontend/src/api/draft.ts`, replace the comment block at lines 5-7 with:
+In `frontend/src/api/draft.ts`, replace lines 5-7 with:
 
 ```ts
 // Per-launch tab id used by SSE multi-tab consistency and the per-tab submit gate
@@ -1696,13 +1533,12 @@ In `frontend/src/api/draft.ts`, replace the comment block at lines 5-7 with:
 // id, re-introducing the cross-tab bypass class this slice exists to close.
 //
 // __resetTabIdForTest is the ONLY legal mutator and is invoked from test setup only.
-// A production caller that needs a fresh tab id must open a new browser tab.
 let _tabId: string | null = null;
 ```
 
-- [ ] **Step 2: Update the markViewed.ts comment block**
+- [ ] **Step 2: Update markViewed.ts comment**
 
-In `frontend/src/api/markViewed.ts`, replace lines 18-23 with:
+In `frontend/src/api/markViewed.ts`, lines 18-23:
 
 ```ts
 // `signal` lets the caller cancel the POST when its React effect cleans up,
@@ -1714,7 +1550,7 @@ In `frontend/src/api/markViewed.ts`, replace lines 18-23 with:
 // missing or malformed.
 ```
 
-- [ ] **Step 3: Run typecheck**
+- [ ] **Step 3: Typecheck**
 
 ```
 cd D:/src/prism-cross-tab-stamp/frontend && npx tsc --noEmit
@@ -1722,45 +1558,54 @@ cd D:/src/prism-cross-tab-stamp/frontend && npx tsc --noEmit
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Commit (folded into Task 11's commit is also fine — comment-only)**
 
 ```
 git -C D:/src/prism-cross-tab-stamp add frontend/src/api/draft.ts frontend/src/api/markViewed.ts
-git -C D:/src/prism-cross-tab-stamp commit -m "docs(fe): pin _tabId mutability invariant + update markViewed comment block"
+git -C D:/src/prism-cross-tab-stamp commit -m "docs(fe): pin _tabId mutability invariant + update markViewed comment"
 ```
 
 ---
 
 ## Phase 7 — Playwright mocked-mode plumbing
 
-The seven mocked-mode submit specs need explicit tab-id coordination between `recordPrViewed` (APIRequestContext) and the page (browser context).
+The mocked-mode submit suite uses `recordPrViewed` via `APIRequestContext`, whose tab-id context is separate from the page's browser context. Eight specs call `recordPrViewed`; all eight need explicit tab-id coordination.
 
-### Task 15: FE test-mode hook exposes `getTabId` to `page.evaluate`
+### Task 13: FE test-mode hook exposes `getTabId` to `page.evaluate`
 
 **Files:**
-- Modify: `frontend/src/main.tsx` (or wherever app-init wiring lives — find via `grep -rn "aiPreview" frontend/src/`)
-- Modify: `frontend/src/api/draft.ts` (export shape, if needed)
+- Modify: `frontend/src/main.tsx` (or app-init wiring)
+- Modify: `frontend/vite.config.ts` (gate via `define` or env var)
 
-- [ ] **Step 1: Find the test-mode init site**
+- [ ] **Step 1: Pick the test-mode predicate**
 
-```
-git -C D:/src/prism-cross-tab-stamp grep -n "aiPreview" frontend/src/
-```
+Use `import.meta.env.VITE_E2E_TEST === 'true'`. This is settable from Playwright's `playwright.config.ts` via the `webServer.env` block. Vite strips the conditional from production builds when `VITE_E2E_TEST` is unset.
 
-The closest existing pattern for FE test-mode hooks is the one used by PR #58's real-flow suite. Match its shape.
+- [ ] **Step 2: Add the hook in `main.tsx`**
 
-- [ ] **Step 2: Expose `getTabId` on `window` under test mode**
-
-In the test-mode init block:
+After the existing app-mount:
 
 ```ts
-if (import.meta.env.MODE === 'test' || /* the existing test-mode predicate */) {
-  // Expose getTabId for Playwright's page.evaluate.
-  (window as unknown as { __prism_test_getTabId?: () => string }).__prism_test_getTabId = () => getTabId();
+if (import.meta.env.VITE_E2E_TEST === 'true') {
+  import('./api/draft').then(({ getTabId }) => {
+    (window as unknown as { __prism_test_getTabId?: () => string }).__prism_test_getTabId = () => getTabId();
+  });
 }
 ```
 
-- [ ] **Step 3: Confirm Vitest tests still pass**
+- [ ] **Step 3: Confirm `playwright.config.ts` sets `VITE_E2E_TEST=true`**
+
+Read `playwright.config.ts`. Under `webServer`, add (or confirm) `env: { VITE_E2E_TEST: 'true' }`.
+
+- [ ] **Step 4: Confirm production-build strips the hook**
+
+```
+cd D:/src/prism-cross-tab-stamp/frontend && npm run build && grep -r "__prism_test_getTabId" dist/
+```
+
+Expected: no matches in `dist/`.
+
+- [ ] **Step 5: Confirm Vitest tests still pass**
 
 ```
 npm run test
@@ -1768,52 +1613,54 @@ npm run test
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```
-git -C D:/src/prism-cross-tab-stamp add frontend/src/
-git -C D:/src/prism-cross-tab-stamp commit -m "feat(fe-test-mode): expose getTabId on window for Playwright coordination"
+git -C D:/src/prism-cross-tab-stamp add frontend/src/main.tsx frontend/playwright.config.ts
+git -C D:/src/prism-cross-tab-stamp commit -m "feat(fe-test-mode): expose getTabId on window under VITE_E2E_TEST"
 ```
 
 ---
 
-### Task 16: `recordPrViewed` helper accepts `tabId`
+### Task 14: `recordPrViewed` helper + `getPageTabId`
 
 **Files:**
-- Modify: `frontend/e2e/helpers/s5-submit.ts:136-148`
+- Modify: `frontend/e2e/helpers/s5-submit.ts`
 
-- [ ] **Step 1: Update the helper signature**
+- [ ] **Step 1: Add `getPageTabId` with init-race guard**
+
+```ts
+export async function getPageTabId(page: Page, timeoutMs: number = 5000): Promise<string> {
+  await page.waitForFunction(
+    () => typeof (window as unknown as { __prism_test_getTabId?: () => string }).__prism_test_getTabId === 'function',
+    { timeout: timeoutMs },
+  );
+  const id = await page.evaluate(() => (window as unknown as { __prism_test_getTabId?: () => string }).__prism_test_getTabId?.());
+  if (!id || typeof id !== 'string') throw new Error('Page tab id unavailable — FE test-mode hook returned no value');
+  return id;
+}
+```
+
+- [ ] **Step 2: Update `recordPrViewed` to accept `tabId`**
 
 ```ts
 export async function recordPrViewed(
   request: APIRequestContext,
   prRef: { owner: string; repo: string; number: number },
-  headSha: string,
-  tabId: string,                                       // new — required
+  tabId: string,
 ): Promise<void> {
   await postTest(request, '/test/mark-pr-viewed', {
     owner: prRef.owner,
     repo: prRef.repo,
     number: prRef.number,
-    headSha,
     tabId,
   });
 }
 ```
 
-- [ ] **Step 2: Add a small page-tab-id helper**
+Note: the helper does NOT pass `headSha` — the BE hook reads it from the active-PR cache server-side (see Task 6).
 
-In `frontend/e2e/helpers/s5-submit.ts`:
-
-```ts
-export async function getPageTabId(page: Page): Promise<string> {
-  const id = await page.evaluate(() => (window as unknown as { __prism_test_getTabId?: () => string }).__prism_test_getTabId?.());
-  if (!id) throw new Error('Page tab id unavailable — is the FE test-mode hook wired?');
-  return id;
-}
-```
-
-- [ ] **Step 3: Confirm typecheck**
+- [ ] **Step 3: Typecheck**
 
 ```
 cd D:/src/prism-cross-tab-stamp/frontend && npx tsc --noEmit -p e2e/
@@ -1825,42 +1672,48 @@ Expected: PASS.
 
 ```
 git -C D:/src/prism-cross-tab-stamp add frontend/e2e/helpers/s5-submit.ts
-git -C D:/src/prism-cross-tab-stamp commit -m "feat(e2e-helpers): recordPrViewed takes tabId; add getPageTabId helper"
+git -C D:/src/prism-cross-tab-stamp commit -m "feat(e2e-helpers): recordPrViewed takes tabId; add getPageTabId with init-race guard"
 ```
 
 ---
 
-### Task 17: Update the seven mocked-mode submit specs to plumb `tabId`
+### Task 15: Update the eight mocked-mode submit specs
 
-**Files (each spec gets one edit):**
-- Modify: `frontend/e2e/s5-submit-stale-commit-oid.spec.ts`
-- Modify: `frontend/e2e/s5-submit-retry-from-each-step.spec.ts`
-- Modify: `frontend/e2e/s5-submit-lost-response-adoption.spec.ts`
-- Modify: `frontend/e2e/s5-submit-happy-path.spec.ts`
+**Files (all eight — verified via `grep -l recordPrViewed frontend/e2e/`):**
+- Modify: `frontend/e2e/s5-marker-prefix-collision.spec.ts`
 - Modify: `frontend/e2e/s5-multi-tab-simultaneous-submit.spec.ts`
-- Modify: `frontend/e2e/s5-submit-foreign-pending-review.spec.ts`
 - Modify: `frontend/e2e/s5-submit-closed-merged-discard.spec.ts`
+- Modify: `frontend/e2e/s5-submit-foreign-pending-review.spec.ts`
+- Modify: `frontend/e2e/s5-submit-happy-path.spec.ts`
+- Modify: `frontend/e2e/s5-submit-lost-response-adoption.spec.ts`
+- Modify: `frontend/e2e/s5-submit-retry-from-each-step.spec.ts`
+- Modify: `frontend/e2e/s5-submit-stale-commit-oid.spec.ts`
 
-- [ ] **Step 1: For each spec, find the `recordPrViewed` call**
+- [ ] **Step 1: Audit call counts per spec**
 
-Each spec has at least one `await recordPrViewed(page.request, ...)` call. Some have multiple (one per tab in multi-tab tests).
+```
+git -C D:/src/prism-cross-tab-stamp grep -c "recordPrViewed" frontend/e2e/s5-*.spec.ts
+```
 
-- [ ] **Step 2: Capture the page's tab id before each call**
+Expected: most specs 1-2 calls; `s5-submit-foreign-pending-review.spec.ts` has 3.
 
-Before each `recordPrViewed`:
+- [ ] **Step 2: For each spec, add `getPageTabId(page)` before each `recordPrViewed` call**
+
+Standard pattern (single-tab spec):
 
 ```ts
 const tabId = await getPageTabId(page);
-await recordPrViewed(page.request, prRef, headSha, tabId);
+await recordPrViewed(page.request, prRef, tabId);
 ```
 
-For multi-tab tests (`s5-multi-tab-simultaneous-submit`), each tab page object has its own `getPageTabId` call:
+Multi-tab spec (`s5-multi-tab-simultaneous-submit.spec.ts` and the 3-call `foreign-pending-review` spec) — each `recordPrViewed` call uses the same-page tab id if it's from the same page, or different tab ids if explicitly multi-page:
 
 ```ts
 const tabIdA = await getPageTabId(pageA);
+await recordPrViewed(pageA.request, prRef, tabIdA);
+// ...
 const tabIdB = await getPageTabId(pageB);
-await recordPrViewed(pageA.request, prRef, headSha, tabIdA);
-await recordPrViewed(pageB.request, prRef, headSha, tabIdB);
+await recordPrViewed(pageB.request, prRef, tabIdB);
 ```
 
 - [ ] **Step 3: Run the mocked-mode Playwright suite**
@@ -1869,7 +1722,7 @@ await recordPrViewed(pageB.request, prRef, headSha, tabIdB);
 cd D:/src/prism-cross-tab-stamp/frontend && npm run test:e2e -- --grep "@mock"
 ```
 
-(Use whatever tag/project the mocked-mode specs use; check `playwright.config.ts`.)
+(Confirm the tag in `playwright.config.ts`; if the project structure uses `--project mocked` or similar, use that instead.)
 
 Expected: PASS.
 
@@ -1877,29 +1730,31 @@ Expected: PASS.
 
 ```
 git -C D:/src/prism-cross-tab-stamp add frontend/e2e/
-git -C D:/src/prism-cross-tab-stamp commit -m "test(e2e): plumb page tab id into recordPrViewed across 7 mocked submit specs"
+git -C D:/src/prism-cross-tab-stamp commit -m "test(e2e): plumb page tab id into recordPrViewed across 8 mocked submit specs"
 ```
 
 ---
 
 ## Phase 8 — Project standards updates
 
-### Task 18: Amend `docs/spec/02-architecture.md`
+### Task 16: Amend `docs/spec/02-architecture.md`
 
 **Files:**
 - Modify: `docs/spec/02-architecture.md`
 
-- [ ] **Step 1: Find the `ReviewSessionState` description**
+- [ ] **Step 1: Locate the relevant sections**
 
-Search `docs/spec/02-architecture.md` for `ReviewSessionState`, `LastViewedHeadSha`, or `Multi-tab consistency`.
+```
+git -C D:/src/prism-cross-tab-stamp grep -n -E "(ReviewSessionState|LastViewedHeadSha|Multi-tab consistency)" docs/spec/02-architecture.md
+```
 
-- [ ] **Step 2: Add a paragraph noting the V6 reshape**
+- [ ] **Step 2: Add the two amendments**
 
-In the `ReviewSessionState` shape section, add a one-paragraph note:
+For the `ReviewSessionState` shape section:
 
-> *Post-V6: `LastViewedHeadSha` is per-tab via `TabStamps: IReadOnlyDictionary<string, TabStamp>`, keyed by `X-PRism-Tab-Id`. `LastSeenCommentId` stays session-flat as a monotone high-water — both mark-viewed and markAllRead apply `MonotonicCommentId.Max` to preserve the inbox unread-badge invariant across tabs.*
+> *Post-V6: `LastViewedHeadSha` is per-tab via `TabStamps: IReadOnlyDictionary<string, TabStamp>`, keyed by `X-PRism-Tab-Id`. `LastSeenCommentId` stays session-flat as a monotone high-water — mark-viewed applies a `MonotonicMaxCommentId` guard at the write site; markAllRead's value is read server-side from `IActivePrCache.HighestIssueCommentId` and is monotone by construction.*
 
-In the `Multi-tab consistency` section (if it exists; if not, add it as a new sub-section), add:
+For the `Multi-tab consistency` section (or add as a new sub-section):
 
 > *One field on `ReviewSessionState` is per-tab as a deliberate exception to the otherwise eventual-consistency-via-polling model: `TabStamps.HeadSha`. The exception is justified by the submit-gate's correctness need (each tab must be gated by its own viewing). All other session fields remain session-flat with `StateChanged`-broadcast convergence. See `docs/specs/2026-05-18-cross-tab-stamp-poisoning-design.md` for the V6 details.*
 
@@ -1912,40 +1767,40 @@ git -C D:/src/prism-cross-tab-stamp commit -m "docs(architecture): note V6 per-t
 
 ---
 
-## Phase 9 — Pre-push checklist
+## Phase 9 — Pre-push
 
-### Task 19: Run the full pre-push checklist
+### Task 17: Run the full pre-push checklist
 
-Per `.ai/docs/development-process.md` and memory: every push runs the full checklist.
+Per `.ai/docs/development-process.md` + memory: every push runs the full checklist.
 
-- [ ] **Step 1: BE build clean**
+- [ ] **Step 1: BE build**
 
 ```
 dotnet build PRism.sln
 ```
 
-Expected: 0 errors, 0 warnings (in changed files).
+Expected: 0 errors, 0 warnings in changed files. Timeout ≥ 300000ms.
 
-- [ ] **Step 2: BE tests pass**
+- [ ] **Step 2: BE tests**
 
 ```
 dotnet test PRism.sln
 ```
 
-Expected: all PASS. Timeout ≥ 300000ms per memory.
+Expected: all PASS. Timeout ≥ 300000ms.
 
-- [ ] **Step 3: FE lint**
+- [ ] **Step 3: FE lint (gates CI per memory — Prettier `--check` is included)**
 
 ```
 cd D:/src/prism-cross-tab-stamp/frontend && npm run lint
 ```
 
-Expected: PASS. (Prettier --check is part of lint; per memory it gates CI.)
+Expected: PASS. If Prettier fails, run `npm run prettier -- --write <files>` on the new files before re-running lint.
 
 - [ ] **Step 4: FE build**
 
 ```
-cd D:/src/prism-cross-tab-stamp/frontend && npm run build
+npm run build
 ```
 
 Expected: PASS.
@@ -1953,7 +1808,7 @@ Expected: PASS.
 - [ ] **Step 5: FE Vitest**
 
 ```
-cd D:/src/prism-cross-tab-stamp/frontend && npm run test
+npm run test
 ```
 
 Expected: all PASS.
@@ -1961,42 +1816,36 @@ Expected: all PASS.
 - [ ] **Step 6: Mocked-mode Playwright**
 
 ```
-cd D:/src/prism-cross-tab-stamp/frontend && npm run test:e2e -- --grep "@mock"
+npm run test:e2e -- --grep "@mock"
 ```
 
 Expected: PASS.
 
-- [ ] **Step 7: Real-flow Playwright (manual — requires GitHub sandbox)**
-
-Per project convention, real-flow specs run against `prpande/prism-sandbox`. Confirm the happy-path spec passes; the stale-OID spec stays `.skip`ed.
+- [ ] **Step 7: Real-flow Playwright**
 
 ```
-cd D:/src/prism-cross-tab-stamp/frontend && npm run test:e2e:real
+npm run test:e2e:real
 ```
 
-Expected: 3 PASS, 1 SKIP (per PR #58 baseline).
+Expected: 3 PASS, 1 SKIP (per PR #58 baseline). Requires `prpande/prism-sandbox` access.
 
-- [ ] **Step 8: Confirm migration on a real `state.json`**
+- [ ] **Step 8: Manual migration smoke**
 
-Manual smoke test:
-
-```
-# Copy a V5 state.json into a fresh data dir, run PRism, verify it migrates cleanly.
-# Confirm the post-migration file has tab-stamps: {} on every session and no last-viewed-head-sha keys.
-```
-
-Expected: clean migration; no quarantine.
+Copy a V5 `state.json` into a fresh data dir, run PRism, verify:
+- post-migration file has `tab-stamps: {}` on every session
+- no `last-viewed-head-sha` keys remain
+- `last-seen-comment-id` values are preserved
 
 ---
 
 ## Phase 10 — PR
 
-### Task 20: Hand off to `pr-autopilot`
+### Task 18: Hand off to `pr-autopilot`
 
-After all checks pass, invoke `pr-autopilot` to:
-1. Push `feat/cross-tab-stamp` to origin.
-2. Open the PR with the spec, plan, deferrals, and implementation diff.
-3. Drive the reviewer-bot comment loop to quiescence.
-4. Final CI gate.
+After Phase 9 is green, invoke `pr-autopilot`:
+- Pushes `feat/cross-tab-stamp` to origin
+- Opens the PR with spec + plan + deferrals + implementation diff
+- Drives the reviewer-bot comment loop to quiescence
+- Final CI gate
 
 Do not push manually. Let autopilot own the push + PR-open + comment-loop sequence.

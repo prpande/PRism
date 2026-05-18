@@ -496,13 +496,13 @@ public async Task<ReconciliationResult> ReconcileAsync(
 
 **Why per-caller-tab as the primary signal, with session-level fallback.** `headShifted` drives two consequential outcomes: clearing `IsOverriddenStale` flags and forcing verdict re-confirmation. Both are "the user has seen a new head sha and their prior overrides / verdicts may not apply." The relevant "user" is the one clicking Reload — the per-caller-tab signal answers that question precisely. The session-level fallback covers eviction and migration-drop without re-introducing the "any tab's stale view triggers reconfirm on a fresh tab" failure mode of a session-only-everywhere design: the fallback fires *only* when the caller has no per-tab signal, and the user's reload click is itself the consent that the session has experienced a head transition.
 
-### 5.6 markAllRead patch — gains the same monotone guard as mark-viewed
+### 5.6 markAllRead patch — no V6 reshape
 
-[`PrDraftEndpoints.cs:355-373`](../../PRism.Web/Endpoints/PrDraftEndpoints.cs) currently writes `session with { LastSeenCommentId = newId }` — a last-writer-wins assignment. Under V6, `LastSeenCommentId` stays session-flat (§ 2) but the monotone-high-water invariant must hold for the inbox badge to behave correctly across tabs. The same regression class § 2 identifies for mark-viewed applies here: if Tab A's markAllRead writes `id=999` and Tab B's writes `id=500` (Tab B saw fewer comments at its load time), last-writer-wins regresses the high-water.
+[`PrDraftEndpoints.cs:355-373`](../../PRism.Web/Endpoints/PrDraftEndpoints.cs) writes `session with { LastSeenCommentId = newId }` where `newId` is read from `cache.GetCurrent(prRef)?.HighestIssueCommentId` (server-side `IActivePrCache` value), **not** from the patch body. The cache value is updated only by `ActivePrPoller` polling github.com; comment IDs on github.com are append-only, so the cache value increases monotonically over time. Tab A and Tab B firing markAllRead within the same poll cycle read the same cache value; the write is therefore inherently monotone.
 
-**Change:** markAllRead writes `LastSeenCommentId = MonotonicMaxCommentId(current.LastSeenCommentId, newId)` instead of `LastSeenCommentId = newId`. The helper from § 5.2 is shared (lift it into a `PRism.Core/State` static helper or duplicate inline — the plan picks).
+The "two tabs fire markAllRead with different ids" regression class the original draft of this section worried about does not exist — the value is server-derived, not tab-supplied. The mark-viewed write site DOES need a monotone guard (its `body.MaxCommentId` IS tab-supplied, per § 5.2); markAllRead does not.
 
-The existing `StateChanged` event's `FieldsTouchedLastSeenCommentId = { "last-seen-comment-id" }` continues to work — `useStateChangedSubscriber` ([`frontend/src/hooks/useStateChangedSubscriber.ts:37`](../../frontend/src/hooks/useStateChangedSubscriber.ts)) filters on this string and triggers `onInboxBadgeInvalidation`; the wire shape and event field name are both preserved. The patch's response shape and FE contract are unchanged.
+`StateChanged` event field name (`"last-seen-comment-id"`) and FE consumer in [`useStateChangedSubscriber.ts:37`](../../frontend/src/hooks/useStateChangedSubscriber.ts) are unchanged.
 
 ### 5.7 Test hook `/test/mark-pr-viewed` + the seven mocked-mode submit specs
 
