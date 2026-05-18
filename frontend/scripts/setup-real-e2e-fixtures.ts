@@ -47,9 +47,11 @@ function branchExists(branch: string): boolean {
   }
 }
 
-function ensureBranchAtSeed(
-  branch: string,
-): { baseOid: string; anchorFile: string; anchorLine: number } {
+function ensureBranchAtSeed(branch: string): {
+  baseOid: string;
+  anchorFile: string;
+  anchorLine: number;
+} {
   const anchorFile = 'src/Calc.cs';
   const anchorLine = 3;
   // Seed content — a 5-line C# stub with line 3 as the anchorable line.
@@ -92,11 +94,7 @@ public static class Calc
   return { baseOid: branchInfo.commit.sha, anchorFile, anchorLine };
 }
 
-function ensurePr(
-  branch: string,
-  name: string,
-  login: string,
-): { number: number; nodeId: string } {
+function ensurePr(branch: string, name: string, login: string): { number: number; nodeId: string } {
   // List PRs targeting master from this branch.
   const list = gh<Array<{ number: number; node_id: string }>>([
     'api',

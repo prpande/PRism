@@ -22,7 +22,9 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
-test('S5 real flow — happy path drives mark-viewed → submit → finalize through real GitHub', async ({ page }) => {
+test('S5 real flow — happy path drives mark-viewed → submit → finalize through real GitHub', async ({
+  page,
+}) => {
   // 1. Navigate to the fixture PR. usePrDetail's mark-viewed fires here.
   const markViewedResp = page.waitForResponse(
     (r) => r.url().endsWith('/mark-viewed') && r.status() === 204,
@@ -33,8 +35,12 @@ test('S5 real flow — happy path drives mark-viewed → submit → finalize thr
 
   // 2. Goto Files tab and add an inline comment on the anchor line.
   await page.goto(`/pr/prpande/prism-sandbox/${happyFixture.prNumber}/files`);
-  await page.getByRole('treeitem', { name: new RegExp(path.basename(happyFixture.anchorFile), 'i') }).click();
-  const addBtn = page.getByRole('button', { name: new RegExp(`add comment on line ${happyFixture.anchorLine}`, 'i') });
+  await page
+    .getByRole('treeitem', { name: new RegExp(path.basename(happyFixture.anchorFile), 'i') })
+    .click();
+  const addBtn = page.getByRole('button', {
+    name: new RegExp(`add comment on line ${happyFixture.anchorLine}`, 'i'),
+  });
   await addBtn.waitFor({ state: 'visible', timeout: 15_000 });
   await addBtn.click();
   const textarea = page.getByRole('textbox', { name: /comment body/i });
@@ -59,7 +65,9 @@ test('S5 real flow — happy path drives mark-viewed → submit → finalize thr
   await dialog.getByRole('button', { name: /^confirm submit$/i }).click();
 
   // 5. Expect "Review submitted" heading and Finalize step in done state.
-  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
+    timeout: 20_000,
+  });
   await expect(dialog.locator('[data-step="Finalize"]')).toHaveAttribute('data-state', 'done');
 
   // 6. GitHub-side assertions.

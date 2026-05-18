@@ -24,12 +24,16 @@ export default async function globalSetup(): Promise<void> {
   }
 
   // 3. Capture PAT.
-  const pat = execFileSync('gh', ['auth', 'token', '--hostname', 'github.com'], { encoding: 'utf8' }).trim();
+  const pat = execFileSync('gh', ['auth', 'token', '--hostname', 'github.com'], {
+    encoding: 'utf8',
+  }).trim();
   if (!pat) throw new Error('gh auth token returned empty.');
 
   // 4. Verify viewer.login matches fixtures' owning login (defense against accidental wrong-identity run).
   const viewer = JSON.parse(
-    execFileSync('gh', ['api', 'graphql', '-f', 'query={ viewer { login } }'], { encoding: 'utf8' }),
+    execFileSync('gh', ['api', 'graphql', '-f', 'query={ viewer { login } }'], {
+      encoding: 'utf8',
+    }),
   ) as { data: { viewer: { login: string } } };
   const myLogin = viewer.data.viewer.login;
   // Anchored match — `split('-').slice(-1)[0]` would yield "doe" for "john-doe" because GitHub
@@ -97,7 +101,12 @@ export default async function globalSetup(): Promise<void> {
     // to diagnose; re-run with --debug to inspect the body interactively if needed.
     throw new Error(`POST /api/auth/connect failed: HTTP ${connectResp.status()}`);
   }
-  const connectBody = (await connectResp.json()) as { ok: boolean; error?: string; warning?: string; login?: string };
+  const connectBody = (await connectResp.json()) as {
+    ok: boolean;
+    error?: string;
+    warning?: string;
+    login?: string;
+  };
   if (!connectBody.ok) {
     throw new Error(`/api/auth/connect rejected PAT: error=${connectBody.error ?? '(unknown)'}`);
   }

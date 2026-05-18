@@ -28,7 +28,9 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
-test('S5 real flow — foreign pending review prompt fires; Resume imports + submit lands', async ({ page }) => {
+test('S5 real flow — foreign pending review prompt fires; Resume imports + submit lands', async ({
+  page,
+}) => {
   // Default Playwright test timeout is 30s. This spec exercises two real-GraphQL submit
   // cycles (foreign-pending classify + Resume import; then final submit at HEAD) on top of
   // the standard mark-viewed / draft / files-tab navigation, comfortably exceeding 30s on
@@ -44,8 +46,12 @@ test('S5 real flow — foreign pending review prompt fires; Resume imports + sub
 
   // Add an inline draft of our own.
   await page.goto(`/pr/prpande/prism-sandbox/${foreignFixture.prNumber}/files`);
-  await page.getByRole('treeitem', { name: new RegExp(path.basename(foreignFixture.anchorFile), 'i') }).click();
-  const addBtn = page.getByRole('button', { name: new RegExp(`add comment on line ${foreignFixture.anchorLine}`, 'i') });
+  await page
+    .getByRole('treeitem', { name: new RegExp(path.basename(foreignFixture.anchorFile), 'i') })
+    .click();
+  const addBtn = page.getByRole('button', {
+    name: new RegExp(`add comment on line ${foreignFixture.anchorLine}`, 'i'),
+  });
   await addBtn.waitFor({ state: 'visible', timeout: 15_000 });
   await addBtn.click();
   const textarea = page.getByRole('textbox', { name: /comment body/i });
@@ -66,7 +72,9 @@ test('S5 real flow — foreign pending review prompt fires; Resume imports + sub
   await dialog.getByRole('button', { name: /^confirm submit$/i }).click();
 
   // Foreign-pending-review modal should appear.
-  const modal = page.getByRole('dialog', { name: /pending review|existing pending|already have a pending/i });
+  const modal = page.getByRole('dialog', {
+    name: /pending review|existing pending|already have a pending/i,
+  });
   await expect(modal).toBeVisible({ timeout: 15_000 });
   // ForeignPendingReviewModal only renders thread/reply COUNTS (and a humanized createdAt),
   // not the thread body text — thread bodies surface in the composer after Resume.
@@ -102,7 +110,9 @@ test('S5 real flow — foreign pending review prompt fires; Resume imports + sub
   await page.getByRole('button', { name: /^submit review$/i }).click();
   const finalDialog = page.getByRole('dialog');
   await finalDialog.getByRole('button', { name: /^confirm submit$/i }).click();
-  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
+    timeout: 20_000,
+  });
 
   // GitHub-side assertions.
   const reviews = listSubmittedReviewsSince(foreignFixture.prNumber, sinceTs);

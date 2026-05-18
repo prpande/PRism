@@ -22,7 +22,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { resetSandboxFixture } from './helpers/reset-sandbox-fixture';
 import { injectRealFailure } from './helpers/real-inject';
-import { advanceHead, listSubmittedReviewsSince, listOwnPendingReviews } from './helpers/gh-sandbox';
+import {
+  advanceHead,
+  listSubmittedReviewsSince,
+  listOwnPendingReviews,
+} from './helpers/gh-sandbox';
 import type { SandboxFixture } from './helpers/sandbox-fixture';
 
 const fixtures = JSON.parse(
@@ -38,17 +42,24 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
-test.skip('S5 real flow — stale commit OID triggers recreate on second submit (deferred — see docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md)', async ({ page }) => {
+test.skip('S5 real flow — stale commit OID triggers recreate on second submit (deferred — see docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md)', async ({
+  page,
+}) => {
   await page.goto(`/pr/prpande/prism-sandbox/${staleFixture.prNumber}`);
-  await page.waitForResponse(
-    (r) => r.url().endsWith('/mark-viewed') && r.status() === 204,
-    { timeout: 15_000 },
-  );
+  await page.waitForResponse((r) => r.url().endsWith('/mark-viewed') && r.status() === 204, {
+    timeout: 15_000,
+  });
 
   // Draft.
   await page.goto(`/pr/prpande/prism-sandbox/${staleFixture.prNumber}/files`);
-  await page.getByRole('treeitem', { name: new RegExp(path.basename(staleFixture.anchorFile), 'i') }).click();
-  await page.getByRole('button', { name: new RegExp(`add comment on line ${staleFixture.anchorLine}`, 'i') }).click();
+  await page
+    .getByRole('treeitem', { name: new RegExp(path.basename(staleFixture.anchorFile), 'i') })
+    .click();
+  await page
+    .getByRole('button', {
+      name: new RegExp(`add comment on line ${staleFixture.anchorLine}`, 'i'),
+    })
+    .click();
   const draftSave = page.waitForResponse(
     (r) => r.url().includes('/draft') && r.request().method() === 'PUT' && r.status() === 200,
     { timeout: 10_000 },
@@ -82,9 +93,15 @@ test.skip('S5 real flow — stale commit OID triggers recreate on second submit 
   // assertion below is the regression net for SSE pr-updated delivery — the banner only renders
   // when usePrDetail receives the pr-updated event from the backend SSE channel, so a broken
   // SSE pipeline times out at 30s with a clearly-named surface.
-  const newContent = `// advanced ${Date.now()}\n` + 'public static int Mul(int a, int b) => a * b;\n';
+  const newContent =
+    `// advanced ${Date.now()}\n` + 'public static int Mul(int a, int b) => a * b;\n';
   advanceHead(staleFixture, {
-    fileChanges: [{ path: staleFixture.anchorFile, contentBase64: Buffer.from(newContent, 'utf8').toString('base64') }],
+    fileChanges: [
+      {
+        path: staleFixture.anchorFile,
+        contentBase64: Buffer.from(newContent, 'utf8').toString('base64'),
+      },
+    ],
     commitMessage: 'advance head for stale-oid spec',
   });
 
@@ -93,10 +110,9 @@ test.skip('S5 real flow — stale commit OID triggers recreate on second submit 
   await expect(reloadBanner).toBeVisible({ timeout: 30_000 });
   await reloadBanner.click();
   // After reload, mark-viewed re-stamps LastViewedHeadSha=newOid.
-  await page.waitForResponse(
-    (r) => r.url().endsWith('/mark-viewed') && r.status() === 204,
-    { timeout: 15_000 },
-  );
+  await page.waitForResponse((r) => r.url().endsWith('/mark-viewed') && r.status() === 204, {
+    timeout: 15_000,
+  });
 
   // Second submit. Pipeline: FindOwnPendingReviewAsync finds review at baseOid;
   // session.PendingReviewId matches → own; pending.CommitOid != newOid → stale → recreate.
@@ -112,7 +128,9 @@ test.skip('S5 real flow — stale commit OID triggers recreate on second submit 
   await expect(recreateBtn).toBeVisible({ timeout: 20_000 });
   await recreateBtn.click();
   // Fresh Begin→Attach→Finalize cycle at newOid lands "Review submitted".
-  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
+    timeout: 30_000,
+  });
 
   // GitHub-side: one finalized review at newOid (not baseOid).
   const reviews = listSubmittedReviewsSince(staleFixture.prNumber, sinceTs);

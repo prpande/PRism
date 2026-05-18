@@ -19,22 +19,29 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
-test('S5 real flow — lost-response adoption skips re-attach and finalizes cleanly', async ({ page }) => {
+test('S5 real flow — lost-response adoption skips re-attach and finalizes cleanly', async ({
+  page,
+}) => {
   await page.goto(`/pr/prpande/prism-sandbox/${lostFixture.prNumber}`);
-  await page.waitForResponse(
-    (r) => r.url().endsWith('/mark-viewed') && r.status() === 204,
-    { timeout: 15_000 },
-  );
+  await page.waitForResponse((r) => r.url().endsWith('/mark-viewed') && r.status() === 204, {
+    timeout: 15_000,
+  });
 
   // Draft.
   await page.goto(`/pr/prpande/prism-sandbox/${lostFixture.prNumber}/files`);
-  await page.getByRole('treeitem', { name: new RegExp(path.basename(lostFixture.anchorFile), 'i') }).click();
-  await page.getByRole('button', { name: new RegExp(`add comment on line ${lostFixture.anchorLine}`, 'i') }).click();
+  await page
+    .getByRole('treeitem', { name: new RegExp(path.basename(lostFixture.anchorFile), 'i') })
+    .click();
+  await page
+    .getByRole('button', { name: new RegExp(`add comment on line ${lostFixture.anchorLine}`, 'i') })
+    .click();
   const draftSave1 = page.waitForResponse(
     (r) => r.url().includes('/draft') && r.request().method() === 'PUT' && r.status() === 200,
     { timeout: 10_000 },
   );
-  await page.getByRole('textbox', { name: /comment body/i }).fill('Body — first attempt should fail mid-stream.');
+  await page
+    .getByRole('textbox', { name: /comment body/i })
+    .fill('Body — first attempt should fail mid-stream.');
   await draftSave1;
 
   // Arm afterEffect on addPullRequestReviewThread — GitHub commits the thread, PRism throws on response.
@@ -67,7 +74,9 @@ test('S5 real flow — lost-response adoption skips re-attach and finalizes clea
   const dialog2 = page.getByRole('dialog');
   await expect(dialog2).toBeVisible();
   await dialog2.getByRole('button', { name: /^confirm submit$/i }).click();
-  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
+    timeout: 25_000,
+  });
 
   // GitHub-side: exactly ONE Comment review with EXACTLY ONE thread (no duplicate from re-attach).
   const reviews = listSubmittedReviewsSince(lostFixture.prNumber, sinceTs);

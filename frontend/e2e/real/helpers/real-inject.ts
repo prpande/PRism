@@ -12,6 +12,8 @@ export async function injectRealFailure(
     headers: { Origin: 'http://localhost:5181' },
   });
   if (!resp.ok()) {
-    throw new Error(`POST /test/real-inject/inject-failure failed: ${resp.status()} ${await resp.text()}`);
+    throw new Error(
+      `POST /test/real-inject/inject-failure failed: ${resp.status()} ${await resp.text()}`,
+    );
   }
 }
