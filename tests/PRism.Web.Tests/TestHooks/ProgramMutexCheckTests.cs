@@ -14,7 +14,7 @@ public class ProgramMutexCheckTests
         Environment.SetEnvironmentVariable("PRISM_E2E_REAL_INJECT", "1");
         try
         {
-            var factory = new WebApplicationFactory<Program>();
+            using var factory = new WebApplicationFactory<Program>();
             // WebApplicationFactory may wrap the startup exception (TargetInvocationException,
             // host-bootstrap aggregation). Use ThrowsAny and walk inner exceptions.
             var ex = Assert.ThrowsAny<Exception>(() => factory.CreateClient());

@@ -49,6 +49,7 @@ internal sealed partial class TestFailureInjectionHandler : DelegatingHandler
 
         if (_injector.TryConsume(fieldName, afterEffectWanted: true, out var postEx))
         {
+            response.Dispose();
             throw postEx;
         }
 

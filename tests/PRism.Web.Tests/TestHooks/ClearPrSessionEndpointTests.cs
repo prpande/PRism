@@ -59,7 +59,7 @@ public class ClearPrSessionEndpointTests
     [Fact]
     public async Task ClearPrSession_MissingOwnerOrRepo_Returns400()
     {
-        var factory = new TestEnvAppFactory();
+        using var factory = new TestEnvAppFactory();
         using var client = factory.CreateClient();
         client.DefaultRequestHeaders.Add("Origin", factory.Server.BaseAddress!.ToString().TrimEnd('/'));
 
