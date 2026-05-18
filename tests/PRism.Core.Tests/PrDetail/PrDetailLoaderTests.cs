@@ -184,18 +184,26 @@ public class PrDetailLoaderTests
     // Q5 — ClusteringQuality determination tests.
 
     [Fact]
-    public async Task LoadAsync_returns_ClusteringQuality_Low_when_timeline_has_one_commit()
+    public async Task LoadAsync_returns_ClusteringQuality_Ok_with_single_iteration_when_timeline_has_one_commit()
     {
+        // Calibration 2026-05-18: single-commit PRs (doc-fixes, reverts) are legitimately "one
+        // unit of work" and should render the iteration view, not the commit-picker fallback.
+        // DetermineQuality only short-circuits to Low on Commits.Count == 0 now; 1-commit PRs
+        // flow through the strategy's `sorted.Length == 1` arm and return Ok + 1 iteration.
         var review = new FakePrDetailReviewService();
         review.DefaultDetailResponse = MakeDetail();
         review.DefaultTimelineResponse = MakeTimeline(1);
-        var loader = MakeLoader(review);
+        var singleClusterResult = new[]
+        {
+            new IterationCluster(1, BeforeSha: "sha0", AfterSha: "sha0", CommitShas: new[] { "sha0" }),
+        };
+        var loader = MakeLoader(review, clusterer: new RecordingClusterer(new List<string>(), result: singleClusterResult));
 
         var snapshot = await loader.LoadAsync(Pr1, CancellationToken.None);
 
         snapshot.Should().NotBeNull();
-        snapshot!.Detail.ClusteringQuality.Should().Be(ClusteringQuality.Low);
-        snapshot.Detail.Iterations.Should().BeNull();
+        snapshot!.Detail.ClusteringQuality.Should().Be(ClusteringQuality.Ok);
+        snapshot.Detail.Iterations.Should().NotBeNull().And.HaveCount(1);
         snapshot.Detail.Commits.Should().HaveCount(1);
     }
 

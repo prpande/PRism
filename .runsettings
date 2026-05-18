@@ -3,8 +3,8 @@
   <RunConfiguration>
     <!-- Exclude integration tests AND strict-canonical sibling tests from default `dotnet test`.
          xUnit's trait filter property is `Category` (the trait name we apply); MSTest's is `TestCategory`.
-         Strict-canonical tests run only via `dotnet test --filter "Canonical=Strict"` during triage
-         (spec § 9.7, § 10 silent-drift bullet). -->
+         Strict-canonical tests run only via the explicit `Canonical=Strict` test filter during
+         triage (spec § 9.7, § 10 silent-drift bullet). -->
     <TestCaseFilter>Category!=Integration&amp;Canonical!=Strict</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>
