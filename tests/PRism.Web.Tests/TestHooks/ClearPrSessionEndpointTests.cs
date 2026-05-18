@@ -55,6 +55,25 @@ public class ClearPrSessionEndpointTests
         Assert.False(after.Reviews.Sessions.ContainsKey("acme/api/123"));
         Assert.Empty(registry.SubscribersFor(prRef));
     }
+
+    [Fact]
+    public async Task ClearPrSession_MissingOwnerOrRepo_Returns400()
+    {
+        var factory = new TestEnvAppFactory();
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("Origin", factory.Server.BaseAddress!.ToString().TrimEnd('/'));
+
+        var resp = await client.PostAsJsonAsync("/test/clear-pr-session", new
+        {
+            owner = "",
+            repo = "api",
+            number = 123,
+        });
+
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, resp.StatusCode);
+        var body = await resp.Content.ReadAsStringAsync();
+        Assert.Contains("owner-or-repo-missing", body, StringComparison.Ordinal);
+    }
 }
 
 // Minimal Test-environment WebApplicationFactory. We do NOT set PRISM_E2E_REAL_INJECT or

@@ -2,7 +2,6 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using PRism.Web.TestHooks;
 using Xunit;
 
@@ -74,12 +73,11 @@ public sealed class RealInjectAppFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("PRISM_E2E_REAL_INJECT", "1");
     }
 
-    protected override IHostBuilder? CreateHostBuilder()
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        var builder = base.CreateHostBuilder();
-        builder?.UseEnvironment("Test");
-        builder?.ConfigureWebHost(b => b.UseSetting("DataDir", _dataDir));
-        return builder;
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.UseEnvironment("Test");
+        builder.UseSetting("DataDir", _dataDir);
     }
 
     protected override void Dispose(bool disposing)

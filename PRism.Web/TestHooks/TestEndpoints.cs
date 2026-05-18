@@ -213,6 +213,10 @@ internal static class TestEndpoints
             // InvalidOperationException or silently skips subscribers depending on the underlying
             // enumeration semantics, leaving the registry partially cleaned (exactly the race
             // this endpoint exists to close).
+            //
+            // No transactional atomicity between state-store and registry: if Remove throws here the
+            // session is already cleared. Acceptable — this endpoint is test-fixture-only, and
+            // resetSandboxFixture re-runs idempotently per spec.
             foreach (var subscriberId in registry.SubscribersFor(prRef))
             {
                 registry.Remove(subscriberId, prRef);
