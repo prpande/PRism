@@ -34,13 +34,14 @@ These need to land BEFORE the implementation starts. Verify each is satisfied �
 
 ## File structure
 
-Three modification surfaces:
+Four modification surfaces:
 
 | Project | New files | Modified |
 |---|---|---|
 | `PRism.Web` | `TestHooks/TestFailureInjectionHandler.cs`, `TestHooks/RealTransportFailureInjector.cs`, `TestHooks/RealInjectEndpoints.cs` | `TestHooks/TestEndpoints.cs` (+`/test/clear-pr-session`), `Program.cs` (3 blocks + UseStaticWebAssets gate widen) |
-| `tests/PRism.Web.Tests` | `TestHooks/RealTransportFailureInjectorTests.cs`, `TestHooks/TestFailureInjectionHandlerTests.cs`, `TestHooks/RealInjectEndpointsTests.cs`, `TestHooks/ClearPrSessionEndpointTests.cs`, `TestHooks/ProgramMutexCheckTests.cs` | — |
-| `frontend` | `playwright.real.config.ts`, `scripts/setup-real-e2e-fixtures.ts`, `e2e/real/global-setup.ts`, `e2e/real/helpers/{gh-sandbox,real-inject,reset-sandbox-fixture}.ts`, `e2e/real/s5-real-{happy-path,foreign-pending-review,lost-response-adoption,stale-commit-oid}.spec.ts` | `package.json` (scripts + devDeps), `.gitignore` (+`e2e/real/fixtures.json`, `.env.local`) |
+| `PRism.Core` | — | `PrDetail/ActivePrSubscriberRegistry.cs` (conditional: add `SubscribersFor(prRef)` as `IReadOnlyList<string>` if not already public — ~5 LOC ConcurrentDictionary lookup, materialized to avoid iterate-and-Remove hazard) |
+| `tests/PRism.Web.Tests` | `TestHooks/RealTransportFailureInjectorTests.cs`, `TestHooks/TestFailureInjectionHandlerTests.cs`, `TestHooks/RealInjectEndpointsTests.cs`, `TestHooks/ClearPrSessionEndpointTests.cs`, `TestHooks/ProgramMutexCheckTests.cs`, `TestHooks/Collections.cs` | — |
+| `frontend` | `playwright.real.config.ts`, `scripts/setup-real-e2e-fixtures.ts`, `e2e/real/global-setup.ts`, `e2e/real/helpers/{sandbox-fixture,gh-sandbox,real-inject,reset-sandbox-fixture}.ts`, `e2e/real/s5-real-{happy-path,foreign-pending-review,lost-response-adoption,stale-commit-oid}.spec.ts` | `package.json` (scripts + devDeps), `.gitignore` (+`e2e/real/fixtures.json`, `.env.local`, `playwright-report/`, `test-results/`) |
 | `docs` | `e2e/real-flow.md` | `specs/2026-05-11-s5-submit-pipeline-deferrals.md` (revisions-log + status update) |
 
 Order: backend (Tasks 1-5) → frontend infra (Tasks 6-12) → specs (Tasks 13-16) → docs + deferral closeout (Tasks 17-18) → pre-push + regression-net attestation (Task 19).
@@ -804,6 +805,15 @@ app.MapPost("/test/clear-pr-session", async (ClearPrSessionRequest req, IAppStat
     // Subscriber-registry mutation is concurrent-dict; iterate snapshot and Remove each.
     // ActivePrPoller takes UniquePrRefs() at tick-start, so any Remove between ticks is
     // observed on the next tick — no shared lock needed across state-store and registry.
+    //
+    // `SubscribersFor(prRef)` MUST return a materialized snapshot (`IReadOnlyList<string>`),
+    // not a lazy IEnumerable backed by the underlying ConcurrentDictionary — otherwise the
+    // mid-iteration Remove either throws InvalidOperationException or silently skips
+    // subscribers depending on the underlying enumeration semantics, leaving the registry
+    // partially cleaned (exactly the race this endpoint exists to close). Implementation
+    // sketch in `PRism.Core/PrDetail/ActivePrSubscriberRegistry.cs`:
+    //   public IReadOnlyList<string> SubscribersFor(PrReference prRef) =>
+    //       _dict.Where(kv => kv.Value.Contains(prRef)).Select(kv => kv.Key).ToList();
     foreach (var subscriberId in registry.SubscribersFor(prRef))
     {
         registry.Remove(subscriberId, prRef);
@@ -1018,6 +1028,10 @@ Append to `frontend/.gitignore`:
 # Real-flow e2e suite — locally-generated state
 e2e/real/fixtures.json
 .env.local
+# Playwright artifacts (traces may capture request bodies including the PAT
+# under retries>0; never commit these even though they are local-only by default).
+playwright-report/
+test-results/
 ```
 
 - [ ] **Step 3: Verify npm scripts resolve**
@@ -1510,12 +1524,16 @@ function masterHeadOid(): string {
 }
 
 function branchExists(branch: string): boolean {
-  const result = ghText([
-    'api',
-    `repos/${OWNER}/${REPO}/branches/${branch}`,
-    '--silent',
-  ]);
-  return result.length > 0 || ghText(['api', `repos/${OWNER}/${REPO}/branches/${branch}`]).includes('"name"');
+  // One round-trip: gh api throws on non-zero exit (e.g. 404 for missing branch);
+  // catch the throw and return false. Don't pipe `--silent` (gh api doesn't take that flag).
+  try {
+    execFileSync('gh', ['api', `repos/${OWNER}/${REPO}/branches/${branch}`], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function ensureBranchAtSeed(branch: string, _name: string): { baseOid: string; anchorFile: string; anchorLine: number } {
@@ -1738,7 +1756,10 @@ export default async function globalSetup(): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
   });
   if (!connectResp.ok()) {
-    throw new Error(`POST /api/auth/connect failed: ${connectResp.status()} ${await connectResp.text()}`);
+    // Do NOT include the raw response body — a malformed validation response could echo
+    // the submitted PAT, and Playwright captures globalSetup stdout. Status code is enough
+    // to diagnose; re-run with --debug to inspect the body interactively if needed.
+    throw new Error(`POST /api/auth/connect failed: HTTP ${connectResp.status()}`);
   }
   const connectBody = (await connectResp.json()) as { ok: boolean; error?: string; warning?: string; login?: string };
   if (!connectBody.ok) {
@@ -1748,7 +1769,8 @@ export default async function globalSetup(): Promise<void> {
     // Soft warning (NoReposSelected, typical for fine-grained PATs). Accept by calling /commit.
     const commitResp = await page.request.post('/api/auth/connect/commit', {});
     if (!commitResp.ok()) {
-      throw new Error(`POST /api/auth/connect/commit failed: ${commitResp.status()} ${await commitResp.text()}`);
+      // Same PAT-echo defence as above — status only.
+      throw new Error(`POST /api/auth/connect/commit failed: HTTP ${commitResp.status()}`);
     }
     console.log(`[real-flow-setup] PAT committed with warning=${connectBody.warning}`);
   } else {
@@ -2042,11 +2064,15 @@ test('S5 real flow — lost-response adoption skips re-attach and finalizes clea
   await page.getByRole('button', { name: /^submit review$/i }).click();
   const dialog1 = page.getByRole('dialog');
   await dialog1.getByRole('button', { name: /^confirm submit$/i }).click();
-  await expect(dialog1.getByText(/submit failed|failed/i).first()).toBeVisible({ timeout: 20_000 });
+  // Assert against the SubmitProgressIndicator's failed-row data-state, not a loose /failed/i regex —
+  // /failed/i would also match transient step-progress text and risk a false-positive pass if the
+  // injector misfires (see SubmitProgressIndicator.tsx:80,98 for the data-state surface).
+  await expect(dialog1.locator('[data-state="failed"]').first()).toBeVisible({ timeout: 20_000 });
 
-  // Close dialog.
-  const closeBtn = dialog1.getByRole('button', { name: /close|dismiss|cancel/i }).first();
-  if (await closeBtn.isVisible()) await closeBtn.click();
+  // Deterministic close — assert hidden after Escape so a missing close affordance fails loudly
+  // rather than silently leaving the modal blocking the next Submit click.
+  await page.keyboard.press('Escape');
+  await expect(dialog1).toBeHidden({ timeout: 5_000 });
 
   // Second submit → adoption: FindOwnPendingReviewAsync finds the previously-attached pending review,
   // marker-matches the existing thread, skips re-attach, finalizes.
@@ -2133,13 +2159,19 @@ test('S5 real flow — stale commit OID triggers recreate on second submit', asy
   await page.getByRole('button', { name: /^submit review$/i }).click();
   const dialog1 = page.getByRole('dialog');
   await dialog1.getByRole('button', { name: /^confirm submit$/i }).click();
-  await expect(dialog1.getByText(/submit failed|failed/i).first()).toBeVisible({ timeout: 20_000 });
-  const closeBtn = dialog1.getByRole('button', { name: /close|dismiss|cancel/i }).first();
-  if (await closeBtn.isVisible()) await closeBtn.click();
+  // Assert against the SubmitProgressIndicator's failed-row data-state, not a loose /failed/i regex —
+  // /failed/i would also match transient step-progress text and risk a false-positive pass if the
+  // injector misfires (see SubmitProgressIndicator.tsx:80,98 for the data-state surface).
+  await expect(dialog1.locator('[data-state="failed"]').first()).toBeVisible({ timeout: 20_000 });
+  // Deterministic close — assert hidden after Escape so a missing close affordance fails loudly
+  // rather than silently leaving the modal blocking the next Submit click.
+  await page.keyboard.press('Escape');
+  await expect(dialog1).toBeHidden({ timeout: 5_000 });
 
-  // Advance head on the fixture branch. Set up to wait for the SSE pr-updated event BEFORE advancing.
-  const prUpdated = page.waitForEvent('console', { timeout: 30_000 }).catch(() => undefined); // placeholder; use SSE-specific wait if available
-  // Push a real commit to the branch via createCommitOnBranch.
+  // Push a real commit to the branch via createCommitOnBranch. The Reload-banner-visibility
+  // assertion below is the regression net for SSE pr-updated delivery — the banner only renders
+  // when usePrDetail receives the pr-updated event from the backend SSE channel, so a broken
+  // SSE pipeline times out at 30s with a clearly-named surface.
   const newContent = `// advanced ${Date.now()}\n` + 'public static int Mul(int a, int b) => a * b;\n';
   advanceHead(staleFixture, {
     fileChanges: [{ path: staleFixture.anchorFile, contentBase64: Buffer.from(newContent, 'utf8').toString('base64') }],
@@ -2157,10 +2189,19 @@ test('S5 real flow — stale commit OID triggers recreate on second submit', asy
   );
 
   // Second submit. Pipeline: FindOwnPendingReviewAsync finds review at baseOid;
-  // session.PendingReviewId matches → own; pending.CommitOid != newOid → stale; recreate.
+  // session.PendingReviewId matches → own; pending.CommitOid != newOid → stale → recreate.
+  // First Confirm Submit triggers StaleCommitOidRecreating (server-side orphan delete + clear stamps);
+  // dialog transitions to kind='stale-commit-oid' and renders StaleCommitOidBanner. The user must
+  // then click "Recreate and resubmit" — that's the user-consent gate for the resubmit cycle
+  // (see SubmitDialog.tsx:192-205, StaleCommitOidBanner.tsx:53, useSubmit.ts:144-152).
   await page.getByRole('button', { name: /^submit review$/i }).click();
   const dialog2 = page.getByRole('dialog');
   await dialog2.getByRole('button', { name: /^confirm submit$/i }).click();
+  // Stale-commit-oid banner appears with the Recreate-and-resubmit button.
+  const recreateBtn = dialog2.getByRole('button', { name: /recreate and resubmit/i });
+  await expect(recreateBtn).toBeVisible({ timeout: 20_000 });
+  await recreateBtn.click();
+  // Fresh Begin→Attach→Finalize cycle at newOid lands "Review submitted".
   await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({ timeout: 30_000 });
 
   // GitHub-side: one finalized review at newOid (not baseOid).
@@ -2169,8 +2210,6 @@ test('S5 real flow — stale commit OID triggers recreate on second submit', asy
   expect(reviews[0].state).toBe('COMMENTED');
   expect(reviews[0].commitOid).not.toBe(staleFixture.baseOid);
   expect(listOwnPendingReviews(staleFixture.prNumber)).toHaveLength(0);
-
-  await prUpdated; // best-effort: don't fail the test on console wait
 });
 ```
 
