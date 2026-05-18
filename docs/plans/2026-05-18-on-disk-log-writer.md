@@ -1609,7 +1609,7 @@ Adds tests pinning subtle invariants documented in spec § 8.1:
 - Keeps_headSha_field_unredacted: pins § 6.2 carve-out for headSha.
 - Value_whose_ToString_throws: pins ADV2-3 broad-catch behavior.
 - Rolls_over_file_at_local_date_boundary: uses clock seam (internal ctor
-  with Func<DateTime>) to drive a deterministic date-rollover.
+  with Func<DateTimeOffset>) to drive a deterministic date-rollover.
 - Emits_session_end_line_and_counter_summary: pins the shutdown summary.
 - Writer_task_does_not_call_ILogger: structural recursion-safety check.
 '@

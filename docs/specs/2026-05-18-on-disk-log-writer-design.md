@@ -351,7 +351,7 @@ The recursion rule: **the writer task never calls `ILogger`.** All writer-task s
 - `DropsEvent_DueToBackpressure_IncrementsBackpressureCounter` *(channel full during normal operation)*
 - `DropsEvent_DuringShutdown_IncrementsShutdownCounter_NotBackpressure` *(ADV-4 — graceful-shutdown elision counted separately from backpressure drop)*
 - `FinalShutdownLine_NamesBothCounters_WhenNonZero`
-- `RollsOverFile_AtLocalDateBoundary` *(uses `Func<DateTime>` clock seam injected via `internals-visible-to`)*
+- `RollsOverFile_AtLocalDateBoundary` *(uses `Func<DateTimeOffset>` clock seam injected via `internals-visible-to`; the seam covers both `FileLogEvent.Timestamp` and the local-date rollover boundary)*
 - `RotationDuringDrain_AssignsEventsToFilesByEventLocalDate_NotByDrainTime` *(pins the ADV-10 boundary semantics from § 6.1)*
 - `RetentionSweep_DeletesFilesOlderThanRetentionDays`
 - `RetentionSweep_KeepsNonMatchingFilenames`
@@ -374,8 +374,9 @@ The recursion rule: **the writer task never calls `ILogger`.** All writer-task s
 - `MalformedTemplate_ReturnsTemplateVerbatim_AndDoesNotThrow`
 - `NullValue_RendersAsEmptyString`
 - `MultipleOccurrencesOfSameName_AllSubstituted` *(template `"a={X} b={X}"` with one X arg)*
-- `RepeatedKVKeyInState_LastValueWins_NoArgumentException` *(FEAS-1 — manual `dict[k] = v` loop instead of `ToDictionary`; documents last-wins semantics)*
 - `ValueContainingPlaceholderShape_DoesNotRecurseIntoSecondSubstitution` *(ADV-3 — value `"{login}"` literal in arg position 1 does NOT pick up arg `login`'s value via second-pass scan; pins single-pass `string.Format` invariant)*
+
+(The `RepeatedKVKeyInState_LastValueWins_NoArgumentException` test exercises `FileLogger.Log<TState>`'s manual `dict[k] = v` loop — the last-wins behavior is at the file-sink layer, NOT at the formatter layer — so it lives in § 8.1 alongside the other `FileLoggerProvider` tests, not here.)
 
 ### 8.3 `FileLoggerIntegrationTests` — `WebApplicationFactory<Program>`-driven
 
