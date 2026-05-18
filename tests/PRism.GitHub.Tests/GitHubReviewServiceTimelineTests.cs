@@ -145,4 +145,38 @@ public class GitHubReviewServiceTimelineTests
         input.ForcePushes[0].BeforeSha.Should().Be("before0");
         input.ForcePushes[0].AfterSha.Should().Be("after0");
     }
+
+    [Fact]
+    public async Task GetTimelineAsync_tolerates_pending_review_with_null_submittedAt()
+    {
+        // Real-flow regression: any PENDING review on the PR — whether created by PRism, by the
+        // GitHub web UI, or by `gh` — appears in `timelineItems` as a PullRequestReview node with
+        // `submittedAt: null` (no submission has happened yet, by definition). The historic parser
+        // called GetDateTimeOffset() on the null-kind JsonElement and threw InvalidOperationException,
+        // bubbling up as HTTP 500 from /api/pr/{ref}. The fix skips pending entries entirely (the
+        // clustering signal needs a real timestamp, and default(DateTimeOffset) = 0001-01-01 would
+        // pollute clustering with an event from year 1). This test exercises the pure-null case.
+        const string graphQL =
+            "{\"data\":{\"repository\":{\"pullRequest\":{" +
+            "\"comments\":{\"nodes\":[]}," +
+            "\"timelineItems\":{\"nodes\":[" +
+              "{\"__typename\":\"PullRequestCommit\",\"commit\":{\"oid\":\"c0\",\"committedDate\":\"2026-01-01T00:00:00Z\",\"message\":\"m\",\"additions\":1,\"deletions\":0}}," +
+              "{\"__typename\":\"PullRequestReview\",\"submittedAt\":null}," +
+              "{\"__typename\":\"PullRequestReview\",\"submittedAt\":\"2026-01-02T00:00:00Z\"}" +
+            "]}" +
+            "}}}}";
+        var handler = new GraphQLPlusRestHandler
+        {
+            GraphQLBody = graphQL,
+            RestRoute = _ => (HttpStatusCode.OK, CommitFilesJson()),
+        };
+
+        var input = await NewService(handler).GetTimelineAsync(
+            new PrReference("o", "r", 1), CancellationToken.None);
+
+        // The submitted review still produces one clustering event; the pending one is skipped
+        // rather than emitted with a default DateTimeOffset (which would mis-anchor clustering).
+        input.ReviewEvents.Should().HaveCount(1);
+        input.ReviewEvents[0].SubmittedAt.Should().Be(DateTimeOffset.Parse("2026-01-02T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
+    }
 }
