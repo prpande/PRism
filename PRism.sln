@@ -23,6 +23,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PRism.GitHub.Tests", "tests
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PRism.Web.Tests", "tests\PRism.Web.Tests\PRism.Web.Tests.csproj", "{F954E798-8E28-4CA0-AE71-2C35BA77EFDD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PRism.GitHub.Tests.Integration", "tests\PRism.GitHub.Tests.Integration\PRism.GitHub.Tests.Integration.csproj", "{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -141,6 +143,18 @@ Global
 		{F954E798-8E28-4CA0-AE71-2C35BA77EFDD}.Release|x64.Build.0 = Release|Any CPU
 		{F954E798-8E28-4CA0-AE71-2C35BA77EFDD}.Release|x86.ActiveCfg = Release|Any CPU
 		{F954E798-8E28-4CA0-AE71-2C35BA77EFDD}.Release|x86.Build.0 = Release|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Debug|x64.Build.0 = Debug|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Debug|x86.Build.0 = Debug|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Release|x64.ActiveCfg = Release|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Release|x64.Build.0 = Release|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Release|x86.ActiveCfg = Release|Any CPU
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -149,5 +163,6 @@ Global
 		{752127B3-5325-4D47-90F6-E1FB174B604E} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{4A45E0BD-273D-49B1-853C-4D6002B190EE} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{F954E798-8E28-4CA0-AE71-2C35BA77EFDD} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{56F7FD14-4A3B-4EF3-BEA7-016FBE67FACB} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
