@@ -952,6 +952,7 @@ namespace PRism.GitHub.Tests.Integration;
 public sealed record FrozenPrEntry(
     int PrNumber,
     string HeadSha,
+    string BaseSha,                               // historical merge-base captured at lock time; required by test 7b
     DateTimeOffset MergedAt,
     ClusteringQualityExpectation ExpectedQuality,
     (int Min, int Max)? ExpectedIterationRange,   // null when ExpectedQuality == Low
@@ -971,7 +972,8 @@ public static class FrozenPrCorpus
 
     public static readonly FrozenPrEntry Pr1 = new(
         PrNumber: 1,
-        HeadSha: "<captured-by-task-9>",
+        HeadSha: "<captured-by-task-8>",
+        BaseSha: "<captured-by-task-8>",
         MergedAt: DateTimeOffset.MinValue,
         ExpectedQuality: ClusteringQualityExpectation.Low,
         ExpectedIterationRange: null,
@@ -981,7 +983,8 @@ public static class FrozenPrCorpus
 
     public static readonly FrozenPrEntry Pr16 = new(
         PrNumber: 16,
-        HeadSha: "<captured-by-task-9>",
+        HeadSha: "<captured-by-task-8>",
+        BaseSha: "<captured-by-task-8>",
         MergedAt: DateTimeOffset.MinValue,
         ExpectedQuality: ClusteringQualityExpectation.Ok,
         ExpectedIterationRange: (1, 2),
@@ -991,7 +994,8 @@ public static class FrozenPrCorpus
 
     public static readonly FrozenPrEntry Pr19 = new(
         PrNumber: 19,
-        HeadSha: "<captured-by-task-9>",
+        HeadSha: "<captured-by-task-8>",
+        BaseSha: "<captured-by-task-8>",
         MergedAt: DateTimeOffset.MinValue,
         ExpectedQuality: ClusteringQualityExpectation.Ok,
         ExpectedIterationRange: (2, 3),
@@ -1001,7 +1005,8 @@ public static class FrozenPrCorpus
 
     public static readonly FrozenPrEntry Pr22 = new(
         PrNumber: 22,
-        HeadSha: "<captured-by-task-9>",
+        HeadSha: "<captured-by-task-8>",
+        BaseSha: "<captured-by-task-8>",
         MergedAt: DateTimeOffset.MinValue,
         ExpectedQuality: ClusteringQualityExpectation.Ok,
         ExpectedIterationRange: (2, 2),
@@ -1011,7 +1016,8 @@ public static class FrozenPrCorpus
 
     public static readonly FrozenPrEntry Pr28 = new(
         PrNumber: 28,
-        HeadSha: "<captured-by-task-9>",
+        HeadSha: "<captured-by-task-8>",
+        BaseSha: "<captured-by-task-8>",
         MergedAt: DateTimeOffset.MinValue,
         ExpectedQuality: ClusteringQualityExpectation.Ok,
         ExpectedIterationRange: (2, 2),
@@ -1299,18 +1305,23 @@ public sealed class LiveGitHubFixture : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
 
-        // Production wiring needs IConfigStore (for the github host) and ITokenStore (for the
-        // PAT). Both are normally registered by PRism.Web's startup; here we provide minimal
-        // test stubs so AddPrismGitHub() can resolve them without dragging in PRism.Web.
+        // Test-shape stubs for IConfigStore + ITokenStore — see classes below.
+        // Register BEFORE AddPrismGitHub() so the production registration consumes these via
+        // sp.GetRequiredService<IConfigStore>() / sp.GetRequiredService<ITokenStore>() (which
+        // AddPrismGitHub does internally — verified at PRism.GitHub/ServiceCollectionExtensions.cs:31-50).
         services.AddSingleton<IConfigStore>(new InMemoryConfigStoreForIntegrationTests());
         services.AddSingleton<ITokenStore>(new GhCliBackedTokenStore());
 
-        // Plus the iteration-clustering pieces PrDetailLoader requires. PrDetailLoader is in
-        // PRism.Core but its registration site lives in PRism.Web — re-register here to keep
-        // the test project free of PRism.Web's full DI surface. Verify the exact wiring at
-        // implementation time against PRism.Web/Program.cs or PRism.Core's bootstrap helpers.
-        services.AddSingleton<IIterationClusteringStrategy, WeightedDistanceClusteringStrategy>();
-        services.AddSingleton<IterationClusteringCoefficients>(new IterationClusteringCoefficients());
+        // Iteration-clustering registration — mirrors PRism.Core/ServiceCollectionExtensions.cs:103-108
+        // exactly (production wiring). All three IDistanceMultiplier implementations are required;
+        // WeightedDistanceClusteringStrategy resolves them via sp.GetServices<IDistanceMultiplier>().
+        // Registering the strategy without the multipliers would silently produce neutral 1.0
+        // multipliers for every edge — degenerate clustering with no failure signal.
+        services.AddSingleton<IDistanceMultiplier, FileJaccardMultiplier>();
+        services.AddSingleton<IDistanceMultiplier, ForcePushMultiplier>();
+        services.AddSingleton<IIterationClusteringStrategy>(sp =>
+            new WeightedDistanceClusteringStrategy(sp.GetServices<IDistanceMultiplier>()));
+        services.AddSingleton(new IterationClusteringCoefficients());
         services.AddSingleton<PrDetailLoader>();
 
         // Production capability registration — pulls in GitHubReviewService bound to all four
@@ -1323,46 +1334,72 @@ public sealed class LiveGitHubFixture : IDisposable
         Auth   = _sp.GetRequiredService<IReviewAuth>();
     }
 
+    /// <summary>Convenience wrapper for tests that want the parsed DTO, not the snapshot envelope.</summary>
+    public async Task<PrDetailDto> LoadPrDetailAsync(FrozenPrEntry entry)
+    {
+        var snap = await Loader.LoadAsync(new PrReference("prpande", "PRism", entry.PrNumber), CancellationToken.None);
+        if (snap is null)
+            throw new InvalidOperationException(
+                $"PrDetailLoader returned null for PR #{entry.PrNumber} — token expired or PR inaccessible.");
+        return snap.Detail;
+    }
+
     public void Dispose() => _sp.Dispose();
 }
 
 /// <summary>
-/// Minimal IConfigStore for integration tests — exposes `github.host = "github.com"` only.
-/// Used by AddPrismGitHub() to compute the API base URL. The Changed event is unused here
-/// (PrDetailLoader subscribes but the test never triggers config changes).
+/// Minimal IConfigStore for integration tests. Implements the full interface surface
+/// (PRism.Core/Config/IConfigStore.cs verified at impl time — 5 members + Changed event with
+/// EventHandler&lt;ConfigChangedEventArgs&gt;). The github host is the only field the
+/// integration tests need; everything else throws or returns inert defaults.
 /// </summary>
 internal sealed class InMemoryConfigStoreForIntegrationTests : IConfigStore
 {
-    public AppConfig Current { get; } = new AppConfig
-    {
-        Github = new GithubConfig { Host = "github.com" }
-        // Plus any other required AppConfig fields — verify against AppConfig record shape at impl time.
-    };
-
-    public event EventHandler<AppConfig>? Changed { add { } remove { } }
-
-    public Task WriteAsync(AppConfig config, CancellationToken ct) => throw new NotSupportedException(
-        "Integration tests do not write config. If this throws, a code path under test is mutating config.");
+    // Use AppConfig.Default (or whatever the production default factory is — verify at impl time
+    // against PRism.Core/Config/AppConfig.cs). Construct here so it survives Dispose; the host
+    // is github.com because that's where prpande/PRism lives.
+    public AppConfig Current { get; } = AppConfig.Default;   // <-- verify name; may be `Default()` or `Empty`
+    public Exception? LastLoadError => null;
+    public Task InitAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct) =>
+        throw new NotSupportedException("Integration tests do not patch config.");
+    public Task SetDefaultAccountLoginAsync(string login, CancellationToken ct) =>
+        Task.CompletedTask;   // No-op — ViewerLoginHydrator may call this during host startup.
+    public event EventHandler<ConfigChangedEventArgs>? Changed { add { } remove { } }
 }
 
 /// <summary>
-/// ITokenStore implementation that returns the PAT from `gh auth token` or the
-/// `PRISM_INTEGRATION_PAT` env var (CI). The actual production ITokenStore writes to the
-/// OS keychain via MSAL; this stub bypasses that for tests. The PAT is revealed once per
-/// call inside the Func<Task<string?>> closure passed by AddPrismGitHub.
+/// ITokenStore implementation that surfaces the PAT from `gh auth token` (or the
+/// `PRISM_INTEGRATION_PAT` env var in CI) via ReadAsync — the only method called by the
+/// production AddPrismGitHub closure (`() => tokens.ReadAsync(...)`).
+/// HasTokenAsync MUST return true; production code paths gate token-using calls on it.
+/// All other surfaces are no-op or throw — verified against PRism.Core/Auth/ITokenStore.cs.
 /// </summary>
 internal sealed class GhCliBackedTokenStore : ITokenStore
 {
-    public Task<string?> ReadAsync(CancellationToken ct) => Task.FromResult<string?>(GhCliPat.Get().Reveal());
-    public Task WriteAsync(string token, CancellationToken ct) => throw new NotSupportedException(
-        "Integration tests do not write tokens.");
-    public Task ClearAsync(CancellationToken ct) => throw new NotSupportedException(
-        "Integration tests do not clear tokens.");
-    // Adapt member names to match the real ITokenStore surface at impl time — verify against PRism.Core/Auth/ITokenStore.cs.
+    public Task<bool> HasTokenAsync(CancellationToken ct) => Task.FromResult(true);
+    public Task<string?> ReadAsync(CancellationToken ct) =>
+        Task.FromResult<string?>(GhCliPat.Get().Reveal());
+
+    public Task WriteTransientAsync(string token, CancellationToken ct) =>
+        throw new NotSupportedException("Integration tests do not write transient tokens.");
+    public Task SetTransientLoginAsync(string login, CancellationToken ct) =>
+        throw new NotSupportedException("Integration tests do not set transient logins.");
+    public Task<string?> ReadTransientLoginAsync(CancellationToken ct) =>
+        Task.FromResult<string?>(null);
+    public Task CommitAsync(CancellationToken ct) =>
+        throw new NotSupportedException("Integration tests do not commit tokens.");
+    public Task RollbackTransientAsync(CancellationToken ct) =>
+        Task.CompletedTask;   // Safe no-op.
+    public Task ClearAsync(CancellationToken ct) =>
+        throw new NotSupportedException("Integration tests do not clear tokens.");
 }
 ```
 
-**Implementation note — verify wiring against production at impl time.** The exact shape of `IConfigStore.Current`, `AppConfig`, `GithubConfig`, `ITokenStore`'s interface members, and `WeightedDistanceClusteringStrategy`'s constructor all need to match production. The fixture above is the SHAPE the test needs (a DI container that produces a working `PrDetailLoader`); the implementer adapts member names to whatever the production interfaces actually expose at the time of implementation. If `AddPrismGitHub()` requires additional `services.AddX()` calls to satisfy its internal DI graph, add them here.
+**Implementation note — verify against production at impl time.** Verify these against the actual codebase before the first `dotnet build`:
+1. `AppConfig.Default` — the static factory may be named differently (`AppConfig.Empty`, `AppConfig.NewInstance`, etc.). If no such factory exists, construct the positional record with default-ish values for every required ctor argument.
+2. `WeightedDistanceClusteringStrategy`'s ctor takes `IEnumerable<IDistanceMultiplier>` — confirm the DI factory shape above matches.
+3. `AddPrismGitHub()` may require additional services beyond `IConfigStore` + `ITokenStore` — if `BuildServiceProvider()` throws missing-dependency, register the additional types here.
 
 - [ ] **Step 2: Write the test file with all 5 tests**
 
@@ -1411,18 +1448,18 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
         }
     }
 
-    // 7b — files list set-equality. Locked + SHA-pinned makes the file list deterministic;
-    // spec § 5 row 7b — set-equality, not superset.
+    // 7b — files list set-equality. Locked + SHA-pinned + BaseSha-pinned makes the diff
+    // deterministic; spec § 5 row 7b — set-equality, not superset.
     [Theory]
     [MemberData(nameof(FrozenPrCorpus.AllAsTheoryData), MemberType = typeof(FrozenPrCorpus))]
     public async Task Frozen_pr_returns_expected_files_in_diff(FrozenPrEntry entry)
     {
-        // GetDiffAsync takes a DiffRangeRequest — canonical PR diff is base..head.
-        // We don't know the base SHA here; fetch the PR to discover it via PollActivePr.
-        // (Spec § 6.1's loader already does this; we recreate the same flow here for the
-        // diff probe because PrDetailLoader doesn't expose the loaded DiffDto by reference.)
-        var poll = await _fixture.Reader.PollActivePrAsync(Ref(entry), CancellationToken.None);
-        var range = new DiffRangeRequest(BaseSha: poll.BaseSha, HeadSha: entry.HeadSha);
+        // Both BaseSha and HeadSha come from FrozenPrCorpus (captured at lock-time by Task 8's
+        // script). Using a stored BaseSha avoids the moving-target trap — `pulls/{n}.base.sha`
+        // would return the CURRENT base-branch tip, which drifts as main advances and would
+        // make set-equality flake silently. ActivePrPollSnapshot does NOT carry BaseSha;
+        // do not try to derive it at runtime.
+        var range = new DiffRangeRequest(BaseSha: entry.BaseSha, HeadSha: entry.HeadSha);
         var diff = await _fixture.Reader.GetDiffAsync(Ref(entry), range, CancellationToken.None);
 
         var actualFiles = diff.Files.Select(f => f.Path).OrderBy(p => p, StringComparer.Ordinal).ToArray();
@@ -1648,9 +1685,12 @@ public async Task<JsonElement> LoadRawGraphQLResponseAsync(int prNumber)
 - [ ] **Step 4: Run capture mode to generate the fixture (executes Task 9)**
 
 ```powershell
-$env:PRISM_FROZEN_PR_CAPTURE_FIXTURE='1'
-dotnet test tests\PRism.GitHub.Tests.Integration --configuration Release --filter "FullyQualifiedName~Frozen_pr_graphql_shape_unchanged"
-Remove-Item env:PRISM_FROZEN_PR_CAPTURE_FIXTURE
+try {
+    $env:PRISM_FROZEN_PR_CAPTURE_FIXTURE = '1'
+    dotnet test tests\PRism.GitHub.Tests.Integration --configuration Release --filter "FullyQualifiedName~Frozen_pr_graphql_shape_unchanged"
+} finally {
+    Remove-Item env:PRISM_FROZEN_PR_CAPTURE_FIXTURE -ErrorAction SilentlyContinue
+}
 ```
 
 Expected: test prints "Captured fixture..." and passes. The fixture file `tests/PRism.GitHub.Tests.Integration/Fixtures/pr19-graphql-response.json` is created.
@@ -1685,20 +1725,22 @@ Spec § 5 row 7e — single `[Fact]` fitness check. Round-2 redesign per FEAS-R2
 
 - [ ] **Step 1: Write the test**
 
+Reuses `LiveGitHubFixture` from Task 10 — `_fixture.Auth` is the DI-resolved `IReviewAuth` (same singleton `GitHubReviewService` instance backing all four capability interfaces, wired through production composition). This avoids re-doing the HTTP/PAT bootstrap and dodges the constructor-drift trap that the round-1 DI rewrite exists to prevent. Assertion (b)'s repo-authorization probe goes through `_fixture.Reader.PollActivePrAsync` for the same reason.
+
 ```csharp
 using FluentAssertions;
-using Microsoft.Extensions.Logging.Abstractions;
+using PRism.Core;
 using PRism.Core.Contracts;
-using PRism.GitHub;
-using PRism.GitHub.Tests.Integration.Helpers;
-using System.Net.Http.Headers;
 using Xunit;
 
 namespace PRism.GitHub.Tests.Integration;
 
 [Trait("Category", "Integration")]
-public class PatScopeContractTests
+public class PatScopeContractTests : IClassFixture<LiveGitHubFixture>
 {
+    private readonly LiveGitHubFixture _fixture;
+    public PatScopeContractTests(LiveGitHubFixture fixture) => _fixture = fixture;
+
     [Fact]
     public async Task ValidateCredentialsAsync_returns_ok_with_login_for_test_pat()
     {
@@ -1706,23 +1748,19 @@ public class PatScopeContractTests
         // for both fine-grained PATs (no X-OAuth-Scopes header, Scopes is empty) and classic PATs
         // (different scope namespace). See FEAS-R2-1/2 round-2 findings.
 
-        using var http = new HttpClient { BaseAddress = new Uri("https://api.github.com/") };
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GhCliPat.Get().Reveal());
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("PRism.GitHub.Tests.Integration");
-
-        var svc = new GitHubReviewService(http, NullLogger<GitHubReviewService>.Instance);
-
         // Assertion (a): credential validates and returns Ok with a non-empty Login.
-        AuthValidationResult result = await svc.ValidateCredentialsAsync(CancellationToken.None);
+        AuthValidationResult result = await _fixture.Auth.ValidateCredentialsAsync(CancellationToken.None);
         result.Ok.Should().BeTrue($"validation failed with: {result.ErrorDetail}");
         result.Login.Should().NotBeNullOrWhiteSpace("ViewerLogin is load-bearing for the suite");
 
-        // Assertion (b): one live read against prpande/PRism succeeds — confirms repo authorization,
-        // not just credential format.
-        using var probe = new HttpRequestMessage(HttpMethod.Get, "repos/prpande/PRism/pulls/1");
-        using var probeResp = await http.SendAsync(probe);
-        probeResp.IsSuccessStatusCode.Should().BeTrue(
-            $"PAT must authorize against prpande/PRism — probe returned {(int)probeResp.StatusCode}");
+        // Assertion (b): one live read against prpande/PRism succeeds — confirms repo
+        // authorization, not just credential format. Goes through IPrReader so we exercise
+        // the same code path the corpus tests use; a 401/403 here surfaces as the same
+        // exception shape the corpus tests would hit, so PAT-fitness failure is consistent
+        // across the suite.
+        var poll = await _fixture.Reader.PollActivePrAsync(
+            new PrReference("prpande", "PRism", 1), CancellationToken.None);
+        poll.Should().NotBeNull("PAT must authorize a read against prpande/PRism PR #1");
     }
 }
 ```
@@ -1775,28 +1813,38 @@ namespace PRism.GitHub.Tests.Integration;
 
 // Sibling strict-equality tests for the ranged corpus PRs. Run only via:
 //   dotnet test --filter "Canonical=Strict"
-// Spec § 9.7 + § 10 silent-drift bullet. The `.runsettings` filter excludes Canonical=Strict
-// from default `dotnet test` AND from the standard Category=Integration filter.
+// Spec § 9.7 + § 10 silent-drift bullet. The .runsettings filter excludes Canonical=Strict
+// from default `dotnet test`; the standard Category=Integration filter must use the AND-form
+// `Category=Integration&Canonical!=Strict` to keep them out of routine runs.
+//
+// Canonical values are constants at the class top so the test method names stay generic.
+// A coefficient retune that shifts a canonical only changes the constant, not the name.
 [Trait("Canonical", "Strict")]
 [Trait("Category", "Integration")]
 public class CanonicalIterationCountTests : IClassFixture<LiveGitHubFixture>
 {
+    // Update these constants when Task 13 Step 1's algorithm run reports new canonical values.
+    // The method name does NOT embed the value, so an updated constant + green test is the only
+    // change required.
+    private const int Pr16Canonical = 2;   // captured at Task 13 Step 1
+    private const int Pr19Canonical = 3;   // captured at Task 13 Step 1
+
     private readonly LiveGitHubFixture _fixture;
     public CanonicalIterationCountTests(LiveGitHubFixture fixture) => _fixture = fixture;
 
     [Fact]
-    public async Task Pr16_canonical_iteration_count_equals_2()
+    public async Task Pr16_iteration_count_matches_captured_canonical()
     {
         var dto = await _fixture.LoadPrDetailAsync(FrozenPrCorpus.Pr16);
-        dto.Iterations!.Count.Should().Be(2,  // <-- replace with actual canonical from Step 1
+        dto.Iterations!.Count.Should().Be(Pr16Canonical,
             "Canonical value for PR #16; range [1,2] absorbs tuning, this asserts the current truth");
     }
 
     [Fact]
-    public async Task Pr19_canonical_iteration_count_equals_3()
+    public async Task Pr19_iteration_count_matches_captured_canonical()
     {
         var dto = await _fixture.LoadPrDetailAsync(FrozenPrCorpus.Pr19);
-        dto.Iterations!.Count.Should().Be(3,  // <-- replace with actual canonical from Step 1
+        dto.Iterations!.Count.Should().Be(Pr19Canonical,
             "Canonical value for PR #19; range [2,3] absorbs tuning, this asserts the current truth");
     }
 }
