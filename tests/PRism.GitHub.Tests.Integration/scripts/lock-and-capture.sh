@@ -20,7 +20,7 @@ if [ "$LOCKED" = "true" ]; then
 else
     echo "[lock] Locking conversation on PR #$PR_NUMBER ..."
     if ! gh api -X PUT "repos/prpande/PRism/issues/$PR_NUMBER/lock" --silent; then
-        echo "[error] gh api lock failed for PR #$PR_NUMBER. To roll back any PRs locked earlier in the sequence, run: gh api -X DELETE repos/prpande/PRism/issues/{N}/lock for each affected PR (see docs/contract-tests.md § 8)." >&2
+        echo "[error] gh api lock failed for PR #$PR_NUMBER. To roll back any PRs locked earlier in the sequence, run: gh api -X DELETE repos/prpande/PRism/issues/{N}/lock for each affected PR (see the 'Unlocking a test PR' section in docs/contract-tests.md)." >&2
         exit 1
     fi
 fi

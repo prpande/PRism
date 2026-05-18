@@ -27,7 +27,7 @@ if ($prMeta.locked) {
 } else {
     Write-Host "[lock] Locking conversation on PR #$PrNumber ..."
     & gh api -X PUT "repos/prpande/PRism/issues/$PrNumber/lock" --silent
-    if ($LASTEXITCODE -ne 0) { throw "gh api lock failed for PR #$PrNumber (exit $LASTEXITCODE). To roll back any PRs locked earlier in the sequence, run: gh api -X DELETE repos/prpande/PRism/issues/{N}/lock for each affected PR (see docs/contract-tests.md § 8)." }
+    if ($LASTEXITCODE -ne 0) { throw "gh api lock failed for PR #$PrNumber (exit $LASTEXITCODE). To roll back any PRs locked earlier in the sequence, run: gh api -X DELETE repos/prpande/PRism/issues/{N}/lock for each affected PR (see the 'Unlocking a test PR' section in docs/contract-tests.md)." }
 }
 
 Write-Host "[capture] Fetching commits + files + mergedAt + baseRefOid for PR #$PrNumber ..."

@@ -46,5 +46,11 @@ public sealed record IterationClusteringCoefficients(
             throw new ArgumentException($"{nameof(DegenerateFloorFraction)} must be in (0, 1]; got {DegenerateFloorFraction}.");
         if (MinimumBoundaryGapSeconds < 0)
             throw new ArgumentException($"{nameof(MinimumBoundaryGapSeconds)} must be non-negative; got {MinimumBoundaryGapSeconds}.");
+        // If the boundary floor exceeds the per-edge ceiling, every weighted distance is
+        // capped below the threshold and no edge can ever register as a boundary — clustering
+        // silently returns a single iteration for every PR. Reject the unreachable config at
+        // load time rather than letting it ship a stealth single-cluster default.
+        if (MinimumBoundaryGapSeconds > HardCeilingSeconds)
+            throw new ArgumentException($"{nameof(MinimumBoundaryGapSeconds)} ({MinimumBoundaryGapSeconds}) must be <= {nameof(HardCeilingSeconds)} ({HardCeilingSeconds}); otherwise no edge can ever cross the boundary threshold.");
     }
 }

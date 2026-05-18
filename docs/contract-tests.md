@@ -49,6 +49,8 @@ The `IterationClusteringCoefficients` defaults were calibrated against this corp
 
 ## Adding a new test PR
 
+> **PAT scope note.** The routine test runs above use a read-only PAT (`metadata:read + pull_requests:read`). Corpus expansion needs WRITE access on the issues subresource for the `gh api -X PUT .../lock` call — the script will fail with HTTP 403 against a read-only PAT. Re-authenticate `gh` with elevated scope (or use a separate fine-grained PAT with `issues:write` on `prpande/PRism`) for the duration of this workflow, then revoke or downgrade afterwards.
+
 1. **Pick on shape criteria** — commit count, time gaps, `authoredDate` vs `committedDate` divergence. Do **not** run the algorithm first.
 2. **Run the atomic lock-and-capture script.**
 
