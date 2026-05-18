@@ -136,8 +136,14 @@ internal static class FrozenPrCorpus
     public static readonly FrozenPrEntry Pr22 = new(/* ... */);
     public static readonly FrozenPrEntry Pr28 = new(/* ... */);
 
-    public static IEnumerable<object[]> All() =>
-        new[] { Pr1, Pr16, Pr19, Pr22, Pr28 }.Select(e => new object[] { e });
+    // Iteration order over the corpus — consumers iterate the entries directly.
+    public static IEnumerable<FrozenPrEntry> All() =>
+        new[] { Pr1, Pr16, Pr19, Pr22, Pr28 };
+
+    // xUnit-facing wrapper for `[Theory] [MemberData(nameof(AllAsTheoryData))]`. The plan's
+    // tests bind to this; All() is the cleaner enumeration for non-theory call sites.
+    public static IEnumerable<object[]> AllAsTheoryData() =>
+        All().Select(e => new object[] { e });
 }
 
 internal sealed record FrozenPrEntry(
@@ -212,9 +218,12 @@ Returns a `List<string>` consumed by the test's failure assertion. Arrays diff b
 <?xml version="1.0" encoding="utf-8"?>
 <RunSettings>
   <RunConfiguration>
-    <!-- Exclude integration tests from default `dotnet test`. xUnit's trait filter property is
-         `Category` (the trait name we apply); MSTest's is `TestCategory`. We use xUnit. -->
-    <TestCaseFilter>Category!=Integration</TestCaseFilter>
+    <!-- Exclude integration tests AND strict-canonical sibling tests from default `dotnet test`.
+         xUnit's trait filter property is `Category` (the trait name we apply); MSTest's is
+         `TestCategory`. We use xUnit. The Canonical=Strict clause keeps the canonical-strict
+         sibling tests (CanonicalIterationCountTests, § 10 silent-drift bullet) out of routine
+         runs — they fire only via `dotnet test --filter "Canonical=Strict"` during triage. -->
+    <TestCaseFilter>Category!=Integration&amp;Canonical!=Strict</TestCaseFilter>
   </RunConfiguration>
 </RunSettings>
 ```
@@ -264,7 +273,7 @@ jobs:
           if (-not [string]::IsNullOrWhiteSpace($token)) { Write-Output "::add-mask::$token" }
         env:
           PRISM_INTEGRATION_PAT: ${{ secrets.PRISM_INTEGRATION_PAT }}
-      - run: dotnet test tests/PRism.GitHub.Tests.Integration --configuration Release --filter "Category=Integration" --logger "console;verbosity=detailed"
+      - run: dotnet test tests/PRism.GitHub.Tests.Integration --configuration Release --filter "Category=Integration&Canonical!=Strict" --logger "console;verbosity=detailed"
         env:
           PRISM_INTEGRATION_PAT: ${{ secrets.PRISM_INTEGRATION_PAT }}
           PRISM_FROZEN_PR_CAPTURE_FIXTURE: ''   # explicit override — capture mode MUST NOT engage in CI (§ 7)

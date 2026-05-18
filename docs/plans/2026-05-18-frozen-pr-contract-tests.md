@@ -1099,8 +1099,8 @@ if ($prMeta.locked) {
     if ($LASTEXITCODE -ne 0) { throw "gh api lock failed for PR #$PrNumber (exit $LASTEXITCODE). To roll back any PRs locked earlier in the sequence, run: gh api -X DELETE repos/prpande/PRism/issues/{N}/lock for each affected PR (see docs/contract-tests.md § 8)." }
 }
 
-Write-Host "[capture] Fetching commits + files + mergedAt for PR #$PrNumber ..."
-$prJson = & gh pr view $PrNumber --repo prpande/PRism --json commits,files,mergedAt
+Write-Host "[capture] Fetching commits + files + mergedAt + baseRefOid for PR #$PrNumber ..."
+$prJson = & gh pr view $PrNumber --repo prpande/PRism --json commits,files,mergedAt,baseRefOid
 if ($LASTEXITCODE -ne 0) { throw "gh pr view failed for PR #$PrNumber (exit $LASTEXITCODE)" }
 Set-Content -Path (Join-Path $OutputDir "pr$PrNumber.pr.json") -Value $prJson
 
@@ -1136,11 +1136,14 @@ if [ "$LOCKED" = "true" ]; then
     echo "[lock] PR #$PR_NUMBER already locked — skipping PUT (idempotent)."
 else
     echo "[lock] Locking conversation on PR #$PR_NUMBER ..."
-    gh api -X PUT "repos/prpande/PRism/issues/$PR_NUMBER/lock" --silent
+    if ! gh api -X PUT "repos/prpande/PRism/issues/$PR_NUMBER/lock" --silent; then
+        echo "[error] gh api lock failed for PR #$PR_NUMBER. To roll back any PRs locked earlier in the sequence, run: gh api -X DELETE repos/prpande/PRism/issues/{N}/lock for each affected PR (see docs/contract-tests.md § 8)." >&2
+        exit 1
+    fi
 fi
 
-echo "[capture] Fetching commits + files + mergedAt for PR #$PR_NUMBER ..."
-gh pr view "$PR_NUMBER" --repo prpande/PRism --json commits,files,mergedAt > "$OUTPUT_DIR/pr$PR_NUMBER.pr.json"
+echo "[capture] Fetching commits + files + mergedAt + baseRefOid for PR #$PR_NUMBER ..."
+gh pr view "$PR_NUMBER" --repo prpande/PRism --json commits,files,mergedAt,baseRefOid > "$OUTPUT_DIR/pr$PR_NUMBER.pr.json"
 
 echo "[capture] Fetching review comments for PR #$PR_NUMBER ..."
 gh api "repos/prpande/PRism/pulls/$PR_NUMBER/comments" > "$OUTPUT_DIR/pr$PR_NUMBER.comments.json"
@@ -1209,11 +1212,14 @@ For each PR, read the captured JSON and replace the sentinel values in `FrozenPr
 ```powershell
 $captured = Get-Content tests/PRism.GitHub.Tests.Integration/captured/pr1.pr.json | ConvertFrom-Json
 $headSha = $captured.commits[-1].oid
+$baseSha = $captured.baseRefOid
 $mergedAt = $captured.mergedAt
 $files = ($captured.files | ForEach-Object { "`"$($_.path)`"" }) -join ", "
-Write-Host "Pr1: HeadSha=$headSha, MergedAt=$mergedAt, Files=[$files]"
+Write-Host "Pr1: HeadSha=$headSha, BaseSha=$baseSha, MergedAt=$mergedAt, Files=[$files]"
 # Repeat for 16, 19, 22, 28 and edit FrozenPrCorpus.cs accordingly.
 ```
+
+Note: `baseRefOid` from `gh pr view --json` returns the historical merge-base SHA at the time the PR was merged — exactly what test 7b needs. This is NOT the same as `pulls/{n}.base.sha` from the REST API, which returns the CURRENT base-branch tip and would drift as `main` advances.
 
 Edit `FrozenPrCorpus.cs` for each PR:
 
@@ -1221,6 +1227,7 @@ Edit `FrozenPrCorpus.cs` for each PR:
 public static readonly FrozenPrEntry Pr1 = new(
     PrNumber: 1,
     HeadSha: "b21b38b...<full 40-char SHA>",
+    BaseSha: "<full 40-char SHA from .baseRefOid>",
     MergedAt: DateTimeOffset.Parse("2026-05-04T...Z"),  // actual mergedAt from gh
     ExpectedQuality: ClusteringQualityExpectation.Low,
     ExpectedIterationRange: null,
@@ -1983,23 +1990,21 @@ private static JsonElement MutateDeepPath(JsonElement source)
 }
 ```
 
-- [ ] **Step 2: Run the test**
+- [ ] **Step 2: Fix the mutation to actually exercise the differ**
 
-```powershell
-dotnet test tests\PRism.GitHub.Tests.Integration --configuration Release --filter "FullyQualifiedName~GraphQLShapeDiffTests.Mutation_in_deeply_nested_path"
-```
-
-Expected: passes (differ catches the mutation).
-
-Note: with the current `GraphQLShapeDiff` impl, mutating a string leaf (`oid: "abc..." → "MUTATED_FOR_TEST"`) returns no diff because the differ only reports shape changes (ValueKind), not value changes. **This is intentional** per the spec (shape detector, not value detector) — but the self-check has to mutate the *shape* to be meaningful.
-
-Update `MutateDeepPath` to mutate the shape (string → number):
+`GraphQLShapeDiff` only reports SHAPE changes (`JsonValueKind` differences), not value changes — by design (shape detector, not value detector, per spec § 6.3). The Step 1 snippet shows a string→string value swap (`"MUTATED_FOR_TEST"` replacing the oid string) which would NOT fire the differ. Replace it with a string→number type swap so the `~` diff actually fires:
 
 ```csharp
 node["data"]!["repository"]!["pullRequest"]!["commits"]!["nodes"]![0]!["commit"]!["oid"] = 42;  // String → Number
 ```
 
-Re-run. Expected: passes — the `~` diff line fires at `/data/repository/pullRequest/commits/nodes/0/commit/oid`.
+Run the test:
+
+```powershell
+dotnet test tests\PRism.GitHub.Tests.Integration --configuration Release --filter "FullyQualifiedName~GraphQLShapeDiffTests.Mutation_in_deeply_nested_path"
+```
+
+Expected: passes — the `~` diff line fires at `/data/repository/pullRequest/commits/nodes/0/commit/oid`.
 
 - [ ] **Step 3: Commit**
 
