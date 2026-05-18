@@ -28,7 +28,7 @@ These need to land BEFORE the implementation starts. Verify each is satisfied �
    # expected: 404 (no protection rule)
    ```
 
-3. **Worktree on the docs branch:** Verify `git -C D:/src/PRism-real-flow-e2e branch --show-current` returns `docs/real-flow-e2e`. The spec was committed there as commits 1-3 of this branch.
+3. **Worktree on the docs branch:** From the repo root, verify `git branch --show-current` returns `docs/real-flow-e2e`. (Authored on Windows in `D:/src/PRism-real-flow-e2e`; macOS/Linux teammates pick their own worktree path — the only invariant is the branch name.)
 
 ---
 
@@ -496,6 +496,11 @@ using Xunit;
 
 namespace PRism.Web.Tests.TestHooks;
 
+// [Collection] MUST be on the test class, not on RealInjectAppFactory below — xUnit only
+// honours [Collection] on classes it discovers as test classes (those with [Fact]/[Theory]).
+// Placing it on the fixture is silent no-op, leaving the env-var race with ProgramMutexCheckTests
+// unaddressed despite the comment in the factory claiming serialization.
+[Collection("EnvVarMutating")]
 public class RealInjectEndpointsTests : IClassFixture<RealInjectAppFactory>
 {
     private readonly RealInjectAppFactory _factory;
@@ -544,8 +549,8 @@ public class RealInjectEndpointsTests : IClassFixture<RealInjectAppFactory>
 //
 // Env-var mutation is process-wide; xUnit parallelizes test classes by default. The
 // EnvVarMutating collection (see Collections.cs) serializes the env-touching tests so they
-// don't race with one another.
-[Collection("EnvVarMutating")]
+// don't race with one another. [Collection("EnvVarMutating")] is set on the TEST CLASS above
+// (RealInjectEndpointsTests) — xUnit's collection attribute is a no-op on fixture classes.
 public sealed class RealInjectAppFactory : WebApplicationFactory<Program>
 {
     private readonly string _dataDir;
@@ -668,6 +673,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: Read the existing `TestEndpoints.cs` to find the right insertion point**
 
 Read `PRism.Web/TestHooks/TestEndpoints.cs`. The handler goes inside the `MapTestEndpoints` method, anywhere after the existing `app.MapPost("/test/reset", ...)` block. Follow the same shape (StoreMissing / Origin / Origin header etc).
+
+- [ ] **Step 1a: Ensure `ActivePrSubscriberRegistry.SubscribersFor(PrReference)` is public**
+
+Read `PRism.Core/PrDetail/ActivePrSubscriberRegistry.cs`. If a public `SubscribersFor(PrReference)` method does NOT already exist, add it now — both the test below (Step 2) and the endpoint implementation (Step 4) call it, so the project won't compile without it. Return type must be a materialized snapshot (`IReadOnlyList<string>`), not a lazy IEnumerable backed by the underlying ConcurrentDictionary, so the iterate-and-Remove loop in Step 4 doesn't observe a mid-iteration view.
+
+```csharp
+public IReadOnlyList<string> SubscribersFor(PrReference prRef) =>
+    _dict.Where(kv => kv.Value.Contains(prRef)).Select(kv => kv.Key).ToList();
+```
+
+If the method is already public, skip; proceed to Step 2.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -1104,7 +1120,7 @@ export default defineConfig({
   use: {
     browserName: 'chromium' as const,
     baseURL: 'http://localhost:5181',
-    trace: 'on-first-retry',
+    trace: 'retain-on-failure', // retries:0 means 'on-first-retry' never fires; capture trace on the single attempt instead
   },
   projects: [{ name: 'real' }],
 });
@@ -1443,7 +1459,8 @@ export async function resetSandboxFixture(
   // 2. Force-reset the fixture branch to its baseOid; capture server clock from response.
   const { serverTs } = gh.forceResetBranch(fixture);
 
-  // 3. Clear PRism's local PR session AND unsubscribe from IActivePrCache via /test/clear-pr-session.
+  // 3. Clear PRism's local PR session (IAppStateStore.UpdateAsync) AND remove subscribers
+  //    from ActivePrSubscriberRegistry — both via /test/clear-pr-session in one POST.
   const resp = await request.post('http://localhost:5181/test/clear-pr-session', {
     data: { owner: 'prpande', repo: 'prism-sandbox', number: fixture.prNumber },
     headers: { Origin: 'http://localhost:5181' },
@@ -1674,8 +1691,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ```typescript
 import { chromium, request } from '@playwright/test';
-import { execFileSync } from 'node:child_process';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { SandboxFixture } from './helpers/sandbox-fixture';
@@ -1708,7 +1724,10 @@ export default async function globalSetup(): Promise<void> {
     execFileSync('gh', ['api', 'graphql', '-f', 'query={ viewer { login } }'], { encoding: 'utf8' }),
   ) as { data: { viewer: { login: string } } };
   const myLogin = viewer.data.viewer.login;
-  const fixtureLogin = fixtures[0].branch.split('-').slice(-1)[0]; // e.g. "pratyush" from "...-fixture-pratyush"
+  // Anchored match — `split('-').slice(-1)[0]` would yield "doe" for "john-doe" because GitHub
+  // logins can contain hyphens. The setup script writes branches as `e2e-real-${name}-fixture-${login}`
+  // (Task 11), so the `-fixture-` literal is a stable boundary regardless of login internals.
+  const fixtureLogin = fixtures[0].branch.match(/-fixture-(.+)$/)?.[1] ?? '';
   if (myLogin !== fixtureLogin) {
     throw new Error(
       `gh auth identity mismatch: current login is "${myLogin}" but fixtures.json was generated for "${fixtureLogin}". Re-run setup-real-e2e-fixtures or switch gh auth context.`,

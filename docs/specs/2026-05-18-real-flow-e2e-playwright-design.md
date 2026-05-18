@@ -191,7 +191,8 @@ export async function resetSandboxFixture(
   }
   // 2. Force-reset the branch to its known baseOid (clears stale-oid head advances).
   gh.forceResetBranch(fixture);
-  // 3. Clear PRism's local PR session AND unsubscribe (single UpdateAsync; closes poller race).
+  // 3. Clear PRism's local PR session via IAppStateStore.UpdateAsync AND remove subscribers
+  //    from ActivePrSubscriberRegistry — two operations on two surfaces, both via /test/clear-pr-session.
   const resp = await request.post('/test/clear-pr-session', {
     data: { owner: 'prpande', repo: 'prism-sandbox', number: fixture.prNumber },
     headers: { Origin: 'http://localhost:5181' },
@@ -342,7 +343,7 @@ Assertions:
 
 **Regression net for:** real `addPullRequestReview` at a non-head OID, `deletePullRequestReview` orphan cleanup, `createCommitOnBranch` helper interop, full stale-recreation pipeline against real GraphQL.
 
-**Known fragility:** step 7 depends on GitHub read-replica propagation + the `ActivePrPoller` cadence. 30s is the empirical headroom budget (see §10 risks). Mitigated by awaiting the `pr-updated` SSE event (the same event that triggers the Reload banner) rather than polling state directly. If the SSE never arrives within 30s the test fails loudly — `retries:0` is intentional, but the failure message clearly indicates "poller/SSE timeout, may be real GitHub eventual-consistency on slow days" so a developer can distinguish flake from design break.
+**Known fragility:** step 7 depends on GitHub read-replica propagation + the `ActivePrPoller` cadence. 30s is the empirical headroom budget (see §10 risks). Mitigated by waiting for the Reload banner to appear — the banner only renders when usePrDetail receives the `pr-updated` SSE event, so the wait IS the SSE gate, just transitively. (A direct `EventSource` listener via `page.waitForResponse` on the SSE stream is doable but non-trivial in Playwright; the banner-visibility assertion gives the same coverage with no extra wiring.) If the SSE never arrives within 30s, the banner never appears and the test fails loudly — `retries:0` is intentional, and the failure message clearly indicates "Reload banner not visible (poller/SSE timeout, may be real GitHub eventual-consistency on slow days)" so a developer can distinguish flake from design break.
 
 ### 6.5 Coverage matrix
 
@@ -555,7 +556,7 @@ Each spec is paired with a one-line production-code edit that should make it fai
 | `PRism.Web/TestHooks/TestFailureInjectionHandler.cs` | NEW |
 | `PRism.Web/TestHooks/RealTransportFailureInjector.cs` | NEW |
 | `PRism.Web/TestHooks/RealInjectEndpoints.cs` | NEW |
-| `PRism.Web/TestHooks/TestEndpoints.cs` | + `/test/clear-pr-session` endpoint (clears session AND `IActivePrCache` subscription in one `UpdateAsync`) |
+| `PRism.Web/TestHooks/TestEndpoints.cs` | + `/test/clear-pr-session` endpoint (clears session via `IAppStateStore.UpdateAsync` AND removes per-PR subscribers from `ActivePrSubscriberRegistry`) |
 | `PRism.Web/Program.cs` | + 3 conditional blocks (mutex check, handler registration co-gated on Test+REAL_INJECT, endpoint map); also widen the existing `UseStaticWebAssets()` gate to engage under REAL_INJECT=1 as well (one-line OR) |
 | `PRism.Core/PrDetail/ActivePrSubscriberRegistry.cs` | If `SubscribersFor(prRef)` isn't already public, + one ConcurrentDictionary lookup method (~5 LOC) so `/test/clear-pr-session` can iterate-and-Remove subscribers for a PR |
 | `frontend/playwright.real.config.ts` | NEW |
