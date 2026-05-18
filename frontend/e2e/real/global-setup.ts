@@ -15,6 +15,11 @@ export default async function globalSetup(): Promise<void> {
     );
   }
   const fixtures = JSON.parse(fs.readFileSync(fxPath, 'utf8')) as SandboxFixture[];
+  if (fixtures.length === 0) {
+    throw new Error(
+      `fixtures.json at ${fxPath} is empty. Re-run \`npm run setup-real-e2e-fixtures\`; see docs/e2e/real-flow.md.`,
+    );
+  }
 
   // 2. Validate gh auth.
   try {
