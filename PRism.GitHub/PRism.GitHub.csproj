@@ -18,4 +18,11 @@
     <BanOctokit>false</BanOctokit>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Test 7g (Frozen_pr_graphql_shape_unchanged) replays `PrDetailGraphQLQuery` against
+         live GitHub to detect schema drift; the constant is `internal` so it isn't part of
+         the public surface. Mirrors the same pattern in PRism.Core.csproj / PRism.Web.csproj. -->
+    <InternalsVisibleTo Include="PRism.GitHub.Tests.Integration" />
+  </ItemGroup>
+
 </Project>

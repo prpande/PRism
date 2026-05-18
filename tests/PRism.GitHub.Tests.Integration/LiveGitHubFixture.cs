@@ -1,3 +1,5 @@
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PRism.Core;
@@ -69,6 +71,49 @@ public sealed class LiveGitHubFixture : IDisposable
                 $"PrDetailLoader returned null for PR #{entry.PrNumber} — token expired or PR inaccessible.");
         }
         return snap.Detail;
+    }
+
+    /// <summary>
+    /// Issues the SAME GraphQL query that <see cref="GitHubReviewService.GetPrDetailAsync"/>
+    /// issues — using the production <c>PrDetailGraphQLQuery</c> constant (visible here via
+    /// InternalsVisibleTo) — and returns the raw response as a <see cref="JsonElement"/>.
+    /// Used by test 7g (Frozen_pr_graphql_shape_unchanged) to detect GraphQL schema drift.
+    /// </summary>
+    /// <remarks>
+    /// Uses the same named <c>github</c> <see cref="HttpClient"/> the production code resolves
+    /// via <c>AddPrismGitHub</c> — same <c>BaseAddress</c>, same connection pool, same
+    /// host resolution. The absolute GraphQL endpoint URL is computed from
+    /// <see cref="HostUrlResolver.GraphQlEndpoint"/> (matches the production
+    /// <c>PostGraphQLAsync</c> path) to keep parity with how the SUT reaches GitHub.
+    /// </remarks>
+    public async Task<JsonElement> LoadRawGraphQLResponseAsync(int prNumber)
+    {
+        var factory = _sp.GetRequiredService<IHttpClientFactory>();
+        var config = _sp.GetRequiredService<IConfigStore>();
+        using var http = factory.CreateClient("github");
+
+        var token = GhCliPat.Get().Reveal();
+        var endpoint = HostUrlResolver.GraphQlEndpoint(config.Current.Github.Host);
+        using var req = new HttpRequestMessage(HttpMethod.Post, endpoint);
+        req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        req.Headers.UserAgent.ParseAdd("PRism.GitHub.Tests.Integration");
+        req.Content = JsonContent.Create(new
+        {
+            query = GitHubReviewService.PrDetailGraphQLQuery,
+            variables = new { owner = "prpande", repo = "PRism", number = prNumber }
+        });
+
+        using var resp = await http.SendAsync(req);
+        if (!resp.IsSuccessStatusCode)
+        {
+            // Sanitized — never echo the Authorization header value back through the exception.
+            throw new InvalidOperationException(
+                $"GraphQL request to GitHub failed with {(int)resp.StatusCode} for PR #{prNumber}. " +
+                "(Authorization header omitted.)");
+        }
+        var stream = await resp.Content.ReadAsStreamAsync();
+        using var doc = await JsonDocument.ParseAsync(stream);
+        return doc.RootElement.Clone();
     }
 
     public void Dispose() => _sp.Dispose();

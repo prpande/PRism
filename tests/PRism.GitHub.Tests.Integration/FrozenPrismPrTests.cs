@@ -1,5 +1,7 @@
+using System.Text.Json;
 using FluentAssertions;
 using PRism.Core.Contracts;
+using PRism.GitHub.Tests.Integration.Helpers;
 using Xunit;
 
 namespace PRism.GitHub.Tests.Integration;
@@ -97,6 +99,45 @@ public class FrozenPrismPrTests : IClassFixture<LiveGitHubFixture>
             : ClusteringQuality.Ok;
         snap!.Detail.ClusteringQuality.Should().Be(expected,
             $"PR #{entry.PrNumber} ({entry.ShapeCategory}) expects {expected}");
+    }
+
+    // 7g — GraphQL shape-drift detector. Replays the EXACT production GraphQL query
+    // (via the lifted internal `GitHubReviewService.PrDetailGraphQLQuery` constant)
+    // against PR #19, strips content per the FixtureStripAllowlist, and diffs the
+    // captured fixture against the live shape. Capture mode rewrites the fixture
+    // locally and is hard-blocked in CI by `GhCliPat.EnsureCaptureModeNotInCi`.
+    [Fact]
+    public async Task Frozen_pr_graphql_shape_unchanged()
+    {
+        // CI write-protection layer 2: throws if PRISM_FROZEN_PR_CAPTURE_FIXTURE=1 AND CI is set.
+        GhCliPat.EnsureCaptureModeNotInCi();
+
+        var pr19 = FrozenPrCorpus.Pr19;
+        var liveResponse = await _fixture.LoadRawGraphQLResponseAsync(pr19.PrNumber);
+        var stripped = FixtureStripAllowlist.Apply(liveResponse);
+        var strippedJson = stripped!.ToJsonString();
+
+        var fixturePath = FixturePathResolver.GetFixturePath("pr19-graphql-response.json");
+
+        if (GhCliPat.IsCaptureModeEnabled())
+        {
+            File.WriteAllText(fixturePath, strippedJson);
+            // The xunit test runner captures stdout per test — this surfaces in -v:detailed
+            // output and in the .trx file. Operator runbook (Task 19) tells the user to
+            // grep this line when checking that capture mode took effect.
+            Console.WriteLine($"Captured fixture for PR #19 -> {fixturePath}. Re-run without the env var to assert.");
+            return;  // capture-mode runs always pass; assert mode is a separate invocation.
+        }
+
+        File.Exists(fixturePath).Should().BeTrue(
+            $"Fixture must exist; run with PRISM_FROZEN_PR_CAPTURE_FIXTURE=1 once locally to generate. Path: {fixturePath}");
+
+        using var expectedDoc = JsonDocument.Parse(File.ReadAllText(fixturePath));
+        using var actualDoc = JsonDocument.Parse(strippedJson);
+        var diffs = GraphQLShapeDiff.Diff(expectedDoc.RootElement, actualDoc.RootElement);
+
+        diffs.Should().BeEmpty(
+            "GraphQL shape drift detected — see structured diff:\n" + string.Join("\n", diffs));
     }
 
     // 7h — PR #16 must not fabricate iterations despite collapsed committedDate.
