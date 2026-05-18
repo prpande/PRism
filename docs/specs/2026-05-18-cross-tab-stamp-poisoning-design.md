@@ -14,9 +14,11 @@ topic: cross-tab-stamp-poisoning
 
 ## Summary
 
-`ReviewSessionState` keys session data on `owner/repo/number` only. Two tabs open on the same PR share a single `LastViewedHeadSha`. Tab A's `POST /mark-viewed` at `headSha=B` silently overwrites Tab B's stamp at `headSha=A`; the submit-gate rule (f) — *"most-recent active-PR poll observed no head-sha drift"* — then evaluates against the *other* tab's stamp. Tab B can submit at `headSha=B` without having reviewed B's diff. The pre-decision sketch in the deferral entry — *"store LastViewedHeadSha as `Dictionary<string, string>` keyed by `X-PRism-Tab-Id`, eviction LRU at N=8"* — is the right shape; this design fills in the storage detail, migration, header plumbing, inbox wire projection, and test matrix.
+`ReviewSessionState` keys session data on `owner/repo/number` only. Two tabs open on the same PR share a single `LastViewedHeadSha`. Tab A's `POST /mark-viewed` at `headSha=B` silently overwrites Tab B's stamp at `headSha=A`; the submit-gate rule (f) — *"most-recent active-PR poll observed no head-sha drift"* — then evaluates against the *other* tab's stamp. Tab B can submit at `headSha=B` without having reviewed B's diff. The failure is silent, the artifact (a GitHub review) is durable, and the verdict is publicly attributed to the reviewer.
 
-The slice ships a V5→V6 schema migration, promotes `LastViewedHeadSha` + `LastSeenCommentId` into a per-tab `TabStamp` map inside `ReviewSessionState`, plumbs `X-PRism-Tab-Id` into the mark-viewed and submit endpoints (which currently ignore the header on these two routes), and pins the two-tab bypass scenario with a `PrSubmitEndpoints` test.
+The slice ships a V5→V6 schema migration, promotes `LastViewedHeadSha` (only) into a per-tab `TabStamp` map inside `ReviewSessionState`, wires the BE to read `X-PRism-Tab-Id` on mark-viewed and submit (which currently ignore the header on these two routes; the FE already sends it), threads the tab id into the reload + reconciliation pipeline + test-hook write sites, and pins the two-tab bypass scenario with a `PrSubmitEndpoints` test.
+
+`LastSeenCommentId` stays session-flat as a monotone high-water across all tabs — the inbox unread badge depends on this semantic and per-tab partitioning would regress it (§ 2).
 
 End-to-end behavior change: a user with two tabs open on the same PR cannot submit from a tab whose own diff they haven't viewed at the PR's current head sha. The single-tab path is byte-identical to today.
 
@@ -24,7 +26,9 @@ End-to-end behavior change: a user with two tabs open on the same PR cannot subm
 
 ## Problem Frame
 
-The bypass is silent and architectural. Today's single stamp is a single value; the FE has no model of which tab "owns" the stamp. The submit endpoint reads the value with no caller-tab context. A reviewer with two tabs open on the same PR — common when comparing two commits side-by-side, or when a Slack ping reopened a PR in a second window — can submit a verdict against a head sha they have not actually inspected. The risk shape matches the S5 design's "silently-wrong, not loudly-broken" framing: nothing in the UI surfaces that the wrong stamp was used; the verdict lands on github.com and is attributed to the reviewer.
+The bypass is silent, the artifact is durable, and the attribution is public. A reviewer with two tabs open on the same PR can submit a verdict against a head sha they have not actually inspected; the verdict lands on github.com under their name with no UI signal that the wrong stamp was consulted. The risk shape matches the S5 design's "silently-wrong, not loudly-broken" framing — nothing surfaces at submit time, the GitHub review is non-rollbackable, and a future reviewer reading the verdict has no way to know the author didn't read the diff.
+
+The deferral entry called this "P1, confidence 75" at code-review time; the operational firing rate in single-user dogfooding is unknown. The case rests on the failure shape (silent + durable + publicly attributed), not on the workflow's prevalence. Even a single occurrence is undiscoverable to the user after the fact.
 
 The deferral was carried forward because the fix needs a schema migration, and S6 PR0 (the multi-account storage-shape scaffold) was the natural carrier. PR0 shipped without taking on this work; V6 is the next discrete schema step and a clean home for it.
 
@@ -37,7 +41,7 @@ The deferral was carried forward because the fix needs a schema migration, and S
 1. Make the submit gate evaluate each tab's stamp independently. A stamp landed by Tab A never unblocks a submit from Tab B.
 2. Preserve the single-tab user experience byte-identically — no extra prompts, no extra round-trips, no behavior change in the dominant case.
 3. Migrate V5 → V6 cleanly, with idempotency and partial-rollback discrimination matching V4→V5's policy ([§ 4.1](#41-state-statejson-v5--v6)).
-4. Cap per-session tab-id storage at N=8 with LRU eviction so a long-running install doesn't accumulate unbounded entries.
+4. Cap per-session tab-id storage at N=8 with eviction-by-oldest-stamp so a long-running install doesn't accumulate unbounded dead entries from closed tabs ([§ 5.2 LRU note](#52-mark-viewed-write-site)).
 5. Pin the two-tab bypass regression in `PrSubmitEndpoints` tests so future refactors can't silently regress it.
 
 ### 1.2 Non-goals
@@ -45,7 +49,18 @@ The deferral was carried forward because the fix needs a schema migration, and S
 - **Tab-aware inbox** — the inbox lists PRs across all subscriptions; "have I viewed this from THIS tab" is not a useful per-row semantic, and the existing `pr.lastViewedHeadSha == null` "first visit" badge serves a different purpose (have I *ever* opened this PR). The wire projection ([§ 6](#6-inbox-wire-projection)) preserves the existing semantic.
 - **Tab-aware SSE filtering** — already exists ([`SourceTabId` on `StateChanged` / `DraftSaved` / `DraftDiscarded`](../../PRism.Core/Events/)). This slice doesn't touch it.
 - **Tab-id durability across browser launches** — `getTabId()` is in-memory only ([`frontend/src/api/draft.ts:9-12`](../../frontend/src/api/draft.ts)). After a launch, every tab is a new tab; their first PR-detail load fires `mark-viewed` and re-stamps. This is the right semantic — a fresh launch has no continuity with prior viewing context.
-- **Removing the FE wire-up gate test** — the existing `head-sha-not-stamped` 400 (the symptom that PR #55 fixed) is preserved verbatim. Per-tab partitioning narrows *when* the 400 fires; it doesn't change the error code or the FE recovery path.
+- **Removing the FE wire-up gate test** — the existing `head-sha-not-stamped` 400 (the symptom that PR #55 fixed) is preserved for the valid-tab-id-but-no-map-entry case. A new `tab-id-missing` 422 splits off the malformed/missing-header case ([§ 5.3](#53-submit-gate-read-site)).
+- **Per-tab `LastSeenCommentId`** — kept session-flat as a monotone high-water. See § 2 for the rationale.
+
+### 1.3 Alternatives considered
+
+The deferral entry sketched three fix options. This slice picks (i) and rejects (ii) and (iii) below.
+
+**(i) Per-tab `LastViewedHeadSha` map (chosen).** Each tab stamps its own slot; submit gate looks up the caller's slot only. Cost: V5→V6 schema migration + reconciliation/reload/test-hook semantics + LRU policy. Benefit: preserves every existing user workflow — two tabs at different head shas, side-by-side commit comparison, Slack-ping-reopens-in-second-window. The "what to view" model is unchanged; only the "what your tab personally stamped" dimension is added.
+
+**(ii) Per-tab session keys** — rejected. Would multiply the session count by tab count (one `accounts.{key}.reviews.sessions.{owner/repo/n}/{tabId}` entry per tab); drafts would need to be per-tab too (loss of cross-tab draft sharing, which the existing `StateChanged` SSE event explicitly broadcasts to all subscribed tabs), and the LRU problem fans out across every session-keyed surface. A heavier reshape with worse cross-tab UX.
+
+**(iii) Lock-on-first-view ("stamp on first PR-detail GET, then locked")** — rejected. The first tab to mark-viewed locks the session's head sha; subsequent tabs see a "this PR is being reviewed in another tab" state until the owner releases / TTL expires. Cheaper to implement (no schema change) and closes the bypass class, but breaks the legitimate side-by-side workflow this design preserves: a user comparing PR #100 at sha-A in Tab A vs the just-pushed sha-B in Tab B would be locked out of Tab B until they explicitly release Tab A. The PRism diff viewer's range parameter (`/diff?range=A..B`) was built for this workflow; foreclosing it at the session level to fix a silent gate is the wrong trade. Also: "lock release" is a new affordance the spec would have to invent (close-tab? TTL? explicit release button?), and each shape carries its own footguns.
 
 ---
 
@@ -55,7 +70,8 @@ Inside [`PRism.Core/State/AppState.cs`](../../PRism.Core/State/AppState.cs), `Re
 
 ```csharp
 public sealed record ReviewSessionState(
-    IReadOnlyDictionary<string, TabStamp> TabStamps,   // new; replaces LastViewedHeadSha + LastSeenCommentId
+    IReadOnlyDictionary<string, TabStamp> TabStamps,   // new; replaces LastViewedHeadSha
+    string? LastSeenCommentId,                         // kept session-flat — monotone high-water
     string? PendingReviewId,
     string? PendingReviewCommitOid,
     IReadOnlyDictionary<string, string> ViewedFiles,
@@ -67,13 +83,14 @@ public sealed record ReviewSessionState(
 
 public sealed record TabStamp(
     string HeadSha,
-    string? MaxCommentId,
     DateTime StampedAtUtc);
 ```
 
-**Why both fields, not just `HeadSha`.** `LastViewedHeadSha` and `LastSeenCommentId` are stamped atomically by a single `POST /mark-viewed` ([`PrDetailEndpoints.cs:112-116`](../../PRism.Web/Endpoints/PrDetailEndpoints.cs)). Asymmetric partitioning (per-tab head sha, session-flat seen-comment-id) leaves a residual cross-tab poisoning surface in the unread-comment count math used by [`BannerRefresh`](../../frontend/src/components/PrDetail/BannerRefresh.tsx), at no storage saving worth the irregular shape. Moving both into `TabStamp` keeps the atomicity that the existing mark-viewed call already promises.
+**Why only `LastViewedHeadSha` goes per-tab, not also `LastSeenCommentId`.** `LastSeenCommentId` is the inbox unread-badge's session-level high-water — every writer increases it monotonically. Today's writers are mark-viewed ([`PrDetailEndpoints.cs:115`](../../PRism.Web/Endpoints/PrDetailEndpoints.cs), stamps `body.MaxCommentId`) and markAllRead ([`PrDraftEndpoints.cs:355-373`](../../PRism.Web/Endpoints/PrDraftEndpoints.cs), stamps an explicit id). If `LastSeenCommentId` moved into `TabStamp` and the inbox projected "most-recent stamp's MaxCommentId" across tabs, Tab B re-stamping at sha-B with `MaxCommentId=50` (its own load-time max) would silently regress the inbox badge from Tab A's prior `999`. The first-pass ce-doc-review's adversarial agent flagged this; the right semantic is "session-flat monotone high-water." Both writers continue to write `LastSeenCommentId` directly; mark-viewed gains a `max(current, body.MaxCommentId)` guard to preserve monotonicity ([§ 5.2](#52-mark-viewed-write-site)).
 
-**Why `DateTime StampedAtUtc`, not insertion order.** LRU eviction on a long-running tab that rarely re-stamps would silently penalize that tab under insertion-order semantics — its entry sinks because *other* tabs touched the map more recently. `StampedAtUtc` makes eviction order match the deferral entry's "LRU" framing literally. The server clock is fine here: the consumer is "evict the oldest entry within a single (account, PR) session," not any user-visible ordering. Clock skew under a backwards system-clock adjustment is acknowledged in the deferrals sidecar.
+The cross-tab "Tab A marked an old comment-id as seen, Tab B's banner now says 0 new" concern is mild compared to the inbox regression. The submit-gate bypass class is closed regardless because the submit gate reads `TabStamps[tabId].HeadSha` only — `LastSeenCommentId` is not on the rule (f) path.
+
+**Why `DateTime StampedAtUtc`.** Provides a deterministic eviction order for bounding the map's size; `MinBy` picks a single entry on each cap-exceeding insert. The mechanism does *not* favor long-running tabs over short-lived ones — a long-running tab that rarely re-stamps has an older `StampedAtUtc` than churning tabs, so it sinks first under cap pressure. That's accepted: the cap exists to bound storage of dead entries from closed tabs, not to provide an "active tab survives" guarantee. The server cannot observe whether a tab is still alive ([§ 9.1 Eight-tab cap](#91-risks)). Clock skew under a backwards system-clock adjustment is acknowledged in the deferrals sidecar.
 
 **Why nest inside `ReviewSessionState`, not at a higher level.** Sessions already live at `accounts.{key}.reviews.sessions.{owner/repo/n}` post-S6 PR0. A tab map at the account or top level would force a join key from `(account, prRef, tab)` back down to a session, recreating data the per-session map already encodes. The FE's `getTabId()` is cross-account by construction (one per browser launch) and that's correct — the same tab id will appear independently in each `(account, prRef)` session's tab map it touches, with no FE-side bookkeeping required.
 
@@ -84,10 +101,10 @@ public sealed record TabStamp(
   "tab-stamps": {
     "0c1f4e8a-3b9d-4c2f-9e1a-2b3c4d5e6f70": {
       "head-sha": "abc123...",
-      "max-comment-id": "987654321",
       "stamped-at-utc": "2026-05-18T14:23:45.6789012Z"
     }
   },
+  "last-seen-comment-id": "987654321",
   "pending-review-id": null,
   // ... rest unchanged
 }
@@ -99,9 +116,11 @@ public sealed record TabStamp(
 
 Header value must match `^[a-zA-Z0-9_-]{1,64}$` before being used as a JSON map key, a log field, or a dictionary lookup key.
 
-Same allowlist as the [S6 PR0 § 7 binding constraint #2](2026-05-10-multi-account-scaffold-design.md#7-v2-user-facing-model--constraints-v1-places--advisory-observations) for `accountKey`, applied verbatim because the threat surface is identical: header value lands in JSON map keys (state.json), log lines (`s_headShaNotStamped` would log it for cross-tab debugging), and would land in file paths if v2 ever shards per-tab.
+Same allowlist as the [S6 PR0 § 7 binding constraint #2](2026-05-10-multi-account-scaffold-design.md#7-v2-user-facing-model--constraints-v1-places--advisory-observations) for `accountKey`, applied verbatim because the threat surface is identical: header value lands in JSON map keys (state.json), and may land in log lines if the implementation chooses to log it for diagnostics.
 
-Implementation: inline regex at each call site initially. If a third site appears, factor to `PRism.Core/State/TabIds.cs` with a single `IsValid(string)` method. v1 has two sites — `PrDetailEndpoints.MapPost("/mark-viewed", ...)` and `PrSubmitEndpoints.SubmitAsync` — so inline keeps the seam from being premature.
+**Log-field discipline.** This slice does NOT add tab id to any log line. If a future change adds tab id to a structured log parameter (the natural next step when "granular log distinction" is un-deferred, [§ 9.2](#92-deferred)), the log line MUST use the *post-validation local variable*, never the raw `httpContext.Request.Headers["X-PRism-Tab-Id"]`. The allowlist pre-mitigates the log-injection vector only under that discipline; without it, the mitigation is decoupled from the logging path.
+
+Implementation: inline `[GeneratedRegex]` at each call site for v1. If a third site appears beyond mark-viewed / submit / reload / test-hook (the four BE sites enumerated in § 5), factor to `PRism.Core/State/TabIds.cs` with a single `IsValid(string)` method.
 
 `crypto.randomUUID()` produces canonical UUIDs (32 hex + 4 dashes, 36 chars total) which fit the allowlist cleanly. Non-FE callers (direct curl during local debugging, the Playwright test harness if it ever calls submit without the React client) must send a header that matches the allowlist or the call fails-closed.
 
@@ -117,16 +136,16 @@ public static JsonObject MigrateV5ToV6(JsonObject root)
     // Idempotency vs partial-rollback discrimination (mirrors MigrateV4ToV5's policy):
     //
     //   - V6 file passed in by mistake (every session already has `tab-stamps`, no legacy
-    //     `last-viewed-head-sha` / `last-seen-comment-id` keys anywhere): just bump version.
-    //     Idempotent.
+    //     `last-viewed-head-sha` keys anywhere): just bump version. Idempotent.
     //
-    //   - Partial-rollback / hand-edit (a session has BOTH legacy keys AND a pre-existing
-    //     `tab-stamps` key): refuse to silently pick one set. Surface as JsonException so
-    //     LoadCoreAsync's catch (JsonException) quarantines the whole file. Same all-or-
-    //     nothing policy as V4→V5: one inconsistent session quarantines the file; the
-    //     user lands at AppState.Default + re-Setup. Per-session partial recovery is
-    //     deliberately not attempted — quarantine is the safer default for a single-user
-    //     local PoC where the right recovery is "re-stamp on next PR detail load."
+    //   - Partial-rollback / hand-edit (a session has BOTH a legacy `last-viewed-head-sha`
+    //     key AND a pre-existing `tab-stamps` key): refuse to silently pick one set.
+    //     Surface as JsonException so LoadCoreAsync's catch (JsonException) quarantines
+    //     the whole file. Same all-or-nothing policy as V4→V5: one inconsistent session
+    //     quarantines the file; the user lands at AppState.Default + re-Setup.
+    //
+    //   - `last-seen-comment-id` stays at the session level (not moved under tab-stamps),
+    //     so it is NOT touched by this migration. Existing values pass through unchanged.
     if (root["accounts"] is not JsonObject accounts)
     {
         // V5 files always have `accounts` (V4→V5 ensures it). Missing means corrupt / hand-edited;
@@ -144,27 +163,24 @@ public static JsonObject MigrateV5ToV6(JsonObject root)
         {
             if (sessionNode is not JsonObject session) continue;
 
-            var hasLegacy = session["last-viewed-head-sha"] is not null
-                         || session["last-seen-comment-id"] is not null;
+            var hasLegacy = session["last-viewed-head-sha"] is not null;
             var hasNew = session["tab-stamps"] is JsonObject;
 
             if (hasLegacy && hasNew)
                 throw new System.Text.Json.JsonException(
-                    "state.json session has both legacy last-viewed-head-sha/last-seen-comment-id AND " +
-                    "a tab-stamps key. This indicates a partial rollback from a future version or a " +
-                    "hand-edit gone wrong. Quarantining and re-Setup is safer than guessing which set wins.");
+                    "state.json session has both legacy last-viewed-head-sha AND a tab-stamps " +
+                    "key. This indicates a partial rollback from a future version or a hand-edit " +
+                    "gone wrong. Quarantining and re-Setup is safer than guessing which set wins.");
 
-            // Drop pre-V6 stamps. Cannot be attributed to any specific tab; synthesizing under a
-            // sentinel key (e.g. "__legacy") would either match every tab's submit (re-introducing
-            // the bypass) or match no tab's submit (functionally equivalent to drop, plus extra
-            // storage + a confusing key). Drop is the honest move.
-            //
-            // Cost: every active session needs one mark-viewed round-trip on the next PR-detail
-            // load before submit unblocks. That round-trip already fires unconditionally from
-            // usePrDetail.ts:66-79 on every PR-detail load, so the cost is invisible to the user.
+            // Drop pre-V6 LastViewedHeadSha. Cannot be attributed to any specific tab;
+            // synthesizing under a sentinel key would either re-introduce the bypass or
+            // be equivalent to drop. Cost: one mark-viewed round-trip on the next PR-detail
+            // load before submit unblocks — that round-trip already fires unconditionally
+            // from usePrDetail.ts:66-79.
             session.Remove("last-viewed-head-sha");
-            session.Remove("last-seen-comment-id");
             if (!hasNew) session["tab-stamps"] = new JsonObject();
+
+            // LastSeenCommentId is intentionally NOT removed — it stays session-flat (see § 2).
         }
     }
 
@@ -179,7 +195,7 @@ public static JsonObject MigrateV5ToV6(JsonObject root)
 
 - `CurrentVersion` bumps `5 → 6`.
 - `MigrationSteps` gains `(6, AppStateMigrations.MigrateV5ToV6)` in the array initializer. The `.OrderBy(s => s.ToVersion)` already pins ascending order at type-init time.
-- `EnsureCurrentShape` extends to backfill `session["tab-stamps"] = new JsonObject()` for sessions missing the key. This defends against a future-version file (V7+) that drops sessions through the deserializer with `TabStamps == null`, which would NRE on the first `session.TabStamps.TryGetValue(...)` in the submit endpoint.
+- `EnsureCurrentShape` extends to backfill `session["tab-stamps"] = new JsonObject()` for sessions missing the key. Defends against a future-version (V7+) file dropping sessions through the deserializer with `TabStamps == null`, which would NRE on the first `session.TabStamps.TryGetValue(...)` in the submit endpoint.
 
 ```csharp
 // Inside EnsureCurrentShape, after the existing reviews.sessions backfill:
@@ -200,9 +216,25 @@ If 47 of 48 sessions are clean and one session has both `last-viewed-head-sha` A
 
 ---
 
-## 5. Endpoint changes
+## 5. Endpoint and pipeline changes
 
-### 5.1 Mark-viewed write site
+V6's per-tab partitioning touches more surface than the deferral entry sketched. Audited via `grep -r "LastViewedHeadSha"` across the codebase — the live read/write sites are:
+
+| Site | Role | V6 change |
+|---|---|---|
+| [`PrDetailEndpoints.cs:89-131`](../../PRism.Web/Endpoints/PrDetailEndpoints.cs) | mark-viewed (write) | § 5.2 — write `TabStamps[tabId]` + monotone `LastSeenCommentId` |
+| [`PrSubmitEndpoints.cs:113-144`](../../PRism.Web/Endpoints/PrSubmitEndpoints.cs) | submit rule (f) (read) | § 5.3 — read `TabStamps[tabId].HeadSha` |
+| [`PrReloadEndpoints.cs:161`](../../PRism.Web/Endpoints/PrReloadEndpoints.cs) | reload (write) | § 5.4 — write `TabStamps[tabId]` |
+| [`DraftReconciliationPipeline.cs:33`](../../PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs) | reconcile `headShifted` (read) | § 5.5 — read caller's tab stamp via new param |
+| [`PrDraftEndpoints.cs:355-373`](../../PRism.Web/Endpoints/PrDraftEndpoints.cs) | markAllRead patch (write) | § 5.6 — no-op (stays session-flat under `LastSeenCommentId`) |
+| [`TestEndpoints.cs:149-176`](../../PRism.Web/TestHooks/TestEndpoints.cs) | `/test/mark-pr-viewed` (write) | § 5.7 — accept `tabId` field |
+| [`InboxRefreshOrchestrator.cs:244-247`](../../PRism.Core/Inbox/InboxRefreshOrchestrator.cs) | inbox projection (read) | § 6 — most-recent stamp's `HeadSha`; `LastSeenCommentId` unchanged |
+
+### 5.1 `PrSubmitEndpoints` class-shape prerequisite
+
+`[GeneratedRegex]` requires `partial`. [`PrSubmitEndpoints.cs:23`](../../PRism.Web/Endpoints/PrSubmitEndpoints.cs) is currently `internal static class`; add the `partial` keyword. `PrDetailEndpoints` and `PrReloadEndpoints` need the same edit (the latter currently uses `static readonly Regex` for its sha-format regexes; either pattern works, but the new tab-id regex should land as `[GeneratedRegex]` for consistency with PrDraft's existing source-generated pattern).
+
+### 5.2 Mark-viewed write site
 
 [`PrDetailEndpoints.cs:89-131`](../../PRism.Web/Endpoints/PrDetailEndpoints.cs) reshapes:
 
@@ -233,32 +265,27 @@ app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
         {
             await stateStore.UpdateAsync(state =>
             {
-                var session = state.Reviews.Sessions.GetValueOrDefault(key) ??
-                              new ReviewSessionState(
-                                  TabStamps: new Dictionary<string, TabStamp>(),
-                                  PendingReviewId: null,
-                                  PendingReviewCommitOid: null,
-                                  ViewedFiles: new Dictionary<string, string>(),
-                                  DraftComments: new List<DraftComment>(),
-                                  DraftReplies: new List<DraftReply>(),
-                                  DraftSummaryMarkdown: null,
-                                  DraftVerdict: null,
-                                  DraftVerdictStatus: DraftVerdictStatus.Draft);
+                var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? NewEmptySession();
 
+                // Per-tab head sha (replaces LastViewedHeadSha assignment).
                 var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-                tabStamps[tabId] = new TabStamp(body.HeadSha, body.MaxCommentId, DateTime.UtcNow);
-
-                // LRU eviction at N=8. The newly-inserted entry is the newest by construction
-                // (DateTime.UtcNow > any prior entry's StampedAtUtc), so it can never be the
-                // eviction target unless N=1.
+                tabStamps[tabId] = new TabStamp(body.HeadSha, DateTime.UtcNow);
                 if (tabStamps.Count > 8)
                 {
+                    // Cap by evicting the entry with the oldest StampedAtUtc. The freshly-inserted
+                    // entry is the newest by construction (DateTime.UtcNow > any prior entry).
                     var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
                     tabStamps.Remove(oldest);
                 }
 
+                // Session-flat LastSeenCommentId — monotone high-water across all tabs.
+                // Today's behavior was last-writer-wins; the max() guard preserves monotonicity
+                // when V6's per-tab landscape means a freshly-loaded Tab B at a lower MaxCommentId
+                // would otherwise rewind the badge under Tab A's previous higher mark.
+                var newSeen = MonotonicMaxCommentId(session.LastSeenCommentId, body.MaxCommentId);
+
                 var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
-                sessions[key] = session with { TabStamps = tabStamps };
+                sessions[key] = session with { TabStamps = tabStamps, LastSeenCommentId = newSeen };
                 return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
             }, ct).ConfigureAwait(false);
         }
@@ -272,15 +299,27 @@ app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
 
 [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
 private static partial Regex TabIdAllowlistRegex();
+
+// Numeric monotone-max. Inputs are stringified longs (GitHub comment IDs); a non-numeric
+// or null `incoming` leaves `current` unchanged. Defends against the bypass-by-bad-input
+// path where a buggy FE sends `MaxCommentId = "0"` after the session has reached 999.
+private static string? MonotonicMaxCommentId(string? current, string? incoming)
+{
+    if (!long.TryParse(incoming, out var inc)) return current;
+    if (!long.TryParse(current, out var cur)) return incoming;
+    return inc > cur ? incoming : current;
+}
 ```
+
+`NewEmptySession()` is shared with `PrReloadEndpoints` and `PrDraftEndpoints` — see § 8.2 for the test-factory rewrite scope.
 
 **Why 422 for missing/invalid tab id, not 400.** Consistent with the existing `MarkViewedRequest` validation surface — `/viewed/snapshot-evicted` and `/viewed/stale-head-sha` are 422 / 409 for input-shape problems; tab-id-missing is the same class. 400 is reserved for the submit endpoint's rule-(f) family.
 
 **`/api/pr/{owner}/{repo}/{number:int}/files/viewed` is unchanged.** It already stamps under a `(prRef, path, headSha)` triple. The cross-tab poisoning class doesn't extend to per-file viewed state because the file-viewed check isn't part of rule (f) — it's a per-file UX affordance, not a submit gate. Out of scope.
 
-### 5.2 Submit-gate read site
+### 5.3 Submit-gate read site
 
-[`PrSubmitEndpoints.cs:113-144`](../../PRism.Web/Endpoints/PrSubmitEndpoints.cs) rule (f) reshapes:
+[`PrSubmitEndpoints.cs:113-144`](../../PRism.Web/Endpoints/PrSubmitEndpoints.cs) rule (f) reshapes — and the two fail-closed branches now use **distinct error codes** so the FE can route them differently:
 
 ```csharp
 private static async Task<IResult> SubmitAsync(
@@ -299,17 +338,18 @@ private static async Task<IResult> SubmitAsync(
 {
     // ... existing rule (a)-(e) checks unchanged ...
 
-    // Rule (f) — per-tab. Caller's tab id is required; missing/invalid is treated as
-    // "head-sha-not-stamped" (fail-closed). A regressed FE that forgot the header would
-    // present exactly this shape, and the existing `s_headShaNotStamped` log already
-    // points operators at the FE wire-up.
+    // Rule (f) — per-tab. The tab-id validation branch (422 / `tab-id-missing`) is split
+    // from the no-map-entry branch (400 / `head-sha-not-stamped`) because the recoveries
+    // differ: a missing/malformed header is a FE wire-up regression (Reload doesn't fix
+    // it; the user can't recover via UX) while a missing map entry is the standard
+    // "Reload the PR" path.
     var tabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
     if (string.IsNullOrEmpty(tabId) || !TabIdAllowlistRegex().IsMatch(tabId))
     {
-        s_headShaNotStamped(loggerFactory.CreateLogger(LoggerCategory), sessionKey, null);
-        return Results.Json(new SubmitErrorDto("head-sha-not-stamped",
-            "PR detail has not been marked viewed yet. Reload the PR and try again."),
-            statusCode: StatusCodes.Status400BadRequest);
+        s_tabIdMissing(loggerFactory.CreateLogger(LoggerCategory), sessionKey, null);
+        return Results.Json(new SubmitErrorDto("tab-id-missing",
+            "Internal error: missing tab identifier. Refresh the browser tab and retry."),
+            statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 
     if (!session.TabStamps.TryGetValue(tabId, out var stamp))
@@ -335,23 +375,104 @@ private static async Task<IResult> SubmitAsync(
     // ... rest unchanged ...
 }
 
+// New LoggerMessage delegate paralleling s_headShaNotStamped, distinguishing the
+// FE-wire-up-regression case from the legitimate-no-entry case.
+private static readonly Action<ILogger, string, Exception?> s_tabIdMissing =
+    LoggerMessage.Define<string>(LogLevel.Warning, new EventId(4, "SubmitRejectedTabIdMissing"),
+        "POST /submit rejected for {SessionKey}: X-PRism-Tab-Id header is missing or fails allowlist. " +
+        "The frontend must always send this header; see frontend/src/api/draft.ts:TAB_ID_HEADER.");
+
 [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
 private static partial Regex TabIdAllowlistRegex();
 ```
 
-**`PrSubmitEndpoints` becomes `partial`.** It's currently `internal static class` ([`PrSubmitEndpoints.cs:23`](../../PRism.Web/Endpoints/PrSubmitEndpoints.cs)); `[GeneratedRegex]` requires `partial`. Add the keyword. `PrDetailEndpoints` is already `internal static partial class` so the mark-viewed site needs no class-level edit.
-
-**Two distinct null branches collapsed to one log.** Both "header missing/invalid" and "no entry for this tab in the map" emit `s_headShaNotStamped`. The two cases are observationally identical from the user's POV — Reload the PR and try again — and the log message points at the FE wire-up either way. A more granular log distinction is deferrable to v2 if it ever becomes diagnostic-load-bearing.
+**Frontend wire impact.** `KNOWN_SUBMIT_ERROR_CODES` in [`frontend/src/api/submit.ts`](../../frontend/src/api/submit.ts) gains `'tab-id-missing'`. `PrHeader.submitErrorMessage`'s exhaustive switch ([`PrHeader.tsx:159-204`](../../frontend/src/components/PrDetail/PrHeader.tsx)) gets a new arm that surfaces "Internal error: missing tab identifier. Refresh the browser tab." The toast `kind` is `error`. Auto-retry is NOT wired — refresh-tab is the user-side recovery.
 
 **Pipeline `getCurrentHeadShaAsync` callback unchanged.** [`PrSubmitEndpoints.cs:150-154`](../../PRism.Web/Endpoints/PrSubmitEndpoints.cs) calls `prReader.PollActivePrAsync` directly; it doesn't read the stamp. The pre-Finalize re-poll for stale-`commitOID` continues to work as before.
 
-### 5.3 `SubmitRequestDto` body unchanged
+### 5.4 Reload write site
 
-Tab id stays header-only. Same precedent as `PrDraftEndpoints` ([line 82](../../PRism.Web/Endpoints/PrDraftEndpoints.cs)) and `PrReloadEndpoints`. Single source of truth on the wire; duplicating into the body invites drift.
+[`PrReloadEndpoints.cs:156-162`](../../PRism.Web/Endpoints/PrReloadEndpoints.cs) currently writes `LastViewedHeadSha = request.HeadSha` inside the apply-phase `with { ... }`. The endpoint already reads `X-PRism-Tab-Id` at line 63 (as `sourceTabId`, used for SSE filtering). V6 routes the same value into the stamp:
 
-### 5.4 `MarkViewedRequest` body unchanged
+```csharp
+// Tab-id validation. Reload is a writer endpoint; same allowlist as mark-viewed / submit.
+if (string.IsNullOrEmpty(sourceTabId) || !TabIdAllowlistRegex().IsMatch(sourceTabId))
+    return Results.UnprocessableEntity(new { error = "tab-id-missing" });
 
-Same rationale.
+// ... existing Phase 1 reconcile (now passes sourceTabId — see § 5.5) ...
+
+// Phase 2 apply — replace LastViewedHeadSha assignment with per-tab stamp:
+var tabStamps = current.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
+tabStamps[sourceTabId] = new TabStamp(request.HeadSha, DateTime.UtcNow);
+if (tabStamps.Count > 8)
+{
+    var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
+    tabStamps.Remove(oldest);
+}
+var updated = current with
+{
+    DraftComments = updatedDrafts,
+    DraftReplies = updatedReplies,
+    DraftVerdictStatus = newVerdictStatus,
+    TabStamps = tabStamps,                          // was: LastViewedHeadSha = request.HeadSha
+};
+```
+
+The `partial` keyword + `[GeneratedRegex]` apply here too. The existing `Sha40` / `Sha64` static-readonly `Regex` instances stay — only the new tab-id regex uses source-generation.
+
+**Why stamp on reload, not just on mark-viewed.** Today's behavior writes `LastViewedHeadSha = request.HeadSha` on every successful reload, on the model that "the user clicked Reload, they've now seen this head sha." Preserving that semantic in the per-tab world means stamping `TabStamps[sourceTabId]` for the caller's tab. Skipping the stamp would force the FE to re-fire `POST /mark-viewed` after every reload to unblock submit, which is wasted I/O and a regression-class-revival risk (forgetting the mark-viewed call after reload would silently re-introduce a `head-sha-not-stamped` symptom).
+
+### 5.5 Reconciliation pipeline read site
+
+[`DraftReconciliationPipeline.cs:12-18`](../../PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs) `ReconcileAsync` signature gains a `string? callerTabId` parameter:
+
+```csharp
+public async Task<ReconciliationResult> ReconcileAsync(
+    ReviewSessionState session,
+    string newHeadSha,
+    IFileContentSource fileSource,
+    CancellationToken ct,
+    string? callerTabId = null,                              // new
+    IReadOnlyDictionary<string, string>? renames = null,
+    IReadOnlySet<string>? deletedPaths = null)
+{
+    // ... unchanged ...
+
+    // Override-on-head-shift clearing per spec § 3.2. Per-tab: head-shifted relative to
+    // the caller's stamp (the tab that triggered this reload). If the caller has no
+    // prior stamp in TabStamps (e.g., a new tab's first reload, OR a post-V6 upgrade
+    // where pre-V6 stamps were dropped), treat as "no shift" — same first-reload
+    // semantic as the pre-V6 `LastViewedHeadSha is not null` guard. The legacy code's
+    // null-check is preserved by the TryGetValue-then-compare shape.
+    bool headShifted = false;
+    if (callerTabId is not null
+        && session.TabStamps.TryGetValue(callerTabId, out var priorStamp)
+        && priorStamp.HeadSha != newHeadSha)
+    {
+        headShifted = true;
+    }
+    if (headShifted) { /* same override-clear block as today */ }
+```
+
+The caller [`PrReloadEndpoints.cs:91-93`](../../PRism.Web/Endpoints/PrReloadEndpoints.cs) passes `sourceTabId` as the new argument. The default parameter value means the second read-site at line 216 (verdict-reconfirm) — which uses the same `headShifted` derivation — picks up the new semantics without further changes; it currently lives in a separate step but consumes the same input.
+
+**Why per-caller-tab, not per-any-tab.** `headShifted` drives two consequential outcomes: clearing `IsOverriddenStale` flags and forcing verdict re-confirmation. Both are "the user has seen a new head sha and their prior overrides / verdicts may not apply." The relevant "user" is the one clicking Reload. Reading "any tab's stamp" would let Tab A's stale view force a re-confirm on Tab B's fresh view; reading "all tabs' stamps" would never trigger if any tab had already stamped the new head. The caller-tab semantic matches today's behavior most closely (the FE's reload click fires from one tab; that tab is the "user" who has seen the new head).
+
+### 5.6 markAllRead patch — no V6 reshape
+
+[`PrDraftEndpoints.cs:355-373`](../../PRism.Web/Endpoints/PrDraftEndpoints.cs) writes `session with { LastSeenCommentId = newId }`. Under V6, `LastSeenCommentId` stays session-flat (§ 2), so this code path needs **no change**.
+
+The existing `StateChanged` event's `FieldsTouchedLastSeenCommentId = { "last-seen-comment-id" }` continues to work — `useStateChangedSubscriber` ([`frontend/src/hooks/useStateChangedSubscriber.ts:37`](../../frontend/src/hooks/useStateChangedSubscriber.ts)) filters on this string and triggers `onInboxBadgeInvalidation`; the wire shape and event field name are both preserved.
+
+### 5.7 Test hook `/test/mark-pr-viewed`
+
+[`TestEndpoints.cs:149-176`](../../PRism.Web/TestHooks/TestEndpoints.cs) is the Playwright real-flow suite's path for seeding `LastViewedHeadSha` without exercising mark-viewed. PR #58's four real-flow specs depend on this hook. Under V6:
+
+- The hook gains a `tabId` field in its request body (test-mode endpoint; the FE-side test harness can pass it explicitly, OR the hook can read `X-PRism-Tab-Id` from the request).
+- The hook writes `TabStamps[tabId] = new TabStamp(headSha, DateTime.UtcNow)` instead of `LastViewedHeadSha = headSha`.
+- Playwright fixtures that subsequently fire `POST /submit` must send the same tab id on both calls.
+
+Implementation: read the tab id from `X-PRism-Tab-Id` (consistent with all other writers); the Playwright suite already plumbs `tabIdHeader()` on every request. If a test ever needs to seed for a tab id different from the test's runtime tab id (unlikely; no current test does this), the hook can fall back to a body-field override. Default reads the header.
 
 ---
 
@@ -360,40 +481,77 @@ Same rationale.
 [`PrInboxItem`](../../PRism.Core.Contracts/PrInboxItem.cs) keeps `LastViewedHeadSha: string?` and `LastSeenCommentId: long?` on the wire. The server-side projection from V6 storage:
 
 ```csharp
-// In the inbox query / mapper that turns session state into PrInboxItem rows:
+// In InboxRefreshOrchestrator (or its DTO mapper) — replaces lines 244-247:
 var mostRecent = session.TabStamps
     .Values
     .OrderByDescending(s => s.StampedAtUtc)
     .FirstOrDefault();
 
 inboxItem.LastViewedHeadSha = mostRecent?.HeadSha;
-inboxItem.LastSeenCommentId = mostRecent?.MaxCommentId is { } id ? long.Parse(id) : null;
+inboxItem.LastSeenCommentId = session.LastSeenCommentId is { } id ? long.Parse(id) : null;
 ```
 
-**Why the most-recent stamp across all tabs.** The inbox UI uses `pr.lastViewedHeadSha == null` ([`InboxRow.tsx:31`](../../frontend/src/components/Inbox/InboxRow.tsx)) for the "first visit" badge, and uses the comment-id for unread-comment math. Both questions are session-level, not tab-level — "have I ever opened this PR from this install" and "what's the highest comment id I've seen on this PR across all my tabs." The most-recent-stamp projection answers both correctly without a wire shape change. A tab-aware inbox is a deferred v2 surface ([§ 9.2](#92-deferred)).
+**Why the most-recent stamp for `LastViewedHeadSha`.** The inbox UI uses `pr.lastViewedHeadSha == null` ([`InboxRow.tsx:31`](../../frontend/src/components/Inbox/InboxRow.tsx)) for the "first visit" badge. The most-recent projection answers "have I ever opened this PR from this install" correctly — null only when no tab has stamped.
 
-**Why not aggregate over all stamps.** Aggregating (e.g., min, max, set of head shas) doesn't have a useful inbox semantic. "Which head sha have you viewed" is a per-tab question; "have you viewed this PR at all" is the session question, and "most recent" is a stable representative for that question.
+**Why session-flat for `LastSeenCommentId`.** Already explained in § 2: session-flat preserves the monotone high-water across tabs, which the inbox unread badge requires.
 
 ---
 
 ## 7. Frontend
 
-**No FE code changes required.**
+**Two FE edits, both small.**
 
-Audit:
-- [`draft.ts:23`](../../frontend/src/api/draft.ts) — `TAB_ID_HEADER` exported as single source of truth.
-- [`draft.ts:9-12`](../../frontend/src/api/draft.ts) — `getTabId()` is per-launch, in-memory only.
-- [`markViewed.ts:32`](../../frontend/src/api/markViewed.ts) — sends `X-PRism-Tab-Id` on every POST.
-- [`submit.ts`](../../frontend/src/api/submit.ts) — sends `X-PRism-Tab-Id` on every POST (consolidated to import from `draft.ts` in PR #55 round 2).
-- [`__resetTabIdForTest()`](../../frontend/src/api/draft.ts) — exists for unit-test isolation.
+### 7.1 New `tab-id-missing` error arm in `PrHeader.submitErrorMessage`
 
-The only FE-facing edit is the comment block in [`markViewed.ts:21-22`](../../frontend/src/api/markViewed.ts):
+[`frontend/src/components/PrDetail/PrHeader.tsx:159-204`](../../frontend/src/components/PrDetail/PrHeader.tsx) — add the new known submit error code to the switch:
+
+```ts
+case 'tab-id-missing':
+    return 'Internal error: missing tab identifier. Refresh the browser tab and retry.';
+```
+
+[`frontend/src/api/submit.ts`](../../frontend/src/api/submit.ts) — add `'tab-id-missing'` to `KNOWN_SUBMIT_ERROR_CODES`. TypeScript's exhaustive-switch over the narrowed `KnownSubmitErrorCode` enforces the PrHeader arm at compile time.
+
+### 7.2 Comment block update in `markViewed.ts`
+
+[`markViewed.ts:21-22`](../../frontend/src/api/markViewed.ts):
 
 > *"The tab-id header matches every other writer (PUT /draft, POST /submit, POST /reload) — the BE doesn't read it on /mark-viewed today, but consistency keeps the cross-tab presence signal aligned for future use."*
 
 becomes:
 
-> *"The tab-id header is consumed by the BE on /mark-viewed (per-tab `TabStamp` partitioning) and on /submit (rule (f) lookup). The BE rejects /mark-viewed with 422 `/viewed/tab-id-missing` and /submit with 400 `head-sha-not-stamped` if the header is missing or malformed."*
+> *"The tab-id header is consumed by the BE on /mark-viewed (per-tab `TabStamp` partitioning), /submit (rule (f) lookup), and /reload (per-tab stamp write). The BE rejects /mark-viewed and /reload with 422 `tab-id-missing` and /submit with 422 `tab-id-missing` if the header is missing or malformed."*
+
+### 7.3 Tab-id mutability invariant
+
+`getTabId()` ([`frontend/src/api/draft.ts:9-12`](../../frontend/src/api/draft.ts)) is set-once for the page lifetime of a tab. `__resetTabIdForTest()` exists only as a Vitest seam. The invariant the submit gate depends on:
+
+> Production code MUST NOT mutate `_tabId` after `getTabId()` returns. The only legal mutator is `__resetTabIdForTest`, which is invoked from `__tests__/` and `e2e/` test setup only.
+
+Add a comment block above `_tabId`'s declaration restating this:
+
+```ts
+// INVARIANT: _tabId is set-once for the page lifetime of a tab. The BE submit gate
+// (PrSubmitEndpoints rule (f)) depends on each tab's _tabId being stable across the
+// tab's lifetime — if production code resets it, a tab could re-stamp under a new id
+// and then submit under the old id, re-introducing the cross-tab bypass class this
+// slice exists to close.
+//
+// __resetTabIdForTest is the ONLY legal mutator, and is invoked from test setup only.
+// Any production caller that needs a fresh tab id must open a new browser tab.
+```
+
+No analyzer or lint rule today; the invariant is enforced by code review. A grep for `_tabId =` in production code (excluding `__resetTabIdForTest`) returns one result (the assignment inside `getTabId` itself) and stays at one.
+
+### 7.4 FE audit — header senders
+
+Header is already sent on every writer:
+- [`draft.ts:23`](../../frontend/src/api/draft.ts) — `TAB_ID_HEADER` exported as single source of truth.
+- [`draft.ts:97, 112, 167`](../../frontend/src/api/draft.ts) — `getDraft`, `sendPatch`, `postReload` all use `tabIdHeader()`.
+- [`markViewed.ts:32`](../../frontend/src/api/markViewed.ts) — sends header.
+- [`submit.ts`](../../frontend/src/api/submit.ts) — sends header.
+
+No additional FE code changes required beyond § 7.1 and § 7.2.
 
 ---
 
@@ -403,11 +561,11 @@ becomes:
 
 `tests/PRism.Core.Tests/State/Migrations/AppStateMigrationsV5ToV6Tests.cs` (new):
 
-- **Legacy session → empty tab map.** Load V5 fixture with `last-viewed-head-sha = "abc"`, `last-seen-comment-id = "123"`; assert V6 shape: `tab-stamps: {}`, both legacy keys removed.
-- **Idempotence.** Load V6 fixture (no legacy keys, `tab-stamps: {}`) → no-op, version stays 6 (after the bump from V5 it's 6; re-running MigrateV5ToV6 leaves it untouched).
-- **Partial-rollback.** Load fixture with BOTH legacy keys AND `tab-stamps` populated → `JsonException` thrown.
-- **Empty `accounts`.** Load fixture with `accounts: {}` → no-op.
-- **Session with `tab-stamps` already populated, no legacy keys.** Load → preserves the existing map untouched (e.g., a hand-edited V5 file that anticipated V6).
+- **Legacy session → empty tab map.** V5 fixture with `last-viewed-head-sha = "abc"`, `last-seen-comment-id = "123"` → V6: `tab-stamps: {}`, `last-viewed-head-sha` removed, `last-seen-comment-id = "123"` (preserved).
+- **Idempotence.** V6 fixture (no legacy `last-viewed-head-sha`, `tab-stamps` present) → no-op.
+- **Partial-rollback.** Fixture with BOTH `last-viewed-head-sha` AND `tab-stamps` populated → `JsonException`.
+- **Empty `accounts`.** Fixture with `accounts: {}` → no-op.
+- **Session with `tab-stamps` already populated, no legacy keys.** Preserves the map untouched.
 
 `tests/PRism.Core.Tests/State/MigrationChainTests.cs` — extend so V1 → V6 chain still works end-to-end.
 
@@ -415,32 +573,59 @@ becomes:
 
 `tests/PRism.Web.Tests/Endpoints/PrDetailEndpointsTests.cs`:
 
-- **Happy path.** `POST /mark-viewed` with header → session gains `TabStamps[tabId] = (headSha, maxCommentId, t)`.
-- **Missing header.** `POST /mark-viewed` without `X-PRism-Tab-Id` → 422 `/viewed/tab-id-missing`.
-- **Invalid header.** `POST /mark-viewed` with `X-PRism-Tab-Id: ../../etc/passwd` → 422 `/viewed/tab-id-missing`. Other rejection samples: `X-PRism-Tab-Id: a` × 65 (too long), `X-PRism-Tab-Id: tab id` (space), empty string.
-- **Cap eviction.** Seed session with 8 stamps (each `StampedAtUtc` ascending); `POST /mark-viewed` from a 9th tab → tab with the earliest `StampedAtUtc` is evicted; the 9th's entry is present.
-- **Re-stamp from existing tab.** Tab already in the map; `POST /mark-viewed` again → entry updated in place; map count unchanged.
-- **Sequence with same `StampedAtUtc`** (tight loop, clock granularity tie) — the test asserts only the *post-condition*: count stays ≤ N, the freshly-inserted entry is present, and exactly one tied entry was evicted. `MinBy`'s tiebreaker over `Dictionary` enumeration is implementation-defined and not pinned. Either tied pick is correct behavior; ties are vanishingly rare in practice (`DateTime.UtcNow` resolution is sub-millisecond on Windows).
+- **Happy path.** `POST /mark-viewed` with header → session gains `TabStamps[tabId] = (headSha, t)`; `LastSeenCommentId = max(prior, body.MaxCommentId)`.
+- **Monotone `LastSeenCommentId`.** Two `POST /mark-viewed` calls with `MaxCommentId = 999` then `MaxCommentId = 50` → final `LastSeenCommentId = "999"` (no rewind).
+- **Missing header.** No `X-PRism-Tab-Id` → 422 `/viewed/tab-id-missing`.
+- **Invalid header.** Samples: `../../etc/passwd`, 65-char string, `tab id` (space), empty string → 422 `/viewed/tab-id-missing`.
+- **Cap eviction.** Seed 8 stamps (ascending `StampedAtUtc`); 9th mark-viewed evicts the oldest; 9th's entry present.
+- **Re-stamp existing tab.** Tab already in map; second mark-viewed → entry updated in place; count unchanged.
 
 `tests/PRism.Web.Tests/Endpoints/PrSubmitEndpointsTests.cs`:
 
-- **Two-tab bypass scenario (the named regression).** Seed session with `TabStamps = { "tab-A": (sha-B, ...) }`. `POST /submit` with `X-PRism-Tab-Id: tab-B` → 400 `head-sha-not-stamped`. Without this test, the entire slice is unverified.
-- **Multi-account × tab-id matrix.** Two accounts with sessions on the same `owner/repo/number`. Stamp under `accounts.A` with `tab-X`; submit from `accounts.B` with `tab-X` → 400 `head-sha-not-stamped`. Sessions are per-account by V5 shape, so this is structurally enforced; the test pins it so a future flattening can't regress.
-- **Single-tab happy path.** Stamp from `tab-X`, submit from `tab-X` → pipeline runs (no rule-(f) rejection). Unchanged behavior.
-- **Header missing at submit.** `POST /submit` without `X-PRism-Tab-Id` → 400 `head-sha-not-stamped` (fail-closed; matches the submit endpoint's existing failure-mode shape).
-- **Header invalid at submit.** Same shape as `mark-viewed` invalid-header rejection samples → 400 `head-sha-not-stamped`.
-- **Head-sha drift after per-tab stamp.** Tab stamps at `sha-A`, poll observes `sha-B`, submit → 400 `head-sha-drift` (unchanged behavior).
-- **Cross-tab head-sha-drift parity.** Tab A stamps at `sha-A`; tab B never stamps; tab B submits → 400 `head-sha-not-stamped` (not `head-sha-drift`). Pins that the absence-of-stamp branch precedes the drift branch.
+- **Two-tab bypass (the named regression).** Seed `TabStamps = { "tab-A": (sha-B, ...) }`. `POST /submit` with `X-PRism-Tab-Id: tab-B` → 400 `head-sha-not-stamped`. Without this test, the entire slice is unverified.
+- **Single-tab happy path.** Stamp from `tab-X`, submit from `tab-X` → pipeline runs.
+- **Missing header at submit.** No `X-PRism-Tab-Id` → 422 `tab-id-missing` (distinct from the no-map-entry 400 — this is the FE-wire-up-regression signal).
+- **Invalid header at submit.** Same rejection samples as mark-viewed → 422 `tab-id-missing`.
+- **Head-sha drift after per-tab stamp.** Tab stamps at sha-A, poll observes sha-B, submit → 400 `head-sha-drift`.
+- **Cross-tab no-stamp parity.** Tab A stamps at sha-A; Tab B never stamps; B submits → 400 `head-sha-not-stamped` (absence-of-stamp precedes drift branch).
+
+`tests/PRism.Web.Tests/Endpoints/PrReloadEndpointsTests.cs`:
+
+- **Reload writes caller's tab stamp.** `POST /reload` from `tab-X` with `headSha=B` → session `TabStamps[tab-X] = (B, t)`. Other tabs' stamps untouched.
+- **Reload missing tab id.** No `X-PRism-Tab-Id` → 422 `tab-id-missing`.
+
+`tests/PRism.Core.Tests/Reconciliation/...` — extend an existing matrix test (or add a focused one) to cover:
+
+- **`headShifted` computed per caller-tab.** Session has `TabStamps[tab-X] = sha-A`; `ReconcileAsync` with `callerTabId = "tab-X"` and `newHeadSha = "B"` → `headShifted = true`; overrides clear. With `callerTabId = "tab-Y"` (no entry) → `headShifted = false`; overrides preserved.
+
+### 8.3 Submit-success / submit-failed preservation tests
 
 `tests/PRism.Core.Tests/Submit/Pipeline/SuccessClearsSessionTests.cs`:
 
-- **`TabStamps` survives `SubmitOutcome.Success`.** Today's `LastViewedHeadSha` survives submit-success (no clear in the pipeline's success path); the test pins that `TabStamps` also survives. Future change is then a deliberate spec edit, not a silent regression.
+- **`TabStamps` survives `SubmitOutcome.Success`.** Today's `LastViewedHeadSha` survives submit-success; pin that `TabStamps` does too.
+- **`TabStamps` survives `SubmitOutcome.Failed`.** The endpoint's `SubmitOutcome.Failed` arm at [`PrSubmitEndpoints.cs:181`](../../PRism.Web/Endpoints/PrSubmitEndpoints.cs) calls `WithSession(state, sessionKey, failed.NewSession)`. Confirm `failed.NewSession`'s record-`with` semantics preserve `TabStamps` through every pipeline step's mutations.
 
-### 8.3 Frontend tests
+### 8.4 Test-factory rewrite surface
 
-No FE behavior change → no FE test additions. Existing [`usePrDetail.test.tsx`](../../frontend/__tests__/usePrDetail.test.tsx) continues to assert `mark-viewed` POST fires on PR-detail load.
+The reshape removes `LastViewedHeadSha` from `ReviewSessionState`'s positional constructor. Every test helper or production site that builds a session via positional record syntax fails to compile until rewritten. The grep-confirmed surface:
 
-The real-flow Playwright suite ([`frontend/e2e/real/`](../../frontend/e2e/real/)) already exercises one tab's mark-viewed → submit chain on a real GitHub PR. Per-tab partitioning is a backend-only change for a single tab; the existing happy-path spec covers it.
+| File | Site |
+|---|---|
+| `PRism.Web/Endpoints/PrDetailEndpoints.cs:110, 169` | mark-viewed + files/viewed empty-session construction |
+| `PRism.Web/Endpoints/PrDraftEndpoints.cs:571-578` | `internal static ReviewSessionState NewEmptySession()` |
+| `PRism.Web/TestHooks/TestEndpoints.cs:160-170` | `/test/mark-pr-viewed` |
+| `tests/PRism.Core.Tests/Submit/Pipeline/PipelineTestHelpers.cs:25-49` | factory used by ~10 pipeline test files |
+| `tests/PRism.Core.Tests/Submit/Pipeline/PipelineTypesTests.cs:22` | direct constructor |
+| `tests/PRism.Core.Tests/Submit/Pipeline/SuccessClearsSessionTests.cs:53` | `Assert.Equal("head1", persisted.LastViewedHeadSha)` rewrites to `Assert.Equal("head1", persisted.TabStamps["tab-X"].HeadSha)` |
+| Plus ~10 reconciliation test files | grep `LastViewedHeadSha\|LastSeenCommentId` |
+
+The plan's task list must enumerate these so the implementation pass doesn't get stuck on "the test suite won't build" partway through.
+
+### 8.5 Frontend tests
+
+[`PrHeader.test.tsx`](../../frontend/__tests__/PrHeader.test.tsx) — add an arm asserting the new `tab-id-missing` error code surfaces the right toast copy.
+
+The real-flow Playwright suite ([`frontend/e2e/real/`](../../frontend/e2e/real/)) already exercises mark-viewed → submit on a real GitHub PR; the existing happy-path spec covers the single-tab V6 wire-up. The `/test/mark-pr-viewed` hook change (§ 5.7) is internal to the test harness; the four PR #58 specs continue to work because they already plumb `tabIdHeader()`.
 
 ---
 
@@ -448,29 +633,38 @@ The real-flow Playwright suite ([`frontend/e2e/real/`](../../frontend/e2e/real/)
 
 ### 9.1 Risks
 
-- **Migration quarantine on hand-edited state.json.** A user who has manually edited `state.json` to seed `tab-stamps` ahead of time AND left the legacy `last-viewed-head-sha` in place will quarantine on first V6 launch. Recovery: re-Setup; one mark-viewed round-trip per active PR session. Acceptable — manual state.json editing is an unsupported workflow.
+- **Migration quarantine on hand-edited state.json.** A user who manually edited `state.json` to seed `tab-stamps` ahead of time AND left the legacy `last-viewed-head-sha` in place will quarantine on first V6 launch. Recovery: re-Setup; one mark-viewed round-trip per active PR session. Acceptable — manual state.json editing is an unsupported workflow.
 - **Clock skew under backwards system-clock adjustment.** A backwards adjustment can make a "stale" `TabStamp.StampedAtUtc` look newer than a fresh stamp; eviction order is then briefly wrong. Single-machine single-process PoC; out of scope.
-- **Eight-tab cap.** A user with 9+ tabs open on the same PR will see the oldest-stamped tab silently evicted from the map. Their next submit attempt from that tab returns 400 `head-sha-not-stamped`, the standard "Reload the PR" copy. Acceptable — 9+ tabs on one PR is an unusual workflow; the recovery is one Reload.
+- **Eight-tab cap.** A user with 9+ tabs (or 9+ launches' worth of accumulated dead entries) on the same PR will see the oldest-stamped tab silently evicted. Next submit from that tab returns 400 `head-sha-not-stamped`, the standard "Reload the PR" copy. The cap exists to bound storage; it does not provide an "active tab survives" guarantee — a long-running tab that rarely re-stamps sinks under churn pressure just as it would under FIFO. Acceptable for a single-user PoC.
+- **`TabStamp` shape commits v2's hand.** The V6 schema migration writes `tab-stamps: {<uuid>: {head-sha, stamped-at-utc}}` to disk for every user's state.json. v2's multi-account runtime inherits this shape. Three specific bets:
+  - **Server-clock LRU** is fine for single-machine; v2 multi-device (different laptops on the same account) would want NTP-disciplined ordering or a monotonic counter.
+  - **Flat-string tab-id keys** forecloses a future composite `(deviceId, tabId)` or `(accountKey, tabId)` key shape without another migration.
+  - **Per-`(account, prRef)` session shape** with no cross-PR tab registry forecloses "evict all stamps for tab X across all PRs" (user closes tab → server cleans up) without a full state scan.
+
+  None of these are bypass-class regressions; they are v2 ergonomic constraints. The bet: v2 multi-account will accept these constraints or pay a V6→V7 migration that the v2 brainstorm scopes. Calling out at the risk level rather than burying in § 10 so the v2 brainstorm reads this design before committing.
 
 ### 9.2 Deferred
 
 Captured in the deferrals sidecar [`2026-05-18-cross-tab-stamp-poisoning-deferrals.md`](2026-05-18-cross-tab-stamp-poisoning-deferrals.md):
 
-- **Tab-aware inbox.** PoC ships the most-recent-stamp projection.
-- **LRU cap N=8 tuning.** Revisit if telemetry surfaces real 9+ tab usage.
+- **Tab-aware inbox.** PoC ships the most-recent-stamp projection for `LastViewedHeadSha`; `LastSeenCommentId` stays session-flat (§ 2).
+- **LRU cap N=8 tuning.** Revisit when a user reports `head-sha-not-stamped` after closing a tab. (Previous revisit-when was "telemetry surfaces 9+ tab usage" — this PoC has no telemetry pipeline, so that trigger never fires.)
 - **Server-clock LRU under skew.** Acknowledged, not mitigated.
-- **Granular log distinction** between "header missing/invalid" and "no map entry" at the submit gate — both currently emit `s_headShaNotStamped`. Distinct event-ids would be useful if a regression class ever divides them.
+- **Granular log distinction.** `s_headShaNotStamped` and `s_tabIdMissing` split the two fail-closed branches at the log level; further granularity (e.g., distinguishing "header missing" from "allowlist-failed") is deferrable.
+- **Tab-id mutability lint guard.** `_tabId` invariant is enforced by code review (§ 7.3). A Roslyn-style analyzer or a TypeScript lint rule that flags any production assignment to `_tabId` outside `getTabId` / `__resetTabIdForTest` is the harder enforcement. Deferred until a regression actually fires.
 
 ---
 
 ## 10. Project standards updates
 
-- [`docs/spec/02-architecture.md`](../spec/02-architecture.md) — Where the spec discusses session state shape (`ReviewSessionState`), update to note that `LastViewedHeadSha` / `LastSeenCommentId` are per-tab post-V6.
-- [`.ai/docs/architectural-invariants.md`](../../.ai/docs/architectural-invariants.md) — No new invariant. The cross-tab partitioning is a localized fix to one regression class; it doesn't graduate to invariant status. v2's multi-account runtime (which inherits this work) may add a binding "all submit-affecting session state is per-tab AND per-account" invariant; this slice lays the groundwork without committing to that abstraction.
+- [`docs/spec/02-architecture.md`](../spec/02-architecture.md) — Two amendments:
+  - § "ReviewSessionState shape": `LastViewedHeadSha` is per-tab via `TabStamps` post-V6; `LastSeenCommentId` stays session-flat.
+  - § "Multi-tab consistency" (or equivalent): note that this slice introduces *one* per-tab field (`TabStamps.HeadSha`) as a deliberate exception to the otherwise eventual-consistency-via-polling model. The exception is justified by the submit-gate's correctness need (each tab must be gated by its own viewing); all other session fields remain session-flat with `StateChanged`-broadcast convergence.
+- [`.ai/docs/architectural-invariants.md`](../../.ai/docs/architectural-invariants.md) — No new invariant. The cross-tab partitioning is a localized fix; v2's multi-account runtime (which inherits this) may add a binding "submit-gate session state is per-tab AND per-account" invariant. This slice lays the groundwork without committing.
 - [`docs/spec/01-vision-and-acceptance.md`](../spec/01-vision-and-acceptance.md) — No update; the demo flow is single-tab and unchanged.
 
 ---
 
 ## 11. Open questions
 
-None at design time. All five substantive questions raised during brainstorm ([`TabStamp` field set, inbox wire shape, V5→V6 migration policy for pre-existing stamps, LRU bookkeeping, tab-id allowlist](#summary)) settled to defaults the user reviewed.
+None at design time. All substantive choices — including the Q1 reversal that pulled `LastSeenCommentId` back to session-flat in response to the inbox-projection regression surfaced by the first-pass ce-doc-review — are settled and reflected in this revision.

@@ -12,12 +12,12 @@ Companion to [`2026-05-18-cross-tab-stamp-poisoning-design.md`](2026-05-18-cross
 
 ## Pre-implementation deferrals (brainstorm, 2026-05-18)
 
-### [Decision] Both `LastViewedHeadSha` AND `LastSeenCommentId` move into the per-tab `TabStamp` record
+### [Decision] Only `LastViewedHeadSha` moves into `TabStamp`; `LastSeenCommentId` stays session-flat
 
-- **Source:** Q1 of the brainstorm session.
-- **Affects:** `PRism.Core/State/AppState.cs` (ReviewSessionState shape); `PRism.Web/Endpoints/PrDetailEndpoints.cs` (mark-viewed write); `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (rule (f) read).
-- **Decision:** Both fields go per-tab. Asymmetric partitioning (per-tab head sha, session-flat seen-comment-id) leaves a residual poisoning surface in the unread-comment count math used by `BannerRefresh`, at no storage saving worth the irregular shape. The two fields are already stamped atomically by a single `POST /mark-viewed`; the per-tab move keeps that atomicity.
-- **Revisit when:** A v2 use case wants a session-level "max comment-id ever seen across any tab" (e.g., for an inbox-side unread badge that should never regress when a different tab views older comments). At that point either add a separate session-flat aggregate alongside per-tab, or pick which semantic the inbox actually wants and project from `TabStamps`.
+- **Source:** Q1 of the brainstorm session — *reversed in light of first-pass ce-doc-review finding F2/A2*.
+- **Affects:** `PRism.Core/State/AppState.cs` (ReviewSessionState shape); `PRism.Web/Endpoints/PrDetailEndpoints.cs` (mark-viewed write); `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (rule (f) read); `PRism.Web/Endpoints/PrDraftEndpoints.cs` (markAllRead — no change); `PRism.Core/Inbox/InboxRefreshOrchestrator.cs` (inbox projection).
+- **Decision:** `LastViewedHeadSha` is the per-tab field that the submit gate must partition; `LastSeenCommentId` is the session-level monotone high-water that the inbox unread badge depends on. The original Q1 framing ("both fields atomically per-tab") would have made the inbox project "most-recent stamp's MaxCommentId across all tabs," which silently regresses the unread badge when a freshly-loaded Tab B re-stamps at a lower `MaxCommentId` than Tab A's previous high-water 999. The asymmetric shape (one per-tab, one session-flat) trades a tiny residual UX overconfidence (Tab A marks-all-read at 999 → Tab B's banner reads "0 new") against a real correctness regression in the inbox badge. The trade is correct: the submit-gate bypass is closed regardless because rule (f) reads `TabStamps[tabId].HeadSha` only. mark-viewed updates `LastSeenCommentId = max(current, body.MaxCommentId)` to preserve monotonicity even when V6's per-tab landscape means a freshly-loaded Tab B at a lower MaxCommentId would otherwise rewind.
+- **Revisit when:** A v2 use case wants per-tab "what was the highest comment-id I, this tab, had seen" semantics (e.g., a per-tab banner that resists Tab A's mark-all-read clearing Tab B's "new since I last viewed" indicator). At that point: add a per-tab `MaxCommentId` *alongside* the session-flat field, do not replace it.
 
 ### [Decision] Pre-V6 stamps dropped at V5→V6 migration, not synthesized under a sentinel key
 
@@ -26,12 +26,12 @@ Companion to [`2026-05-18-cross-tab-stamp-poisoning-design.md`](2026-05-18-cross
 - **Decision:** Pre-V6 `last-viewed-head-sha` / `last-seen-comment-id` values can't be attributed to any specific tab. Synthesizing under a sentinel like `"__legacy"` would either match every tab's submit (re-introducing the bypass) or match no tab's submit (functionally equivalent to drop, plus extra storage + a confusing key name). Drop is the honest move. Cost: one extra `POST /mark-viewed` round-trip on the next PR-detail load before submit unblocks; that round-trip already fires unconditionally from `usePrDetail.ts:66-79`, so the user-visible cost is zero.
 - **Revisit when:** N/A — landed.
 
-### [Decision] LRU bookkeeping uses explicit `DateTime StampedAtUtc` per entry, not FIFO insertion order
+### [Decision] LRU bookkeeping uses explicit `DateTime StampedAtUtc` per entry — caveat: not actually "active-tab-survives"
 
-- **Source:** Q4 of the brainstorm session.
-- **Affects:** `PRism.Core/State/AppState.cs` (TabStamp record); `PRism.Web/Endpoints/PrDetailEndpoints.cs` (eviction logic).
-- **Decision:** `StampedAtUtc` makes "LRU" match the deferral entry's framing literally. FIFO insertion order would silently penalize a long-running tab that rarely re-stamps — its entry sinks because *other* tabs touched the map more recently, even though the long-running tab is still actively viewing. ~8-byte cost per entry; trivial.
-- **Revisit when:** A monotonic counter becomes preferable for testability (current clock-based ordering is hard to make deterministic in tests without time injection). The `SuccessClearsSessionTests` style of fake-clock pattern would slot in cleanly.
+- **Source:** Q4 of the brainstorm session; rationale clarified after first-pass ce-doc-review finding A4.
+- **Affects:** `PRism.Core/State/AppState.cs` (TabStamp record); `PRism.Web/Endpoints/PrDetailEndpoints.cs` (eviction); `PRism.Web/Endpoints/PrReloadEndpoints.cs` (eviction on reload-write).
+- **Decision:** `StampedAtUtc` provides a deterministic eviction order — `MinBy` picks a single entry on each cap-exceeding insert. The original framing ("long-running tab survives churn") was *wrong*: a long-running tab that rarely re-stamps has an older `StampedAtUtc` than churning tabs, so it sinks first under cap pressure, just as it would under FIFO. The corrected framing: the cap exists to bound storage of dead entries from closed browser tabs (per-launch `getTabId()` means each new launch creates a new uuid; old tab's entry lives until LRU eviction). The server cannot observe whether a tab is still alive — no signal beats no signal here, so "deterministic + simple" wins over an attempted heuristic.
+- **Revisit when:** Either (a) a monotonic counter becomes preferable for testability (current clock-based ordering is hard to make deterministic in tests without time injection), or (b) v2 introduces a tab-close beacon that lets the server know which entries are genuinely dead, at which point eviction-by-stamped-at gets replaced by "evict-known-dead-first."
 
 ### [Decision] Server clock used for `StampedAtUtc`, not client-provided timestamp
 
@@ -71,16 +71,16 @@ Companion to [`2026-05-18-cross-tab-stamp-poisoning-design.md`](2026-05-18-cross
 ### [Defer] LRU cap N=8 tuning
 
 - **Source:** Brainstorm § 2 (storage shape); pre-committed in the original deferral entry's pre-decision sketch.
-- **Affects:** `PRism.Web/Endpoints/PrDetailEndpoints.cs` (the literal `8`).
+- **Affects:** `PRism.Web/Endpoints/PrDetailEndpoints.cs` (the literal `8`); `PRism.Web/Endpoints/PrReloadEndpoints.cs` (same literal).
 - **Decision:** N=8 is the deferral entry's pre-committed value. Eight tabs on a single PR covers any plausible "comparing two views side by side" workflow with headroom. Larger N raises the per-session storage cost linearly; smaller N risks legitimate evictions.
-- **Revisit when:** Real usage telemetry (or a user report) surfaces 9+ tab workflows.
+- **Revisit when:** A user reports `head-sha-not-stamped` after closing a tab (the failure mode that fires when a still-active tab's stamp was evicted by churn pressure). The original revisit-when ("telemetry surfaces 9+ tab usage") never triggers in a no-telemetry single-user PoC — user-reported `head-sha-not-stamped`-after-close is the diagnostic signal that actually fires.
 
-### [Defer] Granular log distinction at submit-gate fail-closed branches
+### [Decision] Distinct error codes for missing-header (`tab-id-missing`, 422) vs. no-map-entry (`head-sha-not-stamped`, 400)
 
-- **Source:** Brainstorm § 5.2 (submit-gate read site).
-- **Affects:** `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (`s_headShaNotStamped` LoggerMessage).
-- **Decision:** Both "header missing/invalid" and "no entry for this tab in the map" emit the existing `s_headShaNotStamped` event. The two cases are observationally identical from the user's POV (Reload the PR and try again), and the existing log message already points operators at the FE wire-up. Distinct event-ids would be useful if a regression class ever divides them (e.g., FE bug that always strips the header vs. FE bug that fires submit before mark-viewed completes).
-- **Revisit when:** A diagnostic need surfaces that the single-event log can't disambiguate.
+- **Source:** First-pass ce-doc-review finding A7 — reversed the brainstorm's original "collapse to one log event" position.
+- **Affects:** `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (`s_tabIdMissing` LoggerMessage, new `SubmitErrorDto` code); `frontend/src/api/submit.ts` (`KNOWN_SUBMIT_ERROR_CODES`); `frontend/src/components/PrDetail/PrHeader.tsx` (`submitErrorMessage` switch arm).
+- **Decision:** Missing/malformed header → 422 `tab-id-missing` ("Internal error: missing tab identifier. Refresh the browser tab and retry."). Valid header, no entry in map → 400 `head-sha-not-stamped` ("Reload the PR and try again."). The user recoveries are different: a missing header is a FE wire-up regression that Reload cannot fix; the user has to refresh the browser tab itself. Collapsing both to one code/message would lie to the user in the wire-up-regression case. Two LoggerMessage delegates (`s_tabIdMissing`, `s_headShaNotStamped`) distinguish the cases at the log level too.
+- **Revisit when:** N/A — landed.
 
 ### [Acknowledge] Server-clock LRU under backwards clock adjustment
 
