@@ -98,6 +98,61 @@ Companion to [`2026-05-18-cross-tab-stamp-poisoning-design.md`](2026-05-18-cross
 
 ---
 
+## Pre-implementation deferrals (brainstorm pass-2, 2026-05-18)
+
+Captured after the user-authorized second ce-doc-review pass. The pass surfaced four high-confidence design gaps + several smaller ones; the spec was revised in place. New decisions:
+
+### [Decision] `markAllRead` gains the same `MonotonicMaxCommentId` guard as mark-viewed
+
+- **Source:** Pass-2 coherence finding 3 — `markAllRead` was originally specified as "no V6 reshape" but writes `LastSeenCommentId = newId` (last-writer-wins), which regresses the monotone-high-water invariant § 2 promises.
+- **Affects:** `PRism.Web/Endpoints/PrDraftEndpoints.cs:355-373`.
+- **Decision:** markAllRead writes `LastSeenCommentId = MonotonicMaxCommentId(current.LastSeenCommentId, newId)` instead of `LastSeenCommentId = newId`. Helper shared with mark-viewed (lifted to a `PRism.Core/State` static or inlined per plan choice). Preserves the cross-tab high-water invariant the inbox unread badge depends on.
+- **Revisit when:** N/A — landed in pass-2 revision.
+
+### [Decision] `ReconcileAsync` `callerTabId` is a REQUIRED parameter, not optional default-null
+
+- **Source:** Pass-2 security finding F1 — a default-null parameter lets future callers silently disable override-clear.
+- **Affects:** `PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs` (signature); all callers must update.
+- **Decision:** Promote `callerTabId` to a required, non-nullable positional parameter. `ArgumentException.ThrowIfNullOrEmpty(callerTabId)` at the method top. Compiler enforces the discipline at every call site — a new caller's choice not to pass it becomes a build error, not a runtime regression. Reload (the only current caller) always has `sourceTabId` after § 5.4's 422 gate.
+- **Revisit when:** N/A — landed in pass-2 revision.
+
+### [Decision] `headShifted` uses session-level fallback when caller's tab has no entry (LRU-eviction case)
+
+- **Source:** Pass-2 adversarial finding F2 — strict per-caller-tab semantics regress override-clear/verdict-reconfirm vs V5 in the LRU-eviction case.
+- **Affects:** `PRism.Core/Reconciliation/Pipeline/DraftReconciliationPipeline.cs` (`headShifted` derivation at line 33 + verdict-reconcile at line 216).
+- **Decision:** Three-branch decision: (a) caller's tab has an entry → compare against it (per-tab); (b) `TabStamps` is empty → `headShifted = false` (first-reload semantic, no overrides to clear); (c) caller's tab has no entry but other stamps exist → `headShifted = session.TabStamps.Values.Any(s => s.HeadSha != newHeadSha)` (session-level fallback). The fallback preserves V5's "session has seen a different head sha" semantic for evicted-then-reload, post-V6-migration-drop, and genuinely-new-tab-in-existing-session cases. The bypass class is unchanged (the submit gate reads `TabStamps[tabId].HeadSha` only; this only affects override-clear/verdict-reconfirm).
+- **Revisit when:** A v2 use case needs to distinguish "evicted" from "never stamped" (e.g., to surface a banner: "Your tab's stamp expired; please reload to re-establish per-tab tracking"). At that point a sentinel-evicted marker or a server-side tab-close beacon makes the distinction observable.
+
+### [Decision] Distinct error codes for missing/invalid tab id on `/reload` (422 `tab-id-missing`)
+
+- **Source:** Pass-2 adversarial finding F3 — `useReconcile` would route reload's new 422 to the generic banner with no recovery.
+- **Affects:** `PRism.Web/Endpoints/PrReloadEndpoints.cs` (422 emit site); `frontend/src/api/draft.ts` (`PostReloadResult` union); `frontend/src/hooks/useReconcile.ts` (banner state machine); FE banner constants.
+- **Decision:** Reload mirrors the submit endpoint's 422 `tab-id-missing` shape. `PostReloadResult` gains a `{ ok: false; status: 422; kind: 'tab-id-missing' }` variant. `useReconcile` adds an arm that surfaces `BANNER_TAB_ID_MISSING` ("refresh the browser tab and retry") with no auto-retry. Without this, reload's new fail-closed code lands on the generic "try again" banner that the user cannot escape.
+- **Revisit when:** N/A — landed in pass-2 revision.
+
+### [Decision] Mocked-mode Playwright suite plumbs the page's `getTabId()` into `recordPrViewed`
+
+- **Source:** Pass-2 adversarial finding F1 — `recordPrViewed` calls `/test/mark-pr-viewed` via `APIRequestContext`, which has a different tab-id context than the page's browser context that fires the subsequent UI submit.
+- **Affects:** `PRism.Web/TestHooks/TestEndpoints.cs` (hook accepts `tabId` body field); `frontend/e2e/helpers/s5-submit.ts` (`recordPrViewed` accepts `tabId` param); seven mocked-mode submit specs (each adds one line); FE test-mode hook to expose `getTabId()` to `page.evaluate` OR fixture-injection.
+- **Decision:** Hook accepts `tabId` as a body field (explicit over header-implicit — test code benefits from explicit coordination); helper accepts `tabId: string`; each spec captures the page's tab id before calling `recordPrViewed`. Body-field over header to make the coordination visible at every call site; mismatched ids in mocked-mode tests are now a typo at the spec author's call, not a silent header-context divergence.
+- **Revisit when:** N/A — landed in pass-2 revision.
+
+### [Decision] `s_headShaNotStamped` LoggerMessage format string updated to name `TabStamps`
+
+- **Source:** Pass-2 feasibility finding F2 — message string named the removed `session.LastViewedHeadSha`.
+- **Affects:** `PRism.Web/Endpoints/PrSubmitEndpoints.cs:47-49`.
+- **Decision:** Rewrite to "POST /submit rejected for {SessionKey}: session.TabStamps has no entry for the caller's tab. The frontend must call POST /api/pr/{ref}/mark-viewed when PR detail loads; see PrDetailEndpoints.MarkViewed." Human-facing only; no compile impact. Caught now because operators reading future logs will be confused by a message string naming a field that doesn't exist.
+- **Revisit when:** N/A — landed in pass-2 revision.
+
+### [Decision] Authorization assumption documented at submit-gate
+
+- **Source:** Pass-2 security finding F2 — the spec didn't state whether rules (a)-(e) include an auth gate before rule (f)'s tab-id check.
+- **Affects:** `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (spec § 5.3 commentary).
+- **Decision:** Documented in § 5.3's code-block comment that `IsSubscribed(prRef)` gates the endpoint at the top (line 85-86), so the 422/400 error-code differential is NOT reachable by unauthenticated probes. Prevents the plan's implementer from misreading the gate ordering and adding auth at rule (f)'s level thinking it's the first gate.
+- **Revisit when:** N/A — documentation-only.
+
+---
+
 ## Implementation-time deferrals
 
 *(Empty — to be populated during plan execution.)*
