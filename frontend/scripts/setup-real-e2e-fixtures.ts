@@ -49,7 +49,6 @@ function branchExists(branch: string): boolean {
 
 function ensureBranchAtSeed(
   branch: string,
-  _name: string,
 ): { baseOid: string; anchorFile: string; anchorLine: number } {
   const anchorFile = 'src/Calc.cs';
   const anchorLine = 3;
@@ -132,7 +131,7 @@ function main(): void {
   for (const name of FIXTURE_NAMES) {
     const branch = `e2e-real-${name}-fixture-${login}`;
     console.log(`[setup] processing ${branch}`);
-    const { baseOid, anchorFile, anchorLine } = ensureBranchAtSeed(branch, name);
+    const { baseOid, anchorFile, anchorLine } = ensureBranchAtSeed(branch);
     const pr = ensurePr(branch, name, login);
     fixtures.push({
       name,
