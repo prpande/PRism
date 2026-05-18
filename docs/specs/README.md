@@ -24,4 +24,4 @@ When a spec's status changes, move its entry to the right group and add the PR r
 
 ## Not started
 
-- (none currently — every brainstormed spec has at least started shipping or is in plan/implementation queue.)
+- [`2026-05-18-on-disk-log-writer-design.md`](2026-05-18-on-disk-log-writer-design.md) — On-disk log writer for `PRism.Web` (closes the [Defer] entry at `2026-05-11-s5-submit-pipeline-deferrals.md:848`). Adds a `FileLoggerProvider` registered alongside the framework's Console + Debug providers, writes UTF-8 plain-text lines to `<dataDir>/logs/prism-YYYY-MM-DD.log`, rolls over at local midnight, sweeps files older than 14 days on startup, and redacts `SensitiveFieldScrubber.BlockedFieldNames` (extended with `login`) inside the sink before lines hit disk. Console + Debug providers stay unchanged — the universal factory-level decorator (S3 PR5 deferral) is explicitly out of scope, captured in [`2026-05-18-on-disk-log-writer-deferrals.md`](2026-05-18-on-disk-log-writer-deferrals.md). Awaiting writing-plans pass.
