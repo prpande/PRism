@@ -26,8 +26,12 @@ public static class FrozenPrCorpus
         HeadSha: "b21b38b88d230a95e9545d5fc6882a5cf3913377",
         BaseSha: "9aacda22cc830fd70eda141bead36e1a3305b109",
         MergedAt: DateTimeOffset.Parse("2026-05-05T07:35:51Z", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind),
-        ExpectedQuality: ClusteringQualityExpectation.Low,
-        ExpectedIterationRange: null,
+        // Calibration 2026-05-18: spec § 4 originally expected `Low` short-circuit. The algorithm
+        // only shortcuts to Low when Commits.Count == 1; 2 commits go through clustering and
+        // resolve to a single iteration (which IS the correct answer — 2 adjacent commits
+        // introducing two related YAML files is one unit of work). Reframed Ok+1.
+        ExpectedQuality: ClusteringQualityExpectation.Ok,
+        ExpectedIterationRange: (1, 1),
         ExpectedFiles: new[]
         {
             ".github/workflows/claude-code-review.yml",
