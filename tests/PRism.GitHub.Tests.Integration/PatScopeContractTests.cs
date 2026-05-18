@@ -30,10 +30,11 @@ public class PatScopeContractTests
         // exception shape the corpus tests would hit, so PAT-fitness failure is consistent
         // across the suite. PollActivePrAsync returns a non-nullable ActivePrPollSnapshot,
         // so a structural NotBeNull check would always pass — instead assert HeadSha is
-        // non-empty, which only holds if the GraphQL round-trip actually returned data.
+        // non-empty, which only holds if the underlying REST round-trip (PollActivePrAsync
+        // issues three cheap REST calls: pulls + comments + reviews) actually returned data.
         var poll = await _fixture.Reader.PollActivePrAsync(
             new PrReference("prpande", "PRism", 1), CancellationToken.None);
         poll.HeadSha.Should().NotBeNullOrWhiteSpace(
-            "PAT must authorize a read against prpande/PRism PR #1 — non-empty HeadSha proves a real GraphQL round-trip");
+            "PAT must authorize a read against prpande/PRism PR #1 — non-empty HeadSha proves a real REST round-trip");
     }
 }

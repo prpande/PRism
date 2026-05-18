@@ -188,8 +188,15 @@ public class PrDetailLoaderTests
     {
         // Calibration 2026-05-18: single-commit PRs (doc-fixes, reverts) are legitimately "one
         // unit of work" and should render the iteration view, not the commit-picker fallback.
-        // DetermineQuality only short-circuits to Low on Commits.Count == 0 now; 1-commit PRs
-        // flow through the strategy's `sorted.Length == 1` arm and return Ok + 1 iteration.
+        // DetermineQuality only short-circuits to Low on Commits.Count == 0 now — at the
+        // LOADER level, a 1-commit timeline now flows past the short-circuit and is passed to
+        // whatever IIterationClusteringStrategy is wired in. This unit test verifies that
+        // loader contract by injecting a RecordingClusterer that returns one cluster (the
+        // pre-baked `singleClusterResult` below), so the LOADER's behavior given a
+        // single-cluster strategy result is the thing under test. The end-to-end fact that
+        // the real WeightedDistanceClusteringStrategy returns one cluster on length-1 input
+        // is covered separately by `Single_commit_returns_one_cluster` in
+        // WeightedDistanceClusteringStrategyTests + the live PR #1 corpus test.
         var review = new FakePrDetailReviewService();
         review.DefaultDetailResponse = MakeDetail();
         review.DefaultTimelineResponse = MakeTimeline(1);
