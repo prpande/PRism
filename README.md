@@ -54,6 +54,16 @@ dotnet test --collect:"XPlat Code Coverage"
 reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 ```
 
+### Integration tests (live GitHub)
+
+A separate suite at `tests/PRism.GitHub.Tests.Integration/` exercises `GitHubReviewService` against five locked PRs in this repo. Opt-in — excluded from default `dotnet test` via [`.runsettings`](.runsettings).
+
+```
+dotnet test --filter "Category=Integration&Canonical!=Strict"
+```
+
+Requires `PRISM_INTEGRATION_PAT` env var or `gh auth login`. Full operator runbook: [`docs/contract-tests.md`](docs/contract-tests.md). Design: [`docs/specs/2026-05-18-frozen-pr-contract-tests-design.md`](docs/specs/2026-05-18-frozen-pr-contract-tests-design.md).
+
 ### Pre-push checklist
 
 Run steps 1–4 locally before every `git push`. They mirror `.github/workflows/ci.yml` step-for-step so anything CI catches, you catch first. CI is fail-fast — a regression in a later step stays invisible until something earlier passes, so "the last CI was green" is not a substitute for running these steps. Step 5 (Playwright) is conditional — see the comment on that step for when it's required.
@@ -70,7 +80,7 @@ npm test
 
 # 4. Backend build + tests
 cd .. && dotnet build --configuration Release
-dotnet test --no-build --configuration Release
+dotnet test --no-build --configuration Release --settings .runsettings
 
 # 5. Frontend e2e (Playwright) — required if you touched any of:
 #    - frontend/src/pages/, frontend/src/App.tsx, route bindings
