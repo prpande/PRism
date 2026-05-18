@@ -15,13 +15,22 @@ namespace PRism.GitHub.Tests.Integration;
 /// the diff/file lists are not pinned, and the hand-labels are author-judgment (LLM-style shape
 /// reasoning over the commit messages and times).
 ///
-/// Marked <c>[Trait("Category", "Validation")]</c> so it runs separately from
-/// <c>Category=Integration</c>. To run: <c>dotnet test --filter "Category=Validation"</c>.
+/// Carries BOTH <c>Category=Validation</c> AND <c>Category=Integration</c> traits. The two-trait
+/// arrangement is load-bearing:
+///   - Main CI uses the <c>.runsettings</c> filter <c>Category!=Integration</c>, so the Integration
+///     value sweeps these out of PR-push runs (they need a PAT, which the main CI doesn't expose).
+///   - The integration-tests.yml workflow uses <c>Category=Integration&amp;Canonical!=Strict</c>,
+///     so they DO run in the manual-dispatch workflow alongside the frozen-PR contract suite.
+///   - Local ad-hoc runs can target the Validation set directly via
+///     <c>dotnet test --filter "Category=Validation"</c>.
+///
 /// Calibration baseline (2026-05-18):
-///   HardFloorSeconds=60, DegenerateFloorFraction=0.6, MadK=3, MAD=0 fallback = secondLargest.
+///   HardFloorSeconds=60, DegenerateFloorFraction=0.6, MadK=4, MinimumBoundaryGapSeconds=900,
+///   MAD=0 fallback = secondLargest, single-commit PRs return Ok+1.
 /// If a coefficient change causes a regression here, that signals overfitting to the PRism corpus.
 /// </summary>
 [Trait("Category", "Validation")]
+[Trait("Category", "Integration")]
 public class ShaktimaanAiValidationTests : IClassFixture<LiveGitHubFixture>
 {
     private readonly LiveGitHubFixture _fixture;
