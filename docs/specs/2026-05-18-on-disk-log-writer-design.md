@@ -4,6 +4,7 @@ date: 2026-05-18
 status: design
 revisions:
   - 2026-05-18: brainstorm pass — design committed for ce-doc-review + human review
+  - 2026-05-18: ce-doc-review pass 1 applied — 6-persona review (coherence + feasibility + product-lens + security-lens + scope-guardian + adversarial). Applied: (a) split `SensitiveFieldScrubber.Scrub` into `ScrubFieldName` (redaction-only, file-sink uses) + `Scrub` (combined redact-and-truncate, existing direct callers keep); (b) pinned `LogTemplateFormatter` impl to single-pass `string.Format` positional re-map — explicitly forbid `.Replace`-style parser (closes the recursion hazard); (c) replaced naïve `ToDictionary` over KV list with manual `dict[k] = v` loop (last-wins on duplicate template keys; closes the `ArgumentException → fallback unscrubbed` defect); (d) collapsed `FileLoggerLifecycle` into `FileLoggerProvider.DisposeAsync` (no separate `IHostedService`); (e) replaced `FileLoggerOptions` + `BindConfiguration` ceremony with compile-time `FileLoggerConstants` (PoC has zero consumers); (f) gated `Program.cs` registration on `!IsEnvironment("Test")` to sidestep 111 × test-factory drain budget; (g) split drop counter into `_droppedDueToBackpressure` + `_droppedDuringShutdown` so the session-end summary names the right cause; (h) added a session-start marker line as the first event in every file (operator boundary marker for multi-session files); (i) added § 1.2 alternatives-considered section covering Serilog + run.ps1-tee (the original draft only weighed the universal-decorator alternative); (j) added § 6.2 field-redaction-policy table (resolves the broken `§ 6.2 P2.8` cross-reference); (k) tightened the `login` framing to "preventive extension" (no current log site emits it); (l) tightened § 12.6's gap acknowledgement with the `login` blocklist addition; (m) updated test list to ~30 tests covering the four new correctness fixes. Deferred-considered: regex-over-formatter scrub alternative, opportunity-cost analysis, premise-evidence justification (user explicitly chose this work; the post-mortem framing holds for PoC scope). New deferrals appended to the sidecar: Serilog as alternative, run.ps1-tee as alternative, Playwright env-var hook, dedicated stderr file.
 related:
   - 2026-05-11-s5-submit-pipeline-deferrals.md   # closes the [Defer] on-disk log writer entry (lines 848, 926)
   - 2026-05-06-s3-pr-detail-read-deferrals.md    # partially addresses the SensitiveFieldScrubber wire-up deferral
@@ -26,15 +27,17 @@ The intent is narrow: when a user reports a failure after the fact, we want a fi
 2. **`gh issue` paste-friendliness.** Plain text format, one event per line, exceptions on indented continuation lines — copies cleanly into an issue body.
 3. **Local-dev introspection while developing PRism itself.** Same file, no separate tooling.
 
-### 1.2 Alternative considered, not chosen — factory-level decorator that scrubs Console + Debug too
+### 1.2 Alternatives considered
 
-The original S3 PR5 deferral asks for a factory-level `ILogger`-wrapping decorator that intercepts every structured-log scope across every provider. That shape is materially larger than file-sink-internal redaction:
+Three alternatives were weighed and rejected. Each is captured here so the rationale outlives this brainstorm; the unselected paths land as deferrals (§ 11) with explicit revisit triggers.
 
-- `LoggerMessage.Define<T0,T1,…>` produces a strongly-typed source-generated state struct used by 16 PRism log sites. Its `IReadOnlyList<KeyValuePair<string, object?>>` projection is read-only; a decorator can't mutate values in place.
-- To redact universally, the decorator has to re-run the format template against a scrubbed key/value list. That requires owning a small template formatter (`{Name}`, `{Name:format}`, `{Name,alignment}`, escaped `{{`/`}}` — the M.E.Logging template grammar) plus a substitute state-wrapper type whose `ToString()` returns the re-formatted string and whose enumeration returns the scrubbed args.
-- Estimated cost: ~200 LOC of template-substitution machinery + a separate test surface for parser edge cases, on top of the file sink itself.
+**(a) Factory-level `ILogger`-wrapping decorator that scrubs Console + Debug too.** This is the original S3 PR5 deferral wording. `LoggerMessage.Define<T0,T1,…>` produces a strongly-typed source-generated state struct used by 16 PRism log sites; its `IReadOnlyList<KeyValuePair<string, object?>>` projection is read-only. To redact universally, the decorator must own a small template formatter (`{Name}`, `{Name:format}`, `{Name,alignment}`, escaped `{{`/`}}`) plus a substitute state-wrapper type whose `ToString()` returns the re-formatted string. The threat model is "user closed run.ps1, console is gone, only disk artifact remains" — fully closed by file-sink-internal redaction. Console-leak-while-user-tails is speculative for a single-user local PoC where the console reader IS the user. Rejected on YAGNI grounds; deferral entry preserves the option.
 
-The threat model is "user closed run.ps1, console is gone, only disk artifact remains." That vector is fully closed by file-sink-internal redaction. Console-leak-while-user-tails is speculative for a single-user local PoC where the console reader IS the user, in their own terminal, on their own machine. YAGNI argues for the narrower slice; the broader decorator stays as a forward-looking deferral, with revised reasoning, so it remains visible if the threat model expands.
+**(b) Serilog with a destructuring policy or filter enricher.** `Serilog.Sinks.File` already handles rolling, retention, and shared-read; a `Filter.With<IEventFilter>` or `Destructure.ByTransforming<T>` would implement the field-name redaction in ~50 LOC of config. Trade: adds three NuGet packages (`Serilog`, `Serilog.Extensions.Logging`, `Serilog.Sinks.File`) where today the project has zero third-party logging deps. Rejected because (i) the slice that follows ALSO has the redaction mechanism in a co-resident place (the sink), so the LOC delta is smaller than it looks once tests are counted; (ii) PRism's "minimum new dependencies" discipline is asserted across the architectural-readiness doc; (iii) Serilog's filter/enricher contract is a different shape from `SensitiveFieldScrubber` and either we keep our scrubber + write a Serilog adapter (two abstractions doing the same job) or we replace `SensitiveFieldScrubber` (and break its existing direct-call site at `PrDraftsDiscardAllEndpoint.cs:97`). Deferral entry captures the option in case the maintenance trade flips.
+
+**(c) `run.ps1` `Tee-Object` to a file (zero in-process code).** Modify `run.ps1` so the host's stdout is piped into a date-named file: `.\Program.exe | Tee-Object -FilePath logs\prism-$(Get-Date -F yyyy-MM-dd).log`. Zero new C# code; no redaction infrastructure; the file is whatever the console renders. Rejected because (i) the user-facing PowerShell `run.ps1` is the developer-launch entry only — `dotnet run`, IDE launches, Playwright-spawned hosts, and CI all bypass it, so the diagnostic disappears in the cases the slice cares most about; (ii) redaction can't be added at the tee layer without forking the console formatter into PowerShell-side post-processing (a much larger maintenance footprint than the in-process sink); (iii) console formatter output strips structured-arg keys, so the field-name scrub the slice depends on becomes impossible. This option is genuinely cheap if the slice didn't care about redaction or about non-`run.ps1` launches — both of which it does.
+
+The selected path (file-sink-internal redaction, BCL-only) is documented in § 3 onwards. The chosen tradeoff is one named alternative for each axis: scope (a), library choice (b), launch coverage (c).
 
 ## 2. Non-goals
 
@@ -47,7 +50,7 @@ The threat model is "user closed run.ps1, console is gone, only disk artifact re
 
 ## 3. Approach in one paragraph
 
-A new `PRism.Web.Logging.FileLoggerProvider` registers as an additional `ILoggerProvider` alongside Console + Debug. Each `FileLogger` (one per category, framework-managed) reads the structured-log state on `Log<TState>`, scrubs each value via the existing `SensitiveFieldScrubber.Scrub(name, value)`, re-formats the template against the scrubbed values into a single plain-text line, and enqueues a `FileLogEvent` on a bounded `Channel<FileLogEvent>`. A single background writer task drains the channel, appends to today's `<dataDir>/logs/prism-YYYY-MM-DD.log` (UTF-8, append mode, `FileShare.Read`), rolls over at local midnight, and flushes after every event. A 14-day retention sweep runs once on writer-task startup. An `IHostedService` adapter (`FileLoggerLifecycle`) ties the writer task's start/stop to the host lifetime so shutdown drains pending events. The slice also adds `"login"` to `SensitiveFieldScrubber.BlockedFieldNames`.
+A new `PRism.Web.Logging.FileLoggerProvider` registers as an additional `ILoggerProvider` alongside Console + Debug, gated on `!IsEnvironment("Test")` (so xUnit `WebApplicationFactory<Program>`-based tests don't all spin up writer tasks against temp DataDirs — see § 9.1). Each `FileLogger` (one per category, framework-managed) reads the structured-log state on `Log<TState>`, scrubs each value via a new `SensitiveFieldScrubber.ScrubFieldName(name, value)` (redaction-only; the existing combined `Scrub` keeps its current truncation behavior for direct callers), re-formats the template via a `string.Format` positional re-map into a single plain-text line, and enqueues a `FileLogEvent` on a bounded `Channel<FileLogEvent>`. A single background writer task — started in the provider's constructor — drains the channel, appends to today's `<dataDir>/logs/prism-YYYY-MM-DD.log` (UTF-8, append mode, `FileShare.Read`), rolls over at local midnight, and flushes after every event. A 14-day retention sweep runs once on writer-task startup. Provider `DisposeAsync` (called by the DI container during host teardown) signals the channel to drain and flush. The slice also adds `"login"` to `SensitiveFieldScrubber.BlockedFieldNames`.
 
 ## 4. Components
 
@@ -58,27 +61,31 @@ A new `PRism.Web.Logging.FileLoggerProvider` registers as an additional `ILogger
 - `Channel<FileLogEvent>` (bounded, capacity from `FileLoggerOptions.ChannelCapacity` default 1024).
 - Current `FileStream` (initialised on first event; never null after startup).
 - Current file's `DateOnly` (local date).
-- `_droppedCount` (`long`, `Interlocked` increment) — events that failed `TryWrite` because the channel was full.
+- `_droppedDueToBackpressure` (`long`, `Interlocked` increment) — events that failed `TryWrite` because the channel was full while the host was running normally.
+- `_droppedDuringShutdown` (`long`, `Interlocked` increment) — events that failed `TryWrite` because the channel writer had already been completed (host shutting down). Reported separately so the operator's post-mortem reads the correct cause.
 - `_writeFailureCount` (`long`) — writer-task I/O failures.
 - `_retentionFailureCount` (`long`) — retention-sweep `File.Delete` failures (reported in the shutdown stderr summary).
+- `_shutdownStarted` (`int` used as bool via `Interlocked`) — set to 1 by `DisposeAsync` before completing the channel writer; the request-thread path reads it to decide which counter to bump on `TryWrite` returning false.
 - The writer task `Task` handle.
-- `FileLoggerOptions` snapshot (captured at construction; not hot-reloaded).
+- Internal `FileLoggerConstants` (see § 4.5) — compile-time constants for `RetentionDays = 14` and `ChannelCapacity = 1024`. `LogsDir` is supplied as a constructor parameter from `AddPRismFileLogger(dataDir)`.
 
 `CreateLogger(string categoryName)` returns `new FileLogger(categoryName, this)`.
 
-`Dispose()` / `DisposeAsync()` close the channel writer, await the drain task with a 2-second timeout, flush + close the stream. Best-effort; never throws.
+`Dispose()` / `DisposeAsync()` set `_shutdownStarted = 1`, close the channel writer, await the drain task with a 2-second timeout, flush + close the stream. Best-effort; never throws. The DI container calls `DisposeAsync` on registered `IAsyncDisposable` singletons during host teardown, after all `IHostedService` instances have stopped — so the drain happens after every other logging consumer has gone quiet. No separate `IHostedService` lifecycle adapter is needed (rejected during ce-doc-review; a lifecycle hosted service would have duplicated the disposal contract without adding new behavior).
 
 ### 4.2 `FileLogger`
 
 `PRism.Web/Logging/FileLogger.cs` (or sibling). Implements `ILogger`. Holds `(string category, FileLoggerProvider parent)`. Behavior:
 
-- `IsEnabled(LogLevel level)` returns `true`. The framework's filter pipeline (`Logger<T>` in `Microsoft.Extensions.Logging`) applies the configured `Logging:LogLevel:*` rules **and** calls each provider's `IsEnabled` — both must return true for the event to flow. Returning a stricter floor here (e.g., `>= Information`) would silently override the `appsettings.Development.json` `"PRism": "Debug"` setting and prevent `Debug` events from ever reaching the file even when the user explicitly enabled them. The file sink trusts the framework's filter result.
+- `IsEnabled(LogLevel level)` returns `true`. The framework's filter pipeline (`Logger<T>` in `Microsoft.Extensions.Logging`) applies the configured `Logging:LogLevel:*` rules **and** calls each provider's `IsEnabled` — both must return true for the event to flow. Returning a stricter floor here (e.g., `>= Information`) would silently override the `appsettings.Development.json` `"PRism": "Debug"` setting and prevent `Debug` events from ever reaching the file even when the user explicitly enabled them. The file sink trusts the framework's filter result. **Note:** this guarantee holds for the DI-resolved `ILogger<T>` path. A future caller who resolves `FileLoggerProvider` directly and invokes `CreateLogger(...)` bypasses the framework filter pipeline — the singleton is registered as `internal`-only access (no public consumer in the AddPRism pipeline) to discourage that path. § 4.7 names the registration shape that enforces this.
 - `BeginScope<TState>(TState state)` returns `NullScope.Instance` (no-op disposable). v1 ignores scopes; see § 11.
 - `Log<TState>(LogLevel, EventId, TState, Exception?, Func<TState, Exception?, string>)`:
-  1. If `state is IReadOnlyList<KeyValuePair<string, object?>> kvList`: extract `{OriginalFormat}` entry (the template); build a dictionary of `name → SensitiveFieldScrubber.Scrub(name, value)` for the remaining entries; re-format the template via the local `LogTemplateFormatter`. If `{OriginalFormat}` is absent or template-substitution throws, fall back to `formatter(state, exception)`.
+  1. If `state is IReadOnlyList<KeyValuePair<string, object?>> kvList`: extract the `{OriginalFormat}` entry (the template). Iterate the remaining KV entries with a manual `dict[key] = ScrubFieldName(key, value)` assignment (last-wins on duplicate keys — template syntax permits the same name twice; `ToDictionary` would throw `ArgumentException` and fall back to the unscrubbed formatter). Re-format the template via `LogTemplateFormatter.Format(template, dict)` (which delegates to `string.Format` with a positional re-map — see § 4.4). If `{OriginalFormat}` is absent (zero-arg `LoggerMessage.Define` overload, whose source-gen state has no template to substitute) or template-substitution throws, fall back to `formatter(state, exception)`.
   2. Else: `formatted = formatter(state, exception)`.
   3. Build `new FileLogEvent(DateTimeOffset.UtcNow, level, category, eventId, formatted, exception?.ToString())`.
-  4. `parent.TryEnqueue(evt)` — non-blocking; on false, `Interlocked.Increment(ref _droppedCount)`.
+  4. `parent.TryEnqueue(evt)` — non-blocking. On `TryWrite` returning false, increment `_droppedDuringShutdown` if `_shutdownStarted == 1`, else `_droppedDueToBackpressure`. The two counters report different operator-actionable causes (drained-by-shutdown vs channel-overflowing-while-running).
+
+**Important:** the file sink uses `SensitiveFieldScrubber.ScrubFieldName` (redaction-only) — NOT the existing `SensitiveFieldScrubber.Scrub` which ALSO truncates strings > 1024 chars (see § 4.8 for the API split). The file sink's job is redaction; truncation is a separate concern that direct callers (e.g., `PrDraftsDiscardAllEndpoint.cs:97`) opt into explicitly.
 
 ### 4.3 `FileLogEvent`
 
@@ -97,61 +104,57 @@ internal static class LogTemplateFormatter
 }
 ```
 
-Parses M.E.Logging template syntax:
+**Implementation contract (pinned, not "MAY"):** the formatter rewrites named M.E.Logging placeholders to BCL positional placeholders via a single-pass scan, then delegates to `string.Format(CultureInfo.InvariantCulture, rewrittenTemplate, args)`. Leaning on the BCL's format engine is the chosen path; a hand-written `.Replace`-style parser is **explicitly forbidden** because it has a recursion hazard (substituted values may themselves contain text shaped like `{OtherName}`, which a sweep-and-replace would then substitute on the second pass — leaking adjacent arg values into the first arg's rendered position).
 
-- `{Name}` — substitute by name.
-- `{Name:format}` — substitute by name, apply format via `IFormattable.ToString(format, CultureInfo.InvariantCulture)` (fall back to `value?.ToString()` if not `IFormattable`).
-- `{Name,alignment}` — substitute by name, apply width alignment (left if negative).
-- `{Name,alignment:format}` — both.
-- `{{` and `}}` — literal `{` / `}`.
+The single-pass scan recognises M.E.Logging template grammar:
 
-Missing-key behavior: leave the placeholder text intact (`"{MissingName}"`). Misformed template: return template verbatim plus log to stderr once. The implementation MAY internally delegate to `string.Format` with a positional re-map (named → indexed via the dictionary's enumeration), or implement a small hand-written parser. Test coverage in § 8 enumerates the cases either implementation must satisfy.
+- `{Name}` → BCL `{0}`
+- `{Name:format}` → BCL `{0:format}` (e.g., `{Count:N0}` on `int 1234` → `1,234`)
+- `{Name,alignment}` → BCL `{0,alignment}` (left if negative; `{Code,5}` on `"foo"` → `"  foo"`)
+- `{Name,alignment:format}` → BCL `{0,alignment:format}`
+- `{{` and `}}` — preserved as literal escaped braces (BCL `{{` / `}}` semantics)
 
-### 4.5 `FileLoggerOptions`
+For each named placeholder, the scanner appends `values[name]` (or `null` if missing) to the positional `args[]` array in the order encountered. Missing-key behavior: pass `null` as the corresponding arg (renders as empty string under `string.Format`). Misformed template: catch `FormatException`, return the template verbatim, increment a parser-failure counter, write one stderr line per session.
+
+`string.Format` is single-pass — once a positional placeholder is substituted, the result is not re-scanned. A scrubbed value of `"{login}"` (literal string) substituted into the first position renders verbatim; the second positional substitution operates on a fresh segment. Recursion hazard closed by construction.
+
+### 4.5 `FileLoggerConstants`
+
+`PRism.Web/Logging/FileLoggerProvider.cs` — private nested type or top-of-file static:
 
 ```csharp
-internal sealed class FileLoggerOptions
+internal static class FileLoggerConstants
 {
-    public string LogsDir { get; set; } = "";           // populated from dataDir at registration
-    public int RetentionDays { get; set; } = 14;
-    public int ChannelCapacity { get; set; } = 1024;
+    public const int RetentionDays  = 14;
+    public const int ChannelCapacity = 1024;
 }
 ```
 
-Bound from `Logging:File` section in `appsettings.json` (optional; defaults apply if section absent).
+No `IOptions<T>` binding, no `appsettings.json` override. Hot-reload is a deferred concern (§ 11); the PoC has zero deployment scenarios that warrant the binding ceremony. `LogsDir` is supplied as a constructor parameter from `AddPRismFileLogger(dataDir)` — see § 4.7. Changing either constant requires a recompile, which matches the PoC's release cadence.
 
-### 4.6 `FileLoggerLifecycle`
-
-`PRism.Web/Logging/FileLoggerLifecycle.cs`. Implements `IHostedService`. Constructor takes `FileLoggerProvider`. `StartAsync` triggers the writer task and the retention sweep. `StopAsync` triggers provider disposal (awaits drain with 2s budget).
-
-The choice of `IHostedService` over lazy-start-in-first-`Log` is deliberate: it ties the writer to the host lifetime so shutdown happens in the correct order (after every other hosted service has stopped logging), and the retention sweep gets a definite "startup" moment to run.
-
-### 4.7 `AddPRismFileLogger` extension
+### 4.6 `AddPRismFileLogger` extension
 
 `PRism.Web/Logging/FileLoggerExtensions.cs`:
 
 ```csharp
 public static ILoggingBuilder AddPRismFileLogger(this ILoggingBuilder builder, string dataDir)
 {
-    builder.Services.Configure<FileLoggerOptions>(o =>
-    {
-        o.LogsDir = Path.Combine(dataDir, "logs");
-    });
-    builder.Services.AddOptions<FileLoggerOptions>()
-        .BindConfiguration("Logging:File");  // appsettings overrides
-
-    builder.Services.AddSingleton<FileLoggerProvider>();
+    var logsDir = Path.Combine(dataDir, "logs");
+    builder.Services.AddSingleton<FileLoggerProvider>(_ => new FileLoggerProvider(logsDir));
     builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLoggerProvider>());
-    builder.Services.AddHostedService<FileLoggerLifecycle>();
     return builder;
 }
 ```
 
-Binding order: the `Configure` callback runs **before** `BindConfiguration`, so an `appsettings.json` override for `Logging:File:LogsDir` would replace the dataDir-relative default. v1 documents this in the options class XML doc; no PRism use case currently sets it, but a teammate who wants logs under a different root (e.g., a tmpfs for performance) can.
+No options binding. No hosted service. The provider's constructor starts the writer task; the DI container calls `DisposeAsync` on the registered singleton during host teardown, which drains the channel.
 
-### 4.8 Updated `SensitiveFieldScrubber`
+`Program.cs` gates registration on `!IsEnvironment("Test")` (see § 9) — `WebApplicationFactory<Program>`-based tests don't accidentally spin up writer tasks against 111 temp DataDirs in parallel. The integration tests in § 8.3 explicitly opt in via a separate registration shape.
 
-`PRism.Web/Logging/SensitiveFieldScrubber.cs` — add `"login"` to `BlockedFieldNames`:
+### 4.7 Updated `SensitiveFieldScrubber`
+
+`PRism.Web/Logging/SensitiveFieldScrubber.cs` — two changes:
+
+**(a)** Add `"login"` to `BlockedFieldNames`. This is a **preventive** extension per the multi-account-scaffold P3 advisory (`docs/specs/2026-05-10-multi-account-scaffold-deferrals.md`) — no current PRism log site emits `login` as a structured arg. The addition guards against a future site that does. **Scope note**: this protection covers top-level structured args named `login` only. Username values embedded inside JSON strings passed as `body` / `responseBody` / `ErrorsJson` args (S5 PR #55's truncated-body delegates do this) are NOT redacted — see § 12.6 for the explicit carve-out and rationale.
 
 ```csharp
 private static readonly string[] BlockedFieldNames =
@@ -162,11 +165,27 @@ private static readonly string[] BlockedFieldNames =
     "pendingReviewId",
     "threadId",
     "replyCommentId",
-    "login",   // 2026-05-18: GitHub-supplied username; PII per multi-account-scaffold deferral.
+    "login",   // 2026-05-18: preventive — GitHub-supplied username; PII per multi-account-scaffold deferral.
 };
 ```
 
-Existing public surface unchanged. The class stays `internal sealed` with a static `Scrub` method.
+**(b)** Split the existing public surface into two methods, separating redaction from truncation:
+
+```csharp
+// New: redaction-only. Used by FileLogger.Log<TState> to scrub structured args before
+// re-formatting. Returns "[REDACTED]" for blocked field names; returns value unchanged
+// for all other fields (no truncation).
+public static object? ScrubFieldName(string fieldName, object? value);
+
+// Existing: redaction + 1024-char truncation. Kept for direct callers (currently
+// PrDraftsDiscardAllEndpoint.cs:97) who explicitly want the truncation guard. The
+// file sink does NOT route through this — see § 4.2 step 1.
+public static object? Scrub(string fieldName, object? value);
+```
+
+The split closes the contract gap surfaced during ce-doc-review: the file sink's data-flow promised "re-substitute against scrubbed values" — but the existing combined `Scrub` ALSO silently truncated strings > 1024 chars, which would have produced an on-disk file with `[truncated, original-length: N]` suffixes that aren't in the console output. The two-method split keeps the sink's output faithful to the format-template intent while preserving the existing call site's truncation behavior unchanged.
+
+`Scrub` internally calls `ScrubFieldName` first, then applies truncation if the result is still a `string` longer than 1024 chars. Existing test cases for `Scrub` continue to pass without modification.
 
 ## 5. Data flow
 
@@ -181,24 +200,35 @@ ILogger.Log<TState>(level, eventId, state, exception, formatter)
     +-- [FileLogger.Log<TState>]
             |
             +-- if state is IReadOnlyList<KV>:
-            |       template     = state.Last(kv => kv.Key == "{OriginalFormat}").Value as string
-            |       scrubbed     = state.Where(kv => kv.Key != "{OriginalFormat}")
-            |                          .ToDictionary(kv => kv.Key,
-            |                                        kv => SensitiveFieldScrubber.Scrub(kv.Key, kv.Value))
-            |       formatted    = LogTemplateFormatter.Format(template, scrubbed)
+            |       template = null; scrubbedDict = new Dictionary<string, object?>();
+            |       foreach (kv in state) {
+            |           if (kv.Key == "{OriginalFormat}") template = kv.Value as string;
+            |           else scrubbedDict[kv.Key] = ScrubFieldName(kv.Key, kv.Value);  // last-wins on dup keys
+            |       }
+            |       if (template != null) {
+            |           try { formatted = LogTemplateFormatter.Format(template, scrubbedDict); }
+            |           catch { formatted = formatter(state, exception);  // fallback unscrubbed }
+            |       } else {
+            |           formatted = formatter(state, exception);  // zero-arg overload: no template to substitute
+            |       }
             |   else:
-            |       formatted    = formatter(state, exception)
+            |       formatted = formatter(state, exception)
             |
             +-- evt = new FileLogEvent(UtcNow, level, category, eventId, formatted, exception?.ToString())
-            +-- parent.TryEnqueue(evt) -- non-blocking
-                    |
-                    +-- channel.Writer.TryWrite(evt) returns false (channel full):
-                            Interlocked.Increment(ref _droppedCount); return.
+            +-- parent.TryEnqueue(evt):
+                    bool ok = channel.Writer.TryWrite(evt);
+                    if (!ok) {
+                        if (Volatile.Read(ref _shutdownStarted) == 1)
+                            Interlocked.Increment(ref _droppedDuringShutdown);
+                        else
+                            Interlocked.Increment(ref _droppedDueToBackpressure);
+                    }
 
-[writer task -- single thread, started by FileLoggerLifecycle.StartAsync]
+[writer task -- single thread, started in FileLoggerProvider constructor]
 on entry:
-    Directory.CreateDirectory(opts.LogsDir);
+    Directory.CreateDirectory(_logsDir);
     RunRetentionSweep();
+    EmitSessionStartLine();        // see below
     _currentFileDate = DateOnly.FromDateTime(DateTime.Now);
     _currentStream  = OpenAppendStream(_currentFileDate);
 
@@ -207,7 +237,7 @@ await foreach FileLogEvent in channel.Reader.ReadAllAsync(stoppingToken):
     if (today != _currentFileDate) {
         await _currentStream.FlushAsync(); _currentStream.Dispose();
         _currentFileDate = today;
-        _currentStream  = OpenAppendStream(today);
+        _currentStream  = OpenAppendStream(today);  // also calls Directory.CreateDirectory (idempotent)
     }
     try {
         await _currentStream.WriteAsync(Format(evt));
@@ -215,18 +245,34 @@ await foreach FileLogEvent in channel.Reader.ReadAllAsync(stoppingToken):
     }
     catch (Exception ex) {
         Interlocked.Increment(ref _writeFailureCount);
-        Console.Error.WriteLine($"PRism FileLogger write failed: {ex.Message}"); // once per session
+        if (_writeFailureCount == 1)  // rate-limited: one stderr line per session
+            Console.Error.WriteLine($"PRism FileLogger write failed: {ex.Message}");
     }
 
-on shutdown:
+on shutdown (DisposeAsync called by DI container after IHostedServices stop):
+    Interlocked.Exchange(ref _shutdownStarted, 1);
     channel.Writer.Complete();
-    await drain (already in foreach);
-    if (_droppedCount > 0) writeFinalLine(Warning, $"N log events were dropped due to channel backpressure.");
-    if (_writeFailureCount > 0) Console.Error.WriteLine($"PRism FileLogger had N write failures this session.");
+    await drain (existing foreach drains until Complete is observed);
+    write a final session-end line with counter summary (see below);
     await _currentStream.FlushAsync(); _currentStream.Dispose();
+
+EmitSessionStartLine():
+    Write a synthetic line: "<UtcTimestamp> [Information] PRism.Web.Logging.FileLogger[0]: session started, processId=<N>, version=<assembly version>"
+    This is the boundary marker operators grep for when post-mortem-reading a multi-session file.
+
+Session-end summary at shutdown:
+    Write "<UtcTimestamp> [Information] PRism.Web.Logging.FileLogger[1]: session ending, processId=<N>"
+    If _droppedDueToBackpressure > 0:
+        Write "[Warning] PRism.Web.Logging.FileLogger[2]: {N} log events were dropped due to channel backpressure during this session."
+    If _droppedDuringShutdown > 0:
+        Write "[Information] PRism.Web.Logging.FileLogger[3]: {N} log events were elided during host shutdown drain."
+    If _writeFailureCount > 0:
+        Console.Error.WriteLine($"PRism FileLogger had {N} write failures this session.")
+    If _retentionFailureCount > 0:
+        Console.Error.WriteLine($"PRism FileLogger could not delete {N} stale log files this session.")
 ```
 
-`OpenAppendStream(DateOnly d)` builds the path `<LogsDir>/prism-{d:yyyy-MM-dd}.log` and returns `new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)`.
+`OpenAppendStream(DateOnly d)` builds the path `<_logsDir>/prism-{d:yyyy-MM-dd}.log`, calls `Directory.CreateDirectory(_logsDir)` first (idempotent — self-heals against a manually-deleted logs directory), then returns `new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read)`.
 
 `Format(FileLogEvent evt)` produces:
 
@@ -245,14 +291,31 @@ Multi-line exceptions get each line prefixed with four spaces so grep + skim sti
 
 ## 6. File lifecycle details
 
-- **Path**: `<dataDir>/logs/prism-YYYY-MM-DD.log`. Directory created on writer-task startup with `Directory.CreateDirectory` (idempotent).
+### 6.1 Path, date, format
+
+- **Path**: `<dataDir>/logs/prism-YYYY-MM-DD.log`. Directory created with `Directory.CreateDirectory` inside `OpenAppendStream` (idempotent; self-heals if deleted at runtime).
 - **Date semantics**: file *date* is local time (rollover at local midnight). Per-event *timestamp* is UTC with `Z` suffix. The asymmetry is intentional — operators expect "today's log" to roll over at local midnight, but per-event timestamps want to be unambiguous across DST and TZ boundaries.
+- **Rollover boundary semantics**: the rotation check runs in the writer task against `DateOnly.FromDateTime(evt.Timestamp.LocalDateTime)`. If a queue backlog spans local midnight, events with pre-midnight timestamps that drain after midnight still land in the previous file (their `Timestamp.LocalDateTime` is yesterday's); events with post-midnight timestamps trigger the rotation. Files therefore contain "events whose local date equals the file's date" — not "events drained during the file's date window." Operators grep by per-event UTC timestamp, not by file date, when chronology matters.
 - **Encoding**: UTF-8 without BOM (matches the project-wide convention from PowerShell 7+).
-- **Append mode**: a host restart on the same day continues the same file. A user who deletes the file mid-session sees the writer's next write recreate it (FileStream with `FileMode.Append` creates on demand).
-- **`FileShare.Read`**: another process (e.g., a teammate running `Get-Content -Wait`) can tail the file without contention. We don't share `Write` because no other PRism writer should exist (lockfile-enforced).
+- **Append mode**: a host restart on the same day continues the same file. A user who deletes the file mid-session sees the writer's next write recreate it.
+- **`FileShare.Read`**: another process (e.g., a teammate running `Get-Content -Wait`) can tail the file without contention. We don't share `Write` because no other PRism writer should exist (lockfile-enforced via `LockfileManager`; see § 9 for the registration-ordering invariant).
 - **Rotation trigger**: date check on every event in the writer task. The "first event after local midnight" closes the previous stream and opens the new file. No timer; no background tick; deterministic.
 - **Retention sweep**: runs once on writer-task startup. Enumerates `<LogsDir>/prism-*.log`, parses the date suffix (regex `^prism-(\d{4}-\d{2}-\d{2})\.log$`), deletes files where `(today - fileDate).Days > RetentionDays`. Non-matching filenames (e.g., `prism.log.bak`, `notes.txt`) are skipped silently. Each `File.Delete` is wrapped in `try/catch (IOException, UnauthorizedAccessException)`; a failure increments `_retentionFailureCount` reported to stderr at shutdown.
-- **Flush cadence**: `await FlushAsync()` after every event. A host crash loses at most the in-flight event. Throughput-bounded but adequate for a single-user PoC; if a future debug-flood proves it costly we can batch (deferral entry).
+- **Flush cadence**: `await FlushAsync()` after every event. A host crash loses at most the in-flight event. The assumed disk class is local SSD or comparable (typical `FlushAsync` ~1ms). On a NAS / AV-scanned drive with 50-200ms flush latency, a sustained debug-flood could fill the 1024-deep channel — the drop counter signal at shutdown surfaces this case. If dogfooding hits the symptom, the flush-batching deferral (§ 11) becomes the fix; v1 accepts the trade.
+
+### 6.2 Field-redaction policy (resolves the spec-§-6.2 carve-out reference)
+
+The file sink redacts by structured-arg field name. Three classes of behavior:
+
+| Class | Behavior | Field names |
+|---|---|---|
+| **Redacted to `[REDACTED]`** | Top-level structured arg whose key matches `BlockedFieldNames` (case-insensitive) | `subscriberId`, `pat`, `token`, `pendingReviewId`, `threadId`, `replyCommentId`, `login` |
+| **Carve-out — explicitly NOT redacted** | Diagnostic value outweighs PII risk for these specific arg names | `body`, `content`, `responseBody`, `ErrorsJson`, `headSha`, `prRef`, message-template `{OriginalFormat}` |
+| **Default — passes through unchanged** | Any other arg name | (everything else) |
+
+**The carve-out boundary is by ARG NAME, not by value content.** A `login`-shaped value embedded as a substring inside an `ErrorsJson` arg value is NOT redacted — the slice's structured-arg pass operates on the KV pair's key, not the KV value's contents. PR #55's GitHub error-body delegates emit `body` / `ErrorsJson` arguments that are diagnostically load-bearing and would lose their forensic value if scrubbed. The threat model accepts this: the log file is owned by the same user who runs PRism (`%LOCALAPPDATA%/PRism/logs/` on Windows, default user ACL), and `body` / `ErrorsJson` strings from GitHub do not include the user's PAT (the PAT lives in the OS keychain and never reaches a response body — confirmed via inspection of `GitHubReviewService.cs` and `PrSubmitEndpoints.cs`).
+
+`SensitiveFieldScrubberTests` includes `KeepsBodyField_Unredacted` and `KeepsHeadShaField_Unredacted` as regression nets for this carve-out boundary.
 
 ## 7. Error handling
 
@@ -275,67 +338,98 @@ The recursion rule: **the writer task never calls `ILogger`.** All writer-task s
 
 - `CreatesLogsDirectory_OnFirstWrite`
 - `WritesFormattedLine_WithUtcTimestamp_AndCategory_AndLevel_AndEventId`
+- `EmitsSessionStartLine_AsFirstEventInTheFile` *(ADV-9 — operator boundary marker)*
+- `EmitsSessionEndLine_AndCounterSummary_OnGracefulShutdown`
 - `RedactsPatField_WhenPresentAsStructuredArg`
 - `RedactsLoginField_WhenPresentAsStructuredArg` *(new — bundled multi-account-scaffold deferral)*
 - `RedactsPendingReviewIdAndThreadIdAndReplyCommentId` *(S5 PR3 deferral closure)*
-- `KeepsBodyField_Unredacted` *(regression net for the spec § 6.2 P2.8 carve-out)*
+- `KeepsBodyField_Unredacted` *(regression net for the § 6.2 carve-out)*
 - `KeepsHeadShaField_Unredacted`
+- `LoginValue_EmbeddedInBodyString_IsNotRedacted_DocumentingTheCarveOut` *(negative test — pins SEC-3 scope boundary explicitly so future contributors don't assume `login`-value protection inside body strings)*
 - `WritesExceptionToString_OnIndentedContinuationLines`
-- `DropsEvent_WhenChannelFull_AndIncrementsDroppedCount`
-- `FinalShutdownLine_NamesDroppedCount_WhenNonZero`
-- `RollsOverFile_AtLocalDateBoundary` *(uses `Func<DateTime>` clock seam injected via internals-visible-to)*
+- `DropsEvent_DueToBackpressure_IncrementsBackpressureCounter` *(channel full during normal operation)*
+- `DropsEvent_DuringShutdown_IncrementsShutdownCounter_NotBackpressure` *(ADV-4 — graceful-shutdown elision counted separately from backpressure drop)*
+- `FinalShutdownLine_NamesBothCounters_WhenNonZero`
+- `RollsOverFile_AtLocalDateBoundary` *(uses `Func<DateTime>` clock seam injected via `internals-visible-to`)*
+- `RotationDuringDrain_AssignsEventsToFilesByEventLocalDate_NotByDrainTime` *(pins the ADV-10 boundary semantics from § 6.1)*
 - `RetentionSweep_DeletesFilesOlderThanRetentionDays`
 - `RetentionSweep_KeepsNonMatchingFilenames`
-- `RetentionSweep_KeepsFilesAtExactlyRetentionDaysOld` *(boundary test — > not ≥)*
+- `RetentionSweep_KeepsFilesAtExactlyRetentionDaysOld` *(boundary test — `>` not `≥`)*
 - `Shutdown_FlushesPendingEvents_BeforeStreamClose`
 - `IoFailureOnWrite_DoesNotThrow_AndContinuesDraining_AndEmitsOneStderrLine`
 - `RecreatesLogsDirectory_IfDeletedAtRuntime` *(see § 12.5)*
-- `WriterTask_DoesNotCallILogger_OnAnyFailurePath` *(introspection on `ListLoggerProvider` records)*
+- `WriterTask_DoesNotCallILogger_OnAnyFailurePath` *(introspection on a `ListLoggerProvider` records to confirm no recursion)*
+- `ZeroArgLoggerMessageDefine_StateHasNoOriginalFormat_FallsBackToFormatter_Unscrubbed` *(ADV-1 — documents the zero-arg case behavior so a future site adding args doesn't silently land in the fallback)*
 
 ### 8.2 `LogTemplateFormatterTests` — focused on the substitution path
 
 - `SimpleNamedPlaceholder_Substitutes`
-- `MissingKey_LeavesPlaceholderIntact`
+- `MissingKey_RendersEmptyString` *(updated from "LeavesPlaceholderIntact" — `string.Format` with a null arg renders empty; document the actual behavior)*
 - `FormatSpecifier_AppliedToFormattable` *(e.g., `{Count:N0}` on `int 1234` → `1,234`)*
 - `AlignmentSpecifier_AppliedAsWidth` *(`{Code,5}` on `"foo"` → `"  foo"`)*
 - `EscapedBraces_RendersLiteralBraces`
 - `MalformedTemplate_ReturnsTemplateVerbatim_AndDoesNotThrow`
 - `NullValue_RendersAsEmptyString`
-- `MultipleOccurrencesOfSameName_AllSubstituted`
+- `MultipleOccurrencesOfSameName_AllSubstituted` *(template `"a={X} b={X}"` with one X arg)*
+- `RepeatedKVKeyInState_LastValueWins_NoArgumentException` *(FEAS-1 — manual `dict[k] = v` loop instead of `ToDictionary`; documents last-wins semantics)*
+- `ValueContainingPlaceholderShape_DoesNotRecurseIntoSecondSubstitution` *(ADV-3 — value `"{login}"` literal in arg position 1 does NOT pick up arg `login`'s value via second-pass scan; pins single-pass `string.Format` invariant)*
 
 ### 8.3 `FileLoggerIntegrationTests` — `WebApplicationFactory<Program>`-driven
 
+These tests **explicitly opt in** to file-sink registration via `factory.WithWebHostBuilder(b => b.ConfigureServices(s => s.AddSingleton<ILoggerProvider>(sp => new FileLoggerProvider(testLogsDir))))` since `Program.cs` gates the production registration on `!IsEnvironment("Test")` (see § 9). Each test uses `Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString())` as its DataDir to sidestep CI temp-dir collisions (ADV-6 mitigation).
+
 - `EndToEnd_StructuredLogWithPatField_ProducesFileWithRedactedValue`:
-  spins up the host with a temp `DataDir`, fires a known structured-log event with `pat: "ghp_secret_test"` (via a tiny test-only endpoint or via an existing endpoint that touches the structured-log code path), asserts (i) the expected file path exists, (ii) the literal `ghp_secret_test` does NOT appear in the file, (iii) `[REDACTED]` does appear, (iv) the timestamp is parseable as UTC ISO 8601. **This is the load-bearing regression test for the slice.**
+  spins up the host with a temp `DataDir`, fires a known structured-log event with `pat: "ghp_secret_test"` (via a tiny test-only endpoint or via an existing endpoint that touches the structured-log code path), asserts (i) the expected file path exists, (ii) the literal `ghp_secret_test` does NOT appear in the file, (iii) `[REDACTED]` does appear, (iv) the timestamp is parseable as UTC ISO 8601, (v) the session-start marker line is present. **This is the load-bearing regression test for the slice.**
 - `EndToEnd_HostShutdown_FlushesAllInFlightEvents`:
-  fires N events, triggers `IHostApplicationLifetime.StopApplication`, asserts all N appear in the file.
+  fires N events, triggers `IHostApplicationLifetime.StopApplication`, asserts all N appear in the file (along with the session-end summary).
 
-### 8.4 `SensitiveFieldScrubberTests` — extension
+### 8.4 `SensitiveFieldScrubberTests` — split + extension
 
+- Add tests covering the new `ScrubFieldName(name, value)` method (redaction-only): all existing redaction cases assert via `ScrubFieldName` AND `Scrub` (for back-compat).
+- `ScrubFieldName_DoesNotTruncateLongStrings` — explicit regression test confirming the new method does NOT carry the 1024-char truncation from `Scrub`.
+- `Scrub_StillTruncatesLongStrings_ForBackCompat` — existing behavior preserved for direct callers (`PrDraftsDiscardAllEndpoint.cs:97`).
 - Add `[InlineData("login")]` and `[InlineData("Login")]` to the existing redaction theory. Rename `Redacts_submit_pipeline_field_names` to `Redacts_blocked_field_names` to reflect the broader set.
 
-Total new tests: ~24 new test cases + 2 theory data rows.
+Total new tests: ~30 new test cases + 2 theory data rows. The count grew from the original ~24 because of the four substantive correctness fixes from ce-doc-review (counter split, rotation boundary semantics, formatter recursion guard, scrubber API split).
 
 ## 9. Wiring change in `Program.cs`
 
-Single addition, after the `dataDir` resolution line (currently `PRism.Web/Program.cs:39`):
+Two additions. The first acquires the lockfile (already in place); the second registers the file sink **only** when not in Test environment, **after** the lockfile acquisition so the lockfile invariant the file sink leans on (single PRism writer per dataDir) is already enforced before any FileStream opens:
 
 ```csharp
 var dataDir = builder.Configuration["DataDir"] ?? DataDirectoryResolver.Resolve();
 
-builder.Logging.AddPRismFileLogger(dataDir);   // <-- new
-
 builder.Services.AddPrismCore(dataDir);
-// ... rest unchanged.
+builder.Services.AddPrismGitHub();
+// ... rest of service registration unchanged ...
+
+var app = builder.Build();
+
+// Production-only: lockfile + URL binding + browser launch  (existing block).
+if (!isTest)
+{
+    // ... existing lockfile acquisition at PRism.Web/Program.cs:116 ...
+    var lockHandle = LockfileManager.Acquire(dataDir, binaryPath, Environment.ProcessId);
+    app.Lifetime.ApplicationStopping.Register(() => lockHandle.Dispose());
+
+    // New: file-sink registration. After lockfile so the single-writer invariant is enforced.
+    // We register against the app's services collection at this point — equivalent to calling
+    // builder.Logging.AddPRismFileLogger(dataDir) before Build() and is the simplest way to
+    // express "production only" without duplicating the gate.
+    app.Services.GetRequiredService<ILoggerFactory>().AddProvider(new FileLoggerProvider(Path.Combine(dataDir, "logs")));
+    // ... rest of production block unchanged.
+}
 ```
+
+(If the post-Build `AddProvider` shape proves awkward at implementation time — e.g., the framework rejects it after the host has started — fall back to registering pre-Build with a `IsEnvironment("Test")` gate inside the extension method itself; both shapes deliver the same invariant.)
 
 No other production-code touchpoints. The Console + Debug providers stay registered (`WebApplication.CreateBuilder` adds them by default); the file sink is additive.
 
 ### 9.1 Test-host implications
 
-`WebApplicationFactory<Program>`-based xUnit tests will also wire the file sink under their temp `DataDir`. This is fine — each test gets its own temp dir and the writer task cleans up on `IAsyncDisposable.DisposeAsync` via the host lifetime. The `IoFailureOnWrite_DoesNotThrow_AndContinuesDraining` test asserts that even if the temp dir is forcibly deleted mid-test, the host doesn't crash.
+`WebApplicationFactory<Program>`-based xUnit tests **do not inherit the file sink** by default — the `!isTest` gate above ensures 111 test factories × 31 test files × parallel xUnit workers don't all spin up writer tasks against temp DataDirs and burn drain budget on disposal. The integration tests in § 8.3 explicitly opt in via `WithWebHostBuilder(b => b.ConfigureServices(s => s.AddSingleton<ILoggerProvider>(...)))` with a per-test `Guid`-named temp DataDir.
 
-Playwright (`PRISM_E2E_FAKE_REVIEW=1` / `PRISM_E2E_REAL_INJECT=1`) similarly inherits the file sink under its `DataDir`. This is a side-benefit: real-flow e2e failures now leave on-disk evidence in the test data directory.
+Playwright projects (`PRISM_E2E_FAKE_REVIEW=1` / `PRISM_E2E_REAL_INJECT=1`) launch the real binary with `ASPNETCORE_ENVIRONMENT=Test` — they would NOT get the file sink. If Playwright wants on-disk diagnostics, set `PRism__FileSink__ForceEnable=1` (or equivalent) and have the gate check that env var as well. v1 leaves the env-var hook unwired; the deferral list captures it. The unit-test integration suite (§ 8.3) gets the sink via explicit DI registration regardless.
 
 ## 10. Architectural invariants this slice maintains
 
@@ -348,15 +442,19 @@ Playwright (`PRISM_E2E_FAKE_REVIEW=1` / `PRISM_E2E_REAL_INJECT=1`) similarly inh
 
 ## 11. Out of scope (deferrals this slice ships)
 
-Each lands as an entry in `docs/specs/2026-05-18-on-disk-log-writer-deferrals.md` (created alongside this spec).
+Each lands as an entry in [`2026-05-18-on-disk-log-writer-deferrals.md`](2026-05-18-on-disk-log-writer-deferrals.md) (created alongside this spec). The v1 shape is expected to be the permanent shape unless a concrete failure pulls one forward — the list exists for visibility, not as an implicit roadmap commitment.
 
 - **[Defer] Factory-level `ILogger`-wrapping decorator for universal redaction across Console + Debug + future providers.** Revised reasoning from S3 PR5: file sink covers the load-bearing post-mortem case; universal decorator requires ~200 LOC of template-substitution machinery and protects against speculative leak vectors for a PoC.
+- **[Defer] Serilog (or NLog) with a destructuring policy / filter enricher.** Considered in § 1.2 alternative (b). Rejected for now on dependency-discipline grounds. Revisit if the in-process sink's maintenance trade flips (e.g., size-based rotation + retention + NDJSON all land together, at which point Serilog's mature feature set may dominate the hand-written version).
+- **[Defer] `run.ps1` `Tee-Object` to file (zero in-process code).** Considered in § 1.2 alternative (c). Rejected because non-`run.ps1` launches (`dotnet run`, IDE, Playwright, CI) bypass it and console-formatter output strips structured args.
 - **[Defer] Size-based rotation / total-disk-cap retention.** Date-based 14-day retention is sufficient for single-user PoC throughput. Revisit if a debug-flood day occurs.
 - **[Defer] NDJSON / structured machine-parseable format.** Plain text is gh-issue-friendly; revisit when a triage tool needs structured input.
 - **[Defer] `BeginScope` dispatch into the file sink.** v1 returns `NullScope.Instance`. Revisit when a PRism log site adds scope context that downstream readers need.
 - **[Defer] Regex-based PAT-shape scrub of exception messages and stack traces.** Field-name redaction only. Revisit if an exception-message leak is reported in a real incident.
-- **[Defer] Hot-reload of `FileLoggerOptions`.** Options are snapshot at construction. Changing `RetentionDays` or `ChannelCapacity` requires a host restart. Revisit if a deployment scenario emerges that warrants dynamic config.
+- **[Defer] Hot-reload of file-sink constants (`RetentionDays`, `ChannelCapacity`).** v1 uses compile-time constants in `FileLoggerConstants`. Revisit if a deployment scenario emerges that warrants dynamic config.
 - **[Defer] Flush-batching for throughput.** v1 flushes per event. Revisit if a debug-flood proves the eager-flush cost dominates.
+- **[Defer] Playwright env-var hook for opt-in file-sink under Test environment.** Real-flow e2e diagnostics would benefit from on-disk evidence; v1's `!isTest` gate excludes the sink unconditionally. Revisit if a real-flow incident requires backend log capture from a Playwright run.
+- **[Defer] Dedicated stderr-replacement self-diagnostic file.** v1 uses `Console.Error.WriteLine` for writer-task self-diagnostics; the recursion-safety claim depends on no provider capturing stderr. Revisit if a future provider intercepts stderr.
 
 ## 12. Risks and forward-looking hazards
 
@@ -380,9 +478,15 @@ The 2-second drain timeout on `Dispose` means a slow disk could leave the tail o
 
 If a user manually deletes the logs directory while the host runs, the next stream open would fail. Fix: `OpenAppendStream(DateOnly d)` calls `Directory.CreateDirectory(opts.LogsDir)` before opening the FileStream (idempotent; cheap). The rotation path therefore self-heals against a manually-deleted directory. Test `RecreatesLogsDirectory_IfDeletedAtRuntime` pins this. (Add this test to § 8.1's list.)
 
-### 12.6 PR #55 log delegates touch live identifiers
+### 12.6 PR #55 log delegates touch live identifiers (acknowledged gap with the `login` blocklist addition)
 
-PR #55 added `s_graphqlSubmitFailed`, `s_graphqlReadFailed`, `s_graphqlTransportFailed`, `s_graphqlSubmitNoData` in `PRism.GitHub/GitHubReviewService*.cs`. These take an error-body string truncated to 1024 chars. The body may contain GitHub-supplied identifiers (PR numbers, commit SHAs, comment IDs). None of these are PRism's blocked field names, but a future GitHub error format change could include `login` or `pat`-shape strings in the body. The slice's scrub-by-field-name approach won't catch these — the body lands in a structured arg named `body` or `responseBody`, which is on the never-blocked list (per spec § 6.2 P2.8). Acceptable: GitHub error bodies are diagnostic; we trade redaction for debuggability per the existing carve-out. Documented for the next reviewer who wonders why.
+PR #55 added `s_graphqlSubmitFailed`, `s_graphqlReadFailed`, `s_graphqlTransportFailed`, `s_graphqlSubmitNoData` in `PRism.GitHub/GitHubReviewService*.cs`. These take an error-body string truncated to 1024 chars and emit it as a `body`, `responseBody`, or `ErrorsJson` structured arg. The body may contain GitHub-supplied identifiers (PR numbers, commit SHAs, comment IDs, and — relevant after this slice — user `login` values embedded in error messages like `"User X is not authorized"`).
+
+**The `login` blocklist addition (§ 4.7) does NOT cover this case.** Field-name redaction operates on the top-level arg key (`login`), not on the JSON-value's contents inside a `body` / `ErrorsJson` arg. A GitHub error response that includes a username inside its `message` or `path` field lands on disk verbatim. Per § 6.2's carve-out table this is an accepted trade — `body`/`ErrorsJson` redaction would mangle the diagnostic value the delegates exist for. The slice's `login` redaction is preventive against a future log site that emits `login` as a top-level arg; embedded values are a separate concern with a separate (deferred) fix path.
+
+The companion exception path: `exception?.ToString()` in `FileLogEvent` captures `Exception.Message` and `StackTrace` verbatim. `HttpRequestException` thrown at `GitHubReviewService.cs:759-770` interpolates up to 512 chars of the GitHub response body directly into `Message`. The on-disk log therefore contains the body twice: once via the structured `body`/`responseBody` arg (truncated to 1024 chars), once via the exception chain in `ExceptionString` (truncated to 512 chars). Both paths are out of scope for field-name scrub. The discipline ("never put a PAT in an exception message") remains the user-controlled mitigation; GitHub response bodies have been verified not to contain the request's PAT (confirmed by inspection of `GitHubReviewService.cs` and `PostGraphQLAsync` — the Authorization header is never echoed back in 401 / 403 responses).
+
+The carve-out boundary is documented in § 6.2; the regex-based exception-message scrub remains the deferred fix path (§ 11).
 
 ## 13. Open questions
 
@@ -394,10 +498,13 @@ This slice is done when:
 
 1. `<dataDir>/logs/prism-YYYY-MM-DD.log` exists and contains structured log lines after a normal `run.ps1` session.
 2. A log line that would have carried a PAT value contains `[REDACTED]` and not the PAT.
-3. The same for `login`, `pendingReviewId`, `threadId`, `replyCommentId`.
+3. The same for `login`, `pendingReviewId`, `threadId`, `replyCommentId` when each appears as a top-level structured arg.
 4. The 14-day retention sweep removes stale files on startup.
-5. Date rollover at local midnight starts a new file.
-6. Host shutdown drains pending events; no events are lost on graceful stop.
-7. A disk-full or I/O-failure scenario does not crash the host.
-8. All ~24 new tests + 2 theory rows pass.
-9. The integration test `EndToEnd_StructuredLogWithPatField_ProducesFileWithRedactedValue` is the load-bearing assertion that the slice's primary contract holds end-to-end.
+5. Date rollover at local midnight starts a new file; events with pre-midnight timestamps drained after midnight land in yesterday's file per § 6.1.
+6. Host shutdown drains pending events; no events are lost on graceful stop. Backpressure drops and shutdown-elisions are reported as separate counters in the session-end summary.
+7. A session-start marker line appears as the first event in each file, enabling operators to bound a post-mortem to one session via `grep`.
+8. A disk-full or I/O-failure scenario does not crash the host.
+9. `WebApplicationFactory<Program>`-based xUnit tests do not inherit the file sink (production-gate via `!isTest`); the § 8.3 integration tests opt in explicitly via DI override with `Guid`-named temp DataDirs.
+10. `SensitiveFieldScrubber.ScrubFieldName` (redaction-only) is the path the file sink uses; the existing combined `Scrub` (with 1024-char truncation) remains for direct callers.
+11. All ~30 new tests + 2 theory rows pass.
+12. The integration test `EndToEnd_StructuredLogWithPatField_ProducesFileWithRedactedValue` is the load-bearing assertion that the slice's primary contract holds end-to-end.

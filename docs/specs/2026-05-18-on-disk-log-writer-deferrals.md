@@ -5,6 +5,7 @@ last-updated: 2026-05-18
 status: open
 revisions:
   - 2026-05-18: brainstorm pass — initial deferrals from the design session (universal decorator, size-based rotation, NDJSON, scope dispatch, exception-message regex, hot-reload, flush-batching). Source-of-truth for each entry is the design doc § 11.
+  - 2026-05-18: ce-doc-review pass 1 applied — four new deferrals added (Serilog as alternative, run.ps1-tee as alternative, Playwright Test-env file-sink hook, dedicated stderr-replacement self-diagnostic file). Two new "[Decision] not applied" entries added (PL-3/PL-5 regex-over-formatter alternative — rejected; PL-1/PL-2 premise-evidence acceptance — recorded as deliberate choice). One "[Risk]" entry tightened: § 12.6 PR #55 body double-write path.
 ---
 
 # Deferrals — On-disk log writer for PRism.Web
@@ -72,6 +73,38 @@ Decisions weighed during the brainstorm pass that did not land in the v1 slice. 
 - **Reason:** v1 calls `FlushAsync()` after every event. The trade is "host crash loses at most the in-flight event" (good) vs throughput (bounded by the disk's `fsync` rate). At PRism's single-user PoC event rate (dominated by 2-5 events/s under steady load) the per-event flush is invisible; under a debug-flood the channel drops (capacity 1024) before flush latency becomes the bottleneck. Batching (e.g., flush every N events or every T ms) would protect throughput on a debug-flood but lose more events on crash.
 - **Revisit when:** Dogfooding measures the per-event flush as the dominant latency on a real workload, OR a future deployment scenario has a sustained event rate where the channel fills before the flush completes.
 
+### [Defer] Serilog (or NLog) with a destructuring policy / filter enricher
+
+- **Source:** ce-doc-review pass 1 (PL-3, PL-5, ADV-8 — three personas agree this alternative was not considered in the original draft).
+- **Severity:** P3.
+- **Date:** 2026-05-18.
+- **Reason:** `Serilog.Sinks.File` + a `Filter.With<IEventFilter>` enricher would implement the field-name redaction in ~50 LOC of config and inherit Serilog's mature rolling / retention / shared-read behavior. Rejected because (i) PRism has zero third-party logging dependencies today and the "minimum new dependencies" discipline is asserted across the architectural-readiness doc; (ii) Serilog's enricher contract differs in shape from `SensitiveFieldScrubber`, so adopting Serilog means either keeping our scrubber plus writing a Serilog adapter (two abstractions doing the same job) or replacing the scrubber entirely and breaking `PrDraftsDiscardAllEndpoint.cs:97`. Documented at design § 1.2 alternative (b).
+- **Revisit when:** Maintenance trade flips — e.g., the slice grows to need NDJSON + size-based rotation + scope dispatch simultaneously, at which point Serilog's mature feature set may dominate the hand-written sink + parser + retention sweep.
+
+### [Defer] `run.ps1` `Tee-Object` to file (zero in-process code)
+
+- **Source:** ce-doc-review pass 1 (ADV-8).
+- **Severity:** P4 (advisory; never going to land but worth recording).
+- **Date:** 2026-05-18.
+- **Reason:** Modifying `run.ps1` to `.\Program.exe | Tee-Object -FilePath logs\prism-$(Get-Date -F yyyy-MM-dd).log` solves the load-bearing case ("user closed run.ps1, diagnostic is gone") for free, zero code. Rejected at design § 1.2 alternative (c) because (i) `run.ps1` is the developer-launch path only — `dotnet run`, IDE, Playwright, CI all bypass it; (ii) redaction can't be added at the tee layer without forking the console formatter into PowerShell post-processing; (iii) console formatter output strips structured-arg keys, so the field-name scrub the slice depends on becomes impossible to perform at this layer.
+- **Revisit when:** N/A — alternative is structurally inferior for the cases the slice actually targets.
+
+### [Defer] Playwright env-var hook for opt-in file-sink under Test environment
+
+- **Source:** ce-doc-review pass 1 — surfaced by FEAS-2 / ADV-6 mitigation.
+- **Severity:** P3.
+- **Date:** 2026-05-18.
+- **Reason:** v1 gates `Program.cs` file-sink registration on `!IsEnvironment("Test")` to sidestep 111 × `WebApplicationFactory` instances × parallel xUnit workers × 2-second drain budget. Playwright real-flow specs (`PRISM_E2E_REAL_INJECT=1`) also run under `ASPNETCORE_ENVIRONMENT=Test` and therefore lose backend log capture during real-flow incidents. The fix is small: extend the gate to `!IsEnvironment("Test") || Env("PRism__FileSink__ForceEnable") == "1"` and have `playwright.real.config.ts` set the env var. v1 leaves it unwired; the integration tests in § 8.3 already opt in via explicit DI registration with `Guid`-named temp DataDirs (no env-var needed there).
+- **Revisit when:** A real-flow Playwright incident requires backend log capture that the production stdout isn't sufficient for. The fix is a one-line gate extension + a `playwright.real.config.ts` env-var line.
+
+### [Defer] Dedicated stderr-replacement self-diagnostic file
+
+- **Source:** ce-doc-review pass 1 (ADV-7).
+- **Severity:** P3 (forward-looking defensive).
+- **Date:** 2026-05-18.
+- **Reason:** v1's writer-task self-diagnostics (write failures, retention failures, parser failures) go to `Console.Error.WriteLine`. The recursion-safety claim ("the writer task never calls ILogger") depends on no provider capturing stderr. PRism today registers Console + Debug + File providers; none capture stderr. A future provider that does (e.g., Application Insights agent, container log-driver injection, OpenTelemetry stderr-tailer) would reintroduce the recursion the spec defends against. The clean fix is a dedicated `<dataDir>/logs/prism-selfdiag.log` FileStream that the writer task writes to directly, no ILogger involvement. v1 accepts the risk on the basis that the current architecture has no stderr-capturing provider and adding one is a non-trivial future change that would surface this concern explicitly.
+- **Revisit when:** A new `ILoggerProvider` is registered that captures stderr, OR a real recursion incident is reported.
+
 ### [Defer] Cross-process log aggregation
 
 - **Source:** Brainstorm 2026-05-18 (design § 2 non-goals).
@@ -114,6 +147,35 @@ Items the implementer should keep an eye on. Not deferred decisions — known ha
 - **Revisit when:** A CI run flakes on the shutdown-drain test, OR a real-incident report mentions "shutdown lost my last few log lines."
 
 ---
+
+## Considered alternatives, decided not to apply
+
+### [Decision considered, not applied] Regex-over-formatter scrub instead of structured-arg redaction
+
+- **Source:** ce-doc-review pass 1 (PL-3, PL-5).
+- **Severity:** Decision noted, not deferred.
+- **Date:** 2026-05-18.
+- **Alternative:** Call `formatter(state, exception)` directly (matching what every other provider receives), then run a regex pass over the formatted string to redact PAT-shape and blocked-field-name patterns (e.g., `Regex.Replace($"(?<=\\b(pat|token|login)\\s*[=:]\\s*)\\S+", "[REDACTED]")`). Estimated ~50 LOC vs the chosen path's ~200 LOC of formatter + scrubber-split + tests.
+- **Why rejected:** (i) Loses by-name precision — substring matches like `pat` inside `compat` trigger redaction; word-boundary regex helps but is fragile against new blocked field names. (ii) The console formatter's output is implementation-defined; if M.E.Logging changes how it serializes structured args (e.g., switches the `key: value` separator), the regex breaks silently. (iii) The chosen `string.Format` positional re-map path is comparable in LOC once you count the tests both paths need. (iv) Future scope-dispatch / NDJSON deferrals are easier to extend from the structured-arg path than from the regex path.
+- **Revisit when:** N/A — the structured-arg path's precision is the design's load-bearing property. Only revisit if a real maintenance pain emerges from the formatter abstraction.
+
+### [Decision considered, not applied] Adding an operator-flow acceptance check to § 14
+
+- **Source:** ce-doc-review pass 1 (PL-2).
+- **Severity:** Decision noted, not deferred.
+- **Date:** 2026-05-18.
+- **Alternative:** Add an acceptance criterion that requires "take a known-failure run, close the terminal, then have a teammate use only the .log file to identify the failure cause without re-running" as part of slice completion.
+- **Why rejected:** The post-mortem flow is implicit in the slice's goal; making it a binding acceptance test would gate the slice on a hypothetical second-engineer-on-the-team scenario PRism doesn't have. The session-start marker (ADV-9, applied) + the integration test's redaction assertion are the actionable parts of the same concern. If a real second-engineer triage incident shows the file is unreadable, that's the trigger to revisit — same shape as the other deferrals.
+- **Revisit when:** A teammate joins PRism development and a real incident triage exercises this path.
+
+### [Decision considered, not applied] Premise re-evidencing — naming a second concrete failure mode
+
+- **Source:** ce-doc-review pass 1 (PL-1).
+- **Severity:** Decision noted, not deferred.
+- **Date:** 2026-05-18.
+- **Alternative:** Defer the slice until a second concrete incident (besides PR #55) demonstrates the absence of on-disk logs blocked diagnosis, per the original S5 deferral's "Revisit when: next time a user reports a failure that needs server-side diagnosis."
+- **Why rejected:** The user is the sole engineer and triggered this slice intentionally; the work was scheduled as part of the post-S6-PR0 cleanup window. PR #55 IS one concrete instance — the spec doesn't lean on "this happens recurrently" but on "when it happens we want the data." The premise hold under that framing. Recording the choice so future readers see the decision wasn't unexamined.
+- **Revisit when:** N/A.
 
 ## How this doc evolves
 
