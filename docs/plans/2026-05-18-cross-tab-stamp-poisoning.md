@@ -6,7 +6,7 @@
 
 **Architecture:** Promote `LastViewedHeadSha` into a per-tab `TabStamp` map (`TabStamps: IReadOnlyDictionary<string, TabStamp>`) inside `ReviewSessionState`; `LastSeenCommentId` stays session-flat as a monotone high-water (preserves the inbox unread badge). V5→V6 schema migration drops legacy `last-viewed-head-sha` keys; cap N=8 with LRU-by-`StampedAtUtc`. Submit gate, mark-viewed, reload, reconciliation pipeline, the `/test/mark-pr-viewed` hook, the inbox projection, and the FE error/banner copy all get wired through.
 
-**Tech Stack:** .NET 10 minimal API (`PRism.Web` / `PRism.Core` / `PRism.GitHub`), React 18 + Vite + TS frontend, Playwright e2e, xUnit BE tests + Vitest FE tests.
+**Tech Stack:** .NET 10 minimal API (`PRism.Web` / `PRism.Core` / `PRism.GitHub`), React 19 + Vite + TS frontend, Playwright e2e, xUnit BE tests + Vitest FE tests.
 
 **Spec:** [`docs/specs/2026-05-18-cross-tab-stamp-poisoning-design.md`](../specs/2026-05-18-cross-tab-stamp-poisoning-design.md).
 **Deferrals sidecar:** [`docs/specs/2026-05-18-cross-tab-stamp-poisoning-deferrals.md`](../specs/2026-05-18-cross-tab-stamp-poisoning-deferrals.md).
@@ -44,38 +44,41 @@ internal static class HttpClientHeaderExtensions
     /// the cross-tab-stamp tests need: each test sends its own X-PRism-Tab-Id without
     /// mutating the shared HttpClient.DefaultRequestHeaders (which would leak across tests).
     /// </summary>
-    public static Task<HttpResponseMessage> PostAsJsonWithHeadersAsync<T>(
+    public static async Task<HttpResponseMessage> PostAsJsonWithHeadersAsync<T>(
         this HttpClient client,
         string requestUri,
         T body,
         IDictionary<string, string>? headers = null,
         CancellationToken ct = default)
     {
-        var req = new HttpRequestMessage(HttpMethod.Post, requestUri)
+        // `using` disposes the HttpRequestMessage after SendAsync completes — matches the
+        // codebase's existing `using var req = new HttpRequestMessage(...)` discipline and
+        // satisfies analyzer rules that flag IDisposable leakage.
+        using var req = new HttpRequestMessage(HttpMethod.Post, requestUri)
         {
             Content = JsonContent.Create(body),
         };
         if (headers is not null)
             foreach (var (k, v) in headers)
                 req.Headers.TryAddWithoutValidation(k, v);
-        return client.SendAsync(req, ct);
+        return await client.SendAsync(req, ct).ConfigureAwait(false);
     }
 
-    public static Task<HttpResponseMessage> PatchAsJsonWithHeadersAsync<T>(
+    public static async Task<HttpResponseMessage> PatchAsJsonWithHeadersAsync<T>(
         this HttpClient client,
         string requestUri,
         T body,
         IDictionary<string, string>? headers = null,
         CancellationToken ct = default)
     {
-        var req = new HttpRequestMessage(HttpMethod.Patch, requestUri)
+        using var req = new HttpRequestMessage(HttpMethod.Patch, requestUri)
         {
             Content = JsonContent.Create(body),
         };
         if (headers is not null)
             foreach (var (k, v) in headers)
                 req.Headers.TryAddWithoutValidation(k, v);
-        return client.SendAsync(req, ct);
+        return await client.SendAsync(req, ct).ConfigureAwait(false);
     }
 }
 ```
@@ -463,16 +466,23 @@ In `PRism.Core/State/AppStateStore.cs`:
 (6, AppStateMigrations.MigrateV5ToV6),  // V5→V6 — per-tab LastViewedHeadSha
 ```
 
-Extend `EnsureCurrentShape` after the existing `accounts.default.reviews.sessions` backfill block:
+Extend `EnsureCurrentShape` to iterate EVERY account's sessions (not just `accounts.default`):
 
 ```csharp
-if (defaultObj["reviews"] is JsonObject reviewsObj &&
-    reviewsObj["sessions"] is JsonObject sessionsObj)
+// V5 state's `accounts` is a dictionary; the V5→V6 migration's outer loop already iterates
+// every account. EnsureCurrentShape must do the same — a future-version file can carry
+// multi-account state where any account's sessions need the tab-stamps backfill.
+if (root["accounts"] is JsonObject accountsObj)
 {
-    foreach (var (_, sessionNode) in sessionsObj)
+    foreach (var (_, accountNode) in accountsObj)
     {
-        if (sessionNode is JsonObject session && session["tab-stamps"] is null)
-            session["tab-stamps"] = new JsonObject();
+        var sessionsObj = (accountNode as JsonObject)?["reviews"]?["sessions"] as JsonObject;
+        if (sessionsObj is null) continue;
+        foreach (var (_, sessionNode) in sessionsObj)
+        {
+            if (sessionNode is JsonObject session && session["tab-stamps"] is null)
+                session["tab-stamps"] = new JsonObject();
+        }
     }
 }
 ```
@@ -500,7 +510,7 @@ git -C D:/src/prism-cross-tab-stamp commit -m "feat(state): V5→V6 migration dr
 
 ## Phase 2 — Write sites
 
-mark-viewed, reload, and the test-hook write to `TabStamps`. markAllRead is **not** in this phase — its server-derived cache value is monotone by construction (see spec § 5.6).
+mark-viewed, reload, and the test-hook write to `TabStamps`. markAllRead also needs a monotone guard on `LastSeenCommentId` (Task 6b) — the cache value is monotone *within its own progression* but mark-viewed can advance `LastSeenCommentId` past the cache via a fresh PR-detail response, so markAllRead reading the lagging cache value can regress without a guard (see spec § 5.6).
 
 ### Task 4: mark-viewed writes `TabStamps[tabId]` + monotone `LastSeenCommentId`
 
@@ -597,8 +607,13 @@ Add (inside the partial class) and `using System.Text.RegularExpressions;` at th
 private static partial Regex TabIdAllowlistRegex();
 
 // Numeric monotone-max of two stringified comment IDs. Unparseable → "no signal."
-// Inlined here (not a shared helper) — only mark-viewed needs this guard; markAllRead
-// reads from the IActivePrCache value which is monotone-by-construction (spec § 5.6).
+// Both mark-viewed (this site) AND markAllRead (Task 6b) need this guard. Mark-viewed's
+// body.MaxCommentId is tab-supplied (the FE computes it from each tab's PR-detail-load
+// response); markAllRead's `newId` is the cache's HighestIssueCommentId, which can lag
+// behind a fresh PR-detail value during the ~30 s poller cadence window. Both writers
+// must preserve the high-water across both sources. Helper is duplicated inline (this
+// snippet + Task 6b's snippet) for v1 simplicity; lift to `PRism.Core/State/
+// MonotonicCommentId.cs` when a third caller appears.
 private static string? MonotonicMaxCommentId(string? current, string? incoming)
 {
     if (!long.TryParse(incoming, out var inc)) return current;
@@ -755,18 +770,23 @@ public async Task Reload_writes_tab_stamp_under_caller_tab_id()
 {
     await using var factory = new PRismWebApplicationFactory();
     using var client = factory.CreateClient();
-    await factory.SeedSessionWithDrafts("owner", "repo", 1, currentHeadSha: "oldhead00000000000000000000000000000000");
+    // Reload's existing SHA-format gate (Sha40 / Sha64 regex) requires valid hex OIDs.
+    // Use 40-char hex throughout — the test must clear the SHA-format check before
+    // reaching the new tab-id check the test is here to exercise.
+    const string oldHead = "1111111111111111111111111111111111111111";
+    const string newHead = "2222222222222222222222222222222222222222";
+    await factory.SeedSessionWithDrafts("owner", "repo", 1, currentHeadSha: oldHead);
 
     var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/reload",
-        new { headSha = "newhead00000000000000000000000000000000" },
+        new { headSha = newHead },
         new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-X" });
 
     Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
     var state = await factory.StateStore.LoadAsync(default);
     var stamps = state.Reviews.Sessions["owner/repo/1"].TabStamps;
     Assert.True(stamps.ContainsKey("tab-X"));
-    Assert.Equal("newhead00000000000000000000000000000000", stamps["tab-X"].HeadSha);
+    Assert.Equal(newHead, stamps["tab-X"].HeadSha);
 }
 
 [Fact]
@@ -774,11 +794,13 @@ public async Task Reload_returns_422_when_tab_id_header_missing()
 {
     await using var factory = new PRismWebApplicationFactory();
     using var client = factory.CreateClient();
-    await factory.SeedSessionWithDrafts("owner", "repo", 1, currentHeadSha: "oldhead00000000000000000000000000000000");
+    const string oldHead = "1111111111111111111111111111111111111111";
+    const string newHead = "2222222222222222222222222222222222222222";
+    await factory.SeedSessionWithDrafts("owner", "repo", 1, currentHeadSha: oldHead);
 
     var resp = await client.PostAsJsonWithHeadersAsync(
         "/api/pr/owner/repo/1/reload",
-        new { headSha = "newhead00000000000000000000000000000000" });
+        new { headSha = newHead });
 
     Assert.Equal(HttpStatusCode.UnprocessableEntity, resp.StatusCode);
 }
@@ -929,6 +951,103 @@ Expected: PASS.
 ```
 git -C D:/src/prism-cross-tab-stamp add PRism.Web/TestHooks/TestEndpoints.cs tests/PRism.Web.Tests/
 git -C D:/src/prism-cross-tab-stamp commit -m "feat(test-hook): /test/mark-pr-viewed accepts tabId for V6 per-tab stamping"
+```
+
+---
+
+### Task 6b: markAllRead applies the same monotone guard
+
+**Files:**
+- Modify: `PRism.Web/Endpoints/PrDraftEndpoints.cs:355-373`
+- Modify: `tests/PRism.Web.Tests/Endpoints/PrDraftEndpointsTests.cs`
+
+- [ ] **Step 1: Write the failing monotone test**
+
+```csharp
+[Fact]
+public async Task MarkAllRead_does_not_rewind_lastSeenCommentId_when_cache_lags_behind_mark_viewed()
+{
+    // Scenario: mark-viewed lands a fresh-PR-detail high-water of "999" via its body.MaxCommentId.
+    // The active-PR cache's HighestIssueCommentId still reflects "500" because the poller
+    // hasn't ticked yet. markAllRead would read 500 from the cache; the monotone guard
+    // must keep LastSeenCommentId at "999".
+    await using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    await factory.SeedSnapshot("owner", "repo", 1, headSha: "abc123");
+    await factory.SeedActivePrCache("owner", "repo", 1, currentHeadSha: "abc123", highestIssueCommentId: 500);
+
+    // mark-viewed writes LastSeenCommentId = "999" via the fresh-fetch body.MaxCommentId
+    await client.PostAsJsonWithHeadersAsync(
+        "/api/pr/owner/repo/1/mark-viewed",
+        new { headSha = "abc123", maxCommentId = (string?)"999" },
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
+
+    // markAllRead now fires — cache still at 500, but session is at 999
+    var resp = await client.PatchAsJsonWithHeadersAsync(
+        "/api/pr/owner/repo/1/draft",
+        new { markAllRead = true },
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-A" });
+    Assert.True(resp.IsSuccessStatusCode);
+
+    var state = await factory.StateStore.LoadAsync(default);
+    Assert.Equal("999", state.Reviews.Sessions["owner/repo/1"].LastSeenCommentId);
+}
+```
+
+If `SeedActivePrCache` doesn't already accept a `highestIssueCommentId` parameter, extend it (or the underlying `IActivePrCache` fake) — the existing test scaffold for the inbox / unread-badge tests already exercises this; copy the pattern.
+
+- [ ] **Step 2: Run test to verify failure**
+
+```
+dotnet test tests/PRism.Web.Tests/ --filter "MarkAllRead_does_not_rewind"
+```
+
+Expected: FAIL — last-writer-wins from the lagging cache regresses 999 → 500.
+
+- [ ] **Step 3: Apply the monotone guard at the markAllRead write site**
+
+In `PRism.Web/Endpoints/PrDraftEndpoints.cs:355-373`, the existing `markAllRead` case:
+
+```csharp
+case "markAllRead":
+{
+    if (!cache.IsSubscribed(prRef))
+        return new PatchOutcome.NotSubscribed();
+    var snap = cache.GetCurrent(prRef);
+    if (snap is null || snap.HighestIssueCommentId is null)
+        return new PatchOutcome.NoOp();
+    var newId = snap.HighestIssueCommentId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    if (session.LastSeenCommentId == newId)
+        return new PatchOutcome.NoOp();
+
+    // NEW — apply the monotone guard so a lagging cache can't rewind a freshly-set
+    // mark-viewed high-water. If the guard collapses to the existing session value
+    // (incoming < current), the operation is effectively a no-op.
+    var merged = MonotonicMaxCommentId(session.LastSeenCommentId, newId);
+    if (session.LastSeenCommentId == merged)
+        return new PatchOutcome.NoOp();
+
+    return new PatchOutcome.Applied(
+        session with { LastSeenCommentId = merged },
+        null, null, false, false, FieldsTouchedLastSeenCommentId);
+}
+```
+
+`MonotonicMaxCommentId` is the same helper Task 4 added to `PrDetailEndpoints` (its inline definition). Duplicate the function body verbatim inside `PrDraftEndpoints` (private static), OR lift it to a shared helper. The plan's Task 4 helper comment names this duplication explicitly so the duplication is visible at both sites; if duplicate-code lint flags it, lift to `PRism.Core/State/MonotonicCommentId.cs` (one-liner factor; spec § 5.6 mentions this as a deferrable refactor).
+
+- [ ] **Step 4: Run test**
+
+```
+dotnet test tests/PRism.Web.Tests/ --filter "MarkAllRead"
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```
+git -C D:/src/prism-cross-tab-stamp add PRism.Web/Endpoints/PrDraftEndpoints.cs tests/PRism.Web.Tests/Endpoints/PrDraftEndpointsTests.cs
+git -C D:/src/prism-cross-tab-stamp commit -m "feat(markAllRead): monotone guard prevents lagging-cache rewind of LastSeenCommentId"
 ```
 
 ---
@@ -1608,7 +1727,18 @@ Use `import.meta.env.VITE_E2E_TEST === 'true'`. Vite reads `VITE_*` env vars at 
 - **Dev / `dev` project (Playwright runs `npm run dev`)**: Vite picks up `VITE_E2E_TEST` from `viteDevWebServer.env` in `playwright.config.ts`.
 - **CI / `prod` project (Playwright runs the pre-built `dist/`)**: the bundle is built BEFORE Playwright starts. Setting `VITE_E2E_TEST` on the dotnet `webServer.env` has zero effect — Vite already finalized the bundle. Either (a) the CI script must run `VITE_E2E_TEST=true npm run build` so the bundled JS includes the hook, OR (b) use a non-build-time predicate (cookie / URL param / `window` flag set by a Playwright fixture page).
 
-Pick **(a)** — `VITE_E2E_TEST=true npm run build` in CI — because it keeps the hook compile-stripped from real production releases (CI's release artifact build doesn't set the env var) while making the e2e bundle self-contained.
+Pick **(a)** — set `VITE_E2E_TEST=true` in the environment before `npm run build` runs (CI workflow `env:` block on the build job; the local pre-push checklist sets it via a shell prefix that works on the dev's shell). This keeps the hook compile-stripped from real production releases (CI's release artifact build doesn't set the env var) while making the e2e bundle self-contained.
+
+**Shell portability note.** The Unix `VITE_E2E_TEST=true npm run build` env-prefix shape does NOT work on Windows `cmd.exe` or default PowerShell (5.x). PRism's CI workflows run on `windows-latest` (per `.github/workflows/*.yml`). Three working shapes depending on context:
+
+| Context | Working invocation |
+|---|---|
+| GitHub Actions `windows-latest` step | Use the step-level `env:` block: `env: { VITE_E2E_TEST: 'true' }` above the `run: npm run build` step. Shell-agnostic; works on bash/pwsh/cmd. |
+| Local pwsh 7+ | `$env:VITE_E2E_TEST = 'true'; npm run build` |
+| Local bash / Git Bash | `VITE_E2E_TEST=true npm run build` |
+| Local cmd.exe | `set VITE_E2E_TEST=true && npm run build` |
+
+Pick the GitHub Actions `env:` block for CI (Windows-runner-safe) and document the local-shell variants in `.ai/docs/development-process.md`'s pre-push section so the dev can pick the right one for their shell.
 
 - [ ] **Step 2: Add the hook in `main.tsx` (synchronous, no dynamic import)**
 
@@ -1630,7 +1760,17 @@ if (import.meta.env.VITE_E2E_TEST === 'true') {
 In `playwright.config.ts`:
 
 - Add `env: { VITE_E2E_TEST: 'true' }` to `viteDevWebServer` (the dev project's webServer block).
-- For the `prod` project, update the CI script (`.github/workflows/...` or equivalent) that runs `npm run build` to prefix the env var: `VITE_E2E_TEST=true npm run build`. The build step happens before Playwright starts the dotnet server, so Vite bakes the hook into the bundle Playwright then serves.
+- For the `prod` project, update the CI workflow that runs `npm run build` to add a step-level `env:` block (works on `windows-latest` regardless of shell):
+
+  ```yaml
+  - name: Build frontend (with E2E test hook)
+    env:
+      VITE_E2E_TEST: 'true'
+    working-directory: frontend
+    run: npm run build
+  ```
+
+  The build step happens before Playwright starts the dotnet server, so Vite bakes the hook into the bundle Playwright then serves. Local pre-push runs of the prod project use the shell-appropriate prefix from the table above.
 
 - [ ] **Step 4: Confirm production-build strips the hook**
 
@@ -1699,10 +1839,10 @@ Note: the helper does NOT pass `headSha` — the BE hook reads it from the activ
 - [ ] **Step 3: Typecheck**
 
 ```
-cd D:/src/prism-cross-tab-stamp/frontend && npx tsc --noEmit -p e2e/
+cd D:/src/prism-cross-tab-stamp/frontend && npm run build
 ```
 
-Expected: PASS.
+Expected: PASS. (`npm run build` runs `tsc -b && vite build`; the `tsc -b` step typechecks the whole frontend including `e2e/`. There is no separate `frontend/e2e/tsconfig.json` — the root `tsconfig.json` references include `e2e/**/*` via the project's existing TypeScript configuration. If `npm run build` is too heavy for the inner loop, `npx tsc -b --noEmit` runs just the typecheck pass.)
 
 - [ ] **Step 4: Commit**
 
@@ -1769,13 +1909,13 @@ Without this second call, the spec passes for the wrong reason (rule (f) head-sh
 
 Each of the three calls is from the same `page` after the page has loaded; one `getPageTabId(page)` at the top can be reused across all three `recordPrViewed` calls (the tab id is stable for the page's lifetime).
 
-- [ ] **Step 3: Run the mocked-mode Playwright suite**
+- [ ] **Step 3: Run the default (fake-mode) Playwright suite**
 
 ```
-cd D:/src/prism-cross-tab-stamp/frontend && npm run test:e2e -- --grep "@mock"
+cd D:/src/prism-cross-tab-stamp/frontend && npm run test:e2e
 ```
 
-(Confirm the tag in `playwright.config.ts`; if the project structure uses `--project mocked` or similar, use that instead.)
+`playwright.config.ts` defines two projects (`dev` + `prod`); CI runs only `prod` (see the `isCI` branch in the config), local runs both. There are no `@mock` tags in the existing specs — the fake-mode is provided by the `PRISM_E2E_FAKE_REVIEW=1` env var on the backend webServer, which is the default for `playwright.config.ts` (vs. `playwright.real.config.ts`, which is the real-GitHub-PAT suite). The "mocked-mode submit suite" in this plan is the default project.
 
 Expected: PASS.
 
@@ -1866,13 +2006,25 @@ npm run test
 
 Expected: all PASS.
 
-- [ ] **Step 6: Mocked-mode Playwright**
+- [ ] **Step 6: Default (fake-mode) Playwright**
 
 ```
-npm run test:e2e -- --grep "@mock"
+npm run test:e2e
 ```
+
+This is the fake-mode suite (`playwright.config.ts`, backend webServer with `PRISM_E2E_FAKE_REVIEW=1`). There are no project-name or tag filters — the config's `projects` array determines what runs (CI: prod only; local: dev + prod). Real-flow specs live under `frontend/e2e/real/` and run via `npm run test:e2e:real` (Step 7 below).
 
 Expected: PASS.
+
+**`VITE_E2E_TEST` coverage for local pre-push.** The prod project serves the pre-built bundle from `dist/`. If `npm run build` was run without `VITE_E2E_TEST=true`, the test-mode hook isn't in the bundle and `getPageTabId` will time out. Re-build with the env var before running `test:e2e`:
+
+| Shell | Command |
+|---|---|
+| pwsh 7+ | `$env:VITE_E2E_TEST = 'true'; npm run build; npm run test:e2e; $env:VITE_E2E_TEST = $null` |
+| bash / Git Bash | `VITE_E2E_TEST=true npm run build && npm run test:e2e` |
+| cmd.exe | `set VITE_E2E_TEST=true && npm run build && npm run test:e2e` |
+
+The CI workflow's `env:` block handles this for CI.
 
 - [ ] **Step 7: Real-flow Playwright**
 

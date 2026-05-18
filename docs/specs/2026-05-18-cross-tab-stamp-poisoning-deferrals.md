@@ -23,7 +23,7 @@ Companion to [`2026-05-18-cross-tab-stamp-poisoning-design.md`](2026-05-18-cross
 
 - **Source:** Q3 of the brainstorm session.
 - **Affects:** `PRism.Core/State/Migrations/AppStateMigrations.cs` (MigrateV5ToV6).
-- **Decision:** Pre-V6 `last-viewed-head-sha` / `last-seen-comment-id` values can't be attributed to any specific tab. Synthesizing under a sentinel like `"__legacy"` would either match every tab's submit (re-introducing the bypass) or match no tab's submit (functionally equivalent to drop, plus extra storage + a confusing key name). Drop is the honest move. Cost: one extra `POST /mark-viewed` round-trip on the next PR-detail load before submit unblocks; that round-trip already fires unconditionally from `usePrDetail.ts:66-79`, so the user-visible cost is zero.
+- **Decision:** Pre-V6 `last-viewed-head-sha` values can't be attributed to any specific tab. Synthesizing under a sentinel like `"__legacy"` would either match every tab's submit (re-introducing the bypass) or match no tab's submit (functionally equivalent to drop, plus extra storage + a confusing key name). Drop is the honest move. Cost: one extra `POST /mark-viewed` round-trip on the next PR-detail load before submit unblocks; that round-trip already fires unconditionally from `usePrDetail.ts:66-79`, so the user-visible cost is zero. **Note:** `last-seen-comment-id` is NOT dropped — it stays session-flat as a monotone high-water; the V5→V6 migration preserves it verbatim.
 - **Revisit when:** N/A — landed.
 
 ### [Decision] LRU bookkeeping uses explicit `DateTime StampedAtUtc` per entry — caveat: not actually "active-tab-survives"
@@ -102,12 +102,12 @@ Companion to [`2026-05-18-cross-tab-stamp-poisoning-design.md`](2026-05-18-cross
 
 Captured after the user-authorized second ce-doc-review pass. The pass surfaced four high-confidence design gaps + several smaller ones; the spec was revised in place. New decisions:
 
-### [Decision] `markAllRead` does NOT need a monotone guard — value is server-derived from `IActivePrCache.HighestIssueCommentId`
+### [Decision] `markAllRead` gains the same `MonotonicCommentId.Max` guard as mark-viewed
 
-- **Source:** Pass-2 coherence finding 3 reversed by pass-1 plan-review feasibility-F6. The original concern ("two tabs fire markAllRead with different ids and last-writer-wins regresses the high-water") was based on a wrong model of the wire shape. The actual `markAllRead` handler at `PrDraftEndpoints.cs:355-373` reads `newId` from `cache.GetCurrent(prRef)?.HighestIssueCommentId` (server-side `IActivePrCache` value), NOT from the patch body — the FE patch is bool-only (`markAllRead = true`).
-- **Affects:** `PRism.Web/Endpoints/PrDraftEndpoints.cs:355-373` — NO CHANGE.
-- **Decision:** GitHub comment IDs are append-only, so the cache value monotonically increases. Both tabs firing `markAllRead` within the same poll cycle read the same cache value; the write is inherently monotone. No guard needed. The only writer that DOES need the guard is mark-viewed, whose `body.MaxCommentId` is genuinely tab-supplied (the FE computes it from each tab's PR-detail-load response, and Tab B at a lower load-time max could regress 999 → 50 without a guard). Spec § 5.6 documents this correctly.
-- **Revisit when:** A future code path supplies `newId` from a tab-side source instead of the server-side cache. At that point the guard becomes load-bearing.
+- **Source:** Pass-2 coherence-finding-3 → pass-1 plan-review feasibility-F6 → Copilot PR #60 finding (comment id 3260046497). The original "markAllRead is monotone because the cache is monotone" framing was incomplete: the cache is monotone within its own progression, but `LastSeenCommentId` is also written by mark-viewed using the fresh `body.MaxCommentId` from a PR-detail load. A PR-detail response can carry a higher comment id than the cache holds *at that moment* if the active-PR poller hasn't yet ticked since the most recent github.com comment landed (poller cadence ~30 s production). So markAllRead reading the stale cache value can be lower than what mark-viewed already wrote. Last-writer-wins regresses the high-water in that window.
+- **Affects:** `PRism.Web/Endpoints/PrDraftEndpoints.cs:355-373`.
+- **Decision:** Apply `MonotonicCommentId.Max(session.LastSeenCommentId, newId)` at the markAllRead write site, same helper as mark-viewed (§ 5.2). The two writers share one monotone-max function (defined once in `PRism.Core/State`). Spec § 5.6 documents this. The earlier "no guard needed" position was wrong; this entry replaces it.
+- **Revisit when:** N/A — landed.
 
 ### [Decision] `ReconcileAsync` `callerTabId` is a REQUIRED parameter, not optional default-null
 

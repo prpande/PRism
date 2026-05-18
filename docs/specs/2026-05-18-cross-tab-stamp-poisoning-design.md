@@ -200,14 +200,22 @@ public static JsonObject MigrateV5ToV6(JsonObject root)
 - `EnsureCurrentShape` extends to backfill `session["tab-stamps"] = new JsonObject()` for sessions missing the key. Defends against a future-version (V7+) file dropping sessions through the deserializer with `TabStamps == null`, which would NRE on the first `session.TabStamps.TryGetValue(...)` in the submit endpoint.
 
 ```csharp
-// Inside EnsureCurrentShape, after the existing reviews.sessions backfill:
-if (defaultObj["reviews"] is JsonObject reviewsObj &&
-    reviewsObj["sessions"] is JsonObject sessionsObj)
+// Inside EnsureCurrentShape: iterate every account, not just `accounts.default`.
+// V5 state's `accounts` shape is a dictionary that the V5→V6 migration treats
+// as multi-entry (see § 4.1's loop). A future-version file can legitimately
+// carry multiple accounts; backfilling only the default leaves the others
+// with null TabStamps that NRE on first read.
+if (root["accounts"] is JsonObject accountsObj)
 {
-    foreach (var (_, sessionNode) in sessionsObj)
+    foreach (var (_, accountNode) in accountsObj)
     {
-        if (sessionNode is JsonObject session && session["tab-stamps"] is null)
-            session["tab-stamps"] = new JsonObject();
+        var sessionsObj = (accountNode as JsonObject)?["reviews"]?["sessions"] as JsonObject;
+        if (sessionsObj is null) continue;
+        foreach (var (_, sessionNode) in sessionsObj)
+        {
+            if (sessionNode is JsonObject session && session["tab-stamps"] is null)
+                session["tab-stamps"] = new JsonObject();
+        }
     }
 }
 ```
@@ -496,11 +504,17 @@ public async Task<ReconciliationResult> ReconcileAsync(
 
 **Why per-caller-tab as the primary signal, with session-level fallback.** `headShifted` drives two consequential outcomes: clearing `IsOverriddenStale` flags and forcing verdict re-confirmation. Both are "the user has seen a new head sha and their prior overrides / verdicts may not apply." The relevant "user" is the one clicking Reload — the per-caller-tab signal answers that question precisely. The session-level fallback covers eviction and migration-drop without re-introducing the "any tab's stale view triggers reconfirm on a fresh tab" failure mode of a session-only-everywhere design: the fallback fires *only* when the caller has no per-tab signal, and the user's reload click is itself the consent that the session has experienced a head transition.
 
-### 5.6 markAllRead patch — no V6 reshape
+### 5.6 markAllRead patch — gains the same monotone guard
 
-[`PrDraftEndpoints.cs:355-373`](../../PRism.Web/Endpoints/PrDraftEndpoints.cs) writes `session with { LastSeenCommentId = newId }` where `newId` is read from `cache.GetCurrent(prRef)?.HighestIssueCommentId` (server-side `IActivePrCache` value), **not** from the patch body. The cache value is updated only by `ActivePrPoller` polling github.com; comment IDs on github.com are append-only, so the cache value increases monotonically over time. Tab A and Tab B firing markAllRead within the same poll cycle read the same cache value; the write is therefore inherently monotone.
+[`PrDraftEndpoints.cs:355-373`](../../PRism.Web/Endpoints/PrDraftEndpoints.cs) writes `session with { LastSeenCommentId = newId }` where `newId` is read from `cache.GetCurrent(prRef)?.HighestIssueCommentId` (server-side `IActivePrCache` value), not from the patch body. Within the cache's own progression, comment IDs append-only, so the cache value increases monotonically over time.
 
-The "two tabs fire markAllRead with different ids" regression class the original draft of this section worried about does not exist — the value is server-derived, not tab-supplied. The mark-viewed write site DOES need a monotone guard (its `body.MaxCommentId` IS tab-supplied, per § 5.2); markAllRead does not.
+**But the cache is not the only writer to `LastSeenCommentId`.** mark-viewed (§ 5.2) writes `body.MaxCommentId`, which the FE computes from the fresh PR-detail response. A PR-detail load can return a `highest comment id` that is *higher* than the cache's `HighestIssueCommentId` if the active-PR poller hasn't yet ticked since the most recent github.com comment landed (poller cadence is ~30 s in production). Concrete failure mode:
+
+- t=0: Tab A loads PR detail, fresh response carries id=999. mark-viewed writes `LastSeenCommentId = "999"`.
+- t=+5 s: cache's `HighestIssueCommentId` still reflects id=500 (poller hasn't ticked).
+- t=+10 s: Tab B fires markAllRead. Old code reads cache id=500 and writes `LastSeenCommentId = "500"`. Regression.
+
+**Change:** markAllRead applies the same `MonotonicCommentId.Max` guard as mark-viewed (§ 5.2). Helper shared between the two write sites (defined once in `PRism.Core/State`). The cache-vs-fresh-fetch lag concern goes away because the monotone-max preserves the higher of `(current session value, incoming value)`.
 
 `StateChanged` event field name (`"last-seen-comment-id"`) and FE consumer in [`useStateChangedSubscriber.ts:37`](../../frontend/src/hooks/useStateChangedSubscriber.ts) are unchanged.
 
@@ -543,7 +557,10 @@ var mostRecent = session.TabStamps
     .FirstOrDefault();
 
 inboxItem.LastViewedHeadSha = mostRecent?.HeadSha;
-inboxItem.LastSeenCommentId = session.LastSeenCommentId is { } id ? long.Parse(id) : null;
+// long.TryParse (not long.Parse): a malformed or legacy LastSeenCommentId
+// must NOT throw during inbox refresh — the projection's failure mode is
+// "null on this row," not a crash that takes down the whole inbox load.
+inboxItem.LastSeenCommentId = long.TryParse(session.LastSeenCommentId, out var parsed) ? parsed : null;
 ```
 
 **Why the most-recent stamp for `LastViewedHeadSha`.** The inbox UI uses `pr.lastViewedHeadSha == null` ([`InboxRow.tsx:31`](../../frontend/src/components/Inbox/InboxRow.tsx)) for the "first visit" badge. The most-recent projection answers "have I ever opened this PR from this install" correctly — null only when no tab has stamped.
