@@ -407,10 +407,11 @@ internal sealed partial class TestFailureInjectionHandler : DelegatingHandler
         return response;
     }
 
-    // Reads the request body (StringContent — safe to re-read because it's buffered) and matches:
-    //   \{\s*([A-Za-z_][A-Za-z0-9_]*)\(?
-    // anchored at the FIRST opening brace inside the query string. Returns null on any failure
-    // (malformed JSON, no body, no query field) — those cases pass through unchanged.
+    // Reads the request body (StringContent — safe to re-read; buffered). Parses the JSON envelope
+    // to extract the "query" string, then regex-matches the top-level selection-field inside the
+    // query. Parsing the JSON envelope first (instead of scanning the raw body) avoids false
+    // matches in the "variables" sub-object — `{ "variables": { "prReviewId": ...` could land
+    // confusing matches under a naive raw-body regex.
     private static async Task<string?> TrySniffFieldNameAsync(HttpRequestMessage request, CancellationToken ct)
     {
         if (request.Content is null) return null;
@@ -425,13 +426,26 @@ internal sealed partial class TestFailureInjectionHandler : DelegatingHandler
             return null;
         }
 
-        // Find the GraphQL query string within the JSON envelope. We look for "query":"...mutation...{..."
-        // — robust enough for PRism's escape style. Avoids a full JSON parse since the GraphQL is also
-        // string-escaped inside JSON and a System.Text.Json round-trip on every request adds cost.
-        var match = FieldNameRegex().Match(body);
+        string? query;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("query", out var queryElement)) return null;
+            query = queryElement.GetString();
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
+        }
+        if (string.IsNullOrEmpty(query)) return null;
+
+        var match = FieldNameRegex().Match(query);
         return match.Success ? match.Groups[1].Value : null;
     }
 
+    // Matches the first { followed by an identifier followed by ( — the top-level GraphQL
+    // selection-field of an anonymous mutation/query body. Identifier-boundary parsing is
+    // load-bearing: addPullRequestReviewThread is a strict prefix of addPullRequestReviewThreadReply.
     [GeneratedRegex(@"\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(")]
     private static partial Regex FieldNameRegex();
 }
@@ -522,10 +536,23 @@ public class RealInjectEndpointsTests : IClassFixture<RealInjectAppFactory>
 
 // WebApplicationFactory that turns ON Test env + REAL_INJECT for these tests. The env-var-driven
 // gate in Program.cs reads at startup, so we set the var BEFORE the factory creates the host.
+//
+// CRITICAL: per-test DataDir isolation. Without UseSetting("DataDir", …) the host falls back to
+// %LOCALAPPDATA%/PRism on the developer's machine and the test mutates the developer's live
+// state.json. See the existing PRismWebApplicationFactory.cs for the established pattern.
+//
+// Env-var mutation is process-wide; xUnit parallelizes test classes by default. The
+// EnvVarMutating collection (see Collections.cs) serializes the env-touching tests so they
+// don't race with one another.
+[Collection("EnvVarMutating")]
 public sealed class RealInjectAppFactory : WebApplicationFactory<Program>
 {
+    private readonly string _dataDir;
+
     public RealInjectAppFactory()
     {
+        _dataDir = Path.Combine(Path.GetTempPath(), $"PRism-real-inject-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_dataDir);
         Environment.SetEnvironmentVariable("PRISM_E2E_REAL_INJECT", "1");
     }
 
@@ -533,15 +560,34 @@ public sealed class RealInjectAppFactory : WebApplicationFactory<Program>
     {
         var builder = base.CreateHostBuilder();
         builder?.UseEnvironment("Test");
+        builder?.ConfigureWebHost(b => b.UseSetting("DataDir", _dataDir));
         return builder;
     }
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) Environment.SetEnvironmentVariable("PRISM_E2E_REAL_INJECT", null);
+        if (disposing)
+        {
+            Environment.SetEnvironmentVariable("PRISM_E2E_REAL_INJECT", null);
+            try { Directory.Delete(_dataDir, recursive: true); } catch { /* best-effort cleanup */ }
+        }
         base.Dispose(disposing);
     }
 }
+```
+
+You also need a tiny collections file once. Create `tests/PRism.Web.Tests/TestHooks/Collections.cs`:
+
+```csharp
+using Xunit;
+
+namespace PRism.Web.Tests.TestHooks;
+
+// Serializes test classes that mutate process-wide env vars. xUnit parallelizes test classes
+// by default; without a shared CollectionDefinition, RealInjectAppFactory and
+// ProgramMutexCheckTests can race on PRISM_E2E_REAL_INJECT / PRISM_E2E_FAKE_REVIEW.
+[CollectionDefinition("EnvVarMutating", DisableParallelization = true)]
+public sealed class EnvVarMutatingCollection { }
 ```
 
 - [ ] **Step 2: Verify the test fails**
@@ -687,13 +733,31 @@ public class ClearPrSessionEndpointTests
     }
 }
 
-internal sealed class TestEnvAppFactory : WebApplicationFactory<Program>
+internal sealed class TestEnvAppFactory : WebApplicationFactory<Program>, IDisposable
 {
+    private readonly string _dataDir;
+
+    public TestEnvAppFactory()
+    {
+        _dataDir = Path.Combine(Path.GetTempPath(), $"PRism-clear-prsess-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_dataDir);
+    }
+
     protected override Microsoft.Extensions.Hosting.IHostBuilder? CreateHostBuilder()
     {
         var builder = base.CreateHostBuilder();
         builder?.UseEnvironment("Test");
+        builder?.ConfigureWebHost(b => b.UseSetting("DataDir", _dataDir));
         return builder;
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            try { Directory.Delete(_dataDir, recursive: true); } catch { /* best-effort */ }
+        }
+        base.Dispose(disposing);
     }
 }
 ```
@@ -792,6 +856,7 @@ using Xunit;
 
 namespace PRism.Web.Tests.TestHooks;
 
+[Collection("EnvVarMutating")]
 public class ProgramMutexCheckTests
 {
     [Fact]
@@ -802,8 +867,20 @@ public class ProgramMutexCheckTests
         try
         {
             var factory = new WebApplicationFactory<Program>();
-            var ex = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
-            Assert.Contains("mutually exclusive", ex.Message, StringComparison.OrdinalIgnoreCase);
+            // WebApplicationFactory may wrap the startup exception (TargetInvocationException,
+            // host-bootstrap aggregation). Use ThrowsAny and walk inner exceptions.
+            var ex = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+            var found = false;
+            for (var e = (Exception?)ex; e is not null; e = e.InnerException)
+            {
+                if (e is InvalidOperationException
+                    && e.Message.Contains("mutually exclusive", StringComparison.OrdinalIgnoreCase))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            Assert.True(found, $"Expected InvalidOperationException with 'mutually exclusive' message in chain; got: {ex}");
         }
         finally
         {
@@ -1258,10 +1335,6 @@ export function forceResetBranch(fixture: SandboxFixture): { serverTs: string } 
   const dateValue = dateHeader?.substring('date:'.length).trim() ?? new Date().toUTCString();
   return { serverTs: new Date(dateValue).toISOString() };
 }
-
-export function OWNER_REPO(): string {
-  return `${OWNER}/${REPO}`;
-}
 ```
 
 - [ ] **Step 3: Verify the file compiles (no lint errors)**
@@ -1395,20 +1468,13 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+// Import the shared type instead of redeclaring — keeps the strict union from
+// helpers/sandbox-fixture.ts authoritative across the script and the consumers.
+import type { SandboxFixture } from '../e2e/real/helpers/sandbox-fixture';
 
 const OWNER = 'prpande';
 const REPO = 'prism-sandbox';
 const FIXTURE_NAMES = ['happy', 'foreign', 'lost-response', 'stale-oid'] as const;
-
-interface SandboxFixture {
-  name: string;
-  branch: string;
-  prNumber: number;
-  prNodeId: string;
-  baseOid: string;
-  anchorFile: string;
-  anchorLine: number;
-}
 
 function gh<T>(args: string[]): T {
   const out = execFileSync('gh', args, { encoding: 'utf8' });
@@ -1665,6 +1731,8 @@ export default async function globalSetup(): Promise<void> {
   await page.goto('/'); // stamps prism-session cookie via text/html cookie-stamping middleware
 
   // 8. POST PAT via /api/auth/connect. /commit only fires on warning (NoReposSelected).
+  //    PRism serializes JSON in camelCase (PRism.Core/Json/JsonSerializerOptionsFactory.cs sets
+  //    PropertyNamingPolicy = JsonNamingPolicy.CamelCase) — read camelCase keys, not PascalCase.
   const connectResp = await page.request.post('/api/auth/connect', {
     data: { pat },
     headers: { 'Content-Type': 'application/json' },
@@ -1672,17 +1740,17 @@ export default async function globalSetup(): Promise<void> {
   if (!connectResp.ok()) {
     throw new Error(`POST /api/auth/connect failed: ${connectResp.status()} ${await connectResp.text()}`);
   }
-  const connectBody = (await connectResp.json()) as { Ok: boolean; Error?: string; Warning?: string };
-  if (!connectBody.Ok) {
-    throw new Error(`/api/auth/connect rejected PAT: error=${connectBody.Error ?? '(unknown)'}`);
+  const connectBody = (await connectResp.json()) as { ok: boolean; error?: string; warning?: string; login?: string };
+  if (!connectBody.ok) {
+    throw new Error(`/api/auth/connect rejected PAT: error=${connectBody.error ?? '(unknown)'}`);
   }
-  if (connectBody.Warning) {
+  if (connectBody.warning) {
     // Soft warning (NoReposSelected, typical for fine-grained PATs). Accept by calling /commit.
     const commitResp = await page.request.post('/api/auth/connect/commit', {});
     if (!commitResp.ok()) {
       throw new Error(`POST /api/auth/connect/commit failed: ${commitResp.status()} ${await commitResp.text()}`);
     }
-    console.log(`[real-flow-setup] PAT committed with warning=${connectBody.Warning}`);
+    console.log(`[real-flow-setup] PAT committed with warning=${connectBody.warning}`);
   } else {
     console.log('[real-flow-setup] PAT committed inline (no warning)');
   }

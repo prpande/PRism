@@ -561,6 +561,7 @@ Each spec is paired with a one-line production-code edit that should make it fai
 | `frontend/playwright.real.config.ts` | NEW |
 | `frontend/scripts/setup-real-e2e-fixtures.ts` | NEW |
 | `frontend/e2e/real/global-setup.ts` | NEW |
+| `frontend/e2e/real/helpers/sandbox-fixture.ts` | NEW (shared `SandboxFixture` type — imported by `gh-sandbox.ts`, `reset-sandbox-fixture.ts`, `global-setup.ts`, the four specs, and the setup script) |
 | `frontend/e2e/real/helpers/gh-sandbox.ts` | NEW |
 | `frontend/e2e/real/helpers/real-inject.ts` | NEW |
 | `frontend/e2e/real/helpers/reset-sandbox-fixture.ts` | NEW |
