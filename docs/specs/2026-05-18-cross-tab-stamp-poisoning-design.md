@@ -504,7 +504,7 @@ The "two tabs fire markAllRead with different ids" regression class the original
 
 `StateChanged` event field name (`"last-seen-comment-id"`) and FE consumer in [`useStateChangedSubscriber.ts:37`](../../frontend/src/hooks/useStateChangedSubscriber.ts) are unchanged.
 
-### 5.7 Test hook `/test/mark-pr-viewed` + the seven mocked-mode submit specs
+### 5.7 Test hook `/test/mark-pr-viewed` + the eight mocked-mode submit specs
 
 [`TestEndpoints.cs:149-176`](../../PRism.Web/TestHooks/TestEndpoints.cs) is the path that the **mocked-mode** Playwright submit specs use to seed `LastViewedHeadSha` without exercising the real mark-viewed wire-up. The real-flow specs at [`frontend/e2e/real/`](../../frontend/e2e/real/) drive the FE which fires `POST /mark-viewed` through `usePrDetail` (which already sends the header); they don't use this hook directly. The mocked-mode specs that DO use it:
 
@@ -515,6 +515,7 @@ The "two tabs fire markAllRead with different ids" regression class the original
 - `frontend/e2e/s5-multi-tab-simultaneous-submit.spec.ts`
 - `frontend/e2e/s5-submit-foreign-pending-review.spec.ts`
 - `frontend/e2e/s5-submit-closed-merged-discard.spec.ts`
+- `frontend/e2e/s5-marker-prefix-collision.spec.ts`
 
 **The topology requires explicit coordination.** [`frontend/e2e/helpers/s5-submit.ts:14-25`](../../frontend/e2e/helpers/s5-submit.ts) defines `postTest` using Playwright's `APIRequestContext` (separate from the page's browser context). The `recordPrViewed` helper at [`s5-submit.ts:136-148`](../../frontend/e2e/helpers/s5-submit.ts) calls `postTest('/test/mark-pr-viewed', ...)` with **no tab-id header**. The subsequent UI-driven submit in each spec uses the **page's browser context**, which carries the page's own `getTabId()` value. Under V6, those two contexts have different tab ids by construction — the hook writes under one id (or none), the UI submit lands under another → 400 `head-sha-not-stamped` on every mocked-mode submit spec.
 
@@ -522,11 +523,11 @@ The "two tabs fire markAllRead with different ids" regression class the original
 
 1. **Hook (`TestEndpoints.cs`):** accept `tabId` as a body field on the `MarkPrViewedRequest` record (alongside `Owner`, `Repo`, `Number`, `HeadSha`). Apply the same allowlist regex as mark-viewed (`^[a-zA-Z0-9_-]{1,64}$`). Write `TabStamps[tabId] = new TabStamp(headSha, DateTime.UtcNow)` with the same N=8 LRU eviction policy.
 2. **Helper (`recordPrViewed`):** accept a `tabId: string` parameter and pass it in the request body. Add a sibling helper that extracts the page's tab id, e.g. `await page.evaluate(() => (window as any).__prism_test_getTabId?.() ?? null)` — this requires a small FE test-mode hook that exposes `getTabId()` on `window` when `aiPreview` / test mode is active. Alternative: pass the tab id explicitly via a fixture (e.g., set a cookie / localStorage value the FE reads on init). The plan picks the cleanest of the two.
-3. **Specs:** each of the seven specs adds one line before `recordPrViewed` to capture the page's tab id, and passes it to the helper.
+3. **Specs:** each of the eight specs adds one line before `recordPrViewed` to capture the page's tab id, and passes it to the helper.
 
 **Why a body field, not the header.** The `APIRequestContext` could send the header just as well, but the body-field shape makes the coordination explicit — the spec author has to *think* "which tab id am I seeding for?" rather than relying on context-implicit headers that might not match the UI's tab id. For test code, explicitness wins.
 
-This is the largest non-spec test-surface change in the slice. Without it, the entire mocked-mode submit suite regresses on first run after V6. The plan must list each of the seven specs as a deliberate update task, not assume the helper change is transparent to them.
+This is the largest non-spec test-surface change in the slice. Without it, the entire mocked-mode submit suite regresses on first run after V6. The plan must list each of the eight specs as a deliberate update task, not assume the helper change is transparent to them.
 
 ---
 
@@ -692,10 +693,6 @@ The reshape removes `LastViewedHeadSha` from `ReviewSessionState`'s positional c
 
 The plan's task list must enumerate these so the implementation pass doesn't get stuck on "the test suite won't build" partway through.
 
-`tests/PRism.Web.Tests/Endpoints/PrDraftEndpointsTests.cs`:
-
-- **markAllRead monotone guard.** Existing session with `LastSeenCommentId = "999"`; `PUT /draft` with `markAllRead` patch carrying `newId = "500"` → final `LastSeenCommentId = "999"` (no rewind).
-
 ### 8.5 Frontend tests
 
 [`PrHeader.test.tsx`](../../frontend/__tests__/PrHeader.test.tsx) — add an arm asserting the new `tab-id-missing` error code surfaces the right toast copy.
@@ -708,7 +705,7 @@ Tests in this slice's plan that MUST land before the Playwright suite is green:
 
 - `frontend/e2e/helpers/s5-submit.ts` — `recordPrViewed` accepts a `tabId` parameter and passes it in the request body.
 - FE test-mode hook to expose `getTabId()` to `page.evaluate` (or equivalent fixture-injection path; plan picks).
-- Each of the seven mocked-mode submit specs adds the tab-id-extraction line before its `recordPrViewed` call.
+- Each of the eight mocked-mode submit specs adds the tab-id-extraction line before its `recordPrViewed` call.
 - A targeted assertion in `frontend/e2e/s5-submit-happy-path.spec.ts` that the mock-mode submit POSTs with the same tab id the hook used (regression-net against the topology confusion this finding was caught on).
 
 The real-flow Playwright suite ([`frontend/e2e/real/`](../../frontend/e2e/real/)) doesn't use the test hook, so it's unaffected — but a new real-flow spec that uses `/test/mark-pr-viewed` in the future would inherit the same constraint.

@@ -216,16 +216,40 @@ Mark each placeholder with a `// TASK4` / `// TASK5` / `// TASK6` comment so the
 
 If easier: comment out the body of these three endpoint handlers entirely with a `throw new NotImplementedException("Wired in Task N");`, and the relevant tests stay red until that task lands. Pick whichever pattern produces less churn.
 
-- [ ] **Step 4: Rewrite `session.LastViewedHeadSha` reads with sentinels**
+- [ ] **Step 4: Rewrite `session.LastViewedHeadSha` reads with a temporary stub helper**
 
-Four sites in `PrSubmitEndpoints` (lines 117, 129, 131, 144), two in `DraftReconciliationPipeline` (33, 216), one in `InboxRefreshOrchestrator` (244). Each currently uses `session.LastViewedHeadSha` as a `string?` value. Until the per-tab logic lands (Tasks 9, 10, 11), replace each with a placeholder that compiles but throws at runtime:
+`throw new InvalidOperationException(...)` in a value position causes downstream unreachable-code warnings → build error under `TreatWarningsAsErrors=true` (set in `Directory.Build.props`). Use a temporary stub helper that returns a "best-effort" head sha — the most-recently-stamped value across all tabs. The stub is semantically wrong for the per-tab gate (any tab's submit accepts any tab's stamp, the original bypass class) but the build compiles cleanly. The relevant tests fail at the behavior level until each task wires the proper read; tombstone those tests with `[Fact(Skip = "Wired in Task N")]` (see Step 4b) so the suite is green between phases.
+
+Add a temporary static helper in `PRism.Core/State/AppState.cs` (or a sibling file):
 
 ```csharp
-// TASK9 (or 10 / 11): per-tab readout
-throw new InvalidOperationException("Phase-1 placeholder — wired in Task N");
+internal static class ReviewSessionStateLegacy
+{
+    // TEMPORARY — removed when Tasks 7/8/9 land. Returns the most-recently-stamped head sha
+    // across all tabs as a "best effort" pre-V6-compatible value. This is the OLD bypass-prone
+    // semantic by design — every read site that uses this stub is replaced in a later task
+    // with the per-tab logic.
+    internal static string? LegacyMostRecentHeadSha(this ReviewSessionState session) =>
+        session.TabStamps.Values.OrderByDescending(s => s.StampedAtUtc).FirstOrDefault()?.HeadSha;
+}
 ```
 
-The four `PrSubmitEndpoints` sites are inside rule (f) which is fully replaced in Task 9; same for the two reconciliation sites (Task 10) and the inbox site (Task 11). The placeholders are short-lived.
+At each read site, swap `session.LastViewedHeadSha` → `session.LegacyMostRecentHeadSha()`. Annotate each site with a `// TASK7` / `// TASK8` / `// TASK9` comment so the implementer can grep when the relevant task runs.
+
+The four `PrSubmitEndpoints` sites get replaced by Task 7's full rule-(f) rewrite (the stub helper goes away at those sites then). The two reconciliation sites get replaced by Task 8's three-branch `headShifted`. The one inbox site gets replaced by Task 9's most-recent-stamp projection (which is what the stub was already doing — so Task 9 effectively just renames the call from `LegacyMostRecentHeadSha()` to inline). After Task 9 lands, delete `ReviewSessionStateLegacy.cs`.
+
+- [ ] **Step 4b: Tombstone the affected tests with `[Fact(Skip = "Wired in Task N")]`**
+
+Tests that exercised `LastViewedHeadSha`-driven head-shift behavior under the OLD per-session-flat semantic will produce wrong results under the new stub (which returns most-recent across all tabs). Annotate them as Skipped in this commit:
+
+- `tests/PRism.Core.Tests/Reconciliation/VerdictReconfirmTests.cs` head-shift tests → `[Fact(Skip = "Wired in Task 8")]`
+- `tests/PRism.Core.Tests/Reconciliation/OverrideStaleTests.cs` head-shift tests → `[Fact(Skip = "Wired in Task 8")]`
+- `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs` first-visit / unread-badge tests → `[Fact(Skip = "Wired in Task 9")]`
+- Existing submit-gate tests in `tests/PRism.Web.Tests/Endpoints/PrSubmitEndpointsTests.cs` that depended on `LastViewedHeadSha` being null → `[Fact(Skip = "Wired in Task 7")]`
+
+Tasks 7, 8, 9 each remove the corresponding `Skip` attribute as part of their commit. The suite is green at every commit boundary.
+
+Run `dotnet test` after annotating to confirm everything either passes or is explicitly skipped — no red tests.
 
 - [ ] **Step 5: Build**
 
@@ -1579,31 +1603,43 @@ The mocked-mode submit suite uses `recordPrViewed` via `APIRequestContext`, whos
 
 - [ ] **Step 1: Pick the test-mode predicate**
 
-Use `import.meta.env.VITE_E2E_TEST === 'true'`. This is settable from Playwright's `playwright.config.ts` via the `webServer.env` block. Vite strips the conditional from production builds when `VITE_E2E_TEST` is unset.
+Use `import.meta.env.VITE_E2E_TEST === 'true'`. Vite reads `VITE_*` env vars at **build time** (or dev-server boot time), bakes them into the bundle via tree-shaking. Two distinct wiring decisions:
 
-- [ ] **Step 2: Add the hook in `main.tsx`**
+- **Dev / `dev` project (Playwright runs `npm run dev`)**: Vite picks up `VITE_E2E_TEST` from `viteDevWebServer.env` in `playwright.config.ts`.
+- **CI / `prod` project (Playwright runs the pre-built `dist/`)**: the bundle is built BEFORE Playwright starts. Setting `VITE_E2E_TEST` on the dotnet `webServer.env` has zero effect — Vite already finalized the bundle. Either (a) the CI script must run `VITE_E2E_TEST=true npm run build` so the bundled JS includes the hook, OR (b) use a non-build-time predicate (cookie / URL param / `window` flag set by a Playwright fixture page).
 
-After the existing app-mount:
+Pick **(a)** — `VITE_E2E_TEST=true npm run build` in CI — because it keeps the hook compile-stripped from real production releases (CI's release artifact build doesn't set the env var) while making the e2e bundle self-contained.
+
+- [ ] **Step 2: Add the hook in `main.tsx` (synchronous, no dynamic import)**
+
+After the existing app-mount, **synchronously** install the hook:
 
 ```ts
+import { getTabId } from './api/draft';
+// ... existing imports ...
+
 if (import.meta.env.VITE_E2E_TEST === 'true') {
-  import('./api/draft').then(({ getTabId }) => {
-    (window as unknown as { __prism_test_getTabId?: () => string }).__prism_test_getTabId = () => getTabId();
-  });
+  (window as unknown as { __prism_test_getTabId?: () => string }).__prism_test_getTabId = getTabId;
 }
 ```
 
-- [ ] **Step 3: Confirm `playwright.config.ts` sets `VITE_E2E_TEST=true`**
+(`getTabId` is already importable at the top of `main.tsx`; a synchronous bind eliminates the init race the earlier draft of this plan worried about.)
 
-Read `playwright.config.ts`. Under `webServer`, add (or confirm) `env: { VITE_E2E_TEST: 'true' }`.
+- [ ] **Step 3: Wire `VITE_E2E_TEST` at both Playwright projects**
+
+In `playwright.config.ts`:
+
+- Add `env: { VITE_E2E_TEST: 'true' }` to `viteDevWebServer` (the dev project's webServer block).
+- For the `prod` project, update the CI script (`.github/workflows/...` or equivalent) that runs `npm run build` to prefix the env var: `VITE_E2E_TEST=true npm run build`. The build step happens before Playwright starts the dotnet server, so Vite bakes the hook into the bundle Playwright then serves.
 
 - [ ] **Step 4: Confirm production-build strips the hook**
 
 ```
-cd D:/src/prism-cross-tab-stamp/frontend && npm run build && grep -r "__prism_test_getTabId" dist/
+cd D:/src/prism-cross-tab-stamp/frontend && npm run build  # without VITE_E2E_TEST
+grep -r "__prism_test_getTabId" dist/
 ```
 
-Expected: no matches in `dist/`.
+Expected: no matches in `dist/`. (When `VITE_E2E_TEST` is set during CI's e2e build, the hook IS in the bundle — that's intentional.)
 
 - [ ] **Step 5: Confirm Vitest tests still pass**
 
@@ -1697,24 +1733,41 @@ git -C D:/src/prism-cross-tab-stamp grep -c "recordPrViewed" frontend/e2e/s5-*.s
 
 Expected: most specs 1-2 calls; `s5-submit-foreign-pending-review.spec.ts` has 3.
 
-- [ ] **Step 2: For each spec, add `getPageTabId(page)` before each `recordPrViewed` call**
+- [ ] **Step 2: For each spec, add `getPageTabId(page)` AFTER the page navigates and BEFORE `recordPrViewed`**
 
-Standard pattern (single-tab spec):
+The existing specs call `recordPrViewed(page.request)` BEFORE `page.goto('/pr/...')` — at that point the FE hasn't loaded and `__prism_test_getTabId` doesn't exist yet. Reorder so `page.goto` and `await page.waitForLoadState('domcontentloaded')` happen first, then `getPageTabId` extracts the in-page tab id, then `recordPrViewed` lands the stamp.
+
+**For each single-tab spec:**
 
 ```ts
+await page.goto(`/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`);
+await page.waitForLoadState('domcontentloaded');
 const tabId = await getPageTabId(page);
 await recordPrViewed(page.request, prRef, tabId);
+// then UI interactions
 ```
 
-Multi-tab spec (`s5-multi-tab-simultaneous-submit.spec.ts` and the 3-call `foreign-pending-review` spec) — each `recordPrViewed` call uses the same-page tab id if it's from the same page, or different tab ids if explicitly multi-page:
+Test semantics: the FE now boots, mounts PR detail, and may briefly render the unviewed state before the stamp lands. That's a minor visible flicker in test runs (no user impact) — accept it. The original test pattern (stamp-before-goto) is no longer possible under V6 because the tab-id-to-stamp-for doesn't exist until the page loads.
+
+**For `s5-multi-tab-simultaneous-submit.spec.ts` (multi-page, 2 calls):**
+
+The existing spec at `frontend/e2e/s5-multi-tab-simultaneous-submit.spec.ts` calls `recordPrViewed(page.request)` once on the original `page` (~line 34) BEFORE `context.newPage()` creates `page2`. Under V6, Tab 2 has no stamp and its submit will return 400 `head-sha-not-stamped` — masking the submit-lock semantic the spec was originally testing.
+
+**Required edit:** after `page2 = await context.newPage()` and `page2.goto(...)`, add a SECOND `recordPrViewed` for `page2`:
 
 ```ts
-const tabIdA = await getPageTabId(pageA);
-await recordPrViewed(pageA.request, prRef, tabIdA);
-// ...
-const tabIdB = await getPageTabId(pageB);
-await recordPrViewed(pageB.request, prRef, tabIdB);
+await page2.goto(`/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`);
+await page2.waitForLoadState('domcontentloaded');
+const tabIdB = await getPageTabId(page2);
+await recordPrViewed(page2.request, prRef, tabIdB);
+// Now both tabs have stamps; the submit-lock semantic (the original test's purpose) is what gets exercised.
 ```
+
+Without this second call, the spec passes for the wrong reason (rule (f) head-sha-not-stamped, not submit-lock 409).
+
+**For `s5-submit-foreign-pending-review.spec.ts` (3 calls):**
+
+Each of the three calls is from the same `page` after the page has loaded; one `getPageTabId(page)` at the top can be reused across all three `recordPrViewed` calls (the tab id is stable for the page's lifetime).
 
 - [ ] **Step 3: Run the mocked-mode Playwright suite**
 
