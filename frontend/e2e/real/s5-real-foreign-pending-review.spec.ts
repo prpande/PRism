@@ -29,6 +29,12 @@ test.beforeEach(async () => {
 });
 
 test('S5 real flow — foreign pending review prompt fires; Resume imports + submit lands', async ({ page }) => {
+  // Default Playwright test timeout is 30s. This spec exercises two real-GraphQL submit
+  // cycles (foreign-pending classify + Resume import; then final submit at HEAD) on top of
+  // the standard mark-viewed / draft / files-tab navigation, comfortably exceeding 30s on
+  // typical network. Bump to 120s to give the inner toBeVisible budgets (15s modal, 10s
+  // composer body, 20s "Review submitted" heading) their full design budgets.
+  test.setTimeout(120_000);
   const markViewedResp = page.waitForResponse(
     (r) => r.url().endsWith('/mark-viewed') && r.status() === 204,
     { timeout: 15_000 },
@@ -62,13 +68,35 @@ test('S5 real flow — foreign pending review prompt fires; Resume imports + sub
   // Foreign-pending-review modal should appear.
   const modal = page.getByRole('dialog', { name: /pending review|existing pending|already have a pending/i });
   await expect(modal).toBeVisible({ timeout: 15_000 });
-  await expect(modal.getByText(/pre-seeded foreign thread/i)).toBeVisible();
+  // ForeignPendingReviewModal only renders thread/reply COUNTS (and a humanized createdAt),
+  // not the thread body text — thread bodies surface in the composer after Resume.
+  // Asserting on the thread-count chip keeps a regression-net inside the modal step:
+  // a regression that drops `snapshot.threadCount` to 0 or fails to render the chip
+  // would fail this assertion loudly before we click Resume. See
+  // frontend/src/components/PrDetail/ForeignPendingReviewModal/ForeignPendingReviewModal.tsx
+  // for the rendered text shape.
+  await expect(modal.getByText(/1 thread\(s\)/i)).toBeVisible();
 
   // Click Resume.
   await modal.getByRole('button', { name: /resume/i }).click();
 
-  // Expect the imported draft to appear in the composer with the foreign body.
+  // Wait for the modal to close — Resume completion is asynchronous on the server (the import
+  // mutation is awaited before the modal dismisses), so the modal-hidden state is the gate
+  // that lets us proceed without racing the draft-list refetch on the Drafts tab.
+  await expect(modal).toBeHidden({ timeout: 10_000 });
+
+  // Navigate to the Drafts tab to verify the imported foreign thread's body materialized as
+  // a draft entry. The Overview tab doesn't render draft bodies, and the imported drafts are
+  // not surfaced inline on the file diff until the user opens the corresponding line composer —
+  // the Drafts tab is the canonical "session has these drafts" listing (DraftListItem renders
+  // a previewBody up to 80 chars via MarkdownRenderer, plenty for our 26-char seed body).
+  await page.getByRole('tab', { name: /^drafts/i }).click();
   await expect(page.getByText(/pre-seeded foreign thread/i)).toBeVisible({ timeout: 10_000 });
+
+  // Back to Overview to drive the final Submit. Submit button lives on the PrHeader which is
+  // shared across tabs, but the next assertion on the success heading is most discoverable
+  // from the Overview / detail context.
+  await page.getByRole('tab', { name: /^overview$/i }).click();
 
   // Click Submit again.
   await page.getByRole('button', { name: /^submit review$/i }).click();
