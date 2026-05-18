@@ -846,8 +846,17 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         foreach (var node in nodes.EnumerateArray())
         {
             if (!IsTypeName(node, "PullRequestReview")) continue;
-            var ts = node.TryGetProperty("submittedAt", out var s) ? s.GetDateTimeOffset() : default;
-            result.Add(new ClusteringReviewEvent(ts));
+            // PENDING reviews (the viewer's own OR a hand-created one via the GitHub web UI / gh)
+            // appear in this timelineItems connection with submittedAt = null — they have not been
+            // submitted yet, by definition. Calling GetDateTimeOffset() on a Null-kind JsonElement
+            // throws InvalidOperationException → unhandled → HTTP 500 on the PR detail load. The
+            // clustering signal needs a real submission moment to be useful (it's a "reviewer
+            // activity" timestamp), so a pending review carries no signal and is skipped entirely
+            // rather than included with default(DateTimeOffset) (= 0001-01-01) which would pollute
+            // clustering with an event from year 1.
+            if (!node.TryGetProperty("submittedAt", out var s) || s.ValueKind != JsonValueKind.String)
+                continue;
+            result.Add(new ClusteringReviewEvent(s.GetDateTimeOffset()));
         }
         return result;
     }

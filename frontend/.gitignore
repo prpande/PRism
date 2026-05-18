@@ -1,0 +1,7 @@
+# Real-flow e2e suite — locally-generated state
+e2e/real/fixtures.json
+.env.local
+# Playwright artifacts (traces may capture request bodies including the PAT
+# under retries>0; never commit these even though they are local-only by default).
+playwright-report/
+test-results/

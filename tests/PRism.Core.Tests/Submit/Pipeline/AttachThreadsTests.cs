@@ -53,6 +53,34 @@ public class AttachThreadsTests
         Assert.Equal(0, fake.AttachThreadCallCount);  // already attached on a prior attempt — not re-created.
     }
 
+    [Theory]
+    [InlineData("right", "RIGHT")]
+    [InlineData("left", "LEFT")]
+    [InlineData("RIGHT", "RIGHT")]
+    [InlineData("LEFT", "LEFT")]
+    public async Task UnstampedDraft_DraftSideIsNormalisedToUppercase_OnAttach(string draftSide, string expectedAttachedSide)
+    {
+        // The DraftComment.Side field is lowercase on the wire (DraftSide = 'left' | 'right' in
+        // frontend/src/api/types.ts), but GraphQL's DiffSide! enum strict-rejects lowercase. The
+        // pipeline normalises at the AttachThreads boundary so the GitHub call always sees uppercase
+        // — caught originally by the real-flow happy-path Playwright spec; the fake submitter
+        // accepted both casings so the bug never surfaced under fake-mode coverage.
+        //
+        // Finalize is injected to fail so the pending review (and its threads) survive in the fake
+        // for inspection — a successful Finalize would Remove the pending review.
+        var fake = new InMemoryReviewSubmitter();
+        fake.InjectFailure(nameof(IReviewSubmitter.FinalizePendingReviewAsync), new HttpRequestException("simulated"));
+        var session = SessionFactory.With(headSha: "head1", drafts: new[] { SessionFactory.Draft("d1", side: draftSide) });
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, session);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        await pipeline.SubmitAsync(Ref, session, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        var attachedThread = Assert.Single(fake.GetPending(Ref)!.Threads);
+        Assert.Equal(expectedAttachedSide, attachedThread.Side);
+    }
+
     [Fact]
     public async Task UnstampedDraft_AttachThenFinalizeFails_StampPersistedBeforeFinalize()
     {

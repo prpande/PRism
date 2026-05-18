@@ -297,7 +297,7 @@ public sealed class SubmitPipeline
                 BodyMarkdown: PipelineMarker.Inject(draft.BodyMarkdown, draft.Id),
                 FilePath: draft.FilePath,
                 LineNumber: draft.LineNumber.Value,
-                Side: draft.Side ?? "RIGHT");
+                Side: (draft.Side ?? "right").ToUpperInvariant());
 
             var result = await InvokeAsync(SubmitStep.AttachThreads, done, total, current, progress,
                 () => _submitter.AttachThreadAsync(reference, pendingReviewId, request, ct)).ConfigureAwait(false);

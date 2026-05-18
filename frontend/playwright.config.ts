@@ -95,6 +95,12 @@ const devProject = {
 
 export default defineConfig({
   testDir: './e2e',
+  // The real-flow suite (./e2e/real/*.spec.ts) runs against a different backend port
+  // (5181, started by playwright.real.config.ts) and requires a real GitHub PAT. The
+  // default config (fake-mode, port 5180) must not pick these up — they would fail with
+  // connect ECONNREFUSED against /test/real-inject. Run real-flow via
+  // `npm run test:e2e:real` (which uses playwright.real.config.ts) instead.
+  testIgnore: '**/real/**',
   fullyParallel: false,
   // Serialize across files, not just within them. The .NET backend is a single
   // long-running process with global fake state (FakeReviewSubmitter +
