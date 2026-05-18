@@ -78,9 +78,18 @@ export default async function globalSetup(): Promise<void> {
   // 8. POST PAT via /api/auth/connect. /commit only fires on warning (NoReposSelected).
   //    PRism serializes JSON in camelCase (PRism.Core/Json/JsonSerializerOptionsFactory.cs sets
   //    PropertyNamingPolicy = JsonNamingPolicy.CamelCase) — read camelCase keys, not PascalCase.
+  //
+  //    Playwright's page.request is an APIRequestContext that shares cookies with the page but
+  //    does NOT auto-stamp the Origin header the way a real browser fetch() does. Without
+  //    Origin, OriginCheckMiddleware (PRism.Web/Middleware/OriginCheckMiddleware.cs) rejects
+  //    mutating requests with 403 ("Cross-origin request rejected (missing Origin)"). Set it
+  //    explicitly to mirror what the SPA's fetch wrapper would send.
   const connectResp = await page.request.post('/api/auth/connect', {
     data: { pat },
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: BACKEND,
+    },
   });
   if (!connectResp.ok()) {
     // Do NOT include the raw response body — a malformed validation response could echo
@@ -94,7 +103,9 @@ export default async function globalSetup(): Promise<void> {
   }
   if (connectBody.warning) {
     // Soft warning (NoReposSelected, typical for fine-grained PATs). Accept by calling /commit.
-    const commitResp = await page.request.post('/api/auth/connect/commit', {});
+    const commitResp = await page.request.post('/api/auth/connect/commit', {
+      headers: { Origin: BACKEND },
+    });
     if (!commitResp.ok()) {
       // Same PAT-echo defence as above — status only.
       throw new Error(`POST /api/auth/connect/commit failed: HTTP ${commitResp.status()}`);
