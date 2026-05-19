@@ -130,6 +130,34 @@ public class SseChannelActivePrDeliveryLogTests
         try { await subscriberTask; } catch (OperationCanceledException) { } catch (IOException) { }
     }
 
+    [Fact]
+    public async Task T_INV_6c_delivery_log_does_NOT_emit_for_inbox_broadcast_events()
+    {
+        var bus = new ReviewEventBus();
+        var subs = new InboxSubscriberCount();
+        var registry = new ActivePrSubscriberRegistry();
+        var logger = new CapturingLogger();
+        using var channel = new SseChannel(bus, subs, registry, logger);
+
+        var ctx = new DefaultHttpContext { Response = { Body = new MemoryStream() } };
+        using var cts = new CancellationTokenSource();
+        var subscriberTask = channel.RunSubscriberAsync(ctx.Response, cookieSessionId: "c1", cts.Token);
+
+        await WaitFor(() => subs.Current == 1, TimeSpan.FromSeconds(5));
+
+        // No registry.Add — inbox events are broadcast, not per-PR-scoped.
+        bus.Publish(new InboxUpdated(new[] { "review-requested" }, 1));
+
+        // Give the fire-and-forget delivery task a window to run if it were going to log.
+        // The capturing logger filters on EventId 5; if the null-guard works, no message lands.
+        await Task.Delay(200);
+
+        logger.Messages.Should().BeEmpty("InboxUpdated events pass (null, null) to WriteAndEvictOnFailureAsync; the EventId-5 delivery log's null-guard must skip them");
+
+        await cts.CancelAsync();
+        try { await subscriberTask; } catch (OperationCanceledException) { } catch (IOException) { }
+    }
+
     private static async Task WaitFor(Func<bool> predicate, TimeSpan timeout)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
