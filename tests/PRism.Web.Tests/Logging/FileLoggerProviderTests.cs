@@ -1,8 +1,5 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 
 using FluentAssertions;
@@ -26,10 +23,15 @@ namespace PRism.Web.Tests.Logging;
 public sealed class FileLoggerProviderTests : IDisposable
 {
     private readonly string _logsDir;
+    private readonly string _todayPath;
 
     public FileLoggerProviderTests()
     {
         _logsDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        // Capture the daily-file path ONCE per test instance to avoid the midnight-boundary
+        // flake where the provider writes pre-rollover but the assertion reads post-rollover.
+        // Tests that exercise rotation explicitly (with MutableClock) build their own paths.
+        _todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
     }
 
     public void Dispose()
@@ -64,7 +66,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogInformation("hello");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var lines = File.ReadAllLines(todayPath);
 
         lines.Should().NotBeEmpty();
@@ -81,7 +83,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogWarning(new EventId(42, "MyEvent"), "hello {Name}", "world");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
 
         content.Should().Contain("[Warning]");
@@ -101,7 +103,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogError("auth failed with {pat}", "ghp_supersecret_xxxxxxxxxxxxxx");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
 
         content.Should().NotContain("ghp_supersecret");
@@ -117,7 +119,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogInformation("validated as {login}", "pratyush");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
 
         content.Should().NotContain("pratyush");
@@ -133,7 +135,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogWarning("transport failed: {body}", "{\"message\":\"Bad credentials\"}");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
 
         content.Should().Contain("Bad credentials");
@@ -154,7 +156,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogError(thrown, "failed");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var lines = File.ReadAllLines(todayPath);
 
         // The message line first, then exception lines indented with 4 spaces.
@@ -233,7 +235,7 @@ public sealed class FileLoggerProviderTests : IDisposable
                 logger.LogInformation("event {Index}", i);
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
 
         for (var i = 0; i < 20; i++)
@@ -270,7 +272,7 @@ public sealed class FileLoggerProviderTests : IDisposable
         }
 
         Directory.Exists(_logsDir).Should().BeTrue();
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         File.ReadAllText(todayPath).Should().Contain("second event after delete");
     }
 
@@ -284,7 +286,7 @@ public sealed class FileLoggerProviderTests : IDisposable
         // returns false on overflow. We can then deterministically assert DroppedDueToBackpressure > 0.
 
         Directory.CreateDirectory(_logsDir);
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         using var locker = new FileStream(todayPath, FileMode.Create, FileAccess.Write, FileShare.None);
 
         await using var provider = new FileLoggerProvider(_logsDir);
@@ -316,7 +318,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogInformation("static text with no placeholders");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
         content.Should().Contain("static text with no placeholders");
     }
@@ -334,7 +336,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogInformation("first={pat} second={pat}", "ghp_111", "ghp_222");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
         content.Should().NotContain("ghp_111");
         content.Should().NotContain("ghp_222");
@@ -353,7 +355,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogWarning("transport: {body}", "{\"message\":\"User pratyush not authorized\"}");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
         content.Should().Contain("pratyush");  // NOT redacted — by-arg-name scrub doesn't traverse value content
     }
@@ -366,7 +368,7 @@ public sealed class FileLoggerProviderTests : IDisposable
         // daily file makes the second OpenAppendStream throw IOException.
 
         Directory.CreateDirectory(_logsDir);
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
 
         using var locker = new FileStream(todayPath, FileMode.Create, FileAccess.Write, FileShare.Read);
 
@@ -394,7 +396,7 @@ public sealed class FileLoggerProviderTests : IDisposable
                 "PRR_xxxxx", "PRRT_yyyyy", "PRRC_zzzzz");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
         content.Should().NotContain("PRR_xxxxx");
         content.Should().NotContain("PRRT_yyyyy");
@@ -415,7 +417,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogInformation("drift detected at {headSha}", "abc123def456");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
         content.Should().Contain("abc123def456");
     }
@@ -436,7 +438,7 @@ public sealed class FileLoggerProviderTests : IDisposable
         logger.LogError("blew up: {X}", new ThrowingToString());
         await provider.DisposeAsync();
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         File.Exists(todayPath).Should().BeTrue();
     }
 
@@ -476,6 +478,49 @@ public sealed class FileLoggerProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task Rotation_open_failure_increments_writeFailureCount_and_continues_draining()
+    {
+        // Spec § 7 extension counterpart to the startup-open Path A test: when the rollover
+        // OpenAppendStream throws (today's file is locked by another writer), the writer task
+        // must NOT exit. Failure routes to _writeFailureCount, the previous-day's events stay on
+        // disk, and the writer keeps draining. Without the rotate-open guard added in this PR
+        // the writer would die at midnight and every subsequent event would be a drop.
+
+        var yesterdayClock = DateTimeOffset.Now.AddDays(-1);
+        var clock = new MutableClock(yesterdayClock);
+
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTimeOffset.Now:yyyy-MM-dd}.log");
+        var yesterdayPath = Path.Combine(_logsDir, $"prism-{yesterdayClock:yyyy-MM-dd}.log");
+
+        Directory.CreateDirectory(_logsDir);
+        // Lock today's daily file with FileShare.None BEFORE the rotation attempt. The provider
+        // opens yesterday's file successfully at startup, then attempts to open today's at the
+        // rollover — that second open is the one we want to fail.
+        using var locker = new FileStream(todayPath, FileMode.Create, FileAccess.Write, FileShare.None);
+
+        await using (var provider = new FileLoggerProvider(_logsDir, () => clock.Now))
+        {
+            var logger = provider.CreateLogger("Test");
+            logger.LogInformation("yesterday event survives");
+            await Task.Yield();
+            clock.Now = DateTimeOffset.Now;
+            logger.LogInformation("today event triggers locked rotation open");
+            // Give the writer task a moment to drain through the failed rotation before dispose
+            // starts the shutdown sequence — without this, DisposeAsync may complete before the
+            // writer dequeues event #2.
+            await Task.Delay(50);
+
+            provider.WriteFailureCount.Should().BeGreaterThan(0,
+                "the rotation open against a FileShare.None-locked file must route to _writeFailureCount");
+        }
+
+        // The pre-rotation event landed on yesterday's file before the lock-induced failure;
+        // existence + content prove the writer task kept draining (didn't crash on rotation).
+        File.Exists(yesterdayPath).Should().BeTrue();
+        File.ReadAllText(yesterdayPath).Should().Contain("yesterday event survives");
+    }
+
+    [Fact]
     public async Task Emits_session_end_line_and_counter_summary_on_graceful_shutdown()
     {
         await using (var provider = new FileLoggerProvider(_logsDir))
@@ -484,7 +529,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             logger.LogInformation("event 0");
         }
 
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         var content = File.ReadAllText(todayPath);
         content.Should().Contain("session ending");
     }
@@ -501,7 +546,7 @@ public sealed class FileLoggerProviderTests : IDisposable
         // throws), the host stays up, DisposeAsync completes, the counter increments.
 
         Directory.CreateDirectory(_logsDir);
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var todayPath = _todayPath;
         using var locker = new FileStream(todayPath, FileMode.Create, FileAccess.Write, FileShare.Read);
 
         await using var provider = new FileLoggerProvider(_logsDir);

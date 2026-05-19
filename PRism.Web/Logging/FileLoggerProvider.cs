@@ -216,13 +216,38 @@ internal sealed class FileLoggerProvider : ILoggerProvider, IAsyncDisposable
             try { if (_currentStream is not null) await _currentStream.FlushAsync(CancellationToken.None).ConfigureAwait(false); } catch (Exception) { }
             try { if (_currentStream is not null) await _currentStream.DisposeAsync().ConfigureAwait(false); } catch (Exception) { }
 #pragma warning restore CA1031
-            _currentFileDate = today;
-            _currentStream = OpenAppendStream(today);
+            _currentStream = null;
+
+            // Spec § 7 extension: OpenAppendStream can throw IOException at rotation for the same
+            // reasons as at startup (file held by another writer, permissions). Without this guard,
+            // the throw would escape WriteEventAsync past the write try/catch below, hit the outer
+            // fatal-stderr catch in RunWriterAsync, and the writer task would exit — every later
+            // event becomes a backpressure-drop for the rest of the session. Mirror the startup-open
+            // Path A pattern: route to _writeFailureCount with one-stderr-per-session rate-limit,
+            // leave _currentFileDate unchanged so the next event retries, and return cleanly.
+#pragma warning disable CA1031 // Rotate-open: route to counter + stderr, exit gracefully.
+            try
+            {
+                _currentStream = OpenAppendStream(today);
+                _currentFileDate = today;
+            }
+            catch (Exception ex)
+            {
+                if (Interlocked.Increment(ref _writeFailureCount) == 1)
+                    await Console.Error.WriteLineAsync($"PRism FileLogger rotate-open failed: {ex.Message}").ConfigureAwait(false);
+                return;
+            }
+#pragma warning restore CA1031
         }
+
+        // Defense in depth: _currentStream may be null if a prior rotation-open failed and the
+        // current event still falls on the new date (next event retries rotation per the contract
+        // above). Bail rather than NRE-into-catch which would double-count the failure.
+        if (_currentStream is null) return;
 
         try
         {
-            await _currentStream!.WriteAsync(Encoding.UTF8.GetBytes(FormatLine(evt))).ConfigureAwait(false);
+            await _currentStream.WriteAsync(Encoding.UTF8.GetBytes(FormatLine(evt))).ConfigureAwait(false);
             await _currentStream.FlushAsync().ConfigureAwait(false);
         }
 #pragma warning disable CA1031 // I/O failure must not crash the writer.

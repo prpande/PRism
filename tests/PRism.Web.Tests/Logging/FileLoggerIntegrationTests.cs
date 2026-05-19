@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
@@ -51,30 +50,30 @@ public sealed class FileLoggerIntegrationTests : IDisposable
     [Fact]
     public async Task EndToEnd_structured_log_with_pat_field_produces_file_with_redacted_value()
     {
-        // Opt into the file sink despite the Test-env gate, by adding the provider
-        // directly to the test host's service collection. Use a per-test Guid-named
-        // temp DataDir to sidestep any CI temp-dir collisions.
-        await using var factory = new PRismWebApplicationFactory()
+        // Capture the daily-file path BEFORE any provider work to avoid the midnight-boundary
+        // flake (provider writes pre-rollover, assertion reads post-rollover).
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+
+        // Scope the factory in an `await using` block (no explicit DisposeAsync inside the
+        // block — that pattern double-disposes when the scope ends). Implicit dispose at the
+        // close brace drains the writer task before assertions run.
+        await using (var factory = new PRismWebApplicationFactory()
             .WithWebHostBuilder(b => b.ConfigureServices(s =>
             {
                 s.AddSingleton<FileLoggerProvider>(_ => new FileLoggerProvider(_logsDir));
                 s.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLoggerProvider>());
-            }));
+            })))
+        {
+            // CreateClient forces host startup so the FileLoggerProvider is wired into the
+            // Logger<T>'s MessageLogger[]. The client itself is not exercised.
+            using var client = factory.CreateClient();
 
-        using var client = factory.CreateClient();
-
-        // Resolve the ILoggerFactory after host startup so the FileLoggerProvider is
-        // included in the Logger<T>'s MessageLogger[]. The call site fires a known-
-        // shape structured-log event with a `pat` arg.
-        var loggerFactory = factory.Services.GetRequiredService<ILoggerFactory>();
-        var logger = loggerFactory.CreateLogger("PRism.IntegrationTest");
-        logger.LogError("auth failed with {pat}", "ghp_secret_test_xxxxxxxxxxxxxxxx");
-
-        // DisposeAsync the factory to drain the writer task.
-        await factory.DisposeAsync();
+            var loggerFactory = factory.Services.GetRequiredService<ILoggerFactory>();
+            var logger = loggerFactory.CreateLogger("PRism.IntegrationTest");
+            logger.LogError("auth failed with {pat}", "ghp_secret_test_xxxxxxxxxxxxxxxx");
+        }
 
         // Now read the on-disk file.
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
         File.Exists(todayPath).Should().BeTrue($"the daily log file should exist at {todayPath}");
 
         var content = File.ReadAllText(todayPath);
@@ -91,23 +90,23 @@ public sealed class FileLoggerIntegrationTests : IDisposable
     [Fact]
     public async Task EndToEnd_host_shutdown_flushes_all_in_flight_events()
     {
-        await using var factory = new PRismWebApplicationFactory()
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+
+        await using (var factory = new PRismWebApplicationFactory()
             .WithWebHostBuilder(b => b.ConfigureServices(s =>
             {
                 s.AddSingleton<FileLoggerProvider>(_ => new FileLoggerProvider(_logsDir));
                 s.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLoggerProvider>());
-            }));
+            })))
+        {
+            using var client = factory.CreateClient();
+            var loggerFactory = factory.Services.GetRequiredService<ILoggerFactory>();
+            var logger = loggerFactory.CreateLogger("PRism.IntegrationTest");
 
-        using var client = factory.CreateClient();
-        var loggerFactory = factory.Services.GetRequiredService<ILoggerFactory>();
-        var logger = loggerFactory.CreateLogger("PRism.IntegrationTest");
+            for (var i = 0; i < 50; i++)
+                logger.LogInformation("event {Index}", i);
+        }
 
-        for (var i = 0; i < 50; i++)
-            logger.LogInformation("event {Index}", i);
-
-        await factory.DisposeAsync();
-
-        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
         var content = File.ReadAllText(todayPath);
 
         for (var i = 0; i < 50; i++)
