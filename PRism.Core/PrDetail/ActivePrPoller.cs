@@ -124,6 +124,8 @@ public sealed class ActivePrPoller : BackgroundService
                 var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
                 var commentChanged = state.LastCommentCount is { } prevCount && prevCount != snapshot.CommentCount;
 
+                s_pollSnapshotLog(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, commentChanged, null);
+
                 if (firstPoll || headChanged || commentChanged)
                 {
                     _bus.Publish(new ActivePrUpdated(
@@ -173,6 +175,12 @@ public sealed class ActivePrPoller : BackgroundService
         var seconds = Math.Min(Math.Pow(2, state.ConsecutiveErrors) * 30, 300);
         state.NextRetryAt = now.AddSeconds(seconds);
     }
+
+    private static readonly Action<ILogger, PrReference, string, string?, bool, bool, bool, Exception?> s_pollSnapshotLog =
+        LoggerMessage.Define<PrReference, string, string?, bool, bool, bool>(
+            LogLevel.Information,
+            new EventId(3, "ActivePrPollSnapshot"),
+            "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} commentChanged={CommentChanged}");
 
     private static readonly Action<ILogger, PrReference, Exception?> s_pollFailedLog =
         LoggerMessage.Define<PrReference>(LogLevel.Warning,
