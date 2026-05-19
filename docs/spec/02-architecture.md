@@ -525,17 +525,21 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
 
 ## State schema (PoC)
 
-> **Casing note.** The example below uses **camelCase** keys for readability and to match the C# property names, but `state.json` on disk uses **kebab-case** for every property: `JsonSerializerOptionsFactory.Storage` applies `KebabCaseJsonNamingPolicy` to all property names (e.g. `LastViewedHeadSha` C# → `last-viewed-head-sha` JSON; `ReviewSessions` → `review-sessions`; `ViewedFiles` → `viewed-files`; etc.). Dictionary *keys* are intentionally NOT kebab-cased (file paths, repo identifiers must round-trip identically). When extending the schema, name the C# property in PascalCase as usual; the policy converts at write-time. When hand-editing `state.json` (rarely supported — see "Hand-edits" note below), use the kebab-case form.
+> **Casing note.** The example below uses **camelCase** keys for readability and to match the C# property names, but `state.json` on disk uses **kebab-case** for every property: `JsonSerializerOptionsFactory.Storage` applies `KebabCaseJsonNamingPolicy` to all property names (e.g. `TabStamps` C# → `tab-stamps` JSON; `HeadSha` → `head-sha`; `StampedAtUtc` → `stamped-at-utc`; `ReviewSessions` → `review-sessions`; `ViewedFiles` → `viewed-files`; etc.). Dictionary *keys* are intentionally NOT kebab-cased (file paths, repo identifiers, tab ids must round-trip identically). When extending the schema, name the C# property in PascalCase as usual; the policy converts at write-time. When hand-editing `state.json` (rarely supported — see "Hand-edits" note below), use the kebab-case form.
 
 ```jsonc
 {
-  "version": 2,                                  // S3 ships v1 → v2: adds `viewed-files` per session. v1 files are migrated on first load via `MigrateV1ToV2` in `AppStateStore`. Files already at v2 are loaded as-is. See § "Schema migration policy" below.
-  "reviewSessions": {
+  "version": 6,                                  // Current schema version. v1→v2 (S3): adds `viewed-files`. v2→v3 (S4 PR1): renames `review-sessions` → `reviews.sessions` + adds draft collections. v3→v4 (S5 PR2): adds `DraftComment.threadId`. v4→v5 (S6 PR0): moves `reviews`/`ai-state`/`last-configured-github-host` under `accounts.default`. v5→v6 (cross-tab-stamp slice): replaces the session-flat `last-viewed-head-sha` with a per-tab `tab-stamps` map keyed by the caller's `X-PRism-Tab-Id`. Each step has a registered migration function in `PRism.Core/State/Migrations/AppStateMigrations.cs`. See § "Schema migration policy" below.
+  "accounts": {                                  // v5+ container. The default account holds the v4-equivalent reviews / aiState / lastConfiguredGithubHost. v2 of the app may layer more accounts here; v1 reads/writes only `accounts.default`.
+    "default": {
+  "reviews": { "sessions": {
     "owner/repo/123": {
-      "lastViewedHeadSha": "abc...",
-      "lastSeenCommentId": "12345",
+      "tabStamps": {                              // v6+ per-tab head-sha map (cross-tab-stamp slice). Keyed by `X-PRism-Tab-Id` (allowlist [a-zA-Z0-9_-]{1,64}); value is `{ headSha, stampedAtUtc }`. mark-viewed / reload / test-hook write under the caller's tab id; the submit gate reads `tabStamps[callerTabId].headSha` and refuses (400 head-sha-not-stamped) when the caller's specific tab has no stamp. Cap N=8 entries — eviction by oldest `stampedAtUtc`. Inbox projection still surfaces ONE head sha to the FE (via `LastViewedHeadSha` on `PrInboxItem`) using the most-recent stamp across all tabs.
+        "<tab-id-1>": { "headSha": "abc...", "stampedAtUtc": "2026-05-18T14:23:45Z" }
+      },
+      "lastSeenCommentId": "12345",               // Session-flat, NOT per-tab — the inbox unread badge depends on this being a session-level monotone high-water. mark-viewed updates via `MonotonicCommentId.Max(current, body.MaxCommentId)`; markAllRead uses the same guard against the active-PR cache's `HighestIssueCommentId` (the cache can lag a fresh PR-detail mark-viewed, so the equality short-circuit was reversed to a max in v6).
       "draftVerdict": "approve",
-      "draftVerdictStatus": "draft",                  // re-confirm logic compares the PR's current head_sha against `lastViewedHeadSha`; no separate anchor-SHA field is stored (an earlier draft kept `draftVerdictAnchorSha` here with no producer or consumer; it has been dropped).
+      "draftVerdictStatus": "draft",                  // re-confirm logic compares the PR's current head_sha against the caller's `tabStamps[callerTabId].headSha` (three-branch fallback in `DraftReconciliationPipeline.HeadShaForShift` when callerTabId is null or absent from the map); no separate anchor-SHA field is stored (an earlier draft kept `draftVerdictAnchorSha` here with no producer or consumer; it has been dropped).
       "draftSummaryMarkdown": "...",
       "pendingReviewId": null,                // GraphQL Node ID (PRR_...) of the user's pending review on this PR; populated mid-submit and cleared on success. Idempotency key for retry. See [verification-notes § C1](./00-verification-notes.md#c1).
       "pendingReviewCommitOid": null,         // SHA the pending review was anchored to at step 1. Compared against current head_sha on retry to detect history-rewriting force-push since the pending review was created — see § 6 retry "Stale `commitOID`" path.
@@ -566,6 +570,9 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
         "src/Bar.cs": "abc..."
       },
       "iterationOverrides": []                 // user-applied iteration boundary edits via right-click on iteration tabs (PoC feature). Empty array = no overrides applied. Each entry: { kind: "merge" | "split-before" | "split-after", commitSha: "<SHA>", appliedAt: "<ISO8601>" }. "merge" combines this commit's iteration with the previous; "split-before" starts a new iteration *at* this commit (this commit is the first in the new iteration); "split-after" ends the current iteration *after* this commit (the next commit starts a new iteration). The earlier `kind: "split"` was directionally ambiguous; the two-form split fixes that. Replays on PR reload; persists across sessions. History-rewriting force-push handling: on reload, any override whose `commitSha` is no longer in the PR's commit graph (`GET /repos/{o}/{r}/commits/{sha}` returns 404) is dropped silently. A single one-time toast surfaces: "N iteration boundary overrides were dropped because the commits they referenced were rewritten by a force-push." Same posture as the draft fallback in § 5 — best-effort recovery, no rebuild attempt.
+    }
+  } }
+  // ... aiState + lastConfiguredGithubHost live alongside `reviews` under accounts.default; see v5 migration commentary.
     }
   },
   "ui": {                                       // global UI preferences — not per-PR, persisted across sessions

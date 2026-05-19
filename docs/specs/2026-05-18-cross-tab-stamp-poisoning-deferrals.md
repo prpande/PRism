@@ -155,4 +155,37 @@ Captured after the user-authorized second ce-doc-review pass. The pass surfaced 
 
 ## Implementation-time deferrals
 
-*(Empty — to be populated during plan execution.)*
+### [Deviation] Tasks 1+2+3 landed as one commit; Tasks 4+5+6+6b landed as one commit
+
+- **Source:** Phase 1 / Phase 2 commit boundaries.
+- **Affects:** Git history granularity for `feat/cross-tab-stamp-impl`.
+- **Decision:** Plan called for Tasks 1+2 → one commit and Task 3 → another. Combined into a single Phase 1 commit because the V5→V6 migration is so tightly coupled with the V6 schema reshape (every test that asserts on Version values needs to bump 5→6 in the same commit; splitting forced a transient red state). Similarly, the four write-site tasks (mark-viewed, reload, test-hook, markAllRead-monotone) landed as one Phase 2 commit since they share the same `MonotonicCommentId.Max` + `TabIdAllowlistRegex` plumbing. Both commits are atomically build-green and atomically test-green; nothing was deferred functionally.
+- **Revisit when:** N/A — historical record only.
+
+### [Deviation] PrInboxItem.LastViewedHeadSha contract field name preserved
+
+- **Source:** Phase 1 sweep over `LastViewedHeadSha` occurrences.
+- **Affects:** `PRism.Core.Contracts/PrInboxItem.cs:16`, the corresponding TS shape in `frontend/__tests__/usePrDetail.test.tsx`, frontend Playwright fixtures.
+- **Decision:** The inbox contract still surfaces ONE head-sha value to the FE (for the "X commits since you last looked" badge). Spec § 6 says the derivation now reads "most-recent stamp's HeadSha"; only the SERVER-SIDE derivation changed (`InboxRefreshOrchestrator.MaterializePrInboxItem`). The contract field name stayed `LastViewedHeadSha` because renaming would ripple through the FE inbox component, the Playwright fixtures, and the test snapshots — all for a semantic-equivalent rename. The field name is now slightly misleading ("last viewed in any tab" rather than "last viewed at session level"), so a future v2 contract bump that renames `LastViewedHeadSha` → `LastViewedAnyTabHeadSha` would clarify; deferred to that contract bump.
+- **Revisit when:** A v2 contract bump renames any field on PrInboxItem.
+
+### [Deviation] Reconciliation/inbox legacy stub helper retired without tombstoning the OverrideStaleTests / VerdictReconfirmTests cases the plan named
+
+- **Source:** Plan Task 2 Step 4b listed VerdictReconfirmTests + OverrideStaleTests head-shift tests as candidates for `[Fact(Skip = "Wired in Task 8")]`. They were NOT skipped during Phase 1.
+- **Affects:** `tests/PRism.Core.Tests/Reconciliation/{VerdictReconfirm,OverrideStale}Tests.cs`.
+- **Decision:** Each test seeds a session with a single "tab-test" stamp; under the temporary `LegacyMostRecentHeadSha()` stub the semantic ("most-recent across all tabs") happens to coincide with the eventual per-tab semantic for a one-tab session. Both test suites passed unchanged through Phase 1 → Phase 4 with zero false-positive or false-negative runs, so the precautionary Skip was unnecessary. The plan's directive was conservative; sticking with it would have produced a churn-only Phase 4 commit that just removed `Skip` from passing tests.
+- **Revisit when:** If a future regression introduces a real multi-tab semantic divergence at these test sites, they'll fail and the legacy stub's removal (Phase 4) is already the right place to assert the new branch logic.
+
+### [Deferred] Full 8-spec Playwright mocked-mode submit suite
+
+- **Source:** Plan Phase 7 (Tasks 13-15).
+- **Affects:** `frontend/e2e/cross-tab-stamp-*.spec.ts` (not created); existing e2e specs (no changes other than the `/test/mark-pr-viewed` tabId body update via the helper).
+- **Decision:** The plan called for 8 mocked-mode Playwright specs covering tab isolation, eviction at the cap, the cross-tab unread-badge invariant, etc. Phase 6's `__prism_test_getTabId` hook + `VITE_E2E_TEST` build-time env are in place, plus the `recordPrViewed` helper now accepts a tabId. The 8 specs themselves are deferred: every cross-tab branch covered by the new C# tests (mark-viewed tab isolation, eviction, submit cross-tab head-sha-not-stamped) is already exercised at the unit + endpoint-integration tier, so the Playwright additions are confirmation-tier rather than gap-closing. Sticky budget reasons (this implementation PR is already ~12 commits across 6 phases) outweighed the marginal browser-level confirmation value.
+- **Revisit when:** First real cross-tab regression that the C# tests miss; or, the next slice that touches the submit/reload/mark-viewed plumbing (a good place to add the Playwright suite as net new coverage). Re-opening should re-read plan Task 13's spec list — Spec 1 (tab-A submits, tab-B never blocks), Spec 2 (tab-A mark-viewed, tab-B submit → 400 head-sha-not-stamped), Spec 3 (tab-id-missing 422), Spec 4-8 (eviction, monotone unread badge across tabs, reload-then-submit per-tab, etc.).
+
+### [Deferred] Real-flow Playwright e2e spec for cross-tab
+
+- **Source:** Plan implicit (the mocked-mode suite above and the real-flow suite under e2e/real/* are different).
+- **Affects:** `frontend/e2e/real/*.spec.ts`.
+- **Decision:** Real-flow tests use a GitHub PAT and a real PR; they're slow and PAT-gated. Cross-tab semantics don't need GitHub coverage — the gate is server-internal. Real-flow adds zero confidence over the mocked-mode + endpoint-integration tests. Permanently out of scope for this slice.
+- **Revisit when:** Never, unless a future change makes the cross-tab gate dependent on a GitHub API response.
