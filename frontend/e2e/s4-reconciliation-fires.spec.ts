@@ -3,6 +3,7 @@ import {
   setupAndOpenScenarioPr,
   openScenarioFilesTab,
   advanceHead,
+  reloadPr,
   resetBackendState,
 } from './helpers/s4-setup';
 
@@ -63,10 +64,7 @@ test('draft reconciliation fires after a simulated head shift', async ({ page })
   // reads file content at this sha; line 3's anchored content
   // ("public static int Add...") no longer exists in the new content, so the
   // line-resolution step can't find a match → classify Stale.
-  const reloadResp = await page.request.post('/api/pr/acme/api/123/reload', {
-    data: { headSha: newHeadSha },
-    headers: { Origin: 'http://localhost:5180' },
-  });
+  const reloadResp = await reloadPr(page, { owner: 'acme', repo: 'api', number: 123 }, newHeadSha);
   expect(reloadResp.status()).toBe(200);
 
   // Reload the page so useDraftSession fetches the post-reconciliation
