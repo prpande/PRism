@@ -535,7 +535,7 @@ public async Task<ReconciliationResult> ReconcileAsync(
 
 **Required changes:**
 
-1. **Hook (`TestEndpoints.cs`):** accept `tabId` as a body field on the `MarkPrViewedRequest` record (alongside `Owner`, `Repo`, `Number`, `HeadSha`). Apply the same allowlist regex as mark-viewed (`^[a-zA-Z0-9_-]{1,64}$`). Write `TabStamps[tabId] = new TabStamp(headSha, DateTime.UtcNow)` with the same N=8 LRU eviction policy.
+1. **Hook (`TestEndpoints.cs`):** extend the `MarkPrViewedRequest` record from `(Owner, Repo, Number)` to `(Owner, Repo, Number, TabId)` — **`headSha` continues to be derived server-side** from `FakeReviewBackingStore.CurrentHeadSha` (the existing path). Apply the same allowlist regex as mark-viewed (`^[a-zA-Z0-9_-]{1,64}$`) to `TabId`. Write `TabStamps[body.TabId] = new TabStamp(serverDerivedHeadSha, DateTime.UtcNow)` with the same N=8 LRU eviction policy.
 2. **Helper (`recordPrViewed`):** accept a `tabId: string` parameter and pass it in the request body. Add a sibling helper that extracts the page's tab id, e.g. `await page.evaluate(() => (window as any).__prism_test_getTabId?.() ?? null)` — this requires a small FE test-mode hook that exposes `getTabId()` on `window` when `aiPreview` / test mode is active. Alternative: pass the tab id explicitly via a fixture (e.g., set a cookie / localStorage value the FE reads on init). The plan picks the cleanest of the two.
 3. **Specs:** each of the eight specs adds one line before `recordPrViewed` to capture the page's tab id, and passes it to the helper.
 

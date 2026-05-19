@@ -10,7 +10,7 @@
 
 **Spec:** [`docs/specs/2026-05-18-cross-tab-stamp-poisoning-design.md`](../specs/2026-05-18-cross-tab-stamp-poisoning-design.md).
 **Deferrals sidecar:** [`docs/specs/2026-05-18-cross-tab-stamp-poisoning-deferrals.md`](../specs/2026-05-18-cross-tab-stamp-poisoning-deferrals.md).
-**Worktree:** `D:/src/prism-cross-tab-stamp` (branch `feat/cross-tab-stamp`).
+**Worktree:** branch `feat/cross-tab-stamp`. Authored on Windows at `D:/src/prism-cross-tab-stamp`; teammates running this plan on macOS / Linux pick any local path (the worktree shape from the project's `using-git-worktrees` skill applies). All Bash snippets in this plan that reference `D:/src/prism-cross-tab-stamp` are author-machine-specific — substitute your own worktree path.
 
 ---
 
