@@ -254,11 +254,27 @@ internal sealed class FileLoggerProvider : ILoggerProvider, IAsyncDisposable
             new EventId(0, "SessionStarted"),
             $"session started, processId={Environment.ProcessId}, version={version}",
             null));
-        await _currentStream!.WriteAsync(Encoding.UTF8.GetBytes(line)).ConfigureAwait(false);
+
+        // Must mirror WriteEventAsync's discipline: if this write throws, the exception
+        // propagates out of RunWriterAsync's try-block to the fatal-stderr catch and the
+        // writer task EXITS before reading a single channel event — turning the session's
+        // logging into all _droppedDueToBackpressure increments. Wrap in same try/catch
+        // pattern so the writer continues to drain even if the session-start marker is lost.
         // FlushAsync: spec's "eager flush per event for crash durability" — if the host
         // crashes between session-start and the first regular event, the session-start
         // marker should still be on disk.
-        await _currentStream.FlushAsync().ConfigureAwait(false);
+        try
+        {
+            await _currentStream!.WriteAsync(Encoding.UTF8.GetBytes(line)).ConfigureAwait(false);
+            await _currentStream.FlushAsync().ConfigureAwait(false);
+        }
+#pragma warning disable CA1031 // I/O failure must not crash the writer.
+        catch (Exception ex)
+        {
+            if (Interlocked.Increment(ref _writeFailureCount) == 1)
+                await Console.Error.WriteLineAsync($"PRism FileLogger session-start write failed: {ex.Message}").ConfigureAwait(false);
+        }
+#pragma warning restore CA1031
     }
 
     private async Task EmitSessionEndSummaryAsync()
@@ -311,8 +327,16 @@ internal sealed class FileLoggerProvider : ILoggerProvider, IAsyncDisposable
             if (parserFailures > 0)
                 await Console.Error.WriteLineAsync($"PRism FileLogger had {parserFailures} template parser failures this session.").ConfigureAwait(false);
         }
-#pragma warning disable CA1031 // Best-effort summary; never throw.
-        catch (Exception) { }
+#pragma warning disable CA1031 // Best-effort summary; never throw, but DO surface to operator.
+        // Bare swallow was the worst failure mode: the only path that emits per-session
+        // drop/write/parser counts going silent on host-shutdown FS fragility left the
+        // operator with zero diagnostic. Route to stderr like the other failure paths.
+        // Do NOT increment _writeFailureCount here — it has already been read for the
+        // summary line above; just surface the partial-summary failure.
+        catch (Exception ex)
+        {
+            await Console.Error.WriteLineAsync($"PRism FileLogger session-end summary failed: {ex.Message}").ConfigureAwait(false);
+        }
 #pragma warning restore CA1031
     }
 
