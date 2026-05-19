@@ -62,9 +62,11 @@ public sealed class WeightedDistanceClusteringStrategy : IIterationClusteringStr
         }
 
         // The MAD threshold can produce false boundaries on tight-burst PRs (low median, low MAD).
-        // Floor the threshold at MinimumBoundaryGapSeconds so real iteration boundaries are at
-        // least one context-switch apart — see IterationClusteringCoefficients.MinimumBoundaryGapSeconds
-        // commentary. The MAD threshold still dominates whenever it's above the floor.
+        // Floor the threshold at MinimumBoundaryGapSeconds so a gap registers as an iteration
+        // boundary only when it is STRICTLY GREATER than one context-switch apart (the boundary
+        // check below is `weighted[i] > threshold` — a gap exactly equal to the floor does NOT
+        // cross). See IterationClusteringCoefficients.MinimumBoundaryGapSeconds commentary.
+        // The MAD threshold still dominates whenever it's above the floor.
         var madThreshold = MadThresholdComputer.Compute(weighted, coefficients.MadK);
         var threshold = Math.Max(madThreshold, coefficients.MinimumBoundaryGapSeconds);
         var boundaries = new List<int>();

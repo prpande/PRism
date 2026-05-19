@@ -88,10 +88,11 @@ public class FrozenPrismPrTests
             "this assertion runs against parsed shape.");
     }
 
-    // 7f — clusteringQuality classification.
+    // 7f — clusteringQuality classification. Each corpus entry declares its ExpectedQuality
+    // (Ok or Low) and this test asserts the algorithm's classification matches.
     [Theory]
     [MemberData(nameof(FrozenPrCorpus.AllAsTheoryData), MemberType = typeof(FrozenPrCorpus))]
-    public async Task Frozen_pr_returns_clustering_quality_ok(FrozenPrEntry entry)
+    public async Task Frozen_pr_returns_expected_clustering_quality(FrozenPrEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
         var snap = await _fixture.Loader.LoadAsync(Ref(entry), CancellationToken.None);

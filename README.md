@@ -56,7 +56,9 @@ reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 
 ### Integration tests (live GitHub)
 
-A separate suite at `tests/PRism.GitHub.Tests.Integration/` exercises `GitHubReviewService` against five locked PRs in this repo. Opt-in — excluded from default `dotnet test` via [`.runsettings`](.runsettings).
+A separate suite at `tests/PRism.GitHub.Tests.Integration/` exercises `GitHubReviewService` against five locked PRs in this repo. Opt-in. The repo-root [`.runsettings`](.runsettings) excludes the integration + canonical-strict tests, but **`.runsettings` is only consulted when `dotnet test` is invoked with `--settings .runsettings`** — plain `dotnet test` (no flag) runs every test including the integration suite, which then needs a PAT to succeed. The pre-push checklist below and `.github/workflows/ci.yml` both pass `--settings .runsettings`.
+
+Explicit run command for the integration suite only:
 
 ```
 dotnet test --filter "Category=Integration&Canonical!=Strict"

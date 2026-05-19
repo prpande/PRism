@@ -16,7 +16,7 @@
 dotnet test --filter "Category=Integration&Canonical!=Strict"
 ```
 
-Run from repo root. The `.runsettings` filter ensures the default `dotnet test` (without `--filter`) excludes the integration suite.
+Run from repo root. The repo-root `.runsettings` only takes effect when `dotnet test` is invoked with `--settings .runsettings` (the CLI does **not** auto-discover the file). The pre-push checklist and `.github/workflows/ci.yml` both pass `--settings .runsettings` so the integration suite is excluded in those paths; running plain `dotnet test` from the command line will try to execute every test in the solution, including the integration tests — which then need a PAT (or `gh auth`) to succeed. Use either `dotnet test --settings .runsettings` (for a quick local sweep that mirrors CI) or the explicit filter above (to run only the integration suite).
 
 Validation tests against `prpande/ShaktimaanAI` PRs run under the same `Category=Integration` filter (they carry both `Integration` and `Validation` traits); to run only the validation subset, use `--filter "Category=Validation"`.
 
