@@ -58,12 +58,12 @@ Decisions weighed during the brainstorm pass that did not land in the v1 slice. 
 - **Reason:** v1 redacts by *field name* — the structured-arg key has to match `BlockedFieldNames` to trigger redaction. A future call site that does `throw new InvalidOperationException($"failed with PAT {pat}")` would leak the PAT through `ex.Message`, which lands in the `ExceptionString` field of the `FileLogEvent` and is written verbatim. The existing discipline ("never put a PAT in an exception message") is auditable via `git grep 'throw.*pat'`. Adding a regex pass (`^ghp_[A-Za-z0-9_]{36,}$` etc.) over exception messages + stack traces would cost CPU per log event and introduces false-positive risk (any 40-character alphanumeric string could match a PAT-shape regex). The trade — call-site discipline plus auditability vs. defense-in-depth at every log event — favours discipline for the PoC.
 - **Revisit when:** A real incident surfaces a PAT-in-exception-message leak, OR a future slice introduces a code path that produces user-controlled exception strings that could include credentials (e.g., an OAuth flow with error messages from the IdP).
 
-### [Defer] Hot-reload of `FileLoggerOptions`
+### [Defer] Hot-reload of `FileLoggerConstants`
 
 - **Source:** Brainstorm 2026-05-18 (design § 4.1 — options snapshot at construction).
 - **Severity:** P3.
 - **Date:** 2026-05-18.
-- **Reason:** `FileLoggerProvider` captures `FileLoggerOptions` at construction (not `IOptionsMonitor<T>`). Changing `RetentionDays` or `ChannelCapacity` requires a host restart. Hot-reload would mean restarting the writer task on options change (channel must be re-created at a new capacity; retention sweep must re-run with the new window), which adds non-trivial state-machine complexity for a config surface no PRism deployment currently uses.
+- **Reason:** `FileLoggerProvider` uses compile-time constants in `FileLoggerConstants` (no `IOptions` binding, no `IOptionsMonitor<T>`). Changing `RetentionDays` or `ChannelCapacity` requires a recompile. Hot-reload would mean (a) re-introducing the options-binding ceremony pass 1 of ce-doc-review removed, and (b) restarting the writer task on options change (channel must be re-created at a new capacity; retention sweep must re-run with the new window) — non-trivial state-machine complexity for a config surface no PRism deployment currently uses.
 - **Revisit when:** A deployment scenario emerges that warrants dynamic config — e.g., a hosted multi-tenant setting where retention is per-tenant configurable. Out of PoC scope.
 
 ### [Defer] Flush-batching for throughput

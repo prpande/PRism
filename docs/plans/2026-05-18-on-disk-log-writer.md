@@ -16,7 +16,7 @@
 
 ## Task ordering & dependencies
 
-Tasks 1–2 are independent and can be implemented in either order. Task 3 (the POCO) bundles into Task 4. Tasks 4–6 depend on Tasks 1–2. Task 7 (wiring) depends on Tasks 4–6. Task 8 (integration test) depends on Task 7. Task 9 (pre-push) gates the PR.
+Tasks 1–2 are independent and can be implemented in either order. Task 3 (the POCO) is its own commit but is small enough that an implementer may squash it into Task 4 at PR-review time without losing TDD discipline (the POCO has no behavior to test independently). Tasks 4–6 depend on Tasks 1–2. Task 7 (wiring) depends on Tasks 4–6. Task 8 (integration test) depends on Task 7. Task 9 (pre-push) gates the PR.
 
 Each task is independently committable: the build is green at every commit.
 
@@ -968,8 +968,8 @@ namespace PRism.Web.Logging;
 // per session per failure class) and to a counter that lands in the session-end summary.
 internal sealed class FileLoggerProvider : ILoggerProvider, IAsyncDisposable
 {
-    public const int RetentionDays = 14;
-    public const int ChannelCapacity = 1024;
+    internal const int RetentionDays = 14;
+    internal const int ChannelCapacity = 1024;
 
     private static readonly Regex DailyLogFileName =
         new(@"^prism-(\d{4}-\d{2}-\d{2})\.log$", RegexOptions.Compiled);
@@ -1047,7 +1047,12 @@ internal sealed class FileLoggerProvider : ILoggerProvider, IAsyncDisposable
             Interlocked.Increment(ref _droppedDueToBackpressure);
     }
 
-    void IDisposable.Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+    // Sync-bridge to DisposeAsync. .GetAwaiter().GetResult() on an awaiting async method
+    // would deadlock if the caller has a SynchronizationContext (ASP.NET request thread, test
+    // runners with custom contexts). The DI container correctly calls DisposeAsync directly
+    // at host teardown, so this path is unlikely to fire in production — but .Wait(timeout)
+    // is the safe shape for any direct Dispose() call.
+    void IDisposable.Dispose() => DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
 
     public async ValueTask DisposeAsync()
     {
@@ -1576,12 +1581,13 @@ Append to `tests/PRism.Web.Tests/Logging/FileLoggerProviderTests.cs`:
         logger.LogInformation("event that will fail to write");
         await provider.DisposeAsync();
 
-        // Test reaching this line is the assertion — DisposeAsync returned cleanly.
-        provider.WriteFailureCount.Should().BeGreaterOrEqualTo(0);  // counter may or may not have
-                                                                     // fired depending on whether
-                                                                     // OpenAppendStream itself threw
-                                                                     // (which routes to the writer-
-                                                                     // task fatal stderr path).
+        // Reaching this line IS the assertion — DisposeAsync returned cleanly without
+        // deadlock or throw despite the writer-task fatal exception from OpenAppendStream.
+        // The WriteFailureCount counter may or may not have fired depending on whether the
+        // failure landed in OpenAppendStream (routes to the writer-task fatal stderr path
+        // before any write attempt) or in a subsequent WriteAsync (increments the counter).
+        // We don't assert on the counter value here because either path is consistent with
+        // the spec's "host stays up on I/O failure" contract.
     }
 ```
 

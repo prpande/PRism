@@ -59,7 +59,7 @@ A new `PRism.Web.Logging.FileLoggerProvider` registers as an additional `ILogger
 
 `PRism.Web/Logging/FileLoggerProvider.cs`. Implements `ILoggerProvider`, `IAsyncDisposable`. Owns:
 
-- `Channel<FileLogEvent>` (bounded, capacity from `FileLoggerOptions.ChannelCapacity` default 1024).
+- `Channel<FileLogEvent>` (bounded, capacity `FileLoggerConstants.ChannelCapacity` — compile-time constant, 1024).
 - Current `FileStream` (initialised on first event; never null after startup).
 - Current file's `DateOnly` (local date).
 - `_droppedDueToBackpressure` (`long`, `Interlocked` increment) — events that failed `TryWrite` because the channel was full while the host was running normally.
@@ -138,8 +138,10 @@ No `IOptions<T>` binding, no `appsettings.json` override. Hot-reload is a deferr
 `PRism.Web/Logging/FileLoggerExtensions.cs`:
 
 ```csharp
-public static ILoggingBuilder AddPRismFileLogger(this ILoggingBuilder builder, string dataDir)
+public static ILoggingBuilder AddPRismFileLogger(this ILoggingBuilder builder, string dataDir, IHostEnvironment env)
 {
+    if (env.IsEnvironment("Test")) return builder;   // Test-host carve-out (see § 9.1)
+
     var logsDir = Path.Combine(dataDir, "logs");
     builder.Services.AddSingleton<FileLoggerProvider>(_ => new FileLoggerProvider(logsDir));
     builder.Services.AddSingleton<ILoggerProvider>(sp => sp.GetRequiredService<FileLoggerProvider>());
@@ -149,7 +151,7 @@ public static ILoggingBuilder AddPRismFileLogger(this ILoggingBuilder builder, s
 
 No options binding. No hosted service. The provider's constructor starts the writer task; the DI container calls `DisposeAsync` on the registered singleton during host teardown, which drains the channel.
 
-`Program.cs` gates registration on `!IsEnvironment("Test")` (see § 9) — `WebApplicationFactory<Program>`-based tests don't accidentally spin up writer tasks against 111 temp DataDirs in parallel. The integration tests in § 8.3 explicitly opt in via a separate registration shape.
+The `env.IsEnvironment("Test")` short-circuit lives inside the extension method (not at the call site) — `WebApplicationFactory<Program>`-based tests don't accidentally spin up writer tasks against 111 temp DataDirs in parallel. The integration tests in § 8.3 explicitly opt in via a separate registration shape that bypasses the extension method. See § 9 for the canonical wiring shape and rationale.
 
 ### 4.7 Updated `SensitiveFieldScrubber`
 
@@ -208,7 +210,10 @@ ILogger.Log<TState>(level, eventId, state, exception, formatter)
             |       }
             |       if (template != null) {
             |           try { formatted = LogTemplateFormatter.Format(template, scrubbedDict); }
-            |           catch { formatted = formatter(state, exception);  // fallback unscrubbed }
+            |           catch {
+            |               formatted = formatter(state, exception);  // fallback unscrubbed
+            |               _parent.OnTemplateSubstitutionFailure();  // increments counter, stderr once per session
+            |           }
             |       } else {
             |           formatted = formatter(state, exception);  // zero-arg overload: no template to substitute
             |       }
@@ -472,7 +477,7 @@ At the spring-forward boundary, two events 1 second apart could be on different 
 
 ### 12.3 `LogTemplateFormatter` parser surface area
 
-The M.E.Logging template grammar is documented but the parser must handle `{Name}`, `{Name:format}`, `{Name,alignment}`, `{Name,alignment:format}`, `{{`, `}}`. Test coverage in § 8.2 enumerates the cases. Implementation MAY use `string.Format` with a positional re-map (named → indexed via dictionary key ordering) to lean on the BCL's well-tested format engine; the test surface stays the same.
+The M.E.Logging template grammar is documented but the parser must handle `{Name}`, `{Name:format}`, `{Name,alignment}`, `{Name,alignment:format}`, `{{`, `}}`. Test coverage in § 8.2 enumerates the cases. Implementation **MUST** use `string.Format` with a positional re-map (named → indexed via dictionary key ordering) to lean on the BCL's well-tested format engine — see § 4.4 (pinned, not advisory; a `.Replace`-style parser is explicitly forbidden because it has a recursion hazard).
 
 ### 12.4 Drain-timeout-on-shutdown elides events
 
