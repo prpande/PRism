@@ -13,6 +13,28 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
 {
     private static readonly string[] RequiredScopes = ["repo", "read:user", "read:org"];
 
+    // Single source of truth for the PR-detail GraphQL query shape. Lifted out of
+    // GetPrDetailAsync so the integration test 7g (Frozen_pr_graphql_shape_unchanged) can
+    // replay the EXACT same query the production code issues — and so a future schema
+    // refactor here flips the shape-drift test before it ships. `internal` (not public)
+    // because the query string is an implementation detail of the GitHub adapter;
+    // PRism.GitHub.Tests.Integration sees it via InternalsVisibleTo (csproj).
+    internal const string PrDetailGraphQLQuery = "query($owner:String!,$repo:String!,$number:Int!){" +
+        "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
+        "title body url state isDraft mergeable mergeStateStatus " +
+        "headRefName baseRefName headRefOid baseRefOid " +
+        "author{login} createdAt closedAt mergedAt changedFiles " +
+        "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login} createdAt body}}" +
+        "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
+        "comments(first:100){nodes{id author{login} createdAt body lastEditedAt}}}}" +
+        "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
+        "pageInfo{hasNextPage endCursor} nodes{__typename " +
+        "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
+        "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
+        "... on PullRequestReview{submittedAt}" +
+        "}}" +
+        "}}}";
+
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
     private readonly string _host;
@@ -222,22 +244,10 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         // N pages was not loaded" banner. Cursor pagination up to MaxTimelinePages = 10
         // is a follow-up (spec § 6.1; Q2 cap detection); the cap-hit signal is the
         // user-visible contract that matters today.
-        const string query = "query($owner:String!,$repo:String!,$number:Int!){" +
-            "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
-            "title body url state isDraft mergeable mergeStateStatus " +
-            "headRefName baseRefName headRefOid baseRefOid " +
-            "author{login} createdAt closedAt mergedAt changedFiles " +
-            "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login} createdAt body}}" +
-            "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
-            "comments(first:100){nodes{id author{login} createdAt body lastEditedAt}}}}" +
-            "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
-            "pageInfo{hasNextPage endCursor} nodes{__typename " +
-            "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
-            "... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} createdAt} " +
-            "... on PullRequestReview{submittedAt}" +
-            "}}" +
-            "}}}";
-        var raw = await PostGraphQLAsync(query, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
+        //
+        // Query string lifted to `PrDetailGraphQLQuery` (class-level internal const) so
+        // the integration shape-drift test can issue the exact same query.
+        var raw = await PostGraphQLAsync(PrDetailGraphQLQuery, new { owner = reference.Owner, repo = reference.Repo, number = reference.Number }, ct).ConfigureAwait(false);
 
         using var doc = JsonDocument.Parse(raw);
         // GraphQL responses are HTTP 200 even on execution errors — the `errors` array

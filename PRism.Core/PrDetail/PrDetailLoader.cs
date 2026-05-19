@@ -193,11 +193,17 @@ public sealed class PrDetailLoader
         ClusteringInput timeline,
         HashSet<string> commitShaSet)
     {
-        // Q5 — three triggers for ClusteringQuality.Low:
-        //   1. timeline has ≤ 1 commit (clustering is meaningless with 0 or 1 commits)
+        // Quality.Low triggers (post-calibration 2026-05-18):
+        //   1. timeline has 0 commits (clustering is meaningless with no data)
         //   2. config flag iterations.clusteringDisabled = true (calibration-failure escape hatch)
         //   3. strategy returns null (per-PR degenerate detector fired)
-        if (timeline.Commits.Count <= 1)
+        //
+        // 1-commit PRs no longer short-circuit to Low — they return Ok with a single iteration
+        // through the strategy's `sorted.Length == 1` arm. Single-commit doc-fixes and revert
+        // PRs are legitimately "one unit of work" and should render the iteration view, not
+        // the commit-picker fallback. Calibrated against the ShaktimaanAI validation set
+        // (PR #22, single-commit doc fix).
+        if (timeline.Commits.Count == 0)
             return (ClusteringQuality.Low, null);
 
         if (_configStore.Current.Iterations.ClusteringDisabled)

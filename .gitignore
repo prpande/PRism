@@ -88,3 +88,7 @@ Thumbs.db
 
 # Code coverage reports
 coveragereport/
+
+# Transient capture output for FrozenPrCorpus population (Task 8 lock-and-capture script);
+# the values are committed in FrozenPrCorpus.cs itself, source-of-truth.
+tests/PRism.GitHub.Tests.Integration/captured/

@@ -102,8 +102,11 @@ public class PrDetailEndpointsTests
     }
 
     [Fact]
-    public async Task Get_pr_detail_propagates_ClusteringQuality_Low_when_timeline_has_one_commit()
+    public async Task Get_pr_detail_propagates_ClusteringQuality_Ok_with_single_iteration_when_timeline_has_one_commit()
     {
+        // Calibration 2026-05-18: single-commit PRs are legitimately "one unit of work" and
+        // return Ok + 1 iteration through the strategy's `sorted.Length == 1` arm.
+        // DetermineQuality only short-circuits to Low when Commits.Count == 0 now.
         var (factory, review) = MakeFactory();
         using var _f = factory;
         review.DefaultTimelineResponse = MakeTimeline(1);
@@ -111,9 +114,10 @@ public class PrDetailEndpointsTests
         var resp = await factory.CreateClient().GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
 
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("clusteringQuality").GetString().Should().Be("low",
+        body.GetProperty("clusteringQuality").GetString().Should().Be("ok",
             because: "kebab-case enum wire format per the project's JsonSerializerOptions");
-        body.GetProperty("iterations").ValueKind.Should().Be(JsonValueKind.Null);
+        body.GetProperty("iterations").ValueKind.Should().Be(JsonValueKind.Array);
+        body.GetProperty("iterations").GetArrayLength().Should().Be(1);
         body.GetProperty("commits").GetArrayLength().Should().Be(1);
     }
 

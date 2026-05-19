@@ -1,5 +1,21 @@
 namespace PRism.Core.Iterations;
 
+/// <summary>
+/// Despite the name, this multiplier does two things in sequence:
+///   1. <b>Short-gap commit suppression</b> (early-return): when the gap between
+///      <see cref="ClusteringCommit.CommittedDate"/> values is ≤
+///      <see cref="IterationClusteringCoefficients.ForcePushLongGapSeconds"/> (default 600s),
+///      returns 1.0 regardless of whether any force-push event exists. This is the path
+///      exercised by tight intra-cluster commits like rapid CI-loop fixes.
+///   2. <b>Force-push amplification</b>: when the gap is long AND a
+///      <c>HeadRefForcePushedEvent</c> sits in the [prev, next] window, returns
+///      <see cref="IterationClusteringCoefficients.ForcePushAfterLongGap"/> (default 1.5x)
+///      to encourage a boundary.
+/// The class is named for the second behaviour because that was the originally-intended
+/// purpose; the short-gap-suppression path was added later. A future rename to
+/// <c>CommitGapAndForcePushMultiplier</c> is tracked as a separate follow-up in
+/// docs/specs/2026-05-18-frozen-pr-contract-tests-design.md § 12.1.
+/// </summary>
 public sealed class ForcePushMultiplier : IDistanceMultiplier
 {
     public double For(
