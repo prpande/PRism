@@ -60,15 +60,18 @@ export function __resetTabIdForTest(): void {
   fallbackId = null;
 }
 
-// Build-time test hook (Playwright mocked mode). VITE_E2E_TEST is wired in
-// .github/workflows/ci.yml + the e2e setup script — every prod CI build sets it to true so
-// the prod bundle exposes window.__prism_test_getTabId. Dev builds expose the hook
-// unconditionally for local debugging.
+// Build-time test hook (Playwright mocked mode). __PRISM_E2E_TEST__ is a custom global
+// constant injected by vite.config.ts's `define` from process.env.VITE_E2E_TEST. CI sets
+// the env var in .github/workflows/ci.yml so every prod CI build bakes `true` into the
+// bundle. Dev builds expose the hook unconditionally via Vite's built-in DEV flag for
+// local debugging. The custom token avoids a conflict where Vite's internal
+// `import.meta.env` handling overrode user-side `define` of VITE_* keys.
 declare global {
   interface Window {
     __prism_test_getTabId?: () => string;
   }
+  const __PRISM_E2E_TEST__: boolean;
 }
-if (import.meta.env.DEV || import.meta.env.VITE_E2E_TEST === 'true') {
+if (import.meta.env.DEV || __PRISM_E2E_TEST__) {
   window.__prism_test_getTabId = getTabId;
 }

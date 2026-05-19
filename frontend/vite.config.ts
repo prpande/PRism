@@ -1,18 +1,19 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// VITE_E2E_TEST is read from the host process environment at build time and baked
-// into the bundle so window.__prism_test_getTabId is exposed for Playwright mocked-mode
-// specs. Belt-and-suspenders relative to Vite's automatic VITE_* exposure — relying on
-// `import.meta.env.VITE_E2E_TEST` alone failed on Windows CI runners where the env-var
-// set via the workflow `env:` block didn't propagate to Vite's loadEnv. An explicit
-// `define` makes the injection deterministic across hosts and Vite versions.
-const VITE_E2E_TEST = JSON.stringify(process.env.VITE_E2E_TEST ?? 'false');
+// __PRISM_E2E_TEST__ is a custom build-time global that mirrors process.env.VITE_E2E_TEST.
+// Using a custom token (rather than redefining `import.meta.env.VITE_E2E_TEST`) sidesteps a
+// conflict where Vite's internal `import.meta.env` handling appears to win over the user's
+// `define` on this Vite 8 + rolldown build, leaving the prod bundle without the test hook
+// even when `VITE_E2E_TEST=true` was set in the host environment. The custom token is
+// unambiguous — Vite's `define` replaces every textual occurrence verbatim, and tree-shaking
+// drops the branch when the constant is false.
+const PRISM_E2E_TEST = JSON.stringify(process.env.VITE_E2E_TEST === 'true');
 
 export default defineConfig({
   plugins: [react()],
   define: {
-    'import.meta.env.VITE_E2E_TEST': VITE_E2E_TEST,
+    __PRISM_E2E_TEST__: PRISM_E2E_TEST,
   },
   server: {
     port: 5173,
