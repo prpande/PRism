@@ -32,13 +32,6 @@ jobs:
       - name: Frontend build
         working-directory: frontend
         run: npm run build
-        env:
-          # Bakes window.__prism_test_getTabId into the prod bundle so the
-          # Playwright mocked-mode submit specs can read the same tab id the
-          # page is using. Cross-tab-stamp slice requirement — without this
-          # flag, the prod bundle's tabId.ts compile-time guard omits the
-          # global hook and the specs can't coordinate with the page.
-          VITE_E2E_TEST: 'true'
 
       - name: Frontend unit tests
         working-directory: frontend
