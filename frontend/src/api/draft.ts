@@ -1,26 +1,13 @@
 import { apiClient, ApiError } from './client';
 import type { DraftVerdict, PrReference, ReviewSessionDto, ReviewSessionPatch } from './types';
 
-// Per-launch tab id used by SSE multi-tab consistency (spec § 4.5 / § 5.7).
-// `crypto.randomUUID()` is available in jsdom v22+ and every browser the PoC
-// targets.
-let _tabId: string | null = null;
-
-export function getTabId(): string {
-  if (_tabId === null) _tabId = crypto.randomUUID();
-  return _tabId;
-}
-
-// Vitest seam — call between tests so each test gets a fresh tab id.
-export function __resetTabIdForTest(): void {
-  _tabId = null;
-}
-
-// Single source of truth for the cross-tab header name. Re-exported so the
-// other api/*.ts writers (submit.ts, markViewed.ts) don't each redeclare their
-// own constant and drift apart on a future rename. The BE accepts this header
-// on every writer endpoint as the SSE filter dimension.
-export const TAB_ID_HEADER = 'X-PRism-Tab-Id';
+// Re-exports from the canonical tabId module. Pre-cross-tab-stamp slice this file owned the
+// in-memory getTabId; the cross-tab-stamp work upgraded the implementation to sessionStorage
+// (per-tab stable across reloads) and consolidated the canonical source under api/tabId.ts.
+// Keep these re-exports so the existing import paths (markViewed.ts, submit.ts, the SSE hooks,
+// the __tests__ files) continue to resolve without a sweep.
+import { getTabId, __resetTabIdForTest, TAB_ID_HEADER } from './tabId';
+export { getTabId, __resetTabIdForTest, TAB_ID_HEADER };
 
 function tabIdHeader(): Record<string, string> {
   return { [TAB_ID_HEADER]: getTabId() };

@@ -172,6 +172,13 @@ export function PrHeader({
     switch (code) {
       case 'head-sha-not-stamped':
         return "Couldn't submit — the PR view hasn't been stamped yet. Reload the PR and try again.";
+      case 'tab-id-missing':
+        // Cross-tab-stamp slice: the server got no X-PRism-Tab-Id header (or one outside the
+        // allowlist). The remedy is to reload THIS tab so getTabId() mints a fresh id and the
+        // first /mark-viewed call stamps it. "Reload the PR" (the head-sha-not-stamped wording
+        // above) would point the user at the wrong remediation — the PR detail isn't stale,
+        // the tab itself is.
+        return "Couldn't submit — this browser tab is in an unexpected state. Reload the tab and try again.";
       case 'head-sha-drift':
         return "Couldn't submit — the PR's head commit changed since you last viewed it. Reload the PR.";
       case 'unauthorized':

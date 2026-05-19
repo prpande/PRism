@@ -133,14 +133,22 @@ export async function setPrState(
 // Records "viewed this PR at the current head" on the session so the submit head-sha-drift gate
 // passes (the real frontend does this via the demo's "click Reload" step; E2E specs that don't
 // exercise a reload use this hook). Returns the head sha that was recorded.
+//
+// Cross-tab-stamp slice: the hook now requires a tabId in the request body matching the same
+// allowlist the user-facing endpoints validate against. Specs that drive the UI through `page`
+// should pass the tab id surfaced by window.__prism_test_getTabId so the seeded stamp lands
+// under the SAME key the page's subsequent /submit / /reload calls will read; APIRequestContext-
+// only specs (which don't drive a page) can pass any allowlist-compatible literal.
 export async function recordPrViewed(
   request: APIRequestContext,
   pr: { owner: string; repo: string; number: number } = { owner: 'acme', repo: 'api', number: 123 },
+  tabId: string = 'tab-e2e',
 ): Promise<string> {
   const body = (await postTest(request, '/test/mark-pr-viewed', {
     owner: pr.owner,
     repo: pr.repo,
     number: pr.number,
+    tabId,
   })) as {
     headSha: string;
   };
