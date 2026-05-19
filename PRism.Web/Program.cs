@@ -5,6 +5,7 @@ using PRism.Core.Hosting;
 using PRism.GitHub;
 using PRism.Web.Composition;
 using PRism.Web.Endpoints;
+using PRism.Web.Logging;
 using PRism.Web.Middleware;
 using PRism.Web.TestHooks;
 
@@ -37,6 +38,8 @@ if (Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1"
 
 // Resolve dataDir from configuration (test sets it via UseSetting; production uses SpecialFolder).
 var dataDir = builder.Configuration["DataDir"] ?? DataDirectoryResolver.Resolve();
+
+builder.Logging.AddPRismFileLogger(dataDir, builder.Environment);
 
 builder.Services.AddPrismCore(dataDir);
 builder.Services.AddPrismGitHub();
