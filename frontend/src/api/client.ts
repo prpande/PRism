@@ -52,8 +52,8 @@ async function request<T>(
   // X-PRism-Tab-Id is required on all writes (spec § 3) — submit/mark-viewed/reload reject
   // missing or out-of-allowlist values with a distinct 422 tab-id-missing. Attaching it on
   // every request (GET included) is harmless on read paths and saves every call site from
-  // remembering to opt in. Lazy import of getTabId avoids pulling sessionStorage into the
-  // ApiError module's import graph (the global tab-id mint runs only when a request fires).
+  // remembering to opt in. getTabId() reads sessionStorage on call (not at module load), so
+  // the tab id is minted lazily on the FIRST request rather than at import time.
   headers['X-PRism-Tab-Id'] = getTabId();
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 

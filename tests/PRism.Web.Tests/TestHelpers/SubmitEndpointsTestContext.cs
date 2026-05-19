@@ -55,8 +55,10 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
 
     // Default tabId matches the "tab-test" key used in ValidSession() / EmptySession() so the
     // submit-gate per-tab lookup (TabStamps[callerTabId]) finds the seeded stamp. Tests that
-    // exercise the tab-id-missing / head-sha-not-stamped paths override this explicitly.
-    public HttpClient CreateClient(string tabId = "tab-test")
+    // exercise the tab-id-missing path pass `tabId: null` (NOT `""`) to suppress the header
+    // entirely — empty-string was tried first but DefaultRequestHeaders.Add behavior on empty
+    // values is brittle across HttpClient versions; an explicit null is cleaner.
+    public HttpClient CreateClient(string? tabId = "tab-test")
     {
         var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
         var c = _derived.CreateClient();
@@ -64,7 +66,8 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
         c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
         var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
         if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
+        if (!string.IsNullOrEmpty(tabId))
+            c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
         return c;
     }
 

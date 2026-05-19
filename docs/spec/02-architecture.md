@@ -525,7 +525,7 @@ The full strawman config (including the v2-reserved `llm` block) is in [`spec/04
 
 ## State schema (PoC)
 
-> **Casing note.** The example below uses **camelCase** keys for readability and to match the C# property names, but `state.json` on disk uses **kebab-case** for every property: `JsonSerializerOptionsFactory.Storage` applies `KebabCaseJsonNamingPolicy` to all property names (e.g. `TabStamps` C# → `tab-stamps` JSON; `HeadSha` → `head-sha`; `StampedAtUtc` → `stamped-at-utc`; `ReviewSessions` → `review-sessions`; `ViewedFiles` → `viewed-files`; etc.). Dictionary *keys* are intentionally NOT kebab-cased (file paths, repo identifiers, tab ids must round-trip identically). When extending the schema, name the C# property in PascalCase as usual; the policy converts at write-time. When hand-editing `state.json` (rarely supported — see "Hand-edits" note below), use the kebab-case form.
+> **Casing note.** The example below uses **camelCase** keys for readability and to match the C# property names, but `state.json` on disk uses **kebab-case** for every property: `JsonSerializerOptionsFactory.Storage` applies `KebabCaseJsonNamingPolicy` to all property names (e.g. `Accounts` C# → `accounts` JSON; `Reviews` → `reviews`; `TabStamps` → `tab-stamps`; `HeadSha` → `head-sha`; `StampedAtUtc` → `stamped-at-utc`; `ViewedFiles` → `viewed-files`; `UiPreferences` → `ui-preferences`; etc.). Dictionary *keys* are intentionally NOT kebab-cased (file paths, repo identifiers, tab ids must round-trip identically). When extending the schema, name the C# property in PascalCase as usual; the policy converts at write-time. When hand-editing `state.json` (rarely supported — see "Hand-edits" note below), use the kebab-case form.
 
 ```jsonc
 {

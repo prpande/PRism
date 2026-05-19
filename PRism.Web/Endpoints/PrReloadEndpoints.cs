@@ -10,7 +10,7 @@ using PRism.Core.State;
 
 namespace PRism.Web.Endpoints;
 
-internal static partial class PrReloadEndpoints
+internal static class PrReloadEndpoints
 {
     private static readonly Regex Sha40 = new("^[0-9a-f]{40}$", RegexOptions.Compiled);
     private static readonly Regex Sha64 = new("^[0-9a-f]{64}$", RegexOptions.Compiled);
@@ -36,12 +36,6 @@ internal static partial class PrReloadEndpoints
     {
         public string Error { get; } = "reload-stale-head";
     }
-
-    // Spec § 3 — shared X-PRism-Tab-Id allowlist regex. The mark-viewed endpoint owns the
-    // canonical TabIdAllowlistRegex (PrDetailEndpoints); duplicating the pattern here keeps
-    // reload's validation self-contained against PrDetailEndpoints' partial-class shape.
-    [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
-    internal static partial System.Text.RegularExpressions.Regex TabIdAllowlistRegex();
 
     public static IEndpointRouteBuilder MapPrReloadEndpoints(this IEndpointRouteBuilder app)
     {
@@ -72,7 +66,7 @@ internal static partial class PrReloadEndpoints
         // out-of-allowlist tab ids before any state mutation. Distinct /reload/tab-id-missing
         // 422 (vs the head-sha-missing 400 / sha-format-invalid 422 below) so the frontend can
         // surface the "stale browser tab" remedy independently of head-sha failures.
-        if (string.IsNullOrEmpty(sourceTabId) || !TabIdAllowlistRegex().IsMatch(sourceTabId))
+        if (string.IsNullOrEmpty(sourceTabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(sourceTabId))
             return Results.UnprocessableEntity(new { error = "reload-tab-id-missing" });
 
         // SECURITY: validate headSha presence + format before touching state. The null

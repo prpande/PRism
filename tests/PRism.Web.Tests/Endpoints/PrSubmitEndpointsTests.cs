@@ -237,12 +237,9 @@ public class PrSubmitEndpointsTests
         // wrong message.
         using var ctx = SubmitEndpointsTestContext.Create();
         await ctx.SeedSessionAsync("o", "r", 55, SubmitEndpointsTestContext.ValidSession());
-        // CreateClient with empty tabId — bypass the default by overriding.
-        using var client = ctx.CreateClient(tabId: "");
-        // Strip the default header (CreateClient's else-branch would have added it for an
-        // empty default, but DefaultRequestHeaders.Add throws on empty values, so the default
-        // simply didn't add. Just be defensive.)
-        client.DefaultRequestHeaders.Remove("X-PRism-Tab-Id");
+        // CreateClient(tabId: null) skips the X-PRism-Tab-Id header entirely (the helper's
+        // null-or-empty guard short-circuits the DefaultRequestHeaders.Add call).
+        using var client = ctx.CreateClient(tabId: null);
 
         var resp = await client.PostAsJsonAsync("/api/pr/o/r/55/submit", new { verdict = "Comment" });
 

@@ -52,7 +52,7 @@ test('S5 stale commit OID — first submit fails, head moves, recreate-and-resub
 }) => {
   await setupAndOpenScenarioPr(page);
   await createInlineDraft(page, 3, 'draft for stale path');
-  await recordPrViewed(page.request);
+  await recordPrViewed(page);
 
   // First submit: stop after Begin (fail at AttachThreads) so a pending review
   // is created and anchored to the current (old) head.
