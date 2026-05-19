@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -12,15 +11,17 @@ namespace PRism.Web.Tests.Logging;
 // Asserts the FileLoggerExtensions Test-env gate can be overridden by the
 // PRISM_FILE_LOGGER_FORCE=1 env var. Without the override, the existing xUnit
 // safety (preventing per-test writer-task storms) is preserved.
+//
+// Pinned to the EnvVarSensitive collection (DisableParallelization = true) so
+// that process-scoped PRISM_FILE_LOGGER_FORCE mutations cannot be observed by
+// FileLoggerIntegrationTests running concurrently.
+[Collection("EnvVarSensitive")]
 public sealed class FileLoggerGateOverrideTests : IDisposable
 {
-    private readonly string _dataDir;
     private readonly string? _originalForceValue;
 
     public FileLoggerGateOverrideTests()
     {
-        _dataDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-        Directory.CreateDirectory(_dataDir);
         _originalForceValue = Environment.GetEnvironmentVariable("PRISM_FILE_LOGGER_FORCE");
     }
 
@@ -28,10 +29,6 @@ public sealed class FileLoggerGateOverrideTests : IDisposable
     {
         // Restore the env var to its original state so this test doesn't leak into siblings.
         Environment.SetEnvironmentVariable("PRISM_FILE_LOGGER_FORCE", _originalForceValue);
-#pragma warning disable CA1031
-        try { if (Directory.Exists(_dataDir)) Directory.Delete(_dataDir, recursive: true); }
-        catch (Exception) { /* best-effort cleanup */ }
-#pragma warning restore CA1031
         GC.SuppressFinalize(this);
     }
 

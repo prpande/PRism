@@ -26,6 +26,12 @@ namespace PRism.Web.Tests.Logging;
 
 // Sealed + GC.SuppressFinalize in Dispose to satisfy CA1063/CA1816 in line with
 // the pattern established by FileLoggerProviderTests.
+//
+// Pinned to the EnvVarSensitive collection (DisableParallelization = true) so
+// that a concurrently-running FileLoggerGateOverrideTests.T_INV_7b (which sets
+// PRISM_FILE_LOGGER_FORCE=1) cannot cause AddPRismFileLogger to register a
+// second FileLoggerProvider inside this class's factory.
+[Collection("EnvVarSensitive")]
 public sealed class FileLoggerIntegrationTests : IDisposable
 {
     private readonly string _dataDir;
