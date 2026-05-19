@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Http;
 using FluentAssertions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -100,5 +101,39 @@ public class ActivePrPollerSnapshotLogTests
         deltaLine.Should().Contain("head=h2");
         deltaLine.Should().Contain("headChanged=True");
         deltaLine.Should().Contain("commentChanged=False");
+    }
+
+    [Fact]
+    public async Task T_INV_1b_failed_poll_emits_no_snapshot_log_line()
+    {
+        var (poller, review, logger, registry) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+        review.SetThrows(pr, new HttpRequestException("simulated 500"));
+
+        await poller.TickAsync(T0, default);
+
+        logger.Messages.Should().BeEmpty("snapshot log only emits on successful poll; thrown polls go to the catch branch where s_pollFailedLog fires instead");
+    }
+
+    [Fact]
+    public async Task T_INV_3b_second_poll_with_comment_only_delta_has_commentChanged_true_and_headChanged_false()
+    {
+        var (poller, review, logger, registry) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 0));
+        await poller.TickAsync(T0, default);  // first poll: head=h1, comments=0
+
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 3));
+        await poller.TickAsync(T0.AddTicks(1), default);  // second poll: head unchanged, comments delta
+
+        logger.Messages.Should().HaveCount(2);
+        var deltaLine = logger.Messages.Single(m => m.Contains("firstPoll=False", StringComparison.Ordinal));
+        deltaLine.Should().Contain("head=h1");
+        deltaLine.Should().Contain("prevHead=h1");
+        deltaLine.Should().Contain("headChanged=False");
+        deltaLine.Should().Contain("commentChanged=True");
     }
 }
