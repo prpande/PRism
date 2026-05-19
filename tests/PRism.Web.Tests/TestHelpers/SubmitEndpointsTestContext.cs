@@ -53,7 +53,10 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
 
     public IAppStateStore StateStore => _derived.Services.GetRequiredService<IAppStateStore>();
 
-    public HttpClient CreateClient(string tabId = "tab-1")
+    // Default tabId matches the "tab-test" key used in ValidSession() / EmptySession() so the
+    // submit-gate per-tab lookup (TabStamps[callerTabId]) finds the seeded stamp. Tests that
+    // exercise the tab-id-missing / head-sha-not-stamped paths override this explicitly.
+    public HttpClient CreateClient(string tabId = "tab-test")
     {
         var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
         var c = _derived.CreateClient();
