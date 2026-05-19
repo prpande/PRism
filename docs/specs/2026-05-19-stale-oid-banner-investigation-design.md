@@ -414,7 +414,7 @@ The investigation deliverable is ONE markdown file at `docs/specs/2026-05-19-sta
 
 - Investigation date (yyyy-mm-dd).
 - Spec citation: `docs/specs/2026-05-19-stale-oid-banner-investigation-design.md` (this spec).
-- Log capture path (absolute or relative-to-repo) — the redirected backend stdout file from `<e2eDataDir>/logs/prism-stdout-<runId>.log` (per Section 3.4; the on-disk `FileLoggerProvider` is disabled under Test env so the stdout-redirect is the capture path, NOT the `prism-yyyy-MM-dd.log` file shape from PR #63).
+- Log capture path (absolute or relative-to-repo) — the on-disk `FileLoggerProvider` file at `<DataDir>/logs/prism-yyyy-MM-dd.log` (per Section 3.4; under real-flow runs with `PRISM_FILE_LOGGER_FORCE=1` set, the Test-env gate is bypassed and the on-disk file from PR #63 is the capture path).
 - Playwright trace zip path.
 - `gh api` snapshot log — one line per snapshot. **Each line records `(timestamp, head.sha)` ONLY**, NOT the full API response. GitHub PR API responses include `user.login`, `head.repo.owner.login`, `requested_reviewers`, etc. — GitHub usernames are PII per the project's SensitiveFieldScrubber blocklist (entry added 2026-05-18). Committing raw responses into `docs/specs/` persists PII. The boundary-1 evidence the investigation needs is `head.sha` and timestamp; everything else is stripped before commit.
 
@@ -485,7 +485,7 @@ Add a project memory entry once the investigation completes, matching the existi
 - Skipped test: `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts`
 - Production code: `PRism.Core/PrDetail/ActivePrPoller.cs:115–135`, `PRism.GitHub/GitHubReviewService.cs:455`, `PRism.Web/Sse/SseChannel.cs:238`
 - Frontend code: `frontend/src/components/PrDetail/BannerRefresh.tsx:43–62`, `frontend/src/hooks/useActivePrUpdates.ts`, `frontend/src/api/events.ts`, `frontend/src/hooks/useEventSource.tsx`
-- On-disk logger (prerequisite, PR #63): merged 2026-05-19 (merge `3647cfe`); writes to `<DataDir>/logs/prism-yyyy-MM-dd.log`. **Disabled under `ASPNETCORE_ENVIRONMENT=Test`** (`FileLoggerExtensions.cs:24`) — the investigation's capture path is the stdout-redirect in `playwright.real.config.ts`, NOT the on-disk file. See Section 3.4.
+- On-disk logger (prerequisite, PR #63): merged 2026-05-19 (merge `3647cfe`); writes to `<DataDir>/logs/prism-yyyy-MM-dd.log`. Disabled by default under `ASPNETCORE_ENVIRONMENT=Test` (`FileLoggerExtensions.cs:24`), but the gate is overridable via `PRISM_FILE_LOGGER_FORCE=1` which `playwright.real.config.ts` sets for real-flow investigation runs. See Section 3.4.
 - Test config: `frontend/playwright.real.config.ts:31` (cadence=1s), `:39` (retries=0).
 - Helpers: `frontend/e2e/real/helpers/gh-sandbox.ts` (`pokePrRestRecord`, `advanceHead`).
 
@@ -508,7 +508,7 @@ Add a project memory entry once the investigation completes, matching the existi
 `ce-doc-review` ran one pass on 2026-05-19 across six reviewers (coherence, feasibility, product-lens, security-lens, scope-guardian, adversarial). 34 findings total. Action summary:
 
 **Applied (substantive):**
-- **F1 (feasibility, P0, anchor 100)** — Added Section 3.4 + updated runbook (Section 4.1) for the on-disk-logger Test-env gate. The `FileLoggerProvider` from PR #63 is disabled under `ASPNETCORE_ENVIRONMENT=Test`; the investigation's capture path is now backend-stdout-redirect via a new `PRISM_E2E_LOG_TO_FILE` env-var guard. SHOWSTOPPER fix.
+- **F1 (feasibility, P0, anchor 100)** — Added Section 3.4 + updated runbook (Section 4.1) for the on-disk-logger Test-env gate. The `FileLoggerProvider` from PR #63 is disabled under `ASPNETCORE_ENVIRONMENT=Test`; the investigation's capture path is the on-disk file with the Test-env gate overridden via `PRISM_FILE_LOGGER_FORCE=1` (set by `playwright.real.config.ts`). SHOWSTOPPER fix. **Note:** the round-1 stdout-redirect approach was reversed in round 2 in favor of the gate-lift — see Section 3.4's "Why this approach over stdout-redirect" paragraph and Section 13.1's stdout cluster entry.
 - **F2 (feasibility, P1, anchor 75)** — Replaced `getPrHeadOid` courtesy poke (GraphQL `pullRequest.headRefOid`) with a new REST-targeting helper `pokePrRestRecord` (Sections 6.1, 8.1). GraphQL and REST are different replica sets; the courtesy poke must target the same surface the poller reads.
 - **F3 (feasibility, P2, anchor 100)** — Fixed log file naming (`PRism-YYYYMMDD.log` → `prism-yyyy-MM-dd.log`) in Sections 4.1 and 11.
 - **F4 (feasibility, P2, anchor 75)** — Clarified `/api/pr/{ref}/active-snapshot` contract as three-state (200 with snapshot / 204 No Content / 404). The two-state contract masked the bug H3 exists to fix.
