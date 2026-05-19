@@ -365,10 +365,17 @@ internal static class PrDraftEndpoints
                     if (snap is null || snap.HighestIssueCommentId is null)
                         return new PatchOutcome.NoOp();
                     var newId = snap.HighestIssueCommentId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                    if (session.LastSeenCommentId == newId)
+                    // Monotone guard (spec § 5.6): the cache's HighestIssueCommentId reflects the
+                    // last poll tick, while mark-viewed can advance LastSeenCommentId past that
+                    // value via a fresh PR-detail response. Without the guard, markAllRead reads
+                    // the lagging cache value and regresses the user-facing unread badge. Use
+                    // MonotonicCommentId.Max so the higher of the two always wins; NoOp when no
+                    // change.
+                    var capped = MonotonicCommentId.Max(session.LastSeenCommentId, newId);
+                    if (capped == session.LastSeenCommentId)
                         return new PatchOutcome.NoOp();
                     return new PatchOutcome.Applied(
-                        session with { LastSeenCommentId = newId },
+                        session with { LastSeenCommentId = capped },
                         null, null, false, false, FieldsTouchedLastSeenCommentId);
                 }
 

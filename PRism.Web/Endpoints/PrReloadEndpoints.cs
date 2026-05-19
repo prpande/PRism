@@ -10,7 +10,7 @@ using PRism.Core.State;
 
 namespace PRism.Web.Endpoints;
 
-internal static class PrReloadEndpoints
+internal static partial class PrReloadEndpoints
 {
     private static readonly Regex Sha40 = new("^[0-9a-f]{40}$", RegexOptions.Compiled);
     private static readonly Regex Sha64 = new("^[0-9a-f]{64}$", RegexOptions.Compiled);
@@ -37,6 +37,12 @@ internal static class PrReloadEndpoints
         public string Error { get; } = "reload-stale-head";
     }
 
+    // Spec § 3 — shared X-PRism-Tab-Id allowlist regex. The mark-viewed endpoint owns the
+    // canonical TabIdAllowlistRegex (PrDetailEndpoints); duplicating the pattern here keeps
+    // reload's validation self-contained against PrDetailEndpoints' partial-class shape.
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
+    internal static partial System.Text.RegularExpressions.Regex TabIdAllowlistRegex();
+
     public static IEndpointRouteBuilder MapPrReloadEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -61,6 +67,13 @@ internal static class PrReloadEndpoints
         var prRef = new PrReference(owner, repo, number);
         var refKey = prRef.ToString();
         var sourceTabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+
+        // Tab id validation (spec § 3) — reload is a write site and must reject missing /
+        // out-of-allowlist tab ids before any state mutation. Distinct /reload/tab-id-missing
+        // 422 (vs the head-sha-missing 400 / sha-format-invalid 422 below) so the frontend can
+        // surface the "stale browser tab" remedy independently of head-sha failures.
+        if (string.IsNullOrEmpty(sourceTabId) || !TabIdAllowlistRegex().IsMatch(sourceTabId))
+            return Results.UnprocessableEntity(new { error = "reload-tab-id-missing" });
 
         // SECURITY: validate headSha presence + format before touching state. The null
         // guard runs first because System.Text.Json can deserialize `{}` or
@@ -153,10 +166,16 @@ internal static class PrReloadEndpoints
                     ? DraftVerdictStatus.NeedsReconfirm
                     : current.DraftVerdictStatus;
 
-                // TASK5 placeholder — Task 5 wires X-PRism-Tab-Id header here and writes
-                // TabStamps[tabId] = (request.HeadSha, DateTime.UtcNow) with N=8 LRU eviction.
+                // Per-tab stamp write — sourceTabId was validated against TabIdAllowlistRegex
+                // at the top of PostReload, so it's safe to use as a state-store key. N=8 cap
+                // mirrors the mark-viewed write site (spec § 5.2): eviction by oldest stamp.
                 var tabStamps = current.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
-                tabStamps["tab-PLACEHOLDER"] = new TabStamp(request.HeadSha, DateTime.UtcNow);
+                tabStamps[sourceTabId] = new TabStamp(request.HeadSha, DateTime.UtcNow);
+                if (tabStamps.Count > 8)
+                {
+                    var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
+                    tabStamps.Remove(oldest);
+                }
                 var updated = current with
                 {
                     DraftComments = updatedDrafts,

@@ -316,26 +316,145 @@ public class PrDetailEndpointsTests
 
     // ---------- POST /api/pr/{ref}/mark-viewed ----------
 
+    private static IDictionary<string, string> TabHeader(string tabId = "tab-A") =>
+        new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tabId };
+
     [Fact]
-    public async Task Post_mark_viewed_returns_204_and_writes_LastViewedHeadSha_and_LastSeenCommentId()
+    public async Task Post_mark_viewed_writes_tab_stamp_under_caller_tab_id_and_monotone_LastSeenCommentId()
     {
         var (factory, _) = MakeFactory();
         using var _f = factory;
         var client = factory.CreateClient();
         await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));   // load snapshot
 
-        var resp = await client.PostAsJsonAsync(
-            new Uri("/api/pr/octo/repo/1/mark-viewed", UriKind.Relative),
-            new { headSha = "head1", maxCommentId = "999" });
+        var resp = await client.PostAsJsonWithHeadersAsync(
+            "/api/pr/octo/repo/1/mark-viewed",
+            new { headSha = "head1", maxCommentId = "999" },
+            TabHeader("tab-A"));
 
         resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
-        // Verify state.json side-effect.
+        // Verify state.json side-effect: tab-specific stamp + session-flat last-seen.
         using var stateStore = new AppStateStore(factory.DataDir);
         var state = await stateStore.LoadAsync(CancellationToken.None);
         var session = state.Reviews.Sessions["octo/repo/1"];
-        session.LegacyMostRecentHeadSha().Should().Be("head1");
+        session.TabStamps.Should().ContainKey("tab-A");
+        session.TabStamps["tab-A"].HeadSha.Should().Be("head1");
         session.LastSeenCommentId.Should().Be("999");
+    }
+
+    [Fact]
+    public async Task Post_mark_viewed_returns_422_when_tab_id_header_missing()
+    {
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+
+        var resp = await client.PostAsJsonAsync(
+            new Uri("/api/pr/octo/repo/1/mark-viewed", UriKind.Relative),
+            new { headSha = "head1", maxCommentId = (string?)null });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/tab-id-missing");
+    }
+
+    [Theory]
+    [InlineData("../../etc/passwd")]   // path-traversal-style chars rejected
+    [InlineData("tab with space")]     // disallowed char
+    [InlineData("")]                   // empty (also caught by IsNullOrEmpty before regex)
+    [InlineData("tab/A")]              // slash disallowed
+    public async Task Post_mark_viewed_rejects_invalid_tab_id_header(string tabId)
+    {
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+
+        var resp = await client.PostAsJsonWithHeadersAsync(
+            "/api/pr/octo/repo/1/mark-viewed",
+            new { headSha = "head1", maxCommentId = (string?)null },
+            new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tabId });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/tab-id-missing");
+    }
+
+    [Fact]
+    public async Task Post_mark_viewed_rejects_tab_id_over_64_chars()
+    {
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+        var tooLong = new string('a', 65);
+
+        var resp = await client.PostAsJsonWithHeadersAsync(
+            "/api/pr/octo/repo/1/mark-viewed",
+            new { headSha = "head1", maxCommentId = (string?)null },
+            new Dictionary<string, string> { ["X-PRism-Tab-Id"] = tooLong });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+    }
+
+    [Fact]
+    public async Task Post_mark_viewed_evicts_oldest_stamp_at_cap_N_8()
+    {
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+
+        // Seed 8 stamps via real mark-viewed calls (each different tab id). The N=8 cap is
+        // enforced at write time; the 9th call evicts the oldest by StampedAtUtc.
+        for (int i = 0; i < 8; i++)
+        {
+            var resp = await client.PostAsJsonWithHeadersAsync(
+                "/api/pr/octo/repo/1/mark-viewed",
+                new { headSha = "head1", maxCommentId = (string?)null },
+                new Dictionary<string, string> { ["X-PRism-Tab-Id"] = $"tab-{i}" });
+            resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+            // Spread the timestamps so MinBy(StampedAtUtc) is deterministic — without a delay
+            // every stamp can land in the same DateTime.UtcNow tick.
+            await Task.Delay(2);
+        }
+
+        var ninth = await client.PostAsJsonWithHeadersAsync(
+            "/api/pr/octo/repo/1/mark-viewed",
+            new { headSha = "head1", maxCommentId = (string?)null },
+            new Dictionary<string, string> { ["X-PRism-Tab-Id"] = "tab-NEW" });
+        ninth.StatusCode.Should().Be(HttpStatusCode.NoContent);
+
+        using var stateStore = new AppStateStore(factory.DataDir);
+        var state = await stateStore.LoadAsync(CancellationToken.None);
+        var stamps = state.Reviews.Sessions["octo/repo/1"].TabStamps;
+        stamps.Should().HaveCount(8);
+        stamps.Should().ContainKey("tab-NEW");
+        stamps.Should().NotContainKey("tab-0", "oldest stamp (tab-0) should have been evicted");
+    }
+
+    [Fact]
+    public async Task Post_mark_viewed_monotone_LastSeenCommentId_does_not_rewind_across_tabs()
+    {
+        // Cross-tab regression: tab-A advances LastSeenCommentId to 999; tab-B's stale 50 must
+        // not regress the high-water (the user-facing unread badge would jump up). Spec § 5.6.
+        var (factory, _) = MakeFactory();
+        using var _f = factory;
+        var client = factory.CreateClient();
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+
+        await client.PostAsJsonWithHeadersAsync(
+            "/api/pr/octo/repo/1/mark-viewed",
+            new { headSha = "head1", maxCommentId = "999" },
+            TabHeader("tab-A"));
+        await client.PostAsJsonWithHeadersAsync(
+            "/api/pr/octo/repo/1/mark-viewed",
+            new { headSha = "head1", maxCommentId = "50" },
+            TabHeader("tab-B"));
+
+        using var stateStore = new AppStateStore(factory.DataDir);
+        var state = await stateStore.LoadAsync(CancellationToken.None);
+        state.Reviews.Sessions["octo/repo/1"].LastSeenCommentId.Should().Be("999");
     }
 
     [Fact]
@@ -346,9 +465,10 @@ public class PrDetailEndpointsTests
         var (factory, _) = MakeFactory();
         using var _f = factory;
 
-        var resp = await factory.CreateClient().PostAsJsonAsync(
-            new Uri("/api/pr/octo/repo/1/mark-viewed", UriKind.Relative),
-            new { headSha = "head1", maxCommentId = (string?)null });
+        var resp = await factory.CreateClient().PostAsJsonWithHeadersAsync(
+            "/api/pr/octo/repo/1/mark-viewed",
+            new { headSha = "head1", maxCommentId = (string?)null },
+            TabHeader());
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/snapshot-evicted");
@@ -362,9 +482,10 @@ public class PrDetailEndpointsTests
         var client = factory.CreateClient();
         await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));   // snapshot's HeadSha = "head1"
 
-        var resp = await client.PostAsJsonAsync(
-            new Uri("/api/pr/octo/repo/1/mark-viewed", UriKind.Relative),
-            new { headSha = "stale-head", maxCommentId = (string?)null });
+        var resp = await client.PostAsJsonWithHeadersAsync(
+            "/api/pr/octo/repo/1/mark-viewed",
+            new { headSha = "stale-head", maxCommentId = (string?)null },
+            TabHeader());
 
         resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/viewed/stale-head-sha");
