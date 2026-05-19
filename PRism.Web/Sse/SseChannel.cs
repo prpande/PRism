@@ -231,14 +231,22 @@ internal sealed class SseChannel : IDisposable
             new EventId(4, "SseActivePrFanout"),
             "SSE fan-out {EventType} {PrRef}: subscribers={SubscriberCount} headShaChanged={HeadShaChanged} commentCountChanged={CommentCountChanged}");
 
+    private static readonly Action<ILogger, string, PrReference, string, bool, Exception?> s_sseActivePrDeliveryLog =
+        LoggerMessage.Define<string, PrReference, string, bool>(
+            LogLevel.Information,
+            new EventId(5, "SseActivePrDelivery"),
+            "SSE delivery {EventType} {PrRef} subscriber={SubscriberId} success={Success}");
+
     private void OnInboxUpdated(InboxUpdated evt)
     {
         var json = JsonSerializer.Serialize(evt, JsonSerializerOptionsFactory.Api);
         var frame = $"event: inbox-updated\ndata: {json}\n\n";
         // Inbox events broadcast to every subscriber — each connected client sees
         // every inbox change. Per-subscriber serialization remains in WriteAsync.
+        // Delivery log (EventId 5) is not emitted for inbox events: they are not
+        // scoped to a PrReference, so boundary 5b tracking would lack a prRef key.
         foreach (var s in _subscribers.Values)
-            _ = WriteAndEvictOnFailureAsync(s, frame);
+            _ = WriteAndEvictOnFailureAsync(s, frame, prRef: null, eventType: null);
     }
 
     private void OnActivePrUpdated(ActivePrUpdated evt)
@@ -252,7 +260,7 @@ internal sealed class SseChannel : IDisposable
         foreach (var subscriberId in subscriberList)
         {
             if (_subscribers.TryGetValue(subscriberId, out var sub))
-                _ = WriteAndEvictOnFailureAsync(sub, frame);
+                _ = WriteAndEvictOnFailureAsync(sub, frame, evt.PrRef, nameof(ActivePrUpdated));
         }
     }
 
@@ -273,15 +281,19 @@ internal sealed class SseChannel : IDisposable
         var (eventName, payload) = SseEventProjection.Project(evt);
         var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
         var frame = $"event: {eventName}\ndata: {json}\n\n";
+        var eventType = evt.GetType().Name;
         foreach (var subscriberId in _activeRegistry.SubscribersFor(prRef))
         {
             if (_subscribers.TryGetValue(subscriberId, out var sub))
-                _ = WriteAndEvictOnFailureAsync(sub, frame);
+                _ = WriteAndEvictOnFailureAsync(sub, frame, prRef, eventType);
         }
     }
 
 #pragma warning disable CA1031 // SSE write failures must not crash the publisher; observe + evict.
-    private async Task WriteAndEvictOnFailureAsync(SseSubscriber s, string frame)
+    // prRef and eventType are nullable: inbox-broadcast events are not scoped to a PR,
+    // so they pass null and the delivery log (EventId 5) is skipped for those writes.
+    // Per-PR events (ActivePrUpdated, FanoutProjected) pass non-null values.
+    private async Task WriteAndEvictOnFailureAsync(SseSubscriber s, string frame, PrReference? prRef, string? eventType)
     {
         try
         {
@@ -291,14 +303,21 @@ internal sealed class SseChannel : IDisposable
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(s.RequestAborted);
             cts.CancelAfter(TimeSpan.FromSeconds(PerWriteTimeoutSeconds));
             await s.WriteAsync(frame, cts.Token).ConfigureAwait(false);
+            // Boundary 5b: per-subscriber delivery outcome for per-PR events.
+            if (prRef is not null && eventType is not null)
+                s_sseActivePrDeliveryLog(_log, eventType, prRef, s.SubscriberId, true, null);
         }
         catch (OperationCanceledException)
         {
+            if (prRef is not null && eventType is not null)
+                s_sseActivePrDeliveryLog(_log, eventType, prRef, s.SubscriberId, false, null);
             EvictSubscriber(s);
         }
         catch (Exception ex)
         {
             s_writeFailedLog(_log, ex);
+            if (prRef is not null && eventType is not null)
+                s_sseActivePrDeliveryLog(_log, eventType, prRef, s.SubscriberId, false, null);
             EvictSubscriber(s);
         }
     }
