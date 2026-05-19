@@ -101,4 +101,53 @@ public class SensitiveFieldScrubberTests
         SensitiveFieldScrubber.Scrub("count", 42).Should().Be(42);
         SensitiveFieldScrubber.Scrub("flag", true).Should().Be(true);
     }
+
+    [Theory]
+    [InlineData("login")]
+    [InlineData("Login")]
+    [InlineData("LOGIN")]
+    public void Redacts_login_field_case_insensitive(string fieldName)
+    {
+        SensitiveFieldScrubber.Scrub(fieldName, "pratyush").Should().Be("[REDACTED]");
+    }
+
+    [Fact]
+    public void ScrubFieldName_redacts_blocked_fields_just_like_Scrub()
+    {
+        SensitiveFieldScrubber.ScrubFieldName("pat", "ghp_xxxxx").Should().Be("[REDACTED]");
+        SensitiveFieldScrubber.ScrubFieldName("login", "pratyush").Should().Be("[REDACTED]");
+        SensitiveFieldScrubber.ScrubFieldName("subscriberId", "abc").Should().Be("[REDACTED]");
+    }
+
+    [Fact]
+    public void ScrubFieldName_does_NOT_truncate_long_strings()
+    {
+        // The new method preserves long values verbatim — the file sink's job is redaction,
+        // not value mangling. Truncation is a separate concern (the existing combined Scrub
+        // method retains it for direct callers).
+        var twoKb = new string('x', 2048);
+        var result = SensitiveFieldScrubber.ScrubFieldName("anyField", twoKb) as string;
+
+        result.Should().Be(twoKb);  // unchanged, full length, no [truncated, ...] suffix
+    }
+
+    [Fact]
+    public void Scrub_still_truncates_long_strings_for_back_compat()
+    {
+        // The existing combined Scrub method keeps its redact+truncate contract for the
+        // existing call site (PrDraftsDiscardAllEndpoint.cs:97).
+        var twoKb = new string('x', 2048);
+        var result = SensitiveFieldScrubber.Scrub("anyField", twoKb) as string;
+
+        result.Should().NotBeNull();
+        result!.Should().StartWith(new string('x', 1024));
+        result.Should().EndWith("[truncated, original-length: 2048]");
+    }
+
+    [Fact]
+    public void ScrubFieldName_returns_value_unchanged_for_non_blocked_fields()
+    {
+        SensitiveFieldScrubber.ScrubFieldName("headSha", "abc123").Should().Be("abc123");
+        SensitiveFieldScrubber.ScrubFieldName("body", "{\"prRef\":...}").Should().Be("{\"prRef\":...}");
+    }
 }
