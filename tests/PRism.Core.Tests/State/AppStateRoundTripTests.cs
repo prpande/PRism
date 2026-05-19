@@ -37,7 +37,9 @@ public class AppStateRoundTripTests
 
         Assert.NotNull(roundTripped);
         Assert.Single(roundTripped!.Reviews.Sessions);
-        Assert.Equal("abc", roundTripped.Reviews.Sessions["acme/api/123"].LegacyMostRecentHeadSha());
+        // Pre-V6 the session carried a flat LastViewedHeadSha; under V6 the same value lives
+        // under the seeded "tab-test" stamp. Assert via TabStamps lookup directly.
+        Assert.Equal("abc", roundTripped.Reviews.Sessions["acme/api/123"].TabStamps["tab-test"].HeadSha);
     }
 
     [Fact]

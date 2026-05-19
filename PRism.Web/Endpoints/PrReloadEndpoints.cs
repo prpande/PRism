@@ -103,7 +103,10 @@ internal static partial class PrReloadEndpoints
             var pipeline = new DraftReconciliationPipeline();
             var result = await pipeline.ReconcileAsync(
                 session, request.HeadSha, fileSource, ct,
-                renames: null, deletedPaths: null).ConfigureAwait(false);
+                renames: null, deletedPaths: null,
+                // Pass the validated tab id into the pipeline so the override / verdict
+                // head-shift checks use the caller's own stamp (spec § 5.4 branch 1).
+                callerTabId: sourceTabId).ConfigureAwait(false);
 
             // Phase 2: apply (gate held briefly). Head-shift detection compares the
             // request's headSha against the active-PR cache's current head (populated by

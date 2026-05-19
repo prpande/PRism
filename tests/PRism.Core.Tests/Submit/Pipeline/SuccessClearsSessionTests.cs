@@ -50,6 +50,8 @@ public class SuccessClearsSessionTests
         Assert.Null(persisted.PendingReviewId);
         Assert.Null(persisted.PendingReviewCommitOid);
         // Non-submit fields untouched.
-        Assert.Equal("head1", persisted.LegacyMostRecentHeadSha());
+        // The submit pipeline doesn't clear TabStamps on Success (only the draft / pending-
+        // review fields). The seeded "tab-test" stamp survives.
+        Assert.Equal("head1", persisted.TabStamps["tab-test"].HeadSha);
     }
 }
