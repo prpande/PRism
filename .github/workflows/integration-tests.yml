@@ -11,6 +11,20 @@ jobs:
         with:
           dotnet-version: '10.0.x'   # matches Directory.Build.props TargetFramework=net10.0
 
+      # Mask first, then validate. Convention is to register the masking directive BEFORE
+      # any step that touches the secret value — the fail-fast step below only reads the
+      # presence flag and never echoes the token, but a future edit that accidentally
+      # prints the value would already be masked. Mask-first is purely defensive.
+      - name: Mask PAT in all subsequent log output (must run BEFORE any step that could surface it)
+        shell: pwsh
+        run: |
+          $token = $env:PRISM_INTEGRATION_PAT
+          if (-not [string]::IsNullOrWhiteSpace($token)) {
+            Write-Output "::add-mask::$token"
+          }
+        env:
+          PRISM_INTEGRATION_PAT: ${{ secrets.PRISM_INTEGRATION_PAT }}
+
       - name: Fail fast if PRISM_INTEGRATION_PAT secret is missing (ADV-9)
         shell: pwsh
         run: |
@@ -18,14 +32,6 @@ jobs:
             Write-Error "PRISM_INTEGRATION_PAT secret is not set. See docs/contract-tests.md prereqs to create the secret before re-dispatching this workflow."
             exit 1
           }
-        env:
-          PRISM_INTEGRATION_PAT: ${{ secrets.PRISM_INTEGRATION_PAT }}
-
-      - name: Mask PAT in all subsequent log output (must run BEFORE any step that could surface it)
-        shell: pwsh
-        run: |
-          $token = $env:PRISM_INTEGRATION_PAT
-          Write-Output "::add-mask::$token"
         env:
           PRISM_INTEGRATION_PAT: ${{ secrets.PRISM_INTEGRATION_PAT }}
 

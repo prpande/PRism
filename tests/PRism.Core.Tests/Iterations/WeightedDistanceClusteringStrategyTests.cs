@@ -25,19 +25,21 @@ public class WeightedDistanceClusteringStrategyTests
     [Fact]
     public void Empty_commits_returns_empty_array()
     {
-        // Defensive: PrDetailLoader is the canonical pre-check (spec § 6.4 routes ≤1-commit
-        // PRs to ClusteringQuality:Low before calling Cluster). Empty input from an upstream
-        // bug should still produce a stable, non-null, no-iterations result rather than
-        // surfacing as a NullReferenceException downstream.
+        // Defensive: PrDetailLoader is the canonical pre-check (post-2026-05-18 calibration
+        // it routes 0-commit PRs to ClusteringQuality:Low before calling Cluster). Empty
+        // input reaching the strategy implies an upstream bug; the strategy still produces
+        // a stable, non-null, no-iterations result rather than a NullReferenceException
+        // downstream.
         NewStrategy().Cluster(Input(), Defaults).Should().NotBeNull().And.BeEmpty();
     }
 
     [Fact]
     public void Single_commit_returns_one_cluster()
     {
-        // Defensive: see Empty_commits_returns_empty_array. PrDetailLoader handles the
-        // 1-commit case via ClusteringQuality:Low; this test pins the strategy's fallback
-        // shape if the loader's check is bypassed.
+        // Nominal: since the 2026-05-18 calibration, 1-commit PRs are NO LONGER intercepted
+        // by PrDetailLoader (Low short-circuits only on Commits.Count == 0). They flow
+        // through this strategy's `sorted.Length == 1` arm as the regular code path and
+        // return Ok + 1 iteration. This test pins that arm.
         var c = Commit("a", DateTimeOffset.UtcNow);
         var clusters = NewStrategy().Cluster(Input(c), Defaults);
         clusters.Should().NotBeNull().And.HaveCount(1);

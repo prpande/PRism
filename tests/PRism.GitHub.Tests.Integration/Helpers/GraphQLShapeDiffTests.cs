@@ -79,9 +79,15 @@ public class GraphQLShapeDiffTests
         var diff = GraphQLShapeDiff.Diff(
             Parse("""{"a": 1, "b": "x", "c": [1]}"""),
             Parse("""{"a": 2, "b": "x", "c": [1, 2], "d": true}"""));
-        // Three differences: type-or-value change at /a (Number→Number, value differ — see contract), array length /c, addition /d.
-        // Stable order: pre-order traversal of the LEFT tree first, then additions from the RIGHT.
-        diff.Should().HaveCount(c => c >= 2);
+        // Exactly TWO differences: /a (1 vs 2) is Number→Number — the SHAPE differ does
+        // not emit on same-ValueKind primitives by design (it's a shape detector, not a
+        // value detector). The two reported diffs are:
+        //   (1) /c/1     — extra array element on the actual side
+        //   (2) /d       — added object property on the actual side
+        // Stable order: pre-order traversal of the LEFT tree first, then additions from
+        // the RIGHT. Pin the exact count so spurious new diff lines on this synthetic
+        // input fail the test loudly.
+        diff.Should().HaveCount(2);
     }
 
     [Fact]

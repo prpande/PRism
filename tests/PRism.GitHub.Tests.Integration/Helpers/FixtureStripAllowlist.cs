@@ -51,14 +51,12 @@ public static class FixtureStripAllowlist
         "createdAt", "closedAt", "mergedAt", "committedDate", "submittedAt", "lastEditedAt",
     };
 
-    public static JsonNode? Apply(JsonElement element) => Apply(element, depth: 0);
-
-    private static JsonNode? Apply(JsonElement element, int depth)
+    public static JsonNode? Apply(JsonElement element)
     {
         return element.ValueKind switch
         {
-            JsonValueKind.Object => StripObject(element, depth),
-            JsonValueKind.Array  => StripArray(element, depth),
+            JsonValueKind.Object => StripObject(element),
+            JsonValueKind.Array  => StripArray(element),
             JsonValueKind.String => JsonValue.Create(element.GetString()),
             JsonValueKind.Number => JsonNode.Parse(element.GetRawText())!,
             JsonValueKind.True   => JsonValue.Create(true),
@@ -68,7 +66,7 @@ public static class FixtureStripAllowlist
         };
     }
 
-    private static JsonObject StripObject(JsonElement obj, int depth)
+    private static JsonObject StripObject(JsonElement obj)
     {
         var result = new JsonObject();
         foreach (var prop in obj.EnumerateObject())
@@ -76,7 +74,7 @@ public static class FixtureStripAllowlist
             if (AllowedFieldNames.Contains(prop.Name))
             {
                 // Allowed: recurse with stripping still applied at deeper levels.
-                result[prop.Name] = Apply(prop.Value, depth + 1);
+                result[prop.Name] = Apply(prop.Value);
             }
             else
             {
@@ -89,11 +87,11 @@ public static class FixtureStripAllowlist
         return result;
     }
 
-    private static JsonArray StripArray(JsonElement arr, int depth)
+    private static JsonArray StripArray(JsonElement arr)
     {
         var result = new JsonArray();
         foreach (var item in arr.EnumerateArray())
-            result.Add(Apply(item, depth + 1));
+            result.Add(Apply(item));
         return result;
     }
 }
