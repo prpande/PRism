@@ -225,6 +225,12 @@ internal sealed class SseChannel : IDisposable
         LoggerMessage.Define(LogLevel.Debug, new EventId(0, "SseWriteFailed"),
             "SSE write failed; evicting subscriber");
 
+    private static readonly Action<ILogger, string, PrReference, int, bool, bool, Exception?> s_sseActivePrFanoutLog =
+        LoggerMessage.Define<string, PrReference, int, bool, bool>(
+            LogLevel.Information,
+            new EventId(4, "SseActivePrFanout"),
+            "SSE fan-out {EventType} {PrRef}: subscribers={SubscriberCount} headShaChanged={HeadShaChanged} commentCountChanged={CommentCountChanged}");
+
     private void OnInboxUpdated(InboxUpdated evt)
     {
         var json = JsonSerializer.Serialize(evt, JsonSerializerOptionsFactory.Api);
@@ -237,10 +243,13 @@ internal sealed class SseChannel : IDisposable
 
     private void OnActivePrUpdated(ActivePrUpdated evt)
     {
+        var subscriberList = _activeRegistry.SubscribersFor(evt.PrRef);
+        s_sseActivePrFanoutLog(_log, nameof(ActivePrUpdated), evt.PrRef, subscriberList.Count, evt.HeadShaChanged, evt.CommentCountChanged, null);
+
         var json = JsonSerializer.Serialize(evt, JsonSerializerOptionsFactory.Api);
         var frame = $"event: pr-updated\ndata: {json}\n\n";
         // Per-PR fanout — only subscribers that registered for evt.PrRef receive the event.
-        foreach (var subscriberId in _activeRegistry.SubscribersFor(evt.PrRef))
+        foreach (var subscriberId in subscriberList)
         {
             if (_subscribers.TryGetValue(subscriberId, out var sub))
                 _ = WriteAndEvictOnFailureAsync(sub, frame);
