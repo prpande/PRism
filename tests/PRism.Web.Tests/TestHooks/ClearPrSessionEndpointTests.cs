@@ -24,7 +24,7 @@ public class ClearPrSessionEndpointTests
         await stateStore.UpdateAsync(state =>
         {
             var session = new ReviewSessionState(
-                LastViewedHeadSha: "abc123",
+                TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp("abc123", DateTime.UtcNow.AddMinutes(-1)) },
                 LastSeenCommentId: null,
                 PendingReviewId: "PRR_x",
                 PendingReviewCommitOid: "abc123",

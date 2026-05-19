@@ -106,7 +106,7 @@ public class OverrideStaleTests
 
     private static ReviewSessionState SessionWith(string lastViewedHeadSha, params DraftComment[] drafts)
         => new(
-            LastViewedHeadSha: lastViewedHeadSha,
+            TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(lastViewedHeadSha, DateTime.UtcNow.AddMinutes(-1)) },
             LastSeenCommentId: null,
             PendingReviewId: null,
             PendingReviewCommitOid: null,

@@ -8,7 +8,7 @@ namespace PRism.Core.State;
 
 public sealed class AppStateStore : IAppStateStore, IDisposable
 {
-    private const int CurrentVersion = 5;
+    private const int CurrentVersion = 6;
 
     // Per-step migrations applied in ascending ToVersion order. Each step takes a JsonObject
     // at version N-1 and returns the same root mutated to version N. Adding a step here is
@@ -25,6 +25,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             (3, AppStateMigrations.MigrateV2ToV3),
             (4, AppStateMigrations.MigrateV3ToV4),  // S5 PR2 — adds DraftComment.ThreadId
             (5, AppStateMigrations.MigrateV4ToV5),  // S6 PR0 — moves reviews/ai-state/last-host under accounts.default
+            (6, AppStateMigrations.MigrateV5ToV6),  // cross-tab-stamp slice — per-tab TabStamps map replaces session-flat last-viewed-head-sha
         }.OrderBy(s => s.ToVersion).ToArray();
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -280,6 +281,22 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
                 ["repo-clone-map"] = new JsonObject(),
                 ["workspace-mtime-at-last-enumeration"] = null
             };
+        }
+
+        // V5→V6 backfill: every session under every account gets a tab-stamps map. A
+        // future-version file might list sessions without the new field; without this
+        // backfill the deserializer would NRE on session.TabStamps. Iterates EVERY
+        // account (not just accounts.default) for the same reason MigrateV5ToV6 does:
+        // multi-account state is the V5 shape we live in now.
+        foreach (var (_, accountNode) in accountsObj)
+        {
+            var sessionsObj = (accountNode as JsonObject)?["reviews"]?["sessions"] as JsonObject;
+            if (sessionsObj is null) continue;
+            foreach (var (_, sessionNode) in sessionsObj)
+            {
+                if (sessionNode is JsonObject session && session["tab-stamps"] is null)
+                    session["tab-stamps"] = new JsonObject();
+            }
         }
     }
 }

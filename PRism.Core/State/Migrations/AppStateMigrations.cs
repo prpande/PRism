@@ -100,4 +100,53 @@ internal static class AppStateMigrations
         root["version"] = 5;
         return root;
     }
+
+    public static JsonObject MigrateV5ToV6(JsonObject root)
+    {
+        // Cross-tab stamp poisoning fix — per-tab TabStamps map replaces session-flat
+        // last-viewed-head-sha. The migration drops the legacy key and seeds an empty
+        // tab-stamps object; the next mark-viewed call from any tab populates it. Spec § 4.
+        //
+        // Idempotency vs partial-rollback discrimination, mirroring V4→V5:
+        //   - V6 file passed in by mistake (sessions already have tab-stamps, no legacy key):
+        //     just bump version. Idempotent.
+        //   - Partial-rollback / hand-edit (a session has BOTH last-viewed-head-sha AND
+        //     tab-stamps): refuse to silently pick one. Surface JsonException → quarantine.
+        //
+        // Iterates EVERY account's sessions, not just accounts.default. V5 introduced the
+        // multi-account container; this migration must respect the same shape even though
+        // v1 only writes the default account in practice — a future-version file demoted
+        // here would otherwise leak its non-default accounts past the migration.
+        if (root["accounts"] is not JsonObject accounts)
+        {
+            root["version"] = 6;
+            return root;
+        }
+
+        foreach (var (_, accountNode) in accounts)
+        {
+            var sessions = (accountNode as JsonObject)?["reviews"]?["sessions"] as JsonObject;
+            if (sessions is null) continue;
+
+            foreach (var (_, sessionNode) in sessions)
+            {
+                if (sessionNode is not JsonObject session) continue;
+
+                var hasLegacy = session["last-viewed-head-sha"] is not null;
+                var hasNew = session["tab-stamps"] is JsonObject;
+
+                if (hasLegacy && hasNew)
+                    throw new System.Text.Json.JsonException(
+                        "state.json session has both legacy last-viewed-head-sha AND a tab-stamps key. " +
+                        "This indicates a partial rollback from a future version or a hand-edit gone wrong. " +
+                        "Quarantining and re-Setup is safer than guessing which set wins.");
+
+                session.Remove("last-viewed-head-sha");
+                if (!hasNew) session["tab-stamps"] = new JsonObject();
+            }
+        }
+
+        root["version"] = 6;
+        return root;
+    }
 }

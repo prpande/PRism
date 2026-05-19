@@ -49,10 +49,12 @@ public class MigrateV3ToV4Tests
     }
 
     [Fact]
-    public void AppStateDefault_IsAtVersion5()
+    public void AppStateDefault_IsAtVersion6()
     {
         // Documentation pin: the in-memory default and the migration target stay in lockstep.
         // S6 PR0 — bumped from 4 to 5 alongside the multi-account scaffold migration.
-        Assert.Equal(5, AppState.Default.Version);
+        // Cross-tab-stamp slice — bumped from 5 to 6 alongside the V5→V6 migration that
+        // replaces session-flat LastViewedHeadSha with a per-tab TabStamps map.
+        Assert.Equal(6, AppState.Default.Version);
     }
 }

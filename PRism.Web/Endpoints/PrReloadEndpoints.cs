@@ -153,12 +153,16 @@ internal static class PrReloadEndpoints
                     ? DraftVerdictStatus.NeedsReconfirm
                     : current.DraftVerdictStatus;
 
+                // TASK5 placeholder — Task 5 wires X-PRism-Tab-Id header here and writes
+                // TabStamps[tabId] = (request.HeadSha, DateTime.UtcNow) with N=8 LRU eviction.
+                var tabStamps = current.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
+                tabStamps["tab-PLACEHOLDER"] = new TabStamp(request.HeadSha, DateTime.UtcNow);
                 var updated = current with
                 {
                     DraftComments = updatedDrafts,
                     DraftReplies = updatedReplies,
                     DraftVerdictStatus = newVerdictStatus,
-                    LastViewedHeadSha = request.HeadSha
+                    TabStamps = tabStamps
                 };
                 updatedSession = updated;
 

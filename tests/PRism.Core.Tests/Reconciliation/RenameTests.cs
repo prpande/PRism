@@ -29,7 +29,7 @@ public class RenameTests
             IsOverriddenStale: false);
 
         var session = new ReviewSessionState(
-            LastViewedHeadSha: OldSha,
+            TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(OldSha, DateTime.UtcNow.AddMinutes(-1)) },
             LastSeenCommentId: null,
             PendingReviewId: null,
             PendingReviewCommitOid: null,

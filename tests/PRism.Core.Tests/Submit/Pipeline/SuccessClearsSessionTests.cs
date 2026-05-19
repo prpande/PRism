@@ -50,6 +50,6 @@ public class SuccessClearsSessionTests
         Assert.Null(persisted.PendingReviewId);
         Assert.Null(persisted.PendingReviewCommitOid);
         // Non-submit fields untouched.
-        Assert.Equal("head1", persisted.LastViewedHeadSha);
+        Assert.Equal("head1", persisted.LegacyMostRecentHeadSha());
     }
 }

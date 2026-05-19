@@ -241,7 +241,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         long? lastSeenCommentId = null;
         if (state.Reviews.Sessions.TryGetValue(sessionKey, out var session))
         {
-            lastViewedHeadSha = session.LastViewedHeadSha;
+            lastViewedHeadSha = session.LegacyMostRecentHeadSha(); // TASK9 — Task 9 inlines this (the inbox semantic is exactly "most-recent stamp's head sha"; the helper rename goes away).
             if (session.LastSeenCommentId != null
                 && long.TryParse(session.LastSeenCommentId, System.Globalization.CultureInfo.InvariantCulture, out var n))
                 lastSeenCommentId = n;

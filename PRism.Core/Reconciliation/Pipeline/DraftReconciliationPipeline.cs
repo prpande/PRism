@@ -30,7 +30,11 @@ public sealed class DraftReconciliationPipeline
         // the apply step. Behavior is equivalent. The check fires only when LastViewedHeadSha
         // is non-null AND differs from newHeadSha — first-reload (LastViewedHeadSha = null)
         // does NOT count as a head shift, so freshly-set overrides survive their first reload.
-        bool headShifted = session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha;
+        // TASK8 — Task 8 swaps the LegacyMostRecentHeadSha() stub for a three-branch derivation
+        // (per-tab stamp → empty-map → session-level fallback). Stub is semantically wrong for the
+        // per-tab gate but keeps the build green between Phase 1 and Phase 4.
+        var legacyHeadSha = session.LegacyMostRecentHeadSha();
+        bool headShifted = legacyHeadSha is not null && legacyHeadSha != newHeadSha;
         if (headShifted)
         {
             session = session with
@@ -213,7 +217,9 @@ public sealed class DraftReconciliationPipeline
         // requires viewing the PR which sets LastViewedHeadSha — but keeping the two
         // head-shift checks symmetric prevents the asymmetry from becoming a latent trap
         // when PR3 wires the endpoint.
-        bool verdictHeadShifted = session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha;
+        // TASK8 — same as the head-shift derivation at the top of this method.
+        var verdictLegacyHeadSha = session.LegacyMostRecentHeadSha();
+        bool verdictHeadShifted = verdictLegacyHeadSha is not null && verdictLegacyHeadSha != newHeadSha;
         var verdictOutcome =
             session.DraftVerdict is not null && verdictHeadShifted
                 ? VerdictReconcileOutcome.NeedsReconfirm

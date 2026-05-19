@@ -84,7 +84,7 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
     // A valid in-flight session: one line-anchored draft, a summary, a Comment verdict, head sha
     // matching TestPrReader.HeadSha so rule (f) passes when ActivePrCache.Current is set.
     public static ReviewSessionState ValidSession(string headSha = "head1") => new(
-        LastViewedHeadSha: headSha, LastSeenCommentId: null,
+        TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(headSha, DateTime.UtcNow.AddMinutes(-1)) }, LastSeenCommentId: null,
         PendingReviewId: null, PendingReviewCommitOid: null,
         ViewedFiles: new Dictionary<string, string>(),
         DraftComments: new List<DraftComment>
@@ -97,7 +97,7 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
         DraftVerdictStatus: DraftVerdictStatus.Draft);
 
     public static ReviewSessionState EmptySession(string headSha = "head1") => new(
-        LastViewedHeadSha: headSha, LastSeenCommentId: null,
+        TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(headSha, DateTime.UtcNow.AddMinutes(-1)) }, LastSeenCommentId: null,
         PendingReviewId: null, PendingReviewCommitOid: null,
         ViewedFiles: new Dictionary<string, string>(),
         DraftComments: Array.Empty<DraftComment>(),

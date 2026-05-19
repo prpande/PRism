@@ -106,12 +106,14 @@ internal static partial class PrDetailEndpoints
                 {
                     await stateStore.UpdateAsync(state =>
                     {
-                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ??
-                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
+                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? PrDraftEndpoints.NewEmptySession();
                         var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
+                        // TASK4 placeholder — Task 4 wires X-PRism-Tab-Id header here.
+                        var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
+                        tabStamps["tab-PLACEHOLDER"] = new TabStamp(body.HeadSha, DateTime.UtcNow);
                         sessions[key] = session with
                         {
-                            LastViewedHeadSha = body.HeadSha,
+                            TabStamps = tabStamps,
                             LastSeenCommentId = body.MaxCommentId,
                         };
                         return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
@@ -165,8 +167,7 @@ internal static partial class PrDetailEndpoints
                 {
                     await stateStore.UpdateAsync(state =>
                     {
-                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ??
-                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
+                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? PrDraftEndpoints.NewEmptySession();
                         var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
 
                         if (body.Viewed)

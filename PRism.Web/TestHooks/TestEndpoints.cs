@@ -4,6 +4,7 @@ using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Web.Endpoints;
 
 namespace PRism.Web.TestHooks;
 
@@ -157,19 +158,13 @@ internal static class TestEndpoints
             await stateStore.UpdateAsync(state =>
             {
                 var session = state.Reviews.Sessions.GetValueOrDefault(key)
-                    ?? new ReviewSessionState(
-                        LastViewedHeadSha: null,
-                        LastSeenCommentId: null,
-                        PendingReviewId: null,
-                        PendingReviewCommitOid: null,
-                        ViewedFiles: new Dictionary<string, string>(),
-                        DraftComments: new List<DraftComment>(),
-                        DraftReplies: new List<DraftReply>(),
-                        DraftSummaryMarkdown: null,
-                        DraftVerdict: null,
-                        DraftVerdictStatus: DraftVerdictStatus.Draft);
+                    ?? PrDraftEndpoints.NewEmptySession();
                 var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
-                sessions[key] = session with { LastViewedHeadSha = headSha };
+                // TASK6 placeholder — Task 6 extends MarkPrViewedRequest with TabId and writes
+                // TabStamps[req.TabId] = (headSha, DateTime.UtcNow) with N=8 LRU eviction.
+                var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
+                tabStamps["tab-PLACEHOLDER"] = new TabStamp(headSha, DateTime.UtcNow);
+                sessions[key] = session with { TabStamps = tabStamps };
                 return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
             }, CancellationToken.None).ConfigureAwait(false);
             return Results.Ok(new { ok = true, headSha });

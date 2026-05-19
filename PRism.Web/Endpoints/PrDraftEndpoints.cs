@@ -569,7 +569,7 @@ internal static class PrDraftEndpoints
     // it for the same reason. Internal so both endpoint classes share the single definition: a new
     // field on ReviewSessionState then produces one compile error, not zero.
     internal static ReviewSessionState NewEmptySession() => new(
-        LastViewedHeadSha: null, LastSeenCommentId: null,
+        TabStamps: new Dictionary<string, TabStamp>(), LastSeenCommentId: null,
         PendingReviewId: null, PendingReviewCommitOid: null,
         ViewedFiles: new Dictionary<string, string>(),
         DraftComments: Array.Empty<DraftComment>(),
