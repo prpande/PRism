@@ -5,7 +5,7 @@ namespace PRism.Core.Tests.State;
 public class MigrationChainTests
 {
     [Fact]
-    public async Task LoadsV1File_AppliesV1ToV2_ThenV2ToV3_ThenV3ToV4_ThenV4ToV5_ResultIsV5()
+    public async Task LoadsV1File_AppliesV1ToV2_ThenV2ToV3_ThenV3ToV4_ThenV4ToV5_ThenV5ToV6_ResultIsV6()
     {
         var temp = Path.GetTempPath();
         var dir = Directory.CreateDirectory(Path.Combine(temp, $"prism-test-{Guid.NewGuid():N}")).FullName;
@@ -30,13 +30,17 @@ public class MigrationChainTests
             var store = new AppStateStore(dir);
             var loaded = await store.LoadAsync(CancellationToken.None);
 
-            Assert.Equal(5, loaded.Version);
+            Assert.Equal(6, loaded.Version);
             Assert.True(loaded.Reviews.Sessions.ContainsKey("acme/api/123"));
             var session = loaded.Reviews.Sessions["acme/api/123"];
             Assert.Empty(session.DraftComments);
             Assert.Empty(session.DraftReplies);
             Assert.Null(session.DraftSummaryMarkdown);
             Assert.Equal(DraftVerdictStatus.Draft, session.DraftVerdictStatus);
+            // V5→V6: the chain drops the legacy last-viewed-head-sha and seeds an empty TabStamps
+            // map. The "last-seen-comment-id": "100" carries through unchanged.
+            Assert.Empty(session.TabStamps);
+            Assert.Equal("100", session.LastSeenCommentId);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
@@ -73,7 +77,7 @@ public class MigrationChainTests
     }
 
     [Fact]
-    public async Task LoadsV3File_AppliesV3ToV4_ThenV4ToV5_ResultIsV5()
+    public async Task LoadsV3File_AppliesV3ToV4_ThenV4ToV5_ThenV5ToV6_ResultIsV6()
     {
         var temp = Path.GetTempPath();
         var dir = Directory.CreateDirectory(Path.Combine(temp, $"prism-test-{Guid.NewGuid():N}")).FullName;
@@ -93,14 +97,14 @@ public class MigrationChainTests
             var store = new AppStateStore(dir);
             var loaded = await store.LoadAsync(CancellationToken.None);
 
-            Assert.Equal(5, loaded.Version);
+            Assert.Equal(6, loaded.Version);
             Assert.Empty(loaded.Reviews.Sessions);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
 
     [Fact]
-    public async Task LoadsV4File_AppliesV4ToV5_ResultIsV5()
+    public async Task LoadsV4File_AppliesV4ToV5_ThenV5ToV6_ResultIsV6()
     {
         var temp = Path.GetTempPath();
         var dir = Directory.CreateDirectory(Path.Combine(temp, $"prism-test-{Guid.NewGuid():N}")).FullName;
@@ -120,7 +124,7 @@ public class MigrationChainTests
             var store = new AppStateStore(dir);
             var loaded = await store.LoadAsync(CancellationToken.None);
 
-            Assert.Equal(5, loaded.Version);
+            Assert.Equal(6, loaded.Version);
             Assert.Empty(loaded.Reviews.Sessions);
         }
         finally { Directory.Delete(dir, recursive: true); }

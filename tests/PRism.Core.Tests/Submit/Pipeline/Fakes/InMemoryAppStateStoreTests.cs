@@ -18,7 +18,7 @@ public class InMemoryAppStateStoreTests
     {
         var store = new InMemoryAppStateStore();
         var session = new ReviewSessionState(
-            LastViewedHeadSha: "h", LastSeenCommentId: null,
+            TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp("h", DateTime.UtcNow.AddMinutes(-1)) }, LastSeenCommentId: null,
             PendingReviewId: null, PendingReviewCommitOid: null,
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(),

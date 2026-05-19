@@ -83,7 +83,7 @@ test('S5 closed PR — a failed courtesy delete surfaces the orphan-cleanup-fail
 }) => {
   await setupAndOpenScenarioPr(page);
   await createInlineDraft(page, 3, 'draft with a leftover pending review');
-  await recordPrViewed(page.request);
+  await recordPrViewed(page);
 
   // Submit, but fail at AttachThreads so the pipeline leaves a pending review
   // behind (session.pendingReviewId gets stamped on the failed-state Cancel).

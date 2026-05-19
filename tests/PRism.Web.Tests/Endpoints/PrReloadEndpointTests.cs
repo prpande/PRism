@@ -88,6 +88,51 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     }
 
     [Fact]
+    public async Task Reload_writes_tab_stamp_under_caller_tab_id()
+    {
+        // Spec § 5.3 — the per-tab stamp lands under X-PRism-Tab-Id (not "tab-PLACEHOLDER").
+        var client = ClientWithTab("tab-RELOAD");
+        await SeedSessionAsync(client, "acme/api/1100");
+
+        var sha = new string('f', 40);
+        var resp = await client.PostAsJsonAsync("/api/pr/acme/api/1100/reload", new { headSha = sha });
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var stateStore = _factory.Services.GetRequiredService<PRism.Core.State.IAppStateStore>();
+        var state = await stateStore.LoadAsync(CancellationToken.None);
+        var stamps = state.Reviews.Sessions["acme/api/1100"].TabStamps;
+        stamps.Should().ContainKey("tab-RELOAD");
+        stamps["tab-RELOAD"].HeadSha.Should().Be(sha);
+    }
+
+    [Fact]
+    public async Task Reload_returns_422_when_tab_id_header_missing()
+    {
+        // Reload is a write site; tab-id gate fires before the headSha format check.
+        var c = _factory.CreateClient();   // deliberately no X-PRism-Tab-Id
+        var sha = new string('a', 40);
+        var resp = await c.PostAsJsonAsync("/api/pr/acme/api/1101/reload", new { headSha = sha });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain("reload-tab-id-missing");
+    }
+
+    [Theory]
+    [InlineData("tab id with space")]
+    [InlineData("tab/with/slash")]
+    public async Task Reload_returns_422_when_tab_id_header_is_invalid(string tabId)
+    {
+        var c = _factory.CreateClient();
+        c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
+        var sha = new string('a', 40);
+        var resp = await c.PostAsJsonAsync("/api/pr/acme/api/1102/reload", new { headSha = sha });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("reload-tab-id-missing");
+    }
+
+    [Fact]
     public async Task Reload_invalid_sha_returns_422()
     {
         var client = ClientWithTab();

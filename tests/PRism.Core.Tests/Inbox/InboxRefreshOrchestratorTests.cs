@@ -493,7 +493,7 @@ public sealed class InboxRefreshOrchestratorTests
         // Slash form per S4 PR1 — matches PrReference.ToString() canonical form.
         var sessionKey = "acme/api/1";
         var sessionState = new ReviewSessionState(
-            LastViewedHeadSha: "abc",
+            TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp("abc", DateTime.UtcNow.AddMinutes(-1)) },
             LastSeenCommentId: "12345",
             PendingReviewId: null,
             PendingReviewCommitOid: null,

@@ -177,7 +177,7 @@ public class PrSubmitEndpointsTests
     public async Task PostSubmit_last_viewed_head_sha_null_returns_400_head_sha_not_stamped()
     {
         using var ctx = SubmitEndpointsTestContext.Create();
-        var session = SubmitEndpointsTestContext.ValidSession() with { LastViewedHeadSha = null };
+        var session = SubmitEndpointsTestContext.ValidSession() with { TabStamps = new Dictionary<string, TabStamp>() };
         await ctx.SeedSessionAsync("o", "r", 50, session);
         using var client = ctx.CreateClient();
 
@@ -195,6 +195,12 @@ public class PrSubmitEndpointsTests
         message.Should().NotContain("mark-viewed", "diagnostic detail belongs in the structured log, not the response body");
     }
 
+    // Untombstoned by Task 7 — the per-tab gate is wired; the log line now carries the
+    // TabStamps-shaped diagnostic ("session.TabStamps for the caller's tab is missing") while
+    // still naming the missing /mark-viewed call so an operator grepping logs sees both the
+    // wire-up gap AND the FE remediation. A regression that shortens this back to just the
+    // session key would silently pass a "log fired" assertion; this test pins the actionable
+    // content.
     [Fact]
     public async Task PostSubmit_last_viewed_head_sha_null_logs_warning_with_pr_ref_and_diagnostic_phrase()
     {
@@ -205,7 +211,7 @@ public class PrSubmitEndpointsTests
         // session key would silently pass a "log fired" assertion; this test
         // pins the actionable content.
         using var ctx = SubmitEndpointsTestContext.Create();
-        var session = SubmitEndpointsTestContext.ValidSession() with { LastViewedHeadSha = null };
+        var session = SubmitEndpointsTestContext.ValidSession() with { TabStamps = new Dictionary<string, TabStamp>() };
         await ctx.SeedSessionAsync("o", "r", 51, session);
         using var client = ctx.CreateClient();
 
@@ -215,9 +221,59 @@ public class PrSubmitEndpointsTests
             r.Level == LogLevel.Warning &&
             r.Category.Contains("PrSubmit", StringComparison.Ordinal) &&
             r.FormattedMessage.Contains("o/r/51", StringComparison.Ordinal) &&
-            r.FormattedMessage.Contains("LastViewedHeadSha", StringComparison.Ordinal) &&
+            r.FormattedMessage.Contains("TabStamps", StringComparison.Ordinal) &&
             r.FormattedMessage.Contains("mark-viewed", StringComparison.OrdinalIgnoreCase) &&
             r.FormattedMessage.Contains("frontend", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task PostSubmit_returns_422_tab_id_missing_when_X_PRism_Tab_Id_header_absent()
+    {
+        // Spec § 3 — submit's per-tab gate must reject requests without an X-PRism-Tab-Id
+        // header (or with an out-of-allowlist value) using a DISTINCT error code from the
+        // head-sha-not-stamped/400 case. The frontend's toast routing relies on the
+        // discriminator: 422 tab-id-missing → "reload this tab"; 400 head-sha-not-stamped →
+        // "reload the PR detail". Conflating them would hide either remediation behind the
+        // wrong message.
+        using var ctx = SubmitEndpointsTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 55, SubmitEndpointsTestContext.ValidSession());
+        // CreateClient(tabId: null) skips the X-PRism-Tab-Id header entirely (the helper's
+        // null-or-empty guard short-circuits the DefaultRequestHeaders.Add call).
+        using var client = ctx.CreateClient(tabId: null);
+
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/55/submit", new { verdict = "Comment" });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("tab-id-missing");
+    }
+
+    [Fact]
+    public async Task PostSubmit_cross_tab_isolation_tab_B_submit_with_only_tab_A_stamp_returns_head_sha_not_stamped()
+    {
+        // The bypass class that motivated this whole slice: tab-A stamps headSha=foo via
+        // mark-viewed; tab-B (which never visited PR detail in this session) attempts to
+        // submit. Under the old session-flat LastViewedHeadSha semantic, tab-B would inherit
+        // tab-A's stamp and pass the head-sha-drift gate. Under V6, tab-B's TabStamps lookup
+        // misses → 400 head-sha-not-stamped, exactly as the spec requires (§ 5.5).
+        using var ctx = SubmitEndpointsTestContext.Create();
+        // Seed a session where ONLY tab-A has a stamp at the current head.
+        var session = SubmitEndpointsTestContext.ValidSession() with
+        {
+            TabStamps = new Dictionary<string, TabStamp>
+            {
+                ["tab-A"] = new TabStamp("head1", DateTime.UtcNow.AddMinutes(-1)),
+            },
+        };
+        await ctx.SeedSessionAsync("o", "r", 56, session);
+        // Tab B submits — no stamp under tab-B.
+        using var client = ctx.CreateClient(tabId: "tab-B");
+
+        var resp = await client.PostAsJsonAsync("/api/pr/o/r/56/submit", new { verdict = "Comment" });
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("head-sha-not-stamped");
     }
 
     [Fact]

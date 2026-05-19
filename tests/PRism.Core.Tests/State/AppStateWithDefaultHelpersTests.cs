@@ -13,7 +13,7 @@ public class AppStateWithDefaultHelpersTests
         var newReviews = new PrSessionsState(new Dictionary<string, ReviewSessionState>
         {
             ["owner/repo/1"] = new ReviewSessionState(
-                LastViewedHeadSha: "abc",
+                TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp("abc", DateTime.UtcNow.AddMinutes(-1)) },
                 LastSeenCommentId: null,
                 PendingReviewId: null,
                 PendingReviewCommitOid: null,

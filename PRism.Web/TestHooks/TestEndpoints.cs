@@ -4,6 +4,7 @@ using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Web.Endpoints;
 
 namespace PRism.Web.TestHooks;
 
@@ -35,7 +36,7 @@ internal static class TestEndpoints
 
     internal sealed record SetPrStateRequest(string State);
 
-    internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number);
+    internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number, string TabId);
 
     internal sealed record ClearPrSessionRequest(string Owner, string Repo, int Number);
 
@@ -152,24 +153,28 @@ internal static class TestEndpoints
             if (store is null) return StoreMissing("/test/mark-pr-viewed");
             if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo))
                 return Results.BadRequest(new { error = "owner-or-repo-missing" });
+            // Spec § 3 — same TabId allowlist as mark-viewed / reload. The test hook is its
+            // own request contract (TabId arrives in the JSON body, not the header — Playwright
+            // mocked-mode specs read the tab id off window.__prism_test_getTabId and pass it
+            // explicitly), but the validation gate is identical so a typo here behaves the same
+            // way it does for the user-facing endpoints.
+            if (string.IsNullOrEmpty(req.TabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(req.TabId))
+                return Results.BadRequest(new { error = "tab-id-missing-or-invalid" });
             var key = $"{req.Owner}/{req.Repo}/{req.Number}";
             var headSha = store.CurrentHeadSha;
             await stateStore.UpdateAsync(state =>
             {
                 var session = state.Reviews.Sessions.GetValueOrDefault(key)
-                    ?? new ReviewSessionState(
-                        LastViewedHeadSha: null,
-                        LastSeenCommentId: null,
-                        PendingReviewId: null,
-                        PendingReviewCommitOid: null,
-                        ViewedFiles: new Dictionary<string, string>(),
-                        DraftComments: new List<DraftComment>(),
-                        DraftReplies: new List<DraftReply>(),
-                        DraftSummaryMarkdown: null,
-                        DraftVerdict: null,
-                        DraftVerdictStatus: DraftVerdictStatus.Draft);
+                    ?? PrDraftEndpoints.NewEmptySession();
                 var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
-                sessions[key] = session with { LastViewedHeadSha = headSha };
+                var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
+                tabStamps[req.TabId] = new TabStamp(headSha, DateTime.UtcNow);
+                if (tabStamps.Count > 8)
+                {
+                    var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
+                    tabStamps.Remove(oldest);
+                }
+                sessions[key] = session with { TabStamps = tabStamps };
                 return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
             }, CancellationToken.None).ConfigureAwait(false);
             return Results.Ok(new { ok = true, headSha });

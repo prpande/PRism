@@ -31,7 +31,7 @@ test('S5 simultaneous submits — one wins, the other is rejected by the per-PR 
 }) => {
   await setupAndOpenScenarioPr(page);
   await createInlineDraft(page, 3, 'multi-tab draft');
-  await recordPrViewed(page.request);
+  await recordPrViewed(page);
 
   // Second tab, same context (shares cookies). try/finally so page2 closes even if a downstream
   // assertion times out (otherwise an open page lingers for the rest of the suite).

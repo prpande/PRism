@@ -53,7 +53,12 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
 
     public IAppStateStore StateStore => _derived.Services.GetRequiredService<IAppStateStore>();
 
-    public HttpClient CreateClient(string tabId = "tab-1")
+    // Default tabId matches the "tab-test" key used in ValidSession() / EmptySession() so the
+    // submit-gate per-tab lookup (TabStamps[callerTabId]) finds the seeded stamp. Tests that
+    // exercise the tab-id-missing path pass `tabId: null` (NOT `""`) to suppress the header
+    // entirely — empty-string was tried first but DefaultRequestHeaders.Add behavior on empty
+    // values is brittle across HttpClient versions; an explicit null is cleaner.
+    public HttpClient CreateClient(string? tabId = "tab-test")
     {
         var token = _derived.Services.GetRequiredService<SessionTokenProvider>().Current;
         var c = _derived.CreateClient();
@@ -61,7 +66,8 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
         c.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
         var origin = c.BaseAddress?.GetLeftPart(UriPartial.Authority);
         if (!string.IsNullOrEmpty(origin)) c.DefaultRequestHeaders.Add("Origin", origin);
-        c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
+        if (!string.IsNullOrEmpty(tabId))
+            c.DefaultRequestHeaders.Add("X-PRism-Tab-Id", tabId);
         return c;
     }
 
@@ -84,7 +90,7 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
     // A valid in-flight session: one line-anchored draft, a summary, a Comment verdict, head sha
     // matching TestPrReader.HeadSha so rule (f) passes when ActivePrCache.Current is set.
     public static ReviewSessionState ValidSession(string headSha = "head1") => new(
-        LastViewedHeadSha: headSha, LastSeenCommentId: null,
+        TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(headSha, DateTime.UtcNow.AddMinutes(-1)) }, LastSeenCommentId: null,
         PendingReviewId: null, PendingReviewCommitOid: null,
         ViewedFiles: new Dictionary<string, string>(),
         DraftComments: new List<DraftComment>
@@ -97,7 +103,7 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
         DraftVerdictStatus: DraftVerdictStatus.Draft);
 
     public static ReviewSessionState EmptySession(string headSha = "head1") => new(
-        LastViewedHeadSha: headSha, LastSeenCommentId: null,
+        TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(headSha, DateTime.UtcNow.AddMinutes(-1)) }, LastSeenCommentId: null,
         PendingReviewId: null, PendingReviewCommitOid: null,
         ViewedFiles: new Dictionary<string, string>(),
         DraftComments: Array.Empty<DraftComment>(),

@@ -30,7 +30,7 @@ test('S5 happy path — draft → Submit dialog → Confirm → pipeline runs �
   await setupAndOpenScenarioPr(page);
   await createInlineDraft(page, 3, 'Consider naming this parameter more descriptively.');
   // The submit head-sha-drift gate needs a recorded "viewed at head" (the demo does this via Reload).
-  await recordPrViewed(page.request);
+  await recordPrViewed(page);
 
   // Back to the PR detail (the inline composer lives in the Files tab; PrHeader's Submit button is
   // on every PR sub-tab). The button enables once there's reviewable content (no verdict required).
