@@ -584,7 +584,7 @@ app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
                     tabStamps.Remove(oldest);
                 }
 
-                var newSeen = MonotonicMaxCommentId(session.LastSeenCommentId, body.MaxCommentId);
+                var newSeen = MonotonicCommentId.Max(session.LastSeenCommentId, body.MaxCommentId);
 
                 var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                 sessions[key] = session with { TabStamps = tabStamps, LastSeenCommentId = newSeen };
@@ -605,22 +605,34 @@ Add (inside the partial class) and `using System.Text.RegularExpressions;` at th
 ```csharp
 [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
 private static partial Regex TabIdAllowlistRegex();
+```
 
-// Numeric monotone-max of two stringified comment IDs. Unparseable → "no signal."
-// Both mark-viewed (this site) AND markAllRead (Task 6b) need this guard. Mark-viewed's
-// body.MaxCommentId is tab-supplied (the FE computes it from each tab's PR-detail-load
-// response); markAllRead's `newId` is the cache's HighestIssueCommentId, which can lag
-// behind a fresh PR-detail value during the ~30 s poller cadence window. Both writers
-// must preserve the high-water across both sources. Helper is duplicated inline (this
-// snippet + Task 6b's snippet) for v1 simplicity; lift to `PRism.Core/State/
-// MonotonicCommentId.cs` when a third caller appears.
-private static string? MonotonicMaxCommentId(string? current, string? incoming)
+**Create the shared `MonotonicCommentId` helper as a Task 4 sub-step** (per spec § 5.6: "Helper shared between the two write sites (defined once in `PRism.Core/State`)"). Both mark-viewed (this task) and markAllRead (Task 6b) call it; defining it once avoids duplication and matches the spec's "defined once" mandate.
+
+Create `PRism.Core/State/MonotonicCommentId.cs`:
+
+```csharp
+namespace PRism.Core.State;
+
+/// <summary>
+/// Numeric monotone-max of two stringified comment IDs. Unparseable → "no signal."
+/// Both mark-viewed and markAllRead apply this guard. Mark-viewed's body.MaxCommentId
+/// is tab-supplied; markAllRead's newId is the IActivePrCache's HighestIssueCommentId,
+/// which can lag behind a fresh PR-detail value during the ~30 s poller-cadence window.
+/// Both writers must preserve the high-water across both sources.
+/// </summary>
+internal static class MonotonicCommentId
 {
-    if (!long.TryParse(incoming, out var inc)) return current;
-    if (!long.TryParse(current, out var cur)) return incoming;
-    return inc > cur ? incoming : current;
+    internal static string? Max(string? current, string? incoming)
+    {
+        if (!long.TryParse(incoming, out var inc)) return current;
+        if (!long.TryParse(current, out var cur)) return incoming;
+        return inc > cur ? incoming : current;
+    }
 }
 ```
+
+Inside the mark-viewed handler (Step 2 above), the helper invocation becomes `MonotonicCommentId.Max(session.LastSeenCommentId, body.MaxCommentId)` rather than an inline private method. Add `using PRism.Core.State;` to `PrDetailEndpoints.cs` if it isn't already imported.
 
 **Use `PrDraftEndpoints.NewEmptySession()` directly** — do not duplicate the factory. The existing comment in `PrDraftEndpoints.cs:567-571` explicitly documents the single-definition invariant. The `internal` visibility is already in place.
 
@@ -1023,7 +1035,7 @@ case "markAllRead":
     // NEW — apply the monotone guard so a lagging cache can't rewind a freshly-set
     // mark-viewed high-water. If the guard collapses to the existing session value
     // (incoming < current), the operation is effectively a no-op.
-    var merged = MonotonicMaxCommentId(session.LastSeenCommentId, newId);
+    var merged = MonotonicCommentId.Max(session.LastSeenCommentId, newId);
     if (session.LastSeenCommentId == merged)
         return new PatchOutcome.NoOp();
 
@@ -1033,7 +1045,18 @@ case "markAllRead":
 }
 ```
 
-`MonotonicMaxCommentId` is the same helper Task 4 added to `PrDetailEndpoints` (its inline definition). Duplicate the function body verbatim inside `PrDraftEndpoints` (private static), OR lift it to a shared helper. The plan's Task 4 helper comment names this duplication explicitly so the duplication is visible at both sites; if duplicate-code lint flags it, lift to `PRism.Core/State/MonotonicCommentId.cs` (one-liner factor; spec § 5.6 mentions this as a deferrable refactor).
+**Use the shared `MonotonicCommentId.Max` helper from `PRism.Core/State/MonotonicCommentId.cs`** (created in Task 4 Step 3). Add `using PRism.Core.State;` to `PrDraftEndpoints.cs` if it isn't already imported. Do NOT duplicate the helper inline — spec § 5.6 mandates a single shared definition.
+
+The mark-viewed call site already imports the same helper; markAllRead's invocation here uses the exact same function. The rewrite at line 370-372 changes from `session with { LastSeenCommentId = newId }` to:
+
+```csharp
+var merged = MonotonicCommentId.Max(session.LastSeenCommentId, newId);
+if (session.LastSeenCommentId == merged)
+    return new PatchOutcome.NoOp();
+return new PatchOutcome.Applied(
+    session with { LastSeenCommentId = merged },
+    null, null, false, false, FieldsTouchedLastSeenCommentId);
+```
 
 - [ ] **Step 4: Run test**
 
@@ -1455,22 +1478,84 @@ return new PrInboxItem(
     LastSeenCommentId: lastSeenCommentId);
 ```
 
-- [ ] **Step 3: Add the test**
+- [ ] **Step 3: Add the test with concrete assertions**
 
-In `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs`, add:
+In `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs`, add the two tests below. Follow the existing fixture pattern in that file (`Ref`, `RawPr` helpers; `RecordingEventBus`; `FakeAiSeamSelector`). Seed sessions in the fake `IAppStateStore` and drive `RefreshAsync` end-to-end, then assert against the published `PrInboxItem` events.
 
 ```csharp
 [Fact]
-public async Task InboxProjection_lastViewedHeadSha_is_most_recent_TabStamp_HeadSha()
+public async Task RefreshAsync_projects_most_recent_TabStamp_HeadSha_to_LastViewedHeadSha()
 {
-    // Drive the orchestrator end-to-end. Seed two stamps with different StampedAtUtc;
-    // assert the projected PrInboxItem.LastViewedHeadSha is the more-recent one's HeadSha.
-    // (Use the existing test pattern in this file as the template — usually a fake IAppStateStore
-    // + IPrDiscovery + invoke RefreshAsync, then assert the published inbox item shape.)
+    // Seed a session with two TabStamps at different StampedAtUtc values.
+    // The inbox projection (Task 9 Step 2 in InboxRefreshOrchestrator) must pick
+    // the more-recently-stamped TabStamp.HeadSha as the wire-level
+    // PrInboxItem.LastViewedHeadSha — the value the FE uses to decide "first visit".
+    var prRef = Ref(42);
+    var rawPr = RawPr(42, headSha: "sha-current");
+    var stamps = new Dictionary<string, TabStamp>
+    {
+        ["tab-old"]  = new TabStamp("sha-A", new DateTime(2026, 5, 18, 10, 0, 0, DateTimeKind.Utc)),
+        ["tab-new"]  = new TabStamp("sha-B", new DateTime(2026, 5, 18, 14, 0, 0, DateTimeKind.Utc)),
+    };
+    var session = new ReviewSessionState(
+        TabStamps: stamps,
+        LastSeenCommentId: "777",
+        PendingReviewId: null,
+        PendingReviewCommitOid: null,
+        ViewedFiles: new Dictionary<string, string>(),
+        DraftComments: new List<DraftComment>(),
+        DraftReplies: new List<DraftReply>(),
+        DraftSummaryMarkdown: null,
+        DraftVerdict: null,
+        DraftVerdictStatus: DraftVerdictStatus.Draft);
+
+    var store = new FakeAppStateStore(session, prRef);   // existing helper pattern in this file
+    var discovery = new FakePrDiscovery(rawPr);
+    var bus = new RecordingEventBus();
+    var orchestrator = new InboxRefreshOrchestrator(
+        discovery, store, bus, new FakeAiSeamSelector(new NoopInboxItemEnricher()),
+        Mock.Of<IConfigStore>(), NullLogger<InboxRefreshOrchestrator>.Instance);
+
+    await orchestrator.RefreshAsync(CancellationToken.None);
+
+    var projected = bus.Published.OfType<InboxRefreshed>().Single().Items.Single(i => i.Reference == prRef);
+    projected.LastViewedHeadSha.Should().Be("sha-B");      // most-recent stamp wins
+    projected.LastSeenCommentId.Should().Be(777L);          // session-flat LastSeenCommentId, parsed
+}
+
+[Fact]
+public async Task RefreshAsync_projects_null_LastViewedHeadSha_when_TabStamps_empty()
+{
+    var prRef = Ref(43);
+    var rawPr = RawPr(43, headSha: "sha-current");
+    var session = new ReviewSessionState(
+        TabStamps: new Dictionary<string, TabStamp>(),    // empty
+        LastSeenCommentId: null,
+        PendingReviewId: null,
+        PendingReviewCommitOid: null,
+        ViewedFiles: new Dictionary<string, string>(),
+        DraftComments: new List<DraftComment>(),
+        DraftReplies: new List<DraftReply>(),
+        DraftSummaryMarkdown: null,
+        DraftVerdict: null,
+        DraftVerdictStatus: DraftVerdictStatus.Draft);
+
+    var store = new FakeAppStateStore(session, prRef);
+    var discovery = new FakePrDiscovery(rawPr);
+    var bus = new RecordingEventBus();
+    var orchestrator = new InboxRefreshOrchestrator(
+        discovery, store, bus, new FakeAiSeamSelector(new NoopInboxItemEnricher()),
+        Mock.Of<IConfigStore>(), NullLogger<InboxRefreshOrchestrator>.Instance);
+
+    await orchestrator.RefreshAsync(CancellationToken.None);
+
+    var projected = bus.Published.OfType<InboxRefreshed>().Single().Items.Single(i => i.Reference == prRef);
+    projected.LastViewedHeadSha.Should().BeNull();        // null → InboxRow renders the "first visit" badge
+    projected.LastSeenCommentId.Should().BeNull();
 }
 ```
 
-(Exact test wiring depends on the existing fixture pattern; the principle is to drive `RefreshAsync` with seeded state and assert the projection, not to test an extracted `InboxItemMapper.FromSession` — that helper does not exist.)
+**Fixture helper notes:** `FakeAppStateStore` and `FakePrDiscovery` are patterns the existing test file uses; if the exact helper names differ, follow the same shape with `Mock.Of<IAppStateStore>(...)` setup that returns an `AppState` containing the seeded session under `accounts.default.reviews.sessions[refKey]`. The principle is end-to-end orchestrator invocation, NOT a unit test against an `InboxItemMapper.FromSession` helper (that helper does not exist; the projection is inline in `InboxRefreshOrchestrator.MaterializePrInboxItem`).
 
 - [ ] **Step 4: Run tests**
 
@@ -1696,10 +1781,10 @@ In `frontend/src/api/markViewed.ts`, lines 18-23:
 - [ ] **Step 3: Typecheck**
 
 ```
-cd D:/src/prism-cross-tab-stamp/frontend && npx tsc --noEmit
+cd D:/src/prism-cross-tab-stamp/frontend && npm run build
 ```
 
-Expected: PASS.
+Expected: PASS. (Matches the project-reference build form used in Tasks 14 and 17.)
 
 - [ ] **Step 4: Commit (folded into Task 11's commit is also fine — comment-only)**
 
@@ -1792,9 +1877,11 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```
-git -C D:/src/prism-cross-tab-stamp add frontend/src/main.tsx frontend/playwright.config.ts
+git -C D:/src/prism-cross-tab-stamp add frontend/src/main.tsx frontend/playwright.config.ts .github/workflows/ci.yml
 git -C D:/src/prism-cross-tab-stamp commit -m "feat(fe-test-mode): expose getTabId on window under VITE_E2E_TEST"
 ```
+
+The `.github/workflows/ci.yml` change adds the `env: { VITE_E2E_TEST: 'true' }` block to the `npm run build` step (per Step 3). Without staging this file, CI builds the prod bundle without the env var → `__prism_test_getTabId` is not in the bundle → every `getPageTabId(page)` call in the 8 mocked-mode Playwright specs times out → CI red across the suite. Don't ship without it.
 
 ---
 
