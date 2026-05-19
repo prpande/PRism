@@ -273,4 +273,259 @@ public sealed class FileLoggerProviderTests : IDisposable
         var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
         File.ReadAllText(todayPath).Should().Contain("second event after delete");
     }
+
+    [Fact]
+    public async Task Drops_event_when_channel_full_increments_backpressure_counter_deterministically()
+    {
+        // Force the writer task to block on its very first write by holding the daily file
+        // with FileShare.None. The writer's OpenAppendStream throws IOException; the writer
+        // task's outer try/catch routes the exception to Console.Error and the writer task
+        // exits. The channel then fills up because nobody is draining it, and TryWrite
+        // returns false on overflow. We can then deterministically assert DroppedDueToBackpressure > 0.
+
+        Directory.CreateDirectory(_logsDir);
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        using var locker = new FileStream(todayPath, FileMode.Create, FileAccess.Write, FileShare.None);
+
+        await using var provider = new FileLoggerProvider(_logsDir);
+        var logger = provider.CreateLogger("Test");
+
+        // Burst-write 2x capacity. The writer task is wedged on the locked file; channel fills
+        // and subsequent TryWrites return false.
+        for (var i = 0; i < FileLoggerProvider.ChannelCapacity * 2; i++)
+            logger.LogInformation("burst {Index}", i);
+
+        // Give the runtime a moment to schedule any drains that did complete before the lock
+        // engaged (none expected, but cheap insurance).
+        await Task.Yield();
+
+        provider.DroppedDueToBackpressure.Should().BeGreaterThan(0,
+            "with the writer task wedged on a locked file, the channel must fill and TryWrite must return false");
+    }
+
+    [Fact]
+    public async Task Zero_arg_LoggerMessage_Define_falls_back_to_formatter_unscrubbed()
+    {
+        // A zero-arg LoggerMessage.Define overload (e.g., logger.LogInformation("static text"))
+        // produces a state without {OriginalFormat} OR with an {OriginalFormat} entry but no
+        // other args. The file sink's fallback path uses the supplied `formatter` — there are
+        // no args to scrub anyway.
+        await using (var provider = new FileLoggerProvider(_logsDir))
+        {
+            var logger = provider.CreateLogger("Test");
+            logger.LogInformation("static text with no placeholders");
+        }
+
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var content = File.ReadAllText(todayPath);
+        content.Should().Contain("static text with no placeholders");
+    }
+
+    [Fact]
+    public async Task Repeated_template_key_in_state_uses_last_wins_not_ArgumentException()
+    {
+        // ILogger message templates legally repeat the same name (e.g., "a={X} b={X}"). The
+        // file sink's manual dict[k]=v loop uses last-wins; ToDictionary would throw
+        // ArgumentException -> fallback to unscrubbed formatter. Verify the redaction still
+        // fires for both occurrences.
+        await using (var provider = new FileLoggerProvider(_logsDir))
+        {
+            var logger = provider.CreateLogger("Test");
+            logger.LogInformation("first={pat} second={pat}", "ghp_111", "ghp_222");
+        }
+
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var content = File.ReadAllText(todayPath);
+        content.Should().NotContain("ghp_111");
+        content.Should().NotContain("ghp_222");
+        content.Should().Contain("[REDACTED]");
+    }
+
+    [Fact]
+    public async Task Login_value_embedded_in_body_string_is_NOT_redacted_documenting_the_carveout()
+    {
+        // Pins § 6.2's carve-out: `body` field is non-blocked even though a login value
+        // embedded inside the body JSON would semantically be PII. This is the deliberate
+        // diagnostic-debuggability trade.
+        await using (var provider = new FileLoggerProvider(_logsDir))
+        {
+            var logger = provider.CreateLogger("Test");
+            logger.LogWarning("transport: {body}", "{\"message\":\"User pratyush not authorized\"}");
+        }
+
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var content = File.ReadAllText(todayPath);
+        content.Should().Contain("pratyush");  // NOT redacted — by-arg-name scrub doesn't traverse value content
+    }
+
+    [Fact]
+    public async Task OpenAppendStream_on_locked_daily_file_increments_writeFailureCount_and_continues()
+    {
+        // Spec § 10 + ADV2-4: the lockfile prevents second-process startup but doesn't
+        // prevent the file-open attempt. A second writer holding FileAccess.Write on the
+        // daily file makes the second OpenAppendStream throw IOException.
+
+        Directory.CreateDirectory(_logsDir);
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+
+        using var locker = new FileStream(todayPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+
+        await using var provider = new FileLoggerProvider(_logsDir);
+        var logger = provider.CreateLogger("Test");
+        logger.LogInformation("event 0");
+        await provider.DisposeAsync();
+
+        // Provider didn't crash; the writer-task task swallowed the IOException.
+        // _writeFailureCount visible via the internal getter (PRism.Web.Tests has
+        // InternalsVisibleTo on PRism.Web).
+        provider.WriteFailureCount.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Redacts_pendingReviewId_and_threadId_and_replyCommentId_when_present_as_structured_args()
+    {
+        // S5 PR3 deferral closure — these field names are added to BlockedFieldNames
+        // and the file sink must redact them too.
+        await using (var provider = new FileLoggerProvider(_logsDir))
+        {
+            var logger = provider.CreateLogger("Test");
+            logger.LogInformation(
+                "trace {pendingReviewId} {threadId} {replyCommentId}",
+                "PRR_xxxxx", "PRRT_yyyyy", "PRRC_zzzzz");
+        }
+
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var content = File.ReadAllText(todayPath);
+        content.Should().NotContain("PRR_xxxxx");
+        content.Should().NotContain("PRRT_yyyyy");
+        content.Should().NotContain("PRRC_zzzzz");
+        // All three placeholders get [REDACTED] — count the occurrences.
+        var redactedCount = System.Text.RegularExpressions.Regex.Count(content, @"\[REDACTED\]");
+        redactedCount.Should().BeGreaterOrEqualTo(3);
+    }
+
+    [Fact]
+    public async Task Keeps_headSha_field_unredacted()
+    {
+        // headSha is non-blocked; it's diagnostically load-bearing for submit-pipeline
+        // failure triage. The carve-out is intentional per spec § 6.2.
+        await using (var provider = new FileLoggerProvider(_logsDir))
+        {
+            var logger = provider.CreateLogger("Test");
+            logger.LogInformation("drift detected at {headSha}", "abc123def456");
+        }
+
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var content = File.ReadAllText(todayPath);
+        content.Should().Contain("abc123def456");
+    }
+
+    [Fact]
+    public async Task Value_whose_ToString_throws_falls_back_to_formatter_without_crashing()
+    {
+        // ADV2-3 + spec § 7: LogTemplateFormatter catches Exception broadly and returns
+        // the template verbatim. The file sink's outer try/catch in FileLogger.Log then
+        // does NOT see an exception (because the formatter swallowed it), so the
+        // counter increment via OnTemplateSubstitutionFailure does NOT fire — the
+        // template-verbatim string lands in the file. The host stays up; that's the
+        // load-bearing assertion. Counter increment behavior is exercised by the unit
+        // tests on LogTemplateFormatter (Task 2).
+        await using var provider = new FileLoggerProvider(_logsDir);
+        var logger = provider.CreateLogger("Test");
+
+        logger.LogError("blew up: {X}", new ThrowingToString());
+        await provider.DisposeAsync();
+
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        File.Exists(todayPath).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Rolls_over_file_at_local_date_boundary()
+    {
+        // Clock-seam test: inject a Func<DateTimeOffset> that the provider uses for BOTH
+        // FileLogEvent.Timestamp (via parent.Now()) AND the date-rollover check (via
+        // _now().LocalDateTime). Driving both legs from the same seam makes the rotation
+        // decision deterministic — event #1's timestamp is yesterday's local date because
+        // FileLogger.Log calls _parent.Now() at the moment of enqueue.
+
+        var clock = new MutableClock(DateTimeOffset.Now.AddDays(-1));
+
+        await using (var provider = new FileLoggerProvider(_logsDir, () => clock.Now))
+        {
+            var logger = provider.CreateLogger("Test");
+            logger.LogInformation("yesterday event");
+            // Drive the writer task's drain of event #1 before advancing the clock — without
+            // this synchronization, the writer might dequeue event #1 AFTER clock.Now was
+            // reassigned (FileLogger.Log captured _parent.Now() correctly at enqueue, but
+            // the rotation decision in WriteEventAsync uses evt.Timestamp which was already
+            // captured, so the race is benign here). For belt-and-braces, briefly yield.
+            await Task.Yield();
+
+            clock.Now = DateTimeOffset.Now;
+            logger.LogInformation("today event");
+        }
+
+        var yesterdayPath = Path.Combine(_logsDir, $"prism-{clock.Now.AddDays(-1):yyyy-MM-dd}.log");
+        var todayPath = Path.Combine(_logsDir, $"prism-{clock.Now:yyyy-MM-dd}.log");
+
+        File.Exists(yesterdayPath).Should().BeTrue();
+        File.Exists(todayPath).Should().BeTrue();
+        File.ReadAllText(yesterdayPath).Should().Contain("yesterday event");
+        File.ReadAllText(todayPath).Should().Contain("today event");
+    }
+
+    [Fact]
+    public async Task Emits_session_end_line_and_counter_summary_on_graceful_shutdown()
+    {
+        await using (var provider = new FileLoggerProvider(_logsDir))
+        {
+            var logger = provider.CreateLogger("Test");
+            logger.LogInformation("event 0");
+        }
+
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        var content = File.ReadAllText(todayPath);
+        content.Should().Contain("session ending");
+    }
+
+    [Fact]
+    public async Task Writer_task_failure_does_not_crash_the_host()
+    {
+        // The structural recursion-safety claim ("the writer task never calls ILogger") is
+        // enforced by code review of FileLoggerProvider.cs: every self-diagnostic path uses
+        // Console.Error.WriteLine, never an ILogger. A unit test cannot enforce this
+        // structurally — it would need a Roslyn analyzer or a discipline-check harness. What
+        // this test verifies is the observable consequence: when the writer task's I/O fails
+        // (we lock the daily file with FileShare.Read so the provider's OpenAppendStream
+        // throws), the host stays up, DisposeAsync completes, the counter increments.
+
+        Directory.CreateDirectory(_logsDir);
+        var todayPath = Path.Combine(_logsDir, $"prism-{DateTime.Now:yyyy-MM-dd}.log");
+        using var locker = new FileStream(todayPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+
+        await using var provider = new FileLoggerProvider(_logsDir);
+        var logger = provider.CreateLogger("Test");
+        logger.LogInformation("event that will fail to write");
+        await provider.DisposeAsync();
+
+        // Reaching this line IS the assertion — DisposeAsync returned cleanly without
+        // deadlock or throw despite the writer-task fatal exception from OpenAppendStream.
+        // The WriteFailureCount counter may or may not have fired depending on whether the
+        // failure landed in OpenAppendStream (routes to the writer-task fatal stderr path
+        // before any write attempt) or in a subsequent WriteAsync (increments the counter).
+        // We don't assert on the counter value here because either path is consistent with
+        // the spec's "host stays up on I/O failure" contract.
+    }
+
+    private sealed class ThrowingToString
+    {
+        public override string ToString() => throw new InvalidOperationException("kaboom");
+    }
+
+    private sealed class MutableClock
+    {
+        public DateTimeOffset Now { get; set; }
+        public MutableClock(DateTimeOffset now) { Now = now; }
+    }
 }

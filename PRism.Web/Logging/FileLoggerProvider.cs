@@ -153,7 +153,27 @@ internal sealed class FileLoggerProvider : ILoggerProvider, IAsyncDisposable
             Directory.CreateDirectory(_logsDir);
             RunRetentionSweep();
             _currentFileDate = DateOnly.FromDateTime(_now().LocalDateTime);
-            _currentStream = OpenAppendStream(_currentFileDate);
+
+            // Spec § 7 extension: OpenAppendStream can throw IOException when the daily file
+            // is held by another writer (ADV2-4 second-process case). Without this try/catch
+            // the exception would propagate to the outer fatal-stderr catch and the writer
+            // task would exit silently with no counter increment — the operator loses the
+            // open-failure signal. Route to _writeFailureCount with the same one-stderr-per-
+            // session rate-limit pattern as WriteEventAsync, then exit cleanly so the finally
+            // block (which sees _currentStream == null and short-circuits) runs.
+            try
+            {
+                _currentStream = OpenAppendStream(_currentFileDate);
+            }
+#pragma warning disable CA1031 // Open-failure: route to counter + stderr, exit gracefully.
+            catch (Exception ex)
+            {
+                if (Interlocked.Increment(ref _writeFailureCount) == 1)
+                    await Console.Error.WriteLineAsync($"PRism FileLogger open-stream failed: {ex.Message}").ConfigureAwait(false);
+                return;  // writer task exits; finally still runs; EmitSessionEndSummaryAsync sees null stream.
+            }
+#pragma warning restore CA1031
+
             await EmitSessionStartLineAsync().ConfigureAwait(false);
 
             await foreach (var evt in _channel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
