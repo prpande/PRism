@@ -66,6 +66,8 @@ public class SseChannelActivePrFanoutLogTests
 
         act.Should().NotThrow();
         logger.Messages.Should().ContainSingle();
-        logger.Messages.Single().Should().Contain("subscribers=0");
+        var line = logger.Messages.Single();
+        line.Should().Contain("subscribers=0");
+        line.Should().Contain("ActivePrUpdated");
     }
 }
