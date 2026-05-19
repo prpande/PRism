@@ -25,19 +25,21 @@ public class WeightedDistanceClusteringStrategyTests
     [Fact]
     public void Empty_commits_returns_empty_array()
     {
-        // Defensive: PrDetailLoader is the canonical pre-check (spec § 6.4 routes ≤1-commit
-        // PRs to ClusteringQuality:Low before calling Cluster). Empty input from an upstream
-        // bug should still produce a stable, non-null, no-iterations result rather than
-        // surfacing as a NullReferenceException downstream.
+        // Defensive: PrDetailLoader is the canonical pre-check (post-2026-05-18 calibration
+        // it routes 0-commit PRs to ClusteringQuality:Low before calling Cluster). Empty
+        // input reaching the strategy implies an upstream bug; the strategy still produces
+        // a stable, non-null, no-iterations result rather than a NullReferenceException
+        // downstream.
         NewStrategy().Cluster(Input(), Defaults).Should().NotBeNull().And.BeEmpty();
     }
 
     [Fact]
     public void Single_commit_returns_one_cluster()
     {
-        // Defensive: see Empty_commits_returns_empty_array. PrDetailLoader handles the
-        // 1-commit case via ClusteringQuality:Low; this test pins the strategy's fallback
-        // shape if the loader's check is bypassed.
+        // Nominal: since the 2026-05-18 calibration, 1-commit PRs are NO LONGER intercepted
+        // by PrDetailLoader (Low short-circuits only on Commits.Count == 0). They flow
+        // through this strategy's `sorted.Length == 1` arm as the regular code path and
+        // return Ok + 1 iteration. This test pins that arm.
         var c = Commit("a", DateTimeOffset.UtcNow);
         var clusters = NewStrategy().Cluster(Input(c), Defaults);
         clusters.Should().NotBeNull().And.HaveCount(1);
@@ -133,12 +135,15 @@ public class WeightedDistanceClusteringStrategyTests
     [Fact]
     public void Degenerate_floor_clamped_majority_returns_null()
     {
-        // Spec § 6.4: when > DegenerateFloorFraction of weighted distances are clamped to the
-        // hard floor AND we have ≥ MadK*2 edges, the strategy returns null. PrDetailLoader
+        // Spec § 6.4: when > DegenerateFloorFraction (0.6) of weighted distances are clamped
+        // to the hard floor AND we have ≥ MadK*2 edges, the strategy returns null. PrDetailLoader
         // translates this to ClusteringQuality:Low and the frontend renders CommitMultiSelectPicker.
         // Replaces the prior tab-per-commit / single-tab materialized fallback (Q5 redesign).
+        //
+        // 9 commits → 8 edges → 8 ≥ MadK*2 (8) → degenerate gate passes. 10s spacing × jaccard
+        // 0.5 multiplier → 5s → clamps to 60s floor; 8/8 floor-clamped > 0.6 → null returned.
         var t0 = DateTimeOffset.UtcNow;
-        var commits = Enumerable.Range(0, 8)
+        var commits = Enumerable.Range(0, 9)
             .Select(i => Commit($"c{i}", t0.AddSeconds(i * 10), "src/A.cs"))
             .ToArray();
         var clusters = NewStrategy().Cluster(Input(commits), Defaults);
@@ -182,32 +187,33 @@ public class WeightedDistanceClusteringStrategyTests
     [Fact]
     public void Lowering_mad_k_flips_clustering_via_degenerate_gate()
     {
-        // Spec § 11.2 requires a "coefficient changes flip clustering decisions deterministically" case.
-        // Mechanism: 6 commits → 5 weighted edges; tight 60s gaps (full overlap → multiplier 0.5)
-        // clamp to the 300s floor, but the c2→c3 cross-file 780s gap passes through. Resulting
-        // weighted = [300, 300, 780, 300, 300] (4 floor-clamped of 5).
-        // With MadK=3, the degenerate gate `weighted.Length >= MadK*2` is 5 >= 6 → false → MAD path
-        //              runs (median=300, MAD=0 → threshold=301), only the 780 edge exceeds → 2 clusters.
-        // With MadK=1, the gate is 5 >= 2 → true, and floor-clamped fraction 4/5 > 0.5 → degenerate
-        //              fallback fires → strategy returns null (post-Q5: PrDetailLoader emits
-        //              ClusteringQuality:Low; frontend renders CommitMultiSelectPicker).
-        // Both arms test the spec requirement: changing a coefficient deterministically flips the
-        // decision. The mechanism here is the degenerate gate flipping, NOT the MAD threshold itself.
+        // Spec § 11.2: "coefficient changes flip clustering decisions deterministically."
+        // 6 commits → 5 weighted edges; tight 60s same-file gaps × jaccard 0.5 → 30s → clamp to
+        // 60s floor; the c2→c3 cross-file 1380s gap passes through. weighted = [60, 60, 1380, 60, 60]
+        // (4 floor-clamped of 5). 1380s sits above the 900s MinimumBoundaryGapSeconds floor so
+        // it can still register as a boundary when the MAD path runs.
+        //
+        // With MadK=3, degenerate gate (5 ≥ MadK*2 = 6) fails → MAD path runs. median=60, MAD=0
+        //              → secondLargest fallback (60) → floor at MinimumBoundaryGapSeconds (900);
+        //              only the 1380 edge exceeds → 2 clusters.
+        // With MadK=1, gate (5 ≥ 2) passes; floor-clamped fraction 4/5 > DegenerateFloorFraction
+        //              (0.6) → degenerate fallback fires → strategy returns null (PrDetailLoader
+        //              emits ClusteringQuality:Low; frontend renders CommitMultiSelectPicker).
         var t0 = DateTimeOffset.UtcNow;
         var commits = new[]
         {
             Commit("c0", t0,                       "src/A.cs"),
             Commit("c1", t0.AddSeconds(60),        "src/A.cs"),
             Commit("c2", t0.AddSeconds(120),       "src/A.cs"),
-            Commit("c3", t0.AddSeconds(900),       "src/B.cs"),
-            Commit("c4", t0.AddSeconds(960),       "src/B.cs"),
-            Commit("c5", t0.AddSeconds(1020),      "src/B.cs"),
+            Commit("c3", t0.AddSeconds(1500),      "src/B.cs"),
+            Commit("c4", t0.AddSeconds(1560),      "src/B.cs"),
+            Commit("c5", t0.AddSeconds(1620),      "src/B.cs"),
         };
         var withMadK3 = NewStrategy().Cluster(Input(commits), Defaults with { MadK = 3 });
         var withMadK1 = NewStrategy().Cluster(Input(commits), Defaults with { MadK = 1 });
 
         withMadK3.Should().NotBeNull(because: "MadK=3 fails the degenerate gate, so the MAD path runs");
-        withMadK3!.Should().HaveCount(2, because: "MAD path: median=300, MAD=0 → threshold=301, only the 780s edge exceeds");
+        withMadK3!.Should().HaveCount(2, because: "MAD-floor=MinimumBoundaryGapSeconds (900); the 1380s edge exceeds the floor and is the sole boundary");
         withMadK1.Should().BeNull(because: "MadK=1 lets the degenerate gate fire (5 ≥ 2) on a floor-heavy weighted array; strategy returns null for ClusteringQuality:Low");
     }
 

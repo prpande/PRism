@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- The integration suite instantiates GitHubReviewService directly, which transitively
+         references Octokit types. Opt out of the global BannedApiAnalyzers Octokit ban
+         (Directory.Build.props default). PRism.GitHub.csproj uses the same opt-out. -->
+    <BanOctokit>false</BanOctokit>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="FluentAssertions" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\PRism.GitHub\PRism.GitHub.csproj" />
+    <ProjectReference Include="..\..\PRism.Core\PRism.Core.csproj" />
+    <!-- ClusteringQuality, PrDetailDto, DiffDto, PrReference, DiffRangeRequest, ReviewThreadDto,
+         AuthValidationResult, and the rest of the DTO surface live in PRism.Core.Contracts.
+         Reference it explicitly so the test code resolves these types directly rather than via
+         transitive availability (which is not guaranteed under TreatWarningsAsErrors=true). -->
+    <ProjectReference Include="..\..\PRism.Core.Contracts\PRism.Core.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Fixture must travel with the test bin so capture mode and assertions both see the same path -->
+    <None Update="Fixtures\pr19-graphql-response.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

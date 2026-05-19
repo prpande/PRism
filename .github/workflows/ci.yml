@@ -44,7 +44,7 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Test (.NET)
-        run: dotnet test --no-build --configuration Release --logger "trx;LogFileName=test-results.trx"
+        run: dotnet test --no-build --configuration Release --settings .runsettings --logger "trx;LogFileName=test-results.trx"
 
       - name: Playwright install
         working-directory: frontend
