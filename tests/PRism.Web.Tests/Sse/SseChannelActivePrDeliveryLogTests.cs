@@ -150,7 +150,13 @@ public class SseChannelActivePrDeliveryLogTests
 
         // Give the fire-and-forget delivery task a window to run if it were going to log.
         // The capturing logger filters on EventId 5; if the null-guard works, no message lands.
-        await Task.Delay(200);
+        // 1s ceiling is the trade-off for a negative-shape test: long enough to absorb
+        // thread-pool scheduling latency on loaded CI (where 200ms wasn't always sufficient
+        // to make the test diagnostic rather than vacuous), short enough that a 100-run
+        // suite doesn't pay a significant cost. A truly deterministic sync would require
+        // observing the InboxUpdated broadcast write to the response body — deferred as
+        // an over-engineering risk for a single negative assertion.
+        await Task.Delay(1000);
 
         logger.Messages.Should().BeEmpty("InboxUpdated events pass (null, null) to WriteAndEvictOnFailureAsync; the EventId-5 delivery log's null-guard must skip them");
 
@@ -166,5 +172,10 @@ public class SseChannelActivePrDeliveryLogTests
             if (predicate()) return;
             await Task.Delay(20);
         }
+        // Throw so an assertion failure that originates here surfaces the timeout reason
+        // ("predicate not met within Ns") instead of the downstream symptom
+        // ("collection was empty"). Without this throw, a missed subscriber registration
+        // or a missing log line looks like a flaky assertion on otherwise-correct code.
+        throw new TimeoutException($"WaitFor predicate did not become true within {timeout.TotalSeconds:F1}s");
     }
 }
