@@ -20,6 +20,10 @@ export const KNOWN_SUBMIT_ERROR_CODES = [
   'no-content',
   'head-sha-drift',
   'head-sha-not-stamped',
+  // Cross-tab-stamp slice — distinct 422 when the request carries no X-PRism-Tab-Id (or an
+  // out-of-allowlist value). The toast remediation is "reload this tab" rather than the
+  // head-sha-not-stamped "reload the PR detail" remedy.
+  'tab-id-missing',
   'submit-in-progress',
   'unauthorized',
   'no-session',

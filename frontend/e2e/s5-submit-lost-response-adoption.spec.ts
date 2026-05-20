@@ -33,7 +33,7 @@ test('S5 lost AttachThread response — Retry adopts the orphan thread, no dupli
 }) => {
   await setupAndOpenScenarioPr(page);
   await createInlineDraft(page, 3, 'draft whose AttachThread response gets lost');
-  await recordPrViewed(page.request);
+  await recordPrViewed(page);
 
   // afterEffect=true → the fake adds the thread (with the injected marker) and
   // THEN throws.

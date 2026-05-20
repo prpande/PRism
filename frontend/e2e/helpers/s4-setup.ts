@@ -43,6 +43,36 @@ export async function openScenarioFilesTab(page: Page): Promise<void> {
   await page.goto('/pr/acme/api/123/files');
 }
 
+// POST /api/pr/{ref}/reload with the page's tab id in the X-PRism-Tab-Id header — the
+// cross-tab-stamp slice gates the reload endpoint on a valid per-tab id (allowlist
+// [a-zA-Z0-9_-]{1,64}) and 422-rejects requests without it. Specs that drive the page via
+// `page.request.post('/api/.../reload', ...)` directly (rather than through the page's
+// apiClient) used to omit the header; this helper centralizes the read-from-page +
+// header-stamp so each call site doesn't repeat the boilerplate. Returns the Playwright
+// APIResponse so callers can assert status (.poll patterns + .status() checks).
+export async function reloadPr(
+  page: Page,
+  pr: { owner: string; repo: string; number: number },
+  headSha: string,
+): Promise<import('@playwright/test').APIResponse> {
+  const tabId = await page.evaluate(() => {
+    if (typeof window.__prism_test_getTabId !== 'function') {
+      throw new Error(
+        'window.__prism_test_getTabId is not exposed — ensure frontend/src/api/tabId.ts ' +
+          'has run before reloadPr is called (any page.goto + waitForURL is sufficient).',
+      );
+    }
+    return window.__prism_test_getTabId();
+  });
+  return page.request.post(`/api/pr/${pr.owner}/${pr.repo}/${pr.number}/reload`, {
+    data: { headSha },
+    headers: {
+      Origin: 'http://localhost:5180',
+      'X-PRism-Tab-Id': tabId,
+    },
+  });
+}
+
 // POST /test/advance-head with the Origin header set — OriginCheckMiddleware
 // rejects mutating verbs without one (spec § 6.2, S3 PR5 tightening). The
 // page.request.post API doesn't auto-add Origin the way fetch from a page

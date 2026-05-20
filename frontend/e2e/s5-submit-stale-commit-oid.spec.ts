@@ -10,6 +10,7 @@ import {
   SubmitMethod,
   advanceHead,
 } from './helpers/s5-submit';
+import { reloadPr } from './helpers/s4-setup';
 
 // Plan Task 65 — DoD test (e): the organic stale-commitOID recovery path.
 //
@@ -52,7 +53,7 @@ test('S5 stale commit OID — first submit fails, head moves, recreate-and-resub
 }) => {
   await setupAndOpenScenarioPr(page);
   await createInlineDraft(page, 3, 'draft for stale path');
-  await recordPrViewed(page.request);
+  await recordPrViewed(page);
 
   // First submit: stop after Begin (fail at AttachThreads) so a pending review
   // is created and anchored to the current (old) head.
@@ -78,10 +79,7 @@ test('S5 stale commit OID — first submit fails, head moves, recreate-and-resub
   await expect
     .poll(
       async () => {
-        const r = await page.request.post('/api/pr/acme/api/123/reload', {
-          data: { headSha: NEW_HEAD },
-          headers: { Origin: 'http://localhost:5180' },
-        });
+        const r = await reloadPr(page, { owner: 'acme', repo: 'api', number: 123 }, NEW_HEAD);
         return r.status();
       },
       { timeout: 15_000, intervals: [500] },

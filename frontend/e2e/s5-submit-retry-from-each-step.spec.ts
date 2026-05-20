@@ -42,7 +42,7 @@ for (const failingMethod of [
   }) => {
     await setupAndOpenScenarioPr(page);
     await createInlineDraft(page, 3, 'Inline note exercising the retry path.');
-    await recordPrViewed(page.request);
+    await recordPrViewed(page);
     await injectSubmitFailure(page.request, failingMethod, {
       message: `simulated ${failingMethod} failure`,
     });

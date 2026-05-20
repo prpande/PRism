@@ -19,7 +19,7 @@ public class PipelineTypesTests
     public void SubmitOutcome_HasFourVariants()
     {
         var session = new ReviewSessionState(
-            LastViewedHeadSha: null, LastSeenCommentId: null,
+            TabStamps: new Dictionary<string, TabStamp>(), LastSeenCommentId: null,
             PendingReviewId: null, PendingReviewCommitOid: null,
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(),

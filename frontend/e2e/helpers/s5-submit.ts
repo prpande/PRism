@@ -133,14 +133,31 @@ export async function setPrState(
 // Records "viewed this PR at the current head" on the session so the submit head-sha-drift gate
 // passes (the real frontend does this via the demo's "click Reload" step; E2E specs that don't
 // exercise a reload use this hook). Returns the head sha that was recorded.
+//
+// Cross-tab-stamp slice: the hook stamps under the PAGE's tab id (read via
+// window.__prism_test_getTabId() — exposed in dev + when VITE_E2E_TEST=true). Without this, the
+// seeded stamp would land under a literal like "tab-e2e" while the page's subsequent
+// /submit / /reload calls send the sessionStorage-minted UUID, missing the stamp and 400-ing
+// with head-sha-not-stamped. setupAndOpenScenarioPr triggers the first apiClient call before
+// recordPrViewed is invoked, so the tab id is already minted by the time we read it here.
 export async function recordPrViewed(
-  request: APIRequestContext,
+  page: Page,
   pr: { owner: string; repo: string; number: number } = { owner: 'acme', repo: 'api', number: 123 },
 ): Promise<string> {
-  const body = (await postTest(request, '/test/mark-pr-viewed', {
+  const tabId = await page.evaluate(() => {
+    if (typeof window.__prism_test_getTabId !== 'function') {
+      throw new Error(
+        'window.__prism_test_getTabId is not exposed — ensure VITE_E2E_TEST=true at build time ' +
+          '(or DEV mode locally) so frontend/src/api/tabId.ts installs the global hook.',
+      );
+    }
+    return window.__prism_test_getTabId();
+  });
+  const body = (await postTest(page.request, '/test/mark-pr-viewed', {
     owner: pr.owner,
     repo: pr.repo,
     number: pr.number,
+    tabId,
   })) as {
     headSha: string;
   };

@@ -68,7 +68,7 @@ public class ForcePushFallbackTests
 
     private static ReviewSessionState SessionWith(params DraftComment[] drafts)
         => new(
-            LastViewedHeadSha: OldSha,
+            TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(OldSha, DateTime.UtcNow.AddMinutes(-1)) },
             LastSeenCommentId: null,
             PendingReviewId: null,
             PendingReviewCommitOid: null,

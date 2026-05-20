@@ -15,7 +15,8 @@ public sealed class DraftReconciliationPipeline
         IFileContentSource fileSource,
         CancellationToken ct,
         IReadOnlyDictionary<string, string>? renames = null,
-        IReadOnlySet<string>? deletedPaths = null)
+        IReadOnlySet<string>? deletedPaths = null,
+        string? callerTabId = null)
     {
         ArgumentNullException.ThrowIfNull(session);
         ArgumentException.ThrowIfNullOrEmpty(newHeadSha);
@@ -27,10 +28,20 @@ public sealed class DraftReconciliationPipeline
         // Override-on-head-shift clearing per spec § 3.2 — "the override only applies to one
         // anchor state." Spec wording places this in the apply-result step (Phase 2 of § 3.3);
         // the plan moves it to the pipeline so the result DTO carries the cleared flag back to
-        // the apply step. Behavior is equivalent. The check fires only when LastViewedHeadSha
-        // is non-null AND differs from newHeadSha — first-reload (LastViewedHeadSha = null)
-        // does NOT count as a head shift, so freshly-set overrides survive their first reload.
-        bool headShifted = session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha;
+        // the apply step. Behavior is equivalent.
+        //
+        // Three-branch head-shift derivation (spec § 5.4):
+        //   1. callerTabId provided AND session.TabStamps[callerTabId] exists → compare that
+        //      tab's HeadSha against newHeadSha. This is the per-tab gate: only the caller's
+        //      own stamp can produce a head shift for them.
+        //   2. session.TabStamps is empty → no stamp exists yet (first reload). Not a shift.
+        //   3. Fallback: callerTabId is null OR the caller has no stamp but other tabs do.
+        //      Use the most-recent stamp across all tabs as the head-shift baseline. This is
+        //      a transitional safety net for reload paths that haven't been threaded with a
+        //      tab id yet; once Task 5 + Task 10 are complete every real reload carries a
+        //      callerTabId, and the fallback only fires for pipeline unit tests with no tab.
+        var sessionHeadShaForShift = HeadShaForShift(session, callerTabId);
+        bool headShifted = sessionHeadShaForShift is not null && sessionHeadShaForShift != newHeadSha;
         if (headShifted)
         {
             session = session with
@@ -206,20 +217,40 @@ public sealed class DraftReconciliationPipeline
             .ToList();
 
         // Verdict reconcile: head shifted while a verdict was set → user must re-confirm.
-        // The null-guard on LastViewedHeadSha mirrors the override head-shift check above
-        // (line ~26): a never-viewed session (LastViewedHeadSha == null) is not a head shift
-        // even if a verdict happens to be pre-set, matching "first-reload doesn't count as
-        // a shift." This case is currently unreachable through normal user flow — verdict
-        // requires viewing the PR which sets LastViewedHeadSha — but keeping the two
-        // head-shift checks symmetric prevents the asymmetry from becoming a latent trap
-        // when PR3 wires the endpoint.
-        bool verdictHeadShifted = session.LastViewedHeadSha is not null && session.LastViewedHeadSha != newHeadSha;
+        // Mirrors the override head-shift derivation above (HeadShaForShift) for the same
+        // first-reload-doesn't-count and three-branch reasons. Currently unreachable through
+        // normal user flow (verdict requires viewing the PR which sets a stamp), but keeping
+        // the two head-shift checks symmetric prevents the asymmetric pattern from becoming a
+        // latent trap when downstream tasks evolve the endpoint.
+        bool verdictHeadShifted = headShifted;   // reuse the same derivation; identical semantics
         var verdictOutcome =
             session.DraftVerdict is not null && verdictHeadShifted
                 ? VerdictReconcileOutcome.NeedsReconfirm
                 : VerdictReconcileOutcome.Unchanged;
 
         return new ReconciliationResult(reconciledDrafts, reconciledReplies, verdictOutcome);
+    }
+
+    // Spec § 5.4 — three-branch head-shift baseline. Encapsulated as a static helper so the
+    // override and verdict checks share exactly one definition and the branch comments stay in
+    // one place.
+    private static string? HeadShaForShift(ReviewSessionState session, string? callerTabId)
+    {
+        // Branch 1: caller's tab has a stamp → that's the baseline.
+        if (callerTabId is not null && session.TabStamps.TryGetValue(callerTabId, out var stamp))
+            return stamp.HeadSha;
+
+        // Branch 2: no stamps at all → first reload, no head to shift from.
+        if (session.TabStamps.Count == 0)
+            return null;
+
+        // Branch 3: caller has no stamp but other tabs do → fall back to the most recent
+        // across all tabs. Transitional for pipeline unit tests and any reload path that
+        // hasn't been threaded with a callerTabId yet (Tasks 5 + 10 close those gaps).
+        return session.TabStamps
+            .Values
+            .OrderByDescending(s => s.StampedAtUtc)
+            .FirstOrDefault()?.HeadSha;
     }
 
     private static ReconciledDraft MakeStale(

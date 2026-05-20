@@ -38,14 +38,14 @@ public sealed record AppState(
             Accounts[AccountKeys.Default] with { LastConfiguredGithubHost = newHost }) };
 
     public static AppState Default { get; } = new(
-        Version: 5,
+        Version: 6,
         UiPreferences: UiPreferences.Default,
         Accounts: ImmutableDictionary<string, AccountState>.Empty
             .Add(AccountKeys.Default, AccountState.Default));
 }
 
 public sealed record ReviewSessionState(
-    string? LastViewedHeadSha,
+    IReadOnlyDictionary<string, TabStamp> TabStamps,
     string? LastSeenCommentId,
     string? PendingReviewId,
     string? PendingReviewCommitOid,
@@ -55,6 +55,10 @@ public sealed record ReviewSessionState(
     string? DraftSummaryMarkdown,
     DraftVerdict? DraftVerdict,
     DraftVerdictStatus DraftVerdictStatus);
+
+public sealed record TabStamp(
+    string HeadSha,
+    DateTime StampedAtUtc);
 
 public sealed record DraftComment(
     string Id,

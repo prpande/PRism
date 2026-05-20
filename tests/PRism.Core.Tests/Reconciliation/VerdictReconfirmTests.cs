@@ -60,9 +60,11 @@ public class VerdictReconfirmTests
         Assert.Equal(VerdictReconcileOutcome.Unchanged, result.VerdictOutcome);
     }
 
-    private static ReviewSessionState SessionWith(string lastViewedHeadSha, DraftVerdict? verdict)
+    private static ReviewSessionState SessionWith(string? lastViewedHeadSha, DraftVerdict? verdict)
         => new(
-            LastViewedHeadSha: lastViewedHeadSha,
+            TabStamps: lastViewedHeadSha is null
+                ? new Dictionary<string, TabStamp>()
+                : new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(lastViewedHeadSha, DateTime.UtcNow.AddMinutes(-1)) },
             LastSeenCommentId: null,
             PendingReviewId: null,
             PendingReviewCommitOid: null,

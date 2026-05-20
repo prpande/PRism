@@ -39,14 +39,14 @@ internal static class PrSubmitEndpoints
         LoggerMessage.Define<string>(LogLevel.Warning, new EventId(1, "ForeignPendingReviewDiscardDeleteFailed"),
             "deletePullRequestReview failed for the foreign-pending-review discard on {SessionKey} (returning 502); the pending review remains and will be re-detected on the next submit");
 
-    // Logged at Warning because LastViewedHeadSha being null is a server-detectable
-    // FE wire-up gap (the frontend's PR-detail load path failed to call POST
-    // /api/pr/{ref}/mark-viewed). Without this log, the symptom — silent flash of
-    // the submit button — required client-side debugging to diagnose. See
-    // docs/solutions/ if this persists; the FE wire-up lives in usePrDetail.
+    // Logged at Warning because TabStamps[callerTabId] missing is a server-detectable FE wire-up
+    // gap — the caller's tab never sent /mark-viewed after loading PR detail. Without this log,
+    // the symptom — silent flash of the submit button — required client-side debugging to
+    // diagnose. The FE wire-up lives in usePrDetail; the log message stays terse on the response
+    // body so an unauthenticated viewer can't infer the route shape from the error payload.
     private static readonly Action<ILogger, string, Exception?> s_headShaNotStamped =
         LoggerMessage.Define<string>(LogLevel.Warning, new EventId(2, "SubmitRejectedHeadShaNotStamped"),
-            "POST /submit rejected for {SessionKey}: session.LastViewedHeadSha is null. The frontend must call POST /api/pr/{{ref}}/mark-viewed when PR detail loads; see PrDetailEndpoints.MarkViewed.");
+            "POST /submit rejected for {SessionKey}: session.TabStamps for the caller's tab is missing. The frontend must call POST /api/pr/{{ref}}/mark-viewed when PR detail loads; see PrDetailEndpoints.MarkViewed.");
 
     // Logged at Information because real drift is a UX concern (the user's
     // viewport is stale), not a wire-up bug. Surfacing it lets operators
@@ -69,6 +69,7 @@ internal static class PrSubmitEndpoints
     private static async Task<IResult> SubmitAsync(
         string owner, string repo, int number,
         SubmitRequestDto? request,
+        HttpContext httpContext,
         IAppStateStore stateStore,
         IActivePrCache activePrCache,
         IReviewSubmitter submitter,
@@ -87,6 +88,16 @@ internal static class PrSubmitEndpoints
 
         if (!TryParseVerdict(request?.Verdict, out var verdict))
             return Results.Json(new SubmitErrorDto("verdict-invalid", "verdict must be Approve, RequestChanges, or Comment."), statusCode: StatusCodes.Status400BadRequest);
+
+        // Tab id validation (spec § 3 + § 5.5) — the caller's tab is the principal for the
+        // head-sha drift gate below. Surface a distinct "tab-id-missing" 422 (vs the 400
+        // "head-sha-not-stamped" the empty-stamp case still emits) so the frontend can
+        // distinguish a missing/poisoned tab id (reload the tab) from a wire-up gap (call
+        // /mark-viewed). The allowlist is the same shared regex as mark-viewed / reload.
+        var tabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+        if (string.IsNullOrEmpty(tabId) || !PrDetailEndpoints.TabIdAllowlistRegex().IsMatch(tabId))
+            return Results.Json(new SubmitErrorDto("tab-id-missing", "Reload this browser tab and try again."),
+                statusCode: StatusCodes.Status422UnprocessableEntity);
 
         // --- Defensive rule enforcement (server-side authoritative; spec § 7.1 + § 9 rules b/c/e/f).
         // The Submit Review button enforces the same rules client-side; this is the backstop.
@@ -111,14 +122,14 @@ internal static class PrSubmitEndpoints
             return Results.Json(new SubmitErrorDto("no-content", "A Comment-verdict review needs at least one draft, reply, or summary."), statusCode: StatusCodes.Status400BadRequest);
 
         // Rule (f): head_sha drift. Two distinct sub-cases — kept separate so the frontend's
-        // toast can pick a useful remedy, and so a wire-up regression (FE never stamping
-        // last-viewed-head-sha) shows up as a Warning in the logs instead of being mistaken
-        // for a stale-viewport UX issue.
-        if (string.IsNullOrEmpty(session.LastViewedHeadSha))
+        // toast can pick a useful remedy, and so a wire-up regression (FE never stamping the
+        // per-tab head sha via /mark-viewed) shows up as a Warning in the logs instead of being
+        // mistaken for a stale-viewport UX issue. The lookup is per-tab: the caller's tab id
+        // must have a TabStamp recorded; the head sha there must match the active poller's
+        // current head. Cross-tab poisoning is closed because a session-wide LastViewedHeadSha
+        // no longer exists for one tab's mark-viewed to overwrite another tab's gate.
+        if (!session.TabStamps.TryGetValue(tabId, out var callerStamp) || string.IsNullOrEmpty(callerStamp.HeadSha))
         {
-            // Diagnostic detail (named missing call, hint that the FE wire-up regressed)
-            // lives in the structured Warning log via s_headShaNotStamped; the response
-            // body stays terse so an unauthenticated viewer can't infer the route shape.
             s_headShaNotStamped(loggerFactory.CreateLogger(LoggerCategory), sessionKey, null);
             return Results.Json(
                 new SubmitErrorDto("head-sha-not-stamped",
@@ -126,9 +137,9 @@ internal static class PrSubmitEndpoints
                 statusCode: StatusCodes.Status400BadRequest);
         }
         var pollSnapshot = activePrCache.GetCurrent(prRef);
-        if (pollSnapshot is not null && !string.Equals(pollSnapshot.HeadSha, session.LastViewedHeadSha, StringComparison.Ordinal))
+        if (pollSnapshot is not null && !string.Equals(pollSnapshot.HeadSha, callerStamp.HeadSha, StringComparison.Ordinal))
         {
-            s_headShaDrift(loggerFactory.CreateLogger(LoggerCategory), sessionKey, session.LastViewedHeadSha, pollSnapshot.HeadSha, null);
+            s_headShaDrift(loggerFactory.CreateLogger(LoggerCategory), sessionKey, callerStamp.HeadSha, pollSnapshot.HeadSha, null);
             return Results.Json(new SubmitErrorDto("head-sha-drift", "Reload the PR before submitting."), statusCode: StatusCodes.Status400BadRequest);
         }
 
@@ -141,7 +152,7 @@ internal static class PrSubmitEndpoints
         if (handle is null)
             return Results.Json(new SubmitErrorDto("submit-in-progress", "A submit is already in flight for this PR."), statusCode: StatusCodes.Status409Conflict);
 
-        var headSha = session.LastViewedHeadSha;
+        var headSha = callerStamp.HeadSha;
         var progress = new SseSubmitProgressBridge(prRef, bus);
         var pipeline = new SubmitPipeline(
             submitter,

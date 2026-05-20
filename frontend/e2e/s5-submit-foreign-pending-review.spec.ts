@@ -31,7 +31,7 @@ test.beforeEach(async () => {
 async function openForeignPrompt(page: import('@playwright/test').Page) {
   await setupAndOpenScenarioPr(page);
   await createInlineDraft(page, 3, 'my local draft');
-  await recordPrViewed(page.request);
+  await recordPrViewed(page);
   await seedPendingReview(page.request, PR, {
     threads: [
       { filePath: 'src/Calc.cs', lineNumber: 3, body: 'looks good to me', isResolved: true },

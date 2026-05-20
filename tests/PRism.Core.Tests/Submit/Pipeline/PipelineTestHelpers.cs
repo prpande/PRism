@@ -23,7 +23,7 @@ internal static class SessionFactory
 {
     // A bare session at a given head with no drafts / replies / summary / verdict and no pending review.
     public static ReviewSessionState Empty(string headSha = "head1") => new(
-        LastViewedHeadSha: headSha,
+        TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(headSha, DateTime.UtcNow.AddMinutes(-1)) },
         LastSeenCommentId: null,
         PendingReviewId: null,
         PendingReviewCommitOid: null,
@@ -42,7 +42,7 @@ internal static class SessionFactory
         IEnumerable<DraftReply>? replies = null,
         string? summary = null,
         DraftVerdict? verdict = null) => new(
-            LastViewedHeadSha: headSha,
+            TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(headSha, DateTime.UtcNow.AddMinutes(-1)) },
             LastSeenCommentId: null,
             PendingReviewId: pendingReviewId,
             PendingReviewCommitOid: pendingReviewCommitOid ?? (pendingReviewId is not null ? headSha : null),

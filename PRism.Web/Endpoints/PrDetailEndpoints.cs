@@ -89,10 +89,21 @@ internal static partial class PrDetailEndpoints
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/mark-viewed",
             async (string owner, string repo, int number,
                    MarkViewedRequest body,
+                   HttpContext httpContext,
                    PrDetailLoader loader, IAppStateStore stateStore, CancellationToken ct) =>
             {
                 if (stateStore.IsReadOnlyMode)
                     return Results.Problem(type: "/state/read-only", statusCode: 423);
+
+                // Validate X-PRism-Tab-Id header. Missing or out-of-allowlist values get the
+                // distinct /viewed/tab-id-missing 422 (vs the snapshot/stale-sha 422s above) so
+                // the frontend can surface a "your browser tab is in an unexpected state, reload"
+                // toast for the wire-up regression case without conflating it with PR-detail
+                // staleness. Allowlist is the same [a-zA-Z0-9_-]{1,64} regex used everywhere a
+                // tab id reaches the server (spec § 3).
+                var tabId = httpContext.Request.Headers["X-PRism-Tab-Id"].FirstOrDefault();
+                if (string.IsNullOrEmpty(tabId) || !TabIdAllowlistRegex().IsMatch(tabId))
+                    return Results.Problem(type: "/viewed/tab-id-missing", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
                 var snapshot = loader.TryGetCachedSnapshot(prRef);
@@ -106,13 +117,30 @@ internal static partial class PrDetailEndpoints
                 {
                     await stateStore.UpdateAsync(state =>
                     {
-                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ??
-                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
+                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? PrDraftEndpoints.NewEmptySession();
+
+                        // Write the caller's tab stamp; cap at N=8 entries by evicting the
+                        // oldest StampedAtUtc. The cap protects against state.json bloat if a
+                        // misbehaving extension or test fixture keeps minting fresh tab ids.
+                        var tabStamps = session.TabStamps.ToDictionary(kv => kv.Key, kv => kv.Value);
+                        tabStamps[tabId] = new TabStamp(body.HeadSha, DateTime.UtcNow);
+                        if (tabStamps.Count > 8)
+                        {
+                            var oldest = tabStamps.MinBy(kv => kv.Value.StampedAtUtc).Key;
+                            tabStamps.Remove(oldest);
+                        }
+
+                        // Session-flat LastSeenCommentId is the inbox unread-badge anchor;
+                        // monotone guard prevents a stale per-tab value from rewinding the
+                        // high-water (two tabs at different PR-detail polls can drift, but the
+                        // user-facing unread badge must never increase).
+                        var newSeen = MonotonicCommentId.Max(session.LastSeenCommentId, body.MaxCommentId);
+
                         var sessions = state.Reviews.Sessions.ToDictionary(kv => kv.Key, kv => kv.Value);
                         sessions[key] = session with
                         {
-                            LastViewedHeadSha = body.HeadSha,
-                            LastSeenCommentId = body.MaxCommentId,
+                            TabStamps = tabStamps,
+                            LastSeenCommentId = newSeen,
                         };
                         return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
                     }, ct).ConfigureAwait(false);
@@ -165,8 +193,7 @@ internal static partial class PrDetailEndpoints
                 {
                     await stateStore.UpdateAsync(state =>
                     {
-                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ??
-                                      new ReviewSessionState(null, null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft);
+                        var session = state.Reviews.Sessions.GetValueOrDefault(key) ?? PrDraftEndpoints.NewEmptySession();
                         var viewedFiles = session.ViewedFiles.ToDictionary(kv => kv.Key, kv => kv.Value);
 
                         if (body.Viewed)
@@ -209,6 +236,13 @@ internal static partial class PrDetailEndpoints
 
     [GeneratedRegex("^[0-9a-fA-F]{64}$")]
     private static partial Regex GitOid64Regex();
+
+    // Spec § 3 — X-PRism-Tab-Id allowlist. 1-64 chars from [a-zA-Z0-9_-]. Anything else is
+    // rejected with /viewed/tab-id-missing 422 by mark-viewed (Task 4), reload (Task 5),
+    // the test-hook (Task 6), and submit (Task 7). Shared via the partial-class pattern so
+    // the regex source is exactly one literal — analyzer guarantees the compiled-regex shape.
+    [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
+    internal static partial Regex TabIdAllowlistRegex();
 
     private static string? CanonicalizePath(string path)
     {
