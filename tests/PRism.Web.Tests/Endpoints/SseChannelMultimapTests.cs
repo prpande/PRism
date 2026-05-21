@@ -96,7 +96,7 @@ public class SseChannelMultimapTests
         registry.Add(subB, prY);  // B subscribes to PR Y only
 
         // Publish a PR X update — only A should receive it.
-        bus.Publish(new ActivePrUpdated(prX, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h-new", NewCommentCount: null));
+        bus.Publish(new ActivePrUpdated(prX, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h-new", CommentCountDelta: 0));
         await WaitFor(() => bodyA.WrittenString.Contains("event: pr-updated", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
 
         bodyA.WrittenString.Should().Contain("event: pr-updated");

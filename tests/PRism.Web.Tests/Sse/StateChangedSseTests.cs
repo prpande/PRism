@@ -81,14 +81,44 @@ public class StateChangedSseTests
     }
 
     [Fact]
+    public void ActivePrUpdated_projects_to_pr_updated_with_string_pr_ref()
+    {
+        var evt = new ActivePrUpdated(SamplePr, HeadShaChanged: true, CommentCountChanged: false,
+            NewHeadSha: "abc123", CommentCountDelta: 0);
+
+        var (eventName, json) = Project(evt);
+
+        eventName.Should().Be("pr-updated");
+        // prRef MUST be the string "owner/repo/number" — a nested object {owner,repo,number}
+        // is the bug this test exists to catch: the frontend compares event.prRef against a
+        // string, so an object-shaped prRef silently drops every pr-updated event.
+        json.Should().Contain("\"prRef\":\"acme/api/123\"");
+        json.Should().NotContain("\"prRef\":{");
+        json.Should().Contain("\"headShaChanged\":true");
+        json.Should().Contain("\"newHeadSha\":\"abc123\"");
+        json.Should().Contain("\"commentCountDelta\":0");
+    }
+
+    [Fact]
+    public void ActivePrUpdated_projects_comment_count_delta()
+    {
+        var evt = new ActivePrUpdated(SamplePr, HeadShaChanged: false, CommentCountChanged: true,
+            NewHeadSha: null, CommentCountDelta: 2);
+
+        var (_, json) = Project(evt);
+
+        json.Should().Contain("\"commentCountDelta\":2");
+    }
+
+    [Fact]
     public void Unhandled_event_type_throws()
     {
-        // ActivePrUpdated is intentionally NOT in the projection switch — it ships its own
-        // wire shape inline in OnActivePrUpdated (full record JSON, not "owner/repo/number"
-        // string). Calling Project on it should throw the default-arm ArgumentOutOfRangeException
-        // so a future contributor adding a new IReviewEvent type without updating the
-        // projection switch hears about it loudly.
-        var evt = new ActivePrUpdated(SamplePr, true, false, "headSha", null);
+        // DraftSubmitted is intentionally NOT in the projection switch — SseChannel does
+        // not subscribe to it (see SseEventProjection.cs header comment). Calling Project
+        // on it must throw the default-arm ArgumentOutOfRangeException so a future
+        // contributor adding a new IReviewEvent type without updating the projection
+        // switch hears about it loudly.
+        var evt = new DraftSubmitted(SamplePr);
 
         var act = () => Project(evt);
 

@@ -85,7 +85,7 @@ public class SseChannelActivePrDeliveryLogTests
         var prRef = new PrReference("o", "r", 1);
         registry.Add(subscriberId, prRef);
 
-        bus.Publish(new ActivePrUpdated(prRef, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h2", NewCommentCount: null));
+        bus.Publish(new ActivePrUpdated(prRef, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h2", CommentCountDelta: 0));
 
         await WaitFor(() => !logger.Messages.IsEmpty, TimeSpan.FromSeconds(5));
 
@@ -118,7 +118,7 @@ public class SseChannelActivePrDeliveryLogTests
         var prRef = new PrReference("o", "r", 1);
         registry.Add(subscriberId, prRef);
 
-        bus.Publish(new ActivePrUpdated(prRef, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h2", NewCommentCount: null));
+        bus.Publish(new ActivePrUpdated(prRef, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h2", CommentCountDelta: 0));
 
         await WaitFor(() => logger.Messages.Any(m => m.Contains("success=False", StringComparison.Ordinal)), TimeSpan.FromSeconds(5));
 
