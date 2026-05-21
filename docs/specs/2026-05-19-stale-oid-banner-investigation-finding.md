@@ -50,7 +50,7 @@ The frontend never agreed to the object contract. `events.ts:25-30` types `PrUpd
 
 ### 3.2 Phase-3 falsification test (spec § 4.6)
 
-Because step 3's trace disjunct was unevaluable, a single-variable Phase-3 test was run (run D): `OnActivePrUpdated` was changed locally to emit `prRef` as `evt.PrRef.ToString()` (string), nothing else. The spec then **progressed past the line-110 banner assertion** — it reached the *second* `submit review` click (only reachable after the banner appears, is clicked, and mark-viewed completes). This confirms: (a) the `pr-updated` frame *does* reach the live tab's handler; (b) the lone fan-out subscriber *is* the live tab, not an orphan — an orphan delivery would not have surfaced the banner; (c) the `prRef` mismatch is the **sole** cause of the banner non-surfacing. H3 is definitively ruled out. The experimental change was reverted; the production fix ships via writing-plans.
+Because step 3's trace disjunct was unevaluable, a single-variable Phase-3 test was run (run D): `OnActivePrUpdated` was changed locally to emit `prRef` as `evt.PrRef.ToString()` (string), nothing else. The spec then **progressed past the line-110 banner assertion** — it reached the *second* `submit review` click (only reachable after the banner appears, is clicked, and mark-viewed completes). This confirms: (a) the `pr-updated` frame *does* reach the live tab's handler; (b) the lone fan-out subscriber *is* the live tab, not an orphan — an orphan delivery would not have surfaced the banner; (c) the `prRef` mismatch is the **sole** cause of the banner non-surfacing. H3 is definitively ruled out. The experimental change was reverted; the production fix is implemented per [`docs/plans/2026-05-21-pr-updated-wire-fix.md`](../plans/2026-05-21-pr-updated-wire-fix.md) and ships in this same PR.
 
 ## 4. Pre-investigation prediction vs. outcome
 
@@ -59,6 +59,8 @@ The spec § 4.2 desk-analysis priors, recorded before any log reading: **H1 ~70%
 **Outcome: every prior was wrong.** H1 is the most decisively refuted — boundary-1 propagation was ≤ 22 s in all runs, far inside the 30 s budget. The actual cause was a static wire-contract mismatch none of the four hypotheses named. What the desk analysis missed: it took `SseEventProjection.cs`'s comment that `pr-updated` keeps its "wire contract unchanged" at face value, without checking whether the frontend's `PrUpdatedEvent` contract ever *agreed* with that object shape — it never did. The analysis also concentrated on runtime mechanics (propagation, polling, SSE delivery, mount-race) and never inspected the serialized payload shape, because no end-to-end test ever exercised it.
 
 ## 5. Handoff to writing-plans
+
+**Implemented in this PR** — the fix landed alongside this finding rather than via a separate follow-up PR; see [`docs/plans/2026-05-21-pr-updated-wire-fix.md`](../plans/2026-05-21-pr-updated-wire-fix.md). The sketch-amendment below is retained as the historical handoff record.
 
 **None of the spec's sketches (§ 6.1 H1 / 6.2 H2 / 6.3 H3 / 6.4 H4) apply.** Per spec § 12 A7, a bounded sketch-amendment:
 

@@ -1,22 +1,16 @@
-// DEFERRED: this spec exercises the SSE 'pr-updated' → ActivePrPoller → BannerRefresh
-// pipeline after `createCommitOnBranch` advances the fixture branch head. The Reload
-// banner does not surface within a 150s budget on the prpande/prism-sandbox sandbox,
-// and root-cause investigation surfaced two plausible contributors:
+// STILL SKIPPED — but the banner root cause is now fixed.
 //
-//   1. GitHub PR record propagation lag — `repos/.../pulls/{n}.head.sha` updates
-//      asynchronously after branch-ref updates. Empirical observation: even 150s is
-//      insufficient on free-tier sandboxes.
+// The Reload-banner non-surfacing was investigated and resolved: it was a `pr-updated`
+// SSE wire-contract mismatch (the backend shipped `prRef` as an object; the frontend
+// handler dropped every event). Fixed in the same PR — see
+// docs/specs/2026-05-19-stale-oid-banner-investigation-finding.md.
 //
-//   2. BannerRefresh first-poll empty-render — ActivePrPoller emits an event on
-//      first-poll-after-subscribe with HeadShaChanged=false (LastHeadSha was null);
-//      BannerRefresh.formatMessage returns '' for that flag pattern and the banner
-//      never renders. If the spec's first poll for the fixture PR lands AFTER
-//      advanceHead, the head DIFF is silently lost.
-//
-// The remaining 3 real-flow specs (happy-path, foreign-pending-review,
-// lost-response-adoption) still ship and continue to catch the bug class the
-// suite was built for. See docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md
-// for the deferred follow-up entry.
+// This spec stays `test.skip`-ed for a SEPARATE reason: its second-submit choreography
+// (below) clicks "Submit review" directly, but after `advanceHead` the draft is stale
+// and SubmitButton disables until the stale draft is overridden in the Drafts tab. The
+// second-submit portion needs rewriting to drive that override gate before un-skipping.
+// See the finding's out-of-band #7. Un-skipping also needs a `test.setTimeout()` bump
+// (out-of-band #3) — the suite's internal waits exceed Playwright's 30s default.
 import { test, expect, request } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
