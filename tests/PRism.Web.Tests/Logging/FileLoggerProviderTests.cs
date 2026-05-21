@@ -505,10 +505,12 @@ public sealed class FileLoggerProviderTests : IDisposable
             await Task.Yield();
             clock.Now = DateTimeOffset.Now;
             logger.LogInformation("today event triggers locked rotation open");
-            // Give the writer task a moment to drain through the failed rotation before dispose
-            // starts the shutdown sequence — without this, DisposeAsync may complete before the
-            // writer dequeues event #2.
-            await Task.Delay(50);
+            // Poll for the writer task to drain event #2 and increment the failure counter rather
+            // than holding a fixed delay — slow CI runners (Windows Actions) couldn't make the
+            // 50ms ceiling, and the assertion would fire before the writer had even scheduled.
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (provider.WriteFailureCount == 0 && DateTime.UtcNow < deadline)
+                await Task.Delay(20);
 
             provider.WriteFailureCount.Should().BeGreaterThan(0,
                 "the rotation open against a FileShare.None-locked file must route to _writeFailureCount");

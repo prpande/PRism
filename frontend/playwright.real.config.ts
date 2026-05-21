@@ -29,6 +29,10 @@ const backend = {
     // PRISM_E2E_FAKE_REVIEW deliberately NOT set — Program.cs rejects the combo.
     DataDir: e2eDataDir,
     PRISM_POLLER_CADENCE_SECONDS: '1',
+    // Override FileLoggerExtensions Test-env gate so the stale-OID investigation
+    // methodology can capture structured logs to <DataDir>/logs/prism-yyyy-MM-dd.log.
+    // See docs/specs/2026-05-19-stale-oid-banner-investigation-design.md Section 3.4.
+    PRISM_FILE_LOGGER_FORCE: '1',
   },
 };
 
