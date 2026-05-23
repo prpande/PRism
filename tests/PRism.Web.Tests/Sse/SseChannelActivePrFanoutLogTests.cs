@@ -39,7 +39,7 @@ public class SseChannelActivePrFanoutLogTests
         registry.Add("sub-A", prRef);
         registry.Add("sub-B", prRef);
 
-        bus.Publish(new ActivePrUpdated(prRef, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h2", NewCommentCount: null));
+        bus.Publish(new ActivePrUpdated(prRef, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h2", CommentCountDelta: 0));
 
         logger.Messages.Should().ContainSingle();
         var line = logger.Messages.Single();
@@ -62,7 +62,7 @@ public class SseChannelActivePrFanoutLogTests
         var prRef = new PrReference("o", "r", 42);
         // Intentionally no registry.Add — verify the log still fires with subscribers=0.
 
-        var act = () => bus.Publish(new ActivePrUpdated(prRef, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h-orphan", NewCommentCount: null));
+        var act = () => bus.Publish(new ActivePrUpdated(prRef, HeadShaChanged: true, CommentCountChanged: false, NewHeadSha: "h-orphan", CommentCountDelta: 0));
 
         act.Should().NotThrow();
         logger.Messages.Should().ContainSingle();

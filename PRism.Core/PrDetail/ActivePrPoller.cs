@@ -128,12 +128,15 @@ public sealed class ActivePrPoller : BackgroundService
 
                 if (firstPoll || headChanged || commentChanged)
                 {
+                    var commentCountDelta = state.LastCommentCount is { } priorCount
+                        ? snapshot.CommentCount - priorCount
+                        : 0;
                     _bus.Publish(new ActivePrUpdated(
                         prRef,
                         HeadShaChanged: headChanged,
                         CommentCountChanged: commentChanged,
                         NewHeadSha: headChanged ? snapshot.HeadSha : null,
-                        NewCommentCount: commentChanged ? snapshot.CommentCount : null));
+                        CommentCountDelta: commentCountDelta));
                 }
 
                 state.LastHeadSha = snapshot.HeadSha;

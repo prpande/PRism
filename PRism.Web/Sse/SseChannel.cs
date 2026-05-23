@@ -254,8 +254,9 @@ internal sealed class SseChannel : IDisposable
         var subscriberList = _activeRegistry.SubscribersFor(evt.PrRef);
         s_sseActivePrFanoutLog(_log, nameof(ActivePrUpdated), evt.PrRef, subscriberList.Count, evt.HeadShaChanged, evt.CommentCountChanged, null);
 
-        var json = JsonSerializer.Serialize(evt, JsonSerializerOptionsFactory.Api);
-        var frame = $"event: pr-updated\ndata: {json}\n\n";
+        var (eventName, payload) = SseEventProjection.Project(evt);
+        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+        var frame = $"event: {eventName}\ndata: {json}\n\n";
         // Per-PR fanout — only subscribers that registered for evt.PrRef receive the event.
         foreach (var subscriberId in subscriberList)
         {

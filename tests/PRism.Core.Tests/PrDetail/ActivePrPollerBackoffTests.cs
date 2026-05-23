@@ -118,7 +118,7 @@ public class ActivePrPollerBackoffTests
         evt.HeadShaChanged.Should().BeFalse();
         evt.CommentCountChanged.Should().BeFalse();
         evt.NewHeadSha.Should().BeNull();
-        evt.NewCommentCount.Should().BeNull();
+        evt.CommentCountDelta.Should().Be(0);
     }
 
     [Fact]
@@ -161,7 +161,7 @@ public class ActivePrPollerBackoffTests
         var deltaEvt = (ActivePrUpdated)bus.Published[1];
         deltaEvt.HeadShaChanged.Should().BeFalse();
         deltaEvt.CommentCountChanged.Should().BeTrue();
-        deltaEvt.NewCommentCount.Should().Be(3);
+        deltaEvt.CommentCountDelta.Should().Be(3);
     }
 
     [Fact]

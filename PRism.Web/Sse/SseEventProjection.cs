@@ -4,9 +4,12 @@ namespace PRism.Web.Sse;
 
 // Wire-shape projections — convert IReviewEvent records (which carry PrReference)
 // into the JSON payload shape the frontend consumes (prRef as "owner/repo/number" string).
-// Only the three S4-PR3 event types + the five S5-PR3 submit-* events use string-shaped prRef
-// per spec § 4.5 / § 7.4–7.5; existing pr-updated / inbox-updated continue to serialize the
-// event record directly so their wire contract is unchanged.
+// The three S4-PR3 event types, the five S5-PR3 submit-* events, and pr-updated all use
+// string-shaped prRef per spec § 4.5 / § 7.4–7.5. pr-updated was added to this switch in
+// the wire-fix PR — it previously serialized the raw ActivePrUpdated record, shipping prRef
+// as an object the frontend silently dropped (see docs/specs/2026-05-19-stale-oid-banner-
+// investigation-finding.md). inbox-updated still serializes its record directly: it is
+// broadcast (not per-PR) and its frontend contract already matches the raw shape.
 //
 // Intentionally NOT in the switch: `DraftSubmitted` is declared in PRism.Core/Events and is
 // published by the S5 PR3 submit endpoint, but `SseChannel` does not subscribe to it — the
@@ -26,6 +29,7 @@ namespace PRism.Web.Sse;
 // keeping the payload minimal is the defense — that one foreign-review id is the irreducible minimum.
 internal static class SseEventProjection
 {
+    internal sealed record ActivePrUpdatedWire(string PrRef, string? NewHeadSha, bool HeadShaChanged, int CommentCountDelta);
     internal sealed record StateChangedWire(string PrRef, IReadOnlyList<string> FieldsTouched, string? SourceTabId);
     internal sealed record DraftSavedWire(string PrRef, string DraftId, string? SourceTabId);
     internal sealed record DraftDiscardedWire(string PrRef, string DraftId, string? SourceTabId);
@@ -41,6 +45,9 @@ internal static class SseEventProjection
 
     public static (string EventName, object Payload) Project(IReviewEvent evt) => evt switch
     {
+        ActivePrUpdated e => ("pr-updated", new ActivePrUpdatedWire(
+            e.PrRef.ToString(), e.NewHeadSha, e.HeadShaChanged, e.CommentCountDelta)),
+
         StateChanged e => ("state-changed", new StateChangedWire(e.PrRef.ToString(), e.FieldsTouched, e.SourceTabId)),
         DraftSaved e => ("draft-saved", new DraftSavedWire(e.PrRef.ToString(), e.DraftId, e.SourceTabId)),
         DraftDiscarded e => ("draft-discarded", new DraftDiscardedWire(e.PrRef.ToString(), e.DraftId, e.SourceTabId)),

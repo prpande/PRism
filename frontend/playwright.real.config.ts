@@ -14,10 +14,17 @@ dotenv.config({ path: '.env.local', quiet: true });
 // PRism.tokens.cache via the real /api/auth/connect flow.
 const e2eDataDir = path.join(os.tmpdir(), `PRism-e2e-real-${Date.now()}`);
 fs.mkdirSync(e2eDataDir, { recursive: true });
+// Surface the per-run DataDir so the on-disk log file (<DataDir>/logs/) is locatable
+// after the run — Playwright prints no banner for it.
+console.log(`[real-flow] DataDir=${e2eDataDir}`);
 
 const backend = {
+  // `npm run build` first: a fresh worktree has no PRism.Web/wwwroot, and the backend
+  // resolves WebRootPath once at startup. Without the build, `dotnet run` would start
+  // with no web root, `/` would not return text/html, and the prism-session cookie
+  // would never be stamped — auth then 401s. Vite emits straight into PRism.Web/wwwroot.
   command:
-    'cd .. && dotnet run --project PRism.Web --no-launch-profile --urls http://localhost:5181 -- --no-browser',
+    'npm run build && cd .. && dotnet run --project PRism.Web --no-launch-profile --urls http://localhost:5181 -- --no-browser',
   url: 'http://localhost:5181/api/health',
   reuseExistingServer: false,
   timeout: 120_000,
