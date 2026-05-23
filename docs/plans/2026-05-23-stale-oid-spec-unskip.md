@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Un-skip `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts` so the suite exercises the full stale-commit-OID recreate pipeline end-to-end against `prpande/prism-sandbox` PR #6 — driving the missing stale-draft override step that PR #65's banner fix exposed.
+**Goal:** Un-skip `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts` so the suite exercises the full stale-commit-OID recreate pipeline end-to-end against `prpande/prism-sandbox` PR #7 — driving the missing stale-draft override step that PR #65's banner fix exposed.
 
 **Architecture:**
 
@@ -12,7 +12,7 @@
 - The deterministic wait pattern is already established by `frontend/e2e/s4-keep-anyway-survives-reload.spec.ts:62-70`: set up a `page.waitForResponse` promise for the PUT-200 _before_ clicking Keep anyway, then `await` it. Mirror that pattern here, scoped to the post-reload phase so we don't accidentally re-match the original `/draft` PUT from line 57-58.
 - The second remaining issue (finding out-of-band #3) is that the spec has no `test.setTimeout()` and Playwright defaults to 30 s — well below the ~150 s of internal waits plus live-GitHub latency. Add `test.setTimeout(300_000)` at the top of the test body. Internal per-assertion timeouts are already bounded (15 s / 30 s / 20 s / 10 s), so a stuck assertion will surface fast; the 5-min wrapper exists only to keep wall-clock real-GitHub latency from hitting the default ceiling.
 
-**Tech Stack:** TypeScript / Playwright (`@playwright/test`) / live GitHub REST + GraphQL via `gh` CLI / `prpande/prism-sandbox` PR #6.
+**Tech Stack:** TypeScript / Playwright (`@playwright/test`) / live GitHub REST + GraphQL via `gh` CLI / `prpande/prism-sandbox` PR #7.
 
 **Scope:** One spec file + four doc edits. No production code change. The four hypotheses the original deferral entry enumerated (item 1 GitHub PR propagation lag; item 2 `BannerRefresh` empty-render; the spec's H1–H4) are all already disposed of by the finding doc and PR #65. This plan is purely (a) drive the override gate, (b) bump the wrapper timeout, (c) flip the skip, (d) refresh the doc references.
 
@@ -277,12 +277,12 @@ Expected: shows authenticated user `prpande` with scopes including `repo` and `r
 Run: `cd frontend && npm run setup-real-e2e-fixtures`
 Expected: console reports 4 fixtures present (happy, foreign, lost-response, stale-oid) and writes `frontend/e2e/real/fixtures.json`. The script is idempotent — re-running with existing branches/PRs is a no-op per `docs/e2e/real-flow.md:23`.
 
-- [ ] **Step 3: Verify stale-oid fixture is PR #6**
+- [ ] **Step 3: Verify stale-oid fixture is PR #7**
 
 Run: `cd frontend && node -e "const f = require('./e2e/real/fixtures.json'); const s = f.find(x => x.name === 'stale-oid'); console.log(s.prNumber, s.baseOid, s.anchorFile, s.anchorLine);"`
-Expected: prints `6 <40-char-sha> src/Calc.cs 3` (or whatever line the fixture seeds — line 3 is the historical value from `setup-real-e2e-fixtures.ts`).
+Expected: prints `7 <40-char-sha> src/Calc.cs 3` (line 3 is the seeded anchor in `setup-real-e2e-fixtures.ts`).
 
-If `prNumber` is not 6, the sandbox fixture has drifted or been recreated. Confirm via `gh pr view 6 --repo prpande/prism-sandbox --json headRefName,state` that the branch is `e2e-real-stale-oid-fixture-prpande` and state is `OPEN`. Repair per `docs/e2e/real-flow.md:23` if needed.
+If `prNumber` is not 7, the sandbox fixture has drifted or been recreated again. Confirm via `gh pr list --repo prpande/prism-sandbox --head e2e-real-stale-oid-fixture-prpande --state open` that the branch has an active PR. Repair per `docs/e2e/real-flow.md:23` if needed (the historical drift-repair sequence was PR #5 → #6 → #7).
 
 - [ ] **Step 4: Single-spec smoke run**
 
@@ -424,7 +424,7 @@ New (replace as-is; commit-sha and PR-number placeholders are filled in Task 9 a
 
 ```
 - **PARTIALLY RESOLVED 2026-05-21:** the banner root cause was found and fixed (PR #65, merge `619b31a7`). It was neither of the two causes above — it is a `pr-updated` SSE wire-contract mismatch (`SseChannel.OnActivePrUpdated` serialized the raw `ActivePrUpdated` record, shipping `prRef` as an object the frontend handler dropped). See `docs/specs/2026-05-19-stale-oid-banner-investigation-finding.md` and `docs/plans/2026-05-21-pr-updated-wire-fix.md`.
-- **RESOLVED 2026-05-23:** un-skipped in PR #<TBD> (merge `<TBD>`). The remaining blocker — out-of-band #7's intentional stale-draft override gate — is now driven by the spec via the UnresolvedPanel "Keep anyway" button between the post-reload `mark-viewed` and the second submit. The wrapper timeout was also bumped per out-of-band #3 (`test.setTimeout(300_000)`). Plan: `docs/plans/2026-05-23-stale-oid-spec-unskip.md`. Pre-merge gate: 3 consecutive local passes against `prpande/prism-sandbox` PR #6, per stale-OID investigation design § 8.2.
+- **RESOLVED 2026-05-23:** un-skipped in PR #<TBD> (merge `<TBD>`). The remaining blocker — out-of-band #7's intentional stale-draft override gate — is now driven by the spec via the UnresolvedPanel "Keep anyway" button between the post-reload `mark-viewed` and the second submit. The wrapper timeout was also bumped per out-of-band #3 (`test.setTimeout(300_000)`). Plan: `docs/plans/2026-05-23-stale-oid-spec-unskip.md`. Pre-merge gate: 3 consecutive local passes against `prpande/prism-sandbox` PR #7, per stale-OID investigation design § 8.2.
 ```
 
 - [ ] **Step 2: Commit**
@@ -472,7 +472,7 @@ Invoke `compound-engineering:ce-commit-push-pr` (or its commit-push-pr equivalen
 The PR body should cover:
 - **What:** Un-skips `s5-real-stale-commit-oid.spec.ts`; adds 5-min wrapper timeout; drives the Keep-anyway override step the existing spec was missing.
 - **Why now:** PR #65 fixed the Reload-banner non-surfacing (the original deferral cause). The remaining blocker — out-of-band #7 — was a frontend gate the spec didn't drive; this PR drives it.
-- **Pre-merge evidence:** "3 consecutive local passes against `prpande/prism-sandbox` PR #6" (paste the wall-clock per run from the local run logs).
+- **Pre-merge evidence:** "3 consecutive local passes against `prpande/prism-sandbox` PR #7" (paste the wall-clock per run from the local run logs).
 - **Out of scope (explicit):** out-of-band #2 (fixture-drift hardening in `setup-real-e2e-fixtures`); on-disk-logger polish from PR #61/#63; S6 Settings page; any refactor of `SseEventProjection` or the just-shipped wire fix.
 - **Risk:** the spec is local-only (`docs/e2e/real-flow.md` — not on CI). The change cannot affect CI green/red; the worst case is a spec that flakes against live GitHub for the next maintainer who runs `npm run test:e2e:real`.
 
