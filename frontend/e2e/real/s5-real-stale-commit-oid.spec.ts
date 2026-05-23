@@ -7,8 +7,9 @@
 //  3) Push a new commit via createCommitOnBranch (advanceHead).
 //  4) Wait for the Reload banner (SSE pr-updated; PR #65 wire fix).
 //  5) Click Reload → mark-viewed re-stamps LastViewedHeadSha=newOid.
-//  6) The previously-saved draft is now stale (anchor line dropped by step 3). Override it
-//     via UnresolvedPanel "Keep anyway" so SubmitButton's stale gate clears
+//  6) The previously-saved draft is now stale — anchoredLineContent="{" no longer matches
+//     line 3's new content (step 3 preserves line 3's position but mutates its content).
+//     Override it via UnresolvedPanel "Keep anyway" so SubmitButton's stale gate clears
 //     (SubmitButton.tsx:61-64; UnresolvedPanel + StaleDraftRow.tsx).
 //  7) Submit again → FindOwnPendingReviewAsync finds the pending review at baseOid,
 //     detects stale (pending.CommitOid != newOid) → user consents via Recreate and
@@ -42,9 +43,7 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
-test('S5 real flow — stale commit OID triggers recreate on second submit', async ({
-  page,
-}) => {
+test('S5 real flow — stale commit OID triggers recreate on second submit', async ({ page }) => {
   // Wrapper timeout: internal waits sum to ~150 s and each is independently bounded
   // (so a real stall fails fast at its own assertion). The 5-min ceiling exists only
   // so live-GitHub latency under load can't trip Playwright's 30 s default.

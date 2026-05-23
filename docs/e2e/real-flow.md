@@ -38,23 +38,23 @@ Wall-clock ~5-8 minutes for the suite (4 active specs; the stale-oid spec adds a
 
 ## What each spec catches
 
-| Spec | Surface |
-|---|---|
-| `s5-real-happy-path` | FE `/mark-viewed` wire-up regression net; `addPullRequestReview` + `addPullRequestReviewThread` + `submitPullRequestReview` GitHub acceptance |
-| `s5-real-foreign-pending-review` | `FindOwnPendingReviewAsync` GraphQL shape; TOCTOU re-fetch; draft-import flow; anchored-line enrichment from a real file blob |
-| `s5-real-lost-response-adoption` | `TestFailureInjectionHandler` seam itself; adoption-vs-foreign branching; **HTML-comment marker durability on live GitHub** (running C7 empirical gate) |
-| `s5-real-stale-commit-oid` | `addPullRequestReview` at a non-head OID; `deletePullRequestReview` orphan cleanup; full stale-recreation pipeline against real GraphQL; SSE `pr-updated` wire-shape regression net (PR #65). |
+| Spec                             | Surface                                                                                                                                                                                       |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `s5-real-happy-path`             | FE `/mark-viewed` wire-up regression net; `addPullRequestReview` + `addPullRequestReviewThread` + `submitPullRequestReview` GitHub acceptance                                                 |
+| `s5-real-foreign-pending-review` | `FindOwnPendingReviewAsync` GraphQL shape; TOCTOU re-fetch; draft-import flow; anchored-line enrichment from a real file blob                                                                 |
+| `s5-real-lost-response-adoption` | `TestFailureInjectionHandler` seam itself; adoption-vs-foreign branching; **HTML-comment marker durability on live GitHub** (running C7 empirical gate)                                       |
+| `s5-real-stale-commit-oid`       | `addPullRequestReview` at a non-head OID; `deletePullRequestReview` orphan cleanup; full stale-recreation pipeline against real GraphQL; SSE `pr-updated` wire-shape regression net (PR #65). |
 
 ## Verifying the regression nets
 
 Per design §8 DoD: before merging a PR that touches the submit pipeline, run each one-line edit below, confirm the named spec fails, restore, and attest in the PR description.
 
-| Spec | Edit to introduce | Expected failure surface |
-|---|---|---|
-| `s5-real-happy-path` | Comment out `postMarkViewed(...)` in `frontend/src/hooks/usePrDetail.ts` | `waitForResponse(/mark-viewed/)` times out → 400 `head-sha-not-stamped` |
-| `s5-real-foreign-pending-review` | Force `FindOwnPendingReviewAsync` to return `null` | Pipeline reaches Begin without foreign-detection; GitHub refuses second pending review → dialog Failed |
-| `s5-real-lost-response-adoption` | Remove marker prefix from `DraftThreadRequest.BodyMarkdown` | Adoption can't match on second submit → 2 threads (expected 1) |
-| `s5-real-stale-commit-oid` | Force `IsStaleCommitOid` to return `false` in the submit pipeline (or short-circuit it) so the second submit re-uses the pending review at `baseOid` | Final `reviews[0].commitOid === baseOid`, violating `expect(...).not.toBe(baseOid)` |
+| Spec                             | Edit to introduce                                                                                                                                    | Expected failure surface                                                                               |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `s5-real-happy-path`             | Comment out `postMarkViewed(...)` in `frontend/src/hooks/usePrDetail.ts`                                                                             | `waitForResponse(/mark-viewed/)` times out → 400 `head-sha-not-stamped`                                |
+| `s5-real-foreign-pending-review` | Force `FindOwnPendingReviewAsync` to return `null`                                                                                                   | Pipeline reaches Begin without foreign-detection; GitHub refuses second pending review → dialog Failed |
+| `s5-real-lost-response-adoption` | Remove marker prefix from `DraftThreadRequest.BodyMarkdown`                                                                                          | Adoption can't match on second submit → 2 threads (expected 1)                                         |
+| `s5-real-stale-commit-oid`       | Force `IsStaleCommitOid` to return `false` in the submit pipeline (or short-circuit it) so the second submit re-uses the pending review at `baseOid` | Final `reviews[0].commitOid === baseOid`, violating `expect(reviews[0].commitOid).toBe(newHeadOid)`    |
 
 ## Known flake surfaces
 
@@ -72,7 +72,7 @@ Per design §8 DoD: before merging a PR that touches the submit pipeline, run ea
 ## Operator runbook (owner)
 
 - **Onboarding a new teammate:** `gh api -X PUT repos/prpande/prism-sandbox/collaborators/<login> -F permission=push`. Share this doc.
-- **Refreshing fixtures if master / anchor file drifts:** the setup script only reads master's head when creating a *new* fixture branch, so existing fixture branches keep their original anchor content. To refresh anchors, delete the affected fixture branch + PR and re-run the setup script.
+- **Refreshing fixtures if master / anchor file drifts:** the setup script only reads master's head when creating a _new_ fixture branch, so existing fixture branches keep their original anchor content. To refresh anchors, delete the affected fixture branch + PR and re-run the setup script.
 - **GC'ing stale fixtures for a teammate who left:** list their `e2e-real-*-fixture-<login>` branches via `gh api repos/prpande/prism-sandbox/branches` and delete via `gh api -X DELETE`.
 
 ## Pre-release sanity gate

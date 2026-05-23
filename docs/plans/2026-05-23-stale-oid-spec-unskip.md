@@ -7,7 +7,7 @@
 **Architecture:**
 
 - The Reload-banner non-surfacing has already been fixed (PR #65 — `SseEventProjection.Project` now projects `pr-updated` to the string-`prRef` wire shape). The spec's first ~110 lines work as-is on a live sandbox.
-- The remaining blocker (finding doc out-of-band #7) is the second-submit choreography. After `advanceHead`, the inline draft created earlier (anchored to `baseOid` on a line that no longer exists) is classified `stale`. `SubmitButton.tsx:61-64` correctly disables Submit with the tooltip _"Resolve or override the stale drafts in the Drafts tab first."_ The spec's `await page.getByRole('button', { name: /^submit review$/i }).click()` then no-ops (the button has `onClick={undefined}` when disabled).
+- The remaining blocker (finding doc out-of-band #7) is the second-submit choreography. After `advanceHead`, the inline draft created earlier (anchored to `baseOid` line 3 with `anchoredLineContent="{"`) is classified `stale` because the new commit's line 3 has a different content. `SubmitButton.tsx:61-64` correctly disables Submit with the tooltip _"Resolve or override the stale drafts in the Drafts tab first."_ The spec's `await page.getByRole('button', { name: /^submit review$/i }).click()` then no-ops (the button has `onClick={undefined}` when disabled). (The early-iteration `advanceHead` content also deleted line 3 entirely, which broke the downstream recreate Attach on real GitHub — newContent was later rewritten to preserve line 3's position; see the spec's inline rationale block above `advanceHead`.)
 - The user-visible affordance to override is the **"Keep anyway"** button on `UnresolvedPanel` (`frontend/src/components/PrDetail/Reconciliation/UnresolvedPanel.tsx` + `StaleDraftRow.tsx:131-138`). It auto-renders above the tabs whenever any draft has `status === 'stale' && !isOverriddenStale`. Click it → fires `PUT /draft { overrideStale: { id } }` → server flips `IsOverriddenStale=true` → next session refetch removes the stale from the SubmitButton gate.
 - The deterministic wait pattern is already established by `frontend/e2e/s4-keep-anyway-survives-reload.spec.ts:62-70`: set up a `page.waitForResponse` promise for the PUT-200 _before_ clicking Keep anyway, then `await` it. Mirror that pattern here, scoped to the post-reload phase so we don't accidentally re-match the original `/draft` PUT from line 57-58.
 - The second remaining issue (finding out-of-band #3) is that the spec has no `test.setTimeout()` and Playwright defaults to 30 s — well below the ~150 s of internal waits plus live-GitHub latency. Add `test.setTimeout(300_000)` at the top of the test body. Internal per-assertion timeouts are already bounded (15 s / 30 s / 20 s / 10 s), so a stuck assertion will surface fast; the 5-min wrapper exists only to keep wall-clock real-GitHub latency from hitting the default ceiling.
@@ -20,18 +20,19 @@
 
 ## File Structure
 
-| File | Action | What it owns |
-|------|--------|--------------|
-| `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts` | Modify | Rewrite header comment, add wrapper timeout, flip `test.skip` → `test`, insert override-step block between reload and second submit. |
-| `docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md` | Modify | PARTIALLY RESOLVED entry at line 944 → RESOLVED with new PR/commit citation. |
-| `docs/e2e/real-flow.md` | Modify | Four references claim spec is `test.skip`-ed (lines 37, 46, 57, 61). Update to reflect 4-active-specs reality. |
-| _(no source code changes)_ | — | PR #65 already shipped the only production fix this spec needed. |
+| File                                                    | Action | What it owns                                                                                                                         |
+| ------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts`    | Modify | Rewrite header comment, add wrapper timeout, flip `test.skip` → `test`, insert override-step block between reload and second submit. |
+| `docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md` | Modify | PARTIALLY RESOLVED entry at line 944 → RESOLVED with new PR/commit citation.                                                         |
+| `docs/e2e/real-flow.md`                                 | Modify | Four references claim spec is `test.skip`-ed (lines 37, 46, 57, 61). Update to reflect 4-active-specs reality.                       |
+| _(no source code changes)_                              | —      | PR #65 already shipped the only production fix this spec needed.                                                                     |
 
 ---
 
 ## Task 1: Bump test wrapper timeout
 
 **Files:**
+
 - Modify: `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts:39-46`
 
 - [ ] **Step 1: Add `test.setTimeout(300_000)` as the first statement in the test body**
@@ -76,6 +77,7 @@ git commit -m "test(s5-real-stale-oid): add 5-min wrapper timeout (out-of-band #
 ## Task 2: Insert the override-stale step between reload and second submit
 
 **Files:**
+
 - Modify: `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts:107-117`
 
 **Why this lives between mark-viewed and the second submit:**
@@ -89,22 +91,25 @@ git commit -m "test(s5-real-stale-oid): add 5-min wrapper timeout (out-of-band #
 Current spec (lines 102-117):
 
 ```ts
-  // Wait for the Reload banner to appear (driven by SSE pr-updated; ActivePrPoller cadence 1s + replica propagation).
-  const reloadBanner = page.getByRole('button', { name: /reload pr|reload/i });
-  await expect(reloadBanner).toBeVisible({ timeout: 30_000 });
-  await reloadBanner.click();
-  // After reload, mark-viewed re-stamps LastViewedHeadSha=newOid.
-  await page.waitForResponse((r) => r.url().endsWith('/mark-viewed') && r.status() === 204, {
+// Wait for the Reload banner to appear (driven by SSE pr-updated; ActivePrPoller cadence 1s + replica propagation).
+const reloadBanner = page.getByRole("button", { name: /reload pr|reload/i });
+await expect(reloadBanner).toBeVisible({ timeout: 30_000 });
+await reloadBanner.click();
+// After reload, mark-viewed re-stamps LastViewedHeadSha=newOid.
+await page.waitForResponse(
+  (r) => r.url().endsWith("/mark-viewed") && r.status() === 204,
+  {
     timeout: 15_000,
-  });
+  },
+);
 
-  // Second submit. Pipeline: FindOwnPendingReviewAsync finds review at baseOid;
-  // session.PendingReviewId matches → own; pending.CommitOid != newOid → stale → recreate.
-  // First Confirm Submit triggers StaleCommitOidRecreating (server-side orphan delete + clear stamps);
-  // dialog transitions to kind='stale-commit-oid' and renders StaleCommitOidBanner. The user must
-  // then click "Recreate and resubmit" — that's the user-consent gate for the resubmit cycle
-  // (see SubmitDialog.tsx:192-205, StaleCommitOidBanner.tsx:53, useSubmit.ts:144-152).
-  await page.getByRole('button', { name: /^submit review$/i }).click();
+// Second submit. Pipeline: FindOwnPendingReviewAsync finds review at baseOid;
+// session.PendingReviewId matches → own; pending.CommitOid != newOid → stale → recreate.
+// First Confirm Submit triggers StaleCommitOidRecreating (server-side orphan delete + clear stamps);
+// dialog transitions to kind='stale-commit-oid' and renders StaleCommitOidBanner. The user must
+// then click "Recreate and resubmit" — that's the user-consent gate for the resubmit cycle
+// (see SubmitDialog.tsx:192-205, StaleCommitOidBanner.tsx:53, useSubmit.ts:144-152).
+await page.getByRole("button", { name: /^submit review$/i }).click();
 ```
 
 The override block goes between the closing `})` of the mark-viewed wait and the `// Second submit.` comment.
@@ -114,36 +119,43 @@ The override block goes between the closing `})` of the mark-viewed wait and the
 Insert immediately after the `mark-viewed` 204 wait (so the comment block above `// Second submit.` stays unchanged):
 
 ```ts
-  // The draft created earlier (line 57-58) anchored to baseOid; after advanceHead it
-  // classifies stale and SubmitButton disables until the user overrides or discards
-  // (SubmitButton.tsx:61-64 — "Resolve or override the stale drafts in the Drafts tab first.").
-  // The override affordance is "Keep anyway" on UnresolvedPanel (StaleDraftRow.tsx:131-138),
-  // which mounts above the tabs whenever any draft is stale-not-overridden.
-  //
-  // Two deterministic waits bracket the click so the test never races React state:
-  //  - BEFORE: assert on the Keep-anyway button itself (not just panel visibility — the
-  //    panel also renders for `needsReconfirm` or `movedCount > 0` per UnresolvedPanel.tsx:74,
-  //    so panel-visible alone is not proof that our stale row is mounted).
-  //  - AFTER: assert the panel hides. StaleDraftRow.handleKeepAnyway fires the PUT, then
-  //    onMutated() → draftSession.refetch() runs a follow-up GET. The panel only disappears
-  //    once the refetch lands and React re-renders — which is the same tick that flips
-  //    SubmitButton's stale gate in SubmitButton.tsx:61-64. Asserting on disappearance
-  //    avoids a Playwright actionability wait on the still-disabled Submit button below.
-  // Mirrors frontend/e2e/s4-keep-anyway-survives-reload.spec.ts:62-70 for the PUT wait pattern.
-  const unresolvedPanel = page.getByRole('region', { name: /unresolved drafts/i });
-  const keepAnywayBtn = unresolvedPanel.getByRole('button', { name: /keep anyway/i });
-  await expect(keepAnywayBtn).toBeVisible({ timeout: 15_000 });
-  const overridePromise = page.waitForResponse(
-    (r) =>
-      r.url().endsWith(`/api/pr/prpande/prism-sandbox/${staleFixture.prNumber}/draft`) &&
-      r.request().method() === 'PUT' &&
-      r.status() === 200,
-    { timeout: 10_000 },
-  );
-  await keepAnywayBtn.click();
-  await overridePromise;
-  await expect(unresolvedPanel).not.toBeVisible({ timeout: 10_000 });
-
+// The draft created earlier (line 57-58) anchored to baseOid; after advanceHead it
+// classifies stale and SubmitButton disables until the user overrides or discards
+// (SubmitButton.tsx:61-64 — "Resolve or override the stale drafts in the Drafts tab first.").
+// The override affordance is "Keep anyway" on UnresolvedPanel (StaleDraftRow.tsx:131-138),
+// which mounts above the tabs whenever any draft is stale-not-overridden.
+//
+// Two deterministic waits bracket the click so the test never races React state:
+//  - BEFORE: assert on the Keep-anyway button itself (not just panel visibility — the
+//    panel also renders for `needsReconfirm` or `movedCount > 0` per UnresolvedPanel.tsx:74,
+//    so panel-visible alone is not proof that our stale row is mounted).
+//  - AFTER: assert the panel hides. StaleDraftRow.handleKeepAnyway fires the PUT, then
+//    onMutated() → draftSession.refetch() runs a follow-up GET. The panel only disappears
+//    once the refetch lands and React re-renders — which is the same tick that flips
+//    SubmitButton's stale gate in SubmitButton.tsx:61-64. Asserting on disappearance
+//    avoids a Playwright actionability wait on the still-disabled Submit button below.
+// Mirrors frontend/e2e/s4-keep-anyway-survives-reload.spec.ts:62-70 for the PUT wait pattern.
+const unresolvedPanel = page.getByRole("region", {
+  name: /unresolved drafts/i,
+});
+const keepAnywayBtn = unresolvedPanel.getByRole("button", {
+  name: /keep anyway/i,
+});
+await expect(keepAnywayBtn).toBeVisible({ timeout: 15_000 });
+const overridePromise = page.waitForResponse(
+  (r) =>
+    r
+      .url()
+      .endsWith(
+        `/api/pr/prpande/prism-sandbox/${staleFixture.prNumber}/draft`,
+      ) &&
+    r.request().method() === "PUT" &&
+    r.status() === 200,
+  { timeout: 10_000 },
+);
+await keepAnywayBtn.click();
+await overridePromise;
+await expect(unresolvedPanel).not.toBeVisible({ timeout: 10_000 });
 ```
 
 (Note the blank line at the end so the spacing before `// Second submit.` matches the rest of the file.)
@@ -165,6 +177,7 @@ git commit -m "test(s5-real-stale-oid): drive Keep-anyway override before second
 ## Task 3: Refresh the file header comment
 
 **Files:**
+
 - Modify: `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts:1-14`
 
 - [ ] **Step 1: Replace lines 1-14 with a forward-looking docstring**
@@ -187,7 +200,7 @@ Current:
 // second-submit portion needs rewriting to drive that override gate before un-skipping.
 // See the finding's out-of-band #7. Un-skipping also needs a `test.setTimeout()` bump
 // (out-of-band #3) — the suite's internal waits exceed Playwright's 30s default.
-import { test, expect, request } from '@playwright/test';
+import { test, expect, request } from "@playwright/test";
 ```
 
 Replace with:
@@ -212,7 +225,7 @@ Replace with:
 //
 // History: this spec uncovered the pr-updated SSE wire-contract bug fixed in PR #65 — see
 // docs/specs/2026-05-19-stale-oid-banner-investigation-finding.md.
-import { test, expect, request } from '@playwright/test';
+import { test, expect, request } from "@playwright/test";
 ```
 
 - [ ] **Step 2: Verify TypeScript compiles**
@@ -232,6 +245,7 @@ git commit -m "test(s5-real-stale-oid): rewrite header docstring for un-skipped 
 ## Task 4: Flip `test.skip` → `test`
 
 **Files:**
+
 - Modify: `frontend/e2e/real/s5-real-stale-commit-oid.spec.ts:39`
 
 - [ ] **Step 1: Flip the call and drop the "deferred" tail**
@@ -265,6 +279,7 @@ git commit -m "test(s5-real-stale-oid): un-skip (closes deferral)"
 ## Task 5: Environment prep + first run
 
 **Files:**
+
 - _(no edits — execution-only verification step)_
 
 - [ ] **Step 1: Confirm gh auth + scopes**
@@ -304,6 +319,7 @@ This task is verification-only; nothing to commit.
 ## Task 6: 3× consecutive passing runs (pre-merge gate per design § 8.2)
 
 **Files:**
+
 - _(no edits — verification-only)_
 
 - [ ] **Step 1: Run the spec three times in a row**
@@ -340,6 +356,7 @@ Verification-only.
 ## Task 7: Update real-flow doc
 
 **Files:**
+
 - Modify: `docs/e2e/real-flow.md:37` `docs/e2e/real-flow.md:46` `docs/e2e/real-flow.md:57` `docs/e2e/real-flow.md:61`
 
 - [ ] **Step 1: Update spec-count line at line 37**
@@ -410,6 +427,7 @@ git commit -m "docs(real-flow): un-skip stale-oid spec — update suite count, t
 ## Task 8: Mark the deferral entry RESOLVED
 
 **Files:**
+
 - Modify: `docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md:959`
 
 - [ ] **Step 1: Replace the PARTIALLY RESOLVED line**
@@ -441,6 +459,7 @@ The PR # and merge sha get filled by an amend or follow-up commit once known (Ta
 ## Task 9: Pre-push checklist + open PR
 
 **Files:**
+
 - _(no edits in this task — workflow only)_
 
 - [ ] **Step 1: Pre-push checklist (per `.ai/docs/development-process.md`)**
@@ -470,6 +489,7 @@ git push -u origin feat/stale-oid-unskip
 Invoke `compound-engineering:ce-commit-push-pr` (or its commit-push-pr equivalent) to draft a value-first PR description. PR title suggestion: `test(real-flow): un-skip stale-OID spec — drive Keep-anyway override + bump wrapper timeout`.
 
 The PR body should cover:
+
 - **What:** Un-skips `s5-real-stale-commit-oid.spec.ts`; adds 5-min wrapper timeout; drives the Keep-anyway override step the existing spec was missing.
 - **Why now:** PR #65 fixed the Reload-banner non-surfacing (the original deferral cause). The remaining blocker — out-of-band #7 — was a frontend gate the spec didn't drive; this PR drives it.
 - **Pre-merge evidence:** "3 consecutive local passes against `prpande/prism-sandbox` PR #7" (paste the wall-clock per run from the local run logs).
@@ -497,6 +517,7 @@ MERGE_SHA=$(git log origin/main -1 --format=%H)
 ## Task 10: Worktree cleanup
 
 **Files:**
+
 - _(no edits — destructive cleanup only after merge)_
 
 - [ ] **Step 1: Confirm PR is merged + main is up-to-date**
@@ -530,6 +551,7 @@ git branch         # should NOT list feat/stale-oid-unskip
 ## Self-Review
 
 **Spec coverage:**
+
 - ✅ Out-of-band #7 (stale-draft override gate) — Task 2 inserts the Keep-anyway click + PUT-200 wait, mirroring the s4 spec pattern.
 - ✅ Out-of-band #3 (no `test.setTimeout()`) — Task 1 adds `test.setTimeout(300_000)`.
 - ✅ Un-skip itself — Task 4 flips `test.skip` → `test`.
@@ -540,15 +562,18 @@ git branch         # should NOT list feat/stale-oid-unskip
 - ✅ Pre-push checklist — Task 9 Step 1.
 
 **Placeholder scan:**
+
 - `<TBD>` appears in Task 8 Step 1 _intentionally_ (PR # + merge sha aren't known yet); Task 9 Step 5 documents how to backfill them. Not a plan failure — explicitly tracked.
 - No "TODO", "implement later", "appropriate error handling", "similar to Task N", or other placeholder anti-patterns.
 
 **Type consistency:**
+
 - The override-block uses `staleFixture.prNumber` (already typed in spec line 29).
 - Selector patterns (`getByRole('region', { name: ... })`, `getByRole('button', { name: ... })`) match the s4 spec verbatim.
 - All API URL patterns use the same `/api/pr/<owner>/<repo>/<number>/draft` shape as the existing line 57-58 wait.
 
 **Explicit out-of-scope confirmation (per user prompt):**
+
 - Out-of-band #2 (fixture-drift hardening) — Task 7 Step 4 only adds a flake-surface note; no code fix here.
 - On-disk-logger polish (PR #61/#63 deferrals) — not touched.
 - S6 Settings page — not touched.
