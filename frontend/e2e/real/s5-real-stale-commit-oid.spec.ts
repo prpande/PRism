@@ -39,6 +39,11 @@ test.beforeEach(async () => {
 test.skip('S5 real flow — stale commit OID triggers recreate on second submit (deferred — see docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md)', async ({
   page,
 }) => {
+  // Wrapper timeout: internal waits sum to ~150 s and each is independently bounded
+  // (so a real stall fails fast at its own assertion). The 5-min ceiling exists only
+  // so live-GitHub latency under load can't trip Playwright's 30 s default.
+  test.setTimeout(300_000);
+
   await page.goto(`/pr/prpande/prism-sandbox/${staleFixture.prNumber}`);
   await page.waitForResponse((r) => r.url().endsWith('/mark-viewed') && r.status() === 204, {
     timeout: 15_000,
