@@ -98,8 +98,23 @@ test('S5 real flow — stale commit OID triggers recreate on second submit', asy
   // assertion below is the regression net for SSE pr-updated delivery — the banner only renders
   // when usePrDetail receives the pr-updated event from the backend SSE channel, so a broken
   // SSE pipeline times out at 30s with a clearly-named surface.
+  //
+  // newContent must preserve line 3's POSITION but change its CONTENT, so the spec exercises
+  // both the FE stale-draft gate AND a successful recreate end-to-end on real GitHub:
+  //  - FE classifier: anchoredLineContent="{" != new line 3 → status='stale' → SubmitButton
+  //    blocks until Keep-anyway. (A 2-line replacement that deletes line 3 entirely would
+  //    also produce 'stale', BUT then GitHub's addPullRequestReviewThread rejects the
+  //    recreate with no thread.id because line 3 doesn't exist in the new diff.)
+  //  - GitHub addPullRequestReviewThread at newOid line 3 side=RIGHT: still valid (line 3
+  //    exists and is in the diff hunk because its content changed), so the recreate's Attach
+  //    succeeds and the review finalizes.
   const newContent =
-    `// advanced ${Date.now()}\n` + 'public static int Mul(int a, int b) => a * b;\n';
+    'namespace Sandbox;\n' +
+    'public static class Calc\n' +
+    `{ // advanced ${Date.now()}\n` +
+    '    public static int Add(int a, int b) => a + b;\n' +
+    '    public static int Sub(int a, int b) => a - b;\n' +
+    '}\n';
   advanceHead(staleFixture, {
     fileChanges: [
       {
