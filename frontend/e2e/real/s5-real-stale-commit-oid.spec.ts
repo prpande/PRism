@@ -113,6 +113,36 @@ test.skip('S5 real flow — stale commit OID triggers recreate on second submit 
     timeout: 15_000,
   });
 
+  // The draft created earlier (line 57-58) anchored to baseOid; after advanceHead it
+  // classifies stale and SubmitButton disables until the user overrides or discards
+  // (SubmitButton.tsx:61-64 — "Resolve or override the stale drafts in the Drafts tab first.").
+  // The override affordance is "Keep anyway" on UnresolvedPanel (StaleDraftRow.tsx:131-138),
+  // which mounts above the tabs whenever any draft is stale-not-overridden.
+  //
+  // Two deterministic waits bracket the click so the test never races React state:
+  //  - BEFORE: assert on the Keep-anyway button itself (not just panel visibility — the
+  //    panel also renders for `needsReconfirm` or `movedCount > 0` per UnresolvedPanel.tsx:74,
+  //    so panel-visible alone is not proof that our stale row is mounted).
+  //  - AFTER: assert the panel hides. StaleDraftRow.handleKeepAnyway fires the PUT, then
+  //    onMutated() → draftSession.refetch() runs a follow-up GET. The panel only disappears
+  //    once the refetch lands and React re-renders — which is the same tick that flips
+  //    SubmitButton's stale gate in SubmitButton.tsx:61-64. Asserting on disappearance
+  //    avoids a Playwright actionability wait on the still-disabled Submit button below.
+  // Mirrors frontend/e2e/s4-keep-anyway-survives-reload.spec.ts:62-70 for the PUT wait pattern.
+  const unresolvedPanel = page.getByRole('region', { name: /unresolved drafts/i });
+  const keepAnywayBtn = unresolvedPanel.getByRole('button', { name: /keep anyway/i });
+  await expect(keepAnywayBtn).toBeVisible({ timeout: 15_000 });
+  const overridePromise = page.waitForResponse(
+    (r) =>
+      r.url().endsWith(`/api/pr/prpande/prism-sandbox/${staleFixture.prNumber}/draft`) &&
+      r.request().method() === 'PUT' &&
+      r.status() === 200,
+    { timeout: 10_000 },
+  );
+  await keepAnywayBtn.click();
+  await overridePromise;
+  await expect(unresolvedPanel).not.toBeVisible({ timeout: 10_000 });
+
   // Second submit. Pipeline: FindOwnPendingReviewAsync finds review at baseOid;
   // session.PendingReviewId matches → own; pending.CommitOid != newOid → stale → recreate.
   // First Confirm Submit triggers StaleCommitOidRecreating (server-side orphan delete + clear stamps);
