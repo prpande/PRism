@@ -1,16 +1,22 @@
-// STILL SKIPPED — but the banner root cause is now fixed.
+// S5 real flow — stale commit OID triggers recreate on second submit.
 //
-// The Reload-banner non-surfacing was investigated and resolved: it was a `pr-updated`
-// SSE wire-contract mismatch (the backend shipped `prRef` as an object; the frontend
-// handler dropped every event). Fixed in the same PR — see
+// Exercises the full stale-recreate pipeline on a live sandbox PR:
+//  1) Draft an inline comment anchored to baseOid.
+//  2) Submit with AttachThread pre-effect injection → Begin lands a pending review at
+//     baseOid, AttachThread fails → dialog Failed → Cancel.
+//  3) Push a new commit via createCommitOnBranch (advanceHead).
+//  4) Wait for the Reload banner (SSE pr-updated; PR #65 wire fix).
+//  5) Click Reload → mark-viewed re-stamps LastViewedHeadSha=newOid.
+//  6) The previously-saved draft is now stale (anchor line dropped by step 3). Override it
+//     via UnresolvedPanel "Keep anyway" so SubmitButton's stale gate clears
+//     (SubmitButton.tsx:61-64; UnresolvedPanel + StaleDraftRow.tsx).
+//  7) Submit again → FindOwnPendingReviewAsync finds the pending review at baseOid,
+//     detects stale (pending.CommitOid != newOid) → user consents via Recreate and
+//     Resubmit → fresh Begin→Attach→Finalize at newOid → "Review submitted".
+//  8) GitHub-side: exactly one finalized review at newOid (not baseOid); no own pending.
+//
+// History: this spec uncovered the pr-updated SSE wire-contract bug fixed in PR #65 — see
 // docs/specs/2026-05-19-stale-oid-banner-investigation-finding.md.
-//
-// This spec stays `test.skip`-ed for a SEPARATE reason: its second-submit choreography
-// (below) clicks "Submit review" directly, but after `advanceHead` the draft is stale
-// and SubmitButton disables until the stale draft is overridden in the Drafts tab. The
-// second-submit portion needs rewriting to drive that override gate before un-skipping.
-// See the finding's out-of-band #7. Un-skipping also needs a `test.setTimeout()` bump
-// (out-of-band #3) — the suite's internal waits exceed Playwright's 30s default.
 import { test, expect, request } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
