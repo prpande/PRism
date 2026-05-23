@@ -42,7 +42,7 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
-test.skip('S5 real flow — stale commit OID triggers recreate on second submit (deferred — see docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md)', async ({
+test('S5 real flow — stale commit OID triggers recreate on second submit', async ({
   page,
 }) => {
   // Wrapper timeout: internal waits sum to ~150 s and each is independently bounded
