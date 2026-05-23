@@ -34,7 +34,7 @@ To run a single spec:
 cd frontend && npx playwright test --config=playwright.real.config.ts s5-real-happy-path
 ```
 
-Wall-clock ~3-5 minutes for the suite (3 active specs; the stale-oid spec is currently `test.skip`ed pending the deferral — see below). `retries: 0` is intentional — see "Known flake surfaces" below.
+Wall-clock ~5-8 minutes for the suite (4 active specs; the stale-oid spec adds a real `advanceHead` + Reload-banner + stale-recreate cycle that runs longer than the other three). `retries: 0` is intentional — see "Known flake surfaces" below.
 
 ## What each spec catches
 
@@ -43,7 +43,7 @@ Wall-clock ~3-5 minutes for the suite (3 active specs; the stale-oid spec is cur
 | `s5-real-happy-path` | FE `/mark-viewed` wire-up regression net; `addPullRequestReview` + `addPullRequestReviewThread` + `submitPullRequestReview` GitHub acceptance |
 | `s5-real-foreign-pending-review` | `FindOwnPendingReviewAsync` GraphQL shape; TOCTOU re-fetch; draft-import flow; anchored-line enrichment from a real file blob |
 | `s5-real-lost-response-adoption` | `TestFailureInjectionHandler` seam itself; adoption-vs-foreign branching; **HTML-comment marker durability on live GitHub** (running C7 empirical gate) |
-| `s5-real-stale-commit-oid` _(deferred — `test.skip`)_ | `addPullRequestReview` at a non-head OID; `deletePullRequestReview` orphan cleanup; full stale-recreation pipeline against real GraphQL. **See [s5 deferrals doc](../specs/2026-05-11-s5-submit-pipeline-deferrals.md) — section "Real-flow stale-OID spec — SSE/Reload-banner non-surfacing after createCommitOnBranch".** |
+| `s5-real-stale-commit-oid` | `addPullRequestReview` at a non-head OID; `deletePullRequestReview` orphan cleanup; full stale-recreation pipeline against real GraphQL; SSE `pr-updated` wire-shape regression net (PR #65). |
 
 ## Verifying the regression nets
 
@@ -54,11 +54,11 @@ Per design §8 DoD: before merging a PR that touches the submit pipeline, run ea
 | `s5-real-happy-path` | Comment out `postMarkViewed(...)` in `frontend/src/hooks/usePrDetail.ts` | `waitForResponse(/mark-viewed/)` times out → 400 `head-sha-not-stamped` |
 | `s5-real-foreign-pending-review` | Force `FindOwnPendingReviewAsync` to return `null` | Pipeline reaches Begin without foreign-detection; GitHub refuses second pending review → dialog Failed |
 | `s5-real-lost-response-adoption` | Remove marker prefix from `DraftThreadRequest.BodyMarkdown` | Adoption can't match on second submit → 2 threads (expected 1) |
-| `s5-real-stale-commit-oid` _(spec skipped)_ | _(n/a while deferred — re-enable spec first; see deferrals doc)_ | _(n/a)_ |
+| `s5-real-stale-commit-oid` | Force `IsStaleCommitOid` to return `false` in the submit pipeline (or short-circuit it) so the second submit re-uses the pending review at `baseOid` | Final `reviews[0].commitOid === baseOid`, violating `expect(...).not.toBe(baseOid)` |
 
 ## Known flake surfaces
 
-- **Stale-OID spec, SSE-Reload-banner non-surfacing:** spec is currently `test.skip`ed pending root cause. Two hypotheses on file (GitHub PR record propagation lag, or BannerRefresh empty-render on first-poll-after-subscribe). See [deferrals doc](../specs/2026-05-11-s5-submit-pipeline-deferrals.md) for details.
+- **Stale-OID spec, fixture drift after interrupted run:** `advanceHead` has no post-run cleanup; an interrupted run + a regenerate of `fixtures.json` can leave `setup-real-e2e-fixtures` blessing the drifted tip as the new `baseOid`. Symptom: subsequent runs fail at "add comment on line N" because the seeded file no longer has line N. See out-of-band #2 in the investigation finding (`docs/specs/2026-05-19-stale-oid-banner-investigation-finding.md`) for the planned hardening; until then, `forceResetBranch` runs in `beforeEach` (so an in-place re-run is safe) and a full recreate of the branch + PR is the manual escape hatch.
 - **Transient GitHub 5xx / rate-limit edge:** Fails one spec; re-run by hand. Repeated failures = real regression.
 
 ## Troubleshooting
@@ -77,4 +77,4 @@ Per design §8 DoD: before merging a PR that touches the submit pipeline, run ea
 
 ## Pre-release sanity gate
 
-For any version-tag release, run `npm run test:e2e:real` and confirm all 3 currently-active specs pass on first attempt. This is the rot-mitigation per design §10.
+For any version-tag release, run `npm run test:e2e:real` and confirm all 4 currently-active specs pass on first attempt. This is the rot-mitigation per design §10.
