@@ -115,7 +115,7 @@ test('S5 real flow — stale commit OID triggers recreate on second submit', asy
     '    public static int Add(int a, int b) => a + b;\n' +
     '    public static int Sub(int a, int b) => a - b;\n' +
     '}\n';
-  advanceHead(staleFixture, {
+  const { newHeadOid } = advanceHead(staleFixture, {
     fileChanges: [
       {
         path: staleFixture.anchorFile,
@@ -158,7 +158,7 @@ test('S5 real flow — stale commit OID triggers recreate on second submit', asy
       r.url().endsWith(`/api/pr/prpande/prism-sandbox/${staleFixture.prNumber}/draft`) &&
       r.request().method() === 'PUT' &&
       r.status() === 200,
-    { timeout: 10_000 },
+    { timeout: 15_000 },
   );
   await keepAnywayBtn.click();
   await overridePromise;
@@ -182,10 +182,13 @@ test('S5 real flow — stale commit OID triggers recreate on second submit', asy
     timeout: 30_000,
   });
 
-  // GitHub-side: one finalized review at newOid (not baseOid).
+  // GitHub-side: one finalized review at the new OID specifically — not just
+  // "anything except baseOid" (which would silently accept a leftover from a
+  // crash-recovered prior run). Equality against newHeadOid is the strict
+  // regression net for "recreate landed at the post-advanceHead commit."
   const reviews = listSubmittedReviewsSince(staleFixture.prNumber, sinceTs);
   expect(reviews).toHaveLength(1);
   expect(reviews[0].state).toBe('COMMENTED');
-  expect(reviews[0].commitOid).not.toBe(staleFixture.baseOid);
+  expect(reviews[0].commitOid).toBe(newHeadOid);
   expect(listOwnPendingReviews(staleFixture.prNumber)).toHaveLength(0);
 });

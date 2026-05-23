@@ -95,13 +95,14 @@ describe('apiClient', () => {
 
   it('PUT returns undefined on 200 with Content-Length: 0', async () => {
     // Same case as above, but explicit Content-Length header — confirms the empty-text
-    // check (not just absence of Content-Type) is what gates the parse skip.
+    // check is what gates the parse skip (Content-Length is informational; the
+    // implementation reads resp.text() and returns undefined iff the body is empty).
     globalThis.fetch = vi
       .fn()
       .mockResolvedValue(
         new Response('', { status: 200, headers: { 'Content-Length': '0' } }),
       ) as unknown as typeof fetch;
-    const result = await apiClient.post('/api/pr/foo/bar/1/draft/confirm-verdict', {});
+    const result = await apiClient.put('/api/pr/foo/bar/1/draft', { overrideStale: { id: 'd1' } });
     expect(result).toBeUndefined();
   });
 
