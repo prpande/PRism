@@ -2,10 +2,11 @@
 source-doc: docs/specs/2026-05-15-s6-polish-and-distribution-design.md
 plan-doc: docs/plans/2026-05-15-s6-polish-and-distribution.md
 created: 2026-05-23
-last-updated: 2026-05-23
+last-updated: 2026-05-25
 status: open
 revisions:
   - 2026-05-23: created during the 2026-05-23 spec amendment pass to record one deferral surfaced by the drift review against PRs #55–#65.
+  - 2026-05-25: post-PR-#67 review pass — rewrote `[Risk] LogsPathOptions` to match the spec's revised `LogsPathInfo` singleton recommendation; fixed broken `§ 15.3` cross-link to point at the § 15.1 row; updated `last-updated` per the file-finalization convention used in this repo.
 ---
 
 # Deferrals — S6 polish and distribution
@@ -32,7 +33,7 @@ The 2026-05-23 amendment pass itself folded its other findings directly into the
   - A second sandbox account becomes available (cost of standing up + rotating the PAT amortizes across enough specs).
   - A real-flow regression appears on the auth surface (validation, replace-token, identity-change) that the standard Playwright specs missed — that's evidence the real-flow lens IS catching something standard tests don't.
   - Multi-account v2 work begins — at that point the harness almost certainly needs a second-account flow anyway, and Replace-token becomes a free rider on that infrastructure.
-- **Where the gap lives in code:** Nowhere — this is a not-added spec. The amendment doc § 15.3 references this deferral by name.
+- **Where the gap lives in code:** Nowhere — this is a not-added spec. The amendment doc's § 15.1 table (row "Real-flow Replace-token e2e") references this deferral by name. (Corrected 2026-05-25: earlier draft of this entry pointed at § 15.3, which doesn't exist — § 15.2 was added for the adversarial-round amendments and § 15.3 was collapsed during the same trim.)
 
 ---
 
@@ -40,11 +41,14 @@ The 2026-05-23 amendment pass itself folded its other findings directly into the
 
 Items the implementing engineer should keep an eye on during Phase 1 execution.
 
-### [Risk] `LogsPathOptions` registration coupling to `FileLoggerProvider`
+### [Risk] `LogsPathInfo` singleton — dual-derivation invariant against `FileLoggerProvider`
 
-- **Where:** § 2.4's `logsPath` exposure assumes the `/api/preferences` GET handler can read the configured `logsDir` without duplicating the platform-path derivation. The spec sketch suggests `IOptions<LogsPathOptions>` or a static `LogsPathAccessor`; the implementer should pick whichever fits PR #63's existing `FileLoggerProvider` registration shape best, NOT add a second derivation of `<LocalApplicationData>/PRism/logs`.
-- **Mitigation:** During PR1 implementation, grep for where `FileLoggerProvider` is constructed in `Program.cs` (or `ServiceCollectionExtensions`) and read the `logsDir` from the same source. Adding a second `Path.Combine(...)` would risk divergence if the dataDir convention ever changes.
-- **Severity:** P2 (test-pinned — the amendment's § 11.1 test "logsPath matches the `logsDir` `FileLoggerProvider` was constructed with" catches divergence).
+**Rewritten 2026-05-25 per PR #67 review.** The original entry described an `IOptions<LogsPathOptions>` / `LogsPathAccessor` approach that the 2026-05-25 adversarial round explicitly rejected; the spec now recommends a `LogsPathInfo(string Path)` singleton sourced from `dataDir` directly. This risk entry is preserved (renamed) to capture the actual residual invariant.
+
+- **Where:** § 2.4 sources `logsPath` from a `LogsPathInfo` singleton registered in `Program.cs` from `dataDir` BEFORE `AddPRismFileLogger`. `FileLoggerExtensions.AddPRismFileLogger` independently computes `Path.Combine(dataDir, "logs")` internally (`FileLoggerExtensions.cs:34`). Both derivations being equal is an invariant, NOT a single-source guarantee. If a future refactor changes the `FileLoggerProvider` derivation (e.g., versioned log roots `Path.Combine(dataDir, "logs", appVersion)`), the `LogsPathInfo` singleton would silently diverge and the Settings page would surface a path no log file lives at.
+- **Mitigation:** § 11.1's dual-derivation integration test (added 2026-05-25): with `PRISM_FILE_LOGGER_FORCE=1` set, construct the factory, write a log line through `FileLoggerProvider`, assert a `prism-YYYY-MM-DD.log` file exists in `LogsPathInfo.Path`. Drift bites the test, not the user.
+- **Severity:** P2 (test-pinned).
+- **Revisit when:** A future PR introduces versioned log roots or otherwise changes `FileLoggerExtensions.AddPRismFileLogger`'s internal derivation — at that point, refactor `FileLoggerExtensions` to read `LogsPathInfo` as the single source, which the round-2 amendment deliberately deferred to avoid scope-creeping into already-shipped PR #63 code.
 
 ### [Risk] `POST /api/auth/replace` is absent from the 16 KiB body-size-cap predicate
 

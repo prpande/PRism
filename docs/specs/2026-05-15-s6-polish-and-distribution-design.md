@@ -2,8 +2,8 @@
 
 **Slice**: S6 (after S6 PR0 multi-account storage scaffold, which has shipped).
 **Date**: 2026-05-15.
-**Amendment**: 2026-05-23 — drift-against-recent-PRs pass; see § 15 for the per-section delta.
-**Status**: Design — pending user review (amendment pending review).
+**Amendments**: 2026-05-23 (drift-against-recent-PRs amendment pass) + 2026-05-25 (adversarial-round corrections) + 2026-05-25 (post-open Copilot+claude[bot] PR-review fixes); see § 15.1 + § 15.2 for the per-section delta.
+**Status**: Design — pending user review (all amendment rounds pending review).
 **Source authorities**:
 - [`docs/spec/01-vision-and-acceptance.md`](../spec/01-vision-and-acceptance.md) — the Definition of Done (DoD) bullets this slice closes.
 - [`docs/spec/02-architecture.md`](../spec/02-architecture.md) — distribution model, configuration schema, security posture.
@@ -192,7 +192,7 @@ Each Settings toggle/dropdown fires its own one-field PATCH on change; the page 
 
 New under `frontend/src/`:
 
-- `pages/SettingsPage.tsx` — top-level page; uses the existing `usePreferences` hook (extended to read the new GET shape, including `github.configPath`). No separate `useConfigPath` hook — `configPath` flows through `usePreferences().preferences.github.configPath` and is passed to `GithubSection.tsx` as a prop.
+- `pages/SettingsPage.tsx` — top-level page; uses the existing `usePreferences` hook (extended to read the new GET shape, including `github.configPath`). No separate `useConfigPath` hook — `configPath` flows through `usePreferences().preferences.github.configPath` and is passed to `ConnectionSection.tsx` as a prop (component file renamed from `GithubSection.tsx` per the 2026-05-25 a11y-driven rename in § 2.7).
 - `components/Settings/`
   - `AppearanceSection.tsx` — three rows (theme dropdown, accent radio group, AI preview switch).
   - `InboxSectionsSection.tsx` — five toggle rows with helper text about the 2-minute propagation caveat. The helper text renders as a single `<span id="inbox-section-help">` once at the top of the section; every toggle in the section sets `aria-describedby="inbox-section-help"` so screen reader users hear the propagation caveat as part of each control's announcement.
@@ -380,8 +380,15 @@ IdentityChanged => ("identity-changed", new IdentityChangedWire("identity-change
    private void OnIdentityChanged(IdentityChanged evt)
    {
        var (eventName, payload) = SseEventProjection.Project(evt);
+       var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+       var frame = $"event: {eventName}\ndata: {json}\n\n";
        foreach (var sub in _subscribers.Values)
-           WriteEventFrame(sub, eventName, payload);
+       {
+           // Mirror the existing OnStateChanged / OnActivePrUpdated pattern at SseChannel.cs:258,283.
+           // 4-arg signature: (SseSubscriber, string frame, PrReference?, string? eventType).
+           // prRef is null for broadcast events; eventType lets the channel attribute eviction failures.
+           _ = WriteAndEvictOnFailureAsync(sub, frame, prRef: null, eventType: nameof(IdentityChanged));
+       }
    }
    ```
    Iterates `_subscribers.Values` (every connected tab), not `_activeRegistry.SubscribersFor(...)` (which is per-PR). Identity-change is global.
@@ -1239,7 +1246,7 @@ PRism's dedicated forensic event log (`state-events.jsonl`) is not yet implement
 grep 'Identity changed' "<dataDir>/logs/"*.log
 ```
 
-The Settings page's GitHub section (§ 2.2) exposes the exact `<dataDir>/logs/` path via a "Copy logs path" button so you don't have to guess the platform-specific data-directory location.
+The Settings page's **Connection** section (§ 2.2 — heading text "Connection" per the 2026-05-25 a11y-driven rename; was "GitHub" in the round-1 amendment) exposes the exact `<dataDir>/logs/` path via a "Copy logs path" button so you don't have to guess the platform-specific data-directory location.
 
 `DraftSaved` events do NOT currently land in any forensic log (the v2 backlog item). If you need to recover a draft body in the PoC, the safest path is to copy it out of the composer BEFORE any destructive action (Replace token, Discard, foreign-pending-review Discard). After the action, the draft body is only recoverable from `state.json` if the destructive action did not mutate that session.
 
@@ -1428,7 +1435,7 @@ Recent PRs (#55–#65, all merged after this spec was first written) introduced 
 | § | Original assumption | Recent PR | Amendment |
 |---|---|---|---|
 | **1.4** | "Logging-level Settings UI — file-only" was deferred against an undefined logging surface. | PR #63 (on-disk log writer with `FileLoggerProvider`, 14-day retention). | Defer is preference, not technical gating — re-evaluate at start of implementation. |
-| **2.2 / 2.4 / 2.7** | GET shape exposes `github.configPath`; GithubSection.tsx renders one "Copy `config.json` path" affordance. | PR #63 introduced `<dataDir>/logs/prism-YYYY-MM-DD.log`; same UX gap as configPath. | Added `github.logsPath` to the GET shape; GithubSection.tsx renders the same button-and-input pattern for logs path. No new component or section taxonomy. |
+| **2.2 / 2.4 / 2.7** | GET shape exposes `github.configPath`; GithubSection.tsx renders one "Copy `config.json` path" affordance. | PR #63 introduced `<dataDir>/logs/prism-YYYY-MM-DD.log`; same UX gap as configPath. | Added `github.logsPath` to the GET shape; the component (`ConnectionSection.tsx` per the 2026-05-25 rename; was `GithubSection.tsx` in the round-1 amendment) renders the same button-and-input pattern for logs path. Wire field names stay under `github.*` (config-namespace keys, not UI presentation). |
 | **3.2.1** | `OnIdentityChanged` directly serializes payload in `SseChannel.cs`. | PR #65 established `SseEventProjection.Project` as the canonical wire-shape boundary (`ActivePrUpdated` + 8 other events route through it). | Rewrote to add an `IdentityChangedWire` arm to `Project`; `OnIdentityChanged` calls `Project` like `OnStateChanged` does. **The PR #65 bug class (wire-shape mismatch on event-derived fields) does not directly apply to discriminator-only frames like `IdentityChanged` — the projection arm here is forward-looking** (when v2 multi-account adds `accountKey` to the wire, the projection arm is the right home for the field-shape change in one file rather than per-handler) rather than current-defense. Treat as precedent-consistent bookkeeping with optionality value. |
 | **3.3 / 3.4 / 3.7** | Frontend tabs hear "`state-changed` with `identity-change` field tag" — internally inconsistent with § 3.2.1's dedicated `IdentityChanged` event. (§ 3.7 occurrence in the multi-tab edge case was missed in the first amendment pass and corrected during the ce-doc-review round.) | (Pre-existing internal inconsistency, surfaced during the amendment pass.) | All three sections now reference the dedicated `identity-changed` SSE event. |
 | **3.4** | Multi-tab story didn't address per-tab cross-tab gates. | PR #62 added per-tab TabStamps (V5→V6 storage version). | Added one-paragraph acknowledgement: TabStamps gate `draft.ts` / `submit.ts`, not `useAuth().refetch()` — orthogonal. |

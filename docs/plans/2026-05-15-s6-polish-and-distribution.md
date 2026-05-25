@@ -54,7 +54,7 @@ The S6 spec was amended on 2026-05-23 (drift against PRs #55–#65) and ce-doc-r
 | **SSE projection arm for `IdentityChanged`** | Task 2.5 Step 2 handler hardcodes payload `const string payload = """{"type":"identity-change"}"""` | Route through `SseEventProjection.Project` consistently with PR #65 precedent. Add `internal sealed record IdentityChangedWire(string Type);` to `SseEventProjection.cs` and a switch arm `IdentityChanged => ("identity-changed", new IdentityChangedWire("identity-change"))`. `SseChannel.OnIdentityChanged` calls `SseEventProjection.Project(evt)` and iterates `_subscribers.Values` writing the projected `(eventName, payload)`. Task 2.5 Step 1's projection test already covers this; Step 2 must NOT hardcode the payload. Spec § 3.2.1. |
 | **`{login}` template-name discipline** | Task 2.6 already uses `priorLogin` / `newLogin` ✓ | No change to Task 2.6. ALSO: the existing `[LoggerMessage]` methods in `AuthEndpoints.cs:178` (`ConnectValidatedWithWarning`), `:180` (`ConnectCommitted`), `:188` (`CommitSucceeded`) have parameters named bare `login` — these are silently redacted by `SensitiveFieldScrubber` today (forensic gap). Rename to `validatedLogin` / `committedLogin` in the same PR2 commit that adds `LogIdentityChanged`. New Task 2.8a below covers this. Deferrals sidecar `[Risk] Existing AuthEndpoints.cs LoggerMessage methods silently redact GitHub login`. |
 | **Body-size cap on `/api/auth/replace`** | Not included in Task 2.8 or Task 2.9-pre | Fold into PR2 as Task 2.8b: add `/api/auth/replace` to the existing `UseWhen` predicate in `Program.cs:165-193` that applies the 16 KiB body cap to mutating endpoints. One-line consistency fix; do NOT defer to a separate PR. Deferrals sidecar `[Risk] POST /api/auth/replace is absent from the 16 KiB body-size-cap predicate`. |
-| **Settings GithubSection — logsPath row** | Task 3.5 implements configPath row only | Add a sibling row for `logsPath` with the same `<input readOnly>` + Copy button pattern. **Distinct success toast** (NOT a verbatim copy of the configPath toast): `show({ kind: 'success', message: 'Logs path copied — paste into a terminal or file browser.' })`. Rejection toast inherits the generic configPath wording. `aria-label="Path to PRism logs"`. v1 section heading stays "GitHub" (rename deferred to v2 alongside multi-account UX). Spec § 2.2 / § 2.7. |
+| **Settings ConnectionSection — logsPath row** | Task 3.5 implements configPath row only | Add a sibling row for `logsPath` with the same `<input readOnly>` + Copy button pattern. **Distinct success toast** (NOT a verbatim copy of the configPath toast): `show({ kind: 'success', message: 'Logs path copied — paste into a terminal or file browser.' })`. Rejection toast inherits the generic configPath wording. `aria-label="Path to PRism logs"`. **~~v1 section heading stays "GitHub"~~ SUPERSEDED 2026-05-25: heading is "Connection" (component is `ConnectionSection`); see the Plan-resync 2026-05-25 row below.** Spec § 2.2 / § 2.7. |
 | **`usePreferences` type — logsPath** | Task 3.1 Step 2 `UiPreferences.github = { host; configPath }` | Extend to `{ host; configPath; logsPath }`. Task 3.1 Step 1 mock fixture also adds `logsPath`. Task 3.5 destructures `{ host, configPath, logsPath }`. |
 | **§ 14 OQ 4 verification (informational)** | Task 2.8 already wraps `LogIdentityChanged` in try/catch ✓ | No code change. Test guidance: Task 2.7's "logger throws → state still fully reconciled" test stubs a deliberately-throwing logger, NOT a failure-injected `FileLoggerProvider` (which is exception-free on its normal paths per the amendment's audit). |
 
@@ -64,7 +64,7 @@ A second-round adversarial ce-doc-review on 2026-05-25 surfaced 8 additional fin
 
 | Topic | Plan's current state (post-2026-05-23 resync) | Amended convention (2026-05-25) |
 |---|---|---|
-| **Section rename: `GithubSection` → `ConnectionSection`** | Task 3.5 implements `frontend/src/components/Settings/GithubSection.tsx` with heading "GitHub". | Rename the component file to `ConnectionSection.tsx` (and the corresponding test file to `frontend/__tests__/Settings/ConnectionSection.test.tsx`). Section heading text becomes `"Connection"` (the user-visible string in the `<h2>`). Reason: adversarial F7 — SR-by-heading navigation lands on "GitHub" and finds a "Copy logs path" button that is not a GitHub-scoped concept. Wire field names (`github.host` / `github.configPath` / `github.logsPath`) stay unchanged — they're keyed by config namespace, not user-facing presentation. Cost is one CSS string + one test assertion update; no behavior change. Spec § 2.7 + § 11.3 + § 15.2 row. |
+| **Section rename: `ConnectionSection` → `ConnectionSection`** | Task 3.5 implements `frontend/src/components/Settings/ConnectionSection.tsx` with heading "GitHub". | Rename the component file to `ConnectionSection.tsx` (and the corresponding test file to `frontend/__tests__/Settings/ConnectionSection.test.tsx`). Section heading text becomes `"Connection"` (the user-visible string in the `<h2>`). Reason: adversarial F7 — SR-by-heading navigation lands on "GitHub" and finds a "Copy logs path" button that is not a GitHub-scoped concept. Wire field names (`github.host` / `github.configPath` / `github.logsPath`) stay unchanged — they're keyed by config namespace, not user-facing presentation. Cost is one CSS string + one test assertion update; no behavior change. Spec § 2.7 + § 11.3 + § 15.2 row. |
 | **§ 3.2.1 carve-out principle** | Task 2.5 Step 2 already routes `OnIdentityChanged` through `SseEventProjection.Project` ✓ | No code change. **But** Task 2.5's inline comment / commit message should reflect the corrected carve-out from § 3.2.1: "all NEW SSE events route through Project; InboxUpdated is grandfathered, not principled exclusion." Don't invoke `InboxUpdated` as precedent for new events — it inline-serializes for historical reasons. |
 | **Dual-derivation integration test for logsPath** | Task 1.8's test asserts `logsPath` matches `Path.Combine(dataDir, "logs")` via `UseSetting("DataDir", knownTempDir)`. | Task 1.8 Step 1 also adds an integration test (with `PRISM_FILE_LOGGER_FORCE=1` env var set so the file logger registers under Test env) that writes one log line through a registered `ILogger`, asserts a `prism-YYYY-MM-DD.log` file exists in `LogsPathInfo.Path`, AND asserts `GET /api/preferences` surfaces that same directory. Closes the silent-divergence scenario the spec's "dual-derivation invariant" note documents. |
 | **PR2 row in spec § 13 now names Tasks 2.8a + 2.8b** | Plan already has Tasks 2.8a + 2.8b as first-class entries ✓ | No plan change; spec § 13 was updated so an agent reading spec-only doesn't miss the folds. Cross-reference is now bilateral. |
@@ -78,7 +78,7 @@ A second-round adversarial ce-doc-review on 2026-05-25 surfaced 8 additional fin
 - PR1 `configPath` logging suppression — defense-in-depth observation; verify response-body logging middleware (if any) excludes the field.
 - PR3 AppearanceSection label association — use `<label htmlFor="theme-select"><select id="theme-select">` pattern; verified in PR7 a11y audit.
 - PR6 `prefers-reduced-motion` Playwright verification — add to PR6 e2e or accept as PR7 VoiceOver manual coverage.
-- PR3 → PR4 Toast scope move (success kind in PR3 instead of PR4) — deliberate (PR3 GithubSection needs `'success'`); deviation from spec § 3.1.1 noted, no action.
+- PR3 → PR4 Toast scope move (success kind in PR3 instead of PR4) — deliberate (PR3 ConnectionSection needs `'success'`); deviation from spec § 3.1.1 noted, no action.
 
 ---
 
@@ -642,7 +642,9 @@ public async Task GET_preferences_ReturnsRicherShape_WithInboxAndGithub()
     // Amendment 2026-05-23: logsPath sourced from dataDir, NOT from FileLoggerProvider.
     // Construct factory via UseSetting("DataDir", knownTempDir) so logsPath equals
     // Path.Combine(knownTempDir, "logs") — the canonical Program.cs derivation.
-    github.GetProperty("logsPath").GetString().Should().EndWith(Path.Combine("", "logs").TrimStart(Path.DirectorySeparatorChar));
+    // (Post-PR-#67-review fix 2026-05-25: assert the FULL path, not just the suffix —
+    // .EndWith("logs") would pass for "/anywhere/logs" and fail to catch a misregistered LogsPathInfo.)
+    github.GetProperty("logsPath").GetString().Should().Be(Path.Combine(knownTempDir, "logs"));
 }
 ```
 
@@ -680,7 +682,7 @@ internal sealed record GithubPreferencesDto(string Host, string ConfigPath, stri
 internal sealed record PreferencesError(string Error);
 ```
 
-Note: the existing `JsonSerializerOptionsFactory.Web` should already apply the kebab-case policy so `ReviewRequested` serializes as `review-requested`, etc. If not, add explicit `[JsonPropertyName("review-requested")]` attributes. The new `LogsPath` property serializes as `logs-path` by default; spec § 2.4 documents the wire field as `logsPath` (camelCase) so add `[JsonPropertyName("logsPath")]` if the kebab policy applies and `[JsonPropertyName("configPath")]` is already present (mirror the existing precedent).
+Note (corrected 2026-05-25 per PR #67 review): The serializer is `JsonSerializerOptionsFactory.Api` (NOT `.Web` — that doesn't exist in PRism; verified at `PRism.Web/Sse/SseChannel.cs:242/258/283` and `PRism.Web/Composition/ServiceCollectionExtensions.cs:81`). `JsonSerializerOptionsFactory.Api` uses **camelCase** naming policy, NOT kebab-case. Consequences: (a) C# properties `ConfigPath` and `LogsPath` naturally serialize as `configPath` / `logsPath` — no `[JsonPropertyName]` attribute needed. (b) The kebab-cased wire keys for inbox sections (`review-requested`, `awaiting-author`, `authored-by-me`, `mentioned`, `ci-failing`) DO require explicit `[JsonPropertyName("review-requested")]` attributes on the `InboxSectionsDto` properties — kebab-case is NOT the default policy.
 
 - [ ] **Step 2: Compute `configPath` and expose it via `IConfigStore`**
 
@@ -1072,22 +1074,26 @@ public class SseEventProjectionIdentityChangedTests
         var evt = new IdentityChanged("default", "alice", "bob");
 
         // Use the same reflection helper the existing StateChangedSseTests / SseEventProjectionSubmitEventsTests use
-        // (look for `ProjectEventForTest` or similar in the existing tests; reuse the established invocation pattern).
-        var projection = SseEventProjection.Project(evt);
+        // Test pattern matches the established StateChangedSseTests shape (corrected 2026-05-25 per
+        // PR #67 review): SseEventProjection.Project returns a tuple `(string EventName, object Payload)`,
+        // NOT a record with `EventName`/`Data` fields. Serialize the payload via JsonSerializerOptionsFactory.Api
+        // (the same serializer SseChannel uses at .cs:242/258/283) then assert on the resulting JSON string.
+        var (eventName, payload) = SseEventProjection.Project(evt);
+        eventName.Should().Be("identity-changed");
 
-        projection.EventName.Should().Be("identity-changed");
-        projection.Data.Should().Contain("\"type\":\"identity-change\"");
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+        json.Should().Contain("\"type\":\"identity-change\"");
 
         // Spec § 3.2.1 wire-shape contract: NO login strings on the wire.
-        projection.Data.Should().NotContain("alice");
-        projection.Data.Should().NotContain("bob");
-        projection.Data.Should().NotContain("priorLogin");
-        projection.Data.Should().NotContain("newLogin");
+        json.Should().NotContain("alice");
+        json.Should().NotContain("bob");
+        json.Should().NotContain("priorLogin");
+        json.Should().NotContain("newLogin");
     }
 }
 ```
 
-This requires extending `SseEventProjection`'s internal switch to recognize `IdentityChanged`. The projection emits `("identity-changed", "{\"type\":\"identity-change\"}")` — the login strings stay server-side, picked up by the structured-log emission in § 3.6, never on the SSE wire.
+This requires extending `SseEventProjection`'s internal switch to recognize `IdentityChanged`. The projection emits `("identity-changed", new IdentityChangedWire("identity-change"))` (typed wire record, not a raw JSON string — see Step 2 below). Login strings stay server-side, picked up by the structured-log emission in § 3.6, never on the SSE wire.
 
 **SseChannel fan-out itself** is verified by an integration test under `PrismWebApplicationFactory` that opens a real `EventSource` connection and asserts the frame arrives — deferred to a follow-up if too heavy for PR2's scope.
 
@@ -1118,8 +1124,12 @@ private void OnIdentityChanged(IdentityChanged evt)
         // Use the existing WriteAndEvictOnFailureAsync pattern (per conventions table row
         // "SseChannel.TryWriteFrame doesn't exist"); build the raw frame string from the
         // projected (eventName, payload) tuple, mirroring the existing handlers.
-        var frame = $"event: {eventName}\ndata: {System.Text.Json.JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Web)}\n\n";
-        _ = WriteAndEvictOnFailureAsync(sub, frame);
+        // 4-arg signature verified at PRism.Web/Sse/SseChannel.cs:297:
+        //   private async Task WriteAndEvictOnFailureAsync(SseSubscriber s, string frame, PrReference? prRef, string? eventType)
+        // prRef is null for broadcast events; eventType lets the channel attribute eviction failures.
+        // Serializer is `JsonSerializerOptionsFactory.Api` — `.Web` does not exist in PRism.
+        var frame = $"event: {eventName}\ndata: {System.Text.Json.JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api)}\n\n";
+        _ = WriteAndEvictOnFailureAsync(sub, frame, prRef: null, eventType: nameof(IdentityChanged));
     }
 }
 ```
@@ -1508,11 +1518,11 @@ EOF
 - Create: `frontend/src/pages/SettingsPage.module.css` (co-located with the page component, not under `components/Settings/`, so the page-level layout CSS lives next to its only consumer)
 - Create: `frontend/src/components/Settings/AppearanceSection.tsx`
 - Create: `frontend/src/components/Settings/InboxSectionsSection.tsx`
-- Create: `frontend/src/components/Settings/GithubSection.tsx`
+- Create: `frontend/src/components/Settings/ConnectionSection.tsx`
 - Create: `frontend/src/components/Settings/AuthSection.tsx`
 - Test: `frontend/__tests__/Settings/SettingsPage.test.tsx`
 - Test: `frontend/__tests__/Settings/InboxSectionsSection.test.tsx`
-- Test: `frontend/__tests__/Settings/GithubSection.test.tsx`
+- Test: `frontend/__tests__/Settings/ConnectionSection.test.tsx`
 - Test: `frontend/e2e/settings-flow.spec.ts`
 
 ### Task 3.1: Extend `UiPreferences` type + `usePreferences` hook — RED → GREEN
@@ -1763,7 +1773,7 @@ Create `frontend/src/components/Settings/AppearanceSection.tsx` — three rows: 
 
 Create `frontend/src/components/Settings/InboxSectionsSection.tsx` — five toggle rows. Render a single `<span id="inbox-section-help">Inbox section changes apply on the next inbox refresh (within 2 minutes).</span>`; every toggle sets `aria-describedby="inbox-section-help"`.
 
-Create `frontend/src/components/Settings/GithubSection.tsx` — read-only host display + a "Copy `config.json` path" button alongside an always-visible read-only `<input type="text" readOnly value={configPath} aria-label="Path to config.json">`. Clicking the button calls `navigator.clipboard.writeText(configPath)`; on success calls `useToast().show({ kind: 'success', message: 'Path copied — paste into your editor' })`; on rejection calls `useToast().show({ kind: 'error', message: 'Could not copy path. Select it from the field next to the button.' })`.
+Create `frontend/src/components/Settings/ConnectionSection.tsx` — read-only host display + a "Copy `config.json` path" button alongside an always-visible read-only `<input type="text" readOnly value={configPath} aria-label="Path to config.json">`. Clicking the button calls `navigator.clipboard.writeText(configPath)`; on success calls `useToast().show({ kind: 'success', message: 'Path copied — paste into your editor' })`; on rejection calls `useToast().show({ kind: 'error', message: 'Could not copy path. Select it from the field next to the button.' })`.
 
 Create `frontend/src/components/Settings/AuthSection.tsx` — placeholder "Replace token" link (full logic lands in PR4). For PR3, render a disabled link with text "Replace token (lands in PR4)" so the section is structurally present.
 
@@ -1772,7 +1782,7 @@ Create `frontend/src/pages/SettingsPage.tsx`:
 ```tsx
 import { AppearanceSection } from '../components/Settings/AppearanceSection';
 import { InboxSectionsSection } from '../components/Settings/InboxSectionsSection';
-import { GithubSection } from '../components/Settings/GithubSection';
+import { ConnectionSection } from '../components/Settings/ConnectionSection';
 import { AuthSection } from '../components/Settings/AuthSection';
 import styles from './SettingsPage.module.css';
 
@@ -1782,7 +1792,7 @@ export function SettingsPage() {
       <h1>Settings</h1>
       <AppearanceSection />
       <InboxSectionsSection />
-      <GithubSection />
+      <ConnectionSection />
       <AuthSection />
     </main>
   );
@@ -1938,18 +1948,18 @@ git commit -m "feat(s6-pr3): InboxSectionsSection — five toggles with aria-des
 
 ### Task 3.5: ConnectionSection Copy-path button + clipboard failure UX — RED → GREEN
 
-(Renamed from `GithubSection` per the 2026-05-25 adversarial-round resync; see the resync table above. The conventions table's "Section rename" row explains why. The inline content below still references `GithubSection` in places — translate to `ConnectionSection` per the resync row, including the file path, test file, and `<h2>` heading text "Connection".)
+(Renamed from `ConnectionSection` per the 2026-05-25 adversarial-round resync; see the resync table above. The conventions table's "Section rename" row explains why. The inline content below still references `ConnectionSection` in places — translate to `ConnectionSection` per the resync row, including the file path, test file, and `<h2>` heading text "Connection".)
 
 
 - [ ] **Step 1: Test**
 
-Create `frontend/__tests__/Settings/GithubSection.test.tsx`:
+Create `frontend/__tests__/Settings/ConnectionSection.test.tsx`:
 
 ```tsx
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GithubSection } from '../../src/components/Settings/GithubSection';
+import { ConnectionSection } from '../../src/components/Settings/ConnectionSection';
 
 const showMock = vi.fn();
 vi.mock('../../src/components/Toast', () => ({ useToast: () => ({ show: showMock }) }));
@@ -1964,11 +1974,11 @@ vi.mock('../../src/hooks/usePreferences', () => ({
   }),
 }));
 
-describe('GithubSection', () => {
+describe('ConnectionSection', () => {
   beforeEach(() => { showMock.mockReset(); });
 
   it('always renders the path as a read-only input', () => {
-    render(<GithubSection />);
+    render(<ConnectionSection />);
     const input = screen.getByRole('textbox', { name: /path to config.json/i });
     expect(input).toHaveAttribute('readOnly');
     expect(input).toHaveValue('/Users/x/AppData/Local/PRism/config.json');
@@ -1977,7 +1987,7 @@ describe('GithubSection', () => {
   it('clicking Copy-path surfaces success toast on clipboard.writeText resolve', async () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
     const user = userEvent.setup();
-    render(<GithubSection />);
+    render(<ConnectionSection />);
     await user.click(screen.getByRole('button', { name: /copy/i }));
     expect(showMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'success' }));
   });
@@ -1985,7 +1995,7 @@ describe('GithubSection', () => {
   it('clicking Copy-path surfaces error toast on clipboard.writeText reject', async () => {
     Object.assign(navigator, { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('blocked')) } });
     const user = userEvent.setup();
-    render(<GithubSection />);
+    render(<ConnectionSection />);
     await user.click(screen.getByRole('button', { name: /copy/i }));
     expect(showMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
   });
@@ -1998,7 +2008,7 @@ describe('GithubSection', () => {
 import { usePreferences } from '../../hooks/usePreferences';
 import { useToast } from '../Toast';
 
-export function GithubSection() {
+export function ConnectionSection() {
   const { preferences } = usePreferences();
   const { show } = useToast();
   if (!preferences) return null;
@@ -2027,10 +2037,12 @@ export function GithubSection() {
     })();
   };
 
-  // v1 heading stays "GitHub" (spec § 2.7 Amendment 2026-05-23); rename deferred to v2 alongside multi-account UX.
+  // v1 heading is "Connection" (spec § 2.7 — 2026-05-25 a11y rename, supersedes the round-1 "stays GitHub" framing).
+  // Reason: SR-by-heading navigation lands on "GitHub" and finds a "Copy logs path" button that is not a
+  // GitHub-scoped concept. "Connection" covers Host + configPath + logsPath under a common operational concept.
   return (
-    <section aria-labelledby="github-heading">
-      <h2 id="github-heading">GitHub</h2>
+    <section aria-labelledby="connection-heading">
+      <h2 id="connection-heading">Connection</h2>
       <div>Host: <code>{host}</code></div>
       <label>
         <span>Path to <code>config.json</code></span>
@@ -2047,11 +2059,11 @@ export function GithubSection() {
 }
 ```
 
-Add Vitest test coverage for the second row in `frontend/__tests__/Settings/GithubSection.test.tsx`:
+Add Vitest test coverage for the second row in `frontend/__tests__/Settings/ConnectionSection.test.tsx`:
 
 ```tsx
 it('always renders the logs path as a read-only input', () => {
-  render(<GithubSection />);
+  render(<ConnectionSection />);
   const input = screen.getByRole('textbox', { name: /path to prism logs/i });
   expect(input).toHaveAttribute('readOnly');
   expect(input).toHaveValue('/Users/x/AppData/Local/PRism/logs');
@@ -2060,7 +2072,7 @@ it('always renders the logs path as a read-only input', () => {
 it('clicking Copy logs path surfaces the distinct success toast on resolve', async () => {
   Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
   const user = userEvent.setup();
-  render(<GithubSection />);
+  render(<ConnectionSection />);
   await user.click(screen.getByRole('button', { name: /copy logs path/i }));
   expect(showMock).toHaveBeenCalledWith({
     kind: 'success',
@@ -2072,9 +2084,9 @@ it('clicking Copy logs path surfaces the distinct success toast on resolve', asy
 - [ ] **Step 3: Run + commit**
 
 ```bash
-cd frontend && npm test -- GithubSection
-cd .. && git add frontend/src/components/Settings/GithubSection.tsx frontend/__tests__/Settings/GithubSection.test.tsx
-git commit -m "feat(s6-pr3): GithubSection — Copy-path button + always-visible read-only input"
+cd frontend && npm test -- ConnectionSection
+cd .. && git add frontend/src/components/Settings/ConnectionSection.tsx frontend/__tests__/Settings/ConnectionSection.test.tsx
+git commit -m "feat(s6-pr3): ConnectionSection — Copy-path button + always-visible read-only input"
 ```
 
 ### Task 3.6: Playwright e2e — Settings flow
@@ -2119,7 +2131,7 @@ Toast component extended with `'success'` kind (5s auto-dismiss like `'info'`).
 - [x] Toast renders kind=success and auto-dismisses at 5s
 - [x] SettingsPage renders all four sections
 - [x] InboxSectionsSection: 5 toggles with aria-describedby + correct dotted-path POSTs
-- [x] GithubSection: always-visible input + clipboard success / failure toasts
+- [x] ConnectionSection: always-visible input + clipboard success / failure toasts
 - [x] Playwright settings-flow e2e
 EOF
 )"
@@ -3841,7 +3853,7 @@ In GitHub Actions UI: Workflows → Publish → Run workflow → tag = `v0.1.0` 
 |---|---|
 | § 1 Goal + scope | (informational — no tasks) |
 | § 2.1 Surface (Settings route + Header nav) | Task 3.3 (Settings route + Header nav with three-tab active-state) |
-| § 2.2 Field set | Tasks 3.3, 3.4, 3.5 (Settings page, InboxSectionsSection, GithubSection) |
+| § 2.2 Field set | Tasks 3.3, 3.4, 3.5 (Settings page, InboxSectionsSection, ConnectionSection) |
 | § 2.3 PatchAsync allowlist | Tasks 1.5, 1.6 |
 | § 2.4 Wire shape | Tasks 1.7, 1.8 |
 | § 2.5 Validation | Covered by Task 1.6 tests (unknown key 400) |
