@@ -2,7 +2,8 @@
 
 **Slice**: S6 (after S6 PR0 multi-account storage scaffold, which has shipped).
 **Date**: 2026-05-15.
-**Status**: Design — pending user review.
+**Amendment**: 2026-05-23 — drift-against-recent-PRs pass; see § 15 for the per-section delta.
+**Status**: Design — pending user review (amendment pending review).
 **Source authorities**:
 - [`docs/spec/01-vision-and-acceptance.md`](../spec/01-vision-and-acceptance.md) — the Definition of Done (DoD) bullets this slice closes.
 - [`docs/spec/02-architecture.md`](../spec/02-architecture.md) — distribution model, configuration schema, security posture.
@@ -49,7 +50,7 @@ Ship the PoC binary that clears the validation gate. Every DoD checkbox under `0
 - Linux binary — P4 backlog (Linux remains best-effort per `05-non-goals.md`).
 - `osx-x64` (Intel Mac) binary — explicit DoD non-target.
 - Polling-cadence Settings UI — half-day v2 retrofit; deferred per brainstorm (`config.polling.*` shape already exists; pollers read from `IConfigStore.Current`; the missing piece is allowlist + UI rows).
-- Logging-level Settings UI — file-only.
+- Logging-level Settings UI — file-only. (**Amendment 2026-05-23**: PR #63 shipped a concrete `FileLoggerProvider` with 14-day retention. Defer stays firm — for ~5 PoC dogfooders, log-level toggling is a maintainer concern handleable via `config.json` edit + relaunch; no DoD line depends on it. Revisit post-PoC if EITHER a dogfooder reports log volume OR a maintainer incident requires mid-session log-level change — the `config.json`-edit-then-relaunch path destroys the in-memory state the incident is about, which is the actual UX bite, not log volume in isolation.)
 - Event-log retention Settings UI — file-only.
 - GitHub host editable in Settings — Settings shows read-only with link to `config.json`; host changes still go through hand-edit + `FileSystemWatcher` → host-change-resolution flow.
 - Orphan-drafts surface (for PRs the current token can't see) — drafts persist in `state.json` invisibly; spec § 3.4 explains why.
@@ -84,6 +85,7 @@ The multi-account storage scaffold ([`2026-05-10-multi-account-scaffold-design.m
 | Inbox sections | CI failing on my PRs | bool | `inbox.sections.ci-failing` | Next inbox poll tick |
 | GitHub | Host (read-only display) | string | n/a — reads `config.github.accounts[0].host` via the multi-account scaffold delegate property | n/a |
 | GitHub | "Copy `config.json` path" button + always-visible read-only `<input>` | button → clipboard | n/a — the path is **always** rendered alongside the button as a read-only `<input type="text" readOnly value={configPath} aria-label="Path to config.json">` (selectable on triple-click; visible to all users including SR users on every render — not conditional on clipboard failure). The button is a convenience: on click, calls `navigator.clipboard.writeText(configPath)`. On success: `show({ kind: 'success', message: 'Path copied — paste into your editor' })`. On rejection (insecure context, Permissions-Policy denial, missing user activation, browser policy block): `show({ kind: 'error', message: 'Could not copy path. Select it from the field next to the button.' })`. Because the field is always present, the SR user's path is identical regardless of clipboard success — the button never *gates* access to the path. Browsers block `<a href="file:///...">` for security, so we never render this as a hyperlink. | n/a |
+| GitHub | "Copy logs path" button + always-visible read-only `<input>` (**Amendment 2026-05-23**) | button → clipboard | n/a — reads `logsPath` from the GET shape (the directory `FileLoggerProvider` writes daily-rolling `prism-YYYY-MM-DD.log` files to; PR #63). Same UI/clipboard pattern as the `configPath` row above: always-rendered read-only `<input type="text" readOnly value={logsPath} aria-label="Path to PRism logs">`; button calls `navigator.clipboard.writeText(logsPath)`. **Distinct success toast** (different from configPath's "paste into your editor"): `show({ kind: 'success', message: 'Logs path copied — paste into a terminal or file browser.' })`. Rejection toast inherits the generic configPath wording ("Could not copy path. Select it from the field next to the button.") since the recovery action is identical. SR users see the path on every render regardless of clipboard success. **Primary user is the maintainer triaging a dogfooder's incident** (the discoverable-logs-path chain is: § 1.3 scope item 9 mandates the README Troubleshooting section → § 9.4 directs users to `<dataDir>/logs/` → users can't find the platform-specific path without a UI affordance → this row closes that gap). Dogfooders are the secondary beneficiary; v2's account-management redesign is the natural place to revisit whether this row should live under a renamed "Diagnostics" section. | n/a |
 | Auth | Replace token | link → § 3 lazy-swap flow | n/a | n/a |
 
 **Inbox-tick hot-reload caveat.** The inbox poller reads `config.Current.Inbox.Sections` per fetch cycle, not on `IConfigStore.Changed`. A user toggling an inbox section in Settings sees the change apply on the next 120s poll, not immediately. Surfacing this in Settings helper text:
@@ -152,7 +154,8 @@ The mechanical expansion is acceptable for five keys. If a future slice adds man
   },
   "github": {
     "host": "https://github.com",
-    "configPath": "C:\\Users\\<user>\\AppData\\Local\\PRism\\config.json"
+    "configPath": "C:\\Users\\<user>\\AppData\\Local\\PRism\\config.json",
+    "logsPath": "C:\\Users\\<user>\\AppData\\Local\\PRism\\logs"
   }
 }
 ```
@@ -160,6 +163,14 @@ The mechanical expansion is acceptable for five keys. If a future slice adds man
 `POST /api/preferences` keeps the single-field contract. Body shape stays `{ "<key>": <value> }` where `<key>` is either a bare `ui.*` key (back-compat) or a dotted `inbox.sections.*` key. Unknown keys → `400 ConfigPatchException` (existing path).
 
 The `github.configPath` field is read-only; it's there so the Settings page can display "Edit `<actual path>`" without the frontend having to guess the data directory across platforms. Computed at startup as `Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), "PRism", "config.json")` and exposed via a small extension on `IConfigStore` (`ConfigStore.ConfigPath` property; read-only).
+
+**`github.logsPath` (Amendment 2026-05-23, sourcing revised per ce-doc-review 2026-05-23, dual-derivation note added 2026-05-25).** Same pattern as `configPath`: read-only string equal to `Path.Combine(dataDir, "logs")`, where `dataDir` is the already-resolved data directory in scope at `Program.cs` (line 40 in the current tree). Register a `LogsPathInfo(string Path)` singleton from `Program.cs` BEFORE `AddPRismFileLogger` is called. **Do NOT source via `FileLoggerProvider`'s constructor argument or via an `IOptions<LogsPathOptions>`/`LogsPathAccessor` mirror of it** — `FileLoggerExtensions.cs:30-32` skips registering the provider under Test env (unless `PRISM_FILE_LOGGER_FORCE=1`), so a provider-tied accessor would null-ref or return empty under the default `PRismWebApplicationFactory` (which uses Test env per its `UseEnvironment("Test")` call). Sourcing from `dataDir` directly decouples logsPath visibility from the logger gate.
+
+**Dual-derivation invariant (Amendment 2026-05-25, adversarial-round correction).** `FileLoggerExtensions.AddPRismFileLogger` already computes `Path.Combine(dataDir, "logs")` internally (`FileLoggerExtensions.cs:34`); the `LogsPathInfo` singleton is a SECOND derivation from the same `dataDir`. Both derivations being equal is an invariant, not a single-source guarantee. If a future refactor changes the FileLoggerProvider derivation (e.g., versioned log roots `Path.Combine(dataDir, "logs", appVersion)`), `LogsPathInfo` would silently diverge and the Settings page would surface a path no log file lives at. The cheaper-than-refactor mitigation is a single integration test (added in § 11.1) that writes a log line through `FileLoggerProvider`, observes the actual file path, and asserts equality with `LogsPathInfo.Path` — drift bites the test, not the user. Refactoring `FileLoggerExtensions` to read `LogsPathInfo` would be the principled fix; deliberately deferred to avoid scope-creeping into already-shipped PR #63 code.
+
+Naming the field `logsPath` (not `logPath`) matches the directory semantics — there are multiple daily-rolling files, not a single log.
+
+**Auth posture for the GET shape (Amendment 2026-05-23, security-lens follow-up).** `GET /api/preferences` is gated by `SessionTokenMiddleware` in production (the middleware bypasses auth only in `IsDevelopment()`). Both `configPath` and `logsPath` are therefore not readable by unauthenticated localhost callers — they require a valid session cookie or `X-PRism-Session` header. The Windows path string contains the OS username (`C:\Users\<user>\AppData\...`); this is the same PII-adjacent posture as the existing `configPath` field and is covered by the same auth gate.
 
 ### 2.5 Validation
 
@@ -185,7 +196,7 @@ New under `frontend/src/`:
 - `components/Settings/`
   - `AppearanceSection.tsx` — three rows (theme dropdown, accent radio group, AI preview switch).
   - `InboxSectionsSection.tsx` — five toggle rows with helper text about the 2-minute propagation caveat. The helper text renders as a single `<span id="inbox-section-help">` once at the top of the section; every toggle in the section sets `aria-describedby="inbox-section-help"` so screen reader users hear the propagation caveat as part of each control's announcement.
-  - `GithubSection.tsx` — read-only host display + "Edit `config.json`" link.
+  - `ConnectionSection.tsx` — read-only GitHub host display + "Copy `config.json` path" affordance + (**Amendment 2026-05-23**) "Copy logs path" affordance, both following the always-rendered-input + clipboard-button pattern from § 2.2. Logs path renders below the configPath row with the same row component shape. **v1 section heading is "Connection"** (Amendment 2026-05-25, adversarial-round correction — was "GitHub" in the round-1 amendment, but adversarial flagged the SR-by-heading navigation context mismatch: a screen-reader user pressing H lands on "GitHub" and finds a "Copy logs path" button that is not a GitHub-scoped concept). "Connection" covers Host + configPath + logsPath under a common operational concept; cost is one CSS-modules string + one test assertion update — well under the round-1 "scope decision" framing's threshold. File-name moves from `GithubSection.tsx` to `ConnectionSection.tsx` in the same change.
   - `AuthSection.tsx` — Replace token link with the in-flight-submit guard logic from § 3.
 - `pages/SettingsPage.module.css` — page-level layout CSS (section styling, max-width 720px container, group dividers); co-located with `SettingsPage.tsx` so the page-only styles live next to their only consumer rather than under `components/Settings/`.
 
@@ -344,16 +355,41 @@ else:
     sse.Publish(new IdentityChanged(AccountKeys.Default, priorLogin, newLogin));
 ```
 
-### 3.2.1 `IdentityChanged` SSE wiring (concrete, not generic)
+### 3.2.1 `IdentityChanged` SSE wiring (projection-routed)
 
-`SseChannel.cs` does NOT have a generic "any `IReviewEvent` without a `PrRef` fans out to all subscribers" code path. Every existing event type — `InboxUpdated`, `ActivePrUpdated`, `StateChanged`, `DraftSaved`, `DraftDiscarded`, `SubmitProgressBusEvent`, etc. — has its own bespoke wiring: a `_busXxx = bus.Subscribe<TEvent>(OnTEvent)` field set in the constructor, a per-type handler method that writes a named SSE frame (e.g., `event: inbox-updated`, `event: pr-updated`), and a corresponding `Dispose()` entry. The "follow the `InboxUpdated` precedent" framing in § 3.2 refers to this *pattern*, not a built-in capability. PR2 must add the following concrete code to `SseChannel.cs`:
+**Amendment 2026-05-23.** This section originally described direct serialization in `SseChannel.OnIdentityChanged`. PR #65 (see `docs/specs/2026-05-19-stale-oid-banner-investigation-finding.md`) established `SseEventProjection.Project` as the canonical wire-shape boundary — `ActivePrUpdated`, `StateChanged`, `DraftSaved`, `DraftDiscarded`, and all five `Submit*BusEvent`s route through it (`PRism.Web/Sse/SseEventProjection.cs:46`; called from `SseChannel.cs:257,282`). The lesson of the `pr-updated` wire-contract bug: bespoke per-event serialization is a recurring footgun.
+
+**Rule (Amendment 2026-05-25, adversarial-round correction):** all NEW SSE events route through `SseEventProjection.Project`. `IdentityChanged` follows this rule. `InboxUpdated` is the one pre-existing event that inline-serializes inside its `OnInboxUpdated` handler — it's grandfathered, not principled exclusion; migrating it through `Project` is a follow-up (low priority — the in-place serializer hasn't bug-classed). Do NOT use `InboxUpdated`'s inline pattern as precedent for new events. `DraftSubmitted` exists in `PRism.Core/Events/` but `SseChannel` does not subscribe to it (the frontend learns about submits via the `StateChanged` event that fires alongside); if a future change subscribes the channel to `DraftSubmitted`, add it to `Project` in the same PR.
+
+PR2 adds the following concrete code:
+
+**`PRism.Web/Sse/SseEventProjection.cs`** — one new wire record + one new switch arm:
+
+```csharp
+internal sealed record IdentityChangedWire(string Type);
+
+// In Project(IReviewEvent evt) switch:
+IdentityChanged => ("identity-changed", new IdentityChangedWire("identity-change")),
+```
+
+**`PRism.Web/Sse/SseChannel.cs`** — broadcast handler (not per-PR), routed through `Project`:
 
 1. **Constructor field + subscribe**: `private readonly IDisposable _busIdentityChanged; ... _busIdentityChanged = bus.Subscribe<IdentityChanged>(OnIdentityChanged);`
-2. **Handler method**: `private void OnIdentityChanged(IdentityChanged evt) { foreach (var sub in _subscribers.Values) { WriteEventFrame(sub, "identity-changed", payload); } }` — iterates `_subscribers.Values` (the entire connected set), not `_activeRegistry.SubscribersFor(...)` (which is per-PR).
-3. **Wire event name**: `identity-changed` (kebab-case, matching the existing convention used by `inbox-updated` and `pr-updated`).
-4. **`Dispose()` entry**: `_busIdentityChanged.Dispose();` alongside the existing `_busInbox`, `_busActivePr`, etc. lines.
+2. **Handler method**:
+   ```csharp
+   private void OnIdentityChanged(IdentityChanged evt)
+   {
+       var (eventName, payload) = SseEventProjection.Project(evt);
+       foreach (var sub in _subscribers.Values)
+           WriteEventFrame(sub, eventName, payload);
+   }
+   ```
+   Iterates `_subscribers.Values` (every connected tab), not `_activeRegistry.SubscribersFor(...)` (which is per-PR). Identity-change is global.
+3. **`Dispose()` entry**: `_busIdentityChanged.Dispose();` alongside the existing `_busInbox`, `_busActivePr`, etc. lines.
 
-**SSE wire payload — minimal.** The frame data is `{ "type": "identity-change" }` only — no `priorLogin`, no `newLogin`, no `accountKey`. The only consumer action is "re-fetch `/api/auth/state`" (§ 3.4); the consumer doesn't need the login strings, and omitting them from the wire keeps GitHub identity information out of the browser event stream (closes the SEC-007 wire-exposure concern). The `priorLogin` / `newLogin` values continue to be available in the structured `IdentityChanged` log line (§ 3.6) for forensic reconstruction.
+**SSE wire payload — minimal.** The frame data is `{ "type": "identity-change" }` only — no `priorLogin`, no `newLogin`, no `accountKey`. The SSE event name `identity-changed` carries the routing signal; the consumer's only action is "re-fetch `/api/auth/state`" (§ 3.4). Omitting login fields from the wire keeps GitHub identity data out of the browser event stream (closes the SEC-007 wire-exposure concern). The `priorLogin` / `newLogin` values stay available in the structured `IdentityChanged` log line (§ 3.6) for forensic reconstruction. The slight name/payload mismatch (event name `identity-changed` past-tense, payload `type: "identity-change"` noun) mirrors the existing convention where the event name is the action and the payload `type` is the category — intentional, not a typo.
+
+**Projection-arm test** (added to the existing `SseEventProjection` test suite per PR #65's precedent): `Project_routes_IdentityChanged_to_identity_changed_event_name_with_sentinel_payload` — assert eventName == `"identity-changed"` and payload shape == `IdentityChangedWire("identity-change")`. The default-arm `ArgumentOutOfRangeException` guard already covers regressions where the arm is removed.
 
 **Reconnect-replay handling.** SSE has no built-in event replay; a tab that's disconnected at the moment `OnIdentityChanged` writes its frame silently misses it. Defense: the frontend's existing SSE-reconnect handshake (`useEventSource.tsx`) re-fetches `/api/auth/state` on every reconnect-after-disconnect, treating each connect as a fresh sync. PR2 doesn't add a server-side identityVersion handshake — the cheap frontend re-fetch covers the gap. The READUS pattern is: any tab that disconnected during an identity change will pick up the new login from `/api/auth/state` immediately on reconnect, the same as if it had received the SSE event live.
 
@@ -373,13 +409,13 @@ Three caches need eviction when `identityChanged === true`:
 
 - **`IActivePrCache`** — in-memory map of `PrReference → ActivePrSnapshot(HeadSha, HighestIssueCommentId?, ObservedAt)` populated by the active-PR poller (see `PRism.Core/PrDetail/IActivePrCache.cs`). The cache does NOT hold the full PR detail (file tree, comment list — those are fetched on demand by frontend pages); it holds the head-shift / unread-bookmark anchors. Token-A-fetched snapshots can still be stale or refer to PRs token B can't reach after Replace, so we evict them: add a new method `void Clear()` to the interface so the next active-PR poll re-fetches every snapshot under the new identity. (v2 generalizes to `ClearForAccount(accountKey)` per § 10.)
 - **Inbox poller** — last-result cache. Add `void RequestImmediateRefresh()` that wakes the poller before its next 120s tick. The current `InboxPoller.ExecuteAsync` loop is `WaitForSubscriberAsync → orchestrator.RefreshAsync → Task.Delay(nextDelay, stoppingToken)` — a semaphore checked "each iteration" would only fire at the next 120s boundary. The fix is to race the delay against a signal. Recommended implementation: a private `SemaphoreSlim _refreshSignal = new(0, 1)`; replace `await Task.Delay(delay, stoppingToken)` with `await Task.WhenAny(Task.Delay(delay, linkedCt.Token), _refreshSignal.WaitAsync(linkedCt.Token))` where `linkedCt` is a `CancellationTokenSource.CreateLinkedTokenSource(stoppingToken)` so either branch can cancel the other. `RequestImmediateRefresh` calls `_refreshSignal.Release()` (semaphore stays at capacity 1 — duplicate signals coalesce). Unit test: signal mid-delay, assert next `RefreshAsync` lands within 100ms.
-- **`ActivePrSubscriberRegistry`** (`PRism.Core/PrDetail/`) — drops every active per-PR subscription. Frontend tabs hear the `state-changed` event with `identity-change` field tag and re-subscribe naturally on next PR-detail navigation. Implementation: add a new `void RemoveAll()` method to the existing `Add` / `Remove` / `RemoveSubscriber` surface; iterate and clear both `_bySubscriber` and `_byPr` dictionaries under their existing concurrency discipline. No synthetic disconnect event is needed — the frontend's existing SSE-reconnect logic detects subscription absence on the next per-PR poll cycle (which now returns no events for the dropped PR) and re-subscribes when the user navigates to that PR.
+- **`ActivePrSubscriberRegistry`** (`PRism.Core/PrDetail/`) — drops every active per-PR subscription. Frontend tabs hear the dedicated `identity-changed` SSE event (§ 3.2.1) and re-subscribe naturally on next PR-detail navigation. Implementation: add a new `void RemoveAll()` method to the existing `Add` / `Remove` / `RemoveSubscriber` surface; iterate and clear both `_bySubscriber` and `_byPr` dictionaries under their existing concurrency discipline. No synthetic disconnect event is needed — the frontend's existing SSE-reconnect logic detects subscription absence on the next per-PR poll cycle (which now returns no events for the dropped PR) and re-subscribes when the user navigates to that PR.
 
 Identity-change is the ONLY trigger that calls `Clear()` / `RemoveAll()` in v1. Other auth state transitions (initial connect, host change) handle their own state via separate paths.
 
 ### 3.4 Multi-tab and 404-on-current-PR
 
-- **Multi-tab**: every tab's `useAuth` hook receives `state-changed` with `identity-change` field tag → re-fetches `/api/auth/state` (which now reports the new login). The tab's React state for inbox / PR-detail re-renders. Composer text in any open composer remains untouched (state.json drafts preserved).
+- **Multi-tab**: every tab's `useAuth` hook receives the dedicated `identity-changed` SSE event (§ 3.2.1) → re-fetches `/api/auth/state` (which now reports the new login). The tab's React state for inbox / PR-detail re-renders. Composer text in any open composer remains untouched (state.json drafts preserved). **Per-tab TabStamp interaction (Amendment 2026-05-23):** PR #62 introduced a per-tab `TabStamps` map (V5→V6 storage version) that gates draft/submit idempotency. The TabStamp gate operates on `draft.ts` / `submit.ts` (per-tab dedupe of optimistic UI updates against SSE echoes), NOT on auth state — `useAuth().refetch()` is per-tab and orthogonal to the TabStamp map. No interaction; the identity-change re-fetch behaves identically before and after the V6 cross-tab fix.
 - **404 on the currently-viewed PR**: user is on `/pr/owner/P2/42` and replaces with a token that has no access to `P2`. After the identity-change cache eviction:
   - Next active-PR poll (forced within seconds via `RequestImmediateRefresh` analog for the active poller, OR within 30s on the normal cadence — actually the active-PR poller doesn't have an immediate-refresh path today, but the next 30s tick hits 404).
   - Spec § 12 (poc-features) "404 on a PR" handler surfaces: *"This PR no longer exists or your token doesn't cover this repo."*
@@ -435,9 +471,9 @@ The endpoint does NOT support a `Warning` path (the `no-repos-selected` warning 
 
 ### 3.6 Identity-change logging (scoped to ILogger; forensic event log deferred)
 
-**Current state of the forensic event log infrastructure.** S0+S1 deferred the `state-events.jsonl` rolling writer to S4; S4 didn't deliver it. The DI graph today registers `NoopStateEventLog`, whose `AppendAsync` returns `Task.CompletedTask` — so any call site that emits via `IStateEventLog` silently writes nothing. Promoting `NoopStateEventLog` to a real implementation (rolling JSONL with retention) is a v2 / post-PoC backlog item; S6 does not absorb that scope.
+**Current state.** `NoopStateEventLog` is registered in the DI graph today (its `AppendAsync` returns `Task.CompletedTask`); promoting it to a real `state-events.jsonl` rolling writer is a v2 / post-PoC backlog item — out of scope for S6.
 
-**S6's identity-change logging.** Until the dedicated forensic log exists, the identity-change event lands as an `ILogger` structured-log entry (Info level) in `<dataDir>/logs/` — which IS writing today (existing rolling text logger). The structured payload mirrors what the eventual JSONL event would carry, so promoting `NoopStateEventLog` later is a no-op for this call site beyond swapping the sink:
+**S6's identity-change logging.** The identity-change event lands as an `ILogger` structured-log entry (Info level) routed through PR #63's `FileLoggerProvider`, which writes daily-rolling files to `<dataDir>/logs/prism-YYYY-MM-DD.log` with 14-day retention. The structured payload shape matches what the eventual JSONL event would carry, so v2 promotion is a sink swap at this call site:
 
 ```csharp
 log.LogIdentityChanged(
@@ -449,24 +485,28 @@ log.LogIdentityChanged(
     repliesAffected:  repliesAffected);
 ```
 
-The `LogIdentityChanged` source-generator method (one of the `PRism.Web.Endpoints.AuthEndpoints.Log.*` family) emits a line like:
+The `LogIdentityChanged` source-generator method (one of the `PRism.Web.Endpoints.AuthEndpoints.Log.*` family) emits a line in the format `FileLoggerProvider.FormatLine` produces (verified in `PRism.Web/Logging/FileLoggerProvider.cs:388`):
 
 ```
-[2026-05-15T12:34:56Z] [Information] AuthEndpoints: Identity changed accountKey=default priorLogin=alice newLogin=bob sessions=7 drafts=23 replies=5
+2026-05-15T12:34:56.000Z [Information] PRism.Web.Endpoints.AuthEndpoints[<eventId>]: Identity changed accountKey=default priorLogin=alice newLogin=bob sessions=7 drafts=23 replies=5
 ```
+
+**Field-name discipline against `SensitiveFieldScrubber` (Amendment 2026-05-23).** PR #61 added `login` to `SensitiveFieldScrubber.BlockedFieldNames` (`PRism.Web/Logging/SensitiveFieldScrubber.cs:32`); the matcher uses case-insensitive equality (`SensitiveFieldScrubber.cs:41`), not substring. The argument names `priorLogin` and `newLogin` are deliberately distinct from the blocklisted bare `login` — they pass through unscrubbed and the forensic capability survives. The cross-cutting rule for any future log call site (qualify GitHub-login template names; never use a bare `{login}`) lives in the deferrals sidecar's `[Risk] LoggerMessage template-name discipline` entry; the durable home for that rule is `.ai/docs/behavioral-guidelines.md` via a follow-up amendment, not the S6 spec body.
+
+**Backpressure under `FileLoggerProvider` (Amendment 2026-05-23).** `FileLoggerProvider`'s bounded channel is non-blocking on saturation and routes template-substitution failures to counters rather than exceptions, so `log.LogIdentityChanged(...)` cannot throw via normal paths. The implementation-detail audit (channel mode, counter routing, line references) lives in the code comment on the OQ 4 try/catch site (PR2 Task 2.8) rather than the spec body, so it doesn't become stale if `FileLoggerProvider`'s channel mode ever changes.
 
 The `accountKey` field is `"default"` in v1 but **present in the structured payload** so v2's per-account scoping is a structural extension rather than a re-keying migration. The counts let a maintainer doing "where did this draft go" reconstruction grep `<dataDir>/logs/` by date.
 
 The event is logged only when `identityChanged === true`. Same-login Replace is silent (no log line — same posture as no-op state mutations elsewhere).
 
-**Migration path to the real forensic log (v2 / post-PoC).** When `NoopStateEventLog` is promoted to a real `JsonlStateEventLog` writer, the identity-change call site swaps from `log.LogIdentityChanged(...)` to `stateEventLog.AppendAsync(new StateEvent("IdentityChanged", payload), ct)`. The README's "Recovering a lost draft" troubleshooting section (§ 9.4) updates at the same time to point at the new file. The two sinks are deliberately incompatible (one is text-logs, the other is JSONL) — promoting is a one-PR swap, not a parallel-run period.
+**Migration path (v2 / post-PoC).** When `NoopStateEventLog` is promoted to a real `JsonlStateEventLog`, this call site swaps `log.LogIdentityChanged(...)` for `stateEventLog.AppendAsync(...)` and § 9.4 updates to point at the new file. **Expected to be a one-PR swap with no parallel-run period because** (a) the call site is single-sourced (one method on one endpoint), and (b) the consumer is the maintainer running grep, who can switch from `grep 'Identity changed' "<dataDir>/logs/"*.log` (text format) to a JSONL line-parse on `state-events.jsonl` in one tooling change. Verify before committing: confirm the maintainer's grep tooling handles JSONL on their dogfood machine; if not, a brief parallel-run period during v2 is the cheaper option.
 
 ### 3.7 Edge cases
 
 - **User backs out of `/setup?replace=1`**: clicks browser back, closes tab, or navigates to `/`. Nothing happened server-side; the old PAT and login are intact. Next render of any route uses the unchanged auth state.
 - **Validation fails on new PAT**: `RollbackTransientAsync` clears the transient; old PAT in keychain unchanged; identity-change rule does not fire.
 - **S5 foreign-pending-review modal open at moment of Replace**: user navigates from the PR detail to `/settings`; modal unmounts. Next visit to that PR re-evaluates against the new login. If the new login happens to BE the foreign author, the pending review is no longer foreign — fixes itself.
-- **Tab A in Settings → Replace; Tab B viewing PR detail**: Tab B receives `state-changed` with `identity-change` → re-fetches PR detail → either 404s (if no access) or renders fresh data (if access). Composer text preserved if any was being typed.
+- **Tab A in Settings → Replace; Tab B viewing PR detail**: Tab B receives the `identity-changed` SSE event (§ 3.2.1) → re-fetches PR detail → either 404s (if no access) or renders fresh data (if access). Composer text preserved if any was being typed.
 - **Replace fires immediately after a submit completes**: race between Tab A's `GET /api/submit/in-flight` (returns `false`) and Tab B's submit starting. Defense: the backend re-checks `AnyHeld()` inside `/api/auth/replace` itself (step 6 above); a submit that grabbed the lock between Tab A's check and Tab A's submit-paste loses the race and returns 409. The TOCTOU window is closed.
 - **First-launch user with `priorLogin === null`**: identity-change rule short-circuits to `identityChanged = false`. This branch is unreachable via Replace (Replace requires `hasToken === true`, which only happens after a successful connect that has populated `accounts[0].login`). Defensive nonetheless.
 - **Dangling `DraftReply.ParentThreadId` after foreign-pending Discard.** If `priorLogin` had a pending review with attached threads at the moment of Replace, AND the user authored replies to those attached threads (so `DraftReply.ParentThreadId` is populated from snapshotted threads, per S5 `ResumeForeignPendingReview`), AND `newLogin` then chooses **Discard** on the foreign-pending-review modal on next visit to that PR → the backend's `DeletePendingReviewAsync` removes the pending review and its attached threads server-side, and the preserved `DraftReply.ParentThreadId` now references a thread that no longer exists. **Detection**: next submit attempts `addPullRequestReviewReplyComment` against the dangling thread id; GitHub returns a not-found error; the submit pipeline's retry path surfaces a generic "attach failed" toast. **Recovery**: user manually discards the orphan reply via the existing Drafts tab UI; subsequent submit succeeds. **Accepted as a rare edge case** (requires the specific four-event sequence above); deliberate mitigation deferred to v2 alongside the broader multi-account brainstorm. The S6 spec documents the path so an implementer triaging "submit failed after Replace" reports has the recipe; a v2 hardening could null `ParentThreadId` on the Discard path when its thread id is in the discarded set.
@@ -1193,11 +1233,13 @@ Added below Process (the outer fence uses four backticks because the example its
 
 ### Recovering a lost draft
 
-PRism's dedicated forensic event log (`state-events.jsonl`) is not yet implemented — the DI graph registers a no-op writer for the PoC (promoting it is a v2 / post-PoC backlog item). For now, the most useful forensic surface is the structured logs in `<dataDir>/logs/`. Specifically, identity-change events log there with the prior + new login and the count of affected sessions/drafts/replies:
+PRism's dedicated forensic event log (`state-events.jsonl`) is not yet implemented — the DI graph registers a no-op writer for the PoC (promoting it is a v2 / post-PoC backlog item). For now, the most useful forensic surface is the structured logs in `<dataDir>/logs/`, written daily by `FileLoggerProvider` as `prism-YYYY-MM-DD.log` files with 14-day retention. Identity-change events log there with the prior + new login and the count of affected sessions/drafts/replies:
 
 ```
 grep 'Identity changed' "<dataDir>/logs/"*.log
 ```
+
+The Settings page's GitHub section (§ 2.2) exposes the exact `<dataDir>/logs/` path via a "Copy logs path" button so you don't have to guess the platform-specific data-directory location.
 
 `DraftSaved` events do NOT currently land in any forensic log (the v2 backlog item). If you need to recover a draft body in the PoC, the safest path is to copy it out of the composer BEFORE any destructive action (Replace token, Discard, foreign-pending-review Discard). After the action, the draft body is only recoverable from `state.json` if the destructive action did not mutate that session.
 
@@ -1273,6 +1315,14 @@ The multi-account storage scaffold (`2026-05-10-multi-account-scaffold-design.md
   - New dotted keys (`inbox.sections.*`) accepted and persisted to correct sub-record.
   - Unknown dotted keys → `ConfigPatchException` → 400.
   - Multi-field patches still rejected.
+- `GET /api/preferences` shape (Amendment 2026-05-23):
+  - Response body contains `github.configPath` and `github.logsPath` as non-empty strings; both point at platform-correct `<LocalApplicationData>/PRism/{config.json,logs}` locations.
+  - `logsPath` matches `Path.Combine(dataDir, "logs")` — the canonical derivation in `Program.cs`. Construct the test factory via `UseSetting("DataDir", knownTempDir)` (or the equivalent test-host knob the existing tests use) and assert the GET response surfaces `Path.Combine(knownTempDir, "logs")`. The assertion checks the production derivation path, not a hand-supplied value injected into a stubbed `FileLoggerProvider`.
+  - Auth gate: GET requires a valid session token (`SessionTokenMiddleware` in non-Development env). Existing test infra for authenticated GET calls applies unchanged.
+  - **Dual-derivation integration test (Amendment 2026-05-25, adversarial-round addition):** with `PRISM_FILE_LOGGER_FORCE=1` env var set, construct `PRismWebApplicationFactory` against a known `dataDir`, write one log line through a registered `ILogger`, then assert (a) a `prism-YYYY-MM-DD.log` file exists in the same directory `LogsPathInfo.Path` points at, and (b) `GET /api/preferences` surfaces that same directory. Closes the divergence-bites-silently scenario where a future `FileLoggerExtensions` refactor changes the FileLoggerProvider derivation without updating `LogsPathInfo`.
+- `SseEventProjection.Project(IdentityChanged)` (Amendment 2026-05-23):
+  - Returns `("identity-changed", IdentityChangedWire("identity-change"))`.
+  - Regression guard: removing the arm causes the default-arm `ArgumentOutOfRangeException` to fire — already covered by the projection's existing default-arm test pattern.
 
 ### 11.2 Backend unit (`PRism.Core.Tests`)
 
@@ -1284,7 +1334,7 @@ The multi-account storage scaffold (`2026-05-10-multi-account-scaffold-design.md
 
 - Settings page renders all four sections.
 - Toggling each inbox section POSTs `inbox.sections.<key>: <bool>` (single-field shape).
-- Settings GitHub section renders the host + `configPath` link.
+- Settings `ConnectionSection` (heading: "Connection" per Amendment 2026-05-25) renders the host + `configPath` button-and-input affordance + (**Amendment 2026-05-23**) `logsPath` button-and-input affordance with the same shape; the heading text is asserted to be `"Connection"` (not `"GitHub"`) so SR-by-heading navigation lands in a context that matches the operational rows.
 - Replace button disables when `useSubmitInFlight()` returns `inFlight: true`.
 - `useCheatsheetShortcut`: `?` outside composer toggles; inside composer does not.
 - `useCheatsheetShortcut`: `Cmd/Ctrl+/` toggles regardless of focus.
@@ -1334,7 +1384,7 @@ Single slice, nine-PR plan. Sequencing respects dependencies; orthogonal PRs can
 | PR | Scope | Depends on | Notes |
 |---|---|---|---|
 | **PR1** | Backend: `ConfigStore.PatchAsync` allowlist extension + richer `/api/preferences` GET shape + `/api/submit/in-flight` endpoint. | none | xUnit tests for every new allowlist branch + endpoint shape. |
-| **PR2** | Backend: `/api/auth/replace` endpoint + identity-change rule + `IActivePrCache.Clear()` + `ActivePrSubscriberRegistry.RemoveAll()` + new global `IdentityChanged` `IReviewEvent` (follows the `InboxUpdated` precedent — no `PrRef`) + structured-log emission of identity-change for forensic recovery (since `NoopStateEventLog` is current state — see § 3.6). | PR1 (uses in-flight check internally) | xUnit tests for every identity-change branch + forensic shape + cache eviction. |
+| **PR2** | Backend: `/api/auth/replace` endpoint + identity-change rule + `IActivePrCache.Clear()` + `ActivePrSubscriberRegistry.RemoveAll()` + new global `IdentityChanged` `IReviewEvent` (broadcast — fans out to every subscriber, NOT per-PR) routed through `SseEventProjection.Project` per the canonical rule in § 3.2.1 + structured-log emission of identity-change for forensic recovery (since `NoopStateEventLog` is current state — see § 3.6). **Folded sub-tasks (Amendment 2026-05-25, sidecar [Risk] resolutions):** rename existing `AuthEndpoints.cs:178/180/188` `[LoggerMessage]` `{login}` parameters to qualified names (`validatedLogin`/`committedLogin`) — closes a silent-redaction forensic gap; AND add `/api/auth/replace` to the 16 KiB body-cap `UseWhen` predicate in `Program.cs` for consistency with other mutating endpoints. Both fixes are in PR2's scope per the plan's Tasks 2.8a + 2.8b. | PR1 (uses in-flight check internally) | xUnit tests for every identity-change branch + forensic shape + cache eviction + AuthEndpoints rename regression test + body-cap regression test. |
 | **PR3** | Frontend: Settings page (`/settings` route, four section components, `usePreferences` hook extension). | PR1 (richer GET shape) | Vitest + Playwright `settings-flow.spec.ts`. |
 | **PR4** | Frontend: Replace token UX — footer link, lazy-swap flow, route gating on `?replace=1`, multi-tab `state-changed` reaction. | PR2 (uses new endpoint) | Playwright same-login / different-login / submit-in-flight specs. |
 | **PR5** | Frontend: Cheatsheet overlay + shortcut handlers (`useCheatsheetShortcut`, `<CheatsheetProvider>`, `<Cheatsheet>`, `shortcuts.ts`, `data-composer="true"` markers on existing composers). | none | Vitest hook tests + Playwright `cheatsheet.spec.ts`. |
@@ -1363,4 +1413,46 @@ Single slice, nine-PR plan. Sequencing respects dependencies; orthogonal PRs can
 
 4. **`log.LogIdentityChanged(...)` failure mid-replace.** Round-3 ce-doc-review flagged that `ILogger.LogIdentityChanged` runs after `UpdateAsync` commits but before cache eviction + SSE fan-out. If the logger throws (rolling text logger out of disk space, IO error), the endpoint returns 500 with a half-applied state: `state.json` mutation persisted, in-memory caches still serving prior-login data, no SSE notification. `Microsoft.Extensions.Logging`'s default pipeline generally swallows provider exceptions, but the `LoggerMessage` source-generator path can surface argument-binding errors. Two paths: (a) wrap `log.LogIdentityChanged(...)` in a `try/catch` that swallows the exception and continues to cache eviction + SSE fan-out (forensic-log loss is acceptable for the PoC; partial state is not); (b) move cache eviction + SSE fan-out BEFORE the log line so even a logger failure leaves the system fully reconciled at the cost of losing forensic traceability. **Resolved in writing-plans: (a) — wrap the log call in `try/catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)` that swallows so cache eviction + SSE fan-out still run.** Implemented in PR2 Task 2.8 Step 1; tested by an explicit "logger throws → state still fully reconciled" test added to Task 2.7 (see plan).
 
+   **Verified 2026-05-23 against PR #63's `FileLoggerProvider`** — the try/catch is now defense against future provider variance rather than the file logger's own failure modes. See § 3.6 "Backpressure under `FileLoggerProvider`" for the framing; Task 2.7's "logger throws → state still fully reconciled" test stubs a deliberately-throwing logger rather than failure-injecting `FileLoggerProvider` (which would never throw via its normal paths).
+
 (Resolution status: OQ 1, OQ 3, OQ 4 resolved in writing-plans; OQ 2 — draft vs prerelease — kept as draft per stated default. See plan corrections preamble for the audit trail.)
+
+---
+
+## 15. Amendment log (2026-05-23)
+
+Recent PRs (#55–#65, all merged after this spec was first written) introduced concrete infrastructure that supersedes assumptions made in the original draft. This section is the per-section delta so reviewers can locate every change without diffing the full document.
+
+### 15.1 Sections amended
+
+| § | Original assumption | Recent PR | Amendment |
+|---|---|---|---|
+| **1.4** | "Logging-level Settings UI — file-only" was deferred against an undefined logging surface. | PR #63 (on-disk log writer with `FileLoggerProvider`, 14-day retention). | Defer is preference, not technical gating — re-evaluate at start of implementation. |
+| **2.2 / 2.4 / 2.7** | GET shape exposes `github.configPath`; GithubSection.tsx renders one "Copy `config.json` path" affordance. | PR #63 introduced `<dataDir>/logs/prism-YYYY-MM-DD.log`; same UX gap as configPath. | Added `github.logsPath` to the GET shape; GithubSection.tsx renders the same button-and-input pattern for logs path. No new component or section taxonomy. |
+| **3.2.1** | `OnIdentityChanged` directly serializes payload in `SseChannel.cs`. | PR #65 established `SseEventProjection.Project` as the canonical wire-shape boundary (`ActivePrUpdated` + 8 other events route through it). | Rewrote to add an `IdentityChangedWire` arm to `Project`; `OnIdentityChanged` calls `Project` like `OnStateChanged` does. **The PR #65 bug class (wire-shape mismatch on event-derived fields) does not directly apply to discriminator-only frames like `IdentityChanged` — the projection arm here is forward-looking** (when v2 multi-account adds `accountKey` to the wire, the projection arm is the right home for the field-shape change in one file rather than per-handler) rather than current-defense. Treat as precedent-consistent bookkeeping with optionality value. |
+| **3.3 / 3.4 / 3.7** | Frontend tabs hear "`state-changed` with `identity-change` field tag" — internally inconsistent with § 3.2.1's dedicated `IdentityChanged` event. (§ 3.7 occurrence in the multi-tab edge case was missed in the first amendment pass and corrected during the ce-doc-review round.) | (Pre-existing internal inconsistency, surfaced during the amendment pass.) | All three sections now reference the dedicated `identity-changed` SSE event. |
+| **3.4** | Multi-tab story didn't address per-tab cross-tab gates. | PR #62 added per-tab TabStamps (V5→V6 storage version). | Added one-paragraph acknowledgement: TabStamps gate `draft.ts` / `submit.ts`, not `useAuth().refetch()` — orthogonal. |
+| **3.6** | "lands as an `ILogger` structured-log entry (Info level) in `<dataDir>/logs/` — which IS writing today (existing rolling text logger)". | PR #63 made the rolling writer concrete. PR #61 added `login` to `SensitiveFieldScrubber.BlockedFieldNames`. | Concretized the writer reference (`FileLoggerProvider`, file format, retention). Added field-name discipline note: `priorLogin` / `newLogin` pass through unscrubbed because matcher is case-insensitive equality, not substring; bare `{login}` template name would be redacted. Added backpressure/failure-modes note: `BoundedChannelFullMode.Wait` + `OnTemplateSubstitutionFailure`-counter mean the log call cannot throw via normal paths. |
+| **9.4** | Troubleshooting pointed at `<dataDir>/logs/` without giving users a way to find the path. | logsPath addition in § 2.2 closes the gap. | Added a sentence directing users to the Settings page's "Copy logs path" affordance. |
+| **11.1** | Tests for `ConfigStore.PatchAsync` and endpoint shape only. | Both the GET-shape extension and the projection arm need explicit test coverage. | Added test entries for `GET /api/preferences` (assert `configPath` + `logsPath` surface; assert logsPath matches `FileLoggerProvider`'s `logsDir`) and `SseEventProjection.Project(IdentityChanged)`. |
+| **11.3** | Frontend unit test for the configPath link. | logsPath additional assertion. | Same line extended to cover logsPath. |
+| **14 OQ 4** | Try/catch around `log.LogIdentityChanged(...)` resolved against generic "logger could throw" concerns. | PR #63's `FileLoggerProvider` is non-blocking + exception-free on backpressure and template-substitution failures. | Collapsed the OQ 4 verification text from a ~6-sentence paragraph to a ~3-sentence cross-reference paragraph (verdict preserved: try/catch stays as provider-independence insurance; no revision); implementation-detail audit moved to § 3.6 and PR2 Task 2.8 code comment. Updated Task 2.7 test guidance to stub a throwing logger (rather than failure-inject `FileLoggerProvider`). |
+| **Real-flow Replace-token e2e** | Not in scope in original. | PR #58 surfaced the real-flow harness opportunity. | Deferred (P2) — see `docs/specs/2026-05-15-s6-polish-and-distribution-deferrals.md` for cost rationale. |
+| **3.6 NoopStateEventLog narrative** | Verbose v2-migration narrative carried over from pre-FileLoggerProvider drafts. | PR #63 made the rolling writer concrete — the v2 swap is now a one-line sink replacement, not a multi-stage migration story. | Trimmed the "Current state" + "Migration path" subsections to ~one sentence each. Net reduction ~50% on the v2-narrative portion of § 3.6. **2026-05-25 adversarial follow-up**: restored one sentence of reasoning behind the "one-PR swap, no parallel-run period" claim — the original trim removed it, leaving an unsupported assertion. |
+
+### 15.2 Adversarial-round amendments (2026-05-25)
+
+The 2026-05-23 amendment pass dispatched 7 reviewers; one (adversarial) was rejected mid-flight and re-spawned 2026-05-25. The adversarial round surfaced 8 findings against the AMENDED state. All 8 held up to scrutiny and were applied. Per-section delta:
+
+| § | Pre-adversarial state | Post-adversarial change |
+|---|---|---|
+| **1.4** | "Revisit post-PoC if log-volume complaints surface" — asymmetric trigger for a 5-dogfooder cohort. | Extended trigger phrasing to name BOTH paths: "if a dogfooder reports log volume OR a maintainer incident requires mid-session log-level change (the config.json + relaunch path destroys in-memory state)." |
+| **2.4** | "Sourcing from `dataDir` directly decouples logsPath visibility from the logger gate AND lets tests assert against the canonical `Path.Combine(dataDir, "logs")` derivation" — framed as single-source. | Added dual-derivation invariant note: `FileLoggerExtensions.cs:34` independently computes `Path.Combine(dataDir, "logs")`; the two derivations being equal is an invariant, not a single-source guarantee. § 11.1 now includes an integration test that writes through `FileLoggerProvider` and asserts the actual write directory equals `LogsPathInfo.Path` — drift bites the test, not the user. |
+| **2.7** | "v1 keeps the section heading 'GitHub' — renaming would itself be a scope decision affecting the existing configPath row and the Host display; deferred to v2." | Section renamed to **"Connection"** in v1 (file: `ConnectionSection.tsx`, not `GithubSection.tsx`). Adversarial supplied new evidence: SR-by-heading navigation lands on "GitHub" and finds a "Copy logs path" button that is not a GitHub-scoped concept; § 6's a11y audit (VoiceOver pass) would catch this only by chance. Rename cost is one CSS-modules string + one test assertion — well under the round-1 "scope decision" framing's threshold. |
+| **3.2.1** | "Originally-broadcast events (`InboxUpdated`) and events the channel does not subscribe to (`DraftSubmitted`) remain intentionally out of the projection switch; the rule is 'any event with a per-tab handler that writes a named SSE frame routes through Project.' `IdentityChanged` matches that rule." | Rule restated more honestly: "all NEW SSE events route through `Project`; `InboxUpdated` is grandfathered (not principled exclusion); migrating it is a follow-up." Closes the internal contradiction (the prior framing's carve-out criterion was satisfied by `InboxUpdated`, which IS excluded — the framing didn't match the carve-out). |
+| **3.2.1 / 15.1 row** | "Closes the bug class PR #65 fixed" — overclaimed defense for a discriminator-only frame. | Reframed as forward-looking ("when v2 multi-account adds `accountKey` to the wire, the projection arm is the right home for the field-shape change in one file") and precedent-consistent rather than current-defense. The PR #65 bug class is wire-shape mismatch on event-derived fields; `IdentityChanged` has none. |
+| **3.6 migration path** | "One-PR swap, no parallel-run period." (Bare assertion after the F19 trim.) | Restored one sentence of reasoning: (a) single-sourced call site, (b) the consumer is the maintainer running grep, who can switch tooling. Plus an explicit verify-before-committing trigger. |
+| **13 PR2 row** | Did not mention the folded Tasks 2.8a / 2.8b. | PR2 row now explicitly names both folded sub-tasks (AuthEndpoints `{login}` rename + body-cap predicate addition). An agent reading the spec's PR cut table no longer needs to chase the deferrals sidecar to pick up the folds. |
+| **14 OQ 4 § 15.1 row** | Row claimed "Replaced the OQ 4 verification paragraph with a one-line cross-reference" but OQ 4 actually carried a ~3-sentence paragraph. | Row text corrected to "Collapsed the OQ 4 verification text from a ~6-sentence paragraph to a ~3-sentence cross-reference paragraph (verdict preserved)." Honest about what happened. |
+
+(Sections not in the table above — § 2.6 save semantics, § 3.5 `SubmitLockRegistry.AnyHeld()`, § 3.3 `IActivePrCache.Clear()`, § 4 cheatsheet, § 5 loading, § 6 a11y, § 7 publish, § 8 viewport screenshot, § 10 v2 touch-points — were considered and verified unchanged. They are not re-enumerated here; their absence from the amendment table IS the verification.)

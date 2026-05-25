@@ -44,6 +44,31 @@ Round-1 ce-doc-review on this plan caught several test-infrastructure idioms and
 
 The inline task content below is the original draft preserved as illustration. When in doubt, the conventions table above wins.
 
+### Plan-resync 2026-05-23 (amendment-pass corrections)
+
+The S6 spec was amended on 2026-05-23 (drift against PRs #55–#65) and ce-doc-review'd. The conventions in this subsection apply on top of the table above; when an inline task example contradicts these, the resync wins.
+
+| Topic | Plan's existing draft | Amended convention |
+|---|---|---|
+| **`logsPath` field added to GET /api/preferences** | Task 1.8 ships `GithubPreferencesDto(Host, ConfigPath)` only | Extend DTO to `GithubPreferencesDto(Host, ConfigPath, LogsPath)`. Source `LogsPath` from a new `LogsPathInfo(string Path)` singleton registered in `Program.cs` from the same `dataDir` already in scope (line ~40), BEFORE `AddPRismFileLogger`. Do NOT source via `FileLoggerProvider` — `FileLoggerExtensions.cs:30-32` skips registering the provider under Test env (unless `PRISM_FILE_LOGGER_FORCE=1`), which would null-ref under the default `PRismWebApplicationFactory`. Task 1.8 Step 2 below is rewritten to add `LogsPathInfo`; Step 3 injects it into the GET handler. Task 1.7's test asserts both `configPath` AND `logsPath` (with `logsPath` matching `Path.Combine(dataDir, "logs")` via `UseSetting("DataDir", knownTempDir)`). Spec § 2.2 / § 2.4 / § 11.1. |
+| **SSE projection arm for `IdentityChanged`** | Task 2.5 Step 2 handler hardcodes payload `const string payload = """{"type":"identity-change"}"""` | Route through `SseEventProjection.Project` consistently with PR #65 precedent. Add `internal sealed record IdentityChangedWire(string Type);` to `SseEventProjection.cs` and a switch arm `IdentityChanged => ("identity-changed", new IdentityChangedWire("identity-change"))`. `SseChannel.OnIdentityChanged` calls `SseEventProjection.Project(evt)` and iterates `_subscribers.Values` writing the projected `(eventName, payload)`. Task 2.5 Step 1's projection test already covers this; Step 2 must NOT hardcode the payload. Spec § 3.2.1. |
+| **`{login}` template-name discipline** | Task 2.6 already uses `priorLogin` / `newLogin` ✓ | No change to Task 2.6. ALSO: the existing `[LoggerMessage]` methods in `AuthEndpoints.cs:178` (`ConnectValidatedWithWarning`), `:180` (`ConnectCommitted`), `:188` (`CommitSucceeded`) have parameters named bare `login` — these are silently redacted by `SensitiveFieldScrubber` today (forensic gap). Rename to `validatedLogin` / `committedLogin` in the same PR2 commit that adds `LogIdentityChanged`. New Task 2.8a below covers this. Deferrals sidecar `[Risk] Existing AuthEndpoints.cs LoggerMessage methods silently redact GitHub login`. |
+| **Body-size cap on `/api/auth/replace`** | Not included in Task 2.8 or Task 2.9-pre | Fold into PR2 as Task 2.8b: add `/api/auth/replace` to the existing `UseWhen` predicate in `Program.cs:165-193` that applies the 16 KiB body cap to mutating endpoints. One-line consistency fix; do NOT defer to a separate PR. Deferrals sidecar `[Risk] POST /api/auth/replace is absent from the 16 KiB body-size-cap predicate`. |
+| **Settings GithubSection — logsPath row** | Task 3.5 implements configPath row only | Add a sibling row for `logsPath` with the same `<input readOnly>` + Copy button pattern. **Distinct success toast** (NOT a verbatim copy of the configPath toast): `show({ kind: 'success', message: 'Logs path copied — paste into a terminal or file browser.' })`. Rejection toast inherits the generic configPath wording. `aria-label="Path to PRism logs"`. v1 section heading stays "GitHub" (rename deferred to v2 alongside multi-account UX). Spec § 2.2 / § 2.7. |
+| **`usePreferences` type — logsPath** | Task 3.1 Step 2 `UiPreferences.github = { host; configPath }` | Extend to `{ host; configPath; logsPath }`. Task 3.1 Step 1 mock fixture also adds `logsPath`. Task 3.5 destructures `{ host, configPath, logsPath }`. |
+| **§ 14 OQ 4 verification (informational)** | Task 2.8 already wraps `LogIdentityChanged` in try/catch ✓ | No code change. Test guidance: Task 2.7's "logger throws → state still fully reconciled" test stubs a deliberately-throwing logger, NOT a failure-injected `FileLoggerProvider` (which is exception-free on its normal paths per the amendment's audit). |
+
+### Plan-resync 2026-05-25 (adversarial-round corrections)
+
+A second-round adversarial ce-doc-review on 2026-05-25 surfaced 8 additional findings against the AMENDED spec. All 8 held and were applied. Plan implications:
+
+| Topic | Plan's current state (post-2026-05-23 resync) | Amended convention (2026-05-25) |
+|---|---|---|
+| **Section rename: `GithubSection` → `ConnectionSection`** | Task 3.5 implements `frontend/src/components/Settings/GithubSection.tsx` with heading "GitHub". | Rename the component file to `ConnectionSection.tsx` (and the corresponding test file to `frontend/__tests__/Settings/ConnectionSection.test.tsx`). Section heading text becomes `"Connection"` (the user-visible string in the `<h2>`). Reason: adversarial F7 — SR-by-heading navigation lands on "GitHub" and finds a "Copy logs path" button that is not a GitHub-scoped concept. Wire field names (`github.host` / `github.configPath` / `github.logsPath`) stay unchanged — they're keyed by config namespace, not user-facing presentation. Cost is one CSS string + one test assertion update; no behavior change. Spec § 2.7 + § 11.3 + § 15.2 row. |
+| **§ 3.2.1 carve-out principle** | Task 2.5 Step 2 already routes `OnIdentityChanged` through `SseEventProjection.Project` ✓ | No code change. **But** Task 2.5's inline comment / commit message should reflect the corrected carve-out from § 3.2.1: "all NEW SSE events route through Project; InboxUpdated is grandfathered, not principled exclusion." Don't invoke `InboxUpdated` as precedent for new events — it inline-serializes for historical reasons. |
+| **Dual-derivation integration test for logsPath** | Task 1.8's test asserts `logsPath` matches `Path.Combine(dataDir, "logs")` via `UseSetting("DataDir", knownTempDir)`. | Task 1.8 Step 1 also adds an integration test (with `PRISM_FILE_LOGGER_FORCE=1` env var set so the file logger registers under Test env) that writes one log line through a registered `ILogger`, asserts a `prism-YYYY-MM-DD.log` file exists in `LogsPathInfo.Path`, AND asserts `GET /api/preferences` surfaces that same directory. Closes the silent-divergence scenario the spec's "dual-derivation invariant" note documents. |
+| **PR2 row in spec § 13 now names Tasks 2.8a + 2.8b** | Plan already has Tasks 2.8a + 2.8b as first-class entries ✓ | No plan change; spec § 13 was updated so an agent reading spec-only doesn't miss the folds. Cross-reference is now bilateral. |
+
 **P2 / smaller gaps deferred to Open Questions (do not block execution):**
 - PR4 `useEventSource` reconnect wiring under-specified — implementer extends the existing reconnect handler to also dispatch a `prism-reconnect` event; `useAuth` listens and calls `refetch()`.
 - PR7 a11y fix scope — bound to "serious/critical violations in the new S6 surfaces" (Settings, Cheatsheet, LoadingScreen, FirstRunDisclosure); pre-existing violations elsewhere → sidecar deferral with a tracking issue per rule×selector.
@@ -78,11 +103,14 @@ The inline task content below is the original draft preserved as illustration. W
 
 ### New files
 
-- `PRism.Web/Endpoints/PreferencesDtos.cs` (modified — richer response shape) — extend wire shape
+- `PRism.Web/Endpoints/PreferencesDtos.cs` (modified — richer response shape with `LogsPath` per Amendment 2026-05-23) — extend wire shape
+- `PRism.Web/Logging/LogsPathInfo.cs` (new — Amendment 2026-05-23) — `internal sealed record LogsPathInfo(string Path)` singleton, registered from `Program.cs` before `AddPRismFileLogger`, injected into `/api/preferences` GET handler
+- `PRism.Web/Program.cs` (modified — Amendment 2026-05-23) — register `LogsPathInfo` singleton from `dataDir`; add `/api/auth/replace` to the 16 KiB body-size-cap `UseWhen` predicate (Task 2.8b)
 - `PRism.Web/Endpoints/SubmitInFlightEndpoint.cs` — new `GET /api/submit/in-flight`
 - `PRism.Web/Endpoints/AuthEndpoints.cs` (modified — new `POST /api/auth/replace`)
 - `PRism.Core/Events/IdentityChanged.cs` — new global `IReviewEvent`
-- `PRism.Web/Sse/SseChannel.cs` (modified — `IdentityChanged` handler + dispose)
+- `PRism.Web/Sse/SseEventProjection.cs` (modified — Amendment 2026-05-23) — add `IdentityChangedWire` record + `IdentityChanged` switch arm so `OnIdentityChanged` routes through `Project` like the other 9 events (PR #65 precedent)
+- `PRism.Web/Sse/SseChannel.cs` (modified — `IdentityChanged` handler + dispose; handler calls `SseEventProjection.Project` per Amendment 2026-05-23)
 - `PRism.Core/PrDetail/IActivePrCache.cs` + `ActivePrCache.cs` (modified — `Clear()`)
 - `PRism.Core/PrDetail/ActivePrSubscriberRegistry.cs` (modified — `RemoveAll()`)
 - `PRism.Core/Inbox/InboxPoller.cs` (modified — `RequestImmediateRefresh()` + `WhenAny` loop)
@@ -611,6 +639,10 @@ public async Task GET_preferences_ReturnsRicherShape_WithInboxAndGithub()
     var github = body.GetProperty("github");
     github.GetProperty("host").GetString().Should().Be("https://github.com");
     github.GetProperty("configPath").GetString().Should().EndWith("config.json");
+    // Amendment 2026-05-23: logsPath sourced from dataDir, NOT from FileLoggerProvider.
+    // Construct factory via UseSetting("DataDir", knownTempDir) so logsPath equals
+    // Path.Combine(knownTempDir, "logs") — the canonical Program.cs derivation.
+    github.GetProperty("logsPath").GetString().Should().EndWith(Path.Combine("", "logs").TrimStart(Path.DirectorySeparatorChar));
 }
 ```
 
@@ -643,12 +675,12 @@ internal sealed record InboxSectionsDto(
     bool Mentioned,
     bool CiFailing);
 
-internal sealed record GithubPreferencesDto(string Host, string ConfigPath);
+internal sealed record GithubPreferencesDto(string Host, string ConfigPath, string LogsPath);
 
 internal sealed record PreferencesError(string Error);
 ```
 
-Note: the existing `JsonSerializerOptionsFactory.Web` should already apply the kebab-case policy so `ReviewRequested` serializes as `review-requested`, etc. If not, add explicit `[JsonPropertyName("review-requested")]` attributes.
+Note: the existing `JsonSerializerOptionsFactory.Web` should already apply the kebab-case policy so `ReviewRequested` serializes as `review-requested`, etc. If not, add explicit `[JsonPropertyName("review-requested")]` attributes. The new `LogsPath` property serializes as `logs-path` by default; spec § 2.4 documents the wire field as `logsPath` (camelCase) so add `[JsonPropertyName("logsPath")]` if the kebab policy applies and `[JsonPropertyName("configPath")]` is already present (mirror the existing precedent).
 
 - [ ] **Step 2: Compute `configPath` and expose it via `IConfigStore`**
 
@@ -670,12 +702,37 @@ Modify `PRism.Core/Config/ConfigStore.cs` to expose the existing `_path` field v
 public string ConfigPath => _path;
 ```
 
+- [ ] **Step 2b: Add `LogsPathInfo` singleton for the GET handler to read (Amendment 2026-05-23)**
+
+In `PRism.Web/Program.cs`, BEFORE the call to `AddPRismFileLogger(dataDir, ...)` (around line 40-50 where `dataDir` is resolved), register a `LogsPathInfo` singleton from the same `dataDir`:
+
+```csharp
+// Amendment 2026-05-23: source logsPath from dataDir directly, NOT from FileLoggerProvider.
+// FileLoggerExtensions.cs:30-32 skips registering the provider under Test env unless
+// PRISM_FILE_LOGGER_FORCE=1, which would null-ref under the default PRismWebApplicationFactory
+// (which uses Test env). Sourcing from dataDir gives us a single visibility source decoupled
+// from the logger gate, AND matches the canonical Path.Combine(dataDir, "logs") derivation
+// that AddPRismFileLogger itself uses internally.
+var logsPath = Path.Combine(dataDir, "logs");
+builder.Services.AddSingleton(new LogsPathInfo(logsPath));
+```
+
+Add a tiny record to `PRism.Web/Logging/LogsPathInfo.cs`:
+
+```csharp
+namespace PRism.Web.Logging;
+
+internal sealed record LogsPathInfo(string Path);
+```
+
+Do NOT use `IOptions<LogsPathOptions>` — pure singleton with one string is simpler and matches the existing single-source pattern.
+
 - [ ] **Step 3: Update `GET /api/preferences` to return the richer shape**
 
 Modify `PRism.Web/Endpoints/PreferencesEndpoints.cs`. Replace the `MapGet` handler:
 
 ```csharp
-app.MapGet("/api/preferences", (IConfigStore config) =>
+app.MapGet("/api/preferences", (IConfigStore config, LogsPathInfo logsPathInfo) =>
 {
     var ui = config.Current.Ui;
     var sections = config.Current.Inbox.Sections;
@@ -689,7 +746,8 @@ app.MapGet("/api/preferences", (IConfigStore config) =>
             CiFailing:       sections.CiFailing)),
         Github: new GithubPreferencesDto(
             Host: config.Current.Github.Host,
-            ConfigPath: config.ConfigPath)));
+            ConfigPath: config.ConfigPath,
+            LogsPath:   logsPathInfo.Path)));   // Amendment 2026-05-23
 });
 ```
 
@@ -1033,24 +1091,40 @@ This requires extending `SseEventProjection`'s internal switch to recognize `Ide
 
 **SseChannel fan-out itself** is verified by an integration test under `PrismWebApplicationFactory` that opens a real `EventSource` connection and asserts the frame arrives — deferred to a follow-up if too heavy for PR2's scope.
 
-- [ ] **Step 2: Implement** — Modify `PRism.Web/Sse/SseChannel.cs`:
+- [ ] **Step 2: Implement (projection-routed per Amendment 2026-05-23)** — Modify `PRism.Web/Sse/SseEventProjection.cs` AND `PRism.Web/Sse/SseChannel.cs`:
+
+  **`SseEventProjection.cs`** — add the wire record + switch arm:
+
+```csharp
+internal sealed record IdentityChangedWire(string Type);
+
+// In Project(IReviewEvent evt) switch — add this arm alongside the existing ones:
+IdentityChanged e => ("identity-changed", new IdentityChangedWire("identity-change")),
+```
+
+  **`SseChannel.cs`** — subscribe + handler + dispose, routing through `Project`:
+
   - Add `private readonly IDisposable _busIdentityChanged;` field.
   - In constructor: `_busIdentityChanged = bus.Subscribe<IdentityChanged>(OnIdentityChanged);`
   - In `Dispose()`: `_busIdentityChanged.Dispose();`
-  - New handler:
+  - New handler — calls `SseEventProjection.Project(evt)` rather than hardcoding the payload (matches PR #65 precedent for `ActivePrUpdated` and the other 8 events that already route through `Project`):
 
 ```csharp
 private void OnIdentityChanged(IdentityChanged evt)
 {
-    const string payload = """{"type":"identity-change"}""";
+    var (eventName, payload) = SseEventProjection.Project(evt);
     foreach (var sub in _subscribers.Values)
     {
-        TryWriteFrame(sub, eventName: "identity-changed", data: payload);
+        // Use the existing WriteAndEvictOnFailureAsync pattern (per conventions table row
+        // "SseChannel.TryWriteFrame doesn't exist"); build the raw frame string from the
+        // projected (eventName, payload) tuple, mirroring the existing handlers.
+        var frame = $"event: {eventName}\ndata: {System.Text.Json.JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Web)}\n\n";
+        _ = WriteAndEvictOnFailureAsync(sub, frame);
     }
 }
 ```
 
-(`TryWriteFrame` is the helper used by the existing handlers — extract one if the codebase doesn't yet have it, named after the existing `OnInboxUpdated` write idiom.)
+The projection arm is the single wire-shape source of truth; the handler is broadcast plumbing. This closes the bug class PR #65 found (bespoke per-event serialization drifting from the frontend contract) by keeping the wire shape in `SseEventProjection.cs`.
 
 - [ ] **Step 3: Run + commit**
 
@@ -1262,6 +1336,80 @@ git add PRism.Web/Endpoints/AuthEndpoints.cs PRism.Web/Endpoints/AuthDtos.cs tes
 git commit -m "feat(s6-pr2): POST /api/auth/replace with identity-change rule, structured log, SSE fan-out"
 ```
 
+### Task 2.8a: Rename existing `AuthEndpoints` `{Login}` parameters to qualified names (Amendment 2026-05-23)
+
+The existing `[LoggerMessage]` methods at `AuthEndpoints.cs:178` (`ConnectValidatedWithWarning`), `:180` (`ConnectCommitted`), and `:188` (`CommitSucceeded`) declare a parameter named bare `login`. The `LoggerMessage` source generator emits the parameter name verbatim as the structured-log field key; `SensitiveFieldScrubber.BlockedFieldNames` matches `login` case-insensitively, so those three log lines write `[REDACTED]` today — a silent forensic gap captured in the deferrals sidecar (`[Risk] Existing AuthEndpoints.cs LoggerMessage methods silently redact GitHub login`). Folding the rename into this PR2 commit is the cheapest fix path since the implementer is already in the same file adding `LogIdentityChanged`.
+
+- [ ] **Step 1: Rename parameters in the three methods**
+
+| Method (line) | Old parameter name | New parameter name |
+|---|---|---|
+| `ConnectValidatedWithWarning` (line ~178) | `login` | `validatedLogin` |
+| `ConnectCommitted` (line ~180) | `login` | `committedLogin` |
+| `CommitSucceeded` (line ~188) | `login` | `committedLogin` |
+
+Update the `Message` templates to match: `validated for login={ValidatedLogin}` and `committed for login={CommittedLogin}`. The user-visible message text still reads "login" (the template token name is what changes); the source generator's structured-log field key takes on the new qualified name.
+
+- [ ] **Step 2: Update call sites in `AuthEndpoints.cs`**
+
+Grep for `ConnectValidatedWithWarning(`, `ConnectCommitted(`, `CommitSucceeded(` and update each call site's parameter name. These are positional in the partial method signature, so the call-site argument doesn't change name — only the declaration's parameter name does.
+
+- [ ] **Step 3: Add a regression test**
+
+In `tests/PRism.Web.Tests/Endpoints/AuthEndpointsLoggingTests.cs` (or extend an existing logging-discipline test):
+
+```csharp
+[Fact]
+public async Task ConnectHappyPath_LogsValidatedLogin_NotRedacted()
+{
+    using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    var logCapture = factory.Services.GetRequiredService<InMemoryLoggerProvider>();
+    // ... drive /api/auth/connect happy path with login "alice" ...
+    var entries = logCapture.GetEntries();
+    entries.Should().Contain(e => e.Message.Contains("validated for login=alice"));
+    entries.Should().NotContain(e => e.Message.Contains("validated for login=[REDACTED]"));
+}
+```
+
+- [ ] **Step 4: Build + test + commit**
+
+```bash
+dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~AuthEndpointsLogging" --no-restore
+git add PRism.Web/Endpoints/AuthEndpoints.cs tests/PRism.Web.Tests/Endpoints/AuthEndpointsLoggingTests.cs
+git commit -m "fix(s6-pr2): rename AuthEndpoints {Login} params to qualified names (forensic gap)"
+```
+
+### Task 2.8b: Add `/api/auth/replace` to the 16 KiB body-size cap (Amendment 2026-05-23)
+
+`Program.cs:165-193` defines a `UseWhen` predicate that applies a 16 KiB body cap to mutating endpoints (`/api/events/subscriptions`, `PUT /api/pr/*/draft`, `POST /api/pr/*/reload`, `/submit`, `/submit/foreign-pending-review/*`, `/drafts/discard-all`). The new `POST /api/auth/replace` is currently absent. One-line consistency fix per the deferrals sidecar `[Risk] POST /api/auth/replace is absent from the 16 KiB body-size-cap predicate`.
+
+- [ ] **Step 1: Extend the `UseWhen` predicate in `Program.cs`**
+
+Add `/api/auth/replace` to the path-prefix set the predicate matches. If the existing predicate is a string-equality check, extend it to include the new path; if it's a regex or path-prefix check, the addition is mechanical.
+
+- [ ] **Step 2: Add a regression test in `AuthReplaceEndpointTests.cs`**
+
+```csharp
+[Fact]
+public async Task POST_replace_BodyOverSizeCap_Returns413()
+{
+    using var factory = new PRismWebApplicationFactory();
+    using var client = factory.CreateClient();
+    var oversized = new string('x', 17 * 1024);   // 17 KiB, just over the 16 KiB cap
+    var resp = await client.PostAsJsonAsync("/api/auth/replace", new { pat = oversized });
+    resp.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+}
+```
+
+- [ ] **Step 3: Build + test + commit**
+
+```bash
+dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~AuthReplaceEndpointTests.POST_replace_BodyOverSizeCap" --no-restore
+git add PRism.Web/Program.cs tests/PRism.Web.Tests/Endpoints/AuthReplaceEndpointTests.cs
+git commit -m "fix(s6-pr2): cap /api/auth/replace body at 16 KiB (consistency with mutating endpoints)"
+```
+
 ### Task 2.9-pre: Assert CSRF/Origin coverage on `/api/auth/replace` (round-1 ce-doc-review)
 
 - [ ] **Step 1: Verify middleware coverage** — read `PRism.Web/Program.cs` and `PRism.Web/Middleware/OriginCheckMiddleware.cs` to confirm the middleware runs for all `/api/*` mutating routes. If the existing middleware's path filter excludes the new endpoint, add `/api/auth/replace` to the covered set OR move the registration to a global Use().
@@ -1390,7 +1538,7 @@ describe('usePreferences — richer GET shape', () => {
           'mentioned': true,
           'ci-failing': false,
         }},
-        github: { host: 'https://github.com', configPath: '/Users/x/AppData/Local/PRism/config.json' },
+        github: { host: 'https://github.com', configPath: '/Users/x/AppData/Local/PRism/config.json', logsPath: '/Users/x/AppData/Local/PRism/logs' },
       }), { status: 200, headers: { 'content-type': 'application/json' } }),
     );
   });
@@ -1403,6 +1551,7 @@ describe('usePreferences — richer GET shape', () => {
     expect(result.current.preferences!.inbox.sections['review-requested']).toBe(true);
     expect(result.current.preferences!.inbox.sections['awaiting-author']).toBe(false);
     expect(result.current.preferences!.github.configPath).toContain('config.json');
+    expect(result.current.preferences!.github.logsPath).toContain('logs');   // Amendment 2026-05-23
   });
 });
 ```
@@ -1424,7 +1573,7 @@ export interface UiPreferences {
     'mentioned':        boolean;
     'ci-failing':       boolean;
   }};
-  github: { host: string; configPath: string };
+  github: { host: string; configPath: string; logsPath: string };   // Amendment 2026-05-23: logsPath added
 }
 ```
 
@@ -1589,7 +1738,7 @@ vi.mock('../../src/hooks/usePreferences', () => ({
         'review-requested': true, 'awaiting-author': true, 'authored-by-me': true,
         'mentioned': true, 'ci-failing': true,
       }},
-      github: { host: 'https://github.com', configPath: '/path/to/config.json' },
+      github: { host: 'https://github.com', configPath: '/path/to/config.json', logsPath: '/path/to/logs' },
     },
     error: null,
     refetch: vi.fn(),
@@ -1712,7 +1861,7 @@ vi.mock('../../src/hooks/usePreferences', () => ({
         'review-requested': true, 'awaiting-author': true, 'authored-by-me': true,
         'mentioned': true, 'ci-failing': true,
       }},
-      github: { host: 'https://github.com', configPath: '/x/config.json' },
+      github: { host: 'https://github.com', configPath: '/x/config.json', logsPath: '/x/logs' },
     },
     error: null, refetch: vi.fn(), set: setMock,
   }),
@@ -1787,7 +1936,10 @@ cd .. && git add frontend/src/components/Settings/InboxSectionsSection.tsx front
 git commit -m "feat(s6-pr3): InboxSectionsSection — five toggles with aria-describedby helper"
 ```
 
-### Task 3.5: GithubSection Copy-path button + clipboard failure UX — RED → GREEN
+### Task 3.5: ConnectionSection Copy-path button + clipboard failure UX — RED → GREEN
+
+(Renamed from `GithubSection` per the 2026-05-25 adversarial-round resync; see the resync table above. The conventions table's "Section rename" row explains why. The inline content below still references `GithubSection` in places — translate to `ConnectionSection` per the resync row, including the file path, test file, and `<h2>` heading text "Connection".)
+
 
 - [ ] **Step 1: Test**
 
@@ -1806,7 +1958,7 @@ vi.mock('../../src/hooks/usePreferences', () => ({
     preferences: {
       ui: { theme: 'system', accent: 'indigo', aiPreview: false },
       inbox: { sections: { 'review-requested': true, 'awaiting-author': true, 'authored-by-me': true, 'mentioned': true, 'ci-failing': true } },
-      github: { host: 'https://github.com', configPath: '/Users/x/AppData/Local/PRism/config.json' },
+      github: { host: 'https://github.com', configPath: '/Users/x/AppData/Local/PRism/config.json', logsPath: '/Users/x/AppData/Local/PRism/logs' },
     },
     error: null, refetch: vi.fn(), set: vi.fn(),
   }),
@@ -1850,9 +2002,9 @@ export function GithubSection() {
   const { preferences } = usePreferences();
   const { show } = useToast();
   if (!preferences) return null;
-  const { host, configPath } = preferences.github;
+  const { host, configPath, logsPath } = preferences.github;   // Amendment 2026-05-23: logsPath added
 
-  const onCopy = () => {
+  const copyConfigPath = () => {
     void (async () => {
       try {
         await navigator.clipboard.writeText(configPath);
@@ -1863,6 +2015,19 @@ export function GithubSection() {
     })();
   };
 
+  // Amendment 2026-05-23: distinct success toast — "paste into your editor" is wrong for a logs directory.
+  const copyLogsPath = () => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(logsPath);
+        show({ kind: 'success', message: 'Logs path copied — paste into a terminal or file browser.' });
+      } catch {
+        show({ kind: 'error', message: 'Could not copy path. Select it from the field next to the button.' });
+      }
+    })();
+  };
+
+  // v1 heading stays "GitHub" (spec § 2.7 Amendment 2026-05-23); rename deferred to v2 alongside multi-account UX.
   return (
     <section aria-labelledby="github-heading">
       <h2 id="github-heading">GitHub</h2>
@@ -1871,10 +2036,37 @@ export function GithubSection() {
         <span>Path to <code>config.json</code></span>
         <input type="text" readOnly value={configPath} aria-label="Path to config.json" />
       </label>
-      <button type="button" onClick={onCopy}>Copy config.json path</button>
+      <button type="button" onClick={copyConfigPath}>Copy config.json path</button>
+      <label>
+        <span>Path to PRism logs</span>
+        <input type="text" readOnly value={logsPath} aria-label="Path to PRism logs" />
+      </label>
+      <button type="button" onClick={copyLogsPath}>Copy logs path</button>
     </section>
   );
 }
+```
+
+Add Vitest test coverage for the second row in `frontend/__tests__/Settings/GithubSection.test.tsx`:
+
+```tsx
+it('always renders the logs path as a read-only input', () => {
+  render(<GithubSection />);
+  const input = screen.getByRole('textbox', { name: /path to prism logs/i });
+  expect(input).toHaveAttribute('readOnly');
+  expect(input).toHaveValue('/Users/x/AppData/Local/PRism/logs');
+});
+
+it('clicking Copy logs path surfaces the distinct success toast on resolve', async () => {
+  Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+  const user = userEvent.setup();
+  render(<GithubSection />);
+  await user.click(screen.getByRole('button', { name: /copy logs path/i }));
+  expect(showMock).toHaveBeenCalledWith({
+    kind: 'success',
+    message: 'Logs path copied — paste into a terminal or file browser.',
+  });
+});
 ```
 
 - [ ] **Step 3: Run + commit**
