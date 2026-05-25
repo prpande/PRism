@@ -29,7 +29,9 @@ internal sealed record InboxSectionsDto(
     [property: JsonPropertyName("review-requested")] bool ReviewRequested,
     [property: JsonPropertyName("awaiting-author")]  bool AwaitingAuthor,
     [property: JsonPropertyName("authored-by-me")]   bool AuthoredByMe,
-    [property: JsonPropertyName("mentioned")]        bool Mentioned,
+    // `Mentioned` serializes as `mentioned` natively under the camelCase policy — no
+    // [JsonPropertyName] needed (claude[bot] review on PR #69 caught the redundancy).
+    bool Mentioned,
     [property: JsonPropertyName("ci-failing")]       bool CiFailing);
 
 internal sealed record GithubPreferencesDto(string Host, string ConfigPath, string LogsPath);
