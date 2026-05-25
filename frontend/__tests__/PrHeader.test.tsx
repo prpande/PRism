@@ -188,7 +188,11 @@ describe('PrHeader', () => {
           'ci-failing': true,
         },
       },
-      github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+      github: {
+        host: 'https://github.com',
+        configPath: '/fake/config.json',
+        logsPath: '/fake/logs',
+      },
     };
     render(<PrHeader {...baseProps} session={readySession} />);
     const askAi = screen.getByRole('button', { name: /ask ai/i });

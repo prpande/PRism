@@ -18,7 +18,11 @@ const server = setupServer(
           'ci-failing': true,
         },
       },
-      github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+      github: {
+        host: 'https://github.com',
+        configPath: '/fake/config.json',
+        logsPath: '/fake/logs',
+      },
     }),
   ),
 );

@@ -66,7 +66,11 @@ function setHooks(
           'ci-failing': true,
         },
       },
-      github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+      github: {
+        host: 'https://github.com',
+        configPath: '/fake/config.json',
+        logsPath: '/fake/logs',
+      },
     } as PreferencesResponse,
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),
