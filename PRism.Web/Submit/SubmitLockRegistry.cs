@@ -25,8 +25,13 @@ namespace PRism.Web.Submit;
 /// (<see cref="_heldLocks"/>) rather than the never-evicting <see cref="_locks"/> dictionary.
 /// Reading <c>_locks.Any()</c> would report "held" forever after the first acquire because
 /// entries persist for the host's lifetime; the held-set tracks the currently-held subset so
-/// <see cref="AnyHeld"/> stays TOCTOU-safe and reflects actual in-flight submits. See spec
-/// § 3.5 for the design rationale.
+/// <see cref="AnyHeld"/> reflects actual in-flight submits. Note: the held-set is updated
+/// AFTER the semaphore is acquired, so there is a microsecond window in which the lock is held
+/// but the held-set is empty (an AnyHeld false negative). This is acceptable for the PoC's
+/// single-user model — the legitimate caller (Settings page + Replace-token flow) polls AnyHeld
+/// from the UI thread, not from inside the submit pipeline itself. The release direction is the
+/// one that previously broke (entries never evicted from <c>_locks</c>) and is what this design
+/// fixes. See spec § 3.5 for the design rationale.
 /// </summary>
 internal sealed class SubmitLockRegistry
 {
