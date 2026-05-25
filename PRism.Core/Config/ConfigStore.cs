@@ -12,7 +12,22 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private FileSystemWatcher? _watcher;
     private AppConfig _current = AppConfig.Default;
-    private static readonly HashSet<string> _allowedUiFields = new(StringComparer.Ordinal) { "theme", "accent", "aiPreview" };
+    // Allowlist for PatchAsync. The bare `theme` / `accent` / `aiPreview` keys are the
+    // legacy S0+S1 wire shape (under `ui.*` in config.json but flat on the wire); preserved
+    // for back-compat with the existing POST /api/preferences single-field contract. The
+    // dotted-path `inbox.sections.*` keys (S6 PR1) map onto InboxSectionsConfig in
+    // AppConfig.cs — canonical section set is documented in docs/spec/03-poc-features.md § 11.
+    private static readonly HashSet<string> _allowedFields = new(StringComparer.Ordinal)
+    {
+        "theme",
+        "accent",
+        "aiPreview",
+        "inbox.sections.review-requested",
+        "inbox.sections.awaiting-author",
+        "inbox.sections.authored-by-me",
+        "inbox.sections.mentioned",
+        "inbox.sections.ci-failing",
+    };
 
     public ConfigStore(string dataDir)
     {
@@ -78,21 +93,31 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         if (patch.Count != 1)
             throw new ConfigPatchException("patch must contain exactly one field");
         var (key, value) = patch.Single();
-        if (!_allowedUiFields.Contains(key))
+        if (!_allowedFields.Contains(key))
             throw new ConfigPatchException($"unknown field: {key}");
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var ui = _current.Ui;
-            var newUi = key switch
+            var sections = _current.Inbox.Sections;
+            _current = key switch
             {
-                "theme" => ui with { Theme = (string)value! },
-                "accent" => ui with { Accent = (string)value! },
-                "aiPreview" => ui with { AiPreview = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) },
+                "theme"     => _current with { Ui = ui with { Theme  = (string)value! } },
+                "accent"    => _current with { Ui = ui with { Accent = (string)value! } },
+                "aiPreview" => _current with { Ui = ui with { AiPreview = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } },
+                "inbox.sections.review-requested" =>
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                "inbox.sections.awaiting-author" =>
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { AwaitingAuthor  = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                "inbox.sections.authored-by-me" =>
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { AuthoredByMe    = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                "inbox.sections.mentioned" =>
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { Mentioned       = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                "inbox.sections.ci-failing" =>
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { CiFailing       = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
-            _current = _current with { Ui = newUi };
             await WriteToDiskAsync(ct).ConfigureAwait(false);
         }
         finally
