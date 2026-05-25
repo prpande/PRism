@@ -230,6 +230,7 @@ app.MapPrDetail();
 app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
 app.MapPrSubmitEndpoints();
+app.MapSubmitInFlight();
 app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();
 
