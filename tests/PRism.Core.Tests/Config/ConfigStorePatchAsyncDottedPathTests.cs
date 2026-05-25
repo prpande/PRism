@@ -85,4 +85,90 @@ public class ConfigStorePatchAsyncDottedPathTests
 
         store.Current.Ui.Theme.Should().Be("dark");
     }
+
+    // Copilot review finding on PR #69: PatchAsync previously did `(string)value!` directly
+    // for string keys and `Convert.ToBoolean(null, ...)` for boolean keys. The first throws
+    // InvalidCastException (→ 500 over the wire) on non-string input; the second silently
+    // returns `false` on null (→ setting flips off without a 400 response). Both surface
+    // worse since the allowlist grew to include five new boolean keys. PatchAsync now
+    // validates `value` per key BEFORE the switch and throws ConfigPatchException on
+    // type mismatch — the endpoint's existing catch turns that into 400, not 500.
+    //
+    // Theory covers every boolean key (the five inbox.sections.* plus aiPreview) against
+    // every non-boolean input shape PreferencesEndpoints.cs can produce.
+    public static TheoryData<string, object?> BooleanKeyTypeMismatchInputs() => new()
+    {
+        { "aiPreview", null },
+        { "aiPreview", "true" },
+        { "aiPreview", 1 },
+        { "inbox.sections.review-requested", null },
+        { "inbox.sections.review-requested", "false" },
+        { "inbox.sections.awaiting-author", null },
+        { "inbox.sections.authored-by-me", null },
+        { "inbox.sections.mentioned", null },
+        { "inbox.sections.ci-failing", null },
+        { "inbox.sections.ci-failing", 42 },
+    };
+
+    [Theory]
+    [MemberData(nameof(BooleanKeyTypeMismatchInputs))]
+    public async Task PatchAsync_BooleanKey_RejectsNonBoolean(string key, object? value)
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        Func<Task> act = () => store.PatchAsync(
+            new Dictionary<string, object?> { [key] = value },
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<ConfigPatchException>()
+            .Where(e => e.Message.Contains(key) && e.Message.Contains("bool"),
+                $"key '{key}' is a boolean field — non-boolean input must be rejected with a clear ConfigPatchException so the endpoint returns 400 (not 500 or silent-flip).");
+    }
+
+    public static TheoryData<string, object?> StringKeyTypeMismatchInputs() => new()
+    {
+        { "theme", null },
+        { "theme", true },
+        { "theme", 5 },
+        { "accent", null },
+        { "accent", false },
+    };
+
+    [Theory]
+    [MemberData(nameof(StringKeyTypeMismatchInputs))]
+    public async Task PatchAsync_StringKey_RejectsNonString(string key, object? value)
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        Func<Task> act = () => store.PatchAsync(
+            new Dictionary<string, object?> { [key] = value },
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<ConfigPatchException>()
+            .Where(e => e.Message.Contains(key) && e.Message.Contains("string"),
+                $"key '{key}' is a string field — non-string input must be rejected with a clear ConfigPatchException so the endpoint returns 400 (not 500).");
+    }
+
+    [Fact]
+    public async Task PatchAsync_BooleanKey_NullValue_DoesNotSilentlyFlipOff()
+    {
+        // Defends against the specific bug Copilot flagged: Convert.ToBoolean(null, ...)
+        // returns false, so a malformed JSON payload mapping to null (number, object, etc.)
+        // would silently disable the section without surfacing a 400.
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        Func<Task> act = () => store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.sections.ci-failing"] = null },
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<ConfigPatchException>();
+        // After rejection, the on-disk value MUST remain at its default (true).
+        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
+    }
 }

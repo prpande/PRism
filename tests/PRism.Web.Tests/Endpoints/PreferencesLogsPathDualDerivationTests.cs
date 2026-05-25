@@ -53,10 +53,6 @@ public sealed class PreferencesLogsPathDualDerivationTests : IDisposable
     [Fact]
     public async Task GET_preferences_logsPath_matches_FileLoggerProvider_output_dir()
     {
-        // Capture the daily-file path BEFORE provider work so a midnight rollover
-        // mid-test still gives us a deterministic file name to assert on.
-        var todayFile = $"prism-{DateTime.Now:yyyy-MM-dd}.log";
-
         await using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateClient();
 
@@ -81,9 +77,16 @@ public sealed class PreferencesLogsPathDualDerivationTests : IDisposable
         // (rather than waiting for factory teardown which would also wipe the DataDir).
         await factory.Services.GetRequiredService<FileLoggerProvider>().DisposeAsync();
 
-        var expectedFile = Path.Combine(wireLogsPath!, todayFile);
-        File.Exists(expectedFile).Should().BeTrue(
-            $"expected the FileLoggerProvider to write {todayFile} into the same directory the wire surfaces as github.logsPath ({wireLogsPath})");
+        // Assert SOME `prism-YYYY-MM-DD.log` lives under the wire-surfaced dir. We deliberately
+        // do not pin the exact filename to today's date: the FileLoggerProvider derives its
+        // target file from each event's `Timestamp.LocalDateTime` per call (see
+        // FileLoggerProvider.WriteEventAsync), so if the test crosses local midnight between
+        // capturing "today" and the writer task scheduling, pinning to a pre-captured filename
+        // produces a false negative. Listing the directory for any `prism-*.log` match keeps the
+        // assertion robust through the rollover. Copilot review feedback on PR #69.
+        var matches = Directory.GetFiles(wireLogsPath!, "prism-*.log");
+        matches.Should().NotBeEmpty(
+            $"expected the FileLoggerProvider to write a prism-YYYY-MM-DD.log into the same directory the wire surfaces as github.logsPath ({wireLogsPath})");
 
         // Belt-and-suspenders: assert (1) and (2) agree on the dir derivation, not just that
         // some file landed somewhere — `Path.Combine(factory.DataDir, "logs")` is the canonical

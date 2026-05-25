@@ -12,22 +12,33 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private FileSystemWatcher? _watcher;
     private AppConfig _current = AppConfig.Default;
-    // Allowlist for PatchAsync. The bare `theme` / `accent` / `aiPreview` keys are the
-    // legacy S0+S1 wire shape (under `ui.*` in config.json but flat on the wire); preserved
-    // for back-compat with the existing POST /api/preferences single-field contract. The
-    // dotted-path `inbox.sections.*` keys (S6 PR1) map onto InboxSectionsConfig in
-    // AppConfig.cs — canonical section set is documented in docs/spec/03-poc-features.md § 11.
-    private static readonly HashSet<string> _allowedFields = new(StringComparer.Ordinal)
-    {
-        "theme",
-        "accent",
-        "aiPreview",
-        "inbox.sections.review-requested",
-        "inbox.sections.awaiting-author",
-        "inbox.sections.authored-by-me",
-        "inbox.sections.mentioned",
-        "inbox.sections.ci-failing",
-    };
+    // Allowlist + expected-type table for PatchAsync. The bare `theme` / `accent` / `aiPreview`
+    // keys are the legacy S0+S1 wire shape (under `ui.*` in config.json but flat on the wire);
+    // preserved for back-compat with the existing POST /api/preferences single-field contract.
+    // The dotted-path `inbox.sections.*` keys (S6 PR1) map onto InboxSectionsConfig in
+    // AppConfig.cs — canonical section set documented in docs/spec/03-poc-features.md § 11.
+    //
+    // The expected-type table is the SOURCE OF TRUTH for the allowlist — if a key is here, it
+    // is allowed; otherwise it is rejected. Per-key type validation runs before the switch
+    // arms so a malformed payload (e.g., `{ "aiPreview": "true" }` from a misbehaving client,
+    // or PreferencesEndpoints' default-null fallback on numbers/objects/arrays) produces a
+    // clean ConfigPatchException → 400 from the endpoint, NOT an InvalidCastException → 500
+    // (the old `(string)value!` path) or a silent `Convert.ToBoolean(null) == false` flip
+    // (the old `Convert.ToBoolean` path). Caught by Copilot review on PR #69.
+    private enum ConfigFieldType { String, Bool }
+
+    private static readonly Dictionary<string, ConfigFieldType> _allowedFields =
+        new(StringComparer.Ordinal)
+        {
+            ["theme"]                            = ConfigFieldType.String,
+            ["accent"]                           = ConfigFieldType.String,
+            ["aiPreview"]                        = ConfigFieldType.Bool,
+            ["inbox.sections.review-requested"]  = ConfigFieldType.Bool,
+            ["inbox.sections.awaiting-author"]   = ConfigFieldType.Bool,
+            ["inbox.sections.authored-by-me"]    = ConfigFieldType.Bool,
+            ["inbox.sections.mentioned"]         = ConfigFieldType.Bool,
+            ["inbox.sections.ci-failing"]        = ConfigFieldType.Bool,
+        };
 
     public ConfigStore(string dataDir)
     {
@@ -94,8 +105,24 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         if (patch.Count != 1)
             throw new ConfigPatchException("patch must contain exactly one field");
         var (key, value) = patch.Single();
-        if (!_allowedFields.Contains(key))
+        if (!_allowedFields.TryGetValue(key, out var expectedType))
             throw new ConfigPatchException($"unknown field: {key}");
+
+        // Per-key type validation BEFORE the gate so a malformed payload returns 400
+        // (via the endpoint's existing ConfigPatchException → BadRequest mapping) rather
+        // than crashing in the cast / silently flipping a bool. Two value shapes are
+        // rejected for boolean fields: null (the endpoint's fallback for unsupported
+        // JsonValueKinds) and any non-bool primitive. For string fields, null and any
+        // non-string primitive are rejected. Caught by Copilot review on PR #69.
+        switch (expectedType)
+        {
+            case ConfigFieldType.String when value is not string:
+                throw new ConfigPatchException(
+                    $"field '{key}' expects a string value (got {DescribeValue(value)})");
+            case ConfigFieldType.Bool when value is not bool:
+                throw new ConfigPatchException(
+                    $"field '{key}' expects a bool value (got {DescribeValue(value)})");
+        }
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -106,17 +133,17 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             {
                 "theme"     => _current with { Ui = ui with { Theme  = (string)value! } },
                 "accent"    => _current with { Ui = ui with { Accent = (string)value! } },
-                "aiPreview" => _current with { Ui = ui with { AiPreview = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } },
+                "aiPreview" => _current with { Ui = ui with { AiPreview = (bool)value! } },
                 "inbox.sections.review-requested" =>
-                    _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = (bool)value! } } },
                 "inbox.sections.awaiting-author" =>
-                    _current with { Inbox = _current.Inbox with { Sections = sections with { AwaitingAuthor  = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { AwaitingAuthor  = (bool)value! } } },
                 "inbox.sections.authored-by-me" =>
-                    _current with { Inbox = _current.Inbox with { Sections = sections with { AuthoredByMe    = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { AuthoredByMe    = (bool)value! } } },
                 "inbox.sections.mentioned" =>
-                    _current with { Inbox = _current.Inbox with { Sections = sections with { Mentioned       = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { Mentioned       = (bool)value! } } },
                 "inbox.sections.ci-failing" =>
-                    _current with { Inbox = _current.Inbox with { Sections = sections with { CiFailing       = Convert.ToBoolean(value, System.Globalization.CultureInfo.InvariantCulture) } } },
+                    _current with { Inbox = _current.Inbox with { Sections = sections with { CiFailing       = (bool)value! } } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);
@@ -127,6 +154,18 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         }
         RaiseChanged();
     }
+
+    // Format the rejected value's type for the ConfigPatchException message. Used by
+    // PatchAsync's per-key type-validation block — the message reaches the caller via
+    // the endpoint's BadRequest mapping, so keep it short and free of secret material
+    // (we only describe the type, never the value contents).
+    private static string DescribeValue(object? value) => value switch
+    {
+        null      => "null",
+        string    => "string",
+        bool      => "bool",
+        var other => other.GetType().Name,
+    };
 
     private async Task ReadFromDiskAsync(CancellationToken ct)
     {

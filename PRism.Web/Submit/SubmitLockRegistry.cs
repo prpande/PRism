@@ -55,10 +55,15 @@ internal sealed class SubmitLockRegistry
         return new SubmitLockHandle(sem, key, _heldLocks);
     }
 
-    // Cheap, TOCTOU-safe "is any submit lock currently held?" probe. Returns the first
-    // observed held key (ConcurrentDictionary enumeration order is unspecified — callers
-    // must not depend on which key surfaces when more than one is held; the value is for
-    // forensic / UI display only).
+    // Best-effort "is any submit lock currently held?" probe (spec § 3.5). NOT a hard
+    // TOCTOU guarantee — readers can race against in-flight acquire (held-set written
+    // AFTER WaitAsync returns → microsecond false-negative window) and against dispose
+    // (held-set TryRemove → concurrent reader may see the key disappear). Acceptable
+    // for the UI-thread caller (Settings page + Replace-token flow). For the design
+    // rationale + race-window discussion, see the class-level XML doc above.
+    // Returns the first observed held key (ConcurrentDictionary enumeration order is
+    // unspecified — callers must not depend on which key surfaces when more than one
+    // is held; the value is for forensic / UI display only).
     public (bool Held, string? PrRef) AnyHeld()
     {
         foreach (var key in _heldLocks.Keys)
