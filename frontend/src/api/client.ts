@@ -78,7 +78,16 @@ async function request<T>(
     throw new ApiError(resp.status, requestId, parsed);
   }
   if (resp.status === 204) return undefined as unknown as T;
-  return (await resp.json()) as T;
+  // 200 with an empty response body is valid — PrDraftEndpoints' PatchOutcome.Applied
+  // path returns Results.Ok() (no body) for patches that don't carry an AssignedIdResponse
+  // (overrideStale, confirmVerdict, markAllRead, update/delete-draft). Without this guard,
+  // `resp.json()` throws SyntaxError on empty bodies; sendPatch catches it as a "network"
+  // failure and the caller's onMutated() never fires, leaving the FE session stale until
+  // the next page reload or non-own-tab SSE event. The real-flow stale-OID spec is the
+  // regression net for this — see docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md.
+  const text = await resp.text();
+  if (text === '') return undefined as unknown as T;
+  return JSON.parse(text) as T;
 }
 
 export const apiClient = {

@@ -79,6 +79,33 @@ describe('apiClient', () => {
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'DELETE' });
   });
 
+  it('PUT returns undefined on 200 with empty body', async () => {
+    // PrDraftEndpoints' PatchOutcome.Applied path returns Results.Ok() — 200 with no
+    // body — for patches that don't carry an AssignedIdResponse (overrideStale,
+    // confirmVerdict, markAllRead, update/delete-draft). Before this guard, the JSON
+    // parse threw SyntaxError and sendPatch's catch mapped it to a "network" failure;
+    // the calling component's onMutated() never fired and the FE session stayed stale.
+    // The real-flow stale-OID spec is the regression net.
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response('', { status: 200 })) as unknown as typeof fetch;
+    const result = await apiClient.put('/api/pr/foo/bar/1/draft', { overrideStale: { id: 'd1' } });
+    expect(result).toBeUndefined();
+  });
+
+  it('PUT returns undefined on 200 with Content-Length: 0', async () => {
+    // Same case as above, but explicit Content-Length header — confirms the empty-text
+    // check is what gates the parse skip (Content-Length is informational; the
+    // implementation reads resp.text() and returns undefined iff the body is empty).
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response('', { status: 200, headers: { 'Content-Length': '0' } }),
+      ) as unknown as typeof fetch;
+    const result = await apiClient.put('/api/pr/foo/bar/1/draft', { overrideStale: { id: 'd1' } });
+    expect(result).toBeUndefined();
+  });
+
   it('DELETE throws ApiError on non-2xx', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue(
       new Response('{"error":"not found"}', {
