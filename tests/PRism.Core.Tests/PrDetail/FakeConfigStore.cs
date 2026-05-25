@@ -8,6 +8,8 @@ namespace PRism.Core.Tests.PrDetail;
 internal sealed class FakeConfigStore : IConfigStore
 {
     public AppConfig Current { get; set; } = AppConfig.Default;
+    // PR-detail tests never read ConfigPath, but the interface requires it (S6 PR1).
+    public string ConfigPath { get; set; } = "/fake/config.json";
     public Exception? LastLoadError => null;
     public event EventHandler<ConfigChangedEventArgs>? Changed;
 

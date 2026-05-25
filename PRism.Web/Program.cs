@@ -39,6 +39,14 @@ if (Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1"
 // Resolve dataDir from configuration (test sets it via UseSetting; production uses SpecialFolder).
 var dataDir = builder.Configuration["DataDir"] ?? DataDirectoryResolver.Resolve();
 
+// Register LogsPathInfo BEFORE AddPRismFileLogger so the dual derivation lives in one
+// place (Program.cs) and the GET /api/preferences handler can read it without taking
+// a hard dependency on FileLoggerProvider — which intentionally doesn't register under
+// the default Test env (FileLoggerExtensions.cs gates it on env != "Test" unless
+// PRISM_FILE_LOGGER_FORCE=1). Dual-derivation invariant is test-pinned by
+// PreferencesLogsPathDualDerivationTests. Spec § 2.4 + S6 deferrals.
+builder.Services.AddSingleton(new PRism.Web.Logging.LogsPathInfo(Path.Combine(dataDir, "logs")));
+
 builder.Logging.AddPRismFileLogger(dataDir, builder.Environment);
 
 builder.Services.AddPrismCore(dataDir);

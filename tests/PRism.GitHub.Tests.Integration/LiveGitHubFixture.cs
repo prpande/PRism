@@ -148,6 +148,8 @@ public sealed class LiveGitHubFixture : IDisposable
 internal sealed class InMemoryConfigStoreForIntegrationTests : IConfigStore
 {
     public AppConfig Current { get; } = AppConfig.Default;
+    // Live-GitHub integration tests never read ConfigPath, but the interface requires it (S6 PR1).
+    public string ConfigPath { get; } = "/integration/config.json";
     public Exception? LastLoadError => null;
     public Task InitAsync(CancellationToken ct) => Task.CompletedTask;
     public Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct) =>

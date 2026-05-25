@@ -35,6 +35,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     }
 
     public AppConfig Current => _current;
+    public string ConfigPath => _path;
     public Exception? LastLoadError { get; private set; }
     public event EventHandler<ConfigChangedEventArgs>? Changed;
 
