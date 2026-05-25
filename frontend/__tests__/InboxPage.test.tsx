@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { InboxResponse, AiCapabilities, UiPreferences } from '../src/api/types';
+import type { InboxResponse, AiCapabilities, PreferencesResponse } from '../src/api/types';
 import { InboxPage } from '../src/pages/InboxPage';
 
 vi.mock('../src/hooks/useInbox', () => ({
@@ -52,10 +52,22 @@ function setHooks(
   });
   vi.mocked(usePreferences).mockReturnValue({
     preferences: {
-      theme: 'system',
-      accent: 'indigo',
-      aiPreview: opts.aiPreview ?? false,
-    } as UiPreferences,
+      ui: {
+        theme: 'system',
+        accent: 'indigo',
+        aiPreview: opts.aiPreview ?? false,
+      },
+      inbox: {
+        sections: {
+          'review-requested': true,
+          'awaiting-author': true,
+          'authored-by-me': true,
+          mentioned: true,
+          'ci-failing': true,
+        },
+      },
+      github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+    } as PreferencesResponse,
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),
     set: vi.fn().mockResolvedValue(undefined),

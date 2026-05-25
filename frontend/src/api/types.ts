@@ -1,10 +1,39 @@
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'indigo' | 'amber' | 'teal';
 
+// S6 PR1 widened GET /api/preferences from the flat { theme, accent, aiPreview }
+// shape to a nested { ui, inbox, github } shape (spec § 2.4). UiPreferences is now
+// the inner `ui` block; PreferencesResponse wraps all three. PR3 will introduce
+// the Settings page consumers; existing call sites (HeaderControls, InboxPage,
+// PrHeader, OverviewTab, AiComposerAssistant) read via `preferences.ui.<field>`.
 export interface UiPreferences {
   theme: Theme;
   accent: Accent;
   aiPreview: boolean;
+}
+
+export interface InboxSectionsPreferences {
+  'review-requested': boolean;
+  'awaiting-author': boolean;
+  'authored-by-me': boolean;
+  mentioned: boolean;
+  'ci-failing': boolean;
+}
+
+export interface InboxPreferences {
+  sections: InboxSectionsPreferences;
+}
+
+export interface GithubPreferences {
+  host: string;
+  configPath: string;
+  logsPath: string;
+}
+
+export interface PreferencesResponse {
+  ui: UiPreferences;
+  inbox: InboxPreferences;
+  github: GithubPreferences;
 }
 
 export interface AiCapabilities {

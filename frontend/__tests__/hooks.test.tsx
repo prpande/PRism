@@ -8,7 +8,19 @@ import { useAuth } from '../src/hooks/useAuth';
 
 const server = setupServer(
   http.get('/api/preferences', () =>
-    HttpResponse.json({ theme: 'system', accent: 'indigo', aiPreview: false }),
+    HttpResponse.json({
+      ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+      inbox: {
+        sections: {
+          'review-requested': true,
+          'awaiting-author': true,
+          'authored-by-me': true,
+          mentioned: true,
+          'ci-failing': true,
+        },
+      },
+      github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+    }),
   ),
   http.get('/api/capabilities', () =>
     HttpResponse.json({
@@ -38,7 +50,7 @@ describe('usePreferences', () => {
   it('fetches preferences on mount', async () => {
     const { result } = renderHook(() => usePreferences());
     await waitFor(() => expect(result.current.preferences).not.toBeNull());
-    expect(result.current.preferences?.theme).toBe('system');
+    expect(result.current.preferences?.ui.theme).toBe('system');
   });
 });
 

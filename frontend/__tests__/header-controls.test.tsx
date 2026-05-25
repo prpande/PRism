@@ -15,7 +15,19 @@ describe('HeaderControls', () => {
   beforeEach(() => {
     server.use(
       http.get('/api/preferences', () =>
-        HttpResponse.json({ theme: 'system', accent: 'indigo', aiPreview: false }),
+        HttpResponse.json({
+          ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+          inbox: {
+            sections: {
+              'review-requested': true,
+              'awaiting-author': true,
+              'authored-by-me': true,
+              mentioned: true,
+              'ci-failing': true,
+            },
+          },
+          github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+        }),
       ),
     );
   });
@@ -32,7 +44,19 @@ describe('HeaderControls', () => {
     server.use(
       http.post('/api/preferences', async ({ request }) => {
         requestBody = await request.json();
-        return HttpResponse.json({ theme: 'light', accent: 'indigo', aiPreview: false });
+        return HttpResponse.json({
+          ui: { theme: 'light', accent: 'indigo', aiPreview: false },
+          inbox: {
+            sections: {
+              'review-requested': true,
+              'awaiting-author': true,
+              'authored-by-me': true,
+              mentioned: true,
+              'ci-failing': true,
+            },
+          },
+          github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+        });
       }),
     );
     render(<HeaderControls />);

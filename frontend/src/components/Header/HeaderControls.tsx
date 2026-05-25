@@ -34,17 +34,20 @@ export function HeaderControls() {
   const { refetch: refetchCapabilities } = useCapabilities();
 
   useEffect(() => {
-    if (preferences) applyToDocument(preferences.theme, preferences.accent);
+    if (preferences) applyToDocument(preferences.ui.theme, preferences.ui.accent);
   }, [preferences]);
 
   if (!preferences) return null;
 
+  // Spec § 2.4 widened GET /api/preferences to a nested shape; the legacy bare
+  // `theme`/`accent`/`aiPreview` POST keys still work via the back-compat path in
+  // ConfigStore.PatchAsync's allowlist, so `set('theme', next)` keeps functioning.
   const cycleTheme = () => {
-    const next = THEMES[(THEMES.indexOf(preferences.theme) + 1) % THEMES.length];
+    const next = THEMES[(THEMES.indexOf(preferences.ui.theme) + 1) % THEMES.length];
     void set('theme', next);
   };
   const cycleAccent = () => {
-    const next = ACCENTS[(ACCENTS.indexOf(preferences.accent) + 1) % ACCENTS.length];
+    const next = ACCENTS[(ACCENTS.indexOf(preferences.ui.accent) + 1) % ACCENTS.length];
     void set('accent', next);
   };
   // Capabilities mirror the same AiPreviewState the preference drives. Refetch
@@ -53,15 +56,15 @@ export function HeaderControls() {
   // for a window-focus event. Fire-and-forget — the refetch is idempotent and
   // the hook handles its own error state.
   const toggleAi = async () => {
-    await set('aiPreview', !preferences.aiPreview);
+    await set('aiPreview', !preferences.ui.aiPreview);
     void refetchCapabilities();
   };
 
   return (
     <div className={styles.cluster}>
-      <ThemeToggle theme={preferences.theme} onClick={cycleTheme} />
-      <AccentPicker accent={preferences.accent} onClick={cycleAccent} />
-      <AiPreviewToggle on={preferences.aiPreview} onClick={toggleAi} />
+      <ThemeToggle theme={preferences.ui.theme} onClick={cycleTheme} />
+      <AccentPicker accent={preferences.ui.accent} onClick={cycleAccent} />
+      <AiPreviewToggle on={preferences.ui.aiPreview} onClick={toggleAi} />
     </div>
   );
 }

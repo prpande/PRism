@@ -18,7 +18,7 @@ export function InboxPage() {
   const { preferences } = usePreferences();
 
   const showCategoryChip = capabilities?.inboxEnrichment === true;
-  const showActivityRail = preferences?.aiPreview === true;
+  const showActivityRail = preferences?.ui.aiPreview === true;
   const sections = data?.sections ?? [];
   const allEmpty = sections.length > 0 && sections.every((s) => s.items.length === 0);
 

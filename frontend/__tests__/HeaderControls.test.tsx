@@ -8,7 +8,19 @@ const refetchCapabilitiesMock = vi.fn(() => Promise.resolve());
 
 vi.mock('../src/hooks/usePreferences', () => ({
   usePreferences: () => ({
-    preferences: { theme: 'system', accent: 'indigo', aiPreview: false },
+    preferences: {
+      ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+      inbox: {
+        sections: {
+          'review-requested': true,
+          'awaiting-author': true,
+          'authored-by-me': true,
+          mentioned: true,
+          'ci-failing': true,
+        },
+      },
+      github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+    },
     error: null,
     refetch: vi.fn(),
     set: setMock,

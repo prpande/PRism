@@ -29,7 +29,19 @@ vi.mock('../src/hooks/useCapabilities', () => ({
 }));
 vi.mock('../src/hooks/usePreferences', () => ({
   usePreferences: vi.fn(() => ({
-    preferences: { theme: 'system', accent: 'indigo', aiPreview: false },
+    preferences: {
+      ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+      inbox: {
+        sections: {
+          'review-requested': true,
+          'awaiting-author': true,
+          'authored-by-me': true,
+          mentioned: true,
+          'ci-failing': true,
+        },
+      },
+      github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+    },
     error: null,
     refetch: vi.fn(),
     set: vi.fn(),
