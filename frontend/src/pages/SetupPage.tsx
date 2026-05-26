@@ -104,8 +104,18 @@ export function SetupPage() {
     } catch (e) {
       let message: string;
       if (e instanceof ApiError) {
-        const body = (e.body ?? null) as { error?: string } | null;
-        message = replaceErrorMessage(body?.error);
+        // apiClient.request falls back to the raw response text when the body
+        // doesn't parse as JSON (corporate proxy HTML 502, AV interceptor, etc.),
+        // so e.body can be a string at runtime. Type-guard before reading .error
+        // so an HTML error page doesn't silently funnel into the generic
+        // "Validation failed." default with no infrastructure-vs-validation
+        // distinction visible to the user.
+        const body = e.body;
+        const code =
+          typeof body === 'object' && body !== null
+            ? (body as { error?: unknown }).error
+            : undefined;
+        message = replaceErrorMessage(typeof code === 'string' ? code : undefined);
       } else {
         message = (e as Error).message;
       }

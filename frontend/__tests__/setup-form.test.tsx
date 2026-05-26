@@ -75,4 +75,20 @@ describe('SetupForm', () => {
     const cancel = screen.getByRole('link', { name: /cancel/i });
     expect(cancel).toHaveAttribute('href', '/settings');
   });
+
+  it('disables Cancel (renders as aria-disabled span, not a navigable link) while busy=true', () => {
+    // Regression for code-review #1: a clickable Cancel during the in-flight
+    // /api/auth/replace would navigate to /settings without aborting the fetch,
+    // leading to a silent server-side commit the user thought they cancelled.
+    // While busy the Cancel surface must NOT be a <Link>.
+    render(
+      <MemoryRouter>
+        <SetupForm host="https://github.com" onSubmit={vi.fn()} isReplaceMode busy />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole('link', { name: /cancel/i })).not.toBeInTheDocument();
+    const disabled = screen.getByText('Cancel');
+    expect(disabled.tagName).toBe('SPAN');
+    expect(disabled).toHaveAttribute('aria-disabled', 'true');
+  });
 });

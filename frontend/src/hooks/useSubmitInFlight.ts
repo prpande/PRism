@@ -28,7 +28,14 @@ export function useSubmitInFlight(): SubmitInFlightState {
         const resp = await apiClient.get<SubmitInFlightState>('/api/submit/in-flight');
         if (!cancelled) setState(resp);
       } catch {
-        /* tolerated; best-effort guard */
+        // Reset to fail-open ({inFlight:false}) on error rather than retaining
+        // stale state. If a prior fetch saw inFlight=true and the post-lock-release
+        // refetch 503s (server restart, transient network), retaining the prior
+        // state would leave the Replace link stuck aria-disabled with no future
+        // event to clear it (the submit is already done; no state-changed will
+        // fire). Fail-open is safe: the backend's /api/auth/replace 409 still
+        // enforces correctness on the actual replace attempt.
+        if (!cancelled) setState({ inFlight: false, prRef: null });
       }
     };
     void fetchOnce();

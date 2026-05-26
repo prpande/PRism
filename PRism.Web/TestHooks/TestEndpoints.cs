@@ -387,13 +387,19 @@ internal static class TestEndpoints
                 return Results.Conflict(new { error = "already-held" });
 
             var prRef = new PrReference(req.Owner, req.Repo, req.Number);
-            // Long timeout (effectively eternal for a test) — the spec releases via
-            // /test/submit/release-hold. The endpoint blocks until acquired; if a
-            // real submit is already running for this prRef the test failed to set up
-            // a clean fixture, which we surface as a 408 timeout.
-            var handle = await locks.TryAcquireAsync(prRef, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+            // Short timeout (3s) — the Volatile pre-check above already catches the
+            // common case (s_heldHandle != null). The only path that blocks here is
+            // cross-spec lock leakage where a prior /test/submit/hold left the
+            // SemaphoreSlim acquired but s_heldHandle was nulled by /test/reset's
+            // gate-then-dispose ordering. Surface that condition as a fast 408
+            // rather than a 30s opaque CI hang — the message names the cause so a
+            // spec author can grep their cleanup hooks. Real submit contention is
+            // out of scope for this hook (workers:1 + Test-env only).
+            var handle = await locks.TryAcquireAsync(prRef, TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
             if (handle is null)
-                return Results.Problem("Timed out acquiring SubmitLockRegistry slot.", statusCode: StatusCodes.Status408RequestTimeout);
+                return Results.Problem(
+                    "Timed out acquiring SubmitLockRegistry slot — likely a cross-spec lock leak (prior /test/submit/hold not followed by /test/submit/release-hold).",
+                    statusCode: StatusCodes.Status408RequestTimeout);
 
             bool lostRace;
             lock (s_holdGate)

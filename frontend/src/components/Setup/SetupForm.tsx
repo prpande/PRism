@@ -77,11 +77,24 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
       <button type="submit" className={styles.continue} disabled={pat.trim().length === 0 || busy}>
         {busy ? 'Validating…' : 'Continue'}
       </button>
-      {isReplaceMode && (
-        <Link to="/settings" className={styles.cancel}>
-          Cancel
-        </Link>
-      )}
+      {isReplaceMode &&
+        (busy ? (
+          // While the replace POST is in flight, neutralize Cancel: the backend
+          // has no abort path once /api/auth/replace reaches WriteTransientAsync
+          // → ValidateCredentialsAsync → CommitAsync. A clickable Cancel that
+          // navigates to /settings WITHOUT aborting the fetch would let the
+          // server complete the swap (drafts preserved, Node IDs cleared) while
+          // the user thinks they cancelled — the worst kind of silent commit.
+          // Rendered as aria-disabled with the disabled-link CSS so the affordance
+          // stays visible (consistent UI) but unreachable until Continue resolves.
+          <span aria-disabled="true" className={`${styles.cancel} ${styles.cancelDisabled}`}>
+            Cancel
+          </span>
+        ) : (
+          <Link to="/settings" className={styles.cancel}>
+            Cancel
+          </Link>
+        ))}
     </form>
   );
 }

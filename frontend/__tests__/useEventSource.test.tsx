@@ -98,6 +98,35 @@ describe('useEventSource / EventStreamProvider', () => {
     }
   });
 
+  it('dispatches the bridge window event even when an in-tree listener throws', async () => {
+    // Regression for code-review #2: original order was listeners.forEach → set
+    // parsed=true → dispatch bridge. A throwing listener aborted the try block
+    // and silently suppressed the bridge — useAuth + useSubmitInFlight would
+    // miss the signal even though JSON.parse succeeded. Fixed by dispatching
+    // the bridge BEFORE invoking listeners, and per-subscriber catch on each
+    // listener callback.
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <EventStreamProvider>{children}</EventStreamProvider>
+    );
+    const { result } = renderHook(() => useEventSource(), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    // Register a throwing in-tree listener.
+    const offThrowing = result.current!.on('identity-changed', () => {
+      throw new Error('downstream consumer bug');
+    });
+    const spy = vi.fn();
+    window.addEventListener('prism-identity-changed', spy);
+    try {
+      FakeEventSource.instance.dispatch('identity-changed', { type: 'identity-change' });
+      // The bridge MUST have fired despite the throwing listener.
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      offThrowing();
+      window.removeEventListener('prism-identity-changed', spy);
+    }
+  });
+
   it('does NOT dispatch the bridge window event when the payload is malformed JSON', async () => {
     // Regression: pre-fix, the bridge dispatch ran AFTER the try/catch and fired
     // even when JSON.parse failed — a garbled identity-changed frame would

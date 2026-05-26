@@ -173,24 +173,37 @@ export function openEventStream(): EventStreamHandle {
 
     EVENT_TYPES.forEach((type) => {
       es.addEventListener(type, (raw) => {
-        let parsed = false;
+        let parsed: EventPayloadByType[typeof type] | null = null;
         try {
-          const data = JSON.parse((raw as MessageEvent).data) as EventPayloadByType[typeof type];
-          listeners[type]?.forEach((cb) => (cb as (p: typeof data) => void)(data));
-          parsed = true;
+          parsed = JSON.parse((raw as MessageEvent).data) as EventPayloadByType[typeof type];
         } catch {
-          // Malformed payload — ignore. Skip the cross-provider bridge dispatch
-          // too: a garbled identity-changed frame must not trigger an unintended
-          // useAuth refetch (a 401 there would dispatch prism-auth-rejected on a
-          // stream whose malformed frame had nothing to do with auth).
+          // Malformed payload — ignore. Skip BOTH the listeners.forEach loop AND
+          // the cross-provider bridge dispatch: a garbled identity-changed frame
+          // must not trigger an unintended useAuth refetch (a 401 there would
+          // dispatch prism-auth-rejected on a stream whose malformed frame had
+          // nothing to do with auth).
         }
-        if (parsed) {
-          // Cross-provider bridge: dispatch a window event so consumers outside
-          // EventStreamProvider (useAuth at App-level) can react.
+        if (parsed !== null) {
+          // Cross-provider bridge fires FIRST, before any in-tree listener runs.
+          // Original order put the dispatch AFTER listeners.forEach, but a single
+          // throwing listener callback would abort the try block and silently
+          // suppress the bridge — useAuth + useSubmitInFlight would miss the
+          // signal even though JSON.parse succeeded. Dispatching first guarantees
+          // cross-provider consumers see every well-formed frame regardless of
+          // in-tree subscriber behavior.
           const winEventName = WINDOW_EVENT_BRIDGE[type];
           if (winEventName !== undefined && typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent(winEventName));
           }
+          const data = parsed;
+          listeners[type]?.forEach((cb) => {
+            try {
+              (cb as (p: typeof data) => void)(data);
+            } catch {
+              // A throwing in-tree listener must not affect peer listeners or
+              // the bridge dispatch already done above. Swallow per-subscriber.
+            }
+          });
         }
         resetWatchdog();
       });
