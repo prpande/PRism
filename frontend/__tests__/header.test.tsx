@@ -93,6 +93,14 @@ describe('Header', () => {
     await waitFor(() => expect(setupTab.textContent).toMatch(/^·\s*setup$/i));
   });
 
+  it('keeps Settings active on a nested settings route (future-proofing for /settings/<sub>)', () => {
+    renderAt('/settings/profile');
+    expect(screen.getByRole('link', { name: /^settings$/i })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
   it('omits the "·" indicator once a token is configured', async () => {
     renderAt('/setup');
     const setupTab = await screen.findByRole('link', { name: /setup/i });

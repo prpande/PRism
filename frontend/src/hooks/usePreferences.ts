@@ -18,6 +18,38 @@ export type PreferenceKey =
       | 'mentioned'
       | 'ci-failing'}`;
 
+type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'aiPreview'>;
+
+function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
+  if (key === 'theme') return prefs.ui.theme;
+  if (key === 'accent') return prefs.ui.accent;
+  if (key === 'aiPreview') return prefs.ui.aiPreview;
+  const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
+  return prefs.inbox.sections[id];
+}
+
+function writeKey(
+  prefs: PreferencesResponse,
+  key: PreferenceKey,
+  value: unknown,
+): PreferencesResponse {
+  if (key === 'theme')
+    return { ...prefs, ui: { ...prefs.ui, theme: value as PreferencesResponse['ui']['theme'] } };
+  if (key === 'accent')
+    return { ...prefs, ui: { ...prefs.ui, accent: value as PreferencesResponse['ui']['accent'] } };
+  if (key === 'aiPreview') return { ...prefs, ui: { ...prefs.ui, aiPreview: value as boolean } };
+  const id = (key as InboxSectionKey).slice(
+    'inbox.sections.'.length,
+  ) as keyof PreferencesResponse['inbox']['sections'];
+  return {
+    ...prefs,
+    inbox: {
+      ...prefs.inbox,
+      sections: { ...prefs.inbox.sections, [id]: value as boolean },
+    },
+  };
+}
+
 export function usePreferences() {
   const [preferences, setPreferences] = useState<PreferencesResponse | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -40,15 +72,17 @@ export function usePreferences() {
     return () => window.removeEventListener('focus', handler);
   }, [refetch]);
 
-  // Spec § 2.6 rollback: capture the snapshot before the POST so a 4xx/5xx/network
-  // failure restores the prior value AND surfaces a single error toast. The hook
-  // intentionally does NOT pre-apply the change locally — the server's response is
-  // the source of truth, and a pre-apply would briefly show a value that may never
-  // be persisted. The visible UX is "control briefly looks unchanged, then flips
-  // (success) or stays + toast (failure)" rather than "control flips, snaps back".
+  // Spec § 2.6 rollback: on POST failure, revert ONLY the failing key against
+  // the latest state — not the whole-snapshot `prior` that captured pre-call
+  // baseline. Whole-snapshot revert cascades: two near-simultaneous toggles
+  // each snapshot the same `prior = P0`; if A succeeds and B fails, B's
+  // rollback to P0 silently undoes A's successful local apply (the server is
+  // still correct; the UI lies until a focus refetch). Key-scoped patching via
+  // the functional setState form is race-safe because it composes against
+  // current state, not the captured snapshot.
   const set = useCallback(
     async (key: PreferenceKey, value: unknown) => {
-      const prior = preferences;
+      const priorValue = preferences ? readKey(preferences, key) : undefined;
       try {
         const next = await apiClient.post<PreferencesResponse>('/api/preferences', {
           [key]: value,
@@ -56,7 +90,9 @@ export function usePreferences() {
         setPreferences(next);
         return next;
       } catch (e) {
-        if (prior) setPreferences(prior);
+        if (preferences && priorValue !== undefined) {
+          setPreferences((cur) => (cur ? writeKey(cur, key, priorValue) : cur));
+        }
         show({ kind: 'error', message: `Couldn't save — ${key} reverted.` });
         throw e;
       }

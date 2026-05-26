@@ -25,16 +25,25 @@ export function HeaderControls() {
   // `theme`/`accent`/`aiPreview` POST keys still work via the back-compat path in
   // ConfigStore.PatchAsync's allowlist, so `set('theme', next)` keeps functioning.
   // Each picker also calls applyThemeToDocument() directly so the visible UI
-  // updates without waiting on the POST response or a focus-driven refetch.
+  // updates without waiting on the POST response or a focus-driven refetch; on
+  // POST failure we re-apply the prior pair so the DOM tracks the rolled-back
+  // state (the rollback in usePreferences only touches React state, not DOM
+  // dataset, and HeaderControls' own useEffect on `preferences` would re-fire
+  // and rewrite the DOM but only after the rollback actually updates state —
+  // an explicit re-apply here keeps the visual revert tight).
   const cycleTheme = () => {
-    const next = THEMES[(THEMES.indexOf(preferences.ui.theme) + 1) % THEMES.length];
-    applyThemeToDocument(next, preferences.ui.accent);
-    void set('theme', next);
+    const priorTheme = preferences.ui.theme;
+    const priorAccent = preferences.ui.accent;
+    const next = THEMES[(THEMES.indexOf(priorTheme) + 1) % THEMES.length];
+    applyThemeToDocument(next, priorAccent);
+    void set('theme', next).catch(() => applyThemeToDocument(priorTheme, priorAccent));
   };
   const cycleAccent = () => {
-    const next = ACCENTS[(ACCENTS.indexOf(preferences.ui.accent) + 1) % ACCENTS.length];
-    applyThemeToDocument(preferences.ui.theme, next);
-    void set('accent', next);
+    const priorTheme = preferences.ui.theme;
+    const priorAccent = preferences.ui.accent;
+    const next = ACCENTS[(ACCENTS.indexOf(priorAccent) + 1) % ACCENTS.length];
+    applyThemeToDocument(priorTheme, next);
+    void set('accent', next).catch(() => applyThemeToDocument(priorTheme, priorAccent));
   };
   // Capabilities mirror the same AiPreviewState the preference drives. Refetch
   // immediately after the preference flip so consumers (Overview's

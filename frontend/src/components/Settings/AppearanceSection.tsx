@@ -23,14 +23,22 @@ export function AppearanceSection() {
   // usePreferences() in HeaderControls and here are independent useState
   // instances — updating one won't notify the other until the next focus
   // refetch. Apply directly to documentElement so the chosen theme/accent is
-  // visible immediately regardless of which picker the user touched.
+  // visible immediately regardless of which picker the user touched. If the
+  // POST rejects, usePreferences rolls back its state and shows an error
+  // toast; we ALSO re-apply the original theme/accent to the DOM so the
+  // visible UI matches the rolled-back state (otherwise the toast says
+  // "reverted" but dark mode stays on).
   const onTheme = (value: Theme) => {
-    applyThemeToDocument(value, preferences.ui.accent);
-    void set('theme', value);
+    const priorTheme = preferences.ui.theme;
+    const priorAccent = preferences.ui.accent;
+    applyThemeToDocument(value, priorAccent);
+    void set('theme', value).catch(() => applyThemeToDocument(priorTheme, priorAccent));
   };
   const onAccent = (value: Accent) => {
-    applyThemeToDocument(preferences.ui.theme, value);
-    void set('accent', value);
+    const priorTheme = preferences.ui.theme;
+    const priorAccent = preferences.ui.accent;
+    applyThemeToDocument(priorTheme, value);
+    void set('accent', value).catch(() => applyThemeToDocument(priorTheme, priorAccent));
   };
   const onAiToggle = async (next: boolean) => {
     await set('aiPreview', next);

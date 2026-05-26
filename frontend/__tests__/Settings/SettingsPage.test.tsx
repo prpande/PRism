@@ -45,20 +45,19 @@ describe('SettingsPage', () => {
     expect(screen.getByRole('heading', { name: /^auth$/i, level: 2 })).toBeInTheDocument();
   });
 
-  it('renders the "Replace token (lands in PR4)" disabled link with the PR4-pointer title', () => {
+  it('renders the "Replace token (lands in PR4)" stub as a native disabled button (not a tabbable span)', () => {
     render(
       <MemoryRouter>
         <SettingsPage />
       </MemoryRouter>,
     );
-    // Spec § 3.1: PR3 stubs Auth section with a disabled link; PR4 lands the real
-    // Replace-token UX. The title attribute carries the explanatory tooltip per the
-    // 2026-05-25 plan amendment ("hover/focus tooltip via title + sr-only span");
-    // the visible label still flags the cross-PR pointer so it shows up in PR4's
-    // Step-3 grep sweep.
-    const stub = screen.getByText(/replace token \(lands in pr4\)/i);
-    expect(stub).toBeInTheDocument();
-    expect(stub).toHaveAttribute('aria-disabled', 'true');
+    // Spec § 3.1: PR3 stubs Auth section; PR4 lands the real Replace-token UX.
+    // Use a native <button disabled> rather than a role=link tabIndex=0 span so
+    // keyboard users don't tab to an inert element with no Enter handler. The
+    // title attribute carries the explanatory tooltip; the literal "lands in
+    // PR4" string is a cross-PR pointer that PR4's grep-sweep step looks for.
+    const stub = screen.getByRole('button', { name: /replace token \(lands in pr4\)/i });
+    expect(stub).toBeDisabled();
     expect(stub).toHaveAttribute('title', expect.stringMatching(/lands in pr4/i));
   });
 });

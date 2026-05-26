@@ -20,8 +20,11 @@ export function Header() {
   const { authState } = useAuth();
   const isReplaceMode = searchParams.has('replace');
 
-  const inboxActive = pathname === '/' || pathname === '/inbox';
-  const settingsActive = pathname === '/settings' || (pathname === '/setup' && isReplaceMode);
+  const inboxActive = pathname === '/' || pathname === '/inbox' || pathname.startsWith('/inbox/');
+  const settingsActive =
+    pathname === '/settings' ||
+    pathname.startsWith('/settings/') ||
+    (pathname === '/setup' && isReplaceMode);
   const setupActive = pathname === '/setup' && !isReplaceMode;
 
   const needsFirstRun = authState !== null && !authState.hasToken;
