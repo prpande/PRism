@@ -1,10 +1,15 @@
-import { renderHook, waitFor } from '@testing-library/react';
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { usePreferences } from '../src/hooks/usePreferences';
 import { useCapabilities } from '../src/hooks/useCapabilities';
 import { useAuth } from '../src/hooks/useAuth';
+
+const showMock = vi.fn();
+vi.mock('../src/components/Toast', () => ({
+  useToast: () => ({ show: showMock, dismiss: vi.fn(), toasts: [] }),
+}));
 
 const server = setupServer(
   http.get('/api/preferences', () =>
@@ -55,6 +60,34 @@ describe('usePreferences', () => {
     const { result } = renderHook(() => usePreferences());
     await waitFor(() => expect(result.current.preferences).not.toBeNull());
     expect(result.current.preferences?.ui.theme).toBe('system');
+  });
+
+  it('exposes inbox.sections and github.{configPath,logsPath} from the richer GET shape', async () => {
+    const { result } = renderHook(() => usePreferences());
+    await waitFor(() => expect(result.current.preferences).not.toBeNull());
+    expect(result.current.preferences!.inbox.sections['review-requested']).toBe(true);
+    expect(result.current.preferences!.inbox.sections['ci-failing']).toBe(true);
+    expect(result.current.preferences!.github.configPath).toContain('config.json');
+    expect(result.current.preferences!.github.logsPath).toContain('logs');
+  });
+
+  it('rolls back preferences and surfaces an error toast when POST /api/preferences rejects', async () => {
+    // Server starts as the default (theme=system); flipping the POST to 500
+    // should restore that state and fire one error toast — never a half-applied
+    // preference. Closes spec § 2.6 "rollback on 4xx/5xx/network failure".
+    showMock.mockReset();
+    const { result } = renderHook(() => usePreferences());
+    await waitFor(() => expect(result.current.preferences).not.toBeNull());
+    const before = result.current.preferences;
+
+    server.use(http.post('/api/preferences', () => HttpResponse.text('boom', { status: 500 })));
+
+    await act(async () => {
+      await expect(result.current.set('theme', 'dark')).rejects.toBeDefined();
+    });
+
+    expect(result.current.preferences).toEqual(before);
+    expect(showMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'error' }));
   });
 });
 
