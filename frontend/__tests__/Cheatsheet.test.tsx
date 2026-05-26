@@ -69,6 +69,38 @@ describe('Cheatsheet', () => {
     expect(document.activeElement).toBe(heading);
   });
 
+  it('does NOT move focus to the dialog heading when a modal (aria-modal=true) is already open', async () => {
+    const user = userEvent.setup();
+    // Simulate an open modal in the page — its presence is detected via a
+    // document.querySelector('[aria-modal="true"]') probe in the effect.
+    const modalSentinel = document.createElement('div');
+    modalSentinel.setAttribute('role', 'dialog');
+    modalSentinel.setAttribute('aria-modal', 'true');
+    const modalFocusable = document.createElement('button');
+    modalFocusable.textContent = 'modal-button';
+    modalSentinel.appendChild(modalFocusable);
+    document.body.appendChild(modalSentinel);
+    modalFocusable.focus();
+    expect(document.activeElement).toBe(modalFocusable);
+
+    try {
+      render(
+        <CheatsheetProvider>
+          <TestApp />
+        </CheatsheetProvider>,
+      );
+      await user.click(screen.getByText('open'));
+
+      // Cheatsheet panel IS rendered (visible above modal), but focus stays
+      // wherever it was — the click moved it to the opener button. The key
+      // assertion: focus is NOT on the cheatsheet heading.
+      const heading = screen.getByRole('heading', { name: /keyboard shortcuts/i, level: 2 });
+      expect(document.activeElement).not.toBe(heading);
+    } finally {
+      document.body.removeChild(modalSentinel);
+    }
+  });
+
   it('focus returns to previously-focused element on close (liveness guard, in-DOM)', async () => {
     const user = userEvent.setup();
     render(

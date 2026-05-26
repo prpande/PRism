@@ -15,7 +15,20 @@ export function Cheatsheet() {
       // ARIA APG non-modal-dialog pattern: move programmatic focus to the
       // labelling heading on open so screen-reader virtual cursors land on
       // the panel content.
-      headingRef.current?.focus();
+      //
+      // EXCEPTION: if a modal dialog (aria-modal="true") is currently open,
+      // moving focus would violate the modal's focus-trap contract — the
+      // user would land on the cheatsheet heading, the modal would fight
+      // to pull focus back on the next Tab, and the panel would become
+      // keyboard-unreachable. The cheatsheet is non-modal and sits above
+      // the modal visually (z-index 1500); skipping the focus move keeps
+      // the modal's a11y intact at the cost of AT-discoverability in this
+      // edge case. AT users with a modal already open don't get cheatsheet
+      // focus announcement, but they can still Esc to close.
+      const modalOpen = document.querySelector('[aria-modal="true"]') !== null;
+      if (!modalOpen) {
+        headingRef.current?.focus();
+      }
       return;
     }
     // Close transition: restore focus to the element that was focused at
