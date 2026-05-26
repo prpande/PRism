@@ -266,6 +266,23 @@ a:hover { text-decoration: underline; }
 .muted-2 { color: var(--text-2); }
 .tnum { font-variant-numeric: tabular-nums; }
 
+/* Visually hide an element while keeping it announced by screen readers.
+   Spec § 6.1 Pass 2 ("SR-only badge labels"). Mirrors the well-known
+   clip-rect pattern that survives flex/grid layouts without affecting
+   sibling sizing. The Cheatsheet's `.srOnly` CSS-module class predates
+   this utility and uses an equivalent recipe locally. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ======================================================================
    Components
    ====================================================================== */
