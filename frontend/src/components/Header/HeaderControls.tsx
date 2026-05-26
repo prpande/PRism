@@ -48,11 +48,15 @@ export function HeaderControls() {
   // Capabilities mirror the same AiPreviewState the preference drives. Refetch
   // immediately after the preference flip so consumers (Overview's
   // AiSummaryCard, Inbox enrichment, etc.) see the new flag without waiting
-  // for a window-focus event. Fire-and-forget — the refetch is idempotent and
-  // the hook handles its own error state.
-  const toggleAi = async () => {
-    await set('aiPreview', !preferences.ui.aiPreview);
-    void refetchCapabilities();
+  // for a window-focus event. usePreferences.set rethrows on POST failure
+  // (rollback + error toast already happen inside); .catch() here keeps the
+  // button's onClick handler from observing an unhandled promise rejection.
+  const toggleAi = () => {
+    set('aiPreview', !preferences.ui.aiPreview)
+      .then(() => refetchCapabilities())
+      .catch(() => {
+        /* toast + rollback already happened in usePreferences */
+      });
   };
 
   return (
