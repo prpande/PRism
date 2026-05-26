@@ -16,7 +16,7 @@ export const SHORTCUTS: ReadonlyArray<ShortcutGroup> = [
       {
         keys: 'Cmd/Ctrl + R',
         context: 'Anywhere',
-        action: 'Reload current view (closes the cheatsheet)',
+        action: 'Reload current view',
       },
       { keys: 'Cmd/Ctrl + /', context: 'Anywhere', action: 'Toggle this cheatsheet' },
       { keys: '?', context: 'Outside text inputs', action: 'Toggle this cheatsheet' },

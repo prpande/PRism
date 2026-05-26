@@ -29,9 +29,11 @@ export function Cheatsheet() {
       target.focus();
     } else {
       // `document.body.focus()` is silently a no-op in some browsers unless
-      // body has an explicit tabindex (real-browser quirk; jsdom ignores
-      // it). Set tabindex once so the fallback is deterministic.
-      if (document.body.tabIndex < 0) document.body.tabIndex = -1;
+      // body has an explicit tabindex attribute set (real-browser quirk;
+      // jsdom ignores it). Set the attribute unconditionally — body.tabIndex
+      // defaults to -1 as the IDL property, so any conditional guard reads
+      // vacuously and never sets the underlying attribute.
+      document.body.tabIndex = -1;
       document.body.focus();
     }
     returnFocusRef.current = null;
@@ -62,6 +64,16 @@ export function Cheatsheet() {
           <section key={group.group} className={styles.group}>
             <h3 className={styles.groupHeading}>{group.group}</h3>
             <table className={styles.table}>
+              {/* Visually-hidden column headers so screen readers
+                  announce "Shortcut / Context / Action" before each data
+                  cell. Sighted users see the implicit column order. */}
+              <thead className={styles.srOnly}>
+                <tr>
+                  <th scope="col">Shortcut</th>
+                  <th scope="col">Context</th>
+                  <th scope="col">Action</th>
+                </tr>
+              </thead>
               <tbody>
                 {group.rows.map((row) => (
                   <tr key={`${group.group}-${row.keys}-${row.context}`}>

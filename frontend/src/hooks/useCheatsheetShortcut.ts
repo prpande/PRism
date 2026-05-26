@@ -12,11 +12,11 @@ function isTextEditingContext(target: EventTarget | null): boolean {
   if (target.tagName === 'INPUT' && TEXT_INPUT_TYPES.has((target as HTMLInputElement).type)) {
     return true;
   }
-  // `contenteditable` attribute is editable for any "truthy" value per HTML
-  // spec — `true`, empty string, and `plaintext-only` all count; only `false`
-  // disables it. Match the canonical isContentEditable property, with a
-  // closest() fallback for nested targets (e.g., focus on a child of a
-  // contenteditable wrapper).
+  // HTMLElement.isContentEditable walks ancestors and is true for any
+  // element inside a truthy-contenteditable subtree (true / "" /
+  // "plaintext-only") in real browsers. jsdom does NOT compute this from
+  // the attribute, so the closest() probe is retained as a test-environment
+  // fallback. Both paths converge on identical semantics in production.
   if (target.isContentEditable) return true;
   if (target.closest('[contenteditable]:not([contenteditable="false"])')) return true;
   if (target.closest('[data-composer="true"]')) return true;
@@ -28,23 +28,26 @@ export function useCheatsheetShortcut(
   isOpen: boolean,
   close: () => void,
 ): void {
-  // Capture latest handlers in a ref so we don't re-bind document listeners on every render
-  // when callers pass freshly-created arrow functions. Mirrors useFilesTabShortcuts.
-  const handlersRef = useRef({ toggle, close });
-  handlersRef.current = { toggle, close };
+  // Capture the latest handlers AND isOpen flag in a ref so the document
+  // listener is bound exactly once for the lifetime of the hook. Without
+  // this, `[isOpen]` in the effect deps would churn the listener on every
+  // toggle. Mirrors the useFilesTabShortcuts ref pattern.
+  const stateRef = useRef({ toggle, close, isOpen });
+  stateRef.current = { toggle, close, isOpen };
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const isMeta = e.metaKey || e.ctrlKey;
+      const { toggle, close, isOpen } = stateRef.current;
 
       if (e.key === '?' && !isTextEditingContext(e.target)) {
         e.preventDefault();
-        handlersRef.current.toggle();
+        toggle();
         return;
       }
       if (isMeta && e.key === '/') {
         e.preventDefault();
-        handlersRef.current.toggle();
+        toggle();
         return;
       }
       if (e.key === 'Escape' && isOpen) {
@@ -52,7 +55,7 @@ export function useCheatsheetShortcut(
         // handler (discard-confirm) does not fire when the cheatsheet steals Esc.
         e.preventDefault();
         e.stopPropagation();
-        handlersRef.current.close();
+        close();
         return;
       }
       // Cmd/Ctrl+R intentionally NOT intercepted — the browser's reload runs.
@@ -60,5 +63,5 @@ export function useCheatsheetShortcut(
 
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [isOpen]);
+  }, []);
 }
