@@ -12,12 +12,15 @@ export interface SubmitInFlightState {
 // re-enables the instant the lock clears — no manual page refresh needed. The event is
 // dispatched by api/events.ts's SSE bridge (state-changed → window event).
 //
-// Tolerant by design: a transient 4xx/5xx is swallowed and the prior state is retained.
+// Fail-open on error: a transient 4xx/5xx resets state to `{inFlight:false,prRef:null}`.
 // The guard is best-effort UX hardening, not a security boundary; the backend rejects an
-// /api/auth/replace POST taken during a held submit lock with a 409. If the SSE stream
-// is permanently broken (no state-changed events delivered), the link stays in its last-
-// observed state until the next page navigation re-mounts the hook — spec § 3.1 accepts
-// this trade for the PoC ("permanent disable preferable to stale-enabled link that 409s").
+// /api/auth/replace POST taken during a held submit lock with a 409, which is enforced
+// regardless of what this hook reports. Resetting (rather than retaining the prior
+// inFlight=true) avoids a stuck disabled-link state when the post-lock-release refetch
+// fails and no future state-changed event will fire (the submit already completed).
+// Spec § 3.1's "permanent disable preferable to stale-enabled" trade applies to a
+// permanently-broken SSE stream where no event-driven refetch ever happens — not to
+// transient single-request failures.
 export function useSubmitInFlight(): SubmitInFlightState {
   const [state, setState] = useState<SubmitInFlightState>({ inFlight: false, prRef: null });
 

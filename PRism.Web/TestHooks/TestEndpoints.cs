@@ -70,8 +70,15 @@ internal static class TestEndpoints
     // in Production; (b) single PoC user, single Playwright worker, no concurrency
     // pressure across specs. The Reset endpoint disposes it as a safety net so a
     // forgetful spec doesn't leak the hold into the next test.
+    //
+    // Publish/swap uses Interlocked.CompareExchange / Interlocked.Exchange (no lock):
+    // pairs the release barrier of the publish with the acquire barrier of the read,
+    // so a Volatile.Read pre-check on weak memory models observes the latest write.
+    // Previous lock-only publish + Volatile.Read pre-check was a documented memory-
+    // model race (Copilot iter-2 finding C7); CompareExchange also subsumes the
+    // lost-race bookkeeping (only one caller can swap null → handle; the loser
+    // disposes its just-acquired slot).
     private static SubmitLockHandle? s_heldHandle;
-    private static readonly object s_holdGate = new();
 
     private static IResult StoreMissing(string route) => Results.Problem(
         $"FakeReviewBackingStore is not registered; {route} requires the Test-environment fake-review swap (PRISM_E2E_FAKE_REVIEW=1).",
@@ -127,13 +134,9 @@ internal static class TestEndpoints
             if (store is null) return StoreMissing("/test/reset");
             // Release any leaked /test/submit/hold from a prior spec before resetting
             // store/submitter — otherwise the held lock survives across specs and the
-            // next AnyHeld() probe still reports in-flight on a fresh fixture.
-            SubmitLockHandle? leaked;
-            lock (s_holdGate)
-            {
-                leaked = s_heldHandle;
-                s_heldHandle = null;
-            }
+            // next AnyHeld() probe still reports in-flight on a fresh fixture. Atomic
+            // swap mirrors /test/submit/release-hold.
+            var leaked = Interlocked.Exchange(ref s_heldHandle, null);
             if (leaked is not null)
             {
                 await leaked.DisposeAsync().ConfigureAwait(false);
@@ -380,39 +383,34 @@ internal static class TestEndpoints
         {
             if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo))
                 return Results.BadRequest(new { error = "owner-or-repo-missing" });
-            // Pre-check WITHOUT the gate so a concurrent racing call sees the slot as
-            // already taken and returns 409 immediately rather than blocking inside
-            // TryAcquireAsync.
+            // Optimistic pre-check: paired with the Interlocked.CompareExchange publish
+            // below (release/acquire barrier on both sides), Volatile.Read observes the
+            // latest published write on weak memory models. Avoids paying TryAcquireAsync's
+            // semaphore-acquire when the slot is obviously taken.
             if (Volatile.Read(ref s_heldHandle) is not null)
                 return Results.Conflict(new { error = "already-held" });
 
             var prRef = new PrReference(req.Owner, req.Repo, req.Number);
-            // Short timeout (3s) — the Volatile pre-check above already catches the
-            // common case (s_heldHandle != null). The only path that blocks here is
-            // cross-spec lock leakage where a prior /test/submit/hold left the
-            // SemaphoreSlim acquired but s_heldHandle was nulled by /test/reset's
-            // gate-then-dispose ordering. Surface that condition as a fast 408
-            // rather than a 30s opaque CI hang — the message names the cause so a
-            // spec author can grep their cleanup hooks. Real submit contention is
-            // out of scope for this hook (workers:1 + Test-env only).
+            // Short timeout (3s) — the Volatile pre-check above catches the common
+            // case. The only path that blocks here is cross-spec lock leakage where a
+            // prior /test/submit/hold left the SemaphoreSlim acquired but s_heldHandle
+            // was nulled by /test/reset. Surface that condition as a fast 408 with an
+            // actionable message rather than a long opaque CI hang. Real submit
+            // contention is out of scope for this hook (Test-env, workers:1).
             var handle = await locks.TryAcquireAsync(prRef, TimeSpan.FromSeconds(3), ct).ConfigureAwait(false);
             if (handle is null)
                 return Results.Problem(
                     "Timed out acquiring SubmitLockRegistry slot — likely a cross-spec lock leak (prior /test/submit/hold not followed by /test/submit/release-hold).",
                     statusCode: StatusCodes.Status408RequestTimeout);
 
-            bool lostRace;
-            lock (s_holdGate)
+            // Atomic publish: only one caller can swap null → handle. The loser
+            // disposes its just-acquired slot. Replaces the prior lock + Volatile.Read
+            // pattern (Copilot iter-2 finding C7) and removes the lostRace bookkeeping.
+            var prior = Interlocked.CompareExchange(ref s_heldHandle, handle, null);
+            if (prior is not null)
             {
-                lostRace = s_heldHandle is not null;
-                if (!lostRace) s_heldHandle = handle;
-            }
-            if (lostRace)
-            {
-                // Lost the race after the optimistic pre-check — release our just-acquired slot.
-                // Awaited (not fire-and-forget) so the lock's released-before-409-returned contract
-                // is explicit; SubmitLockHandle.DisposeAsync is sync-internally today but coupling
-                // correctness to that is fragile if it ever grows real async work.
+                // Another /test/submit/hold won the race between our pre-check and the
+                // CAS. Release our just-acquired slot and return 409.
                 await handle.DisposeAsync().ConfigureAwait(false);
                 return Results.Conflict(new { error = "already-held" });
             }
@@ -421,12 +419,10 @@ internal static class TestEndpoints
 
         app.MapPost("/test/submit/release-hold", async () =>
         {
-            SubmitLockHandle? held;
-            lock (s_holdGate)
-            {
-                held = s_heldHandle;
-                s_heldHandle = null;
-            }
+            // Atomic swap: takes the currently-held handle (if any) and nulls the field
+            // in one step. No lock needed; the read barrier matches the CompareExchange
+            // publish in /test/submit/hold above.
+            var held = Interlocked.Exchange(ref s_heldHandle, null);
             if (held is null) return Results.NoContent();
             await held.DisposeAsync().ConfigureAwait(false);
             return Results.NoContent();
