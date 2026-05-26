@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Header } from './components/Header/Header';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider, ToastContainer } from './components/Toast';
+import { CheatsheetProvider, Cheatsheet } from './components/Cheatsheet';
 import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
@@ -74,13 +75,16 @@ export function App() {
         <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
       </Routes>
       <ToastContainer />
+      <Cheatsheet />
     </>
   );
 
   return (
     <ErrorBoundary>
       <ToastProvider>
-        {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+        <CheatsheetProvider>
+          {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+        </CheatsheetProvider>
       </ToastProvider>
     </ErrorBoundary>
   );

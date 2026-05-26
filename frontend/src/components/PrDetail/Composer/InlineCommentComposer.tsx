@@ -215,7 +215,12 @@ export function InlineCommentComposer({
   const closedBanner = prState !== 'open';
 
   return (
-    <div role="form" aria-label={composerAriaLabel(anchor)} className="inline-comment-composer">
+    <div
+      role="form"
+      aria-label={composerAriaLabel(anchor)}
+      data-composer="true"
+      className="inline-comment-composer"
+    >
       {closedBanner && (
         <div className="composer-closed-banner muted" role="status">
           PR {prState === 'closed' ? 'closed' : 'merged'} — text not saved

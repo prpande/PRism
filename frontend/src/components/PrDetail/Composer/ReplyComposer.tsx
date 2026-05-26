@@ -179,7 +179,12 @@ export function ReplyComposer({
   const closedBanner = prState !== 'open';
 
   return (
-    <div role="form" aria-label={replyAriaLabel(parentThreadId)} className="reply-composer">
+    <div
+      role="form"
+      aria-label={replyAriaLabel(parentThreadId)}
+      data-composer="true"
+      className="reply-composer"
+    >
       {closedBanner && (
         <div className="composer-closed-banner muted" role="status">
           PR {prState === 'closed' ? 'closed' : 'merged'} — text not saved
