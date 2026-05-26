@@ -28,6 +28,10 @@ export function Cheatsheet() {
     if (document.contains(target)) {
       target.focus();
     } else {
+      // `document.body.focus()` is silently a no-op in some browsers unless
+      // body has an explicit tabindex (real-browser quirk; jsdom ignores
+      // it). Set tabindex once so the fallback is deterministic.
+      if (document.body.tabIndex < 0) document.body.tabIndex = -1;
       document.body.focus();
     }
     returnFocusRef.current = null;

@@ -4,15 +4,7 @@ import { useEffect, useRef } from 'react';
 // character. The spec frames the rule as "outside text inputs" — limiting this
 // to type==='text' would miss password (PAT field on /setup), search, email,
 // url, tel, and number, all of which a user can type ? into.
-const TEXT_INPUT_TYPES = new Set([
-  'text',
-  'password',
-  'search',
-  'email',
-  'url',
-  'tel',
-  'number',
-]);
+const TEXT_INPUT_TYPES = new Set(['text', 'password', 'search', 'email', 'url', 'tel', 'number']);
 
 function isTextEditingContext(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -20,7 +12,13 @@ function isTextEditingContext(target: EventTarget | null): boolean {
   if (target.tagName === 'INPUT' && TEXT_INPUT_TYPES.has((target as HTMLInputElement).type)) {
     return true;
   }
-  if (target.closest('[contenteditable="true"]')) return true;
+  // `contenteditable` attribute is editable for any "truthy" value per HTML
+  // spec — `true`, empty string, and `plaintext-only` all count; only `false`
+  // disables it. Match the canonical isContentEditable property, with a
+  // closest() fallback for nested targets (e.g., focus on a child of a
+  // contenteditable wrapper).
+  if (target.isContentEditable) return true;
+  if (target.closest('[contenteditable]:not([contenteditable="false"])')) return true;
   if (target.closest('[data-composer="true"]')) return true;
   return false;
 }

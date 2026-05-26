@@ -4,7 +4,11 @@
   /* Soft dim, but clicks fall through — the cheatsheet is non-modal. */
   background: rgba(0, 0, 0, 0.08);
   pointer-events: none;
-  z-index: 1000;
+  /* Sit above modals (tokens.css `.modal-backdrop` is 1000): the cheatsheet
+     is user-invoked help that must remain visible even while a modal is
+     open; the non-modal pointer-events:none backdrop ensures the modal
+     underneath stays clickable. */
+  z-index: 1500;
 }
 .panel {
   position: fixed;
