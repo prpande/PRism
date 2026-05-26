@@ -1,0 +1,65 @@
+.screen {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-0);
+  overflow: hidden;
+}
+
+.watermark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 60vmin;
+  height: auto;
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.pulseLogo {
+  width: 96px;
+  height: 96px;
+  animation: prism-pulse 1.5s ease-in-out infinite;
+}
+
+.logoStill {
+  width: 96px;
+  height: 96px;
+}
+
+.label {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  text-align: center;
+  max-width: 32rem;
+}
+
+@keyframes prism-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulseLogo {
+    animation: none;
+  }
+}

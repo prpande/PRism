@@ -45,7 +45,7 @@ function renderAt(path: string, hasToken: boolean = true) {
 describe('Header', () => {
   it('renders logo + Inbox/Settings/Setup tabs + global-search placeholder', () => {
     renderAt('/');
-    expect(screen.getByText(/PRism/i)).toBeInTheDocument();
+    expect(screen.getByAltText('PRism')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /inbox/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /^settings$/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /setup/i })).toBeInTheDocument();

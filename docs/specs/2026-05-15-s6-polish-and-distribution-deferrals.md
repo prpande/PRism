@@ -2,11 +2,14 @@
 source-doc: docs/specs/2026-05-15-s6-polish-and-distribution-design.md
 plan-doc: docs/plans/2026-05-15-s6-polish-and-distribution.md
 created: 2026-05-23
-last-updated: 2026-05-25
+last-updated: 2026-05-26
 status: open
 revisions:
   - 2026-05-23: created during the 2026-05-23 spec amendment pass to record one deferral surfaced by the drift review against PRs #55–#65.
   - 2026-05-25: post-PR-#67 review pass — rewrote `[Risk] LogsPathOptions` to match the spec's revised `LogsPathInfo` singleton recommendation; fixed broken `§ 15.3` cross-link to point at the § 15.1 row; updated `last-updated` per the file-finalization convention used in this repo.
+  - 2026-05-26: PR6 implementation — recorded the `LoadingScreen` third-swap-site no-op deviation against spec § 5.5 / plan PR6 Task 6.2 Step 3.
+  - 2026-05-26: PR6 implementation — recorded the icon-asset shrink deviation against spec § 5.1's naive `cp` prescription (1.84 MB blocked Playwright `load` event).
+  - 2026-05-26: PR6 implementation — recorded the pre-existing Vite-proxy `Origin` header gap that causes every `dev`-project Playwright spec to 401 locally under `ASPNETCORE_ENVIRONMENT=Test`.
 ---
 
 # Deferrals — S6 polish and distribution
@@ -34,6 +37,59 @@ The 2026-05-23 amendment pass itself folded its other findings directly into the
   - A real-flow regression appears on the auth surface (validation, replace-token, identity-change) that the standard Playwright specs missed — that's evidence the real-flow lens IS catching something standard tests don't.
   - Multi-account v2 work begins — at that point the harness almost certainly needs a second-account flow anyway, and Replace-token becomes a free rider on that infrastructure.
 - **Where the gap lives in code:** Nowhere — this is a not-added spec. The amendment doc's § 15.1 table (row "Real-flow Replace-token e2e") references this deferral by name. (Corrected 2026-05-25: earlier draft of this entry pointed at § 15.3, which doesn't exist — § 15.2 was added for the adversarial-round amendments and § 15.3 was collapsed during the same trim.)
+
+### [Decision] `LoadingScreen` swap is two sites, not three — host-mismatch inline div does not exist
+
+- **Source:** PR6 implementation 2026-05-26 — discovered while executing plan PR6 Task 6.2 Step 3.
+- **Severity:** P3 — documentation correctness, not a behavioral gap. The runtime change matches spec intent.
+- **Date:** 2026-05-26
+- **Reason considered:** Spec § 5.5's table lists three rows under "After → `<LoadingScreen />`": (a) `App.tsx` initial `authState === null`, (b) `App.tsx` host-mismatch path before `HostChangeModal` renders, (c) `SetupPage.tsx` waiting for `authState`. Plan PR6 Task 6.2 Step 3 enumerates the same three sites and warns "round-1 ce-doc-review caught the missing third site". The implementer would naturally expect to find three `<div aria-busy="true">Loading…</div>` elements to swap.
+- **Why deferred (no code change):**
+  - **The third site doesn't exist in the current source.** `frontend/src/App.tsx` lines 39–53 (current `main` branch HEAD `6985264`) returns `<HostChangeModal ... />` directly from the `if (authState.hostMismatch)` branch with no inline `<div>` between the conditional and the return. `grep -n "aria-busy.*Loading" frontend/src/App.tsx` returns exactly one hit (the line-37 `if (authState === null)` branch).
+  - **The line-37 site functionally covers both flows.** The `authState === null` check fires BEFORE the host-mismatch check. While `useAuth()` is still resolving, host-mismatch state is not yet known, so the user already sees `<LoadingScreen />` in the "loading before host-mismatch detected" window. Once `authState` resolves and `hostMismatch` is truthy, `<HostChangeModal>` renders directly with no intermediate loading frame — there is no observable moment where a "loading the modal" indicator would be useful.
+  - **No behavioral gap.** The spec's intent — "no plain `Loading…` divs anywhere in the auth-resolution path" — is satisfied. The third-row entry is a spec/plan accounting artifact, not a real third call site.
+- **Disposition:** PR6 swaps the two sites that exist (`App.tsx:37` and `SetupPage.tsx:158`); the third row in spec § 5.5 is harmless documentation drift. Two interpretations are consistent with how this row was authored: (a) an earlier App.tsx version (pre-PR-#43? pre-S5 host-change-resolution wiring?) had an inline loading div in the host-mismatch branch that was refactored away when `HostChangeModal` became the unconditional render in that branch, OR (b) the spec author counted "states the line-37 div covers" rather than "physical call sites" and the plan inherited the row verbatim. Both leave the user-visible behavior identical to what the spec describes.
+- **Revisit when:** A future PR re-introduces an intermediate state in the host-mismatch branch (e.g., "verifying the new host's cert" or "fetching new-host fixtures" step) that needs its own loading frame. At that point, the third `<LoadingScreen />` slot becomes a real call site and the spec § 5.5 row becomes accurate again.
+- **Where the gap lives in code:** Nowhere. The spec § 5.5 table is the documentation surface. Either trim the row when the spec next gets touched, or leave it as forward-looking documentation if the host-mismatch flow is expected to gain an intermediate state in v2.
+
+### [Decision] Web icon assets are derived (resized) — not raw `cp` of canonical icons
+
+- **Source:** PR6 implementation 2026-05-26 — discovered while running the pre-push Playwright pass.
+- **Severity:** P2 — naive spec prescription would have shipped 1.84 MB of inline image data per page load. Caught before merge by the e2e suite. Future PRs touching `assets/icons/` need to re-derive, not re-copy.
+- **Date:** 2026-05-26
+- **Spec position vs. actual:** Spec § 5.1 prescribes a one-time `cp` of `assets/icons/PRismOG.png` (1.3 MB) → `frontend/public/prism-logo.png` and `assets/icons/PRism256.ico` (535 KB, multi-resolution pack containing 16/32/48/64/256/512 sub-icons) → `frontend/public/favicon.ico`. The "no build-pipeline changes" framing was load-bearing — the spec author wanted asset shipment to remain a manual step with no build dependency.
+- **What broke:** The naive `cp` produced two issues:
+  1. **Vite dev / Playwright page-load hang.** `<LoadingScreen>` renders the 1.3 MB PNG twice (watermark `<img>` + pulse `<img>`, sharing the same URL). The first download was being served by Vite dev (`http://localhost:5173/prism-logo.png`) with a `Content-Length: 1361495` header and a `Cache-Control: no-cache` response. Playwright's default `page.goto` `waitUntil: 'load'` blocks on the `load` event, which itself waits for every image to finish loading. Trace evidence: `frontend/test-results/inbox-AI-preview-toggle-reveals-activity-rail-dev-retry1/trace.zip` shows 10+ sequential 1.36 MB GETs in the first 3 seconds, and the page snapshot at test timeout is stuck on `<LoadingScreen>` because `page.goto` never returned control to the test. Every Playwright spec failed for the same reason — observed in `test-results/` as a complete `-dev` + `-dev-retry1` pair for each spec.
+  2. **Favicon over-shipment.** Only the 16/32 sub-icons of `PRism256.ico` are useful for a browser favicon; the 256/512 sub-icons are dead weight (~95% of the 535 KB).
+- **What the PR ships instead:**
+  1. **`frontend/public/prism-logo.png` is a 256×256 derived PNG** (~22 KB) generated by `sharp` from `assets/icons/PRismOG.png`. Sized for crisp 2x HiDPI rendering at both the 96×96 LoadingScreen pulse and the 28×28 Header logo. Watermark uses the same image rescaled CSS-side via `width: 60vmin` — browser caching makes the second `<img>` reference a cache hit after the first 22 KB GET.
+  2. **`frontend/public/favicon.png` is a 32×32 derived PNG** (~3 KB) generated by `sharp` from `assets/icons/PRismOG.png`. `frontend/index.html` references it via `<link rel="icon" type="image/png" href="/favicon.png">` (NOT `favicon.ico`). PNG favicons are supported by every browser that renders modern web content; the spec's `.ico` prescription was a conservative carryover, not a hard requirement.
+  3. **`assets/icons/README.md` documents the derivation transforms verbatim** with the `node -e` invocations of `sharp` so a future maintainer regenerating the assets re-uses the same parameters. `sharp` is intentionally NOT a project dependency — installed ad-hoc with `npm install --no-save sharp` for the rare re-derivation event.
+- **Why deviate from spec:** The spec § 5.1 framing of "manual copy, no build-pipeline change" was correct in spirit (the goal is zero ongoing complexity, not asset fidelity). A one-time hand-resized PNG/PNG pair satisfies that framing — the build pipeline is still untouched. The deviation is purely on the asset-shape side. Reverting to `cp` reintroduces the Playwright failure mode AND degrades dev-loop HMR speed.
+- **Revisit when:**
+  - PRism gains a build-pipeline asset transform (e.g., Vite imagetools plugin) — at that point, the manual derivation can be removed in favor of build-time generation.
+  - `prism-logo.png` is used in contexts that need higher-DPI source (e.g., printable artwork, marketing assets) — at that point, the 256×256 cap might be tightened to a separate variant.
+  - A future contributor proposes "let's just `cp` the canonical icon" — they need to read this entry first.
+- **Where the gap lives in code:** `assets/icons/README.md` (re-derivation script), `frontend/public/prism-logo.png` + `frontend/public/favicon.png` (derived artifacts), `frontend/index.html` (PNG-favicon link tag), `docs/specs/2026-05-15-s6-polish-and-distribution-design.md` § 5.1 + § 5.3 (spec text not yet amended — flagged for next spec touch-up; this deferral is the authoritative override until then).
+
+### [Decision] Local `dev`-project Playwright specs 401 under Test env — pre-existing Vite-proxy `Origin` gap, not blocking S6 PR6 merge
+
+- **Source:** PR6 implementation 2026-05-26 — surfaced during the pre-push checklist after the icon-asset shrink moved past the prior load-event hang.
+- **Severity:** P2 — local-only pre-push gap. CI is unaffected: `playwright.config.ts` runs only the `prod` project under `isCI`. Documented as a known-pre-existing condition so future implementers stop debugging it as a regression.
+- **Date:** 2026-05-26
+- **Where:** `frontend/vite.config.ts` defines a plain `proxy: { '/api': 'http://localhost:5180' }`. Browser GETs to `http://localhost:5173/api/auth/state` are same-origin, so the browser omits the `Origin` header per the Fetch spec. Vite's http-proxy forwards the browser headers verbatim, so the upstream request to Kestrel at `:5180` also lacks `Origin`. `PRism.Web/Middleware/SessionTokenMiddleware.cs:50-92` enforces session-token auth under Test env via three bypass branches: (i) `/api/health` liveness, (ii) loopback-different-port via the `Origin` header (lines 84-92), (iii) valid `X-PRism-Session` header OR `prism-session` cookie. The Vite-proxied GET hits none of these: no `Origin` (Vite passthrough), no `prism-session` cookie (Vite served the HTML, not Kestrel — the cookie-stamp middleware never ran), no `X-PRism-Session` header (the SPA reads it from a cookie it doesn't have). Result: `401 application/problem+json` with `"type": "/auth/session-stale", "detail": "Session token mismatch — reload the page to refresh."`.
+- **Empirical confirmation that this is pre-existing:** During PR6 pre-push, ran `npx playwright test cold-start` from the unmodified `main` checkout at `D:\src\PRism\frontend` (commit `6985264`, the PR #73 merge — no PR6 changes present). Stats: `expected: 3, unexpected: 3, flaky: 0`. The 3 cold-start specs each ran in both projects; prod (3) passed and dev (3) failed with the identical `Failed to load auth state: HTTP 401` alert at the same locator timeout. Manual verification: `curl http://localhost:5180/api/auth/state` → 401; `curl -H "Origin: http://localhost:5173" http://localhost:5180/api/auth/state` → `200 {"hasToken":false,...}`. The bypass works iff `Origin` is present; Vite isn't sending it.
+- **Why the gap survived prior PRs:** CI gates only the prod project (per the `isCI` carve-out in `playwright.config.ts:39+118`); prior PRs (`#69`-`#73`) passed CI without locally stress-testing the dev project, OR ran step 5 only against prod, OR ignored local dev-project failures as known-noise. Memory entries for PR71-73 cite "Playwright" green at exit without specifying project; this deferral retroactively pins what that meant.
+- **Why deferred (not folded into PR6):**
+  - **Out of S6 PR6 scope.** PR6 is "icon assets + branded LoadingScreen" — touching `vite.config.ts` to add an `Origin` header on `/api` proxy requests is auth-pipeline plumbing, not loading-state polish.
+  - **One-line fix already understood.** The remediation is: pass `proxy: { '/api': { target: 'http://localhost:5180', configure: (proxy) => { proxy.on('proxyReq', (proxyReq) => { proxyReq.setHeader('Origin', 'http://localhost:5173'); }); } } }`. A follow-up PR should land this with a single Playwright spec exercising a fresh-cookie dev GET to confirm the bypass fires.
+  - **No user-visible regression.** `dotnet watch run` (the canonical dev workflow) defaults to `Development` env, where `SessionTokenMiddleware._enforced` is `false`. The 401 ONLY appears when the env is forced to `Test` — i.e., during Playwright's webServer-managed backend. Real developers running `npm run dev` + `dotnet watch run` are unaffected.
+  - **Pre-existing on `main`.** Folding the fix into PR6 would mean PR6's diff is partially about auth-pipeline plumbing the implementer didn't sign up for, AND PR6's review surface conflates "loading state polish" with "dev-mode auth bypass". Better hygiene to land them separately.
+- **Revisit when:**
+  - The next PR that touches `frontend/vite.config.ts` or `PRism.Web/Middleware/SessionTokenMiddleware.cs` — both are natural homes for the Vite-side Origin fix.
+  - A contributor reports "local Playwright doesn't pass on `npm run pre-push`" — that is THIS issue; point them at this entry.
+  - The pre-push checklist in `.ai/docs/development-process.md` is amended (e.g., to clarify "prod-only suffices locally pending the Vite Origin fix").
+- **Where the gap lives in code:** `frontend/vite.config.ts:8-10` (plain proxy, no `configure` hook); `PRism.Web/Middleware/SessionTokenMiddleware.cs:84-92` (Origin-only bypass branch). The fix is at the Vite layer, not the middleware (the middleware already correctly accommodates the dev port via Origin — it just isn't receiving one from Vite). A standalone follow-up branch can land the `configure` hook + one Playwright assertion in a ~10-line diff.
 
 ---
 

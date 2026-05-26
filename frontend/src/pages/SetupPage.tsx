@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SetupForm } from '../components/Setup/SetupForm';
 import { NoReposWarningModal } from '../components/Setup/NoReposWarningModal';
+import { LoadingScreen } from '../components/LoadingScreen';
 import { apiClient, ApiError } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../components/Toast';
@@ -155,7 +156,7 @@ export function SetupPage() {
     setShowWarning(false);
   };
 
-  if (authState === null) return <div aria-busy="true">Loading…</div>;
+  if (authState === null) return <LoadingScreen />;
 
   return (
     <>
