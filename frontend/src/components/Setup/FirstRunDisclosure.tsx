@@ -17,7 +17,7 @@ export function FirstRunDisclosure() {
       <summary>First run on this machine?</summary>
       {(platform === 'windows' || platform === 'unknown') && (
         <section>
-          <h3>Windows</h3>
+          <h2>Windows</h2>
           <p>
             The first time you run PRism, Windows shows a SmartScreen warning (&ldquo;Windows
             protected your PC&rdquo;) because PRism isn&rsquo;t code-signed for the PoC. Click{' '}
@@ -28,7 +28,7 @@ export function FirstRunDisclosure() {
       )}
       {(platform === 'macos' || platform === 'unknown') && (
         <section>
-          <h3>macOS</h3>
+          <h2>macOS</h2>
           <p>
             If macOS Gatekeeper blocks the binary, right-click the app and pick{' '}
             <strong>Open</strong> the first time. The first time PRism reads your token, macOS asks{' '}

@@ -4,11 +4,14 @@ import { FirstRunDisclosure } from '../../src/components/Setup/FirstRunDisclosur
 
 describe('FirstRunDisclosure', () => {
   // navigator.platform is what `detectPlatform()` consumes (spec § 14 OQ 1
-  // resolution: single-source). Save the original descriptor so each test can
-  // poke a different value without leaking across tests in the suite.
-  const origPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');
+  // resolution: single-source). jsdom defines `platform` on Navigator.prototype,
+  // not on the instance, so there is no own-property descriptor to save and
+  // restore — `getOwnPropertyDescriptor(navigator, 'platform')` is `undefined`.
+  // Each test installs an own-property override; afterEach deletes it so
+  // subsequent reads fall through to the prototype again. Vitest's per-file
+  // jsdom isolation contains anything that escapes.
   afterEach(() => {
-    if (origPlatform) Object.defineProperty(navigator, 'platform', origPlatform);
+    delete (navigator as { platform?: string }).platform;
   });
 
   it('renders the Windows block on Win32', () => {
