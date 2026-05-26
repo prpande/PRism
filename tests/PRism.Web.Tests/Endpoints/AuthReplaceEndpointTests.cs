@@ -404,6 +404,32 @@ public class AuthReplaceEndpointTests
     }
 
     [Fact]
+    public async Task Oversize_body_returns_413()
+    {
+        // S6 PR2 Task 2.8b — the Program.cs UseWhen body-cap predicate covers
+        // /api/auth/replace. Legitimate payload is ~40 chars (PAT); cap at 16 KiB
+        // is consistent with the other mutating endpoints. The middleware rejects
+        // via Content-Length pre-check before the route body parser runs.
+        using var f = new HarnessFactory
+        {
+            Validate = () => Task.FromResult(new AuthValidationResult(
+                Ok: true, Login: "alice", Scopes: null,
+                Error: AuthValidationError.None, ErrorDetail: null)),
+        };
+        await SeedPriorLoginAsync(f, "alice");
+
+        using var client = f.CreateClient();
+
+        var oversized = new string('x', 17 * 1024);   // 17 KiB pad
+        var body = $"{{\"pat\":\"ghp_test\",\"pad\":\"{oversized}\"}}";
+        using var content = new System.Net.Http.StringContent(body, System.Text.Encoding.UTF8, "application/json");
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/auth/replace") { Content = content };
+
+        var resp = await client.SendAsync(req);
+        resp.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
+    }
+
+    [Fact]
     public async Task No_repos_selected_warning_treated_as_success()
     {
         using var f = new HarnessFactory
