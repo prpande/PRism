@@ -1,3 +1,13 @@
+import styles from './Logo.module.css';
+
 export function Logo() {
-  return <span aria-label="PRism">PRism</span>;
+  return (
+    <img
+      src="/prism-logo.png"
+      alt="PRism"
+      width={28}
+      height={28}
+      className={styles.logo}
+    />
+  );
 }
