@@ -40,10 +40,29 @@ const authedAuthState = {
   hostMismatch: null,
 };
 
+// S6 PR1: GET /api/preferences widened from flat { theme, accent, aiPreview } to
+// nested { ui, inbox, github } (spec § 2.4). Playwright frontend consumers
+// (HeaderControls, InboxPage, …) now read preferences.ui.theme etc., so the
+// Playwright fixture must mirror the new shape or the React tree crashes when
+// HeaderControls.applyToDocument(undefined, undefined) → ACCENT_HUES[undefined].h
+// throws. Caught by Playwright on PR #69 (4 inbox tests failed at "Refactor auth
+// flow" never rendering).
 const defaultPreferences = {
-  theme: 'system',
-  accent: 'indigo',
-  aiPreview: false,
+  ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+  inbox: {
+    sections: {
+      'review-requested': true,
+      'awaiting-author': true,
+      'authored-by-me': true,
+      mentioned: true,
+      'ci-failing': true,
+    },
+  },
+  github: {
+    host: 'https://github.com',
+    configPath: '/fake/config.json',
+    logsPath: '/fake/logs',
+  },
 };
 
 const allOffCapabilities = {
@@ -264,9 +283,10 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
   );
   await page.route('**/api/preferences', async (route: Route) => {
     if (route.request().method() === 'POST') {
-      const body = JSON.parse(route.request().postData() ?? '{}') as Partial<
-        typeof defaultPreferences
-      >;
+      // POST body is still the single-field flat shape (spec § 2.3): the client
+      // sends `{ "aiPreview": <bool> }`. Only the GET/POST RESPONSE shape changed
+      // to nested in PR1.
+      const body = JSON.parse(route.request().postData() ?? '{}') as { aiPreview?: boolean };
       if (typeof body.aiPreview === 'boolean') {
         aiPreview = body.aiPreview;
       }
@@ -274,7 +294,13 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ...defaultPreferences, aiPreview }),
+      // Response shape is nested per S6 PR1 (spec § 2.4) — the aiPreview override
+      // belongs under `ui`, not at the top level, or the frontend's
+      // preferences.ui.aiPreview consumer never sees the flip.
+      body: JSON.stringify({
+        ...defaultPreferences,
+        ui: { ...defaultPreferences.ui, aiPreview },
+      }),
     });
   });
   await page.route('**/api/capabilities', (route: Route) =>
