@@ -62,7 +62,16 @@ function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
       }}
     >
       {label}
-      {count !== undefined && count > 0 && <span className="pr-tab-count">{count}</span>}
+      {count !== undefined && count > 0 && (
+        <>
+          <span className="pr-tab-count" aria-hidden="true">
+            {count}
+          </span>
+          {/* SR companion so the tab announces "Files, 3 items" rather than
+              "Files 3". Spec § 6.1 Pass 2 ("badge labels in words"). */}
+          <span className="sr-only">{`, ${count} ${count === 1 ? 'item' : 'items'}`}</span>
+        </>
+      )}
     </button>
   );
 }

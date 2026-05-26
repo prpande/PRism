@@ -10,6 +10,7 @@ revisions:
   - 2026-05-26: PR6 implementation — recorded the `LoadingScreen` third-swap-site no-op deviation against spec § 5.5 / plan PR6 Task 6.2 Step 3.
   - 2026-05-26: PR6 implementation — recorded the icon-asset shrink deviation against spec § 5.1's naive `cp` prescription (1.84 MB blocked Playwright `load` event).
   - 2026-05-26: PR6 implementation — recorded the pre-existing Vite-proxy `Origin` header gap that causes every `dev`-project Playwright spec to 401 locally under `ASPNETCORE_ENVIRONMENT=Test`.
+  - 2026-05-27: PR7 implementation — recorded the VoiceOver manual pass deferral (no macOS dogfood machine available to the implementer).
 ---
 
 # Deferrals — S6 polish and distribution
@@ -90,6 +91,30 @@ The 2026-05-23 amendment pass itself folded its other findings directly into the
   - A contributor reports "local Playwright doesn't pass on `npm run pre-push`" — that is THIS issue; point them at this entry.
   - The pre-push checklist in `.ai/docs/development-process.md` is amended (e.g., to clarify "prod-only suffices locally pending the Vite Origin fix").
 - **Where the gap lives in code:** `frontend/vite.config.ts:8-10` (plain proxy, no `configure` hook); `PRism.Web/Middleware/SessionTokenMiddleware.cs:84-92` (Origin-only bypass branch). The fix is at the Vite layer, not the middleware (the middleware already correctly accommodates the dev port via Origin — it just isn't receiving one from Vite). A standalone follow-up branch can land the `configure` hook + one Playwright assertion in a ~10-line diff.
+
+---
+
+### [Decision] VoiceOver manual pass deferred — no macOS dogfood machine
+
+- **Source:** PR7 implementation 2026-05-27 — spec § 6.1 Pass 3 ("Manual VoiceOver pass on macOS dogfood machine") + plan PR7 Task 7.2 Step 4 both prescribe a manual SR walkthrough. The implementer is on Windows and has no macOS host available for this slice.
+- **Severity:** P2 — Pass 1 (automated axe-core) + Pass 2 (manual grep + fixes) already shipped in PR7 and cover the bulk of the DoD § 13 a11y bullets. VoiceOver-specific behavior (unique to macOS Safari + VO interaction model) is the residual gap.
+- **Date:** 2026-05-27
+- **What was shipped in PR7:**
+  - Pass 1 (automated): new `frontend/e2e/a11y-audit.spec.ts` runs `@axe-core/playwright` against `/setup`, `/`, `/pr/octocat/Hello-World/1`, `/pr/octocat/Hello-World/1/files`, `/pr/octocat/Hello-World/1/drafts`, `/settings`, and the cheatsheet-open state. Asserts 0 serious/critical violations. Plus the fold-in `prefers-reduced-motion` LoadingScreen verification.
+  - Pass 2 (manual fixes): `--text-3` token bumped from `oklch(0.58)` to `oklch(0.48)` in light mode so 12-14px body text against `surface-0` clears WCAG AA 4.5:1; `.sr-only` utility added to `tokens.css`; `PrSubTabStrip` count badge gains an `sr-only` companion (`", N items"` form) so screen readers announce "Files, 3 items" rather than bare "Files 3"; the existing `:focus-visible` rule in `tokens.css` already applies globally to every interactive element.
+  - Pass 2 (verification): grep-audit of `Badge` / `Chip` / count-rendering components recorded — every remaining count chip (InboxRow comment counts, InboxSection counts, cross-tab presence badges) is already inside a `button` with `aria-label` that names the surrounding context (the `<span>{count}</span>` is suppressed from the accessible name computation), or is itself the accessible-name-providing text (e.g., section toggle button "Review requested 1").
+- **What is deferred (Pass 3):**
+  - VoiceOver-driven walkthrough of: unread badges on inbox rows, viewed checkbox toggle on Files tab, iteration tab strip navigation, composer open/dismiss/discard-confirm, cheatsheet open/close, LoadingScreen pulse + label, Replace-token UX (which lives at `/setup?replace=1` and isn't covered by axe-core directly).
+  - Anything VoiceOver-specific that axe-core's heuristic rules don't surface — e.g., rotor-navigation friendliness of landmarks, focus-trap semantics under aria-modal="false" (the cheatsheet), live-region announcement timing for toasts.
+- **Why deferred (not folded into PR7):**
+  - No macOS host. The spec explicitly calls for "the macOS dogfood machine" because VoiceOver is the only mainstream SR with deep semantics-rotor behavior — running NVDA on Windows isn't a substitute for the spec's intent.
+  - Pass 1 + Pass 2 are sufficient to close every line item in DoD § 13 ("Semantic landmarks", "ARIA on icon-only buttons", "Keyboard-navigable file tree", "Focus rings visible", "WCAG AA color contrast", "SR-only badge labels") with axe-core evidence + grep audit. The DoD doesn't require VoiceOver evidence specifically; spec § 6.1 Pass 3 is an additional confidence pass, not a DoD line.
+  - The PoC's user base is the 5-dogfooder cohort (per spec § 1.1) — at least one will be on macOS and can drive the manual pass once the binaries from PR8 ship.
+- **Revisit when:**
+  - The implementer (or any contributor) has access to a macOS host and can run the walkthrough.
+  - A dogfooder on macOS reports SR friction — that becomes the reproducer.
+  - PR8 ships and the macOS binary is available; the walkthrough becomes part of the v0.1.0 acceptance-test pass.
+- **Where the gap lives in code:** Nowhere — this is a verification-pass deferral, not a code defect. The spec is correctly calling out a manual check that isn't reproducible on the current host. If VoiceOver surfaces issues later, the fixes would land in the same component surface area Pass 2 already touched.
 
 ---
 
