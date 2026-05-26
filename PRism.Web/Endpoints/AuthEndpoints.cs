@@ -203,9 +203,33 @@ internal static partial class AuthEndpoints
                 : null;
 
             // 4) Lazy validate-before-swap: stash transient, ask GitHub if it's good.
+            //    Wrap validation in try/finally so any exception (network failure,
+            //    OperationCanceledException on aborted request, etc.) rolls back the
+            //    transient. Without this guard a cancelled validation would leave the
+            //    unvalidated PAT in TokenStore, where ReadAsync would silently shadow
+            //    the committed PAT for the rest of the process lifetime — Copilot #6.
+            //    Rollback uses CancellationToken.None so a cancelled request's cleanup
+            //    can still complete; best-effort wrapping absorbs rollback-side failures
+            //    so the original exception still propagates to the global handler.
             Log.ReplaceValidating(log, pat.Length, config.Current.Github.Host);
             await tokens.WriteTransientAsync(pat, ct).ConfigureAwait(false);
-            var result = await review.ValidateCredentialsAsync(ct).ConfigureAwait(false);
+            AuthValidationResult result;
+            var validationCompleted = false;
+            try
+            {
+                result = await review.ValidateCredentialsAsync(ct).ConfigureAwait(false);
+                validationCompleted = true;
+            }
+            finally
+            {
+                if (!validationCompleted)
+                {
+                    try { await tokens.RollbackTransientAsync(CancellationToken.None).ConfigureAwait(false); }
+#pragma warning disable CA1031 // best-effort cleanup; original exception MUST still propagate
+                    catch { }
+#pragma warning restore CA1031
+                }
+            }
             if (!result.Ok)
             {
                 await tokens.RollbackTransientAsync(ct).ConfigureAwait(false);
@@ -242,10 +266,27 @@ internal static partial class AuthEndpoints
             // 6) Commit + persist new login to config + update in-memory cache.
             //    On-disk write goes BEFORE the in-memory cache so a SetDefault throw
             //    can't leave viewerLogin pointing at the new login while the on-disk
-            //    config still says the old one (cross-restart divergence — see
-            //    ADV-PR2-003 in PR2's adversarial preflight).
+            //    config still says the old one (ADV-PR2-003 — cross-restart divergence).
+            //
+            //    SetDefault is also wrapped in best-effort (Copilot #7): once CommitAsync
+            //    succeeds the PAT is in the keychain and the user-visible identity has
+            //    already swapped. If the on-disk login write fails (IO error, antivirus
+            //    lock, disk full), surfacing 500 would skip the cache wipe + SSE fan-out
+            //    AND leave the token committed — worst of both worlds. Instead log the
+            //    failure and continue: viewerLogin + reconciliation still run, and the
+            //    next process startup's ViewerLoginHydrator re-derives the on-disk login
+            //    from the committed PAT, self-healing the on-disk divergence.
             await tokens.CommitAsync(ct).ConfigureAwait(false);
-            await config.SetDefaultAccountLoginAsync(newLogin, ct).ConfigureAwait(false);
+            try
+            {
+                await config.SetDefaultAccountLoginAsync(newLogin, ct).ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // best-effort on-disk write; failure is reconciled cross-restart
+            catch (Exception ex)
+            {
+                Log.SetDefaultAccountLoginFailed(log, ex);
+            }
+#pragma warning restore CA1031
             viewerLogin.Set(newLogin);
 
             // 7) Identity-change rule (case-insensitive; null priorLogin means
@@ -367,6 +408,14 @@ internal static partial class AuthEndpoints
         // log-grep-based forensic reconstruction.
         [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/replace: validating PAT (length={PatLength}) against host {Host}")]
         internal static partial void ReplaceValidating(ILogger logger, int patLength, string host);
+
+        // Logged when the post-commit on-disk write of the new account login fails
+        // (Copilot #7). The exception is swallowed at the call site so cache wipe +
+        // SSE fan-out still run; this log line is the only forensic trace. The next
+        // ViewerLoginHydrator pass on process restart will re-derive and re-persist
+        // the correct login from the committed PAT.
+        [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/replace: SetDefaultAccountLoginAsync failed after CommitAsync; continuing reconciliation (next startup will self-heal via ViewerLoginHydrator)")]
+        internal static partial void SetDefaultAccountLoginFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/connect: validation failed (error={Error}, detail={Detail})")]
         internal static partial void ConnectValidationFailed(ILogger logger, string error, string detail);

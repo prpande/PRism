@@ -216,6 +216,84 @@ public class AuthReplaceEndpointTests
     }
 
     [Fact]
+    public async Task Validation_throws_rolls_back_transient_and_propagates()
+    {
+        // Copilot #6 regression. If ValidateCredentialsAsync throws (network failure,
+        // OperationCanceledException on an aborted request, etc.), the transient PAT
+        // must be rolled back before the exception propagates — otherwise ReadAsync
+        // would keep returning the unvalidated PAT, silently shadowing the committed
+        // PAT for the rest of the process lifetime.
+        using var f = new HarnessFactory
+        {
+            Validate = () => throw new HttpRequestException("simulated network failure"),
+        };
+        await SeedPriorLoginAsync(f, "alice");
+        // Pre-seed a committed PAT via /api/auth/connect happy path so we have a known
+        // "previous PAT" to compare against after the failed replace.
+        f.Validate = () => Task.FromResult(new AuthValidationResult(
+            Ok: true, Login: "alice", Scopes: null,
+            Error: AuthValidationError.None, ErrorDetail: null));
+        using var client = f.CreateClient();
+        var connectResp = await client.PostAsJsonAsync("/api/auth/connect", new { pat = "ghp_initial_pat" });
+        connectResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // Flip the validator to throw and call Replace.
+        f.Validate = () => throw new HttpRequestException("simulated network failure");
+
+        using var resp = await PostReplaceAsync(client, pat: "ghp_replacement");
+        resp.IsSuccessStatusCode.Should().BeFalse("validation throw must NOT return success");
+
+        // Crucial: ReadAsync still returns the committed PAT, NOT the rejected transient.
+        var tokens = f.Services.GetRequiredService<ITokenStore>();
+        (await tokens.ReadAsync(default)).Should().Be("ghp_initial_pat",
+            "the transient must have been rolled back on validation throw");
+    }
+
+    [Fact]
+    public async Task SetDefaultAccountLoginAsync_throw_still_runs_reconciliation_and_returns_200()
+    {
+        // Copilot #7 regression. If SetDefaultAccountLoginAsync throws AFTER CommitAsync
+        // succeeded (disk full, antivirus lock, IO error), surfacing 500 would skip cache
+        // wipe + SSE fan-out + the identity-change rule, leaving the system worse off than
+        // 200-with-self-healing-on-restart. The endpoint must catch + log + continue.
+        var throwingConfig = new ThrowingSetDefaultConfigStore();
+        using var f = new HarnessFactory
+        {
+            Validate = () => Task.FromResult(new AuthValidationResult(
+                Ok: true, Login: "bob", Scopes: null,
+                Error: AuthValidationError.None, ErrorDetail: null)),
+            ExtraServiceConfig = s =>
+            {
+                s.RemoveAll<IConfigStore>();
+                s.AddSingleton<IConfigStore>(throwingConfig);
+            },
+        };
+        await throwingConfig.InitWithPriorLoginAsync("alice");
+        var session = SessionWithNodeIds();
+        await SeedSessionAsync(f, SamplePr, session);
+
+        var bus = f.Services.GetRequiredService<IReviewEventBus>();
+        IdentityChanged? captured = null;
+        using var sub = bus.Subscribe<IdentityChanged>(e => captured = e);
+
+        using var client = f.CreateClient();
+
+        throwingConfig.ShouldThrowOnSetDefault = true;
+        using var resp = await PostReplaceAsync(client);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK, "SetDefault failure is best-effort post-Commit");
+        var body = await resp.Content.ReadFromJsonAsync<ReplaceResponseDto>();
+        body!.IdentityChanged.Should().BeTrue();
+
+        // Reconciliation still ran: state mutated, SSE published.
+        var loaded = await f.Services.GetRequiredService<IAppStateStore>().LoadAsync(default);
+        var s = loaded.Reviews.Sessions[SamplePr];
+        s.PendingReviewId.Should().BeNull("identity-change cleanup ran despite SetDefault throw");
+        s.DraftComments[0].ThreadId.Should().BeNull();
+        captured.Should().NotBeNull("SSE publish still ran after SetDefault throw");
+    }
+
+    [Fact]
     public async Task Validation_returns_Ok_with_null_login_treated_as_validation_failure()
     {
         // claude[bot] review #3: a protocol-inconsistent response (Ok=true, Login=null)
@@ -644,6 +722,47 @@ public class AuthReplaceEndpointTests
 #pragma warning disable CA1812 // System.Text.Json instantiates via reflection — analyzer can't see the use.
     private sealed record ReplaceResponseDto(bool Ok, string? Login, string? Host, bool IdentityChanged);
 #pragma warning restore CA1812
+
+    // Wraps the real on-disk ConfigStore but can be flipped to make SetDefault throw.
+    // Used by SetDefaultAccountLoginAsync_throw_still_runs_reconciliation_and_returns_200
+    // to exercise the post-commit best-effort path without simulating actual disk failures.
+    private sealed class ThrowingSetDefaultConfigStore : IConfigStore, IDisposable
+    {
+        private readonly PRism.Core.Config.ConfigStore _inner;
+        public bool ShouldThrowOnSetDefault { get; set; }
+
+        public ThrowingSetDefaultConfigStore()
+        {
+            // Use the test factory's own DataDir convention; tests await InitWith*Async
+            // before exercising. dataDir uniqueness per-test isolates the on-disk config.json.
+            var dataDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"PRism-replace-throw-{Guid.NewGuid():N}");
+            System.IO.Directory.CreateDirectory(dataDir);
+            _inner = new PRism.Core.Config.ConfigStore(dataDir);
+        }
+
+        public async Task InitWithPriorLoginAsync(string priorLogin)
+        {
+            await _inner.InitAsync(default);
+            await _inner.SetDefaultAccountLoginAsync(priorLogin, default);
+        }
+
+        public PRism.Core.Config.AppConfig Current => _inner.Current;
+        public string ConfigPath => _inner.ConfigPath;
+        public Exception? LastLoadError => _inner.LastLoadError;
+        public Task InitAsync(CancellationToken ct) => _inner.InitAsync(ct);
+        public Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct) => _inner.PatchAsync(patch, ct);
+        public Task SetDefaultAccountLoginAsync(string login, CancellationToken ct) =>
+            ShouldThrowOnSetDefault
+                ? throw new System.IO.IOException("simulated disk-full")
+                : _inner.SetDefaultAccountLoginAsync(login, ct);
+        public event EventHandler<PRism.Core.Config.ConfigChangedEventArgs>? Changed
+        {
+            add { _inner.Changed += value; }
+            remove { _inner.Changed -= value; }
+        }
+
+        public void Dispose() => _inner.Dispose();
+    }
 
     private sealed class ThrowingLoggerProvider : ILoggerProvider
     {
