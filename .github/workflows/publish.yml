@@ -14,6 +14,10 @@ permissions:
 jobs:
   build-and-publish:
     runs-on: windows-latest
+    # Cap at 30 min so a stuck npm ci / dotnet publish / Release-upload retry
+    # can't consume the monthly Actions budget on one hung run. Expected wall
+    # time for the whole job is ~5 minutes.
+    timeout-minutes: 30
     steps:
       # Third-party actions pinned to commit SHAs (security: mutable tags can be
       # force-pushed; pinned SHAs cannot). Bump via Dependabot (.github/dependabot.yml).
