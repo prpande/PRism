@@ -307,25 +307,26 @@ test.describe('A11y audit — automated axe-core pass per spec § 6', () => {
 test.describe('A11y audit — LoadingScreen honors prefers-reduced-motion', () => {
   test('pulse animation is suppressed under reducedMotion: reduce', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    // Hold the auth response open so the LoadingScreen stays visible.
-    await page.route('**/api/auth/state', () => {
-      // Intentionally never call route.fulfill() — the request hangs, the
-      // useAuth hook stays in its pending state, App renders <LoadingScreen />.
-    });
+    // Hold the auth response open so the LoadingScreen stays visible. The
+    // useAuth hook stays in its pending state and App renders <LoadingScreen />.
+    // The handler is intentionally a no-op — the request hangs for the test
+    // duration; Playwright cleans it up at page close.
+    await page.route('**/api/auth/state', () => {});
     await page.goto('/');
-    // role=status is on the screen wrapper (LoadingScreen.tsx line 29).
     const loadingRegion = page.getByRole('status').first();
-    await expect(loadingRegion).toBeVisible({ timeout: 10_000 });
-    // The animated logo is the second <img> in the LoadingScreen (the first is
-    // the watermark). Both are aria-hidden, so we cannot select by role; use a
-    // bounded DOM query rooted at the role=status region.
-    const pulseLogo = loadingRegion.locator('img').nth(1);
+    await expect(loadingRegion).toBeVisible({ timeout: 5_000 });
+    // Bind by CSS-modules-hashed class substring rather than sibling index, so
+    // the test fails fast if the LoadingScreen reorders its <img> elements OR
+    // if the 10s internal timer fires and swaps pulseLogo → logoStill before
+    // the assertion runs. Either case would otherwise produce a silent
+    // false-pass because logoStill also has `animation: none`.
+    const pulseLogo = loadingRegion.locator('img[class*="pulseLogo"]');
     await expect(pulseLogo).toBeVisible();
     const animationName = await pulseLogo.evaluate(
       (el) => window.getComputedStyle(el).animationName,
     );
     // Under prefers-reduced-motion: reduce, the @media override sets
-    // animation: none — getComputedStyle reports 'none' for animationName.
+    // `animation: none` — getComputedStyle reports 'none' for animationName.
     expect(animationName).toBe('none');
   });
 });
