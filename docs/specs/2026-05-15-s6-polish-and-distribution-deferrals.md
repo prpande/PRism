@@ -9,6 +9,7 @@ revisions:
   - 2026-05-25: post-PR-#67 review pass — rewrote `[Risk] LogsPathOptions` to match the spec's revised `LogsPathInfo` singleton recommendation; fixed broken `§ 15.3` cross-link to point at the § 15.1 row; updated `last-updated` per the file-finalization convention used in this repo.
   - 2026-05-26: PR6 implementation — recorded the `LoadingScreen` third-swap-site no-op deviation against spec § 5.5 / plan PR6 Task 6.2 Step 3.
   - 2026-05-26: PR6 implementation — recorded the icon-asset shrink deviation against spec § 5.1's naive `cp` prescription (1.84 MB blocked Playwright `load` event).
+  - 2026-05-26: PR6 implementation — recorded the pre-existing Vite-proxy `Origin` header gap that causes every `dev`-project Playwright spec to 401 locally under `ASPNETCORE_ENVIRONMENT=Test`.
 ---
 
 # Deferrals — S6 polish and distribution
@@ -70,6 +71,25 @@ The 2026-05-23 amendment pass itself folded its other findings directly into the
   - `prism-logo.png` is used in contexts that need higher-DPI source (e.g., printable artwork, marketing assets) — at that point, the 256×256 cap might be tightened to a separate variant.
   - A future contributor proposes "let's just `cp` the canonical icon" — they need to read this entry first.
 - **Where the gap lives in code:** `assets/icons/README.md` (re-derivation script), `frontend/public/prism-logo.png` + `frontend/public/favicon.png` (derived artifacts), `frontend/index.html` (PNG-favicon link tag), `docs/specs/2026-05-15-s6-polish-and-distribution-design.md` § 5.1 + § 5.3 (spec text not yet amended — flagged for next spec touch-up; this deferral is the authoritative override until then).
+
+### [Decision] Local `dev`-project Playwright specs 401 under Test env — pre-existing Vite-proxy `Origin` gap, not blocking S6 PR6 merge
+
+- **Source:** PR6 implementation 2026-05-26 — surfaced during the pre-push checklist after the icon-asset shrink moved past the prior load-event hang.
+- **Severity:** P2 — local-only pre-push gap. CI is unaffected: `playwright.config.ts` runs only the `prod` project under `isCI`. Documented as a known-pre-existing condition so future implementers stop debugging it as a regression.
+- **Date:** 2026-05-26
+- **Where:** `frontend/vite.config.ts` defines a plain `proxy: { '/api': 'http://localhost:5180' }`. Browser GETs to `http://localhost:5173/api/auth/state` are same-origin, so the browser omits the `Origin` header per the Fetch spec. Vite's http-proxy forwards the browser headers verbatim, so the upstream request to Kestrel at `:5180` also lacks `Origin`. `PRism.Web/Middleware/SessionTokenMiddleware.cs:50-92` enforces session-token auth under Test env via three bypass branches: (i) `/api/health` liveness, (ii) loopback-different-port via the `Origin` header (lines 84-92), (iii) valid `X-PRism-Session` header OR `prism-session` cookie. The Vite-proxied GET hits none of these: no `Origin` (Vite passthrough), no `prism-session` cookie (Vite served the HTML, not Kestrel — the cookie-stamp middleware never ran), no `X-PRism-Session` header (the SPA reads it from a cookie it doesn't have). Result: `401 application/problem+json` with `"type": "/auth/session-stale", "detail": "Session token mismatch — reload the page to refresh."`.
+- **Empirical confirmation that this is pre-existing:** During PR6 pre-push, ran `npx playwright test cold-start` from the unmodified `main` checkout at `D:\src\PRism\frontend` (commit `6985264`, the PR #73 merge — no PR6 changes present). Stats: `expected: 3, unexpected: 3, flaky: 0`. The 3 cold-start specs each ran in both projects; prod (3) passed and dev (3) failed with the identical `Failed to load auth state: HTTP 401` alert at the same locator timeout. Manual verification: `curl http://localhost:5180/api/auth/state` → 401; `curl -H "Origin: http://localhost:5173" http://localhost:5180/api/auth/state` → `200 {"hasToken":false,...}`. The bypass works iff `Origin` is present; Vite isn't sending it.
+- **Why the gap survived prior PRs:** CI gates only the prod project (per the `isCI` carve-out in `playwright.config.ts:39+118`); prior PRs (`#69`-`#73`) passed CI without locally stress-testing the dev project, OR ran step 5 only against prod, OR ignored local dev-project failures as known-noise. Memory entries for PR71-73 cite "Playwright" green at exit without specifying project; this deferral retroactively pins what that meant.
+- **Why deferred (not folded into PR6):**
+  - **Out of S6 PR6 scope.** PR6 is "icon assets + branded LoadingScreen" — touching `vite.config.ts` to add an `Origin` header on `/api` proxy requests is auth-pipeline plumbing, not loading-state polish.
+  - **One-line fix already understood.** The remediation is: pass `proxy: { '/api': { target: 'http://localhost:5180', configure: (proxy) => { proxy.on('proxyReq', (proxyReq) => { proxyReq.setHeader('Origin', 'http://localhost:5173'); }); } } }`. A follow-up PR should land this with a single Playwright spec exercising a fresh-cookie dev GET to confirm the bypass fires.
+  - **No user-visible regression.** `dotnet watch run` (the canonical dev workflow) defaults to `Development` env, where `SessionTokenMiddleware._enforced` is `false`. The 401 ONLY appears when the env is forced to `Test` — i.e., during Playwright's webServer-managed backend. Real developers running `npm run dev` + `dotnet watch run` are unaffected.
+  - **Pre-existing on `main`.** Folding the fix into PR6 would mean PR6's diff is partially about auth-pipeline plumbing the implementer didn't sign up for, AND PR6's review surface conflates "loading state polish" with "dev-mode auth bypass". Better hygiene to land them separately.
+- **Revisit when:**
+  - The next PR that touches `frontend/vite.config.ts` or `PRism.Web/Middleware/SessionTokenMiddleware.cs` — both are natural homes for the Vite-side Origin fix.
+  - A contributor reports "local Playwright doesn't pass on `npm run pre-push`" — that is THIS issue; point them at this entry.
+  - The pre-push checklist in `.ai/docs/development-process.md` is amended (e.g., to clarify "prod-only suffices locally pending the Vite Origin fix").
+- **Where the gap lives in code:** `frontend/vite.config.ts:8-10` (plain proxy, no `configure` hook); `PRism.Web/Middleware/SessionTokenMiddleware.cs:84-92` (Origin-only bypass branch). The fix is at the Vite layer, not the middleware (the middleware already correctly accommodates the dev port via Origin — it just isn't receiving one from Vite). A standalone follow-up branch can land the `configure` hook + one Playwright assertion in a ~10-line diff.
 
 ---
 
