@@ -628,9 +628,11 @@ Beyond the per-file Viewed checkbox:
 
 ---
 
-## 11. Settings (PoC: file-only)
+## 11. Settings
 
-No Settings UI in PoC. All preferences live in `config.json` and the user edits the file directly. Hot reload via `FileSystemWatcher` means changes apply on the next poll cycle.
+A dedicated Settings page (route `/settings`, third tab in the app header) is the canonical surface for user preferences. Shipped in S6; see [`../specs/2026-05-15-s6-polish-and-distribution-design.md`](../specs/2026-05-15-s6-polish-and-distribution-design.md) § 2 for the full design. Three sections: **Appearance** (theme, accent, AI preview — same controls as the header pop-out, plus the comprehensive surface), **Inbox sections** (per-section visibility toggles), **Connection** (GitHub host, config-file path with copy, logs path with copy, Replace token link). Saves are optimistic with rollback-on-error and a `'success'` toast that auto-dismisses.
+
+`config.json` remains a valid edit surface for power users — every preference the Settings page writes is also accepted via a hand-edit. Hot reload via `FileSystemWatcher` means hand-edits apply on the next poll cycle.
 
 **Editor save semantics.** Many editors (VS Code, vim with default settings, IntelliJ) save files via *rename-and-replace* — they write a temp file, then `rename(temp, final)`. `FileSystemWatcher` on macOS and Linux fires `Renamed` rather than `Changed` for this pattern, and on some file systems may miss the event entirely. The hot-reload implementation therefore subscribes to **both `Changed` and `Renamed`** events, debounces them by 250 ms (to coalesce rapid sequences), and on debounce-fire **re-reads `config.json` from disk** rather than acting on the event payload. This works across editors and file systems without per-editor special cases.
 
@@ -640,7 +642,7 @@ The README links to a documented config schema. Invalid config behavior depends 
 - **Invalid config on cold load** (first run with hand-edited bad config; or a config file produced by a v2 binary the user downgraded from): no last-good-config exists in memory. Backend logs the parse error, falls back to **documented defaults** for every key, surfaces a different toast: *"config.json could not be parsed; defaults are in effect. Edit the file and save to retry — your changes will hot-reload."* The app continues startup; the user is not blocked.
 - The "documented defaults" are the values shown in the schema example (`02-architecture.md` § Configuration schema): polling 30s/120s, deduplicated inbox, github provider, etc.
 
-A "Replace token" link in the app footer goes to the Setup screen (re-prompting for a new PAT).
+The **Replace token** link in the Connection section drives the Setup-screen re-prompt with the S6 identity-change rule: same-login replace preserves all state; different-login replace preserves drafts and clears the GraphQL Node IDs owned by the prior login (foreign-pending-review modal handles the orphan cleanup on next submit).
 
 ---
 
