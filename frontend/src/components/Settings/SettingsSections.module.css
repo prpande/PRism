@@ -30,8 +30,15 @@
   color: var(--text-2);
   opacity: 0.6;
   cursor: not-allowed;
-  pointer-events: none;
 }
+/* No pointer-events:none — Copilot iter-1: pointer-events:none blocks hover, so
+   the title= tooltip on the disabled Replace link never appears for mouse users.
+   The click is already neutralized via onClick={e => e.preventDefault()} on the
+   <Link>, so dropping pointer-events:none restores hover-tooltip while keeping
+   the disabled affordance. Spec § 3.1 calls for "tooltip on hover/focus" — the
+   spec also said pointer-events:none + tabIndex={-1}, but those attributes
+   defeat the very interactions the tooltip needs (internal spec inconsistency,
+   resolved in favor of the tooltip being reachable). */
 .srOnly {
   position: absolute;
   width: 1px;

@@ -26,7 +26,6 @@ describe('AuthSection Replace link', () => {
     const link = screen.getByRole('link', { name: /replace token/i });
     expect(link).toHaveAttribute('href', '/setup?replace=1');
     expect(link).not.toHaveAttribute('aria-disabled', 'true');
-    expect(link).not.toHaveAttribute('tabindex', '-1');
   });
 
   it('disables the link with prRef tooltip when a submit is in flight', () => {
@@ -41,7 +40,9 @@ describe('AuthSection Replace link', () => {
     );
     const link = screen.getByRole('link', { name: /replace token/i });
     expect(link).toHaveAttribute('aria-disabled', 'true');
-    expect(link).toHaveAttribute('tabindex', '-1');
+    // Stays focusable so keyboard / SR users can reach the disabled affordance
+    // and have aria-describedby announced on focus (Copilot iter-1).
+    expect(link).not.toHaveAttribute('tabindex', '-1');
     // Pointer-tooltip (title=) AND SR descriptor span both carry the prRef.
     expect(link).toHaveAttribute('title', 'Submit on octocat/Hello-World/42 in progress');
     expect(screen.getByText(/Submit on octocat\/Hello-World\/42 in progress/)).toBeInTheDocument();

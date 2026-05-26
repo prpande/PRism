@@ -12,8 +12,14 @@ export interface ReplaceTokenResponse {
   identityChanged: boolean;
 }
 
-// Wire shape from AuthReplaceError. 400 (invalid-json, pat-required, validation-
-// failed, no-token), 409 (submit-in-flight — prRef is set), 401 (token rejected).
+// Wire shape from AuthReplaceError. Codes from PRism.Web/Endpoints/AuthEndpoints.cs:
+//   - 400 invalid-json (non-object JSON root or parse failure)
+//   - 400 pat-required (missing/empty pat field)
+//   - 400 <lowercased AuthValidationError> (invalidtoken / insufficientscopes /
+//     networkerror / dnserror / servererror — token rejected by GitHub returns
+//     400 invalidtoken, NOT 401; the apiClient's 401 path dispatches
+//     prism-auth-rejected for session-cookie rejection only)
+//   - 409 submit-in-flight (prRef set, names the held PR)
 // Frontend never reads `ok: false` directly because apiClient.post throws ApiError
 // on non-2xx; the body is exposed via ApiError.body for the caller to map.
 export interface ReplaceTokenError {

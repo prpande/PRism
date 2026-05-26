@@ -6,10 +6,18 @@ import styles from './SettingsSections.module.css';
 // where SetupPage POSTs to /api/auth/replace (spec § 3.2.1). While a submit holds
 // SubmitLockRegistry the link is aria-disabled with a tooltip naming the PR ref —
 // the backend ALSO rejects a replace mid-submit with 409, so this guard is UX
-// hardening, not security. The tooltip is exposed two ways for keyboard/SR users:
-// title= for pointer/focus tooltip (browser-native) and an aria-describedby span
-// for AT — aria-disabled links can't focus, so screen readers reach the span via
-// the descriptor relationship instead.
+// hardening, not security.
+//
+// Accessibility (Copilot iter-1):
+//   - The link stays in the keyboard tab order (no tabIndex={-1}) so screen
+//     readers reach it and announce aria-disabled + the aria-describedby span.
+//   - CSS no longer applies pointer-events:none, so mouse hover surfaces the
+//     title= tooltip. The click is neutralized by onClick={e => e.preventDefault()}
+//     plus aria-disabled — react-router-dom's Link skips navigation when
+//     defaultPrevented is true.
+//   - Spec § 3.1 prescribed tabIndex={-1} + pointer-events:none AND a hover/focus
+//     tooltip, which is internally inconsistent. Resolved in favor of the
+//     hover/focus tooltip being actually reachable.
 export function AuthSection() {
   const { inFlight, prRef } = useSubmitInFlight();
 
@@ -23,7 +31,6 @@ export function AuthSection() {
             to="/setup?replace=1"
             aria-disabled="true"
             aria-describedby="auth-replace-help"
-            tabIndex={-1}
             title={tooltipMsg}
             onClick={(e) => e.preventDefault()}
             className={styles.linkDisabled}
