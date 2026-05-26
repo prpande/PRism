@@ -4,37 +4,19 @@ import { useCapabilities } from '../../hooks/useCapabilities';
 import { ThemeToggle } from './ThemeToggle';
 import { AccentPicker } from './AccentPicker';
 import { AiPreviewToggle } from './AiPreviewToggle';
+import { applyThemeToDocument } from '../../utils/applyTheme';
 import styles from './HeaderControls.module.css';
 import type { Theme, Accent } from '../../api/types';
 
 const THEMES: readonly Theme[] = ['system', 'light', 'dark'] as const;
 const ACCENTS: readonly Accent[] = ['indigo', 'amber', 'teal'] as const;
-const ACCENT_HUES: Record<Accent, { h: number; c: number }> = {
-  indigo: { h: 245, c: 0.085 },
-  amber: { h: 75, c: 0.1 },
-  teal: { h: 195, c: 0.075 },
-};
-
-function applyToDocument(theme: Theme, accent: Accent) {
-  if (typeof document === 'undefined') return;
-  const resolved =
-    theme === 'system'
-      ? matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light'
-      : theme;
-  document.documentElement.dataset.theme = resolved;
-  const hue = ACCENT_HUES[accent];
-  document.documentElement.style.setProperty('--accent-h', String(hue.h));
-  document.documentElement.style.setProperty('--accent-c', String(hue.c));
-}
 
 export function HeaderControls() {
   const { preferences, set } = usePreferences();
   const { refetch: refetchCapabilities } = useCapabilities();
 
   useEffect(() => {
-    if (preferences) applyToDocument(preferences.ui.theme, preferences.ui.accent);
+    if (preferences) applyThemeToDocument(preferences.ui.theme, preferences.ui.accent);
   }, [preferences]);
 
   if (!preferences) return null;
@@ -42,22 +24,39 @@ export function HeaderControls() {
   // Spec § 2.4 widened GET /api/preferences to a nested shape; the legacy bare
   // `theme`/`accent`/`aiPreview` POST keys still work via the back-compat path in
   // ConfigStore.PatchAsync's allowlist, so `set('theme', next)` keeps functioning.
+  // Each picker also calls applyThemeToDocument() directly so the visible UI
+  // updates without waiting on the POST response or a focus-driven refetch; on
+  // POST failure we re-apply the prior pair so the DOM tracks the rolled-back
+  // state (the rollback in usePreferences only touches React state, not DOM
+  // dataset, and HeaderControls' own useEffect on `preferences` would re-fire
+  // and rewrite the DOM but only after the rollback actually updates state —
+  // an explicit re-apply here keeps the visual revert tight).
   const cycleTheme = () => {
-    const next = THEMES[(THEMES.indexOf(preferences.ui.theme) + 1) % THEMES.length];
-    void set('theme', next);
+    const priorTheme = preferences.ui.theme;
+    const priorAccent = preferences.ui.accent;
+    const next = THEMES[(THEMES.indexOf(priorTheme) + 1) % THEMES.length];
+    applyThemeToDocument(next, priorAccent);
+    void set('theme', next).catch(() => applyThemeToDocument(priorTheme, priorAccent));
   };
   const cycleAccent = () => {
-    const next = ACCENTS[(ACCENTS.indexOf(preferences.ui.accent) + 1) % ACCENTS.length];
-    void set('accent', next);
+    const priorTheme = preferences.ui.theme;
+    const priorAccent = preferences.ui.accent;
+    const next = ACCENTS[(ACCENTS.indexOf(priorAccent) + 1) % ACCENTS.length];
+    applyThemeToDocument(priorTheme, next);
+    void set('accent', next).catch(() => applyThemeToDocument(priorTheme, priorAccent));
   };
   // Capabilities mirror the same AiPreviewState the preference drives. Refetch
   // immediately after the preference flip so consumers (Overview's
   // AiSummaryCard, Inbox enrichment, etc.) see the new flag without waiting
-  // for a window-focus event. Fire-and-forget — the refetch is idempotent and
-  // the hook handles its own error state.
-  const toggleAi = async () => {
-    await set('aiPreview', !preferences.ui.aiPreview);
-    void refetchCapabilities();
+  // for a window-focus event. usePreferences.set rethrows on POST failure
+  // (rollback + error toast already happen inside); .catch() here keeps the
+  // button's onClick handler from observing an unhandled promise rejection.
+  const toggleAi = () => {
+    set('aiPreview', !preferences.ui.aiPreview)
+      .then(() => refetchCapabilities())
+      .catch(() => {
+        /* toast + rollback already happened in usePreferences */
+      });
   };
 
   return (

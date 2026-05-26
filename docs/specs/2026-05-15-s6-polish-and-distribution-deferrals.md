@@ -76,6 +76,22 @@ Items the implementing engineer should keep an eye on during Phase 1 execution.
 - **Mitigation:** No code change required in S6. Add a single line to `.ai/docs/behavioral-guidelines.md` or `CLAUDE.md` noting "if you need to log a GitHub login, pick a qualified name (priorLogin, newLogin, validatedLogin) — bare `{login}` is auto-redacted." Out of scope for S6; capture as a v2 backlog or behavioral-guidelines amendment.
 - **Severity:** P3 (advisory).
 
+### [Decision] `usePreferences` stays per-consumer; PreferencesContext refactor deferred
+
+- **Source:** PR #71 (S6 PR3) post-open `@claude review` pass (2026-05-26).
+- **Severity:** P2 — network chattiness, not correctness. Doesn't block merge per the reviewer's own framing.
+- **Date:** 2026-05-26
+- **Where:** `frontend/src/hooks/usePreferences.ts` exposes a per-consumer `useState` + window-focus listener. On `/settings`, the three section components (Appearance, InboxSections, Connection) PLUS `HeaderControls` each call `usePreferences()` → four independent state instances → four parallel `GET /api/preferences` requests on every `focus` event. PR #71's Copilot review (finding #2) caught the analogous problem for `useAuth()` in `Header` and fixed it by prop-drilling `hasToken` from `App`. The `usePreferences` case is the same pattern but with N=4 consumers instead of 2.
+- **Why deferred:**
+  - The reviewer (claude[bot]) explicitly framed this as "doesn't need to block this PR if the architectural change is scoped to a follow-up." Adding a `PreferencesContext` + `PreferencesProvider` is a small refactor in isolation but touches every existing `usePreferences()` call site (`HeaderControls`, `InboxPage`, `PrHeader`, `OverviewTab`, `AiComposerAssistant`, plus the three new Settings sections) and every mocked-`usePreferences` test (~10+ files). The DOM-side cross-component sync problem PR3 hit (theme picker in /settings didn't update HeaderControls) was already solved by extracting `applyThemeToDocument` to a shared util; the remaining issue is purely network chattiness.
+  - PR3's diff is already large (+1148 / -73 across 21 files) and has been through one adversarial preflight pass + Copilot inline + `@claude review`. Scope-creeping a context refactor would invalidate the existing review and burn another review cycle.
+  - Wall-clock impact is bounded: `/api/preferences` is a small JSON response served by the local Kestrel; 4 parallel GETs per focus are wasteful but not user-visible. The frontend client has no rate-limit concerns against a local backend.
+- **Revisit when:**
+  - Another section is added to `/settings` (more parallel fetchers — the linear scaling makes the fix more obvious).
+  - `useAuth` and `usePreferences` both get a context refactor in the same PR (amortizes the touch cost of updating every consumer + test).
+  - Telemetry or profiling surfaces measurable focus-handler latency on `/settings`.
+- **Where the gap lives in code:** `frontend/src/hooks/usePreferences.ts` (per-consumer `useState`); `frontend/src/pages/SettingsPage.tsx` (composes three direct callers); `frontend/src/components/Header/HeaderControls.tsx` (fourth caller, always mounted).
+
 ---
 
 ## Note on the deferrals format

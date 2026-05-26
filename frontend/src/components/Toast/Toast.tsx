@@ -3,7 +3,7 @@ import styles from './Toast.module.css';
 
 export interface ToastSpec {
   id: string;
-  kind: 'info' | 'error';
+  kind: 'info' | 'error' | 'success';
   message: string;
   requestId?: string;
 }
@@ -21,6 +21,7 @@ interface Props {
 // banners that never cleared even after the user fixed the underlying state.
 const AUTO_DISMISS_MS: Record<ToastSpec['kind'], number> = {
   info: 5000,
+  success: 5000,
   error: 10000,
 };
 

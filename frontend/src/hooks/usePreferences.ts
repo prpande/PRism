@@ -1,10 +1,59 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../api/client';
+import { useToast } from '../components/Toast';
 import type { PreferencesResponse } from '../api/types';
+
+// Settings page (spec § 2.6) tightens the dotted-path key set from the bare
+// `string` PR1 ship to the union below. Bare `theme`/`accent`/`aiPreview` keep
+// the back-compat path used by HeaderControls; `inbox.sections.*` are the new
+// Settings page keys.
+export type PreferenceKey =
+  | 'theme'
+  | 'accent'
+  | 'aiPreview'
+  | `inbox.sections.${
+      | 'review-requested'
+      | 'awaiting-author'
+      | 'authored-by-me'
+      | 'mentioned'
+      | 'ci-failing'}`;
+
+type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'aiPreview'>;
+
+function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
+  if (key === 'theme') return prefs.ui.theme;
+  if (key === 'accent') return prefs.ui.accent;
+  if (key === 'aiPreview') return prefs.ui.aiPreview;
+  const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
+  return prefs.inbox.sections[id];
+}
+
+function writeKey(
+  prefs: PreferencesResponse,
+  key: PreferenceKey,
+  value: unknown,
+): PreferencesResponse {
+  if (key === 'theme')
+    return { ...prefs, ui: { ...prefs.ui, theme: value as PreferencesResponse['ui']['theme'] } };
+  if (key === 'accent')
+    return { ...prefs, ui: { ...prefs.ui, accent: value as PreferencesResponse['ui']['accent'] } };
+  if (key === 'aiPreview') return { ...prefs, ui: { ...prefs.ui, aiPreview: value as boolean } };
+  const id = (key as InboxSectionKey).slice(
+    'inbox.sections.'.length,
+  ) as keyof PreferencesResponse['inbox']['sections'];
+  return {
+    ...prefs,
+    inbox: {
+      ...prefs.inbox,
+      sections: { ...prefs.inbox.sections, [id]: value as boolean },
+    },
+  };
+}
 
 export function usePreferences() {
   const [preferences, setPreferences] = useState<PreferencesResponse | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const { show } = useToast();
 
   const refetch = useCallback(async () => {
     try {
@@ -23,17 +72,40 @@ export function usePreferences() {
     return () => window.removeEventListener('focus', handler);
   }, [refetch]);
 
-  // POST body is the single-field allowlist contract (spec § 2.3). Keys are
-  // the legacy bare ui.* names (`theme`, `accent`, `aiPreview`) OR the new
-  // dotted inbox.sections.* names. Both reach the server's PatchAsync
-  // allowlist. `string` here intentionally allows the dotted form without
-  // requiring this hook to know the full key set up front — PR3's Settings
-  // page consumers will tighten the type.
-  const set = useCallback(async (key: string, value: unknown) => {
-    const next = await apiClient.post<PreferencesResponse>('/api/preferences', { [key]: value });
-    setPreferences(next);
-    return next;
-  }, []);
+  // Spec § 2.6 rollback: on POST failure, revert ONLY the failing key against
+  // the latest state — not the whole-snapshot `prior` that captured pre-call
+  // baseline. Whole-snapshot revert cascades: two near-simultaneous toggles
+  // each snapshot the same `prior = P0`; if A succeeds and B fails, B's
+  // rollback to P0 silently undoes A's successful local apply (the server is
+  // still correct; the UI lies until a focus refetch). Key-scoped patching via
+  // the functional setState form is race-safe because it composes against
+  // current state, not the captured snapshot.
+  const set = useCallback(
+    async (key: PreferenceKey, value: unknown) => {
+      const priorValue = preferences ? readKey(preferences, key) : undefined;
+      try {
+        const next = await apiClient.post<PreferencesResponse>('/api/preferences', {
+          [key]: value,
+        });
+        setPreferences(next);
+        return next;
+      } catch (e) {
+        if (preferences && priorValue !== undefined) {
+          setPreferences((cur) => (cur ? writeKey(cur, key, priorValue) : cur));
+        }
+        // Generic copy: the internal dotted-path key (`inbox.sections.ci-failing`,
+        // etc.) is a wire-format detail with no value to the end user. If a
+        // consumer wants key-specific wording it can catch the rejection and
+        // show its own toast.
+        show({
+          kind: 'error',
+          message: "Couldn't save preference — your change was reverted.",
+        });
+        throw e;
+      }
+    },
+    [preferences, show],
+  );
 
   return { preferences, error, refetch, set };
 }

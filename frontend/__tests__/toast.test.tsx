@@ -1,7 +1,7 @@
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { ToastContainer, useToast, ToastProvider } from '../src/components/Toast';
+import { ToastContainer, useToast, ToastProvider, type ToastSpec } from '../src/components/Toast';
 
 function Trigger({
   kind = 'error',
@@ -9,7 +9,7 @@ function Trigger({
   requestId = 'rid-1',
   label = 'show',
 }: {
-  kind?: 'info' | 'error';
+  kind?: ToastSpec['kind'];
   message?: string;
   requestId?: string;
   label?: string;
@@ -101,6 +101,46 @@ describe('Toast', () => {
       vi.advanceTimersByTime(2);
     });
     expect(screen.queryByText('heads up')).not.toBeInTheDocument();
+  });
+
+  it('renders a success toast with the success CSS class so the green left-border rule lands', async () => {
+    render(
+      <ToastProvider>
+        <Trigger kind="success" message="Saved!" label="show-success" />
+        <ToastContainer />
+      </ToastProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'show-success' }));
+    const banner = screen.getByText('Saved!').closest('[class*="success"]');
+    expect(banner).not.toBeNull();
+  });
+
+  it('auto-dismisses a success toast after 5s (same window as info)', () => {
+    let showToast: ((spec: Omit<ToastSpec, 'id'>) => void) | null = null;
+    function Capture() {
+      const toast = useToast();
+      showToast = toast.show;
+      return null;
+    }
+    vi.useFakeTimers();
+    render(
+      <ToastProvider>
+        <Capture />
+        <ToastContainer />
+      </ToastProvider>,
+    );
+    act(() => {
+      showToast!({ kind: 'success', message: 'all done' });
+    });
+    expect(screen.getByText('all done')).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(4999);
+    });
+    expect(screen.queryByText('all done')).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(2);
+    });
+    expect(screen.queryByText('all done')).not.toBeInTheDocument();
   });
 
   it('auto-dismisses an error toast after 10s (longer window than info)', () => {
