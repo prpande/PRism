@@ -171,4 +171,50 @@ describe('useAuth', () => {
     window.dispatchEvent(new Event('focus'));
     await waitFor(() => expect(result.current.authState?.hasToken).toBe(true));
   });
+
+  // S6 PR4 — spec § 3.2.1 identity-change rule. The SSE bridge in api/events.ts
+  // dispatches `prism-identity-changed` on every IdentityChanged event the
+  // backend publishes; useAuth refetches /api/auth/state to pick up the new
+  // login. Tested via the window event directly (no SSE harness required).
+  it('refetches auth state when prism-identity-changed fires', async () => {
+    let calls = 0;
+    server.use(
+      http.get('/api/auth/state', () => {
+        calls += 1;
+        return HttpResponse.json({
+          hasToken: calls > 1,
+          host: 'https://github.com',
+          hostMismatch: null,
+        });
+      }),
+    );
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.authState).not.toBeNull());
+    expect(result.current.authState?.hasToken).toBe(false);
+    window.dispatchEvent(new CustomEvent('prism-identity-changed'));
+    await waitFor(() => expect(result.current.authState?.hasToken).toBe(true));
+  });
+
+  // Spec § 3.2.1 reconnect-replay defense. If the SSE stream blipped and missed
+  // an identity-change frame, the events.ts reconnect() handler dispatches
+  // `prism-events-reconnected`; useAuth refetches so the new login is reflected
+  // without waiting for window focus.
+  it('refetches auth state when prism-events-reconnected fires', async () => {
+    let calls = 0;
+    server.use(
+      http.get('/api/auth/state', () => {
+        calls += 1;
+        return HttpResponse.json({
+          hasToken: calls > 1,
+          host: 'https://github.com',
+          hostMismatch: null,
+        });
+      }),
+    );
+    const { result } = renderHook(() => useAuth());
+    await waitFor(() => expect(result.current.authState).not.toBeNull());
+    expect(result.current.authState?.hasToken).toBe(false);
+    window.dispatchEvent(new CustomEvent('prism-events-reconnected'));
+    await waitFor(() => expect(result.current.authState?.hasToken).toBe(true));
+  });
 });

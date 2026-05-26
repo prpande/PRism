@@ -120,6 +120,14 @@ export function openEventStream(): EventStreamHandle {
     newIdPromise();
     newAbortController();
     connect();
+    // S6 PR4 (spec § 3.2.1) — reconnect-replay defense. The SSE channel doesn't
+    // replay events from before the disconnect, so consumers that care about
+    // missed state must refetch on every reconnect. useAuth listens for this
+    // event to re-validate the session after a connection blip. Fires AFTER the
+    // new connect() call so listeners receive a stable "we're back" signal.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('prism-events-reconnected'));
+    }
   }
 
   function connect() {
