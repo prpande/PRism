@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider, ToastContainer } from './components/Toast';
 import { CheatsheetProvider, Cheatsheet } from './components/Cheatsheet';
 import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
+import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
 import { PrDetailPage } from './pages/PrDetailPage';
@@ -34,7 +35,7 @@ export function App() {
   if (authState === null && error) {
     return <div role="alert">Failed to load auth state: {error.message}</div>;
   }
-  if (authState === null) return <div aria-busy="true">Loading…</div>;
+  if (authState === null) return <LoadingScreen />;
 
   if (authState.hostMismatch) {
     return (
