@@ -1,5 +1,6 @@
 import { usePreferences } from '../../hooks/usePreferences';
 import { useCapabilities } from '../../hooks/useCapabilities';
+import { applyThemeToDocument } from '../../utils/applyTheme';
 import type { Accent, Theme } from '../../api/types';
 import styles from './SettingsSections.module.css';
 
@@ -19,8 +20,18 @@ export function AppearanceSection() {
   const { refetch: refetchCapabilities } = useCapabilities();
   if (!preferences) return null;
 
-  const onTheme = (value: Theme) => void set('theme', value);
-  const onAccent = (value: Accent) => void set('accent', value);
+  // usePreferences() in HeaderControls and here are independent useState
+  // instances — updating one won't notify the other until the next focus
+  // refetch. Apply directly to documentElement so the chosen theme/accent is
+  // visible immediately regardless of which picker the user touched.
+  const onTheme = (value: Theme) => {
+    applyThemeToDocument(value, preferences.ui.accent);
+    void set('theme', value);
+  };
+  const onAccent = (value: Accent) => {
+    applyThemeToDocument(preferences.ui.theme, value);
+    void set('accent', value);
+  };
   const onAiToggle = async (next: boolean) => {
     await set('aiPreview', next);
     void refetchCapabilities();
