@@ -33,3 +33,11 @@ internal sealed record HostChangeOk(bool Ok);
 
 // /api/auth/host-change-resolution: revert branch (server is exiting).
 internal sealed record HostChangeExiting(bool Ok, bool Exiting);
+
+// S6 PR2 /api/auth/replace happy-path 200 OK. identityChanged tells the frontend
+// whether to surface the "Node IDs cleared; drafts preserved" toast.
+internal sealed record AuthReplaceResponse(bool Ok, string? Login, string Host, bool IdentityChanged);
+
+// 4xx error envelope. PrRef is non-null only on the submit-in-flight 409 path
+// (carries the first observed held key for display); null otherwise. Spec § 3.5.
+internal sealed record AuthReplaceError(bool Ok, string Error, string? PrRef = null);

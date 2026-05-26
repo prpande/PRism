@@ -36,4 +36,6 @@ internal sealed class ActivePrCache : IActivePrCache
         ArgumentNullException.ThrowIfNull(snapshot);
         _snapshots[prRef] = snapshot;
     }
+
+    public void Clear() => _snapshots.Clear();
 }

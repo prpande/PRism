@@ -336,5 +336,6 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         public bool IsSubscribed(PrReference prRef) => _isSubscribed;
         public ActivePrSnapshot? GetCurrent(PrReference prRef) => _snapshot;
         public void Update(PrReference prRef, ActivePrSnapshot snapshot) { /* test fake — no-op */ }
+        public void Clear() { /* test fake — no-op */ }
     }
 }

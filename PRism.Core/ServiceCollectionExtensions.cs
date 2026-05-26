@@ -89,12 +89,17 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IConfigStore>(),
                 sp.GetRequiredService<ILogger<ViewerLoginHydrator>>()));
 
-        services.AddHostedService<InboxPoller>(sp =>
+        // Register InboxPoller as a concrete singleton AND as the IHostedService that
+        // ASP.NET starts. The /api/auth/replace endpoint (S6 PR2) resolves the concrete
+        // type to call RequestImmediateRefresh(); without this two-line pattern,
+        // resolving InboxPoller from the container would throw at request time.
+        services.AddSingleton<InboxPoller>(sp =>
             new InboxPoller(
                 sp.GetRequiredService<IInboxRefreshOrchestrator>(),
                 sp.GetRequiredService<InboxSubscriberCount>(),
                 sp.GetRequiredService<IConfigStore>(),
                 sp.GetRequiredService<ILogger<InboxPoller>>()));
+        services.AddHostedService(sp => sp.GetRequiredService<InboxPoller>());
 
         // S3 PR4 — iteration clustering + PrDetailLoader. Coefficients default to the values
         // recorded in IterationClusteringCoefficients's record-init defaults. Calibration

@@ -5,8 +5,11 @@ using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.Inbox;
+using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.Web.Submit;
 
 namespace PRism.Web.Endpoints;
 
@@ -144,6 +147,233 @@ internal static partial class AuthEndpoints
             return Results.BadRequest(new HostChangeError(Error: "resolution must be 'continue' or 'revert'"));
         });
 
+        // S6 PR2 — Replace the connected PAT with a different one, validating before
+        // committing (lazy validate-before-swap). When the new PAT's GitHub login
+        // differs from the prior login, the identity-change rule clears every
+        // ReviewSessionState's GitHub Node IDs (PendingReviewId / DraftComment.ThreadId
+        // / DraftReply.ReplyCommentId) while preserving draft markdown bodies, then
+        // publishes IdentityChanged so every connected SSE subscriber re-validates.
+        // Spec § 3.
+        app.MapPost("/api/auth/replace", async (
+            HttpContext ctx,
+            ITokenStore tokens,
+            IReviewAuth review,
+            IAppStateStore stateStore,
+            IConfigStore config,
+            IViewerLoginProvider viewerLogin,
+            SubmitLockRegistry submitLocks,
+            IReviewEventBus bus,
+            IActivePrCache activePrCache,
+            ActivePrSubscriberRegistry activeRegistry,
+            InboxPoller inboxPoller,
+            ILogger<Category> log,
+            CancellationToken ct) =>
+        {
+            // 1) Submit-in-flight guard. Optimistic check; the lock can still be
+            //    acquired between here and the post-validate re-check below.
+            var held = submitLocks.AnyHeld();
+            if (held.Held)
+                return Results.Conflict(new AuthReplaceError(Ok: false, Error: "submit-in-flight", PrRef: held.PrRef));
+
+            // 2) Parse + extract PAT.
+            JsonDocument doc;
+            try
+            {
+                doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new AuthReplaceError(Ok: false, Error: "invalid-json"));
+            }
+            using var _doc = doc;
+            // Reject non-object JSON roots (e.g., `[]`, `42`, `"string"`, `null`).
+            // TryGetProperty throws InvalidOperationException on any ValueKind other
+            // than Object — surface as 400 invalid-json rather than 500.
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return Results.BadRequest(new AuthReplaceError(Ok: false, Error: "invalid-json"));
+            var pat = doc.RootElement.TryGetProperty("pat", out var p) ? p.GetString() : null;
+            if (string.IsNullOrWhiteSpace(pat))
+                return Results.BadRequest(new AuthReplaceError(Ok: false, Error: "pat-required"));
+
+            // 3) Snapshot the prior login BEFORE the transient write. Null only on
+            //    first-launch (no account yet); the identity-change rule short-circuits
+            //    in that case because there's no prior identity to differ from.
+            var priorLogin = config.Current.Github.Accounts.Count > 0
+                ? config.Current.Github.Accounts[0].Login
+                : null;
+
+            // 4) Lazy validate-before-swap: stash transient, ask GitHub if it's good.
+            //    Wrap validation in try/finally so any exception (network failure,
+            //    OperationCanceledException on aborted request, etc.) rolls back the
+            //    transient. Without this guard a cancelled validation would leave the
+            //    unvalidated PAT in TokenStore, where ReadAsync would silently shadow
+            //    the committed PAT for the rest of the process lifetime — Copilot #6.
+            //    Rollback uses CancellationToken.None so a cancelled request's cleanup
+            //    can still complete; best-effort wrapping absorbs rollback-side failures
+            //    so the original exception still propagates to the global handler.
+            Log.ReplaceValidating(log, pat.Length, config.Current.Github.Host);
+            await tokens.WriteTransientAsync(pat, ct).ConfigureAwait(false);
+            AuthValidationResult result;
+            var validationCompleted = false;
+            try
+            {
+                result = await review.ValidateCredentialsAsync(ct).ConfigureAwait(false);
+                validationCompleted = true;
+            }
+            finally
+            {
+                if (!validationCompleted)
+                {
+                    try { await tokens.RollbackTransientAsync(CancellationToken.None).ConfigureAwait(false); }
+#pragma warning disable CA1031 // best-effort cleanup; original exception MUST still propagate
+                    catch { }
+#pragma warning restore CA1031
+                }
+            }
+            if (!result.Ok)
+            {
+                await tokens.RollbackTransientAsync(ct).ConfigureAwait(false);
+#pragma warning disable CA1308 // lowercase error names are part of the wire contract
+                var errorName = result.Error?.ToString().ToLowerInvariant() ?? "validation-failed";
+#pragma warning restore CA1308
+                return Results.BadRequest(new AuthReplaceError(Ok: false, Error: errorName));
+            }
+            // NoReposSelected is a soft WARNING (spec § 3.5): commit + identity-change
+            // still run; the frontend surfaces the warning string from the response.
+            //
+            // Protocol-inconsistency guard: GitHub's viewer query populates Login on
+            // every successful response, so Ok=true && Login=null shouldn't happen in
+            // production. If it does (a future client refactor that forgets to populate
+            // Login, or a fake in tests that returns the wrong shape), refuse to commit
+            // an empty login rather than silently persisting "" as the account login.
+            // Roll the transient back so the prior PAT stays in keychain.
+            if (string.IsNullOrEmpty(result.Login))
+            {
+                await tokens.RollbackTransientAsync(ct).ConfigureAwait(false);
+                return Results.BadRequest(new AuthReplaceError(Ok: false, Error: "validation-failed"));
+            }
+            var newLogin = result.Login;
+
+            // 5) TOCTOU re-check: a submit may have grabbed the lock between step 1
+            //    and now. If so, roll back the transient before we commit.
+            held = submitLocks.AnyHeld();
+            if (held.Held)
+            {
+                await tokens.RollbackTransientAsync(ct).ConfigureAwait(false);
+                return Results.Conflict(new AuthReplaceError(Ok: false, Error: "submit-in-flight", PrRef: held.PrRef));
+            }
+
+            // 6) Commit + persist new login to config + update in-memory cache.
+            //    On-disk write goes BEFORE the in-memory cache so a SetDefault throw
+            //    can't leave viewerLogin pointing at the new login while the on-disk
+            //    config still says the old one (ADV-PR2-003 — cross-restart divergence).
+            //
+            //    SetDefault is also wrapped in best-effort (Copilot #7): once CommitAsync
+            //    succeeds the PAT is in the keychain and the user-visible identity has
+            //    already swapped. If the on-disk login write fails (IO error, antivirus
+            //    lock, disk full), surfacing 500 would skip the cache wipe + SSE fan-out
+            //    AND leave the token committed — worst of both worlds. Instead log the
+            //    failure and continue: viewerLogin + reconciliation still run, and the
+            //    next process startup's ViewerLoginHydrator re-derives the on-disk login
+            //    from the committed PAT, self-healing the on-disk divergence.
+            await tokens.CommitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await config.SetDefaultAccountLoginAsync(newLogin, ct).ConfigureAwait(false);
+            }
+#pragma warning disable CA1031 // best-effort on-disk write; failure is reconciled cross-restart
+            catch (Exception ex)
+            {
+                Log.SetDefaultAccountLoginFailed(log, ex);
+            }
+#pragma warning restore CA1031
+            viewerLogin.Set(newLogin);
+
+            // 7) Identity-change rule (case-insensitive; null priorLogin means
+            //    first-launch, which is not "changed identity" — there was nothing
+            //    to change from).
+            var identityChanged = !string.IsNullOrEmpty(priorLogin)
+                && !string.Equals(priorLogin, newLogin, StringComparison.OrdinalIgnoreCase);
+
+            if (identityChanged)
+            {
+                var sessionsAffected = 0;
+                var draftsAffected = 0;
+                var repliesAffected = 0;
+
+                await stateStore.UpdateAsync(state =>
+                {
+                    // Forward-compatibility defense. Today AppStateStore.UpdateAsync
+                    // holds its internal gate across load → transform → save with no
+                    // retry loop, so this transform is invoked exactly once per call;
+                    // the reset below is a no-op against the current implementation.
+                    // It costs nothing AND it pins the lambda to be idempotent against
+                    // any future refactor that adds optimistic concurrency or retries,
+                    // which would silently double-count without this guard. Keep it
+                    // until UpdateAsync's contract is documented to be single-shot.
+                    sessionsAffected = 0;
+                    draftsAffected = 0;
+                    repliesAffected = 0;
+
+                    var sessions = state.Reviews.Sessions;
+                    var newSessions = new Dictionary<string, ReviewSessionState>(sessions.Count, StringComparer.Ordinal);
+                    foreach (var (refKey, session) in sessions)
+                    {
+                        var sessionHadIds = session.PendingReviewId is not null
+                            || session.DraftComments.Any(d => d.ThreadId is not null)
+                            || session.DraftReplies.Any(r => r.ReplyCommentId is not null);
+
+                        var clearedDrafts = session.DraftComments
+                            .Select(d => d.ThreadId is null ? d : d with { ThreadId = null })
+                            .ToList();
+                        var clearedReplies = session.DraftReplies
+                            .Select(r => r.ReplyCommentId is null ? r : r with { ReplyCommentId = null })
+                            .ToList();
+
+                        newSessions[refKey] = session with
+                        {
+                            PendingReviewId        = null,
+                            PendingReviewCommitOid = null,
+                            DraftComments          = clearedDrafts,
+                            DraftReplies           = clearedReplies,
+                        };
+
+                        if (sessionHadIds) sessionsAffected++;
+                        draftsAffected  += session.DraftComments.Count(d => d.ThreadId is not null);
+                        repliesAffected += session.DraftReplies.Count(r => r.ReplyCommentId is not null);
+                    }
+                    return state.WithDefaultReviews(state.Reviews with { Sessions = newSessions });
+                }, ct).ConfigureAwait(false);
+
+                // Spec § 14 OQ 4: forensic-log loss must NOT leave the system half-reconciled.
+                // If the logger throws (disk full, ETW broken, etc.), the surrounding cache
+                // eviction + SSE fan-out + response still run. Filter out terminal exceptions
+                // (OOM / stack overflow) per the standard CA1031 carve-out.
+                try
+                {
+                    Log.LogIdentityChanged(log, AccountKeys.Default, priorLogin!, newLogin,
+                        sessionsAffected, draftsAffected, repliesAffected);
+                }
+#pragma warning disable CA1031 // intentional: forensic-log loss < partial state reconciliation
+                catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+                {
+                    // Swallow so cache eviction + SSE fan-out still run.
+                }
+#pragma warning restore CA1031
+
+                activePrCache.Clear();
+                inboxPoller.RequestImmediateRefresh();
+                activeRegistry.RemoveAll();
+                bus.Publish(new IdentityChanged(AccountKeys.Default, priorLogin!, newLogin));
+            }
+
+            return Results.Ok(new AuthReplaceResponse(
+                Ok: true,
+                Login: newLogin,
+                Host: config.Current.Github.Host,
+                IdentityChanged: identityChanged));
+        });
+
         return app;
     }
 
@@ -172,19 +402,59 @@ internal static partial class AuthEndpoints
         [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: validating PAT (length={PatLength}) against host {Host}")]
         internal static partial void ConnectValidating(ILogger logger, int patLength, string host);
 
+        // S6 PR2 — separate template for /api/auth/replace so log lines accurately
+        // attribute which endpoint initiated the GitHub validation call. Reusing
+        // ConnectValidating would mislabel every replace as a connect, breaking
+        // log-grep-based forensic reconstruction.
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/replace: validating PAT (length={PatLength}) against host {Host}")]
+        internal static partial void ReplaceValidating(ILogger logger, int patLength, string host);
+
+        // Logged when the post-commit on-disk write of the new account login fails
+        // (Copilot #7). The exception is swallowed at the call site so cache wipe +
+        // SSE fan-out still run; this log line is the only forensic trace. The next
+        // ViewerLoginHydrator pass on process restart will re-derive and re-persist
+        // the correct login from the committed PAT.
+        [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/replace: SetDefaultAccountLoginAsync failed after CommitAsync; continuing reconciliation (next startup will self-heal via ViewerLoginHydrator)")]
+        internal static partial void SetDefaultAccountLoginFailed(ILogger logger, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/connect: validation failed (error={Error}, detail={Detail})")]
         internal static partial void ConnectValidationFailed(ILogger logger, string error, string detail);
 
-        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: validated for login={Login} with warning={Warning}; awaiting /commit")]
-        internal static partial void ConnectValidatedWithWarning(ILogger logger, string login, AuthValidationWarning warning);
+        // Parameter names use qualified `validatedLogin`/`committedLogin` rather than bare
+        // `login` so the LoggerMessage source generator emits field keys that
+        // SensitiveFieldScrubber does NOT match — bare `{login}` would be redacted by the
+        // scrubber's `login` blocklist entry, breaking forensic reconstruction of who
+        // connected when. Surfaced in the S6 deferrals sidecar "[Risk] Existing
+        // AuthEndpoints.cs LoggerMessage methods silently redact GitHub login" and
+        // folded into PR2 (Task 2.8a) per spec § 3.6.
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: validated for login={ValidatedLogin} with warning={Warning}; awaiting /commit")]
+        internal static partial void ConnectValidatedWithWarning(ILogger logger, string validatedLogin, AuthValidationWarning warning);
 
-        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: committed for login={Login}")]
-        internal static partial void ConnectCommitted(ILogger logger, string login);
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: committed for login={CommittedLogin}")]
+        internal static partial void ConnectCommitted(ILogger logger, string committedLogin);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/connect/commit rejected: no-pending-token (process restart or double-commit)")]
         internal static partial void CommitNoPendingToken(ILogger logger);
 
-        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect/commit: committed for login={Login}")]
-        internal static partial void CommitSucceeded(ILogger logger, string login);
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect/commit: committed for login={CommittedLogin}")]
+        internal static partial void CommitSucceeded(ILogger logger, string committedLogin);
+
+        // S6 PR2 — forensic record emitted from /api/auth/replace when the identity-change
+        // rule fires. Parameter names use qualified `priorLogin` / `newLogin` so the
+        // LoggerMessage source generator emits them as structured-log field keys that
+        // SensitiveFieldScrubber does NOT match (bare `{login}` would be redacted —
+        // see deferrals sidecar entry for the existing-callsite forensic gap).
+        // Spec § 3.6.
+        [LoggerMessage(
+            Level = LogLevel.Information,
+            Message = "Identity changed accountKey={AccountKey} priorLogin={PriorLogin} newLogin={NewLogin} sessions={SessionsAffected} drafts={DraftsAffected} replies={RepliesAffected}")]
+        internal static partial void LogIdentityChanged(
+            ILogger logger,
+            string accountKey,
+            string priorLogin,
+            string newLogin,
+            int sessionsAffected,
+            int draftsAffected,
+            int repliesAffected);
     }
 }

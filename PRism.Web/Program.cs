@@ -177,6 +177,12 @@ app.UseWhen(
         var method = ctx.Request.Method;
         if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/events/subscriptions", StringComparison.Ordinal))
             return true;
+        // S6 PR2 — POST /api/auth/replace consumes a ~40-char PAT; cap at 16 KiB for
+        // consistency with the other mutating endpoints (spec deferrals sidecar
+        // "[Risk] POST /api/auth/replace is absent from the 16 KiB body-size-cap
+        // predicate"). Legitimate payload uses ~0.25% of the cap.
+        if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/auth/replace", StringComparison.Ordinal))
+            return true;
         if (!path.StartsWithSegments("/api/pr", StringComparison.Ordinal)) return false;
         var value = path.Value!;
         if (HttpMethods.IsPut(method) && value.EndsWith("/draft", StringComparison.Ordinal)) return true;

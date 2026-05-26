@@ -67,4 +67,21 @@ public sealed class ActivePrSubscriberRegistry
         ArgumentNullException.ThrowIfNull(prRef);
         return _byPr.ContainsKey(prRef);
     }
+
+    // Wipes both maps wholesale. Called from /api/auth/replace when the identity-change rule
+    // fires (spec § 3.3) so the next inbox refresh re-subscribes from the new login's view.
+    //
+    // Concurrency posture: the two Clear() calls are NOT atomic w.r.t. each other. Every existing
+    // mutator (Add, Remove, RemoveSubscriber) already operates on each ConcurrentDictionary
+    // independently and accepts brief between-line inconsistency — RemoveAll follows that same
+    // posture. A concurrent reader landing between the two Clear() calls can briefly observe
+    // _bySubscriber empty but _byPr still populated (or vice versa); the next inbox refresh
+    // tick reconciles. If atomicity is ever required, every mutator must move under the same
+    // lock at once — partial locking would create a strictly worse contract than the current
+    // best-effort, eventually consistent one.
+    public void RemoveAll()
+    {
+        _bySubscriber.Clear();
+        _byPr.Clear();
+    }
 }

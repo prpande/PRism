@@ -40,6 +40,9 @@ internal sealed class SseChannel : IDisposable
     private readonly IDisposable _busSubmitStaleCommitOid;
     private readonly IDisposable _busSubmitOrphanCleanupFailed;
     private readonly IDisposable _busSubmitDuplicateMarkerDetected;
+    // S6 PR2 — global identity-change broadcast. Not per-PR; fans out to every connected
+    // subscriber so every tab can re-validate against the new viewer login.
+    private readonly IDisposable _busIdentityChanged;
     // NOTE: DraftSubmitted intentionally NOT subscribed — the submit endpoint publishes it
     // for forward-compat (spec § 17 #25) but the frontend reacts to the StateChanged that
     // fires alongside; there is no SseEventProjection arm for it.
@@ -65,6 +68,7 @@ internal sealed class SseChannel : IDisposable
         _busSubmitStaleCommitOid = bus.Subscribe<SubmitStaleCommitOidBusEvent>(OnSubmitStaleCommitOid);
         _busSubmitOrphanCleanupFailed = bus.Subscribe<SubmitOrphanCleanupFailedBusEvent>(OnSubmitOrphanCleanupFailed);
         _busSubmitDuplicateMarkerDetected = bus.Subscribe<SubmitDuplicateMarkerDetectedBusEvent>(OnSubmitDuplicateMarkerDetected);
+        _busIdentityChanged = bus.Subscribe<IdentityChanged>(OnIdentityChanged);
     }
 
     // Returns the most-recent subscriberId for the given cookieSessionId, or null if no
@@ -249,6 +253,24 @@ internal sealed class SseChannel : IDisposable
             _ = WriteAndEvictOnFailureAsync(s, frame, prRef: null, eventType: null);
     }
 
+    // S6 PR2 — broadcast the identity-change event to every connected subscriber.
+    // Wire shape comes from SseEventProjection.Project, mirroring the precedent
+    // PR #65 set for pr-updated: the projection is the single wire-shape source
+    // of truth so a future contributor can't drift bespoke serialization out from
+    // under the frontend contract. The payload deliberately carries no login
+    // strings — those stay server-side in the forensic structured log (spec § 3.6).
+    private void OnIdentityChanged(IdentityChanged evt)
+    {
+        var (eventName, payload) = SseEventProjection.Project(evt);
+        var json = JsonSerializer.Serialize(payload, JsonSerializerOptionsFactory.Api);
+        var frame = $"event: {eventName}\ndata: {json}\n\n";
+        // Broadcast: iterate every active subscriber, just like OnInboxUpdated. Per-PR
+        // registry lookup is irrelevant — this is a global event. prRef passed null so
+        // the delivery log is skipped (no PR to attribute the write to).
+        foreach (var s in _subscribers.Values)
+            _ = WriteAndEvictOnFailureAsync(s, frame, prRef: null, eventType: null);
+    }
+
     private void OnActivePrUpdated(ActivePrUpdated evt)
     {
         var subscriberList = _activeRegistry.SubscribersFor(evt.PrRef);
@@ -350,6 +372,7 @@ internal sealed class SseChannel : IDisposable
         _busSubmitStaleCommitOid.Dispose();
         _busSubmitOrphanCleanupFailed.Dispose();
         _busSubmitDuplicateMarkerDetected.Dispose();
+        _busIdentityChanged.Dispose();
     }
 
     internal sealed class SseSubscriber : IDisposable

@@ -43,6 +43,11 @@ internal static class SseEventProjection
     internal sealed record SubmitOrphanCleanupFailedWire(string PrRef);
     internal sealed record SubmitDuplicateMarkerDetectedWire(string PrRef, string DraftId);
 
+    // S6 PR2 — global identity-change event. Minimal payload per spec § 3.2.1: login
+    // strings stay server-side (forensic-log surface only); the wire carries just the
+    // discriminator so the frontend can route to the right banner / re-validation flow.
+    internal sealed record IdentityChangedWire(string Type);
+
     public static (string EventName, object Payload) Project(IReviewEvent evt) => evt switch
     {
         ActivePrUpdated e => ("pr-updated", new ActivePrUpdatedWire(
@@ -62,6 +67,8 @@ internal static class SseEventProjection
             e.PrRef.ToString())),
         SubmitDuplicateMarkerDetectedBusEvent e => ("submit-duplicate-marker-detected", new SubmitDuplicateMarkerDetectedWire(
             e.PrRef.ToString(), e.DraftId)),
+
+        IdentityChanged _ => ("identity-changed", new IdentityChangedWire("identity-change")),
 
         _ => throw new ArgumentOutOfRangeException(nameof(evt), $"No SSE projection for {evt.GetType().Name}")
     };
