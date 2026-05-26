@@ -76,19 +76,23 @@ describe('SetupForm', () => {
     expect(cancel).toHaveAttribute('href', '/settings');
   });
 
-  it('disables Cancel (renders as aria-disabled span, not a navigable link) while busy=true', () => {
+  it('disables Cancel (renders as aria-disabled span with role=link, not a navigable link) while busy=true', () => {
     // Regression for code-review #1: a clickable Cancel during the in-flight
     // /api/auth/replace would navigate to /settings without aborting the fetch,
     // leading to a silent server-side commit the user thought they cancelled.
-    // While busy the Cancel surface must NOT be a <Link>.
+    // While busy the Cancel surface must NOT navigate, but it MUST still be
+    // announced as a disabled link by screen readers (claude[bot] iter-5 F3 —
+    // bare aria-disabled on a span without role has no semantics for AT).
     render(
       <MemoryRouter>
         <SetupForm host="https://github.com" onSubmit={vi.fn()} isReplaceMode busy />
       </MemoryRouter>,
     );
-    expect(screen.queryByRole('link', { name: /cancel/i })).not.toBeInTheDocument();
-    const disabled = screen.getByText('Cancel');
-    expect(disabled.tagName).toBe('SPAN');
-    expect(disabled).toHaveAttribute('aria-disabled', 'true');
+    // getByRole('link') finds BOTH <a href> AND role="link" spans — so a single
+    // assertion confirms screen readers see exactly one link-role Cancel.
+    const link = screen.getByRole('link', { name: /cancel/i });
+    expect(link.tagName).toBe('SPAN');
+    expect(link).toHaveAttribute('aria-disabled', 'true');
+    expect(link).not.toHaveAttribute('href');
   });
 });

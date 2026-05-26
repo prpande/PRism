@@ -1,81 +1,10 @@
 import { test, expect, type Route } from '@playwright/test';
+import { setupReplaceMocks } from './helpers/replace-mocks';
 
 // S6 PR4 / spec § 3.2.1 — Replace token UX (same-login path).
 // PAT-A is already connected; user clicks Replace and pastes PAT-B, which
 // validates as the SAME GitHub login. Backend returns identityChanged=false,
 // frontend navigates to / WITHOUT surfacing the identity-change toast.
-
-const authedAuthState = {
-  hasToken: true,
-  host: 'https://github.com',
-  hostMismatch: null,
-};
-
-const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false },
-  inbox: {
-    sections: {
-      'review-requested': true,
-      'awaiting-author': true,
-      'authored-by-me': true,
-      mentioned: true,
-      'ci-failing': true,
-    },
-  },
-  github: {
-    host: 'https://github.com',
-    configPath: '/Users/x/AppData/Local/PRism/config.json',
-    logsPath: '/Users/x/AppData/Local/PRism/logs',
-  },
-};
-
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
-  },
-};
-
-async function setupReplaceMocks(page: import('@playwright/test').Page) {
-  await page.route('**/api/auth/state', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(authedAuthState),
-    }),
-  );
-  await page.route('**/api/preferences', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(defaultPreferences),
-    }),
-  );
-  await page.route('**/api/capabilities', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
-    }),
-  );
-  await page.route('**/api/submit/in-flight', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ inFlight: false, prRef: null }),
-    }),
-  );
-  await page.route('**/api/events', (route: Route) =>
-    route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
-  );
-}
 
 test.use({ viewport: { width: 1280, height: 800 } });
 

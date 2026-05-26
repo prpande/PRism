@@ -26,10 +26,20 @@ export function useSubmitInFlight(): SubmitInFlightState {
 
   useEffect(() => {
     let cancelled = false;
+    // Fetch-generation counter (claude[bot] iter-5 F2): rapid prism-state-changed
+    // events would otherwise let two in-flight fetches resolve out of order, with
+    // the slower one winning by virtue of resolving last. A monotonically-increasing
+    // generation stamp captured per fetch lets us discard any setState() from a
+    // fetch that's been superseded by a newer one. Defends against the lock-
+    // acquired-then-immediately-released case where two state-changed frames fire
+    // back-to-back and the GET responses arrive in reverse order.
+    let fetchGen = 0;
     const fetchOnce = async () => {
+      const myGen = ++fetchGen;
+      const isCurrent = () => !cancelled && myGen === fetchGen;
       try {
         const resp = await apiClient.get<SubmitInFlightState>('/api/submit/in-flight');
-        if (!cancelled) setState(resp);
+        if (isCurrent()) setState(resp);
       } catch {
         // Reset to fail-open ({inFlight:false}) on error rather than retaining
         // stale state. If a prior fetch saw inFlight=true and the post-lock-release
@@ -38,7 +48,7 @@ export function useSubmitInFlight(): SubmitInFlightState {
         // event to clear it (the submit is already done; no state-changed will
         // fire). Fail-open is safe: the backend's /api/auth/replace 409 still
         // enforces correctness on the actual replace attempt.
-        if (!cancelled) setState({ inFlight: false, prRef: null });
+        if (isCurrent()) setState({ inFlight: false, prRef: null });
       }
     };
     void fetchOnce();

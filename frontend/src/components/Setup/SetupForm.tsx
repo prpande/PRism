@@ -87,7 +87,17 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
           // the user thinks they cancelled — the worst kind of silent commit.
           // Rendered as aria-disabled with the disabled-link CSS so the affordance
           // stays visible (consistent UI) but unreachable until Continue resolves.
-          <span aria-disabled="true" className={`${styles.cancel} ${styles.cancelDisabled}`}>
+          // role="link" is explicit (claude[bot] iter-5 F3): aria-disabled on a
+          // bare <span> with no implicit role has no semantics for assistive tech;
+          // screen readers won't announce "disabled" because there's no
+          // interactive role to be disabled from. Matching role="link" (which the
+          // non-busy <Link> branch implicitly carries) gives SR users a parallel
+          // announcement across both states.
+          <span
+            role="link"
+            aria-disabled="true"
+            className={`${styles.cancel} ${styles.cancelDisabled}`}
+          >
             Cancel
           </span>
         ) : (
