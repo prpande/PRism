@@ -7,7 +7,23 @@ import { Header } from '../src/components/Header/Header';
 
 const server = setupServer(
   http.get('/api/preferences', () =>
-    HttpResponse.json({ theme: 'system', accent: 'indigo', aiPreview: false }),
+    HttpResponse.json({
+      ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+      inbox: {
+        sections: {
+          'review-requested': true,
+          'awaiting-author': true,
+          'authored-by-me': true,
+          mentioned: true,
+          'ci-failing': true,
+        },
+      },
+      github: {
+        host: 'https://github.com',
+        configPath: '/fake/config.json',
+        logsPath: '/fake/logs',
+      },
+    }),
   ),
 );
 

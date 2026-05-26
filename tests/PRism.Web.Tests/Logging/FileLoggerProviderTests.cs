@@ -502,7 +502,27 @@ public sealed class FileLoggerProviderTests : IDisposable
         {
             var logger = provider.CreateLogger("Test");
             logger.LogInformation("yesterday event survives");
-            await Task.Yield();
+
+            // Wait for the writer task to actually OPEN yesterday's file before advancing
+            // the clock. RunWriterAsync sets `_currentFileDate = DateOnly.FromDateTime(
+            // _now().LocalDateTime)` and calls OpenAppendStream(_currentFileDate) at startup
+            // (line 155-166 in FileLoggerProvider.cs); if the writer task is scheduled LATE
+            // (slow Windows CI runner) and the clock is advanced before that line runs, the
+            // writer captures TODAY's date, tries to open today's locked file at startup,
+            // hits the catch at line 169-174, and exits before any event is processed.
+            // Yesterday's file then never materializes and the final assertion fails. Probing
+            // for yesterday's file existence proves the writer reached the OpenAppendStream
+            // step against the YESTERDAY clock value; from that point on, `_currentFileDate`
+            // is fixed and the rotation logic in WriteEventAsync uses `evt.Timestamp` (not
+            // the live clock), so advancing the clock is safe. Recurring CI flake observed
+            // on PR #69 (3 of 4 CI runs failed at FileLoggerProviderTests.cs:521 before this
+            // probe was added).
+            var startupDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (!File.Exists(yesterdayPath) && DateTime.UtcNow < startupDeadline)
+                await Task.Delay(20);
+            File.Exists(yesterdayPath).Should().BeTrue(
+                "writer task must have opened yesterday's file (proving _currentFileDate = yesterday) before the test advances the clock");
+
             clock.Now = DateTimeOffset.Now;
             logger.LogInformation("today event triggers locked rotation open");
             // Poll for the writer task to drain event #2 and increment the failure counter rather

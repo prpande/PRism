@@ -124,7 +124,25 @@ function mockFetch(opts: MockOptions = {}) {
 
   return vi.fn().mockImplementation((path: string) => {
     if (path.startsWith('/api/preferences')) {
-      return Promise.resolve(jsonResponse({ theme: 'system', accent: 'indigo', aiPreview }));
+      return Promise.resolve(
+        jsonResponse({
+          ui: { theme: 'system', accent: 'indigo', aiPreview },
+          inbox: {
+            sections: {
+              'review-requested': true,
+              'awaiting-author': true,
+              'authored-by-me': true,
+              mentioned: true,
+              'ci-failing': true,
+            },
+          },
+          github: {
+            host: 'https://github.com',
+            configPath: '/fake/config.json',
+            logsPath: '/fake/logs',
+          },
+        }),
+      );
     }
     if (path.startsWith('/api/capabilities')) {
       return Promise.resolve(
@@ -254,7 +272,23 @@ describe('OverviewTab', () => {
     const fetchMock = vi.fn().mockImplementation((path: string) => {
       if (path.startsWith('/api/preferences')) {
         return Promise.resolve(
-          jsonResponse({ theme: 'system', accent: 'indigo', aiPreview: false }),
+          jsonResponse({
+            ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+            inbox: {
+              sections: {
+                'review-requested': true,
+                'awaiting-author': true,
+                'authored-by-me': true,
+                mentioned: true,
+                'ci-failing': true,
+              },
+            },
+            github: {
+              host: 'https://github.com',
+              configPath: '/fake/config.json',
+              logsPath: '/fake/logs',
+            },
+          }),
         );
       }
       if (path.startsWith('/api/capabilities')) {
@@ -305,7 +339,23 @@ describe('OverviewTab', () => {
     const fetchMock = vi.fn().mockImplementation((path: string) => {
       if (path.startsWith('/api/preferences')) {
         return Promise.resolve(
-          jsonResponse({ theme: 'system', accent: 'indigo', aiPreview: false }),
+          jsonResponse({
+            ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+            inbox: {
+              sections: {
+                'review-requested': true,
+                'awaiting-author': true,
+                'authored-by-me': true,
+                mentioned: true,
+                'ci-failing': true,
+              },
+            },
+            github: {
+              host: 'https://github.com',
+              configPath: '/fake/config.json',
+              logsPath: '/fake/logs',
+            },
+          }),
         );
       }
       if (path.startsWith('/api/capabilities')) {

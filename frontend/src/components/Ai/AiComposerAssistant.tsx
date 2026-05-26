@@ -14,7 +14,7 @@ import { usePreferences } from '../../hooks/usePreferences';
 export function AiComposerAssistant() {
   const { capabilities } = useCapabilities();
   const { preferences } = usePreferences();
-  const on = !!capabilities?.composerAssist && !!preferences?.aiPreview;
+  const on = !!capabilities?.composerAssist && !!preferences?.ui.aiPreview;
   if (!on) return null;
   return (
     <div

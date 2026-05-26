@@ -3,6 +3,15 @@ namespace PRism.Core.Config;
 public interface IConfigStore
 {
     AppConfig Current { get; }
+
+    /// <summary>
+    /// Absolute path to the backing <c>config.json</c> file (= <c>Path.Combine(dataDir, "config.json")</c>
+    /// for the production implementation). Surfaced by <c>GET /api/preferences</c> so the Settings
+    /// page can render a copyable file path without the frontend having to know the dataDir
+    /// derivation. Added in S6 PR1 (spec § 2.4).
+    /// </summary>
+    string ConfigPath { get; }
+
     Exception? LastLoadError { get; }
     Task InitAsync(CancellationToken ct);
     Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct);

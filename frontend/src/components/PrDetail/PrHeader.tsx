@@ -100,7 +100,7 @@ export function PrHeader({
 }: PrHeaderProps) {
   const { capabilities } = useCapabilities();
   const { preferences } = usePreferences();
-  const aiPreview = preferences?.aiPreview ?? false;
+  const aiPreview = preferences?.ui.aiPreview ?? false;
   const validatorResults: ValidatorResult[] =
     aiPreview && !!capabilities?.preSubmitValidators ? CANNED_PRESUBMIT_VALIDATOR_RESULTS : [];
 

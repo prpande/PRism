@@ -8,15 +8,15 @@ import type { ReactNode } from 'react';
 import type {
   AiCapabilities,
   PrReference,
+  PreferencesResponse,
   ReviewSessionDto,
-  UiPreferences,
 } from '../src/api/types';
 
 // vi.hoisted so the mock factories (themselves hoisted above the imports) can
 // read these mutable containers without a TDZ error.
 const { capabilitiesValue, preferencesValue, submitReviewMock } = vi.hoisted(() => ({
   capabilitiesValue: { capabilities: null as AiCapabilities | null },
-  preferencesValue: { preferences: null as UiPreferences | null },
+  preferencesValue: { preferences: null as PreferencesResponse | null },
   submitReviewMock: vi.fn(),
 }));
 
@@ -177,7 +177,23 @@ describe('PrHeader', () => {
   });
 
   it('renders the Ask AI button + opens the empty-state container when aiPreview is on', () => {
-    preferencesValue.preferences = { theme: 'system', accent: 'indigo', aiPreview: true };
+    preferencesValue.preferences = {
+      ui: { theme: 'system', accent: 'indigo', aiPreview: true },
+      inbox: {
+        sections: {
+          'review-requested': true,
+          'awaiting-author': true,
+          'authored-by-me': true,
+          mentioned: true,
+          'ci-failing': true,
+        },
+      },
+      github: {
+        host: 'https://github.com',
+        configPath: '/fake/config.json',
+        logsPath: '/fake/logs',
+      },
+    };
     render(<PrHeader {...baseProps} session={readySession} />);
     const askAi = screen.getByRole('button', { name: /ask ai/i });
     expect(askAi).toBeInTheDocument();

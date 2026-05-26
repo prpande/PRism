@@ -25,7 +25,7 @@ export function OverviewTab() {
     [params.owner, params.repo, params.number],
   );
 
-  const aiPreview = preferences?.aiPreview ?? false;
+  const aiPreview = preferences?.ui.aiPreview ?? false;
   const aiOn = !!capabilities?.summary && aiPreview;
 
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
