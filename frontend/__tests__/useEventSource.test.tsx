@@ -148,10 +148,51 @@ describe('useEventSource / EventStreamProvider', () => {
     }
   });
 
-  // Reconnect-replay defense (spec § 3.2.1) — the prism-events-reconnected
-  // dispatch from reconnect() is intentionally NOT unit-tested here. Driving
-  // the watchdog under jsdom's fake timers races against EventStreamProvider's
-  // useEffect mount; the integration coverage lives in hooks.test.tsx (useAuth
-  // refetches on prism-events-reconnected) and the dispatch is a one-liner
-  // alongside the verified bridge structure above.
+  it('does NOT dispatch prism-events-reconnected on the initial subscriber-assigned', async () => {
+    // Regression for Copilot iter-4 finding C10: the dispatch must NOT fire on
+    // the first subscriber-assigned (initial connect) — only on subsequent ones
+    // (post-reconnect). Pre-fix, reconnect() dispatched unconditionally and could
+    // even fire while the new EventSource was still mid-handshake.
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <EventStreamProvider>{children}</EventStreamProvider>
+    );
+    renderHook(() => useEventSource(), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    const spy = vi.fn();
+    window.addEventListener('prism-events-reconnected', spy);
+    try {
+      FakeEventSource.instance.dispatch('subscriber-assigned', { subscriberId: 's1' });
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('prism-events-reconnected', spy);
+    }
+  });
+
+  it('dispatches prism-events-reconnected on a subsequent subscriber-assigned (reconnect path)', async () => {
+    // Companion to the test above: AFTER the first subscriber-assigned flips
+    // the hasEverConnected flag, the next subscriber-assigned on the same
+    // openEventStream() invocation IS treated as a reconnect signal and fires
+    // the bridge. In production this second handshake happens when reconnect()
+    // closes the old EventSource and opens a new one; in this jsdom harness we
+    // simulate it by dispatching subscriber-assigned twice on the same fake.
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <EventStreamProvider>{children}</EventStreamProvider>
+    );
+    renderHook(() => useEventSource(), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    // First subscriber-assigned: flips the flag, no dispatch.
+    FakeEventSource.instance.dispatch('subscriber-assigned', { subscriberId: 's1' });
+
+    const spy = vi.fn();
+    window.addEventListener('prism-events-reconnected', spy);
+    try {
+      // Second subscriber-assigned: reconnect path.
+      FakeEventSource.instance.dispatch('subscriber-assigned', { subscriberId: 's2' });
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('prism-events-reconnected', spy);
+    }
+  });
 });

@@ -93,6 +93,12 @@ export function openEventStream(): EventStreamHandle {
   let abortController: AbortController;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
+  // Tracks whether the first SSE connection has ever fully established (defined
+  // as receiving the subscriber-assigned handshake). The cross-provider
+  // prism-events-reconnected bridge fires only on subscriber-assigned events
+  // that come AFTER the first one — i.e., signaling an actual reconnect that
+  // the new stream has confirmed alive, not a still-pending HTTP open.
+  let hasEverConnected = false;
 
   const listeners: { [K in keyof EventPayloadByType]?: Set<(p: EventPayloadByType[K]) => void> } =
     {};
@@ -120,14 +126,13 @@ export function openEventStream(): EventStreamHandle {
     newIdPromise();
     newAbortController();
     connect();
-    // S6 PR4 (spec § 3.2.1) — reconnect-replay defense. The SSE channel doesn't
-    // replay events from before the disconnect, so consumers that care about
-    // missed state must refetch on every reconnect. useAuth listens for this
-    // event to re-validate the session after a connection blip. Fires AFTER the
-    // new connect() call so listeners receive a stable "we're back" signal.
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('prism-events-reconnected'));
-    }
+    // S6 PR4 (spec § 3.2.1) — reconnect-replay defense is signaled INSIDE the
+    // subscriber-assigned handler in connect(), not here. Dispatching at this
+    // point would fire before the new EventSource has actually opened (the
+    // browser may still be doing the HTTP handshake), and reconnect() can be
+    // re-invoked rapidly via es.onerror probing — every retry would emit a
+    // spurious "reconnected" signal even while the stream is still down.
+    // See connect()'s subscriber-assigned handler for the actual dispatch.
   }
 
   function connect() {
@@ -163,6 +168,20 @@ export function openEventStream(): EventStreamHandle {
         resolveId(data.subscriberId);
       } catch {
         // Malformed handshake — leave promise pending; next reconnect retries.
+      }
+      // Reconnect-replay defense (spec § 3.2.1): fire prism-events-reconnected
+      // only on subscriber-assigned events that come AFTER the initial connect.
+      // The initial connect's subscriber-assigned simply flips the flag. This
+      // gates the bridge dispatch on "the new stream is confirmed alive" rather
+      // than "connect() returned" — which the Copilot iter-4 review correctly
+      // pointed out can fire while the HTTP handshake is still pending or even
+      // when the stream is permanently down (es.onerror probing path).
+      if (hasEverConnected) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('prism-events-reconnected'));
+        }
+      } else {
+        hasEverConnected = true;
       }
       resetWatchdog();
     });
