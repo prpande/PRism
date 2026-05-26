@@ -223,10 +223,14 @@ internal static partial class AuthEndpoints
                 return Results.Conflict(new AuthReplaceError(Ok: false, Error: "submit-in-flight", PrRef: held.PrRef));
             }
 
-            // 6) Commit + update cached viewer login + persist new login to config.
+            // 6) Commit + persist new login to config + update in-memory cache.
+            //    On-disk write goes BEFORE the in-memory cache so a SetDefault throw
+            //    can't leave viewerLogin pointing at the new login while the on-disk
+            //    config still says the old one (cross-restart divergence — see
+            //    ADV-PR2-003 in PR2's adversarial preflight).
             await tokens.CommitAsync(ct).ConfigureAwait(false);
-            viewerLogin.Set(newLogin);
             await config.SetDefaultAccountLoginAsync(newLogin, ct).ConfigureAwait(false);
+            viewerLogin.Set(newLogin);
 
             // 7) Identity-change rule (case-insensitive; null priorLogin means
             //    first-launch, which is not "changed identity" — there was nothing
@@ -242,10 +246,14 @@ internal static partial class AuthEndpoints
 
                 await stateStore.UpdateAsync(state =>
                 {
-                    // UpdateAsync's "last-transform-wins" contract may invoke the
-                    // transform more than once under contention. Reset closure-captured
-                    // counters at the top of every invocation so losing-run mutations
-                    // don't accumulate into the persisted counts (spec § 3.2 retry-safe note).
+                    // Forward-compatibility defense. Today AppStateStore.UpdateAsync
+                    // holds its internal gate across load → transform → save with no
+                    // retry loop, so this transform is invoked exactly once per call;
+                    // the reset below is a no-op against the current implementation.
+                    // It costs nothing AND it pins the lambda to be idempotent against
+                    // any future refactor that adds optimistic concurrency or retries,
+                    // which would silently double-count without this guard. Keep it
+                    // until UpdateAsync's contract is documented to be single-shot.
                     sessionsAffected = 0;
                     draftsAffected = 0;
                     repliesAffected = 0;

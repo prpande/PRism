@@ -486,7 +486,82 @@ public class AuthReplaceEndpointTests
     }
 
 #pragma warning disable CA1812 // System.Text.Json instantiates via reflection — analyzer can't see the use.
+    [Fact]
+    public async Task Structured_log_field_keys_are_qualified_and_not_scrubber_blocked()
+    {
+        // ADV-PR2-005 regression. LogIdentityChanged's parameter names become structured-log
+        // field keys via the LoggerMessage source generator. Bare `login` would be redacted
+        // by SensitiveFieldScrubber (case-insensitive full-key match against the blocklist);
+        // qualified PriorLogin / NewLogin must reach the formatter unredacted.
+        var kvLogs = new KvCapturingLoggerProvider();
+        using var f = new HarnessFactory
+        {
+            Validate = () => Task.FromResult(new AuthValidationResult(
+                Ok: true, Login: "bob", Scopes: null,
+                Error: AuthValidationError.None, ErrorDetail: null)),
+            ExtraServiceConfig = s => s.AddSingleton<ILoggerProvider>(kvLogs),
+        };
+        await SeedPriorLoginAsync(f, "alice");
+        var session = SessionWithNodeIds();
+        await SeedSessionAsync(f, SamplePr, session);
+
+        using var client = f.CreateClient();
+        using var resp = await PostReplaceAsync(client);
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        kvLogs.Records.Should().Contain(r =>
+            r.Keys.Contains("PriorLogin", StringComparer.Ordinal)
+            && r.GetValue("PriorLogin") as string == "alice"
+            && r.Keys.Contains("NewLogin", StringComparer.Ordinal)
+            && r.GetValue("NewLogin") as string == "bob");
+        kvLogs.Records.Should().NotContain(r => r.Keys.Contains("Login", StringComparer.OrdinalIgnoreCase),
+            "bare `login` (any casing) is scrubber-blocked; LogIdentityChanged must use qualified names");
+    }
+
+    // Mirror of the KV-capturing provider in AuthEndpointsLoggingTests — duplicated
+    // rather than shared so each test file stays independently runnable. If a third
+    // file needs it, promote to a TestHelpers/KvCapturingLoggerProvider.cs.
+    private sealed class KvCapturingLoggerProvider : ILoggerProvider
+    {
+        public List<KvRecord> Records { get; } = new();
+        public ILogger CreateLogger(string categoryName) => new KvLogger(categoryName, Records);
+        public void Dispose() { }
+
+        public sealed record KvRecord(string Category, IReadOnlyDictionary<string, object?> Args)
+        {
+            public IEnumerable<string> Keys => Args.Keys;
+            public object? GetValue(string key) => Args.TryGetValue(key, out var v) ? v : null;
+        }
+
+        private sealed class KvLogger : ILogger
+        {
+            private readonly string _category;
+            private readonly List<KvRecord> _records;
+            public KvLogger(string category, List<KvRecord> records) { _category = category; _records = records; }
+            public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (state is IReadOnlyList<KeyValuePair<string, object?>> kvList)
+                {
+                    var dict = new Dictionary<string, object?>(StringComparer.Ordinal);
+                    foreach (var kv in kvList)
+                        if (!string.Equals(kv.Key, "{OriginalFormat}", StringComparison.Ordinal))
+                            dict[kv.Key] = kv.Value;
+                    lock (_records) { _records.Add(new KvRecord(_category, dict)); }
+                }
+            }
+            private sealed class NullScope : IDisposable
+            {
+                public static readonly NullScope Instance = new();
+                public void Dispose() { }
+            }
+        }
+    }
+
+#pragma warning disable CA1812 // System.Text.Json instantiates via reflection — analyzer can't see the use.
     private sealed record ReplaceResponseDto(bool Ok, string? Login, string? Host, bool IdentityChanged);
+#pragma warning restore CA1812
 #pragma warning restore CA1812
 
     private sealed class ThrowingLoggerProvider : ILoggerProvider

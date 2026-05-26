@@ -78,16 +78,29 @@ public sealed partial class InboxPoller : BackgroundService
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             var delayTask = Task.Delay(nextDelay, linkedCts.Token);
             var signalTask = _refreshSignal.WaitAsync(linkedCts.Token);
-            await Task.WhenAny(delayTask, signalTask).ConfigureAwait(false);
+            var winner = await Task.WhenAny(delayTask, signalTask).ConfigureAwait(false);
             if (stoppingToken.IsCancellationRequested) return;
             // Cancel the losing branch. The losing Task transitions to Canceled but is
             // never awaited — Task.Delay(ct) and SemaphoreSlim.WaitAsync(ct) both treat
             // OCE on the token as a clean termination, so no UnobservedTaskException
-            // fires when the Task is GC'd. (Spec note: SemaphoreSlim.WaitAsync with a
-            // canceled token does NOT consume the semaphore even if a concurrent Release
-            // races in — count stays where it was, so the next iteration's WaitAsync
-            // observes the Release as expected.)
+            // fires when the Task is GC'd.
             await linkedCts.CancelAsync().ConfigureAwait(false);
+
+            // Signal-loss defense (ADV-PR2-001). Race window: Release happens AFTER
+            // WhenAny returned with delayTask as winner but BEFORE CancelAsync flips
+            // signalTask to Canceled. SemaphoreSlim.Release synchronously hands the
+            // slot to the registered waiter; signalTask transitions to RanToCompletion
+            // and the semaphore count returns to 0 — the user-requested refresh is
+            // silently consumed and lost. Detect by checking signalTask after
+            // CancelAsync ran: if it succeeded (i.e., consumed a slot) but delayTask
+            // was the WhenAny winner, the signal was lost in the race window and we
+            // re-release so the next iteration observes it.
+            if (winner == delayTask && signalTask.IsCompletedSuccessfully)
+            {
+                try { _refreshSignal.Release(); }
+                catch (SemaphoreFullException) { /* already at capacity; coalesce */ }
+                catch (ObjectDisposedException) { /* poller stopped */ }
+            }
         }
     }
 
