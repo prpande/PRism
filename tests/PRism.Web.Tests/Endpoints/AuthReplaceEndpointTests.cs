@@ -404,6 +404,41 @@ public class AuthReplaceEndpointTests
     }
 
     [Fact]
+    public async Task Forbidden_Origin_returns_403()
+    {
+        // S6 PR2 Task 2.9-pre — OriginCheckMiddleware is registered globally in
+        // Program.cs:147 ahead of routing, so it covers every mutating request
+        // including /api/auth/replace. Belt-and-suspenders regression: an attacker
+        // POSTing from a foreign Origin (with a stolen session token / cookie) must
+        // be rejected at the middleware layer before the endpoint handler sees the
+        // body. Same-origin requests are still allowed via PRismWebApplicationFactory's
+        // auto-Origin injection in ConfigureClient.
+        using var f = new HarnessFactory
+        {
+            Validate = () => Task.FromResult(new AuthValidationResult(
+                Ok: true, Login: "alice", Scopes: null,
+                Error: AuthValidationError.None, ErrorDetail: null)),
+        };
+        await SeedPriorLoginAsync(f, "alice");
+
+        // Bypass the auto-Origin client; build one that injects a foreign Origin.
+        var raw = f.Server.CreateClient();
+        raw.BaseAddress = f.ClientOptions.BaseAddress;
+        var token = f.Services.GetRequiredService<SessionTokenProvider>().Current;
+        raw.DefaultRequestHeaders.Add("X-PRism-Session", token);
+        raw.DefaultRequestHeaders.Add("Cookie", $"prism-session={token}");
+        raw.DefaultRequestHeaders.Add("Origin", "https://evil.example.com");
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/auth/replace")
+        {
+            Content = JsonContent.Create(new { pat = "ghp_test" }),
+        };
+        var resp = await raw.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
     public async Task Oversize_body_returns_413()
     {
         // S6 PR2 Task 2.8b — the Program.cs UseWhen body-cap predicate covers
