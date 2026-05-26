@@ -215,5 +215,6 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
         public bool IsSubscribed(PrReference prRef) => _expectedPr == prRef;
         public ActivePrSnapshot? GetCurrent(PrReference prRef) => _expectedPr == prRef ? _snapshot : null;
         public void Update(PrReference prRef, ActivePrSnapshot snapshot) { /* test fake — no-op */ }
+        public void Clear() { /* test fake — no-op */ }
     }
 }

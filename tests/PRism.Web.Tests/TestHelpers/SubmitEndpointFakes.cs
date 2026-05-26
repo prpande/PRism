@@ -17,6 +17,7 @@ internal sealed class AllSubscribedActivePrCache : IActivePrCache
     public bool IsSubscribed(PrReference prRef) => true;
     public ActivePrSnapshot? GetCurrent(PrReference prRef) => Current;
     public void Update(PrReference prRef, ActivePrSnapshot snapshot) => Current = snapshot;
+    public void Clear() => Current = null;
 }
 
 // Controllable IReviewSubmitter for endpoint tests. Generates fresh node ids for Begin/Attach,
