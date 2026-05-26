@@ -216,7 +216,19 @@ internal static partial class AuthEndpoints
             }
             // NoReposSelected is a soft WARNING (spec § 3.5): commit + identity-change
             // still run; the frontend surfaces the warning string from the response.
-            var newLogin = result.Login ?? "";
+            //
+            // Protocol-inconsistency guard: GitHub's viewer query populates Login on
+            // every successful response, so Ok=true && Login=null shouldn't happen in
+            // production. If it does (a future client refactor that forgets to populate
+            // Login, or a fake in tests that returns the wrong shape), refuse to commit
+            // an empty login rather than silently persisting "" as the account login.
+            // Roll the transient back so the prior PAT stays in keychain.
+            if (string.IsNullOrEmpty(result.Login))
+            {
+                await tokens.RollbackTransientAsync(ct).ConfigureAwait(false);
+                return Results.BadRequest(new AuthReplaceError(Ok: false, Error: "validation-failed"));
+            }
+            var newLogin = result.Login;
 
             // 5) TOCTOU re-check: a submit may have grabbed the lock between step 1
             //    and now. If so, roll back the transient before we commit.

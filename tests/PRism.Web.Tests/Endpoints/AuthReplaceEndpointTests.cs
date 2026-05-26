@@ -182,6 +182,66 @@ public class AuthReplaceEndpointTests
     }
 
     [Fact]
+    public async Task First_launch_no_prior_login_returns_identityChanged_false()
+    {
+        // Spec § 3.7 / § 3.2 first-launch short-circuit: priorLogin is null when
+        // config.Github.Accounts is empty. The identity-change rule must NOT fire
+        // (there's no prior identity to differ from); response is 200 OK with
+        // identityChanged: false, and the seeded state stays untouched.
+        // NB: this path is unreachable in production (Replace requires hasToken: true
+        // which only happens after a successful connect that populated Login), but
+        // the code branch exists and is worth pinning per claude[bot] review.
+        using var f = new HarnessFactory
+        {
+            Validate = () => Task.FromResult(new AuthValidationResult(
+                Ok: true, Login: "alice", Scopes: null,
+                Error: AuthValidationError.None, ErrorDetail: null)),
+        };
+        // Deliberately NO SeedPriorLoginAsync — config.Current.Github.Accounts is empty.
+        // Seed a session with Node IDs to prove identity-change rule did NOT clear them.
+        var session = SessionWithNodeIds();
+        await SeedSessionAsync(f, SamplePr, session);
+
+        using var client = f.CreateClient();
+        using var resp = await PostReplaceAsync(client);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<ReplaceResponseDto>();
+        body!.IdentityChanged.Should().BeFalse("no prior identity to differ from");
+
+        var loaded = await f.Services.GetRequiredService<IAppStateStore>().LoadAsync(default);
+        var s = loaded.Reviews.Sessions[SamplePr];
+        s.PendingReviewId.Should().Be("PR_PENDING_1", "first-launch short-circuit skips the cleanup");
+        s.DraftComments[0].ThreadId.Should().Be("PRRT_thread_1");
+    }
+
+    [Fact]
+    public async Task Validation_returns_Ok_with_null_login_treated_as_validation_failure()
+    {
+        // claude[bot] review #3: a protocol-inconsistent response (Ok=true, Login=null)
+        // must NOT silently fall back to an empty login. Rollback the transient and
+        // surface validation-failed.
+        using var f = new HarnessFactory
+        {
+            Validate = () => Task.FromResult(new AuthValidationResult(
+                Ok: true, Login: null, Scopes: null,
+                Error: AuthValidationError.None, ErrorDetail: null)),
+        };
+        await SeedPriorLoginAsync(f, "alice");
+        using var client = f.CreateClient();
+
+        using var resp = await PostReplaceAsync(client);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await resp.Content.ReadAsStringAsync();
+        body.Should().Contain("\"error\":\"validation-failed\"");
+
+        // Prior config login unchanged.
+        var config = f.Services.GetRequiredService<IConfigStore>();
+        config.Current.Github.Accounts[0].Login.Should().Be("alice");
+    }
+
+    [Fact]
     public async Task Same_login_case_insensitive_returns_identityChanged_false()
     {
         using var f = new HarnessFactory
@@ -508,7 +568,6 @@ public class AuthReplaceEndpointTests
         body.IdentityChanged.Should().BeTrue();
     }
 
-#pragma warning disable CA1812 // System.Text.Json instantiates via reflection — analyzer can't see the use.
     [Fact]
     public async Task Structured_log_field_keys_are_qualified_and_not_scrubber_blocked()
     {
@@ -584,7 +643,6 @@ public class AuthReplaceEndpointTests
 
 #pragma warning disable CA1812 // System.Text.Json instantiates via reflection — analyzer can't see the use.
     private sealed record ReplaceResponseDto(bool Ok, string? Login, string? Host, bool IdentityChanged);
-#pragma warning restore CA1812
 #pragma warning restore CA1812
 
     private sealed class ThrowingLoggerProvider : ILoggerProvider
