@@ -4,7 +4,68 @@ Local-first PR review tool that runs on the reviewer's own machine. See [`docs/s
 
 ## Status
 
-Implementation in progress. S0+S1 (foundations), S2 (inbox read), S4 (drafts + composer), and S5 (submit pipeline) have shipped; S3 (PR detail read) has its five backend PRs (PR1 state migration, PR2 iteration clustering, PR3 `IReviewService` extensions, PR4 `PrDetailLoader` + backend endpoints, PR5 SSE per-PR fanout + active-PR poller + `SessionTokenMiddleware`) and four frontend PRs (PR6 PR-detail shell, PR7 Files tab, PR8 Diff Pane + Markdown pipeline, PR9 Overview tab + AI summary endpoint) all merged (Task 11 contract tests against the frozen `api-codex` PR remain). S5 landed across an eight-PR cut: PR0a (capability split + verification gates, PR #44), PR1 (`IReviewSubmitter` GraphQL adapter, PR #45), PR2 (`SubmitPipeline` state machine + v3→v4 migration, PR #46), PR3 (backend submit endpoints + SSE events + per-PR submit lock + composer marker-collision rejection + verdict-clear patch shape + scrubber extension, PR #47), PR4 (frontend Submit confirmation dialog + `useSubmit` hook + Submit Review button enable rules + enabled verdict picker + AI validator card + Ask AI empty state + in-flight-submit recovery badge, PR #48), PR5 (foreign-pending-review modal + Resume/Discard sub-modal + Snapshot A→B / IsResolved imported-drafts banner + stale-`commitOID` retry banner with not-yet-Reloaded variant + closed/merged bulk-discard button + confirmation modal + `useSubmitToasts` for the `submit-duplicate-marker-detected` / `submit-orphan-cleanup-failed` toasts + TOCTOU-409 toast, PR #49), PR7 (DoD E2E test sweep — working `FakeReviewSubmitter` + `/test/submit/*` test hooks + eight Playwright specs covering the demo happy path, retry-from-each-step, foreign-pending-review Resume/Discard/Cancel, stale-`commitOID` recreate, lost-response marker adoption, closed/merged bulk-discard + orphan-cleanup toast, multi-tab per-PR-lock, and composer marker-prefix collision, PR #50), and PR0b (Playwright multi-spec state-leak fix — `workers: 1` baked into `playwright.config.ts` + un-fixme of the three carved-out S4 specs, closing the `--workers=1` interim workaround PR7 had to ship with) all landed. See [`docs/roadmap.md`](docs/roadmap.md) for the live slice table and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
+**Released.** PoC binary v0.1.0 is downloadable from the [Releases page](https://github.com/prpande/PRism/releases/latest):
+
+- Windows x64: [`PRism-win-x64.exe`](https://github.com/prpande/PRism/releases/latest/download/PRism-win-x64.exe)
+- macOS Apple Silicon: [`PRism-osx-arm64`](https://github.com/prpande/PRism/releases/latest/download/PRism-osx-arm64)
+
+See [`docs/roadmap.md`](docs/roadmap.md) for slice history and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
+
+## Download and first run
+
+Download the binary for your platform from the [Releases page](https://github.com/prpande/PRism/releases/latest):
+
+- **Windows x64** — [`PRism-win-x64.exe`](https://github.com/prpande/PRism/releases/latest/download/PRism-win-x64.exe)
+- **macOS Apple Silicon** — [`PRism-osx-arm64`](https://github.com/prpande/PRism/releases/latest/download/PRism-osx-arm64)
+
+PRism is unsigned for the PoC, so the OS surfaces a one-time trust prompt on first launch.
+
+### Windows
+
+Double-click the `.exe`. Windows SmartScreen shows **"Windows protected your PC"** because the binary isn't code-signed. Click **More info → Run anyway**. The backend starts on `http://localhost:5180` and your default browser launches into the PRism Setup screen.
+
+### macOS
+
+The downloaded binary needs the executable bit before macOS will launch it:
+
+```sh
+chmod +x ~/Downloads/PRism-osx-arm64
+```
+
+Double-click the binary. Gatekeeper shows **"PRism cannot be opened because Apple cannot check it for malicious software"**. Right-click (or Control-click) → **Open**, then **Open** again in the confirmation dialog. The first time PRism reads your token from the keychain, macOS asks **Allow / Always Allow / Deny** — click **Always Allow** so PRism stops prompting on every launch.
+
+### Generate a GitHub Personal Access Token
+
+PRism authenticates with a fine-grained Personal Access Token you generate at <https://github.com/settings/personal-access-tokens/new>. Required scopes:
+
+- **Pull requests** — Read and write
+- **Contents** — Read
+- **Checks** — Read
+- **Commit statuses** — Read
+
+Paste the PAT into the Setup screen on first launch.
+
+## Troubleshooting
+
+### Recovering a lost draft
+
+PRism's dedicated forensic event log (`state-events.jsonl`) is not yet implemented — the DI graph registers a no-op writer for the PoC. Identity-change events DO land in the structured logs at `<dataDir>/logs/` (with prior + new login + draft counts):
+
+```sh
+grep "Identity changed" "<dataDir>/logs/"*.log
+```
+
+`DraftSaved` events are not currently written to any forensic log. If you need to recover a draft body in the PoC, copy it out of the composer **before** any destructive action (Replace token, Discard, foreign-pending-review Discard).
+
+### Replace token
+
+The Settings page has a **Replace token** link in the Connection section. Clicking it walks you through pasting a new PAT and validates it before swapping. If the new token authenticates as a different GitHub login than the previous one, PRism:
+
+- Preserves all draft text across every PR ("the reviewer's text is sacred").
+- Clears the GraphQL Node IDs that the prior login owned.
+- Surfaces the foreign-pending-review modal on the next submit on any affected PR, so the prior login's orphan pending reviews can be Resumed or Discarded.
+
+Drafts for PRs your new token cannot access remain in `state.json` invisibly. They re-surface if access is later restored.
 
 ## Development workflow
 
