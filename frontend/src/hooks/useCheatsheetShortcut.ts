@@ -1,9 +1,25 @@
 import { useEffect, useRef } from 'react';
 
+// All HTMLInputElement.type values where keystrokes naturally insert a literal
+// character. The spec frames the rule as "outside text inputs" — limiting this
+// to type==='text' would miss password (PAT field on /setup), search, email,
+// url, tel, and number, all of which a user can type ? into.
+const TEXT_INPUT_TYPES = new Set([
+  'text',
+  'password',
+  'search',
+  'email',
+  'url',
+  'tel',
+  'number',
+]);
+
 function isTextEditingContext(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.tagName === 'TEXTAREA') return true;
-  if (target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'text') return true;
+  if (target.tagName === 'INPUT' && TEXT_INPUT_TYPES.has((target as HTMLInputElement).type)) {
+    return true;
+  }
   if (target.closest('[contenteditable="true"]')) return true;
   if (target.closest('[data-composer="true"]')) return true;
   return false;
