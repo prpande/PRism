@@ -120,5 +120,14 @@ export default defineConfig({
   use: {
     trace: 'on-first-retry',
   },
+  // Per-platform screenshot baselines (e2e/__screenshots__/<platform>/...) so the
+  // PR9 no-layout-shift-on-banner spec's supplementary diff doesn't fail on
+  // contributors running Linux/macOS against a Windows-generated baseline. CI
+  // runs windows-latest so the canonical baseline lives under win32/.
+  expect: {
+    toHaveScreenshot: {
+      pathTemplate: '{testDir}/__screenshots__/{platform}/{arg}{ext}',
+    },
+  },
   projects: isCI ? [prodProject] : [devProject, prodProject],
 });
