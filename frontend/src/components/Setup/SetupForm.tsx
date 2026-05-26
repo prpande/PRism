@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { MaskedInput } from './MaskedInput';
 import styles from './SetupForm.module.css';
 
@@ -7,6 +8,12 @@ interface Props {
   onSubmit: (pat: string) => void | Promise<void>;
   error?: string;
   busy?: boolean;
+  // S6 PR4 — when the user reached /setup via Settings → Replace token, render a
+  // Cancel link to bail out back to /settings without committing the new PAT.
+  // SetupPage owns the URL-param read; keeping the boolean on the prop avoids
+  // coupling SetupForm to react-router state and keeps the component testable
+  // without a Router wrapper in existing tests (SetupForm tests render bare).
+  isReplaceMode?: boolean;
 }
 
 const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
@@ -16,7 +23,7 @@ const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
   { name: 'Commit statuses', level: 'Read' },
 ];
 
-export function SetupForm({ host, onSubmit, error, busy }: Props) {
+export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props) {
   const [pat, setPat] = useState('');
   const patPageUrl = `${host.replace(/\/$/, '')}/settings/personal-access-tokens/new`;
 
@@ -70,6 +77,11 @@ export function SetupForm({ host, onSubmit, error, busy }: Props) {
       <button type="submit" className={styles.continue} disabled={pat.trim().length === 0 || busy}>
         {busy ? 'Validating…' : 'Continue'}
       </button>
+      {isReplaceMode && (
+        <Link to="/settings" className={styles.cancel}>
+          Cancel
+        </Link>
+      )}
     </form>
   );
 }

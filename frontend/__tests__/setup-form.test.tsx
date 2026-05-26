@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { SetupForm } from '../src/components/Setup/SetupForm';
@@ -58,5 +59,20 @@ describe('SetupForm', () => {
     await userEvent.type(input, 'ghp_test_token');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     expect(onSubmit).toHaveBeenCalledWith('ghp_test_token');
+  });
+
+  it('does NOT render a Cancel link by default (spec § 3.1 — only in replace mode)', () => {
+    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
+    expect(screen.queryByRole('link', { name: /cancel/i })).not.toBeInTheDocument();
+  });
+
+  it('renders a Cancel link pointing at /settings when isReplaceMode is true', () => {
+    render(
+      <MemoryRouter>
+        <SetupForm host="https://github.com" onSubmit={vi.fn()} isReplaceMode />
+      </MemoryRouter>,
+    );
+    const cancel = screen.getByRole('link', { name: /cancel/i });
+    expect(cancel).toHaveAttribute('href', '/settings');
   });
 });
