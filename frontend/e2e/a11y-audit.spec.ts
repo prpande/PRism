@@ -111,16 +111,20 @@ const samplePrDetail = {
   timelineCapHit: false,
 };
 
-const emptyDraft = {
-  prRef: { owner: 'octocat', repo: 'Hello-World', number: 1 },
-  headSha: 'abc',
-  lastIterationNumberAtCreate: 1,
-  lastSeenCommentIdAtCreate: null,
-  prBody: { content: '', verdict: 'None' },
-  threadDrafts: [],
-  replyDrafts: [],
-  stale: null,
-  unresolvedAck: null,
+// ReviewSessionDto-shaped fixture (matches frontend/src/api/types.ts) — the
+// PrDetailPage crashes into its ErrorBoundary if the draft session response
+// doesn't match this shape, which would shadow the axe-core findings we
+// actually want to surface on the PR detail surfaces.
+const emptyDraftSession = {
+  draftVerdict: null,
+  draftVerdictStatus: 'draft',
+  draftSummaryMarkdown: null,
+  draftComments: [],
+  draftReplies: [],
+  iterationOverrides: [],
+  pendingReviewId: null,
+  pendingReviewCommitOid: null,
+  fileViewState: { viewedFiles: {} },
 };
 
 async function setupBaseMocks(p: Page): Promise<void> {
@@ -178,7 +182,7 @@ async function setupBaseMocks(p: Page): Promise<void> {
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(emptyDraft),
+      body: JSON.stringify(emptyDraftSession),
     }),
   );
   await p.route('**/api/pr/octocat/Hello-World/1/mark-viewed', (route: Route) =>
