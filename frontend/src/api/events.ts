@@ -29,6 +29,11 @@ export type PrUpdatedEvent = {
   commentCountDelta: number;
 };
 
+// Backend payload shape: SseEventProjection.IdentityChangedWire (Type: "identity-change").
+// Frontend consumers only need to know the event fired — useAuth refetches /api/auth/state
+// for the new login. No fields are read off the payload, but the wire still carries `type`.
+export type IdentityChangedEvent = { type: string };
+
 export type EventPayloadByType = {
   'inbox-updated': InboxUpdatedEvent;
   'pr-updated': PrUpdatedEvent;
@@ -40,6 +45,7 @@ export type EventPayloadByType = {
   'submit-stale-commit-oid': SubmitStaleCommitOidEvent;
   'submit-orphan-cleanup-failed': SubmitOrphanCleanupFailedEvent;
   'submit-duplicate-marker-detected': SubmitDuplicateMarkerDetectedEvent;
+  'identity-changed': IdentityChangedEvent;
 };
 
 // SSE event names the EventSource must register listeners for. EventSource only dispatches
@@ -56,7 +62,17 @@ const EVENT_TYPES = [
   'submit-stale-commit-oid',
   'submit-orphan-cleanup-failed',
   'submit-duplicate-marker-detected',
+  'identity-changed',
 ] as const satisfies readonly (keyof EventPayloadByType)[];
+
+// Cross-provider bridges (spec § 3.2.1 reconnect-replay defense + § 3.1 in-flight
+// guard refetch). useAuth runs at App-level OUTSIDE EventStreamProvider — it cannot
+// call useEventSource(); it must subscribe to a window event dispatched from inside
+// the SSE listener. useSubmitInFlight mirrors the pattern for symmetry.
+const WINDOW_EVENT_BRIDGE: Partial<Record<keyof EventPayloadByType, string>> = {
+  'identity-changed': 'prism-identity-changed',
+  'state-changed': 'prism-state-changed',
+};
 
 export type EventStreamHandle = {
   subscriberId(): Promise<string>;
@@ -77,6 +93,12 @@ export function openEventStream(): EventStreamHandle {
   let abortController: AbortController;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
+  // Tracks whether the first SSE connection has ever fully established (defined
+  // as receiving the subscriber-assigned handshake). The cross-provider
+  // prism-events-reconnected bridge fires only on subscriber-assigned events
+  // that come AFTER the first one — i.e., signaling an actual reconnect that
+  // the new stream has confirmed alive, not a still-pending HTTP open.
+  let hasEverConnected = false;
 
   const listeners: { [K in keyof EventPayloadByType]?: Set<(p: EventPayloadByType[K]) => void> } =
     {};
@@ -104,6 +126,13 @@ export function openEventStream(): EventStreamHandle {
     newIdPromise();
     newAbortController();
     connect();
+    // S6 PR4 (spec § 3.2.1) — reconnect-replay defense is signaled INSIDE the
+    // subscriber-assigned handler in connect(), not here. Dispatching at this
+    // point would fire before the new EventSource has actually opened (the
+    // browser may still be doing the HTTP handshake), and reconnect() can be
+    // re-invoked rapidly via es.onerror probing — every retry would emit a
+    // spurious "reconnected" signal even while the stream is still down.
+    // See connect()'s subscriber-assigned handler for the actual dispatch.
   }
 
   function connect() {
@@ -140,6 +169,20 @@ export function openEventStream(): EventStreamHandle {
       } catch {
         // Malformed handshake — leave promise pending; next reconnect retries.
       }
+      // Reconnect-replay defense (spec § 3.2.1): fire prism-events-reconnected
+      // only on subscriber-assigned events that come AFTER the initial connect.
+      // The initial connect's subscriber-assigned simply flips the flag. This
+      // gates the bridge dispatch on "the new stream is confirmed alive" rather
+      // than "connect() returned" — which the Copilot iter-4 review correctly
+      // pointed out can fire while the HTTP handshake is still pending or even
+      // when the stream is permanently down (es.onerror probing path).
+      if (hasEverConnected) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('prism-events-reconnected'));
+        }
+      } else {
+        hasEverConnected = true;
+      }
       resetWatchdog();
     });
 
@@ -149,11 +192,37 @@ export function openEventStream(): EventStreamHandle {
 
     EVENT_TYPES.forEach((type) => {
       es.addEventListener(type, (raw) => {
+        let parsed: EventPayloadByType[typeof type] | null = null;
         try {
-          const data = JSON.parse((raw as MessageEvent).data) as EventPayloadByType[typeof type];
-          listeners[type]?.forEach((cb) => (cb as (p: typeof data) => void)(data));
+          parsed = JSON.parse((raw as MessageEvent).data) as EventPayloadByType[typeof type];
         } catch {
-          // Malformed payload — ignore.
+          // Malformed payload — ignore. Skip BOTH the listeners.forEach loop AND
+          // the cross-provider bridge dispatch: a garbled identity-changed frame
+          // must not trigger an unintended useAuth refetch (a 401 there would
+          // dispatch prism-auth-rejected on a stream whose malformed frame had
+          // nothing to do with auth).
+        }
+        if (parsed !== null) {
+          // Cross-provider bridge fires FIRST, before any in-tree listener runs.
+          // Original order put the dispatch AFTER listeners.forEach, but a single
+          // throwing listener callback would abort the try block and silently
+          // suppress the bridge — useAuth + useSubmitInFlight would miss the
+          // signal even though JSON.parse succeeded. Dispatching first guarantees
+          // cross-provider consumers see every well-formed frame regardless of
+          // in-tree subscriber behavior.
+          const winEventName = WINDOW_EVENT_BRIDGE[type];
+          if (winEventName !== undefined && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(winEventName));
+          }
+          const data = parsed;
+          listeners[type]?.forEach((cb) => {
+            try {
+              (cb as (p: typeof data) => void)(data);
+            } catch {
+              // A throwing in-tree listener must not affect peer listeners or
+              // the bridge dispatch already done above. Swallow per-subscriber.
+            }
+          });
         }
         resetWatchdog();
       });

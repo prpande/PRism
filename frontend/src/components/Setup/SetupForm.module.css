@@ -21,6 +21,17 @@
 .continue {
   margin-top: var(--s-3, 12px);
 }
+.cancel {
+  margin-top: var(--s-2, 8px);
+  align-self: flex-start;
+  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--text-2);
+}
+.cancelDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
 .permissions {
   display: grid;
   grid-template-columns: max-content 1fr;

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from 'react-router-dom';
 import { MaskedInput } from './MaskedInput';
 import styles from './SetupForm.module.css';
 
@@ -7,6 +8,12 @@ interface Props {
   onSubmit: (pat: string) => void | Promise<void>;
   error?: string;
   busy?: boolean;
+  // S6 PR4 — when the user reached /setup via Settings → Replace token, render a
+  // Cancel link to bail out back to /settings without committing the new PAT.
+  // SetupPage owns the URL-param read; keeping the boolean on the prop avoids
+  // coupling SetupForm to react-router state and keeps the component testable
+  // without a Router wrapper in existing tests (SetupForm tests render bare).
+  isReplaceMode?: boolean;
 }
 
 const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
@@ -16,7 +23,7 @@ const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
   { name: 'Commit statuses', level: 'Read' },
 ];
 
-export function SetupForm({ host, onSubmit, error, busy }: Props) {
+export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props) {
   const [pat, setPat] = useState('');
   const patPageUrl = `${host.replace(/\/$/, '')}/settings/personal-access-tokens/new`;
 
@@ -70,6 +77,34 @@ export function SetupForm({ host, onSubmit, error, busy }: Props) {
       <button type="submit" className={styles.continue} disabled={pat.trim().length === 0 || busy}>
         {busy ? 'Validating…' : 'Continue'}
       </button>
+      {isReplaceMode &&
+        (busy ? (
+          // While the replace POST is in flight, neutralize Cancel: the backend
+          // has no abort path once /api/auth/replace reaches WriteTransientAsync
+          // → ValidateCredentialsAsync → CommitAsync. A clickable Cancel that
+          // navigates to /settings WITHOUT aborting the fetch would let the
+          // server complete the swap (drafts preserved, Node IDs cleared) while
+          // the user thinks they cancelled — the worst kind of silent commit.
+          // Rendered as aria-disabled with the disabled-link CSS so the affordance
+          // stays visible (consistent UI) but unreachable until Continue resolves.
+          // role="link" is explicit (claude[bot] iter-5 F3): aria-disabled on a
+          // bare <span> with no implicit role has no semantics for assistive tech;
+          // screen readers won't announce "disabled" because there's no
+          // interactive role to be disabled from. Matching role="link" (which the
+          // non-busy <Link> branch implicitly carries) gives SR users a parallel
+          // announcement across both states.
+          <span
+            role="link"
+            aria-disabled="true"
+            className={`${styles.cancel} ${styles.cancelDisabled}`}
+          >
+            Cancel
+          </span>
+        ) : (
+          <Link to="/settings" className={styles.cancel}>
+            Cancel
+          </Link>
+        ))}
     </form>
   );
 }
