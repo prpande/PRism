@@ -7,6 +7,7 @@ import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
 import { PrDetailPage } from './pages/PrDetailPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { OverviewTab } from './components/PrDetail/OverviewTab/OverviewTab';
 import { FilesTab } from './components/PrDetail/FilesTab/FilesTab';
 import { DraftsTabRoute } from './components/PrDetail/DraftsTab/DraftsTabRoute';
@@ -57,6 +58,10 @@ export function App() {
       <Header />
       <Routes>
         <Route path="/setup" element={<SetupPage />} />
+        <Route
+          path="/settings"
+          element={isAuthed ? <SettingsPage /> : <Navigate to="/setup" replace />}
+        />
         <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
         <Route
           path="/pr/:owner/:repo/:number"
