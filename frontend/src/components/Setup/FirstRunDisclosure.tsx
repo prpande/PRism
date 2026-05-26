@@ -30,7 +30,12 @@ export function FirstRunDisclosure() {
         <section>
           <h2>macOS</h2>
           <p>
-            If macOS Gatekeeper blocks the binary, right-click the app and pick{' '}
+            The binary is built on a Windows runner, so the downloaded file won&rsquo;t have the
+            Unix executable bit set. Open <strong>Terminal</strong>, <code>cd</code> to your
+            Downloads folder, and run <code>chmod +x PRism-osx-arm64</code> once before launching.
+          </p>
+          <p>
+            Then, if macOS Gatekeeper blocks the binary, right-click the app and pick{' '}
             <strong>Open</strong> the first time. The first time PRism reads your token, macOS asks{' '}
             <strong>Allow / Always Allow / Deny</strong> &mdash; click <strong>Always Allow</strong>{' '}
             so you aren&rsquo;t asked again. Code signing arrives post-PoC.

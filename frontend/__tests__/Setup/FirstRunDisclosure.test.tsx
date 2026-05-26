@@ -38,6 +38,16 @@ describe('FirstRunDisclosure', () => {
     expect(screen.getByText(/Gatekeeper/i)).toBeInTheDocument();
   });
 
+  it('renders both blocks on a non-empty unrecognized platform (e.g., Linux)', () => {
+    // Pins the "anything that is not Windows or macOS falls through to BOTH"
+    // contract — protects against a future refactor that accidentally adds a
+    // Linux-specific branch that hides both Windows + macOS copy.
+    Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64', configurable: true });
+    render(<FirstRunDisclosure />);
+    expect(screen.getByText(/SmartScreen/i)).toBeInTheDocument();
+    expect(screen.getByText(/Gatekeeper/i)).toBeInTheDocument();
+  });
+
   it('defaults to closed (the <details> summary is the visible affordance)', () => {
     Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
     const { container } = render(<FirstRunDisclosure />);

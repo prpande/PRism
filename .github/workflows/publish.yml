@@ -41,18 +41,26 @@ jobs:
         # emptyOutDir: true clears stale assets first. No copy step needed.
         run: npm run build
 
+      # -p:PublishProfile=ci activates the gated PropertyGroup in
+      # PRism.Web.csproj (PublishSingleFile / IncludeNativeLibrariesForSelfExtract
+      # / EnableCompressionInSingleFile / PublishTrimmed=false). The csproj is
+      # the single source of truth for those — do not re-specify on the CLI.
+      # --self-contained stays on the CLI as a belt-and-suspenders guard: the
+      # .NET SDK can default SelfContained=false based on --runtime presence
+      # before the conditioned PropertyGroup evaluates, so making it explicit
+      # avoids a framework-dependent surprise if the csproj gate ever shifts.
       - name: Publish win-x64
         run: >
           dotnet publish PRism.Web/PRism.Web.csproj
           --runtime win-x64 --self-contained --configuration Release
-          -p:PublishProfile=ci -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -p:PublishProfile=ci
           --output publish/win-x64
 
       - name: Publish osx-arm64
         run: >
           dotnet publish PRism.Web/PRism.Web.csproj
           --runtime osx-arm64 --self-contained --configuration Release
-          -p:PublishProfile=ci -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
+          -p:PublishProfile=ci
           --output publish/osx-arm64
 
       - name: Rename and measure binaries
