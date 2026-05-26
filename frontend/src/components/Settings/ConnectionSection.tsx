@@ -57,13 +57,7 @@ export function ConnectionSection() {
         <label htmlFor="connection-config-path">
           Path to <code>config.json</code>
         </label>
-        <input
-          id="connection-config-path"
-          type="text"
-          readOnly
-          value={configPath}
-          aria-label="Path to config.json"
-        />
+        <input id="connection-config-path" type="text" readOnly value={configPath} />
         <button type="button" onClick={copyConfigPath}>
           Copy config.json path
         </button>
@@ -71,13 +65,7 @@ export function ConnectionSection() {
 
       <div className={styles.row}>
         <label htmlFor="connection-logs-path">Path to PRism logs</label>
-        <input
-          id="connection-logs-path"
-          type="text"
-          readOnly
-          value={logsPath}
-          aria-label="Path to PRism logs"
-        />
+        <input id="connection-logs-path" type="text" readOnly value={logsPath} />
         <button type="button" onClick={copyLogsPath}>
           Copy logs path
         </button>

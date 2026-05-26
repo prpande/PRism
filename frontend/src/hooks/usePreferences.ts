@@ -93,7 +93,14 @@ export function usePreferences() {
         if (preferences && priorValue !== undefined) {
           setPreferences((cur) => (cur ? writeKey(cur, key, priorValue) : cur));
         }
-        show({ kind: 'error', message: `Couldn't save — ${key} reverted.` });
+        // Generic copy: the internal dotted-path key (`inbox.sections.ci-failing`,
+        // etc.) is a wire-format detail with no value to the end user. If a
+        // consumer wants key-specific wording it can catch the rejection and
+        // show its own toast.
+        show({
+          kind: 'error',
+          message: "Couldn't save preference — your change was reverted.",
+        });
         throw e;
       }
     },
