@@ -29,6 +29,11 @@ export type PrUpdatedEvent = {
   commentCountDelta: number;
 };
 
+// Backend payload shape: SseEventProjection.IdentityChangedWire (Type: "identity-change").
+// Frontend consumers only need to know the event fired — useAuth refetches /api/auth/state
+// for the new login. No fields are read off the payload, but the wire still carries `type`.
+export type IdentityChangedEvent = { type: string };
+
 export type EventPayloadByType = {
   'inbox-updated': InboxUpdatedEvent;
   'pr-updated': PrUpdatedEvent;
@@ -40,6 +45,7 @@ export type EventPayloadByType = {
   'submit-stale-commit-oid': SubmitStaleCommitOidEvent;
   'submit-orphan-cleanup-failed': SubmitOrphanCleanupFailedEvent;
   'submit-duplicate-marker-detected': SubmitDuplicateMarkerDetectedEvent;
+  'identity-changed': IdentityChangedEvent;
 };
 
 // SSE event names the EventSource must register listeners for. EventSource only dispatches
@@ -56,7 +62,17 @@ const EVENT_TYPES = [
   'submit-stale-commit-oid',
   'submit-orphan-cleanup-failed',
   'submit-duplicate-marker-detected',
+  'identity-changed',
 ] as const satisfies readonly (keyof EventPayloadByType)[];
+
+// Cross-provider bridges (spec § 3.2.1 reconnect-replay defense + § 3.1 in-flight
+// guard refetch). useAuth runs at App-level OUTSIDE EventStreamProvider — it cannot
+// call useEventSource(); it must subscribe to a window event dispatched from inside
+// the SSE listener. useSubmitInFlight mirrors the pattern for symmetry.
+const WINDOW_EVENT_BRIDGE: Partial<Record<keyof EventPayloadByType, string>> = {
+  'identity-changed': 'prism-identity-changed',
+  'state-changed': 'prism-state-changed',
+};
 
 export type EventStreamHandle = {
   subscriberId(): Promise<string>;
@@ -154,6 +170,13 @@ export function openEventStream(): EventStreamHandle {
           listeners[type]?.forEach((cb) => (cb as (p: typeof data) => void)(data));
         } catch {
           // Malformed payload — ignore.
+        }
+        // Cross-provider bridge: dispatch a window event so consumers outside
+        // EventStreamProvider (useAuth at App-level) can react. Fires AFTER the
+        // listeners loop so the in-tree subscriber order is unchanged.
+        const winEventName = WINDOW_EVENT_BRIDGE[type];
+        if (winEventName !== undefined && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent(winEventName));
         }
         resetWatchdog();
       });
