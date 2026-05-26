@@ -15,12 +15,13 @@ export function LoadingScreen({
   const [timedOut, setTimedOut] = useState(false);
 
   useEffect(() => {
+    setTimedOut(false);
     const t = setTimeout(() => setTimedOut(true), timeoutMs);
     return () => clearTimeout(t);
   }, [timeoutMs]);
 
   return (
-    <div className={styles.screen} role="status" aria-busy="true" aria-live="polite">
+    <div className={styles.screen} role="status" aria-busy="true">
       <img src="/prism-logo.png" alt="" aria-hidden="true" className={styles.watermark} />
       <div className={styles.center}>
         <img

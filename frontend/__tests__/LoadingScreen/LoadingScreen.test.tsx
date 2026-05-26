@@ -27,12 +27,32 @@ describe('LoadingScreen', () => {
     });
   });
 
-  it('uses role=status with aria-busy=true + aria-live=polite on the root', () => {
+  // role="status" carries implicit aria-live="polite" + aria-atomic="true" per
+  // WAI-ARIA; explicit aria-live="polite" was dropped to avoid the redundant-
+  // live-region pattern that axe-core can flag in PR7's a11y audit.
+  it('uses role=status + aria-busy=true on the root (implicit polite live region)', () => {
     const { container } = render(<LoadingScreen />);
     const root = container.firstChild as HTMLElement;
     expect(root).toHaveAttribute('role', 'status');
     expect(root).toHaveAttribute('aria-busy', 'true');
-    expect(root).toHaveAttribute('aria-live', 'polite');
+    expect(root).not.toHaveAttribute('aria-live');
+  });
+
+  it('resets to the default label when timeoutMs changes after a timeout fired', () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<LoadingScreen timeoutMs={500} timeoutLabel="Stalled…" />);
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    expect(screen.getByText('Stalled…')).toBeInTheDocument();
+
+    // Parent bumps timeoutMs — useEffect re-runs and timedOut resets so the
+    // user sees the loading state again, not a stuck Reload screen.
+    rerender(<LoadingScreen timeoutMs={5000} timeoutLabel="Stalled…" />);
+    expect(screen.queryByText('Stalled…')).toBeNull();
+    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reload/i })).toBeNull();
   });
 
   it('after timeoutMs elapses, swaps label to timeoutLabel and reveals Reload button', () => {
