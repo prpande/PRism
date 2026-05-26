@@ -5,6 +5,7 @@ using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
 using PRism.Web.Endpoints;
+using PRism.Web.Submit;
 
 namespace PRism.Web.TestHooks;
 
@@ -55,6 +56,22 @@ internal static class TestEndpoints
         string FilePath, int LineNumber, string? Side, string Body, bool IsResolved, IReadOnlyList<SeedReply>? Replies);
 
     internal sealed record SeedReply(string Body);
+
+    // ----- /test/submit/hold + /test/submit/release-hold (S6 PR4) -----
+
+    internal sealed record HoldSubmitLockRequest(string Owner, string Repo, int Number);
+
+    // Single-slot holder for the e2e Replace-token-submit-in-flight spec. The test
+    // hook lets a Playwright spec acquire a SubmitLockRegistry slot WITHOUT running
+    // the real submit pipeline, so the AnyHeld() probe reports true and the
+    // AuthSection Replace link renders aria-disabled with the prRef tooltip.
+    //
+    // Static field is acceptable for two reasons: (a) Test-env only — never registered
+    // in Production; (b) single PoC user, single Playwright worker, no concurrency
+    // pressure across specs. The Reset endpoint disposes it as a safety net so a
+    // forgetful spec doesn't leak the hold into the next test.
+    private static SubmitLockHandle? s_heldHandle;
+    private static readonly object s_holdGate = new();
 
     private static IResult StoreMissing(string route) => Results.Problem(
         $"FakeReviewBackingStore is not registered; {route} requires the Test-environment fake-review swap (PRISM_E2E_FAKE_REVIEW=1).",
@@ -108,6 +125,19 @@ internal static class TestEndpoints
         {
             var store = sp.GetService<FakeReviewBackingStore>();
             if (store is null) return StoreMissing("/test/reset");
+            // Release any leaked /test/submit/hold from a prior spec before resetting
+            // store/submitter — otherwise the held lock survives across specs and the
+            // next AnyHeld() probe still reports in-flight on a fresh fixture.
+            SubmitLockHandle? leaked;
+            lock (s_holdGate)
+            {
+                leaked = s_heldHandle;
+                s_heldHandle = null;
+            }
+            if (leaked is not null)
+            {
+                await leaked.DisposeAsync().ConfigureAwait(false);
+            }
             store.Reset();
             AsFake(sp)?.Reset();
             sp.GetService<PrDetailLoader>()?.InvalidateAll();
@@ -339,6 +369,56 @@ internal static class TestEndpoints
             var fake = AsFake(sp);
             if (fake is null) return SubmitterMissing("/test/submit/inspect-pending-review");
             return Results.Json(fake.Inspect(new PrReference(owner, repo, number)));
+        });
+
+        // S6 PR4 — acquire a SubmitLockRegistry slot synthetically so the
+        // Replace-token-submit-in-flight e2e spec can observe the aria-disabled
+        // AuthSection link without spinning up the full submit pipeline. Does NOT
+        // require FakeReviewSubmitter; SubmitLockRegistry is in DI regardless.
+        // Single-slot: a second hold call without an intervening release returns 409.
+        app.MapPost("/test/submit/hold", async (HoldSubmitLockRequest req, SubmitLockRegistry locks, CancellationToken ct) =>
+        {
+            if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo))
+                return Results.BadRequest(new { error = "owner-or-repo-missing" });
+            // Pre-check WITHOUT the gate so a concurrent racing call sees the slot as
+            // already taken and returns 409 immediately rather than blocking inside
+            // TryAcquireAsync.
+            if (Volatile.Read(ref s_heldHandle) is not null)
+                return Results.Conflict(new { error = "already-held" });
+
+            var prRef = new PrReference(req.Owner, req.Repo, req.Number);
+            // Long timeout (effectively eternal for a test) — the spec releases via
+            // /test/submit/release-hold. The endpoint blocks until acquired; if a
+            // real submit is already running for this prRef the test failed to set up
+            // a clean fixture, which we surface as a 408 timeout.
+            var handle = await locks.TryAcquireAsync(prRef, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+            if (handle is null)
+                return Results.Problem("Timed out acquiring SubmitLockRegistry slot.", statusCode: StatusCodes.Status408RequestTimeout);
+
+            lock (s_holdGate)
+            {
+                if (s_heldHandle is not null)
+                {
+                    // Lost the race after the optimistic pre-check — release our just-acquired slot.
+                    _ = handle.DisposeAsync().AsTask();
+                    return Results.Conflict(new { error = "already-held" });
+                }
+                s_heldHandle = handle;
+            }
+            return Results.Ok(new { ok = true, prRef = prRef.ToString() });
+        });
+
+        app.MapPost("/test/submit/release-hold", async () =>
+        {
+            SubmitLockHandle? held;
+            lock (s_holdGate)
+            {
+                held = s_heldHandle;
+                s_heldHandle = null;
+            }
+            if (held is null) return Results.NoContent();
+            await held.DisposeAsync().ConfigureAwait(false);
+            return Results.NoContent();
         });
 
         return app;
