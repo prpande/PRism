@@ -1,10 +1,32 @@
 import { useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SetupForm } from '../components/Setup/SetupForm';
 import { NoReposWarningModal } from '../components/Setup/NoReposWarningModal';
 import { apiClient, ApiError } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
+import { useToast } from '../components/Toast';
+import { replaceToken } from '../api/replaceToken';
 import type { ConnectResponse } from '../api/types';
+
+// Maps AuthReplaceError.error codes (PRism.Web/Endpoints/AuthEndpoints.cs) to
+// user-facing copy. Centralized so the SetupPage render path stays slim.
+function replaceErrorMessage(code: string | undefined, prRef: string | null | undefined): string {
+  switch (code) {
+    case 'submit-in-flight':
+      return `A submit is in progress${prRef ? ` on ${prRef}` : ''}. Wait for it to finish, then try again.`;
+    case 'pat-required':
+      return 'Paste your new token before continuing.';
+    case 'invalid-json':
+      return 'Internal error while parsing the token. Please refresh and try again.';
+    case 'no-token':
+      return 'No existing token to replace. Connect first from the setup page.';
+    case 'invalidtoken':
+    case 'validation-failed':
+      return 'GitHub rejected this token. Check the scopes and try again.';
+    default:
+      return code ? `Validation failed (${code}).` : 'Validation failed.';
+  }
+}
 
 export function SetupPage() {
   const { authState } = useAuth();
@@ -16,8 +38,11 @@ export function SetupPage() {
   // post-commit navigate('/') so the user's "Edit" intent is honored.
   const editedDuringCommitRef = useRef(false);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isReplaceMode = searchParams.has('replace');
+  const toast = useToast();
 
-  const onSubmit = async (pat: string) => {
+  const onConnect = async (pat: string) => {
     setBusy(true);
     setError(undefined);
     try {
@@ -34,6 +59,36 @@ export function SetupPage() {
       navigate('/');
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Replace flow (spec § 3.2.1). Distinct from connect: the backend returns 4xx
+  // on validation failure (apiClient.post throws ApiError) — no 200-with-ok=false
+  // shape. On 200, we surface the identity-change toast only when the backend
+  // flagged identityChanged=true; the message names the new login so the user
+  // sees the swap was both attempted and committed.
+  const onReplace = async (pat: string) => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await replaceToken(pat);
+      if (result.identityChanged) {
+        const login = result.login ?? 'a new GitHub account';
+        toast.show({
+          kind: 'success',
+          message: `Connected as ${login}. Drafts preserved; pending review IDs cleared so the new login can re-submit.`,
+        });
+      }
+      navigate('/');
+    } catch (e) {
+      if (e instanceof ApiError) {
+        const body = (e.body ?? null) as { error?: string; prRef?: string | null } | null;
+        setError(replaceErrorMessage(body?.error, body?.prRef));
+      } else {
+        setError((e as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -73,7 +128,13 @@ export function SetupPage() {
 
   return (
     <>
-      <SetupForm host={authState.host} onSubmit={onSubmit} error={error} busy={busy} />
+      <SetupForm
+        host={authState.host}
+        onSubmit={isReplaceMode ? onReplace : onConnect}
+        error={error}
+        busy={busy}
+        isReplaceMode={isReplaceMode}
+      />
       {showWarning && (
         <NoReposWarningModal onContinue={onContinueAnyway} onEdit={onEdit} busy={busy} />
       )}

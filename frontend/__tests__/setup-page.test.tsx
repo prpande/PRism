@@ -5,19 +5,24 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { SetupPage } from '../src/pages/SetupPage';
+import { ToastProvider, ToastContainer } from '../src/components/Toast';
 
 const server = setupServer();
 beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderRouted() {
+function renderRouted(initialPath = '/setup') {
   return render(
-    <MemoryRouter initialEntries={['/setup']}>
-      <Routes>
-        <Route path="/setup" element={<SetupPage />} />
-        <Route path="/" element={<div>InboxMock</div>} />
-      </Routes>
+    <MemoryRouter initialEntries={[initialPath]}>
+      <ToastProvider>
+        <Routes>
+          <Route path="/setup" element={<SetupPage />} />
+          <Route path="/" element={<div>InboxMock</div>} />
+          <Route path="/settings" element={<div>SettingsMock</div>} />
+        </Routes>
+        <ToastContainer />
+      </ToastProvider>
     </MemoryRouter>,
   );
 }
@@ -161,6 +166,130 @@ describe('SetupPage', () => {
     expect(screen.queryByText('InboxMock')).not.toBeInTheDocument();
     // And the modal stays dismissed.
     expect(screen.queryByText(/no repos selected/i)).not.toBeInTheDocument();
+  });
+
+  describe('replace mode (?replace=1)', () => {
+    it('renders a Cancel link to /settings when the URL has ?replace=1', async () => {
+      renderRouted('/setup?replace=1');
+      await screen.findByLabelText(/personal access token/i);
+      const cancel = screen.getByRole('link', { name: /cancel/i });
+      expect(cancel).toHaveAttribute('href', '/settings');
+    });
+
+    it('POSTs to /api/auth/replace and navigates to / on same-login success (no toast)', async () => {
+      let replaceCalled = false;
+      let connectCalled = false;
+      server.use(
+        http.post('/api/auth/replace', () => {
+          replaceCalled = true;
+          return HttpResponse.json({
+            ok: true,
+            login: 'octocat',
+            host: 'https://github.com',
+            identityChanged: false,
+          });
+        }),
+        http.post('/api/auth/connect', () => {
+          connectCalled = true;
+          return HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' });
+        }),
+      );
+      renderRouted('/setup?replace=1');
+      await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_new');
+      await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+      expect(await screen.findByText('InboxMock')).toBeInTheDocument();
+      expect(replaceCalled).toBe(true);
+      expect(connectCalled).toBe(false);
+      // No identity-change toast on same-login replace.
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
+
+    it('surfaces an identity-changed success toast naming the new login when identityChanged=true', async () => {
+      server.use(
+        http.post('/api/auth/replace', () =>
+          HttpResponse.json({
+            ok: true,
+            login: 'bob',
+            host: 'https://github.com',
+            identityChanged: true,
+          }),
+        ),
+      );
+      renderRouted('/setup?replace=1');
+      await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_bob');
+      await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+      // Toast text fragments — message describes the new login + the drafts-preserved
+      // / Node-IDs-cleared semantics. Spec § 3.2.1.
+      expect(await screen.findByText(/Connected as bob/)).toBeInTheDocument();
+      expect(screen.getByText(/Drafts preserved/)).toBeInTheDocument();
+      expect(screen.getByText(/pending review IDs cleared/)).toBeInTheDocument();
+      // Navigation still fires.
+      expect(await screen.findByText('InboxMock')).toBeInTheDocument();
+    });
+
+    it('maps the 409 submit-in-flight error to a user-facing message with the PR ref', async () => {
+      server.use(
+        http.post(
+          '/api/auth/replace',
+          () =>
+            new HttpResponse(
+              JSON.stringify({
+                ok: false,
+                error: 'submit-in-flight',
+                prRef: 'octocat/Hello-World/42',
+              }),
+              { status: 409, headers: { 'Content-Type': 'application/json' } },
+            ),
+        ),
+      );
+      renderRouted('/setup?replace=1');
+      await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_busy');
+      await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+      expect(await screen.findByText(/submit is in progress/i)).toBeInTheDocument();
+      expect(screen.getByText(/octocat\/Hello-World\/42/)).toBeInTheDocument();
+      // Still on /setup — no navigation away from the form.
+      expect(screen.queryByText('InboxMock')).not.toBeInTheDocument();
+    });
+
+    it('maps a 400 validation-failed error to "GitHub rejected this token"', async () => {
+      server.use(
+        http.post(
+          '/api/auth/replace',
+          () =>
+            new HttpResponse(JSON.stringify({ ok: false, error: 'validation-failed' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+        ),
+      );
+      renderRouted('/setup?replace=1');
+      await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_bad');
+      await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+      expect(await screen.findByText(/GitHub rejected this token/i)).toBeInTheDocument();
+    });
+
+    it('does NOT call /api/auth/connect when in replace mode (regression: cross-flow leak)', async () => {
+      let connectCalled = false;
+      server.use(
+        http.post('/api/auth/connect', () => {
+          connectCalled = true;
+          return HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' });
+        }),
+        http.post('/api/auth/replace', () =>
+          HttpResponse.json({
+            ok: true,
+            login: 'octocat',
+            host: 'https://github.com',
+            identityChanged: false,
+          }),
+        ),
+      );
+      renderRouted('/setup?replace=1');
+      await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_x');
+      await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+      await screen.findByText('InboxMock');
+      expect(connectCalled).toBe(false);
+    });
   });
 
   it('Edit token scope dismisses the modal without commit', async () => {
