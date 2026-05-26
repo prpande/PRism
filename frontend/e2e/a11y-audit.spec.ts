@@ -213,7 +213,10 @@ async function runAxe(p: Page): Promise<void> {
   const blockers = results.violations.filter(
     (v) => v.impact === 'serious' || v.impact === 'critical',
   );
-  expect(blockers, JSON.stringify(blockers, null, 2)).toEqual([]);
+  // Gate ONLY on serious/critical, but stringify ALL violations into the
+  // failure message so any co-occurring moderate/minor findings are visible
+  // for diagnosis (matches the header-comment intent).
+  expect(blockers, JSON.stringify(results.violations, null, 2)).toEqual([]);
 }
 
 test.use({ viewport: { width: 1280, height: 800 } });
