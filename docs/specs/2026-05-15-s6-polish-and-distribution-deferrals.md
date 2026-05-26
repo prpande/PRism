@@ -2,11 +2,12 @@
 source-doc: docs/specs/2026-05-15-s6-polish-and-distribution-design.md
 plan-doc: docs/plans/2026-05-15-s6-polish-and-distribution.md
 created: 2026-05-23
-last-updated: 2026-05-25
+last-updated: 2026-05-26
 status: open
 revisions:
   - 2026-05-23: created during the 2026-05-23 spec amendment pass to record one deferral surfaced by the drift review against PRs #55–#65.
   - 2026-05-25: post-PR-#67 review pass — rewrote `[Risk] LogsPathOptions` to match the spec's revised `LogsPathInfo` singleton recommendation; fixed broken `§ 15.3` cross-link to point at the § 15.1 row; updated `last-updated` per the file-finalization convention used in this repo.
+  - 2026-05-26: PR6 implementation — recorded the `LoadingScreen` third-swap-site no-op deviation against spec § 5.5 / plan PR6 Task 6.2 Step 3.
 ---
 
 # Deferrals — S6 polish and distribution
@@ -34,6 +35,20 @@ The 2026-05-23 amendment pass itself folded its other findings directly into the
   - A real-flow regression appears on the auth surface (validation, replace-token, identity-change) that the standard Playwright specs missed — that's evidence the real-flow lens IS catching something standard tests don't.
   - Multi-account v2 work begins — at that point the harness almost certainly needs a second-account flow anyway, and Replace-token becomes a free rider on that infrastructure.
 - **Where the gap lives in code:** Nowhere — this is a not-added spec. The amendment doc's § 15.1 table (row "Real-flow Replace-token e2e") references this deferral by name. (Corrected 2026-05-25: earlier draft of this entry pointed at § 15.3, which doesn't exist — § 15.2 was added for the adversarial-round amendments and § 15.3 was collapsed during the same trim.)
+
+### [Decision] `LoadingScreen` swap is two sites, not three — host-mismatch inline div does not exist
+
+- **Source:** PR6 implementation 2026-05-26 — discovered while executing plan PR6 Task 6.2 Step 3.
+- **Severity:** P3 — documentation correctness, not a behavioral gap. The runtime change matches spec intent.
+- **Date:** 2026-05-26
+- **Reason considered:** Spec § 5.5's table lists three rows under "After → `<LoadingScreen />`": (a) `App.tsx` initial `authState === null`, (b) `App.tsx` host-mismatch path before `HostChangeModal` renders, (c) `SetupPage.tsx` waiting for `authState`. Plan PR6 Task 6.2 Step 3 enumerates the same three sites and warns "round-1 ce-doc-review caught the missing third site". The implementer would naturally expect to find three `<div aria-busy="true">Loading…</div>` elements to swap.
+- **Why deferred (no code change):**
+  - **The third site doesn't exist in the current source.** `frontend/src/App.tsx` lines 39–53 (current `main` branch HEAD `6985264`) returns `<HostChangeModal ... />` directly from the `if (authState.hostMismatch)` branch with no inline `<div>` between the conditional and the return. `grep -n "aria-busy.*Loading" frontend/src/App.tsx` returns exactly one hit (the line-37 `if (authState === null)` branch).
+  - **The line-37 site functionally covers both flows.** The `authState === null` check fires BEFORE the host-mismatch check. While `useAuth()` is still resolving, host-mismatch state is not yet known, so the user already sees `<LoadingScreen />` in the "loading before host-mismatch detected" window. Once `authState` resolves and `hostMismatch` is truthy, `<HostChangeModal>` renders directly with no intermediate loading frame — there is no observable moment where a "loading the modal" indicator would be useful.
+  - **No behavioral gap.** The spec's intent — "no plain `Loading…` divs anywhere in the auth-resolution path" — is satisfied. The third-row entry is a spec/plan accounting artifact, not a real third call site.
+- **Disposition:** PR6 swaps the two sites that exist (`App.tsx:37` and `SetupPage.tsx:158`); the third row in spec § 5.5 is harmless documentation drift. Two interpretations are consistent with how this row was authored: (a) an earlier App.tsx version (pre-PR-#43? pre-S5 host-change-resolution wiring?) had an inline loading div in the host-mismatch branch that was refactored away when `HostChangeModal` became the unconditional render in that branch, OR (b) the spec author counted "states the line-37 div covers" rather than "physical call sites" and the plan inherited the row verbatim. Both leave the user-visible behavior identical to what the spec describes.
+- **Revisit when:** A future PR re-introduces an intermediate state in the host-mismatch branch (e.g., "verifying the new host's cert" or "fetching new-host fixtures" step) that needs its own loading frame. At that point, the third `<LoadingScreen />` slot becomes a real call site and the spec § 5.5 row becomes accurate again.
+- **Where the gap lives in code:** Nowhere. The spec § 5.5 table is the documentation surface. Either trim the row when the spec next gets touched, or leave it as forward-looking documentation if the host-mismatch flow is expected to gain an intermediate state in v2.
 
 ---
 
