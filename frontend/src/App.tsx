@@ -55,7 +55,7 @@ export function App() {
 
   const tree: ReactNode = (
     <>
-      <Header />
+      <Header hasToken={authState.hasToken} />
       <Routes>
         <Route path="/setup" element={<SetupPage />} />
         <Route

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -34,10 +34,10 @@ beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderAt(path: string) {
+function renderAt(path: string, hasToken: boolean = true) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <Header />
+      <Header hasToken={hasToken} />
     </MemoryRouter>,
   );
 }
@@ -82,15 +82,10 @@ describe('Header', () => {
     expect(screen.getByRole('link', { name: /^settings$/i })).not.toHaveAttribute('aria-current');
   });
 
-  it('prefixes the Setup label with the first-run "·" indicator when !hasToken', async () => {
-    server.use(
-      http.get('/api/auth/state', () =>
-        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
-      ),
-    );
-    renderAt('/setup');
-    const setupTab = await screen.findByRole('link', { name: /setup/i });
-    await waitFor(() => expect(setupTab.textContent).toMatch(/^·\s*setup$/i));
+  it('prefixes the Setup label with the first-run "·" indicator when !hasToken', () => {
+    renderAt('/setup', false);
+    const setupTab = screen.getByRole('link', { name: /setup/i });
+    expect(setupTab.textContent).toMatch(/^·\s*setup$/i);
   });
 
   it('keeps Settings active on a nested settings route (future-proofing for /settings/<sub>)', () => {
@@ -101,9 +96,9 @@ describe('Header', () => {
     );
   });
 
-  it('omits the "·" indicator once a token is configured', async () => {
+  it('omits the "·" indicator once a token is configured', () => {
     renderAt('/setup');
-    const setupTab = await screen.findByRole('link', { name: /setup/i });
-    await waitFor(() => expect(setupTab.textContent?.trim()).toBe('Setup'));
+    const setupTab = screen.getByRole('link', { name: /setup/i });
+    expect(setupTab.textContent?.trim()).toBe('Setup');
   });
 });

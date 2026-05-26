@@ -40,9 +40,15 @@ export function AppearanceSection() {
     applyThemeToDocument(priorTheme, value);
     void set('accent', value).catch(() => applyThemeToDocument(priorTheme, priorAccent));
   };
-  const onAiToggle = async (next: boolean) => {
-    await set('aiPreview', next);
-    void refetchCapabilities();
+  const onAiToggle = (next: boolean) => {
+    // usePreferences.set rethrows on POST failure (after the rollback +
+    // error toast). Catch here so the React onChange handler's void-prefix
+    // doesn't surface as an unhandled promise rejection in the browser.
+    set('aiPreview', next)
+      .then(() => refetchCapabilities())
+      .catch(() => {
+        /* toast + rollback already happened in usePreferences */
+      });
   };
 
   return (
@@ -87,7 +93,7 @@ export function AppearanceSection() {
           type="checkbox"
           role="switch"
           checked={preferences.ui.aiPreview}
-          onChange={(e) => void onAiToggle(e.target.checked)}
+          onChange={(e) => onAiToggle(e.target.checked)}
         />
       </div>
     </section>

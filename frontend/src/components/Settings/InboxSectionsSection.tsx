@@ -37,7 +37,12 @@ export function InboxSectionsSection() {
               role="switch"
               aria-describedby={HELP_ID}
               checked={sections[id]}
-              onChange={(e) => void set(`inbox.sections.${id}` as PreferenceKey, e.target.checked)}
+              onChange={(e) => {
+                // usePreferences.set rethrows on POST failure (rollback +
+                // error toast already fired inside). Catch here so the void-
+                // prefix doesn't surface as an unhandled promise rejection.
+                set(`inbox.sections.${id}` as PreferenceKey, e.target.checked).catch(() => {});
+              }}
             />
           </div>
         );
