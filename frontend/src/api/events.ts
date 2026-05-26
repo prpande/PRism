@@ -173,18 +173,24 @@ export function openEventStream(): EventStreamHandle {
 
     EVENT_TYPES.forEach((type) => {
       es.addEventListener(type, (raw) => {
+        let parsed = false;
         try {
           const data = JSON.parse((raw as MessageEvent).data) as EventPayloadByType[typeof type];
           listeners[type]?.forEach((cb) => (cb as (p: typeof data) => void)(data));
+          parsed = true;
         } catch {
-          // Malformed payload — ignore.
+          // Malformed payload — ignore. Skip the cross-provider bridge dispatch
+          // too: a garbled identity-changed frame must not trigger an unintended
+          // useAuth refetch (a 401 there would dispatch prism-auth-rejected on a
+          // stream whose malformed frame had nothing to do with auth).
         }
-        // Cross-provider bridge: dispatch a window event so consumers outside
-        // EventStreamProvider (useAuth at App-level) can react. Fires AFTER the
-        // listeners loop so the in-tree subscriber order is unchanged.
-        const winEventName = WINDOW_EVENT_BRIDGE[type];
-        if (winEventName !== undefined && typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent(winEventName));
+        if (parsed) {
+          // Cross-provider bridge: dispatch a window event so consumers outside
+          // EventStreamProvider (useAuth at App-level) can react.
+          const winEventName = WINDOW_EVENT_BRIDGE[type];
+          if (winEventName !== undefined && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(winEventName));
+          }
         }
         resetWatchdog();
       });

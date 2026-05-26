@@ -395,15 +395,20 @@ internal static class TestEndpoints
             if (handle is null)
                 return Results.Problem("Timed out acquiring SubmitLockRegistry slot.", statusCode: StatusCodes.Status408RequestTimeout);
 
+            bool lostRace;
             lock (s_holdGate)
             {
-                if (s_heldHandle is not null)
-                {
-                    // Lost the race after the optimistic pre-check — release our just-acquired slot.
-                    _ = handle.DisposeAsync().AsTask();
-                    return Results.Conflict(new { error = "already-held" });
-                }
-                s_heldHandle = handle;
+                lostRace = s_heldHandle is not null;
+                if (!lostRace) s_heldHandle = handle;
+            }
+            if (lostRace)
+            {
+                // Lost the race after the optimistic pre-check — release our just-acquired slot.
+                // Awaited (not fire-and-forget) so the lock's released-before-409-returned contract
+                // is explicit; SubmitLockHandle.DisposeAsync is sync-internally today but coupling
+                // correctness to that is fragile if it ever grows real async work.
+                await handle.DisposeAsync().ConfigureAwait(false);
+                return Results.Conflict(new { error = "already-held" });
             }
             return Results.Ok(new { ok = true, prRef = prRef.ToString() });
         });

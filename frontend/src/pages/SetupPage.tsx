@@ -9,20 +9,31 @@ import { replaceToken } from '../api/replaceToken';
 import type { ConnectResponse } from '../api/types';
 
 // Maps AuthReplaceError.error codes (PRism.Web/Endpoints/AuthEndpoints.cs) to
-// user-facing copy. Centralized so the SetupPage render path stays slim.
-function replaceErrorMessage(code: string | undefined, prRef: string | null | undefined): string {
+// user-facing copy. Centralized so the SetupPage render path stays slim. Codes
+// are the wire contract from /api/auth/replace + the lowercased AuthValidationError
+// enum names (`invalidtoken`, `insufficientscopes`, `networkerror`, `dnserror`,
+// `servererror`). The `submit-in-flight` copy is taken verbatim from spec § 3.2.1
+// step 8 (design.md:240); the spec prose does NOT name the held prRef in the
+// user-facing string, so the body.prRef field on a 409 is intentionally unused
+// here (it's still surfaced in the structured-log forensic record).
+function replaceErrorMessage(code: string | undefined): string {
   switch (code) {
     case 'submit-in-flight':
-      return `A submit is in progress${prRef ? ` on ${prRef}` : ''}. Wait for it to finish, then try again.`;
+      return 'A submit started during your token paste. Try Replace again in a moment.';
     case 'pat-required':
       return 'Paste your new token before continuing.';
     case 'invalid-json':
       return 'Internal error while parsing the token. Please refresh and try again.';
-    case 'no-token':
-      return 'No existing token to replace. Connect first from the setup page.';
     case 'invalidtoken':
     case 'validation-failed':
       return 'GitHub rejected this token. Check the scopes and try again.';
+    case 'insufficientscopes':
+      return "Your token doesn't have the required scopes. Regenerate with repo / read:user / read:org and try again.";
+    case 'networkerror':
+    case 'dnserror':
+      return 'Network error reaching GitHub. Check your connection, then try again.';
+    case 'servererror':
+      return 'GitHub returned a server error. Try again in a moment.';
     default:
       return code ? `Validation failed (${code}).` : 'Validation failed.';
   }
@@ -68,7 +79,14 @@ export function SetupPage() {
   // on validation failure (apiClient.post throws ApiError) — no 200-with-ok=false
   // shape. On 200, we surface the identity-change toast only when the backend
   // flagged identityChanged=true; the message names the new login so the user
-  // sees the swap was both attempted and committed.
+  // sees the swap was both attempted and committed. prism-auth-recovered fires
+  // before the navigate so App.tsx's `isAuthed = hasToken && !authInvalidated`
+  // gate doesn't bounce a previously-401'd-session user back to /setup after
+  // a successful Replace.
+  //
+  // Error channel: spec § 3.1.1 (design.md:254) routes Replace-flow errors
+  // (validation failure, 409 submit-in-flight) through the toast surface, not
+  // the inline pill. Stays on /setup?replace=1 so the user can retry.
   const onReplace = async (pat: string) => {
     setBusy(true);
     setError(undefined);
@@ -81,14 +99,17 @@ export function SetupPage() {
           message: `Connected as ${login}. Drafts preserved; pending review IDs cleared so the new login can re-submit.`,
         });
       }
+      window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
       navigate('/');
     } catch (e) {
+      let message: string;
       if (e instanceof ApiError) {
-        const body = (e.body ?? null) as { error?: string; prRef?: string | null } | null;
-        setError(replaceErrorMessage(body?.error, body?.prRef));
+        const body = (e.body ?? null) as { error?: string } | null;
+        message = replaceErrorMessage(body?.error);
       } else {
-        setError((e as Error).message);
+        message = (e as Error).message;
       }
+      toast.show({ kind: 'error', message });
     } finally {
       setBusy(false);
     }

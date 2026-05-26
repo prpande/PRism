@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -204,6 +204,34 @@ describe('SetupPage', () => {
       expect(screen.queryByRole('status')).not.toBeInTheDocument();
     });
 
+    it('dispatches prism-auth-recovered on a successful Replace so the App isAuthed gate clears', async () => {
+      // Regression net for the cross-flow bug: onConnect dispatches the event
+      // before navigating; onReplace must too, otherwise a previously-401'd
+      // session whose authInvalidated=true stays gated even after the new PAT
+      // validates, and the Navigate guard at App.tsx bounces / → /setup.
+      server.use(
+        http.post('/api/auth/replace', () =>
+          HttpResponse.json({
+            ok: true,
+            login: 'octocat',
+            host: 'https://github.com',
+            identityChanged: false,
+          }),
+        ),
+      );
+      const recoveredSpy = vi.fn();
+      window.addEventListener('prism-auth-recovered', recoveredSpy);
+      try {
+        renderRouted('/setup?replace=1');
+        await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_new');
+        await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+        await screen.findByText('InboxMock');
+        expect(recoveredSpy).toHaveBeenCalledTimes(1);
+      } finally {
+        window.removeEventListener('prism-auth-recovered', recoveredSpy);
+      }
+    });
+
     it('surfaces an identity-changed success toast naming the new login when identityChanged=true', async () => {
       server.use(
         http.post('/api/auth/replace', () =>
@@ -227,7 +255,10 @@ describe('SetupPage', () => {
       expect(await screen.findByText('InboxMock')).toBeInTheDocument();
     });
 
-    it('maps the 409 submit-in-flight error to a user-facing message with the PR ref', async () => {
+    it('surfaces the spec-mandated 409 toast copy verbatim (kind=error, stays on /setup)', async () => {
+      // Spec § 3.2.1 step 8 (design.md:240) mandates: "A submit started during
+      // your token paste. Try Replace again in a moment." Spec § 3.1.1 line 254
+      // mandates the error channel is toast (kind:'error'), not the inline pill.
       server.use(
         http.post(
           '/api/auth/replace',
@@ -245,13 +276,15 @@ describe('SetupPage', () => {
       renderRouted('/setup?replace=1');
       await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_busy');
       await userEvent.click(screen.getByRole('button', { name: /continue/i }));
-      expect(await screen.findByText(/submit is in progress/i)).toBeInTheDocument();
-      expect(screen.getByText(/octocat\/Hello-World\/42/)).toBeInTheDocument();
+      const toast = await screen.findByRole('status');
+      expect(toast).toHaveTextContent(
+        'A submit started during your token paste. Try Replace again in a moment.',
+      );
       // Still on /setup — no navigation away from the form.
       expect(screen.queryByText('InboxMock')).not.toBeInTheDocument();
     });
 
-    it('maps a 400 validation-failed error to "GitHub rejected this token"', async () => {
+    it('maps a 400 validation-failed error to a toast saying "GitHub rejected this token"', async () => {
       server.use(
         http.post(
           '/api/auth/replace',
@@ -265,7 +298,26 @@ describe('SetupPage', () => {
       renderRouted('/setup?replace=1');
       await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_bad');
       await userEvent.click(screen.getByRole('button', { name: /continue/i }));
-      expect(await screen.findByText(/GitHub rejected this token/i)).toBeInTheDocument();
+      const toast = await screen.findByRole('status');
+      expect(toast).toHaveTextContent(/GitHub rejected this token/i);
+    });
+
+    it('maps networkerror / dnserror to actionable network-failure copy', async () => {
+      server.use(
+        http.post(
+          '/api/auth/replace',
+          () =>
+            new HttpResponse(JSON.stringify({ ok: false, error: 'networkerror' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+        ),
+      );
+      renderRouted('/setup?replace=1');
+      await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_x');
+      await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+      const toast = await screen.findByRole('status');
+      expect(toast).toHaveTextContent(/Network error reaching GitHub/i);
     });
 
     it('does NOT call /api/auth/connect when in replace mode (regression: cross-flow leak)', async () => {
