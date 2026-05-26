@@ -37,8 +37,11 @@ const defaultPreferences = {
   },
   github: {
     host: 'https://github.com',
-    configPath: '/Users/x/AppData/Local/PRism/config.json',
-    logsPath: '/Users/x/AppData/Local/PRism/logs',
+    // Fixture-only sentinel paths — the Settings page just renders these as
+    // copyable strings, axe-core doesn't care, and using a clearly synthetic
+    // value avoids implying any real platform's data-dir layout.
+    configPath: '<dataDir>/config.json',
+    logsPath: '<dataDir>/logs',
   },
 };
 
@@ -56,6 +59,12 @@ const allOffCapabilities = {
   },
 };
 
+// Fixed timestamps for deterministic axe-core runs — `InboxRow.formatAge()`
+// renders different strings ("just now" / "1h ago" / …) depending on the
+// wall-clock delta from `new Date()`, which makes test DOM non-deterministic.
+// Pin to a fixed past instant so each run emits the same accessible-name text.
+const FIXED_TS = '2026-05-27T00:00:00.000Z';
+
 const sampleInbox = {
   sections: [
     {
@@ -67,8 +76,8 @@ const sampleInbox = {
           title: 'Sample pull request for a11y audit',
           author: 'amelia',
           repo: 'octocat/Hello-World',
-          updatedAt: new Date().toISOString(),
-          pushedAt: new Date().toISOString(),
+          updatedAt: FIXED_TS,
+          pushedAt: FIXED_TS,
           iterationNumber: 1,
           commentCount: 3,
           additions: 25,
@@ -82,7 +91,7 @@ const sampleInbox = {
     },
   ],
   enrichments: {},
-  lastRefreshedAt: new Date().toISOString(),
+  lastRefreshedAt: FIXED_TS,
   tokenScopeFooterEnabled: true,
 };
 
@@ -101,7 +110,7 @@ const samplePrDetail = {
     ciSummary: 'success',
     isMerged: false,
     isClosed: false,
-    openedAt: new Date().toISOString(),
+    openedAt: FIXED_TS,
   },
   clusteringQuality: 'ok',
   iterations: [],
