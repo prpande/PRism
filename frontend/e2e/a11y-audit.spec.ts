@@ -60,10 +60,12 @@ const allOffCapabilities = {
 };
 
 // Fixed timestamps for deterministic axe-core runs — `InboxRow.formatAge()`
-// renders different strings ("just now" / "1h ago" / …) depending on the
-// wall-clock delta from `new Date()`, which makes test DOM non-deterministic.
-// Pin to a fixed past instant so each run emits the same accessible-name text.
-const FIXED_TS = '2026-05-27T00:00:00.000Z';
+// uses `Date.now() - updatedAt`, so a fixed timestamp close to "now" still
+// renders different strings ("just now" / "1h ago" / …) as wall-clock time
+// moves, and a future timestamp produces a negative delta. Pin to a far-past
+// constant so the rendered age string is stably 'older' (delta > 24h on every
+// realistic run) and the accessible-name text is byte-stable across runs.
+const FIXED_TS = '2024-01-01T00:00:00.000Z';
 
 const sampleInbox = {
   sections: [
@@ -168,11 +170,16 @@ async function setupBaseMocks(p: Page): Promise<void> {
       body: JSON.stringify(sampleInbox),
     }),
   );
+  // Wire shape matches PRism.Web/Endpoints/SubmitInFlightEndpoint.cs:
+  //   SubmitInFlightResponse(bool InFlight, string? PrRef)
+  // i.e. `{ inFlight: bool, prRef: string|null }` — singular, NOT `refs: []`.
+  // Even though inFlight=false makes prRef dormant here, contract-accuracy
+  // keeps the mock from masking future integration regressions.
   await p.route('**/api/submit/in-flight', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ inFlight: false, refs: [] }),
+      body: JSON.stringify({ inFlight: false, prRef: null }),
     }),
   );
   // PR detail (GET on the base ref returns the detail DTO; the same path with
@@ -316,14 +323,23 @@ test.describe('A11y audit — automated axe-core pass per spec § 6', () => {
 // the .pulseLogo CSS rule sets `animation: none` (LoadingScreen.module.css).
 // ---------------------------------------------------------------------------
 
+// Helper for routes that should hang for the test duration. Awaiting a
+// never-resolving Promise makes the "request stays pending" contract explicit
+// rather than relying on the implicit Playwright semantics of a sync handler
+// that doesn't call fulfill/continue/abort — which is non-obvious to read and
+// brittle to a future Playwright upgrade.
+const HANG_FOREVER = async () => {
+  await new Promise<void>(() => {
+    /* never resolves; cleanup happens at page close */
+  });
+};
+
 test.describe('A11y audit — LoadingScreen honors prefers-reduced-motion', () => {
   test('pulse animation is suppressed under reducedMotion: reduce', async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    // Hold the auth response open so the LoadingScreen stays visible. The
-    // useAuth hook stays in its pending state and App renders <LoadingScreen />.
-    // The handler is intentionally a no-op — the request hangs for the test
-    // duration; Playwright cleans it up at page close.
-    await page.route('**/api/auth/state', () => {});
+    // Hold the auth response open so the LoadingScreen stays visible. useAuth
+    // stays in its pending state and App renders <LoadingScreen />.
+    await page.route('**/api/auth/state', HANG_FOREVER);
     await page.goto('/');
     const loadingRegion = page.getByRole('status').first();
     await expect(loadingRegion).toBeVisible({ timeout: 5_000 });
