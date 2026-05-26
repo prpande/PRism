@@ -16,9 +16,16 @@ import { resetBackendState } from './helpers/s4-setup';
 const HELD_PR_REF = 'octocat/Hello-World/42';
 
 async function holdSubmitLock(request: import('@playwright/test').APIRequestContext) {
+  // camelCase keys match the rest of the codebase's wire-shape convention:
+  // ConfigureHttpJsonOptions copies JsonSerializerOptionsFactory.Api's camelCase
+  // PropertyNamingPolicy, so the binder maps "owner" → Owner, "repo" → Repo, etc.
+  // (PascalCase happens to also bind today because the HTTP options inherit
+  // PropertyNameCaseInsensitive=true by default — but a future tightening that
+  // copies the factory's CaseInsensitive=false would silently break PascalCase
+  // bodies. The s4 /test/advance-head helper uses the same camelCase pattern.)
   const resp = await request.post('http://localhost:5180/test/submit/hold', {
     headers: { Origin: 'http://localhost:5180', 'Content-Type': 'application/json' },
-    data: { Owner: 'octocat', Repo: 'Hello-World', Number: 42 },
+    data: { owner: 'octocat', repo: 'Hello-World', number: 42 },
   });
   if (!resp.ok()) {
     throw new Error(`/test/submit/hold failed: ${resp.status()} ${await resp.text()}`);
