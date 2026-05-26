@@ -53,6 +53,34 @@ public sealed class FileLoggerIntegrationTests : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    // Read a file with a short polling-retry on IOException("used by another process").
+    // On slow Windows CI runners the FileLoggerProvider's DisposeAsync chain
+    // (factory → service-provider → FileLoggerProvider.DisposeAsync → _currentStream
+    // .DisposeAsync) can race with the test resuming after `await using`: if the
+    // 2-second writer-task drain budget is exhausted and the channel still has
+    // events, the cancel + dispose path catches exceptions silently and the stream
+    // can briefly remain open from the OS's perspective even after `await using`
+    // returns. Polling for `File.ReadAllText` to succeed (or fail with a different
+    // error) is the surgical fix without enlarging the provider's drain budget,
+    // which would slow every other test. Caught by recurring CI flake on PR #69.
+    private static async Task<string> ReadAllTextWithRetryAsync(
+        string path,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            try
+            {
+                return await File.ReadAllTextAsync(path).ConfigureAwait(false);
+            }
+            catch (IOException) when (DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(50).ConfigureAwait(false);
+            }
+        }
+    }
+
     [Fact]
     public async Task EndToEnd_structured_log_with_pat_field_produces_file_with_redacted_value()
     {
@@ -82,7 +110,7 @@ public sealed class FileLoggerIntegrationTests : IDisposable
         // Now read the on-disk file.
         File.Exists(todayPath).Should().BeTrue($"the daily log file should exist at {todayPath}");
 
-        var content = File.ReadAllText(todayPath);
+        var content = await ReadAllTextWithRetryAsync(todayPath, TimeSpan.FromSeconds(5));
 
         content.Should().NotContain("ghp_secret_test", "the literal PAT value must not appear on disk");
         content.Should().Contain("[REDACTED]", "the scrubber must replace the PAT");
@@ -113,7 +141,7 @@ public sealed class FileLoggerIntegrationTests : IDisposable
                 logger.LogInformation("event {Index}", i);
         }
 
-        var content = File.ReadAllText(todayPath);
+        var content = await ReadAllTextWithRetryAsync(todayPath, TimeSpan.FromSeconds(5));
 
         for (var i = 0; i < 50; i++)
             content.Should().Contain($"event {i}", $"event {i} should be persisted after graceful shutdown");
