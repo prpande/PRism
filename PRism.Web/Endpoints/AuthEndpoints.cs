@@ -1,4 +1,3 @@
-using System.Collections.Immutable;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -187,6 +186,11 @@ internal static partial class AuthEndpoints
                 return Results.BadRequest(new AuthReplaceError(Ok: false, Error: "invalid-json"));
             }
             using var _doc = doc;
+            // Reject non-object JSON roots (e.g., `[]`, `42`, `"string"`, `null`).
+            // TryGetProperty throws InvalidOperationException on any ValueKind other
+            // than Object — surface as 400 invalid-json rather than 500.
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return Results.BadRequest(new AuthReplaceError(Ok: false, Error: "invalid-json"));
             var pat = doc.RootElement.TryGetProperty("pat", out var p) ? p.GetString() : null;
             if (string.IsNullOrWhiteSpace(pat))
                 return Results.BadRequest(new AuthReplaceError(Ok: false, Error: "pat-required"));
@@ -199,7 +203,7 @@ internal static partial class AuthEndpoints
                 : null;
 
             // 4) Lazy validate-before-swap: stash transient, ask GitHub if it's good.
-            Log.ConnectValidating(log, pat.Length, config.Current.Github.Host);
+            Log.ReplaceValidating(log, pat.Length, config.Current.Github.Host);
             await tokens.WriteTransientAsync(pat, ct).ConfigureAwait(false);
             var result = await review.ValidateCredentialsAsync(ct).ConfigureAwait(false);
             if (!result.Ok)
@@ -344,6 +348,13 @@ internal static partial class AuthEndpoints
 
         [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: validating PAT (length={PatLength}) against host {Host}")]
         internal static partial void ConnectValidating(ILogger logger, int patLength, string host);
+
+        // S6 PR2 — separate template for /api/auth/replace so log lines accurately
+        // attribute which endpoint initiated the GitHub validation call. Reusing
+        // ConnectValidating would mislabel every replace as a connect, breaking
+        // log-grep-based forensic reconstruction.
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/replace: validating PAT (length={PatLength}) against host {Host}")]
+        internal static partial void ReplaceValidating(ILogger logger, int patLength, string host);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/connect: validation failed (error={Error}, detail={Detail})")]
         internal static partial void ConnectValidationFailed(ILogger logger, string error, string detail);

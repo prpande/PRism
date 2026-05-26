@@ -438,6 +438,29 @@ public class AuthReplaceEndpointTests
         resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("42")]
+    [InlineData("\"just-a-string\"")]
+    [InlineData("null")]
+    public async Task Non_object_json_root_returns_400_invalid_json(string body)
+    {
+        // Copilot #70 finding: TryGetProperty on a non-Object root throws
+        // InvalidOperationException → 500. Guard via ValueKind check and surface 400.
+        using var f = new HarnessFactory();
+        await SeedPriorLoginAsync(f, "alice");
+        using var client = f.CreateClient();
+
+        using var content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+        using var req = new HttpRequestMessage(HttpMethod.Post, "/api/auth/replace") { Content = content };
+        using var resp = await client.SendAsync(req);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var json = await resp.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        doc.RootElement.GetProperty("error").GetString().Should().Be("invalid-json");
+    }
+
     [Fact]
     public async Task Oversize_body_returns_413()
     {
