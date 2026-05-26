@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
+import { FirstRunDisclosure } from './FirstRunDisclosure';
 import { MaskedInput } from './MaskedInput';
 import styles from './SetupForm.module.css';
 
@@ -59,6 +60,7 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
           <code>read:org</code> scopes.
         </p>
       </div>
+      <FirstRunDisclosure />
       <div>
         <strong>2.</strong> Paste it below
         <MaskedInput

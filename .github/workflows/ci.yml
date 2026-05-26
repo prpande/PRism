@@ -11,6 +11,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Supply-chain guard: any workflow that SHA-pins third-party actions must
+      # resolve all unresolved-pin placeholders before merge. A literal placeholder
+      # left in the YAML would fail at workflow-run time with an opaque "unable to
+      # resolve action" error; failing the lint here surfaces it on the PR instead.
+      # The needle is assembled from substrings so this guard does not match itself.
+      - name: Reject unresolved commit-SHA placeholders in .github/
+        shell: bash
+        run: |
+          NEEDLE='<'"commit-sha"'>'
+          if grep -rnF --include='*.yml' --include='*.yaml' "$NEEDLE" .github/; then
+            echo "ERROR: unresolved $NEEDLE placeholder in .github/ — resolve via 'gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq .object.sha' before merge." >&2
+            exit 1
+          fi
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
