@@ -340,17 +340,24 @@ internal static partial class AuthEndpoints
         [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/connect: validation failed (error={Error}, detail={Detail})")]
         internal static partial void ConnectValidationFailed(ILogger logger, string error, string detail);
 
-        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: validated for login={Login} with warning={Warning}; awaiting /commit")]
-        internal static partial void ConnectValidatedWithWarning(ILogger logger, string login, AuthValidationWarning warning);
+        // Parameter names use qualified `validatedLogin`/`committedLogin` rather than bare
+        // `login` so the LoggerMessage source generator emits field keys that
+        // SensitiveFieldScrubber does NOT match — bare `{login}` would be redacted by the
+        // scrubber's `login` blocklist entry, breaking forensic reconstruction of who
+        // connected when. Surfaced in the S6 deferrals sidecar "[Risk] Existing
+        // AuthEndpoints.cs LoggerMessage methods silently redact GitHub login" and
+        // folded into PR2 (Task 2.8a) per spec § 3.6.
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: validated for login={ValidatedLogin} with warning={Warning}; awaiting /commit")]
+        internal static partial void ConnectValidatedWithWarning(ILogger logger, string validatedLogin, AuthValidationWarning warning);
 
-        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: committed for login={Login}")]
-        internal static partial void ConnectCommitted(ILogger logger, string login);
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect: committed for login={CommittedLogin}")]
+        internal static partial void ConnectCommitted(ILogger logger, string committedLogin);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "/api/auth/connect/commit rejected: no-pending-token (process restart or double-commit)")]
         internal static partial void CommitNoPendingToken(ILogger logger);
 
-        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect/commit: committed for login={Login}")]
-        internal static partial void CommitSucceeded(ILogger logger, string login);
+        [LoggerMessage(Level = LogLevel.Information, Message = "/api/auth/connect/commit: committed for login={CommittedLogin}")]
+        internal static partial void CommitSucceeded(ILogger logger, string committedLogin);
 
         // S6 PR2 — forensic record emitted from /api/auth/replace when the identity-change
         // rule fires. Parameter names use qualified `priorLogin` / `newLogin` so the
