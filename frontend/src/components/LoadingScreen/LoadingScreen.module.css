@@ -5,7 +5,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-base, white);
+  background: var(--surface-0);
   overflow: hidden;
 }
 
@@ -27,7 +27,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-3, 0.75rem);
+  gap: var(--s-3);
 }
 
 .pulseLogo {
@@ -42,14 +42,10 @@
 }
 
 .label {
-  color: var(--text-muted, #6b7280);
-  font-size: var(--font-size-sm, 0.875rem);
+  color: var(--text-3);
+  font-size: var(--text-sm);
   text-align: center;
   max-width: 32rem;
-}
-
-.reload {
-  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
 }
 
 @keyframes prism-pulse {

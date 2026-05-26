@@ -21,7 +21,12 @@ export function LoadingScreen({
   }, [timeoutMs]);
 
   return (
-    <div className={styles.screen} role="status" aria-busy="true">
+    // aria-busy toggles off when the timeout state stabilizes so ATs announce
+    // the new "Taking longer…" + Reload content via the role=status live region.
+    // Per ARIA: aria-busy=true tells ATs to defer announcements within the
+    // region, which we want during the indeterminate Loading… phase but not
+    // after the content settles.
+    <div className={styles.screen} role="status" aria-busy={!timedOut}>
       <img src="/prism-logo.png" alt="" aria-hidden="true" className={styles.watermark} />
       <div className={styles.center}>
         <img
@@ -32,7 +37,15 @@ export function LoadingScreen({
         />
         <span className={styles.label}>{timedOut ? timeoutLabel : label}</span>
         {timedOut && (
-          <button type="button" onClick={() => window.location.reload()} className={styles.reload}>
+          // Compose the global `.btn .btn-secondary` utility classes from
+          // src/styles/tokens.css so the Reload button picks up the design
+          // system's border / background / focus ring instead of inheriting
+          // the global button reset's bare appearance.
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="btn btn-secondary"
+          >
             Reload
           </button>
         )}

@@ -30,12 +30,29 @@ describe('LoadingScreen', () => {
   // role="status" carries implicit aria-live="polite" + aria-atomic="true" per
   // WAI-ARIA; explicit aria-live="polite" was dropped to avoid the redundant-
   // live-region pattern that axe-core can flag in PR7's a11y audit.
-  it('uses role=status + aria-busy=true on the root (implicit polite live region)', () => {
+  it('uses role=status + aria-busy=true while loading (implicit polite live region)', () => {
     const { container } = render(<LoadingScreen />);
     const root = container.firstChild as HTMLElement;
     expect(root).toHaveAttribute('role', 'status');
     expect(root).toHaveAttribute('aria-busy', 'true');
     expect(root).not.toHaveAttribute('aria-live');
+  });
+
+  // Per ARIA: aria-busy=true tells assistive tech to defer announcements within
+  // the region. Keeping it true after the content settles would suppress the
+  // very Reload-state update the live region exists to announce, so we toggle
+  // it off when timedOut flips true.
+  it('toggles aria-busy off once the timeout fires so the new content is announced', () => {
+    vi.useFakeTimers();
+    const { container } = render(<LoadingScreen timeoutMs={1000} timeoutLabel="Stalled…" />);
+    const root = container.firstChild as HTMLElement;
+    expect(root).toHaveAttribute('aria-busy', 'true');
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(root).toHaveAttribute('aria-busy', 'false');
   });
 
   it('resets to the default label when timeoutMs changes after a timeout fired', () => {
