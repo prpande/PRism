@@ -26,6 +26,21 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   await page.setViewportSize({ width: 1440, height: 900 });
 
   await setupAndOpenScenarioPr(page);
+
+  // Set up the subscription-POST listener BEFORE navigating to the PR detail
+  // — useActivePrUpdates fires `POST /api/events/subscriptions` from a
+  // useEffect that runs on mount (frontend/src/hooks/useActivePrUpdates.ts:43-46).
+  // Awaiting this completion before /test/emit-pr-updated avoids a subtle race:
+  // if the publish lands before the subscriber is in ActivePrSubscriberRegistry,
+  // SseChannel.OnActivePrUpdated finds no subscribers and silently drops the
+  // event, and the test then times out on `waitFor reload-banner` with no
+  // diagnostic surface.
+  const subscriptionPosted = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/events/subscriptions') && r.request().method() === 'POST' && r.ok(),
+    { timeout: 15_000 },
+  );
+
   await page.goto('/pr/acme/api/123');
 
   await page.locator('[data-testid="pr-header"]').waitFor();
@@ -36,6 +51,7 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   // networkidle settle.
   await expect(page.locator('h1.pr-title')).toHaveText('Calc utilities');
   await expect(page.locator('[data-testid="pr-tab-files"]')).toBeVisible();
+  await subscriptionPosted;
   await page.addStyleTag({
     content: '*, *::before, *::after { animation: none !important; transition: none !important; }',
   });
@@ -99,9 +115,16 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   // Supplementary visual signal — loose 1% pixel tolerance, banner masked. The
   // per-platform snapshot directory (configured via expect.toHaveScreenshot
   // pathTemplate in playwright.config.ts) keeps cross-OS font-rendering
-  // differences from poisoning the diff.
-  await expect(page).toHaveScreenshot('pr-detail-no-banner.png', {
-    mask: [page.locator('[data-testid="reload-banner"]')],
-    maxDiffPixelRatio: 0.01,
-  });
+  // differences from poisoning the diff. We only carry a win32 baseline (CI
+  // runs windows-latest exclusively per .github/workflows/ci.yml); on other
+  // platforms the supplementary diff would fail on the missing baseline
+  // without giving any cross-OS coverage that CI can enforce. The load-bearing
+  // assertion is the getBoundingClientRect loop above — it runs on every
+  // platform.
+  if (process.platform === 'win32') {
+    await expect(page).toHaveScreenshot('pr-detail-with-banner-masked.png', {
+      mask: [page.locator('[data-testid="reload-banner"]')],
+      maxDiffPixelRatio: 0.01,
+    });
+  }
 });

@@ -138,6 +138,12 @@ internal static class TestEndpoints
         {
             if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo) || req.Number <= 0)
                 return Results.BadRequest(new { error = "pr-ref-missing" });
+            // Internal consistency — a typo'd test request that publishes a malformed event
+            // would surface as an opaque test timeout downstream. Reject early instead.
+            if (req.HeadShaChanged && string.IsNullOrEmpty(req.NewHeadSha))
+                return Results.BadRequest(new { error = "new-head-sha-required-when-head-sha-changed" });
+            if (req.CommentCountChanged != (req.CommentCountDelta != 0))
+                return Results.BadRequest(new { error = "comment-count-flag-and-delta-must-agree" });
             bus.Publish(new PRism.Core.Events.ActivePrUpdated(
                 new PrReference(req.Owner, req.Repo, req.Number),
                 req.HeadShaChanged,

@@ -4,16 +4,16 @@ Local-first PR review tool that runs on the reviewer's own machine. See [`docs/s
 
 ## Status
 
-**Released.** PoC binary v0.1.0 is downloadable from the [Releases page](https://github.com/prpande/PRism/releases/latest):
+**S6 complete; first binary publish pending.** All S6 PRs (#53, #69, #70, #71, #72, #73, #74, #75, #76, this PR) have landed. The [`publish.yml`](.github/workflows/publish.yml) `workflow_dispatch` has not yet run for the first real tag; once the maintainer dispatches `v0.1.0` and promotes the resulting draft, the binaries below resolve via [`releases/latest`](https://github.com/prpande/PRism/releases/latest):
 
 - Windows x64: [`PRism-win-x64.exe`](https://github.com/prpande/PRism/releases/latest/download/PRism-win-x64.exe)
 - macOS Apple Silicon: [`PRism-osx-arm64`](https://github.com/prpande/PRism/releases/latest/download/PRism-osx-arm64)
 
-See [`docs/roadmap.md`](docs/roadmap.md) for slice history and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
+Until the first dispatch, the links above return 404. See [`docs/roadmap.md`](docs/roadmap.md) for slice history and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
 
 ## Download and first run
 
-Download the binary for your platform from the [Releases page](https://github.com/prpande/PRism/releases/latest):
+Download the binary for your platform from the [Releases page](https://github.com/prpande/PRism/releases/latest) (live once the first `publish.yml` dispatch completes):
 
 - **Windows x64** — [`PRism-win-x64.exe`](https://github.com/prpande/PRism/releases/latest/download/PRism-win-x64.exe)
 - **macOS Apple Silicon** — [`PRism-osx-arm64`](https://github.com/prpande/PRism/releases/latest/download/PRism-osx-arm64)
