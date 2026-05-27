@@ -59,6 +59,8 @@ Expected: three rows referring to Phase 1/2/3, each marked "Pending".
 
 - [ ] **Step 5: Commit**
 
+The heredoc blocks in this plan use POSIX-shell syntax and are intended for the harness's Bash tool, not PowerShell. A human running these manually in pwsh should substitute a here-string (`@'...'@`) or `-F .commit-msg.txt`.
+
 ```sh
 git add docs/specs/README.md docs/roadmap.md
 git commit -m "$(cat <<'EOF'
@@ -80,9 +82,15 @@ Standing default per memory `feedback_use_pr_autopilot`. Invoke `pr-autopilot` a
 
 Expected: PR opened against `main` containing two commits — the spec commit (already at HEAD~1) and the index/roadmap commit (HEAD). PR autopilot drives review iterations until CI is green.
 
-- [ ] **Step 7: Wait for PR merge**
+- [ ] **Step 7: Wait for PR merge, then remove this worktree**
 
-Do not start Task 2 until Task 1's PR is merged to `main`. Track via `gh pr view --json mergedAt` or equivalent.
+Do not start Task 2 until Task 1's PR is merged to `main`. Track via `gh pr view --json mergedAt` or equivalent. After merge, from the main checkout:
+
+```sh
+git -C D:/src/PRism fetch origin --quiet
+git -C D:/src/PRism pull --ff-only
+git -C D:/src/PRism worktree remove D:/src/PRism-v1-roadmap
+```
 
 ---
 
@@ -235,13 +243,21 @@ Expected: workflow run succeeds; a draft GitHub Release at `v0.1.0` exists with 
 
 - [ ] **Step 3: Download the Windows binary on real hardware**
 
-On a Windows machine (not the build runner):
+On a Windows machine (not the build runner). Draft Releases are visible only to authenticated users with `repo` scope, so verify auth first:
+
+```sh
+gh auth status
+# If not logged in or token lacks repo scope:
+#   gh auth login -s repo
+```
+
+Then download:
 
 ```sh
 gh release download v0.1.0 --pattern "PRism-win-x64.exe"
 ```
 
-Or download via the draft Release page in the browser.
+Or download via the draft Release page in the browser (also requires authenticated login to the repo).
 
 - [ ] **Step 4: Run the 13-step demo flow per roadmap § 4.3**
 
@@ -266,7 +282,7 @@ Expected: `https://github.com/prpande/PRism/releases/latest` resolves to the v0.
 - [ ] **Step 6: Apply reconciliation per roadmap § 4.5 (only if Step 4 failed)**
 
 If verification surfaced an issue:
-1. Delete the failed draft Release: `gh release delete v0.1.0 --yes --cleanup-tag`.
+1. Delete the failed draft Release: `gh release delete v0.1.0 --yes --cleanup-tag`. (Note: `--cleanup-tag` is best-effort — `softprops/action-gh-release@v3` typically doesn't push the git tag until the draft is promoted, so the flag may be a no-op on the tag side. Either way, re-dispatch with the same tag works.)
 2. Open a fix PR; merge it.
 3. Re-dispatch per Step 2 with the same `tag = v0.1.0` (or bump the tag if multiple iterations are needed: `v0.1.0-rc.2`, etc.).
 4. Re-run verification from Step 3.
@@ -325,14 +341,17 @@ EOF
 
 Per memory `feedback_use_pr_autopilot`. The PR is small and text-only; expect minimal review iteration.
 
-- [ ] **Step 7: After merge — clean up worktrees**
+- [ ] **Step 7: After merge — clean up the three task-created worktrees**
+
+Run from the main checkout (`D:/src/PRism`), not from any of the worktrees being removed:
 
 ```sh
-git worktree remove D:/src/PRism-v1-roadmap
-git worktree remove D:/src/PRism-single-instance
-git worktree remove D:/src/PRism-readme-restructure
-git worktree remove D:/src/PRism-v1-reconciliation
+git -C D:/src/PRism worktree remove D:/src/PRism-single-instance
+git -C D:/src/PRism worktree remove D:/src/PRism-readme-restructure
+git -C D:/src/PRism worktree remove D:/src/PRism-v1-reconciliation
 ```
+
+(The initial `D:/src/PRism-v1-roadmap` worktree was already removed after Task 1's PR merge per the Task 1 Step 7 follow-up. If it's still around, `git -C D:/src/PRism worktree remove D:/src/PRism-v1-roadmap` cleans it up.)
 
 v1 ship complete. Out-of-band follow-up: schedule v0.1.1 (macOS Apple Silicon) when hardware verification path exists.
 
