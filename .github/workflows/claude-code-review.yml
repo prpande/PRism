@@ -12,11 +12,24 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
+    # Skip on Dependabot PRs. Two reasons:
+    #
+    # 1. Secrets store split: Dependabot-triggered workflow runs use a separate
+    #    secret store ("Secret source: Dependabot") rather than Actions secrets,
+    #    so `secrets.CLAUDE_CODE_OAUTH_TOKEN` resolves to an empty string. The
+    #    action then falls back to OIDC-based app token exchange, which 401s
+    #    with "Workflow validation failed".
+    #
+    # 2. Any Dependabot PR that bumps an action used in this very workflow
+    #    (e.g. `actions/checkout`) modifies `claude-code-review.yml` itself,
+    #    which makes the OIDC validation fail unconditionally even if the
+    #    secret were available — the action requires the workflow file on the
+    #    PR head to match the version on the default branch.
+    #
+    # Dependabot PRs are heavily scoped (version bumps only) and already gated
+    # by `build-and-test`. The claude review buys little here and produces
+    # noise via consistently-red checks.
+    if: github.actor != 'dependabot[bot]'
 
     runs-on: ubuntu-latest
     permissions:
