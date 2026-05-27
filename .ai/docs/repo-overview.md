@@ -18,7 +18,7 @@ PRism is **mid-implementation**. Main contents:
 - `docs/solutions/` — documented solutions with YAML frontmatter (`module`, `tags`, `problem_type`)
 - `design/handoff/` — visual/interaction design prototype (reference, **not** production code)
 - `assets/icons/` — app icons (`PRism{16,32,48,64,256,512}.ico` + `PRismOG.png`)
-- `.github/workflows/` — `ci.yml`, `claude.yml` (`@claude` mention handler), `claude-code-review.yml` (auto-review on every PR)
+- `.github/workflows/` — `ci.yml`, `claude.yml` (`@claude` mention handler), `claude-code-review.yml` (auto-review on every PR), `publish.yml` (manual workflow_dispatch — produces self-contained `win-x64` + `osx-arm64` binaries and attaches to a draft GitHub Release; `include_macos` input gates whether the macOS binary reaches `releases/latest`, default false at v0.1.0 per `docs/specs/2026-05-28-v1-completion-roadmap-design.md`), `integration-tests.yml` (live-GitHub contract test suite per `docs/contract-tests.md`)
 
 `docs/spec/` is the source of truth for the *full* PoC contract — including parts not yet shipped. `docs/roadmap.md` (slice-keyed) and `docs/specs/README.md` (spec-keyed) track shipped state. `docs/README.md` is the document map; start there.
 
