@@ -22,7 +22,7 @@ PRism is unsigned for the PoC, so the OS surfaces a one-time trust prompt on fir
 
 ### Windows
 
-Double-click the `.exe`. Windows SmartScreen shows **"Windows protected your PC"** because the binary isn't code-signed. Click **More info → Run anyway**. The backend starts on `http://localhost:5180` and your default browser launches into the PRism Setup screen.
+Double-click the `.exe`. Windows SmartScreen shows **"Windows protected your PC"** because the binary isn't code-signed. Click **More info → Run anyway**. The backend starts on `http://localhost:5180` (or the next free port in the 5180–5199 range if 5180 is already in use) and your default browser launches into the PRism Setup screen.
 
 ### macOS
 
@@ -59,7 +59,7 @@ grep "Identity changed" "<dataDir>/logs/"*.log
 
 ### Replace token
 
-The Settings page has a **Replace token** link in the Connection section. Clicking it walks you through pasting a new PAT and validates it before swapping. If the new token authenticates as a different GitHub login than the previous one, PRism:
+The Settings page has a **Replace token** link in the Auth section. Clicking it walks you through pasting a new PAT and validates it before swapping. If the new token authenticates as a different GitHub login than the previous one, PRism:
 
 - Preserves all draft text across every PR ("the reviewer's text is sacred").
 - Clears the GraphQL Node IDs that the prior login owned.

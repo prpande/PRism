@@ -75,7 +75,14 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   // ActivePrPoller never observes a mismatch and never publishes ActivePrUpdated.
   // The new hook publishes directly via IReviewEventBus so SseChannel fans out
   // `event: pr-updated` to the subscribed page, and BannerRefresh renders.
-  const emitResp = await page.request.post('/test/emit-pr-updated', {
+  //
+  // Absolute backend URL — page.request.post resolves relative paths against the
+  // page's baseURL, which is http://localhost:5173 under the `dev` Playwright
+  // project. Vite proxies `/api/*` but NOT `/test/*` (see vite.config.ts), so a
+  // relative `/test/emit-pr-updated` POST hits Vite's 404 fallback under `dev`.
+  // Pinning to 5180 lets the spec run cleanly under both `dev` and `prod`
+  // projects. Mirrors the resetBackendState helper's pattern.
+  const emitResp = await page.request.post('http://localhost:5180/test/emit-pr-updated', {
     data: {
       owner: 'acme',
       repo: 'api',
