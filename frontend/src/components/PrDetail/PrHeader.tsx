@@ -272,7 +272,7 @@ export function PrHeader({
   };
 
   return (
-    <div className="pr-header">
+    <div className="pr-header" data-testid="pr-header">
       <div className="pr-header-top">
         <div className="pr-meta col gap-1">
           <div className="row gap-2 muted-2 pr-meta-repo">

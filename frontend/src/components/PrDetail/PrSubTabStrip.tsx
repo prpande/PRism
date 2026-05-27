@@ -57,6 +57,7 @@ function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
       aria-disabled={disabled || undefined}
       tabIndex={disabled ? -1 : 0}
       className={`pr-tab ${active ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}`.trim()}
+      data-testid={`pr-tab-${id}`}
       onClick={() => {
         if (!disabled) onSelect(id);
       }}

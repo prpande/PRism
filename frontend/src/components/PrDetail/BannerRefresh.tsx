@@ -21,7 +21,7 @@ export function BannerRefresh({
   if (!message) return null;
 
   return (
-    <div role="status" aria-live="polite" className="banner-refresh">
+    <div role="status" aria-live="polite" className="banner-refresh" data-testid="reload-banner">
       <span className="banner-refresh-message">{message}</span>
       <div className="banner-refresh-actions">
         <button type="button" className="btn btn-primary btn-sm" onClick={onReload}>

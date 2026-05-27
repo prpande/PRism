@@ -39,6 +39,15 @@ internal static class TestEndpoints
 
     internal sealed record MarkPrViewedRequest(string Owner, string Repo, int Number, string TabId);
 
+    internal sealed record EmitPrUpdatedRequest(
+        string Owner,
+        string Repo,
+        int Number,
+        bool HeadShaChanged,
+        bool CommentCountChanged,
+        string? NewHeadSha,
+        int CommentCountDelta);
+
     internal sealed record ClearPrSessionRequest(string Owner, string Repo, int Number);
 
     // ----- /test/submit/* (plan Task 61) -----
@@ -115,6 +124,32 @@ internal static class TestEndpoints
             sp.GetService<PRism.Core.PrDetail.IActivePrCache>()?.Update(
                 FakeReviewBackingStore.Scenario,
                 new PRism.Core.PrDetail.ActivePrSnapshot(store.CurrentHeadSha, null, DateTimeOffset.UtcNow));
+            return Results.Ok(new { ok = true });
+        });
+
+        // S6 PR9 Task 9.1. Directly publishes ActivePrUpdated via the event bus so the
+        // no-layout-shift spec can deterministically observe BannerRefresh rendering
+        // without depending on the ActivePrPoller race (the poller compares against
+        // IActivePrCache, which /test/advance-head pre-warms — so a typical
+        // advance-head → wait-for-banner path never fires pr-updated because the
+        // cache already matches the new sha). SseChannel.OnActivePrUpdated picks
+        // this up and fans out as `event: pr-updated` to subscribed clients.
+        app.MapPost("/test/emit-pr-updated", (EmitPrUpdatedRequest req, PRism.Core.Events.IReviewEventBus bus) =>
+        {
+            if (string.IsNullOrEmpty(req.Owner) || string.IsNullOrEmpty(req.Repo) || req.Number <= 0)
+                return Results.BadRequest(new { error = "pr-ref-missing" });
+            // Internal consistency — a typo'd test request that publishes a malformed event
+            // would surface as an opaque test timeout downstream. Reject early instead.
+            if (req.HeadShaChanged && string.IsNullOrEmpty(req.NewHeadSha))
+                return Results.BadRequest(new { error = "new-head-sha-required-when-head-sha-changed" });
+            if (req.CommentCountChanged != (req.CommentCountDelta != 0))
+                return Results.BadRequest(new { error = "comment-count-flag-and-delta-must-agree" });
+            bus.Publish(new PRism.Core.Events.ActivePrUpdated(
+                new PrReference(req.Owner, req.Repo, req.Number),
+                req.HeadShaChanged,
+                req.CommentCountChanged,
+                req.NewHeadSha,
+                req.CommentCountDelta));
             return Results.Ok(new { ok = true });
         });
 
