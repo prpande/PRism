@@ -6,7 +6,7 @@
 
 **Architecture:** This is a **meta-plan**. The roadmap spec at [`docs/specs/2026-05-28-v1-completion-roadmap-design.md`](../specs/2026-05-28-v1-completion-roadmap-design.md) decomposes v1 into three phases, and § 7 of the spec commits each phase to its own spec/plan cycle. This plan covers only (a) landing the roadmap spec itself on `main` with its docs-index updates and (b) orchestration tasks that trigger the per-phase cycles in sequence. Implementation work for Phases 1-3 happens in their own per-phase plans, not here.
 
-**Tech Stack:** N/A — this plan ships docs/orchestration only. The per-phase plans carry tech stack details (Phase 1: .NET hosting + IPC + Win32/POSIX primitives; Phase 2: markdown + light Playwright capture; Phase 3: GitHub Actions + binary dispatch).
+**Tech Stack:** N/A — this plan ships docs/orchestration + one small workflow-input addition. The per-phase plans carry tech stack details (Phase 1: .NET hosting + IPC + Win32/POSIX primitives; Phase 2: markdown only — the hero screenshot is hand-captured manually per spec § 3.4, no Playwright script and no npm tooling; Phase 3: GitHub Actions + binary dispatch).
 
 **Decomposition note.** The writing-plans skill flags multi-subsystem specs and recommends splitting them. The roadmap spec already does the split — § 7 explicitly names per-phase brainstorm/plan filenames. This plan honors that split rather than trying to inline three subsystems' worth of tasks.
 
@@ -16,8 +16,12 @@
 
 **Files:**
 - Modify: `docs/specs/README.md` (add new "In progress" entry)
-- Modify: `docs/roadmap.md` (add "v1 completion (post-S6)" section after the S6 row)
+- Modify: `docs/roadmap.md` (add "v1 completion (post-S6)" section after the S6 row; cross-reference single-instance from the Architectural-readiness row)
+- Modify: `.github/workflows/publish.yml` (add `include_macos` workflow_dispatch input + conditional `osx-arm64` line in the `files:` upload list — required to make spec § 4.2's "Windows-only at v0.1.0" claim true; without this the workflow would upload both binaries unconditionally)
+- Modify: `.ai/docs/repo-overview.md` (update the `.github/workflows/` row to reflect the new `publish.yml` input per documentation-maintenance policy)
+- Create: `docs/specs/2026-05-28-v1-completion-roadmap-deferrals.md` (sidecar recording the 6 ce-doc-review findings skipped during the spec/plan review passes — 4 FPs, 2 pedantic/folded — per documentation-maintenance policy)
 - Already created: `docs/specs/2026-05-28-v1-completion-roadmap-design.md` (committed at HEAD of `docs/v1-completion-roadmap`)
+- Already created: `docs/plans/2026-05-28-v1-completion-roadmap.md` (this file)
 
 - [ ] **Step 1: Add the v1 roadmap entry to the spec index**
 
