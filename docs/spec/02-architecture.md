@@ -271,11 +271,12 @@ Background polling never touches the worktree. This preserves "banner-not-mutati
 ### PoC distribution model
 
 - Self-contained single-file binary per target platform: `PRism-win-x64.exe`, `PRism-osx-arm64`. (`osx-x64` was an earlier target; dropped in PoC because there is no test path for it.)
-- Each binary includes the .NET runtime + the built React assets in `wwwroot`. Size budget ≤ 150 MB; the actual measurement is recorded at first publish. AOT publish is investigated as a P4 size-reduction option but is not required for PoC. See [verification-notes § M20](./00-verification-notes.md#m20).
+- Each binary includes the .NET runtime + the built React assets in `wwwroot`. Size budget ≤ 150 MB; the actual measurement is logged by the publish workflow (see the "Rename and measure binaries" step in `.github/workflows/publish.yml`). AOT publish is investigated as a P4 size-reduction option but is not required for PoC. See [verification-notes § M20](./00-verification-notes.md#m20).
+- **Canonical publish path:** [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml) (manual `workflow_dispatch` with a tag input). Builds both platforms on `windows-latest` (cross-publishes osx-arm64 from the same runner) and uploads to a draft GitHub Release. The maintainer verifies on both OSes, then promotes the draft to published. Third-party actions are SHA-pinned with Dependabot bumps; CI lints for unresolved `<commit-sha>` placeholders.
 - **No installer.** User downloads the binary, runs it, browser auto-launches at `http://localhost:<port>`.
-- **No code signing in PoC.** Document the macOS Gatekeeper workaround (right-click → Open the first time).
+- **No code signing in PoC.** First-run trust copy in the SPA covers the macOS Gatekeeper right-click → Open workflow and the Windows SmartScreen "More info → Run anyway" workflow; README's "Download and first run" section mirrors the same copy.
 - **No auto-update in PoC.** v2 backlog item.
-- Distribution channel: direct download from a GitHub release, or git-source clone for engineering colleagues.
+- Distribution channel: direct download from a GitHub release ([`releases/latest`](https://github.com/prpande/PRism/releases/latest)), or git-source clone for engineering colleagues.
 
 ### Auto-launching the browser
 

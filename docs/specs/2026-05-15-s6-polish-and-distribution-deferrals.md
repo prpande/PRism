@@ -2,7 +2,7 @@
 source-doc: docs/specs/2026-05-15-s6-polish-and-distribution-design.md
 plan-doc: docs/plans/2026-05-15-s6-polish-and-distribution.md
 created: 2026-05-23
-last-updated: 2026-05-26
+last-updated: 2026-05-27
 status: open
 revisions:
   - 2026-05-23: created during the 2026-05-23 spec amendment pass to record one deferral surfaced by the drift review against PRs #55–#65.
@@ -11,6 +11,7 @@ revisions:
   - 2026-05-26: PR6 implementation — recorded the icon-asset shrink deviation against spec § 5.1's naive `cp` prescription (1.84 MB blocked Playwright `load` event).
   - 2026-05-26: PR6 implementation — recorded the pre-existing Vite-proxy `Origin` header gap that causes every `dev`-project Playwright spec to 401 locally under `ASPNETCORE_ENVIRONMENT=Test`.
   - 2026-05-27: PR7 implementation — recorded the VoiceOver manual pass deferral (no macOS dogfood machine available to the implementer).
+  - 2026-05-27: PR9 implementation — recorded three plan-vs-as-built deviations: (a) RELEASE-LINK strategy switched from per-tag URLs to GitHub `/releases/latest` auto-redirect; (b) plan Task 9.3 Step 5 `assets/icons/README.md` duplication note skipped (file was already amended in PR #74 with derived-icon framing); (c) viewport regression spec uses scenario PR `acme/api/123` and a new `/test/emit-pr-updated` backend hook (the plan's `/test/advance-head` trigger is defeated by the PR0b cache pre-warm, which makes `ActivePrPoller` see no mismatch and never publish `ActivePrUpdated`).
 ---
 
 # Deferrals — S6 polish and distribution
@@ -115,6 +116,58 @@ The 2026-05-23 amendment pass itself folded its other findings directly into the
   - A dogfooder on macOS reports SR friction — that becomes the reproducer.
   - PR8 ships and the macOS binary is available; the walkthrough becomes part of the v0.1.0 acceptance-test pass.
 - **Where the gap lives in code:** Nowhere — this is a verification-pass deferral, not a code defect. The spec is correctly calling out a manual check that isn't reproducible on the current host. If VoiceOver surfaces issues later, the fixes would land in the same component surface area Pass 2 already touched.
+
+---
+
+### [Decision] PR9 RELEASE-LINK uses `/releases/latest` auto-redirect, not per-tag URLs
+
+- **Source:** PR9 implementation 2026-05-27 — plan Task 9.2 Step 1 + Step 2 instructed "Substitute `RELEASE-LINK` with the actual Release URL after PR8's first real-tag dispatch."
+- **Severity:** P3 — README text is the only surface; no behavioral implication. The choice is a one-way door (later switching to per-tag URLs is a 4-line edit).
+- **Date:** 2026-05-27
+- **Spec position vs. actual:** Plan PR9 Task 9.2's "Replace the Status section" and "Add Download and first run" blocks both use `RELEASE-LINK` as a placeholder, with explicit instruction to substitute "after PR8's first real-tag dispatch." The plan author's sequencing assumed PR8 would dispatch before PR9 was cut.
+- **What the PR ships instead:** Every `RELEASE-LINK` resolves to `https://github.com/prpande/PRism/releases/latest` (for the listing page link) or `https://github.com/prpande/PRism/releases/latest/download/<asset>` (for the platform-specific binary links). GitHub serves these as a 302 redirect to whatever the latest published release is, so:
+  1. The README does not need a follow-up patch commit after each release tag.
+  2. The very first reader after the first `workflow_dispatch` lands on the actual binary; no manual link substitution step exists to be forgotten.
+  3. Pre-dispatch readers see a 404 on the links — the README's Status section explicitly names this state ("**S6 complete; first binary publish pending.**" + "Until the first dispatch, the links above return 404.") after preflight adversarial round-1 pushed back on the original "**Released.**" framing as overclaiming relative to the empty `releases` list.
+- **Why deviate from plan:** The plan's "substitute after dispatch" model assumed PR8 dispatch would precede PR9. The user's actual pattern (per memory `project_pr76_s6_pr8_shipped`) parks `workflow_dispatch` verification (plan Task 8.4) as post-merge work, so PR9 ships before the first dispatch. Two compliant choices: (a) merge PR9 with broken placeholder URLs and add a follow-up commit post-dispatch, (b) use `/releases/latest`. Option (b) avoids a follow-up commit AND avoids the "what if the maintainer forgets the substitution" failure mode.
+- **Revisit when:**
+  - The maintainer prefers per-tag URLs for forensic reasons (e.g., the README mentions "v0.1.0" and an immutable URL to that tag's binary is desirable as evidence of which binary was current at README-write time). At that point, swap to `releases/download/v0.1.0/<asset>` URLs in a one-off commit.
+  - GitHub changes `/releases/latest` redirect semantics — unlikely; it's a stable URL contract that's been documented for years.
+- **Where the gap lives in code:** `README.md` Status section + Download and first run section. No other surface references the release URL.
+
+### [Decision] PR9 Task 9.3 Step 5 — `assets/icons/README.md` duplication note skipped
+
+- **Source:** PR9 implementation 2026-05-27 — plan Task 9.3 Step 5 prescribes appending a "Frontend asset duplication" section to `assets/icons/README.md` with the original `PRismOG.png → frontend/public/prism-logo.png` + `PRism256.ico → frontend/public/favicon.ico` mapping plus "If the canonical icons change, **re-copy** to the frontend `public/` directory in the same PR."
+- **Severity:** P3 — documentation correctness, not behavioral.
+- **Date:** 2026-05-27
+- **Spec position vs. actual:** Plan Task 9.3 Step 5 is rooted in the spec § 5.1 prescription of "raw `cp` of canonical icons." That prescription was overridden by the PR6 deferral above (`Web icon assets are derived (resized) — not raw cp of canonical icons`) — PR #74 amended `assets/icons/README.md` with a derived-icon transform table (`sharp` re-derivation script + size annotations) and rewrote the duplication framing as "derived, web-optimized copies."
+- **Why deviate from plan:** Re-applying plan Task 9.3 Step 5 verbatim would have prepended OR overwritten the PR6 amendment with the original raw-`cp` prescription, reintroducing the very bug the PR #74 deferral documents (1.84 MB inline image data blocking Playwright `load` event). The PR6 amendment is authoritative and already in the repo.
+- **Disposition:** Task 9.3 Step 5 is recorded as completed by PR #74. The deferral above continues to govern. No PR9 edit to `assets/icons/README.md`.
+- **Revisit when:** A future PR re-introduces raw `cp` of canonical icons (which would require build-pipeline asset transforms to make load-time-safe) — at that point, plan Task 9.3 Step 5's mapping section would become valid again.
+- **Where the gap lives in code:** `assets/icons/README.md` already documents the correct (derived) mapping. The plan's Task 9.3 Step 5 text is the documentation surface; it could be marked "superseded by PR #74" in a future spec touch-up.
+
+### [Decision] PR9 viewport regression — new `/test/emit-pr-updated` backend hook over plan's `/test/advance-head`
+
+- **Source:** PR9 implementation 2026-05-27 — plan Task 9.1 Step 2 prescribes:
+  ```ts
+  await page.request.post('/test/advance-head', {
+    data: { prRef: 'octocat/Hello-World/1', newHeadSha: 'feedfacedeadbeef' },
+  });
+  ```
+- **Severity:** P3 — test-mechanism choice. The test still asserts the same DoD invariant ("no layout shift when a PR with new commits arrives").
+- **Date:** 2026-05-27
+- **Spec position vs. actual:** The plan's example assumed `/test/advance-head` would trigger the `ActivePrPoller → ActivePrUpdated → SseChannel.OnActivePrUpdated → pr-updated event → BannerRefresh renders` chain. It would have, before PR0b. Per the S5 PR0b commit message and `PRism.Web/TestHooks/TestEndpoints.cs:115-117`, `/test/advance-head` now also synchronously updates `IActivePrCache` to the just-advanced sha — added so the three un-fixme'd S4 specs that exercise `advanceHead → reload` don't 409-race the ~1s poller. The cache update is invisible to those specs but defeats PR9's poller-driven banner trigger entirely: the poller compares against the cache, sees no mismatch, and never publishes the event.
+- **What the PR ships instead:** A new `/test/emit-pr-updated` Test-environment endpoint that publishes `ActivePrUpdated` directly via `IReviewEventBus`. Same wire shape, same SSE projection, same frontend handling — the test exercises `SseChannel.OnActivePrUpdated → projection → frontend useEventSource → useActivePrUpdates → BannerRefresh` end-to-end. The only path skipped is the `ActivePrPoller` itself, which is unrelated to PR9's layout assertion.
+- **Why deviate from plan:**
+  - The plan's mechanism is broken-by-design under the current code (`IActivePrCache` pre-warm in `/test/advance-head` is the load-bearing fix for prior-S4-spec races; we can't reasonably revert it).
+  - Alternative explored (DOM injection via `page.evaluate`) would be synthetic — bypasses React rendering + CSS class application + SSE plumbing, exercises only DOM layout policy. That's a weaker signal than the end-to-end trigger.
+  - Alternative explored (frontend test hook on `window` to force `hasUpdate=true`) requires adding `__prism_test_*` to production code paths for one test — broader blast radius than a Test-env-only backend endpoint.
+  - The new endpoint is a 15-line addition, mirrors the existing `/test/*` hook pattern, sits behind the same `Test`-environment guard, and exercises strictly more code (event bus + SSE channel + projection + frontend hook chain) than DOM injection.
+- **Also deviated:** Plan's example PR ref `octocat/Hello-World/1` does not exist in the fake backend; the canonical scenario PR is `acme/api/123` (per `PRism.Web/TestHooks/FakePrReader.cs`). The plan example was illustrative; spec uses the real scenario.
+- **Where the gap lives in code:**
+  - `PRism.Web/TestHooks/TestEndpoints.cs` — new `EmitPrUpdatedRequest` record + `app.MapPost("/test/emit-pr-updated", ...)` handler after `/test/advance-head`. Preflight adversarial round-1 added two consistency checks: 400 when `HeadShaChanged && NewHeadSha == null`, and 400 when `CommentCountChanged != (CommentCountDelta != 0)` — a typo'd test request now surfaces as 400 instead of an opaque downstream timeout.
+  - `frontend/e2e/no-layout-shift-on-banner.spec.ts` — calls the new endpoint with `headShaChanged: true` and the scenario PR's `acme/api/123` ref. The spec also (a) awaits the `POST /api/events/subscriptions` response (set up before navigation) before emitting the event, closing the subscription-vs-publish race that preflight surfaced, and (b) guards the supplementary `toHaveScreenshot` assertion with `if (process.platform === 'win32')` so Linux/macOS contributors don't hit a missing-baseline failure (the load-bearing `getBoundingClientRect` block above runs on every platform).
+  - `frontend/e2e/__screenshots__/win32/pr-detail-with-banner-masked.png` — Windows-baseline screenshot (renamed from `pr-detail-no-banner.png` after preflight — the snapshot is captured AFTER the banner appears with the banner zone masked, so the new name describes what the bytes actually are). Per-platform pathTemplate keeps Linux/macOS contributors from poisoning the diff.
 
 ---
 
