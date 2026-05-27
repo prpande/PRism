@@ -231,9 +231,9 @@ Before tagging:
 
 ### 4.2 Dispatch
 
-1. Maintainer dispatches `publish.yml` on `main` with input `tag = v0.1.0`.
-2. Workflow produces the `win-x64` binary (the `osx-arm64` binary also builds from CI but is unused at v0.1.0 ship; it ships at v0.1.1 once macOS hardware verifies it).
-3. Workflow attaches the binary to a draft GitHub Release at `v0.1.0`.
+1. Maintainer dispatches `publish.yml` on `main` with inputs `tag = v0.1.0` and `include_macos = false`. The `include_macos` input is the workflow's gate for the macOS binary: false at v0.1.0 (Windows-only), flipped true at v0.1.1 once macOS hardware verifies the build.
+2. Workflow builds both binaries (the `osx-arm64` build stays in CI to keep the cross-compile path live), but the upload step's `files:` list conditionally omits the `osx-arm64` binary when `include_macos` is false. Only `PRism-win-x64.exe` reaches the draft Release.
+3. Workflow attaches the Windows binary to a draft GitHub Release at `v0.1.0`.
 4. Workflow stops at draft (per `publish.yml` shape); maintainer manually promotes after § 4.3 verification.
 
 ### 4.3 Binary verification on Windows

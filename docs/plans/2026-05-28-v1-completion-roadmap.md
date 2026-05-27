@@ -231,15 +231,15 @@ Manual verification:
 
 Note: `PRISM_INTEGRATION_PAT` is NOT a Phase 3 prerequisite. (Earlier draft listed it; that secret belongs to the contract-test workflow per PR #59, not `publish.yml`.)
 
-- [ ] **Step 2: Dispatch `publish.yml` with `tag = v0.1.0`**
+- [ ] **Step 2: Dispatch `publish.yml` with `tag = v0.1.0` + `include_macos = false`**
 
 ```sh
-gh workflow run publish.yml -f tag=v0.1.0
+gh workflow run publish.yml -f tag=v0.1.0 -f include_macos=false
 ```
 
-Or via the GitHub UI: Actions → publish.yml → Run workflow → input `tag = v0.1.0` → Run.
+Or via the GitHub UI: Actions → publish.yml → Run workflow → input `tag = v0.1.0`, `include_macos` left at the false default → Run.
 
-Expected: workflow run succeeds; a draft GitHub Release at `v0.1.0` exists with the `win-x64` binary attached. (The `osx-arm64` binary also builds but is unused at v0.1.0 ship.)
+Expected: workflow run succeeds; a draft GitHub Release at `v0.1.0` exists with ONLY the `win-x64` binary attached. The `osx-arm64` binary builds (the cross-compile path stays exercised) but the workflow's conditional `files:` list omits it from the upload when `include_macos` is false. v0.1.1 will dispatch with `include_macos = true` to add the macOS binary after hardware verification.
 
 - [ ] **Step 3: Download the Windows binary on real hardware**
 
