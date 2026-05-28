@@ -21,7 +21,7 @@
 
 This is conceptually the § 6.1 fallback action (drop single-instance from v1; add README known-issue paragraph) executed for a different trigger than § 6.1 originally anticipated. § 6.1's quantitative triggers (>8 tasks / >3 PRs / >10 calendar days) never fired; the scope-shift trigger replaces them.
 
-**Affected sections.** § 1.2 (Phase 1 row), § 1.3 (added single-instance deferral entry), § 1.6 (two-windows row mitigation updated), § 2 (collapsed to deferral stub), § 3.1 + § 3.5 (Phase 2 README absorbs known-issue paragraph), § 4.3 (verification drops Phase-1 conditional), § 5 (exit criteria drops OR branch), § 6.1 (repurposed: "Phase 1 deferred — current status"), § 7 (Phase 1 spec line removed).
+**Affected sections.** § 1.2 (Phase 1 row), § 1.3 (added single-instance deferral entry), § 1.5 (polish-before-validate prong accounting updated — 1 of 3 prongs no longer applies), § 1.6 (two-windows row mitigation updated), § 2 (collapsed to deferral stub), § 3.1 (added Known issues row; Features row updated) + § 3.3 (Status-truth-sweep `docs/roadmap.md` row + `docs/specs/README.md` row rewritten) + § 3.5 (Phase 2 README absorbs known-issue paragraph), § 4.1 (pre-flight gate dropped Phase 1 merge dependency), § 4.3 (verification drops Phase-1 conditional), § 4.5 (reconciliation bug list dropped "single-instance misbehaving on real Windows"), § 5 (exit criteria drops OR branch), § 6.1 (repurposed: "Phase 1 deferred — current status"), § 7 (Phase 1 spec line removed).
 
 **Wording of the README known-issue paragraph.** Per the amendment-pass decision, the paragraph drops the "lands in vX.Y" clause entirely — the README's job is to set user expectations about behavior, not to publish internal roadmap timing. Final text:
 
