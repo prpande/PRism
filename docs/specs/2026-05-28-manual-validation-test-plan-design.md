@@ -88,8 +88,11 @@ Several scenarios share pre-conditions. Recipes are named A–E so scenarios can
 # 1. Stop any running PRism process
 # Windows
 Stop-Process -Name PRism* -Force -ErrorAction SilentlyContinue
-# wait for handles to release before moving the dir
-do { Start-Sleep -Milliseconds 200 } while (Test-Path -LiteralPath "$env:LOCALAPPDATA\PRism\state.json" -ErrorAction SilentlyContinue -PathType Leaf -OldNewerThan (Get-Date).AddSeconds(-1))
+# Give the OS a moment to release file handles before moving the dir.
+# A more conservative variant would poll until state.json is no longer
+# locked, but Test-Path can't detect locks — only existence — so a short
+# sleep is the most reliable cross-version approach.
+Start-Sleep -Seconds 1
 
 # 2. Move the data directory aside
 Move-Item "$env:LOCALAPPDATA\PRism" "$env:LOCALAPPDATA\PRism.bak.$(Get-Date -f yyyyMMdd-HHmmss)"
@@ -128,10 +131,16 @@ ASPNETCORE_ENVIRONMENT=Test            # exposes /test/clear-pr-session + /test/
                                         # does NOT register FakeReviewSubmitter (no PRISM_E2E_FAKE_REVIEW)
 PRISM_E2E_REAL_INJECT=1                 # enables route-interception endpoints
 DataDir=<per-run temp dir>              # hermetic per run
-dotnet run --project ../PRism.Web --configuration Release --urls http://localhost:5181
+dotnet run --project ../PRism.Web --no-launch-profile --urls http://localhost:5181 -- --no-browser
 ```
 
-The launcher relies on the binary's Test-env behavior (suppresses auto-open-browser, suppresses lockfile, accepts `--DataDir`). All other invariants of the production binary apply.
+This command shape matches `frontend/playwright.real.config.ts` (the existing real-flow CI suite) and Phase 1's `playwright.config.ts`:
+
+- `--no-launch-profile` skips Properties/launchSettings.json so the dotnet run env is bounded to what's explicitly passed (no `ASPNETCORE_ENVIRONMENT` from a Development profile leaking through).
+- `--no-browser` (after the `--` arg-separator) is consumed by PRism's own CLI handler and suppresses the production binary's auto-open-the-default-browser step; Playwright owns the browser surface for validation.
+- `Debug` configuration (the dotnet default) is used rather than `Release` — Release adds significant cold-start time to `dotnet run` and the validation suite doesn't measure perf; Debug build is faster for the iterate-on-the-test cycle.
+
+All other invariants of the production binary apply.
 
 **Recipe E — destructive-only PAT.** J-P2-11 (token expiry) revokes its PAT and breaks every subsequent scenario in the same pass. Generate a third, dedicated PAT for this scenario only, store it separately, never use it for any other scenario. The scenario itself is pinned to run last in any priority pass that includes it (see [Appendix § Pass ordering constraints](#pass-ordering-constraints)).
 

@@ -296,10 +296,10 @@ Set Recipe B PAT (one-time per shell):
 
 ```sh
 # bash / zsh
-export PRISM_VALIDATION_PRIMARY_PAT=ghp_…
+export PRISM_VALIDATION_PRIMARY_PAT=github_pat_…
 
 # PowerShell
-$env:PRISM_VALIDATION_PRIMARY_PAT = "ghp_…"
+$env:PRISM_VALIDATION_PRIMARY_PAT = "github_pat_…"
 ```
 
 Run the suite:
@@ -331,8 +331,8 @@ Generate a fine-grained GitHub PAT at https://github.com/settings/personal-acces
 Set as env var:
 
 ```sh
-export PRISM_VALIDATION_PRIMARY_PAT=ghp_…       # bash/zsh
-$env:PRISM_VALIDATION_PRIMARY_PAT = "ghp_…"     # PowerShell
+export PRISM_VALIDATION_PRIMARY_PAT=github_pat_…       # bash/zsh
+$env:PRISM_VALIDATION_PRIMARY_PAT = "github_pat_…"     # PowerShell
 ```
 
 The validation suite reads this env var via `helpers/recipes.ts`. If unset, J-P0-01 throws a clear error directing you here.
@@ -746,14 +746,14 @@ Expected: file removed without error.
 PowerShell:
 ```powershell
 cd D:/src/PRism-validation-phase1/e2e-validation
-$env:PRISM_VALIDATION_PRIMARY_PAT = "ghp_your_token_here"
+$env:PRISM_VALIDATION_PRIMARY_PAT = "github_pat_your_token_here"
 npx playwright test
 ```
 
 Bash:
 ```bash
 cd D:/src/PRism-validation-phase1/e2e-validation
-export PRISM_VALIDATION_PRIMARY_PAT=ghp_your_token_here
+export PRISM_VALIDATION_PRIMARY_PAT=github_pat_your_token_here
 npx playwright test
 ```
 
