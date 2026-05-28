@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Drive the v1 ship work to merged-on-main `v0.1.0` across three sequential phases, each with its own brainstorm/spec/plan cycle.
+**Goal:** Drive the v1 ship work to merged-on-main `v0.1.0` across two sequential phases (Phase 1 deferred per the [2026-05-28 amendment](../specs/2026-05-28-v1-completion-roadmap-design.md#amendments)), each with its own brainstorm/spec/plan cycle.
 
-**Architecture:** This is a **meta-plan**. The roadmap spec at [`docs/specs/2026-05-28-v1-completion-roadmap-design.md`](../specs/2026-05-28-v1-completion-roadmap-design.md) decomposes v1 into three phases, and § 7 of the spec commits each phase to its own spec/plan cycle. This plan covers only (a) landing the roadmap spec itself on `main` with its docs-index updates and (b) orchestration tasks that trigger the per-phase cycles in sequence. Implementation work for Phases 1-3 happens in their own per-phase plans, not here.
+**Architecture:** This is a **meta-plan**. The roadmap spec at [`docs/specs/2026-05-28-v1-completion-roadmap-design.md`](../specs/2026-05-28-v1-completion-roadmap-design.md) originally decomposed v1 into three phases; the [2026-05-28 amendment](../specs/2026-05-28-v1-completion-roadmap-design.md#amendments) defers Phase 1 (single-instance enforcement) out of v1 scope. v1 ships with Phase 2 + Phase 3 only. The README § Known issues bullet is the v1.0 mitigation for the deferred two-windows path. Implementation work for Phases 2-3 happens in their own per-phase plans, not here.
 
-**Tech Stack:** N/A — this plan ships docs/orchestration + one small workflow-input addition. The per-phase plans carry tech stack details (Phase 1: .NET hosting + IPC + Win32/POSIX primitives; Phase 2: markdown only — the hero screenshot is hand-captured manually per spec § 3.4, no Playwright script and no npm tooling; Phase 3: GitHub Actions + binary dispatch).
+**Tech Stack:** N/A — this plan ships docs/orchestration + one small workflow-input addition. The per-phase plans carry tech stack details (Phase 2: markdown only — the hero screenshot is hand-captured manually per spec § 3.4, no Playwright script and no npm tooling; Phase 3: GitHub Actions + binary dispatch). Phase 1 tech stack is no longer pre-committed; resumes against the native-app-shell framework choice when single-instance brainstorm restarts post-v1.
 
 **Decomposition note.** The writing-plans skill flags multi-subsystem specs and recommends splitting them. The roadmap spec already does the split — § 7 explicitly names per-phase brainstorm/plan filenames. This plan honors that split rather than trying to inline three subsystems' worth of tasks.
 
@@ -98,73 +98,15 @@ git -C D:/src/PRism worktree remove D:/src/PRism-v1-roadmap
 
 ---
 
-### Task 2: Kick off Phase 1 brainstorm — single-instance enforcement
+### Task 2: ~~Kick off Phase 1 brainstorm — single-instance enforcement~~ **DEFERRED**
 
-**Files:** N/A — this task creates a new worktree and invokes the brainstorming skill. The Phase 1 spec lands at `docs/specs/2026-05-XX-single-instance-enforcement-design.md` where `XX` is the brainstorm date.
+**Status:** Deferred out of v1 scope per the [2026-05-28 amendment](../specs/2026-05-28-v1-completion-roadmap-design.md#amendments). Task 2 is closed as Not-Done — no brainstorm, no spec, no plan, no implementation PR. The v0.1.0 mitigation is the README § Known issues bullet absorbed into Task 3 (Phase 2 writing-plans).
 
-- [ ] **Step 1: Create an isolated worktree for Phase 1**
+**Why deferred.** The Phase 1 brainstorm opened, hit the foundational question of what "focus the existing window" means for the current backend-HTTP-server + browser-tab architecture, and surfaced that the application is shifting to a native shell at/before v0.1.0. The shell-framework choice (WebView2 / Tauri / Electron / MAUI Blazor Hybrid) materially changes every Phase 1 design question (IPC channel, mutex placement, focus API, second-launch UX, lockfile interaction). Designing now produces work that gets re-done at shell-migration time. Phase 1 single-instance brainstorm resumes against the native-shell workstream's framework decision when it lands.
 
-```sh
-git fetch origin --quiet
-git worktree add D:/src/PRism-single-instance -b feat/single-instance-enforcement origin/main
-```
+**Sidecar entry.** See [`docs/specs/2026-05-28-v1-completion-roadmap-deferrals.md`](../specs/2026-05-28-v1-completion-roadmap-deferrals.md) — the `[Defer]` "Phase 1 — scope shift to native-app-shell" entry records the trigger, decision, and follow-up.
 
-Expected: worktree at `D:/src/PRism-single-instance` on a fresh branch off the latest `main` (which now contains the v1 roadmap spec from Task 1).
-
-- [ ] **Step 2: Invoke superpowers:brainstorming with the Phase 1 seed prompt**
-
-In a session targeting the new worktree, invoke `superpowers:brainstorming` with this prompt:
-
-```
-Brainstorm single-instance enforcement for PRism. Context lives at
-docs/specs/2026-05-28-v1-completion-roadmap-design.md § 2 (specifically § 2.2
-"Design questions the Phase 1 brainstorm will resolve"). The ADR seed sketch
-is at docs/specs/2026-05-06-architectural-readiness-design.md § ADR-P0-4.
-
-Open questions from § 2.2 (treat as starting list, not final list):
-- IPC channel per OS (named pipe / Unix socket / localhost TCP)
-- Focus API per OS (Win32 SetForegroundWindow / macOS osascript / url-reopen)
-- Second-launch UX — must produce visible feedback (toast or modal);
-  silent-focus and stderr-only are pre-rejected per § 2.2
-- Mutex naming + <dataDir> scoping (so two <dataDir>s coexist)
-- Startup ordering race between lockfile-take and IPC-listener mount
-- Lockfile interaction (replace / augment / coexist)
-
-Acceptance bar: docs/specs/2026-05-28-v1-completion-roadmap-design.md § 2.3.
-Fallback trigger: § 6.1 — if the plan decomposes to >8 tasks across >3 PRs
-or implementation passes 10 calendar days from brainstorm start without
-merging, fire the fallback per § 6.1.
-
-Output to docs/specs/2026-05-XX-single-instance-enforcement-design.md where
-XX is today's date.
-```
-
-- [ ] **Step 3: Verify brainstorm output landed**
-
-Expected: a new spec file at `docs/specs/<today>-single-instance-enforcement-design.md` exists, the user approved it, and `ce-doc-review` ran once on it per CLAUDE.md project rule.
-
-- [ ] **Step 4: Invoke superpowers:writing-plans on the new spec**
-
-In the same session, invoke `superpowers:writing-plans` with the path to the spec file produced in Step 2. The plan lands at `docs/plans/<today>-single-instance-enforcement.md`.
-
-- [ ] **Step 5: Execute the Phase 1 plan**
-
-Either via `superpowers:subagent-driven-development` or `superpowers:executing-plans` per user preference. Lands one or more implementation PRs that close the spec.
-
-- [ ] **Step 6: Apply the fallback if § 6.1 trigger fires**
-
-If, during Step 4 (writing-plans output review) or Step 5 (mid-implementation), the trigger fires (plan decomposes to >8 tasks across >3 PRs at the writing-plans output, OR implementation passes 10 calendar days without merging):
-
-- Stop Phase 1 implementation.
-- Open a PR that adds the README known-issue paragraph per § 6.1: *"Avoid launching PRism more than once on the same machine — concurrent instances will overwrite each other's draft state. Single-instance enforcement lands in v1.1."*
-- Update `docs/roadmap.md` Phase 1 row from "Pending" to "Deferred to v1.1 — see [link to Phase 1 spec or this plan]".
-- Carry forward the Phase 1 brainstorm output to v1.1.
-
-Document the fallback decision in a sidecar `docs/specs/<phase1-spec>-deferrals.md`.
-
-- [ ] **Step 7: Wait for Phase 1 PR(s) merge before Task 3**
-
-Do not start Task 3 until all Phase 1 PR(s) merged to `main` (or the fallback PR from Step 6 merged).
+**Wait gate for Task 3.** Task 3 no longer waits on a Phase 1 merge. The merge sequence is: this amendment PR (Task 1's updated scope) → Task 3 Phase 2 PR → Task 4 dispatch. Task 3 can start immediately after the amendment merges.
 
 ---
 
@@ -192,13 +134,19 @@ ignore § 2 and § 4 — they have their own cycles).
 
 Phase 2 scope (from § 3 of the roadmap):
 - § 3.1: Rewrite README.md to bat/ripgrep public-tool shape (per § 3.1 table)
+  — INCLUDING the new "Known issues" row carrying the single-instance
+  avoidance bullet from the 2026-05-28 Amendments section. Wording verbatim:
+  "Avoid launching PRism more than once on the same machine — concurrent
+  instances will overwrite each other's draft state." No date-promise clause.
 - § 3.2: Extract dev-workflow content to a new CONTRIBUTING.md (verbatim
   absorption + one-paragraph intro; no expanded onboarding additions)
 - § 3.3: Status-truth sweep across docs/specs/README.md, docs/roadmap.md,
-  .ai/docs/operating-context.md, .ai/docs/repo-overview.md per § 3.3 table
+  .ai/docs/operating-context.md, .ai/docs/repo-overview.md per § 3.3 table.
+  Phase 1 row in docs/roadmap.md is already Deferred (set by the amendment
+  PR); the Phase 2 sweep flips Phase 2 row to Shipped.
 - § 3.4: Hero screenshot — one hand-captured PNG at assets/screenshots/hero-inbox.png
   (no Playwright script, no npm registration)
-- § 3.5 acceptance criteria
+- § 3.5 acceptance criteria (note the added Known-issues bullet acceptance line)
 - Link-repointing for every cross-link into moved README sections
 
 This is a single-PR plan. The reviewer load may be heavy enough to split
@@ -270,8 +218,7 @@ Verification checklist (all must pass; if any fails, do NOT promote the draft):
 - Click "More info → Run anyway". Browser auto-launches on `http://localhost:5180` (or next free 5180–5199).
 - Paste a PAT. Inbox loads.
 - Complete the 13-step demo flow per `docs/spec/01-vision-and-acceptance.md` § "The PoC demo".
-- **If Phase 1 shipped single-instance enforcement**: double-click the binary again. Confirm the second-launch focus + visible feedback (toast or modal per Phase 1's brainstorm output).
-- **If Phase 1 fired the § 6.1 fallback**: confirm the README's known-issue paragraph is present in the published release notes / repo README.
+- Confirm the README § Known issues single-instance avoidance bullet is present in the published release notes / repo README. (Single-instance enforcement is deferred per the 2026-05-28 Amendments — no double-launch verification step.)
 - Open Settings → Connection. If "Copy logs path" button exists (per PR #69's `logsPath` GET shape), click it; otherwise locate the path via README's "Where's my data?" section.
 - Confirm `<dataDir>/logs/prism-YYYY-MM-DD.log` exists with at least one `Identity changed` or comparable structured-log line.
 
