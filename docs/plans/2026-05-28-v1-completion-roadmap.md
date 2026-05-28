@@ -292,17 +292,16 @@ EOF
 
 Per memory `feedback_use_pr_autopilot`. The PR is small and text-only; expect minimal review iteration.
 
-- [ ] **Step 7: After merge — clean up the three task-created worktrees**
+- [ ] **Step 7: After merge — clean up the task-created worktrees**
 
-Run from the main checkout (`D:/src/PRism`), not from any of the worktrees being removed:
+Run from the main checkout (`D:/src/PRism`), not from any of the worktrees being removed. Task 2 is Deferred per the [2026-05-28 amendment](../specs/2026-05-28-v1-completion-roadmap-design.md#amendments) so `D:/src/PRism-single-instance` is never created — only two worktrees to remove here:
 
 ```sh
-git -C D:/src/PRism worktree remove D:/src/PRism-single-instance
 git -C D:/src/PRism worktree remove D:/src/PRism-readme-restructure
 git -C D:/src/PRism worktree remove D:/src/PRism-v1-reconciliation
 ```
 
-(The initial `D:/src/PRism-v1-roadmap` worktree was already removed after Task 1's PR merge per the Task 1 Step 7 follow-up. If it's still around, `git -C D:/src/PRism worktree remove D:/src/PRism-v1-roadmap` cleans it up.)
+(The initial `D:/src/PRism-v1-roadmap` worktree was already removed after Task 1's PR merge per the Task 1 Step 7 follow-up. If it's still around, `git -C D:/src/PRism worktree remove D:/src/PRism-v1-roadmap` cleans it up. Similarly, the amendment-PR worktree `D:/src/PRism-v1-amend` is cleaned up after the amendment PR merges, well before Task 5 runs.)
 
 v1 ship complete. Out-of-band follow-up: schedule v0.1.1 (macOS Apple Silicon) when hardware verification path exists.
 
@@ -312,7 +311,7 @@ v1 ship complete. Out-of-band follow-up: schedule v0.1.1 (macOS Apple Silicon) w
 
 The following are explicitly NOT addressed here. Each has its own cycle:
 
-- **Phase 1 implementation details.** Resolved by the Task 2 brainstorm + writing-plans cycle. Includes IPC mechanism choice, focus API per OS, lockfile interaction, second-launch UX picker (constrained to "visible feedback" per § 2.2).
+- **Phase 1 implementation details (single-instance enforcement).** **Deferred out of v1 scope** per the [2026-05-28 amendment](../specs/2026-05-28-v1-completion-roadmap-design.md#amendments). Resumes against the native-app-shell workstream's framework decision when it lands.
 - **Phase 2 file-level task decomposition.** Resolved by the Task 3 writing-plans cycle. Includes exact README structure rewrites, CONTRIBUTING.md content, link-repointing grep targets, hero screenshot capture approach.
 - **v0.1.1 macOS Apple Silicon ship.** Tracked separately when hardware acquisition path exists. Out of v1 scope per roadmap § 6.2.
 - **All deferrals enumerated in roadmap § 1.3.** Each carries a "why not now" stamp; revisit triggers are documented in the deferrals sidecars.
