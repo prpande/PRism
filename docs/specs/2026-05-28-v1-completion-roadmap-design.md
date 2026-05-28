@@ -1,13 +1,33 @@
 # v1 completion roadmap
 
 **Date**: 2026-05-28.
-**Status**: Design — pending user review.
+**Status**: Amended 2026-05-28 — see [Amendments](#amendments). Phase 1 (single-instance enforcement) is deferred out of v1 scope.
 **Source authorities**:
 - [`docs/spec/01-vision-and-acceptance.md`](../spec/01-vision-and-acceptance.md) § "The PoC demo" + § "What 'shipped' means for the PoC" + § "What success looks like 90 days after the PoC ships" — the v1 ship line, distribution posture, and validation gate.
 - [`docs/roadmap.md`](../roadmap.md) — slice decomposition; this roadmap adds the post-S6 phases.
 - [`docs/specs/2026-05-06-architectural-readiness-design.md`](2026-05-06-architectural-readiness-design.md) § ADR-P0-4 — seed sketch for single-instance enforcement.
 - [`docs/specs/2026-05-15-s6-polish-and-distribution-deferrals.md`](2026-05-15-s6-polish-and-distribution-deferrals.md) — open deferrals from S6.
 - [`.ai/docs/documentation-maintenance.md`](../../.ai/docs/documentation-maintenance.md) — what files to update per change type.
+
+---
+
+## Amendments
+
+### 2026-05-28 — Phase 1 deferred post-v1 (native-app-shell scope shift)
+
+**Status:** Amended. Phase 1 (single-instance enforcement) is **deferred out of v1 scope** before brainstorm output exists. v1 ships without single-instance enforcement; the README carries a known-issue paragraph in lieu of the fix.
+
+**Why.** The Phase 1 brainstorm opened, hit the "what does focus the existing window mean?" foundational question, and surfaced that the application architecture is shifting from "backend HTTP server + browser tab" to "native application shell" at or before v0.1.0. The shell-framework choice (WebView2 vs Tauri vs Electron vs MAUI Blazor Hybrid) materially changes the IPC channel, mutex placement, focus API, and second-launch UX of any single-instance design. Designing Phase 1 against the current browser-tab architecture would produce work that gets re-done at shell-migration time; designing against the future shell requires the framework decision first. The shell decision is its own workstream not yet scoped, and Phase 1 should resume against that decision rather than precede it.
+
+This is conceptually the § 6.1 fallback action (drop single-instance from v1; add README known-issue paragraph) executed for a different trigger than § 6.1 originally anticipated. § 6.1's quantitative triggers (>8 tasks / >3 PRs / >10 calendar days) never fired; the scope-shift trigger replaces them.
+
+**Affected sections.** § 1.2 (Phase 1 row), § 1.3 (added single-instance deferral entry), § 1.5 (polish-before-validate prong accounting updated — 1 of 3 prongs no longer applies), § 1.6 (two-windows row mitigation updated), § 2 (collapsed to deferral stub), § 3.1 (added Known issues row; Features row updated) + § 3.3 (Status-truth-sweep `docs/roadmap.md` row + `docs/specs/README.md` row rewritten) + § 3.5 (Phase 2 README absorbs known-issue paragraph), § 4.1 (pre-flight gate dropped Phase 1 merge dependency), § 4.3 (verification drops Phase-1 conditional), § 4.5 (reconciliation bug list dropped "single-instance misbehaving on real Windows"), § 5 (exit criteria drops OR branch), § 6.1 (repurposed: "Phase 1 deferred — current status"), § 7 (Phase 1 spec line removed).
+
+**Wording of the README known-issue paragraph.** Per the amendment-pass decision, the paragraph drops the "lands in vX.Y" clause entirely — the README's job is to set user expectations about behavior, not to publish internal roadmap timing. Final text:
+
+> *"Avoid launching PRism more than once on the same machine — concurrent instances will overwrite each other's draft state."*
+
+The native-app-shell workstream tracks separately (out of v1 scope; not yet specced). Phase 1 single-instance brainstorm resumes against that workstream's framework decision when it lands.
 
 ---
 
@@ -19,16 +39,17 @@ Cross the PoC ship line at tag `v0.1.0`. A new dogfooder on a supported platform
 
 "Supported platform" at v0.1.0 = Windows x64 only. macOS Apple Silicon ships at v0.1.1 (see § 1.4 and § 6.2 for the rationale).
 
-### 1.2 In scope — three phases, sequential
+### 1.2 In scope — two phases, sequential (Phase 1 deferred per Amendments)
 
-1. **Phase 1 — Single-instance enforcement.** Closes the largest credible v1 data-loss path (two PRism windows writing `state.json` last-write-wins). Runs as its own brainstorm → spec → plan → PR cycle; this roadmap commits to running it. Phase 2 starts after Phase 1's PR(s) land on `main` — sequential, not parallel.
-2. **Phase 2 — Doc/README sweep + README restructure + `CONTRIBUTING.md` extraction.** Every "publish pending" wording → truthful current state, the main README is rebuilt to a public-tool shape, and dev workflow content moves to a new `CONTRIBUTING.md`. Phase 3 starts after Phase 2's PR lands.
+1. **Phase 1 — Single-instance enforcement.** **Deferred out of v1 scope** per the [2026-05-28 amendment](#amendments). Resumes against the native-app-shell workstream's framework decision. v1 ships with the § 6.1 README known-issue paragraph instead. Phase numbers below preserve their original identifiers so downstream references (meta-plan, deferrals, PR history) stay correct.
+2. **Phase 2 — Doc/README sweep + README restructure + `CONTRIBUTING.md` extraction.** Every "publish pending" wording → truthful current state, the main README is rebuilt to a public-tool shape, and dev workflow content moves to a new `CONTRIBUTING.md`. The Phase 2 README rewrite also absorbs the single-instance known-issue paragraph from § 6.1 per the amendment. Phase 3 starts after Phase 2's PR lands.
 3. **Phase 3 — `v0.1.0` tag (Windows) + `publish.yml workflow_dispatch` + post-publish reconciliation.** First real exercise of the publish workflow. `v0.1.1` adds the macOS Apple Silicon binary on a separate cycle once a macOS verification path exists.
 
 ### 1.3 Out of scope, explicitly stamped
 
 Every item in this section is intentionally not landing in v1. Each carries a one-line "why not now."
 
+- **Single-instance enforcement (Phase 1, originally in scope).** Why not now: the application architecture is shifting to a native shell at/before v0.1.0 (framework not yet picked: WebView2 / Tauri / Electron / MAUI Blazor Hybrid all viable), and the shell choice materially changes the IPC, mutex, focus API, and second-launch UX of any single-instance design. Designing now produces work that gets re-done at shell-migration time. v1 mitigates via the § 6.1 README known-issue paragraph (single sentence, no roadmap-date promise). Phase 1 brainstorm resumes against the shell decision. See [Amendments](#amendments).
 - **S5 quality-of-life deferrals** — `markAllRead` authz tightening, `IActivePrCache.HighestIssueCommentId`, discard-failure consolidated toast, file-fetch concurrency cap on reload, dangling-reply detection, generic merger walker for `useDraftSession`. Why not now: no v1 user impact; v2 ergonomics polish. (Dangling-reply leaves an orphan on github.com but the reviewer's own content is preserved — not in this roadmap's "data loss" definition; see § 1.6.)
 - **`usePreferences` → `PreferencesContext` refactor** (PR #71 deferral). Why not now: cost is N consumers + ~10 mocked tests; benefit is one network round-trip per `/settings` focus; not load-bearing.
 - **Body-cap predicate gap on `POST /api/auth/replace`** (S6 PR #70 deferral). Why not now: theoretical until a >16 KiB PAT-paste happens, which it won't; P0+ hardening. (Acknowledged risk: this is a token-replacement surface, but the worst-case is a 413 response on a hand-crafted payload, not silent data corruption.)
@@ -64,7 +85,7 @@ A defensible alternative ordering: skip this roadmap, hand the current `main`-br
 2. **The single-instance fix (Phase 1) is required regardless of trial timing.** A trial reviewer double-launching the binary mid-trial and losing drafts produces a trial outcome unrelated to the wedge thesis. Phase 1 is on the critical path either way.
 3. **The README + CONTRIBUTING delta is small (~1 PR, ~1-2 days).** It's not a multi-week investment; the marginal cost is bounded.
 
-The sequencing trade is explicit, not implicit. If the user wants validate-before-polish, the roadmap reshapes: Phase 1 (load-bearing) → trial → reassess Phase 2/3 based on trial feedback. Re-open the question if the Phase 1 brainstorm extends Phase 1 by weeks (see § 6.1).
+The sequencing trade is explicit, not implicit. **Post-amendment (2026-05-28)**, prong (2) ("single-instance is on the critical path regardless of trial timing") no longer applies — Phase 1 is deferred, so single-instance is *not* gating v1. The argument now rests on prongs (1) and (3) only: the N=3 first-impressions argument (1) and the bounded-cost argument (3). That's a weaker case than the original three-of-three, but it still passes the polish-vs-skip threshold because (3) caps the polish investment at ~1-2 days. If the user reads this as "the rationale is now too thin to justify polish-first," the alternative is to reshape to Phase 3 (tag/publish) → trial → Phase 2 (README) reactively-based-on-feedback. The original "Re-open if Phase 1 brainstorm extends by weeks" escape hatch (§ 6.1) is now resolved by the deferral itself.
 
 ### 1.6 "Largest credible" data-loss path — enumeration
 
@@ -72,7 +93,7 @@ Phase 1 closes the *largest credible* v1 data-loss path, not the only one. The "
 
 | Candidate | Failure mode | Why deferred |
 |---|---|---|
-| Two PRism windows on same `<dataDir>` (Phase 1's target) | Last-write-wins on `state.json`; silent draft loss | User-triggered, easy to hit; HIGH frequency × HIGH impact. |
+| Two PRism windows on same `<dataDir>` (was Phase 1's target; deferred per Amendments) | Last-write-wins on `state.json`; silent draft loss | User-triggered, easy to hit; HIGH frequency × HIGH impact. **Mitigated at v1.0 by the § 6.1 README known-issue paragraph only** — no enforcement code ships. Closes when single-instance lands against the native-app-shell architecture. |
 | `AppStateStore` write crash mid-`AtomicFileMove` | Partial state.json + `.bak` recovery | Already mitigated in S3 PR (`2026-05-07-appstatestore-windows-rename-retry-design.md`). Backup exists; PoC-acceptable. |
 | `ConfigStore` `FileSystemWatcher` debounce race | In-memory writer collides with disk re-read | Single-process; existing debounce + atomic-rename + `_gate` makes the window narrow. No reported incident. |
 | `DraftSaved` events not written to forensic log | Crash between in-memory save and atomic-flush loses draft text | Explicitly accepted in spec (`docs/spec/02-architecture.md` § "Forensic event log"); v2 item. README documents it. |
@@ -80,7 +101,7 @@ Phase 1 closes the *largest credible* v1 data-loss path, not the only one. The "
 | Body-cap predicate gap on `POST /api/auth/replace` | >16 KiB body → 413, not data loss | Not a data-loss path; § 1.3 covers it. |
 | Dangling-reply detection | Orphan thread on github.com after parent deleted | Reviewer's content preserved locally; not "lost" in the local sense. Not v1-load-bearing. |
 
-The two genuine v1-class candidates are (i) two PRism windows (Phase 1) and (ii) macOS Gatekeeper write blocking. The latter rides the same hardware gap as macOS verification — it's not a "fix in code" problem, it's a "needs human on macOS to confirm the failure exists" problem.
+The two genuine v1-class candidates are (i) two PRism windows (deferred per Amendments — v1.0 mitigates via the README known-issue paragraph; closes against the native-shell workstream) and (ii) macOS Gatekeeper write blocking. The latter rides the same hardware gap as macOS verification — it's not a "fix in code" problem, it's a "needs human on macOS to confirm the failure exists" problem.
 
 ### 1.7 Positioning shift — explicit acknowledgment
 
@@ -95,33 +116,13 @@ If the user prefers the narrower posture — README stays internal-PoC-shaped, n
 
 ---
 
-## 2. Phase 1 — Single-instance enforcement
+## 2. Phase 1 — Single-instance enforcement (DEFERRED — see [Amendments](#amendments))
 
-### 2.1 Status going in
+Phase 1 is **deferred out of v1 scope** per the [2026-05-28 amendment](#amendments). v1 mitigates the two-windows data-loss path via the § 6.1 README known-issue paragraph only — no enforcement code ships at v0.1.0. Phase 1 single-instance brainstorm resumes against the native-app-shell workstream's framework decision, when it lands.
 
-[`docs/specs/2026-05-06-architectural-readiness-design.md`](2026-05-06-architectural-readiness-design.md) § ADR-P0-4 is a seed sketch, not a spec. It explicitly defers the real design work: *"the fix is bigger than a spec edit and benefits from a separate brainstorm — the IPC channel, focus-API per OS, and the second-launch error UX are real design questions, not just plumbing."*
+The original design questions (IPC channel per OS, focus API per OS, second-launch UX, mutex naming + `<dataDir>` scoping, startup ordering race, lockfile interaction) are not pre-decided here because the shell-framework choice (WebView2 / Tauri / Electron / MAUI Blazor Hybrid) materially flips each one. Re-specifying against the current browser-tab architecture would produce work that gets re-done at shell-migration time.
 
-This roadmap commits to *running* that brainstorm next. The brainstorm produces its own spec at `docs/specs/2026-05-XX-single-instance-enforcement-design.md`, then a plan, then 1–2 implementation PRs.
-
-### 2.2 Design questions the Phase 1 brainstorm will resolve
-
-Not pre-decided here. Enumerated so the brainstorm has a starting list:
-
-- **IPC channel per OS.** Win32 named pipe vs. localhost TCP probe; macOS/Linux Unix domain socket at `<dataDir>/.prism/focus.sock` vs. localhost TCP probe.
-- **Focus API per OS.** How the existing process raises its browser window (Win32 `SetForegroundWindow` flicker rules + foreground-lock workaround; macOS `osascript` vs. opening the localhost URL afresh).
-- **Second-launch UX — visible feedback required.** The brainstorm picks between toast on existing window ("PRism is already running — focused the existing window") and modal. Silent focus and stderr-only are pre-rejected: they fail Phase 1's user-model goal (the user understands why their action didn't do what they expected) even when they satisfy the data-coherence goal. A user double-clicking and getting silence is likely to try again, possibly conclude PRism crashed and "restart" it.
-- **Mutex naming and `<dataDir>` scoping.** The mutex name must include a hash of the resolved `<dataDir>` so two PRism instances against two different `<dataDir>` values legitimately coexist (the architecture's "one host per launch" loophole; relevant for multi-account-style usage already supported by S6 PR0's storage scaffold).
-- **Startup ordering race between lockfile-take and IPC-listener mount.** `LockfileManager.Acquire` runs early; the IPC focus-listener mounts later (after DI graph build + Kestrel bind). A second process launched in that window sees the lockfile but no IPC listener. Decide the discipline: spin-wait with bounded timeout, fail-loud, or order the IPC listener earlier in startup.
-- **Lockfile interaction.** The existing `<dataDir>/state.json.lock` already prevents double-startup of the backend. Decide whether the mutex replaces, augments, or coexists with the lockfile; hard-crash recovery story (mutex auto-releases on process exit; lockfile relies on PID-liveness probe).
-
-### 2.3 Acceptance for Phase 1
-
-- The Phase 1 brainstorm produces a spec the user approves.
-- The plan produces 1–2 PRs that land on `main`.
-- **Merged behavior:** double-clicking the binary on Windows where PRism is already running brings the existing window forward and the second process exits with code 0.
-- **Verification approach is decided by the Phase 1 brainstorm**, not pre-committed here. (Sketch: an automated cross-process integration test if the mechanism supports it; otherwise a unit test on the lockfile/mutex primitive plus a manual Windows verification.)
-- **macOS verification is a v0.1.1 concern**, not a Phase 1 acceptance criterion. The same code paths ship in the macOS binary but human verification lands at v0.1.1.
-- If the Phase 1 brainstorm flags the work as multi-week, see § 6.1 for the trigger and fallback.
+Cross-references that previously pointed at "Phase 1 acceptance" or "§ 2.3" should resolve to the [Amendments](#amendments) note plus § 1.3's deferral entry plus § 6.1's known-issue paragraph.
 
 ---
 
@@ -151,6 +152,7 @@ Top-to-bottom structure:
 | **Keyboard shortcuts** | Compact table of the cheatsheet: `j`/`k` nav, `v` viewed, `n`/`p` thread nav, `c` comment, `Esc`, `Cmd/Ctrl+Enter` submit, `Cmd/Ctrl+R` reload, `?` / `Cmd/Ctrl+/` cheatsheet. |
 | **PAT scopes** | Required scopes (Pull requests R/W, Contents R, Checks R, Commit statuses R) + link to GitHub's fine-grained PAT page. |
 | **Status** | Wording is **stateless** — does NOT claim "v0.1.0 prepared" or "v0.1.0 released". Uses "Latest binaries: see [`releases/latest`](…)" so the section doesn't go stale between Phase 2 merge and Phase 3 dispatch (the link's 200-vs-404 answers the question). |
+| **Known issues** | Single bullet per the [Amendments](#amendments) wording: *"Avoid launching PRism more than once on the same machine — concurrent instances will overwrite each other's draft state."* No date-promise clause. This is the v1.0 mitigation for the deferred single-instance enforcement (§ 1.3 / § 6.1). |
 | **Troubleshooting** | Trimmed to user-facing entries: "Recovering a lost draft" (identity-change events in `<dataDir>/logs/`; `DraftSaved`-not-logged caveat per § 1.6), "Replace token" (links to Settings page), "Where's my data?" (`<dataDir>` per platform). |
 | **How it works** | 3-paragraph architectural sketch — local-first, GitHub-coupled, AI seams hidden in v1. Links to [`docs/spec/`](../spec/) for the full spec. |
 | **Roadmap** | One paragraph: v1 is the PoC ship; v2 adds AI features per [`docs/backlog/`](../backlog/) (the four-tier P0–P4 layout). Link to [`docs/roadmap.md`](../roadmap.md). |
@@ -182,9 +184,9 @@ That's it. The fuller contributor-onboarding additions (behavioral-guidelines po
 | File | Edit |
 |---|---|
 | `README.md` § Status | Stateless wording per § 3.1 — no "prepared" or "released" claim. The `releases/latest` link is the source of truth. |
-| `README.md` Features | Add one bullet acknowledging single-instance enforcement landed in v1. |
-| `docs/roadmap.md` | Add a section "v1 completion (post-S6)" after the S6 row with three rows: Phase 1 (Shipped — PR #xx), Phase 2 (Shipped — this PR), Phase 3 (Pending; status set in the post-publish reconciliation PR). Cross-link to this roadmap spec. |
-| `docs/specs/README.md` | Move the Phase 1 single-instance spec from "In progress" to "Implemented". Add an entry for this v1 roadmap spec under "Implemented" once Phase 3 closes. Promote the `2026-05-06-s3-pr-detail-read-design.md` entry from "In progress" to "Implemented" (Task 11 was superseded by PR #59's frozen-PR contract tests against `prpande/PRism`; the "In progress" framing has been stale since 2026-05-19). Promote the `2026-05-18-frozen-pr-contract-tests-design.md` entry from "In progress" to "Implemented" (PR #59 merged 2026-05-19; runbook at `docs/contract-tests.md`). Promote the `2026-05-18-on-disk-log-writer-design.md` entry from "In progress" to "Implemented" (PR #63 merged 2026-05-19). Audit every remaining "In progress" entry — anything whose work merged before v0.1.0 ships should land in "Implemented" before Phase 2 closes. |
+| `README.md` Features | **No single-instance bullet at v1** (it's deferred per [Amendments](#amendments); the Known issues row carries the avoidance instruction instead). Features list reflects only what actually ships. |
+| `docs/roadmap.md` | The "v1 completion (post-S6)" section already exists (added by PR #84). Phase 1 row is already **Deferred** (set by the amendment PR per [Amendments](#amendments)). The Phase 2 sweep flips the **Phase 2** row from Pending to Shipped — this PR. Phase 3 row stays Pending (status set in the post-publish reconciliation PR). The Architectural-readiness "Before P0+" single-instance row also stays as the amendment left it. |
+| `docs/specs/README.md` | **No Phase 1 single-instance spec promotion** — no such spec was ever created (Phase 1 deferred per [Amendments](#amendments) before brainstorm output existed). Add an entry for this v1 roadmap spec under "Implemented" once Phase 3 closes. Promote the `2026-05-06-s3-pr-detail-read-design.md` entry from "In progress" to "Implemented" (Task 11 was superseded by PR #59's frozen-PR contract tests against `prpande/PRism`; the "In progress" framing has been stale since 2026-05-19). Promote the `2026-05-18-frozen-pr-contract-tests-design.md` entry from "In progress" to "Implemented" (PR #59 merged 2026-05-19; runbook at `docs/contract-tests.md`). Promote the `2026-05-18-on-disk-log-writer-design.md` entry from "In progress" to "Implemented" (PR #63 merged 2026-05-19). Audit every remaining "In progress" entry — anything whose work merged before v0.1.0 ships should land in "Implemented" before Phase 2 closes. |
 | `docs/specs/README.md` "Not started" | Replace with a one-line "No v1 work remaining; v2 specs land here as P0+ work begins." (The two-option phrasing from an earlier draft punted the decision; this is the obvious pick — v2 specs don't exist yet, so there's nothing to populate.) |
 | `.ai/docs/operating-context.md` | Update "current cadence" to reflect post-v0.1.0 state. |
 | `.ai/docs/repo-overview.md` | Verify top-level tree is accurate (new file: `CONTRIBUTING.md`; new directory: `assets/screenshots/`). |
@@ -209,7 +211,8 @@ The README references `assets/screenshots/hero-inbox.png`. The current `assets/`
 - README, top-to-bottom, gets a new reviewer from "what is this?" to "first PR reviewed" with no detour into contributor content.
 - `CONTRIBUTING.md` exists at repo root, contains every dev-workflow line previously in `README.md`, and is linked from `README.md` § Contributing.
 - Every "publish pending" / "first binary publish pending" reference is gone; the Status section uses the stateless wording from § 3.1 so it doesn't go stale between Phase 2 and Phase 3.
-- `docs/roadmap.md` and `docs/specs/README.md` reflect Phase 1 as shipped, Phase 2 as shipped (in this PR), and Phase 3 as pending. The S3 Task 11 promotion lands.
+- README § Known issues carries the [Amendments](#amendments) single-instance avoidance bullet verbatim (no date-promise clause).
+- `docs/roadmap.md` and `docs/specs/README.md` reflect Phase 1 as deferred (per [Amendments](#amendments)), Phase 2 as shipped (in this PR), and Phase 3 as pending. The S3 Task 11 promotion lands.
 - `assets/screenshots/hero-inbox.png` is checked in and referenced from the README.
 - All cross-links into the moved README sections are repointed to `CONTRIBUTING.md`; broken-anchor grep is clean.
 - `ce-doc-review` (Claude-only auto-review per [`CLAUDE.md`](../../CLAUDE.md)) finds no contradictions between the rewritten README, roadmap, and spec index.
@@ -221,7 +224,7 @@ The README references `assets/screenshots/hero-inbox.png`. The current `assets/`
 ### 4.1 Pre-flight gates
 
 Before tagging:
-- Phase 1 and Phase 2 both merged to `main`.
+- Phase 2 merged to `main` (Phase 1 is deferred per [Amendments](#amendments); no Phase 1 merge gate).
 - `main` is green on `ci.yml` at the tag commit.
 - `softprops/action-gh-release@v3.0.0` (bumped in PR #81) verified against `publish.yml`'s current arg shape — the upgrade is new and untested in real use.
 - `publish.yml`'s `GITHUB_TOKEN` permission (`contents: write`) confirmed against any branch-protection rule changes.
@@ -244,8 +247,7 @@ Required before promoting the draft Release. Verified by the maintainer on actua
 - Double-click. Verify the SmartScreen "Windows protected your PC" → "More info → Run anyway" path matches `FirstRunDisclosure` copy.
 - Browser auto-launches on `http://localhost:5180` (or next free port in 5180–5199).
 - Paste a PAT. Complete the 13-step demo flow per [`docs/spec/01-vision-and-acceptance.md`](../spec/01-vision-and-acceptance.md) § "The PoC demo".
-- **If Phase 1 shipped single-instance enforcement** (the expected path): double-click the binary again, confirm focus comes back to the existing window instead of spawning a second backend, and confirm the second-launch user feedback (toast/modal per § 2.2) appears.
-- **If Phase 1 fell back to known-issue note** (per § 6.1): confirm the README's known-issue paragraph is present and accurate; skip the double-launch verification.
+- Confirm the README's § Known issues single-instance avoidance bullet is present and matches the [Amendments](#amendments) wording verbatim. (Per the amendment, single-instance enforcement is deferred — no double-launch verification step. v1.0 ships with the avoidance instruction only.)
 - Open `<dataDir>/logs/`. Path discovery: Settings → Connection → "Copy logs path" if the button exists per PR #69's `logsPath` GET shape (verify the button is actually surfaced in the SettingsPage UI before this verification step runs; if it doesn't, the path resolution falls back to `<dataDir>` discovery via the README's "Where's my data?" section).
 - Confirm `prism-YYYY-MM-DD.log` exists with at least one `Identity changed` or comparable structured-log line.
 
@@ -257,7 +259,7 @@ If verification passes:
 
 ### 4.5 Reconciliation PR (only if verification surfaces issues)
 
-If verification surfaces a bug — SmartScreen copy mismatch, unsigned-binary launch edge case, single-instance enforcement misbehaving on real Windows, logs-path button missing or pointing wrong:
+If verification surfaces a bug — SmartScreen copy mismatch, unsigned-binary launch edge case, missing README § Known issues bullet, logs-path button missing or pointing wrong:
 
 1. **Delete the failed draft Release** before re-dispatching. `softprops/action-gh-release` behavior on duplicate tags is not stable across versions; leaving a stranded draft pollutes `releases/`.
 2. Fix in a follow-up PR; re-dispatch when merged.
@@ -279,8 +281,8 @@ If verification surfaces a bug — SmartScreen copy mismatch, unsigned-binary la
 
 All true:
 
-1. Single-instance enforcement merged + verified on Windows. (macOS verification rides v0.1.1.) OR Phase 1 fallback fired per § 6.1 and the README's known-issue paragraph is present.
-2. README is in public-tool shape; `CONTRIBUTING.md` exists; `docs/roadmap.md` and `docs/specs/README.md` reflect Phase 1 + Phase 2 as shipped. All cross-links repointed.
+1. README § Known issues carries the single-instance avoidance bullet per [Amendments](#amendments). (Single-instance enforcement is deferred per the same amendment — no implementation gate.)
+2. README is in public-tool shape; `CONTRIBUTING.md` exists; `docs/roadmap.md` and `docs/specs/README.md` reflect Phase 1 as deferred + Phase 2 as shipped. All cross-links repointed.
 3. `releases/latest` resolves; `win-x64` binary downloadable; README link 200s.
 4. The 13-step demo flow passes against the downloaded `win-x64` binary on Windows.
 
@@ -292,13 +294,20 @@ v1 is NOT defined as "every DoD checkbox closed" (see § 1.4 for the explicit Do
 
 ## 6. Risks
 
-### 6.1 Phase 1 brainstorm reveals single-instance enforcement is bigger than expected
+### 6.1 Phase 1 deferred — current status (was: brainstorm-bigger-than-expected risk)
 
-Plausible — IPC + focus-API + UX choices have real depth. ADR-P0-4 deliberately punted them.
+**Resolved by the 2026-05-28 amendment.** This section was originally a *risk* (Phase 1 turning out bigger than expected, with quantitative triggers and a fallback). The risk crystallized in a different form (native-app-shell scope shift) before the brainstorm produced output, and the [Amendments](#amendments) section captures the response. § 6.1's quantitative triggers (>8 tasks / >3 PRs / >10 calendar days) never fired and no longer apply.
 
-**Quantitative trigger for fallback:** if the Phase 1 plan, on first `writing-plans` pass, decomposes to **>8 tasks across >3 PRs**, OR if Phase 1 implementation passes **10 calendar days from brainstorm start without merging**, fire the fallback before sinking more time.
+**Current status at v0.1.0:**
+- **Phase 1 single-instance enforcement is deferred** out of v1 scope. Resumes against the native-app-shell workstream's framework decision.
+- **README § Known issues** carries this exact wording (no date-promise clause):
 
-**Fallback action.** Drop single-instance from v1 scope. Ship v0.1.0 with a README known-issue paragraph: *"Avoid launching PRism more than once on the same machine — concurrent instances will overwrite each other's draft state. Single-instance enforcement lands in v1.1."* Phase 3 § 4.3 verification skips the double-launch step and confirms the known-issue paragraph instead. Re-spec single-instance for v1.1 with the brainstorm output's cut recommendations.
+  > *"Avoid launching PRism more than once on the same machine — concurrent instances will overwrite each other's draft state."*
+
+- **§ 4.3 Phase 3 verification** drops the previously-conditional double-launch check; verification confirms the README bullet is present instead.
+- **§ 5 exit criteria** drops the prior OR branch on item 1 (single-instance-merged OR fallback-fired); only the README-bullet half remains.
+
+**Residual risk this leaves at v0.1.0:** the two-PRism-windows data-loss path stays open behind a docs-only mitigation. A reviewer in the N=3 trial cohort who double-launches the binary and loses drafts produces a trial outcome unrelated to the wedge thesis. The mitigation is honest disclosure plus the README avoidance instruction; the closure is whenever the native-app-shell workstream lands and Phase 1 brainstorm resumes against it.
 
 ### 6.2 macOS verification deferred to v0.1.1 — explicit
 
@@ -336,7 +345,7 @@ The wedge as articulated in the vision doc is overwhelmingly motion-based (banne
 - New entry in `docs/specs/README.md` under "In progress" (promoted to "Implemented" when Phase 3 closes).
 - New rows in `docs/roadmap.md` after the S6 row referencing this spec.
 - Each phase's own spec/plan happens in its own brainstorm cycle:
-  - Phase 1 → `docs/specs/2026-05-XX-single-instance-enforcement-design.md` + plan.
+  - Phase 1 → **deferred** per [Amendments](#amendments). No spec written. Resumes against the native-app-shell workstream when it lands.
   - Phase 2 → no separate spec; this roadmap is detailed enough. Plan lives at `docs/plans/2026-05-XX-readme-restructure-and-doc-sweep.md`.
   - Phase 3 → no spec; the steps in § 4 are the spec. Tracked via PR + Release artifacts.
 
