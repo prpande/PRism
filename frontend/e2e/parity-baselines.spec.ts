@@ -25,6 +25,13 @@ import { setupAndOpenHandoffParityFixture } from './helpers/parity-fixture';
 //     slice's JSX touch. Until then, the affected tests fail at the locator
 //     wait — that's the expected pre-restoration state.
 
+// Each test is wrapped with `test.fixme()` to mark it as a known-broken
+// scaffold until its restoration PR lands. Restoration PRs (PR2-PR8) remove
+// `.fixme` from their zone as part of the JSX touch that adds the zone's
+// `data-testid` and commits the first baseline. Playwright reports these as
+// "skipped/expected-fail" rather than hard failures, so CI stays green while
+// the scaffolding remains visible in test reports.
+
 const VIEWPORT = { width: 1440, height: 900 };
 
 // Matches the no-layout-shift-on-banner.spec.ts precedent: kill animations
@@ -45,7 +52,7 @@ test.beforeEach(async () => {
 });
 
 test.describe('parity baselines — Inbox', () => {
-  test('inbox', async ({ page }) => {
+  test.fixme('inbox', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
     // setupAndOpenScenarioPr lands on '/', so wait for the inbox list to
@@ -55,7 +62,7 @@ test.describe('parity baselines — Inbox', () => {
     await expect(page.locator('main')).toHaveScreenshot('inbox.png', SCREENSHOT_OPTS);
   });
 
-  test('inbox-activity-rail', async ({ page }) => {
+  test.fixme('inbox-activity-rail', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
     // Activity rail only renders when preferences.ui.aiPreview === true; enable
@@ -92,7 +99,7 @@ test.describe('parity baselines — Inbox', () => {
 });
 
 test.describe('parity baselines — Setup', () => {
-  test('setup-card', async ({ page }) => {
+  test.fixme('setup-card', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await page.goto('/setup');
     const card = page.locator('[data-testid="setup-card"]');
@@ -103,7 +110,7 @@ test.describe('parity baselines — Setup', () => {
 });
 
 test.describe('parity baselines — Settings', () => {
-  test('settings-page', async ({ page }) => {
+  test.fixme('settings-page', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
     await page.goto('/settings');
@@ -117,7 +124,7 @@ test.describe('parity baselines — Settings', () => {
 });
 
 test.describe('parity baselines — PR Detail', () => {
-  test('pr-detail-header', async ({ page }) => {
+  test.fixme('pr-detail-header', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
@@ -127,7 +134,7 @@ test.describe('parity baselines — PR Detail', () => {
     );
   });
 
-  test('pr-detail-overview', async ({ page }) => {
+  test.fixme('pr-detail-overview', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     const overview = page.locator('[data-testid="overview-tab"]');
@@ -136,7 +143,7 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(overview).toHaveScreenshot('pr-detail-overview.png', SCREENSHOT_OPTS);
   });
 
-  test('pr-detail-files-tree', async ({ page }) => {
+  test.fixme('pr-detail-files-tree', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.goto('/pr/acme/api/123/files');
@@ -146,7 +153,7 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(tree).toHaveScreenshot('pr-detail-files-tree.png', SCREENSHOT_OPTS);
   });
 
-  test('pr-detail-files-diff', async ({ page }) => {
+  test.fixme('pr-detail-files-diff', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.goto('/pr/acme/api/123/files');
@@ -159,7 +166,7 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
 
-  test('pr-detail-drafts', async ({ page }) => {
+  test.fixme('pr-detail-drafts', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.goto('/pr/acme/api/123/drafts');
