@@ -99,9 +99,11 @@ grep -rn --include="*.tsx" --include="*.ts" \
   frontend/src/
 ```
 
-Expected output: 8 files exactly — the 8 production JSX files this plan lists in the file structure section above.
+Expected output: 8 files in PR3 scope (the 8 production JSX files this plan lists in the file structure section above) **plus one expected-out-of-scope match**:
 
-If the grep returns a 9th file (e.g., a sibling test-helper or a stray import in `pages/`), **stop and report** the additional consumer. The plan amendment pattern (`feedback_document_plan_deviations.md`) applies: extend Task 5/7/8/10 to cover the extra file, or escalate if it indicates scope drift.
+- `frontend/src/components/Ai/AiComposerAssistant.tsx` — uses bare literal `ai-summary-chip` on line 25. AiComposerAssistant is a separate AI placeholder component gated behind `composerAssist && aiPreview` (both default-false), mounted inside all 3 composers via `<AiComposerAssistant />`. It renders `null` in the PoC default config. The `ai-summary-chip` literal here has **no rule today** in `tokens.css` or any module; Task 7 wires `styles.aiSummaryChip` only in `AiSummaryCard.tsx`. AiComposerAssistant continues to render the bare literal post-PR3 (it has no rule before or after) — no regression. Future composer-AI consolidation (PR4 or beyond) is the natural home for adjudicating the shared `ai-summary-chip` token.
+
+If the grep returns a 10th file (a sibling test-helper or a stray import in `pages/`), **stop and report** the additional consumer. The plan amendment pattern (`feedback_document_plan_deviations.md`) applies: extend Task 5/7/8/10 to cover the extra file, or escalate if it indicates scope drift.
 
 - [ ] **Step 1.2: Confirm Vitest test files querying PR3 classnames**
 
