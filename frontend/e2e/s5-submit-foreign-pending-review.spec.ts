@@ -61,7 +61,7 @@ test('S5 foreign pending review — Resume imports its threads as drafts and ado
   // The dialog closes; the imported thread becomes a draft. The post-Resume
   // banner notes the resolved import.
   await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 10_000 });
-  await expect(page.locator('.imported-drafts-banner')).toContainText(
+  await expect(page.locator('[data-testid="imported-drafts-banner"]')).toContainText(
     /were resolved on github\.com/i,
     {
       timeout: 10_000,

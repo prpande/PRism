@@ -72,7 +72,7 @@ test('drafts survive a browser-context restart', async ({ page, context }) => {
   // freezes `initialBody` at mount (useState initializer), so a click that
   // races the session fetch sees an empty body and the test races a useless
   // re-render. The badge is a 1:1 signal that the session has hydrated.
-  await expect(freshPage.locator('.pr-tab-count')).toContainText('1', { timeout: 15_000 });
+  await expect(freshPage.locator('[data-testid="pr-tab-count"]')).toContainText('1', { timeout: 15_000 });
 
   // Re-click the file in the tree so the diff renders, then click line 3 —
   // FilesTab.openComposerAt's findExistingDraft picks the persisted body
