@@ -127,3 +127,162 @@ Companion to [`2026-05-29-design-parity-recovery-design.md`](2026-05-29-design-p
 **Plan resolution:** PR2 authors `.prTabCountWarn` in the module so the rule is ready, but does NOT wire the conditional render. Wiring is a behavior change (the JSX decides when to apply the warn class), explicitly out of scope per §2.2. PR9 revisit can decide whether to wire it.
 
 **Status:** Deferred to PR9 revisit.
+
+---
+
+## PR3 — Overview tab card grid
+
+### D12 — Production-vs-handoff naming divergence
+
+**Spec position:** §3.1 "Kebab-case from the handoff → camelCase in the module" assumes 1:1 selector mapping.
+
+**Reality:** Four PR3 components diverge:
+- `StatsTiles` JSX uses `.stats-tile*`; handoff uses `.ov-stat*`.
+- `PrRootConversation` JSX uses `.pr-root-comment*`; handoff uses `.pr-conv-*` against a `<ul>/<li>` structure.
+- `AiSummaryCard` JSX uses `.ai-summary-card` / `.ai-summary-chip` / `.ai-summary-category`; handoff uses `.pr-ai-summary` + `.ai-summary-head` / `.ai-summary-label` / `.ai-summary-bullets`.
+- `PrDescription` JSX uses `.pr-description*` (no handoff equivalent — handoff renders the description body inside the AI hero card as `.overview-desc`).
+
+**Plan resolution:** Author module CSS under PRODUCTION class names (camelCased). Port the handoff *visual treatment* rather than handoff *selector names*. Production JSX class strings stay; the test seam stays; only the visual paint matches the handoff.
+
+**Status:** Applied in PR3.
+
+### D13 — PrRootConversation vertical timeline as CSS-only treatment
+
+**Spec position:** §4.3 "PR-root conversation as a vertical timeline with avatar rail + connecting line."
+
+**Reality:** Handoff renders `<ul>/<li>` with dedicated `.pr-conv-rail` + `.pr-conv-line` child elements. Production renders `<article>` per comment with no rail child. JSX restructuring is out of scope per §2.2 ("class names, layout, and small JSX restructuring are in scope; state, routing, and data fetching are out").
+
+**Plan resolution:** CSS-only treatment using `::before` (vertical line, full height, 1px) + `::after` (small accent dot at the avatar position) pseudo-elements on each `.prRootComment`. The last comment's `::before` stops at `50%` so the timeline ends mid-way through the last item — matching the handoff's behavior where no `.pr-conv-line` is rendered after the last `<li>`. Avatars are NOT rendered (would require JSX structural change).
+
+**Status:** Applied in PR3.
+
+### D14 — overview-card-hero-no-ai authored without exact handoff source
+
+**Spec position:** §3.1 + S3 deferral B26 keep the `.overview-card-hero-no-ai` modifier per "handoff is authoritative" — but the handoff `screens.css` has no exact rule.
+
+**Reality:** Production wired the conditional class to PrDescription (line 13 of `PrDescription.tsx`) without a CSS rule. The visual intent: when `aiPreview=false`, `AiSummaryCard` returns null and `PrDescription` takes the hero slot. The modifier needs to ACTIVATE hero treatment in that path; the base `.overview-card` rule supplies the card surface (background, border) via the literal class string.
+
+**Plan resolution:** Author `.overviewCardHeroNoAi` in `PrDescription.module.css` with the handoff's `.overview-card-hero` declarations (wider radius, larger padding). The literal class string `overview-card-hero-no-ai` stays in JSX as the test seam alongside the hashed module class. AI-ON path: PrDescription gets only the base card surface (no hero treatment) — sits below the AI summary hero. AI-OFF path: PrDescription gets card surface + hero treatment, filling the slot the AI summary would have occupied.
+
+**Status:** Applied in PR3.
+
+### D15 — PrRootReplyComposer scope limited to `.composer-actions` + outer
+
+**Spec position:** §4.3 names `PrRootReplyComposer` as scope item for PR3.
+
+**Reality:** Production JSX uses 7 composer-* classes (`composer-textarea`, `composer-preview-toggle`, `composer-badge`, `composer-discard`, `composer-save`, `composer-closed-banner`, `composer-actions`), but the handoff `screens.css` has rules for only 4 (`composer-tabs`, `composer-tabs .tab`, `composer-preview`, `composer-actions`) — and 3 of those (`composer-tabs`, `composer-tabs .tab`, `composer-preview`) reference a tabs-based composer structure production doesn't use. The only composer-class in both handoff and production is `.composer-actions`.
+
+The remaining 6 production composer-classes are shared across all 3 composers (`InlineCommentComposer`, `ReplyComposer`, `PrRootReplyComposer`). Per spec §3.1's lift-on-second-use rule, they should live in `tokens.css`. PR4 owns all 3 composers and is the natural slice to author the lift.
+
+**Plan resolution:** PR3 ports `.pr-root-reply-composer` (outer container) + `.composer-actions` (button-row layout) into `PrRootReplyComposer.module.css`. The 6 inner composer classes stay as bare global strings, awaiting PR4's lift to `tokens.css`. The `.composerActions` rule includes two pragmatic additions beyond the handoff source (`align-items: center` for badge vertical alignment + `gap: var(--s-2)` for consistent inter-button spacing) — the handoff's bare flex `space-between` is insufficient for production's badge sibling between the toggle and discard/save buttons.
+
+Per **D21**, PR3's parity baseline captures the composer-CLOSED state (Reply button visible). The bare-default styling of the 6 inner classes is a known temporary visual gap until PR4 ships, NOT a regression for PR3.
+
+**Reversible:** Yes. If side-by-side review of PR3 shows the bare-default button styling materially harms the Overview tab's restored visual coherence even with the composer closed, the 6 composer-class rules can be added as bare global rules to `tokens.css` in a PR3 follow-up.
+
+**Status:** Partially applied (outer + composer-actions ported); inner-class lift deferred to PR4.
+
+### D16 — Test-selector migration via data-testid + literal-class retention
+
+**Spec position:** §6.1 names PR2-specific selector renames; PR3 inherits the same risk for 5 vitest unit-test files (`OverviewTab.test.tsx`, `PrDescription.test.tsx`, `StatsTiles.test.tsx`, `PrRootConversation.test.tsx`, `AiSummaryCard.test.tsx`).
+
+**Reality:** Vitest queries fail once CSS Modules hash the class names. `data-testid` queries + module-imported `styles.x` is the canonical pattern.
+
+**Plan resolution:** Add 5 `data-testid` attributes to PR3 components (Task 2). Migrate 5 vitest unit-test files (Task 3) to `getByTestId(...)` / `queryAllByTestId(...)` for element SELECTION. For class-PRESENCE assertions on `.overview-card`, `.overview-card-hero`, `.overview-card-hero-no-ai` (3 classes), keep the literal strings in JSX — these classes have global rules in `tokens.css` after D22's lift, so the literal serves both as test seam AND as the styling hook.
+
+For the `closest('.pr-description-title')` test seam (PrDescription.test.tsx line 31), use module-imported `closest(\`.${styles.prDescriptionTitle}\`)` — the canonical hashed-class assertion pattern.
+
+Matches PR2 D10 resolution.
+
+**Status:** Applied in PR3.
+
+### D17 — Dormant handoff AI-summary rules ported AS-IS (overrides PR2 D9 precedent)
+
+**Spec position:** §6.2 dormant-attribute policy — rules referencing unset attributes get ported as dormant.
+
+**Reality:** The handoff designs a richer AI summary with head + label + bullets + risk chip (handoff `screens.css:90-102`). Production renders a stub with chip + body + category.
+
+**Reconciliation with PR2 D9:** PR2 D9 narrowed the dormant-policy AWAY from dormant CLASSES — for the four PrHeader stub classes (`pr-meta`, `pr-meta-repo`, `pr-subtitle-author`, `pr-subtitle-branch`), no CSS rule was authored. PR3 D17 explicitly overrides D9 for these 5 AI-summary classes because: (a) they form a coherent multi-element layout (head + label + bulleted list + risk chip is a designed surface, not isolated naming anchors); (b) the handoff's intent for AI summary is a near-term richer surface — wiring is on the PR9 revisit shortlist; (c) the rules are scoped to a single module (`AiSummaryCard.module.css`), not lifted globally.
+
+If PR9 revisit decides AI summary stays at the current stub shape, the 5 dormant rules become dead code and get removed in that pass.
+
+**Plan resolution:** Port 5 dormant rules into `AiSummaryCard.module.css`:
+- `.aiSummaryHead`
+- `.aiSummaryLabel`
+- `.aiSummaryBullets`
+- `.aiSummaryBullets li`
+- `.aiRisk`
+
+The rules are inert (no JSX renders these classes today). Future JSX wiring or PR9 revisit picks them up without a second CSS pass.
+
+**Status:** Applied in PR3.
+
+### D18 — New production-only `overview-cta-*` sub-rules without handoff source
+
+**Spec position:** §4.3 names `ReviewFilesCta` as scope but only references the handoff's `.overview-cta` parent rule (L335-341).
+
+**Reality:** Production `ReviewFilesCta` JSX renders two child classes (`overview-cta-empty` for the "No files to review yet" hint, `overview-cta-footer` for the keyboard-hint paragraph) with no handoff source.
+
+**Plan resolution:** Author `.overviewCtaEmpty` (small font + right margin) and `.overviewCtaFooter` (small font + flex layout for inline `<kbd>` children) as module CSS rules in `ReviewFilesCta.module.css`. Both classes compose with the existing `.muted` global. Flagged here so PR9 revisit can audit whether the rules align with the restored Overview visual language.
+
+**Status:** Applied in PR3.
+
+### D19 — Handoff `is-you` comment-bubble treatment NOT ported
+
+**Spec position:** §4.3 names `PrRootConversation` scope including "vertical timeline" + comment cards.
+
+**Reality:** Handoff `screens.css:382-385` defines `.pr-conv-item.is-you .pr-conv-body { background: var(--accent-soft); border-color: ... }` — an accent-tinted bubble that marks the current user's own comments. Production `IssueCommentDto` has no `isCurrentUser` field; `PrRootConversation` JSX has no per-comment author-vs-self comparison.
+
+**Plan resolution:** Skip in PR3. Restoring requires (a) plumbing `currentUserLogin` through to `PrRootConversation` (from `useAuth` or a similar hook), (b) per-comment comparison + conditional `data-author-is-self` attribute, (c) adding the conditional CSS rule. That's a logic-and-data-flow change per §2.2.
+
+**Reversible:** Yes. PR9 revisit or a follow-up slice can wire the comparison + add the CSS rule in one pass.
+
+**Status:** Deferred to PR9 revisit alongside other who-said-what affordance decisions.
+
+### D20 — Handoff `overview-card-head` top-of-card header NOT reproduced
+
+**Spec position:** §4.3 names `MarkAllReadButton` in PR3 scope but doesn't specify placement.
+
+**Reality:** Handoff renders an `overview-card-head` element at the TOP of the conversation card with a "Conversation" heading + the Mark-all-read button. Production renders Mark-all-read at the BOTTOM of the card, in the `pr-root-conversation-actions-row` alongside the Reply button.
+
+**Plan resolution:** Keep production placement (bottom). Restoring the top-header requires moving `MarkAllReadButton` from `PrRootConversationActions` to a new sibling header element above the comment list — JSX structural change per §2.2. Production placement also preserves keyboard-flow ergonomics (Reply + Mark-all-read appear together at the natural footer position).
+
+**Reversible:** Yes. PR9 revisit can decide top vs bottom placement against the restored visual language.
+
+**Status:** Deferred to PR9 revisit.
+
+### D21 — PR3 parity baseline captures composer-CLOSED state only
+
+**Spec position:** §4.3 + §4.1.3 specify per-zone parity-baseline captures; §6.3 anticipates verdict-picker / Submit-button visual repositioning.
+
+**Reality:** When the user clicks Reply on `PrRootConversation`, `PrRootReplyComposer` mounts and renders 6 production composer classes (textarea, preview-toggle, badge, discard, save, closed-banner) that have no handoff source and no rule in PR3 (per D15 — deferred to PR4). The open-composer state would capture default browser styling for these elements.
+
+**Plan resolution:** Task 13 captures the composer-CLOSED state (Reply button + MarkAllReadButton visible; textarea + action buttons NOT mounted). The open-composer state's bare-default rendering is NOT covered by PR3's regression gate.
+
+**Reversible:** Yes. PR4 lifts the composer primitives to `tokens.css` and captures the open-composer baseline as part of its slice. Until then, opening the composer on Overview is a known temporary visual gap — not a regression PR3's baseline gate is responsible for.
+
+**Status:** Applied in PR3 (closed-state baseline locks in); open-composer baseline deferred to PR4.
+
+### D22 — Lift `.overview-card` + `.overview-card-hero` to `tokens.css` upfront at Task 6
+
+**Spec position:** §3.1 lift-on-second-use rule.
+
+**Reality:** Both classes have ≥2 immediate consumers within PR3 (`PrDescription` + `AiSummaryCard` + `PrRootConversation` all use bare literal `overview-card` and/or `overview-card-hero` strings). Without the lift, the literals fire no rule, leaving each card visually unstyled.
+
+**Plan resolution:** At Task 6 Step 6.1, append `.overview-card` (background + border + radius + padding) + `.overview-card-hero` (extends with larger radius + padding) to `tokens.css` as global rules. PrDescription / AiSummaryCard / PrRootConversation JSX compose these literals alongside their module-imported component-specific rules. `PrDescription.module.css` does NOT author hashed `.overviewCard` or `.overviewCardHero` (would be dead — JSX uses literals).
+
+Originally flagged in the pre-revision plan as a "side-by-side review-time decision" at Task 13.3. That was structurally unsound (the baseline is captured before the decision), so promoted to upfront commit.
+
+**Status:** Applied in PR3.
+
+### D23 — Handoff `.ov-stat-sub` secondary-line slot NOT wired
+
+**Spec position:** §4.3 names `StatsTiles` scope.
+
+**Reality:** Handoff `.ov-stat-sub` (L327-333, small monospace) renders a secondary line on each tile (e.g., "+214 / -61" line counts, "73% reviewed" progress). Production `Tile` component takes only `label` + `value` props.
+
+**Plan resolution:** Skip in PR3. Restoring requires (a) adding a `sub?: string` prop to `Tile`, (b) passing data from `OverviewTab.tsx` (e.g., diff `+adds/-deletes` from `diff.data.files`), (c) authoring a `.statsTileSub` module rule. Steps (a) and (b) are logic-and-data-flow changes per §2.2.
+
+**Reversible:** Yes. PR9 revisit or a follow-up slice can wire the prop + data + rule in one pass.
+
+**Status:** Deferred to PR9 revisit.
