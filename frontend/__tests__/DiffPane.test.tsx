@@ -78,7 +78,7 @@ describe('DiffPane', () => {
   });
 
   it('renders diff lines from hunk body', () => {
-    const { container } = render(
+    render(
       <DiffPane
         selectedPath="src/main.ts"
         file={sampleFile}
@@ -88,7 +88,8 @@ describe('DiffPane', () => {
         prUrl=""
       />,
     );
-    const insertRows = container.querySelectorAll('.diff-line--insert');
+    const diffPane = screen.getByTestId('diff-pane');
+    const insertRows = diffPane.querySelectorAll('.diff-line--insert');
     expect(insertRows.length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/line three new/)).toBeInTheDocument();
   });
@@ -124,7 +125,7 @@ describe('DiffPane', () => {
   });
 
   it('renders comment widget for matching thread', () => {
-    const { container } = render(
+    render(
       <DiffPane
         selectedPath="src/main.ts"
         file={sampleFile}
@@ -134,7 +135,7 @@ describe('DiffPane', () => {
         prUrl=""
       />,
     );
-    const commentWidgets = container.querySelectorAll('.comment-widget');
+    const commentWidgets = screen.getAllByTestId('comment-widget');
     expect(commentWidgets.length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Please fix this line.').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('alice').length).toBeGreaterThanOrEqual(1);
@@ -155,7 +156,7 @@ describe('DiffPane', () => {
   });
 
   it('renders side-by-side layout when diffMode is side-by-side', () => {
-    const { container } = render(
+    render(
       <DiffPane
         selectedPath="src/main.ts"
         file={sampleFile}
@@ -165,11 +166,11 @@ describe('DiffPane', () => {
         prUrl=""
       />,
     );
-    expect(container.querySelector('.diff-pane--split')).not.toBeNull();
+    expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--split');
   });
 
   it('renders unified layout when diffMode is unified', () => {
-    const { container } = render(
+    render(
       <DiffPane
         selectedPath="src/main.ts"
         file={sampleFile}
@@ -179,6 +180,6 @@ describe('DiffPane', () => {
         prUrl=""
       />,
     );
-    expect(container.querySelector('.diff-pane--unified')).not.toBeNull();
+    expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--unified');
   });
 });
