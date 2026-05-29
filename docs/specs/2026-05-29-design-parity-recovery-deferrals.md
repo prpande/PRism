@@ -286,3 +286,19 @@ Originally flagged in the pre-revision plan as a "side-by-side review-time decis
 **Reversible:** Yes. PR9 revisit or a follow-up slice can wire the prop + data + rule in one pass.
 
 **Status:** Deferred to PR9 revisit.
+
+### D24 — AiSummaryCard active-shape parity delta from handoff `pr-detail.jsx:194`
+
+**Spec position:** §3.1 + §4.3 imply handoff visual treatment is authoritative for restored surfaces. Handoff `pr-detail.jsx:194` composes `<section class="overview-card overview-card-hero ai-tint">` with NO additional `.pr-ai-summary` override on that node — the AI summary card visually IS the hero card.
+
+**Reality:** Production JSX renders `<section class="ai-summary-card overview-card overview-card-hero ai-tint">` (additional `.ai-summary-card` literal class), and `AiSummaryCard.module.css`'s `.aiSummaryCard` hashed rule overrides `.overview-card-hero`'s padding/border-radius with the smaller values from handoff `screens.css:84-89` (`.pr-ai-summary` shape — `padding: var(--s-3) var(--s-4); border-radius: var(--radius-3)`). Vite injects CSS-modules AFTER global tokens.css, so the module rule wins the equal-specificity cascade.
+
+The result is that AiSummaryCard ships in PR3 as the smaller `.pr-ai-summary` surface, NOT the full `.overview-card-hero` surface the handoff prototype renders for this slot.
+
+**Plan resolution:** Accept the smaller-surface treatment for PR3. The module rule is authored intentionally (Task 7.1) with a header comment explaining the cascade-order intent. The literal `overview-card-hero` class stays on the JSX as a test seam (`OverviewTab.test.tsx:433` asserts `toHaveClass('overview-card-hero')` to verify the hero modifier is present on the AI summary section, even when the visual paint comes from the smaller `.aiSummaryCard` module rule).
+
+If the side-by-side review pass after PR3 ships determines the production AI surface should match handoff `pr-detail.jsx:194`'s hero shape exactly, the resolution is to drop `padding` and `border-radius` from `.aiSummaryCard` (let `.overview-card-hero` win the cascade) — a one-line follow-up.
+
+**Reversible:** Yes. PR9 revisit (or a focused follow-up before PR4) can decide between the two AI-summary shapes once the restored visual is in front of the N=3 cohort.
+
+**Status:** Applied in PR3 (smaller `.pr-ai-summary` shape via module rule); deferred PR9 adjudication of whether the larger `.overview-card-hero` shape better matches handoff intent.

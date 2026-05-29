@@ -1,10 +1,6 @@
 .overviewCardHeroNoAi {
   border-radius: var(--radius-4);
-  padding: var(--s-5) var(--s-5);
-}
-
-.prDescription {
-  /* Production-specific layout container; surface treatment via global .overview-card. */
+  padding: var(--s-5);
 }
 
 .prDescriptionTitle {
