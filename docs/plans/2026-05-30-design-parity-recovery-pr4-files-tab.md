@@ -135,6 +135,8 @@ Treat these as expected-out-of-scope (mirror of PR3's `AiComposerAssistant` carv
 
 If the grep returns a file outside the planned 16, **stop and report**. Apply the plan-amendment pattern (`feedback_document_plan_deviations.md`) — extend the relevant task to cover the extra file, or escalate if it indicates scope drift.
 
+**Known co-tenants of `skeleton-row` (Task 1 pre-flight, 2026-05-30):** `frontend/src/pages/PrDetailPage.tsx:214-216` and `frontend/src/components/PrDetail/DraftsTab/DraftsTabSkeleton.tsx:4-7` both render bare `skeleton-row` literal. PR4 Task 9 ships a FilesTab-scoped `.skeletonRow` rule via `FilesTab.module.css` hashing — the bare `skeleton-row` literal at the other two co-tenants stays unstyled (matching current production state; no regression). Acknowledged here as expected; no plan amendment needed for the co-tenants.
+
 - [ ] **Step 1.2: Identify Vitest test files querying PR4 classnames**
 
 ```bash
@@ -294,7 +296,7 @@ In `DiffPane.tsx:137` (the main branch):
 
 One attribute per component root, mirroring the pattern above. Exact line numbers from Task 1 grep output.
 
-- [ ] **Step 2.8: Add `data-testid="inline-comment-composer"` + `data-testid="reply-composer"` to the two new composer outers**
+- [ ] **Step 2.8: Add `data-testid="inline-comment-composer"` + `data-testid="reply-composer"` to the two new composer outers + `data-testid="composer-badge"` on all 3 badge spans**
 
 `InlineCommentComposer.tsx:222`:
 
@@ -310,7 +312,13 @@ className="reply-composer"
 data-testid="reply-composer"
 ```
 
-(`PrRootReplyComposer` already has its outer module-CSS class hooked up from PR3; no `data-testid` was added there — PR4 leaves it as-is unless Task 3 surfaces a vitest test that needs it. If so, add `data-testid="pr-root-reply-composer"` at that time.)
+`InlineCommentComposer.tsx:256` (and similar in `ReplyComposer.tsx` + `PrRootReplyComposer.tsx`):
+
+```tsx
+<span className={`composer-badge composer-badge--${badge}`} data-testid="composer-badge" role="status">
+```
+
+(Task 1 pre-flight surfaced `frontend/e2e/s5-marker-prefix-collision.spec.ts:45` consuming `.inline-comment-composer .composer-badge` as a Playwright selector. Adding `data-testid="composer-badge"` on the three badge spans gives Task 3 a stable migration target before PR4's class changes ship. `PrRootReplyComposer` already has its outer module-CSS class hooked up from PR3; no outer `data-testid` was added there — PR4 leaves the outer as-is unless Task 3 surfaces a vitest test that needs it.)
 
 - [ ] **Step 2.9: Run vitest after the additive JSX changes**
 
@@ -339,22 +347,42 @@ For each surfaced test file, replace `.querySelector('.x')` with `screen.getByTe
 
 (Detailed migration patterns per file are surfaced during execution. The shape mirrors PR3 Task 3's per-test rewrites: container selectors → `getByTestId`, per-row selectors → `queryAllByTestId` or `within(...).getByText(...)`. Class-presence assertions stay.)
 
-- [ ] **Step 3.2-3.N: Migrate the remaining files**
+- [ ] **Step 3.2-3.N: Migrate the remaining vitest files**
 
-One commit per file:
+Task 1 Step 1.2 surfaced **2 vitest files** (`frontend/__tests__/WordDiffOverlay.test.tsx`, `frontend/__tests__/DiffPane.test.tsx`). One commit per file:
 
 ```bash
 git add frontend/__tests__/<file>.test.tsx
 git commit -m "test(pr4): migrate <Component>.test.tsx to data-testid selectors"
 ```
 
-- [ ] **Step 3.X: Run vitest**
+- [ ] **Step 3.X: Migrate Playwright spec selector for composer-badge**
+
+Task 1 Step 1.3 surfaced `frontend/e2e/s5-marker-prefix-collision.spec.ts:45` using `page.locator('.inline-comment-composer .composer-badge')`. Migrate to the `data-testid` PR4 Task 2 Step 2.8 adds:
+
+```ts
+// before
+page.locator('.inline-comment-composer .composer-badge')
+// after
+page.locator('[data-testid="inline-comment-composer"] [data-testid="composer-badge"]')
+```
+
+If the surrounding test logic asserts the badge text, the migration preserves the structure (descendant selector via two data-testids). Confirm by reading lines 40-60 of the spec for context.
+
+Commit:
+
+```bash
+git add frontend/e2e/s5-marker-prefix-collision.spec.ts
+git commit -m "test(pr4): migrate s5-marker-prefix-collision composer-badge selector to data-testid"
+```
+
+- [ ] **Step 3.Y: Run vitest**
 
 ```bash
 cd frontend && npm run test -- --run 2>&1 | tail -20
 ```
 
-Expected: same pass count as Task 1 Step 1.4. If lower, the migration broke an existing assertion — fix before proceeding.
+Expected: same pass count as Task 1 Step 1.4 (781). If lower, the migration broke an existing assertion — fix before proceeding.
 
 ---
 
