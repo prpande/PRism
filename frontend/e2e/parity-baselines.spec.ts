@@ -134,7 +134,7 @@ test.describe('parity baselines — PR Detail', () => {
     );
   });
 
-  test.fixme('pr-detail-overview', async ({ page }) => {
+  test('pr-detail-overview', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     const overview = page.locator('[data-testid="overview-tab"]');
