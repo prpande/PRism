@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Bring the 13 FilesTab + DiffPane + Composer components into visual parity with `design/handoff/screens.css`. Per spec §4.4 PR4 is the largest CSS slice of the design-parity-recovery roadmap (~13 components, ~600 LOC of handoff CSS to port, the most cross-component CSS in the roadmap per §6.6) and the natural slice to fulfil PR3's deferred D15 (composer-primitive lift to `tokens.css`) and D21 (open-composer baseline) plus PR1's deferred D4 (`Calc.cs` per-file selector tightening).
+**Goal:** Bring the 13 spec §4.4-enumerated FilesTab + DiffPane + Composer component specifications (15 distinct JSX files; some specifications cover sub-components like DiffTruncationBanner under DiffPane) into visual parity with `design/handoff/screens.css`. Per spec §4.4 PR4 is the largest CSS slice of the design-parity-recovery roadmap (~13 components, ~600 LOC of handoff CSS to port, the most cross-component CSS in the roadmap per §6.6) and the natural slice to fulfil PR3's deferred D15 (composer-primitive lift to `tokens.css`) and D21 (open-composer baseline) plus PR1's deferred D4 (`Calc.cs` per-file selector tightening).
 
 **Architecture:** Port the relevant rules from `design/handoff/screens.css` (`.iter-*` block L129-209, `.tree-*` block L523-585, `.diff-*` block L591-679, `.diff-add-comment-bar` L697-701, `.comment-*` block L728-732, `.composer-*` block L760-776, `.ai-hunk*` block L824-837) into per-component CSS modules colocated with each `.tsx`, AND lift the 7 shared composer-inner classes to `tokens.css` per §3.1 lift-on-second-use rule (used by all 3 composers — Inline + Reply + PrRootReply). Composes with existing global primitives from `tokens.css` (`.btn`, `.btn-primary`, `.btn-ghost`, `.btn-icon`, `.btn-link`, `.muted`, `.tnum`, `.ai-tint`, `.ai-icon`, `.chip`, `.chip-status-*`, `.kbd`, `.banner`, `.banner-warning`). Production JSX class names diverge from handoff naming in **every** PR4 component (production uses `iteration-tab*` / `file-tree*` / `diff-pane*` / `diff-gutter*` / `compare-picker*` / `commit-multi-select-picker*` while handoff uses `iter-chip*` / `tree-*` / `diff-area*` / `diff-line*` / `iter-compare` / no equivalent) — far heavier divergence than PR3. Per the D12 precedent, per-component module CSS uses production class names as the source of truth and ports the handoff *visual treatment* rather than rename-to-match. Vitest unit-test queries migrate from `.querySelector('.x')` to `getByTestId(...)` or to module-imported `styles.x` assertions (D16 precedent).
 
@@ -10,24 +10,25 @@
 
 ---
 
-## Deviations from spec §4.4 (working assumptions — entered as D25-D38 in deferrals at Task 23)
+## Deviations from spec §4.4 (working assumptions — entered as D25-D42 in deferrals at Task 23)
 
 These are PR4-discovered gaps. Each is a deliberate choice surfaced during plan-writing pre-flight; full rationale lands in the deferrals sidecar at Task 23. If Task 1 pre-flight surfaces a contradicting signal, the implementer stops and reports.
 
 | # | Topic | Working assumption | Why it's a deviation |
 |---|-------|---------------------|----------------------|
 | **D25** | Production-vs-handoff naming divergence is total in PR4 | Author module CSS under PRODUCTION class names; port handoff *visual treatments* into them. Do NOT rename JSX to match handoff selectors. Apply per-component: `iteration-tab*` (production) gets the visual treatment of `iter-chip*` (handoff); `file-tree*` gets `tree-*`'s treatment; `diff-pane*` + `diff-gutter*` + `diff-content` gets `diff-area*` + `diff-body*` + `diff-line*`'s treatment; etc. | D12 (PR3) established this. PR4 magnifies the divergence: 5 of the 13 components have ZERO direct handoff naming overlap, and 3 of those (`CommitMultiSelectPicker`, `ComparePicker`, `MarkdownFileView`) have no handoff equivalent at all — production-only conventions PR4 must style without a handoff source. JSX rename is a logic-shaped change per §2.2; it would break ~25 vitest test selectors and force a JSX-restructure on every PR4 component for no design benefit. |
-| **D26** | 7 composer-inner classes lifted to `tokens.css` (D15 fulfillment) | Append 7 global rules to `tokens.css` ( `.composer-textarea`, `.composer-preview-toggle`, `.composer-badge`, `.composer-badge--*` modifiers as 1 selector list, `.composer-discard`, `.composer-save`, `.composer-closed-banner`) sourced from `screens.css` lines 760-776 plus extensions. All 3 composers (`InlineCommentComposer`, `ReplyComposer`, `PrRootReplyComposer`) consume these — unambiguously qualifies for §3.1 lift-on-second-use. | D15 (PR3) deferred these classes from PR3's `PrRootReplyComposer` work explicitly to PR4 because PR4 owns all 3 composers. Lifting at the first PR4 composer task (Task 16) would force a cross-task ordering invariant; lifting upfront at Task 4 makes Tasks 16-18 mechanical. Note: the existing `.composer-actions` rule from PR3 lives in `PrRootReplyComposer.module.css` and is hash-scoped — PR4 must REPLACE it with a `tokens.css` global so InlineCommentComposer + ReplyComposer can consume it via the literal class. |
+| **D26** | 6 composer-inner classes lifted to `tokens.css` (D15 fulfillment); badge variants align with production `ComposerSaveBadge` union | Append 6 global rules to `tokens.css` (`.composer-textarea`, `.composer-preview-toggle`, `.composer-badge` + `.composer-badge--{saved,saving,unsaved,rejected}` modifiers, `.composer-discard`, `.composer-closed-banner`, `.composer-actions`) sourced from `screens.css` lines 760-776 plus production extensions. Badge state union is `'saved' \| 'saving' \| 'unsaved' \| 'rejected'` (verified at `frontend/src/hooks/useComposerAutoSave.ts:5`); the original-plan-draft `--error` variant DOES NOT EXIST in production and is dropped. The `.composer-save` literal-class is NOT lifted — production JSX composes `composer-save btn btn-primary btn-sm` and the `.btn .btn-primary .btn-sm` globals supply all visual treatment; an empty `.composer-save` stub rule would be speculative future-anchor with no current consumer (scope-guardian #1). All 3 composers (`InlineCommentComposer`, `ReplyComposer`, `PrRootReplyComposer`) consume the lifted 6 — unambiguously qualifies for §3.1 lift-on-second-use. | D15 (PR3) deferred these classes from PR3's `PrRootReplyComposer` work explicitly to PR4. Aligning the badge variants with the production union prevents the dormant `--error` rule from shipping AND prevents the missing `--unsaved`/`--rejected` from going unstyled. Note: PR3's existing `.composer-actions` rule in `PrRootReplyComposer.module.css` is hash-scoped — PR4 REPLACES it with a `tokens.css` global so InlineCommentComposer + ReplyComposer consume it via the literal class. |
 | **D27** | Drop `.composer-actions` `margin-top: var(--s-2)` per PR3's D15 annotation | When lifting `.composer-actions` to `tokens.css` at Task 4, port `display: flex; justify-content: space-between; align-items: center; gap: var(--s-2);` — but DROP the `margin-top: var(--s-2)` token. PR3's b4a916b annotation: parent already provides `gap: var(--s-2)` between `.composer-textarea` and `.composer-actions`, so `margin-top` doubles the visual gap on the open-composer state. | PR3 b4a916b documents the gotcha. Closing it in PR4 is the natural moment — the global rule replaces PR3's `PrRootReplyComposer.module.css` `.composerActions` rule, so dropping `margin-top` from the global rule also retroactively fixes PR3's open-composer Overview state. |
-| **D28** | IterationTabStrip — small JSX restructure permitted per §4.4 chip anatomy | The handoff chip renders structured contents: `<span class="iter-chip-num">N</span> <span class="iter-chip-label">Iter</span> <span class="iter-chip-meta"><span class="iter-add">+X</span> <span class="iter-rem">-Y</span></span>` plus an `<span class="iter-new-dot">` for newly-arrived iterations. Production JSX renders only `{iterationLabel}` text. PR4 must add the inner `<span>`s (~6 lines per chip) to materialize the chip-num / chip-label / chip-meta / iter-new-dot DOM the handoff styles. Data is already available in the iteration prop (`additions`, `deletions`, `index`, `isNew`-equivalent flag derivable from the prop). | §4.4 explicitly lists "chip cards with +/− counts, new-iteration dot" as restored visuals (line 249). §2.2 permits "small JSX restructuring" alongside class-name and layout changes. The restructure is purely additive (new inner `<span>`s for visual labels) — no state or routing changes; existing button click and aria-selected wiring stays. If the iteration prop genuinely lacks one of these fields (e.g., the cross-iteration "is new" marker), the chip element is rendered without the missing inner `<span>` and the gap is logged for the deferrals sidecar — degraded gracefully, not blocking. |
+| **D28** | IterationTabStrip — chip-num + chip-meta inner spans only; iter-new-dot DEFERRED (no production data source) | The handoff chip renders chip-num + chip-label + chip-meta (`+adds`/`-rems`) + iter-new-dot. Production `IterationDto` (`frontend/src/api/types.ts:162-168`) carries only `{ number, beforeSha, afterSha, commits: CommitDto[], hasResolvableRange }` — there are NO `additions`/`deletions`/`isNew` fields. PR4 ships: (a) chip-num span rendering `{iteration.number}`; (b) chip-label span rendering the existing `Iter ${iteration.number}` computed string the production JSX already constructs (`IterationTabStrip.tsx:84`); (c) chip-meta with `+adds`/`-rems` spans where adds/rems are **client-side derived** by summing `iteration.commits[].additions` + `commits[].deletions` (CommitDto already exposes additions/deletions per types.ts:158-159). iter-new-dot is NOT rendered — there is no "new iteration" flag in production state, and synthesizing one requires new state (out of §2.2 scope). The omission is documented in the sidecar; PR9 revisit can decide whether to wire it via a state hook. Accessible name preserved: chip button keeps the visible label "Iter N"; existing tests using `getByText('Iter N')` continue to match because the literal `"Iter "` text + `"{number}"` text remain in the chip's accessible name (chip-num span carries the number as visible text, NOT `aria-hidden`). | §4.4 explicitly lists "chip cards with +/− counts, new-iteration dot" as restored visuals (line 249). §2.2 permits "small JSX restructuring" alongside class-name changes. The +/- counts are derivable from existing data; iter-new-dot is not. Splitting the deviation between "added" and "deferred" portions is honest about what production currently supports. |
 | **D29** | Production `iteration-tab--more` chip is the handoff "All iterations" entry-point | Style `iteration-tab--more` (the overflow trigger) per handoff `iter-chip-more` (dashed border-style + `--text-3` color). The dropdown panel uses production `iteration-dropdown` + `iteration-option` shape; author it from scratch — the handoff prototype renders the overflow inline rather than as a dropdown, no direct handoff source. | Production renders an actual dropdown listbox (~30 lines of structured JSX in `IterationTabStrip.tsx:39-64`); handoff just renders the overflow chip inline. The dropdown wiring is existing logic; PR4 styles it without a handoff reference (`iteration-dropdown` shell + `iteration-option` rows + `iteration-option--disabled` modifier). New production-only rules; flagged for PR9 visual-coherence review. |
 | **D30** | CommitMultiSelectPicker — no handoff equivalent; production-only styling | Author `CommitMultiSelectPicker.module.css` from scratch. Trigger button reuses `.btn .btn-ghost .btn-sm` globals + a minimal module class for the listbox shell (border + box-shadow + max-height + overflow-y). Per-option row uses module `.commitPickerOption` + `--focused` modifier. SHA prefix uses `.tnum` global. The whole picker shows only on the low-quality clustering path (capability-gated). | The picker is a S3-era production affordance that the handoff prototype never demoed. No design source. Style for keyboard-affordance clarity (visible focused state) and consistency with the iteration strip surface. Flagged for PR9 visual-coherence review. |
 | **D31** | ComparePicker — handoff `iter-compare` is a single chip; production is a 2-select + arrow | Author `ComparePicker.module.css` from scratch. Container is `display: inline-flex; gap: var(--s-2); align-items: center;`. Each `<label>` stacks label-text + `<select>`. The `⇄` arrow gets `color: var(--text-3); font-size: var(--text-sm);`. The `compare-picker-empty` status fallback uses `.muted` global + small font-size. | Handoff `iter-compare` (L199-209) is one chip that opens a comparison flyout. Production renders two side-by-side `<select>`s with an arrow between — different interaction model (a S3-era decision). Visual treatment derived from the surrounding chip-card surface tokens; flagged for PR9 visual-coherence review. |
-| **D32** | FileTree — port handoff `.tree-*` visuals under production `file-tree*` names | The production family is wider than the handoff family: `file-tree`, `file-tree-header`, `file-tree-empty`, `file-tree-list`, `file-tree-file`, `file-tree-file--selected`, `file-status`, `file-status--{added,removed,modified,renamed,copied}`, `file-tree-file-name`, `file-tree-spacer`, `file-tree-viewed-checkbox`, `file-tree-dir`, `file-tree-dir-header`, `file-tree-dir-toggle`, `file-tree-chevron`, `file-tree-chevron--open`, `file-tree-dir-name`. Map handoff treatments: `tree-row` → `.fileTreeFile`; `tree-row.is-selected` → `.fileTreeFile--selected`; `tree-row.is-viewed` → no production class today (the viewed state is in the checkbox `<input>` only — flagged in D33); `tree-status-success/warning/danger/info` → `.fileStatus--added/removed/modified/renamed` etc.; `tree-name` → `.fileTreeFileName` + `.muted`-ish color; `tree-counts` / `tree-add` / `tree-rem` → small module rules with `.tnum`; `tree-ai` AI focus dot → new production-only class `.fileTreeAi` for the canned-data `aiPreview`-gated dot. | Naming asymmetry per D25. The directory-tree shape (`file-tree-dir` + `file-tree-dir-header` + chevron) has no handoff equivalent because the handoff prototype renders a flat file list — production added directory grouping as a usability win. Style the directory shell from production conventions. |
+| **D32** | FileTree — port handoff `.tree-*` visuals under production `file-tree*` names; file-status enum is `'added' \| 'modified' \| 'deleted' \| 'renamed'` (verified at `frontend/src/api/types.ts:209`) | The production family is wider than the handoff family: `file-tree`, `file-tree-header`, `file-tree-empty`, `file-tree-list`, `file-tree-file`, `file-tree-file--selected`, `file-status`, `file-status--{added,modified,deleted,renamed}` (4-value enum — NO `removed`, NO `copied`), `file-tree-file-name`, `file-tree-spacer`, `file-tree-viewed-checkbox`, `file-tree-dir`, `file-tree-dir-header`, `file-tree-dir-toggle`, `file-tree-chevron`, `file-tree-chevron--open`, `file-tree-dir-name`. Map handoff treatments: `tree-row` → `.fileTreeFile`; `tree-row.is-selected` → `.fileTreeFileSelected`; `tree-row.is-viewed` → no production class today (the viewed state is in the checkbox `<input>` only — flagged in D33); `tree-status-success/warning/danger/info` → `.fileStatusAdded/Modified/Deleted/Renamed`; `tree-name` → `.fileTreeFileName` + `.muted`-ish color; `tree-counts` / `tree-add` / `tree-rem` → small module rules with `.tnum`; `tree-ai` AI focus dot → DORMANT module rule `.fileTreeAi` (the JSX wiring for the dot does not exist in production today; rule is dormant per §6.2 dormant-CSS policy, matching PR3 D17 precedent — see D32a). | Naming asymmetry per D25. The directory-tree shape (`file-tree-dir` + `file-tree-dir-header` + chevron) has no handoff equivalent because the handoff prototype renders a flat file list — production added directory grouping as a usability win. Style the directory shell from production conventions. File-status enum is the FileChangeStatus union, not the handoff's semantic labels — verified against source. |
+| **D32a** | `.fileTreeAi` dormant rule ships in PR4; JSX wiring deferred to PR9 | Author `.fileTreeAi { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; }` as a module rule in `FileTree.module.css`. JSX does NOT render `<span class="file-tree-ai">` today (no `aiPreview` consumption in `FileTree.tsx`; no `aiFocus` field on `FileChange`). The dormant rule is ready for PR9 to wire (e.g., conditionally render the dot when `aiPreview && (file as any).aiFocus`). | Spec §4.4 line 249 calls out "AI focus dot when `aiPreview` is on" as a restored visual. Production lacks the data path. Per PR3 D17 dormant-CSS precedent (coherent design intent, single component scope), ship the rule + defer wiring. Reviewer concern that this is YAGNI is acknowledged; same trade as D17 — "1 dormant rule now" vs "second CSS pass when wiring lands." |
 | **D33** | FileTree viewed-state is on the checkbox, not the row | The handoff strikes through the file basename via `.tree-row.is-viewed .tree-name .tree-base`. Production has no `is-viewed` row modifier; the viewed-state is on the `<input type="checkbox">` (`file-tree-viewed-checkbox`). PR4 ports the handoff treatment via a sibling-selector trick: `.fileTreeFile:has(input.fileTreeViewedCheckbox:checked) .fileTreeFileName { color: var(--text-3); text-decoration: line-through; ... }`. If `:has()` support is uncertain, fall back to wiring an `aria-checked` modifier on the row (small JSX touch, §2.2 permits). | The handoff DOM has a state class on the row; production DOM has the state in the checkbox. The CSS `:has()` selector (Baseline 2023, supported in all modern Chromium/Safari/Firefox per Vite's targeted browsers) bridges them without a JSX change. Document the `:has()` choice in the deferrals sidecar for the future-coverage audit. |
-| **D34** | DiffPane — production scaffold is `<table>` rows; handoff is `<div>` rows | Port handoff diff-line visual treatments (add/rem background colors, gutter font-mono, sign color) onto production's `<table>`-based DOM (`diff-table`, `diff-gutter`, `diff-gutter--old`, `diff-gutter--new`, `diff-content`, `diff-hunk-header`). The colspan-3 rendering of `ExistingCommentWidget` and `InlineCommentComposer` under `<tr class="diff-comment-row">` / `<tr class="diff-composer-row">` stays as-is — no JSX scaffold change. The handoff `.diff-line-sbs` side-by-side split is **NOT** ported in PR4 (production is unified-only today; SBS is a S3 deferral). | The DOM scaffold shape difference (`<table>` vs `<div>`) is irrelevant to the CSS color treatments; both can carry the same visual. JSX rewrite to `<div>` rows would be a logic-shaped change (§2.2 disallows). Document the SBS gap in the deferrals sidecar — it's a known production gap, not a PR4 regression. |
+| **D34** | DiffPane diff-line tinting — production class is `.diff-line .diff-line--{insert,delete,context,hunk-header}` (verified at `DiffPane.tsx:193`); lift to `tokens.css` globals | Port handoff diff-line visual treatments onto production's existing literal BEM classes. The class `.diff-line` + modifiers `.diff-line--insert`/`.diff-line--delete`/`.diff-line--context`/`.diff-line--hunk-header` are emitted by the rowClass template literal in `DiffPane.tsx:193` — these are bare global strings with no rules today, exactly matching the §3.1 lift-on-second-use case for any class string used across the diff-pane. PR4 **lifts to `tokens.css`** at Task 10 Step 10.2: `.diff-line` (font-mono base), `.diff-line--insert` (background: `var(--diff-add-bg)`), `.diff-line--delete` (background: `var(--diff-rem-bg)`). DiffPane.module.css supplies the gutter, content, hunk-header, and composer/comment-row classes. The colspan-3 rendering of `ExistingCommentWidget` and `InlineCommentComposer` under `<tr class="diff-comment-row">` / `<tr class="diff-composer-row">` stays as-is — no JSX scaffold change. The handoff `.diff-line-sbs` side-by-side split is **NOT** ported in PR4 (production is unified-only today; SBS is a S3 deferral). | The DOM scaffold shape difference (`<table>` vs `<div>`) is irrelevant to the CSS color treatments. Using the existing literal BEM classes (vs adding `data-kind` attributes) means no JSX touch on the per-row render — the rule fires off the existing class string. Lifting to `tokens.css` instead of module-scoping avoids hashing the rule (the literal class is what JSX emits; the literal is the styling hook). |
 | **D35** | `.diff-pane--empty` no-file-selected rule is new production-only design | Author `.diffPane--empty` in `DiffPane.module.css` (`display: flex; align-items: center; justify-content: center; padding: var(--s-5); min-height: 200px;` plus `.muted` global on the inner `<p>`). The handoff prototype always pre-selects a file, so the empty-state surface doesn't exist there. | Spec §4.4 explicitly calls this out ("the handoff has no `.diff-pane-empty` rule, and this surface is unavoidable in production"). The visual treatment derives from "centered muted text on the surface" — consistent with `DraftListEmpty` and `compare-picker-empty` empty-state precedents. Logged for PR9 to compare against the restored Files-tab visual language. |
-| **D36** | Loading-state Loading… overlay scope | Spec §4.4 line 253 describes a `--text-3` Loading… overlay in the diff toolbar area during in-flight diff fetches. Inspect `DiffPane.tsx` to see whether a Loading-state branch already exists. If not, PR4 adds a minimal `data-loading="true"` attribute on the toolbar (`diff-pane-header` or equivalent) plus a `.diffPaneHeader[data-loading="true"]::after { content: "Loading…"; color: var(--text-3); }` CSS-only overlay — no JSX state change, no React state. If the production component already wires a Loading branch, port the visual into the existing JSX. | The spec describes behavior; production may or may not already wire it. Decide at Task 10 Step 10.1 after inspecting `DiffPane.tsx`. Document the decision in the Task 10 commit. CSS-only attribute-driven approach keeps the surface within §2.2's "no logic changes" boundary. |
+| **D36** | Loading-state Loading… overlay — JSX-driven (`<span>Loading…</span>`); requires threading `isLoading` prop through `DiffPaneProps` | Spec §4.4 line 253 describes a `var(--text-3)` Loading… overlay in the diff toolbar area during in-flight diff fetches. `DiffPane.tsx:12-33` `DiffPaneProps` does NOT carry `isLoading` today (it's on `FileTree`, not `DiffPane`). PR4 threads it: add `isLoading?: boolean` to `DiffPaneProps`; `FilesTab.tsx` passes `isLoading={diff.isLoading}` on the existing `<DiffPane>` mount (`FilesTab.tsx:378-385` region — verify exact line). DiffPane renders a JSX `<span className="diff-pane-loading muted">Loading…</span>` conditional on `isLoading` (B-style, JSX-driven). CSS-only `::after { content: "Loading…" }` (the previous Option A) is **rejected** because CSS-generated content is not announced by screen readers (WCAG 2.1 F87 failure). The JSX `<span>` is naturally in the a11y tree and consumable by screen readers. | Closes the prop-threading gap that would have silently no-op'd a CSS-only attribute-driven approach. JSX rendering also avoids the F87 accessibility hit. Prop threading is a small §2.2-compliant additive prop, not a logic restructure. |
 | **D37** | WordDiffOverlay — production-only; no handoff source | Author `WordDiffOverlay.module.css` from scratch. `.wordDiffOverlay` wraps a span; `.wordDiffInsert` gets `background: var(--diff-add-bg); color: var(--success-fg);`; `.wordDiffDelete` gets `background: var(--diff-rem-bg); color: var(--danger-fg); text-decoration: line-through;`. | The handoff renders no word-level diff overlay (production was authored to surface a finer-grained diff for visual scanning — a S3-era win). No direct source; treatment matches the surrounding diff-add/diff-rem color tokens. Flagged for PR9 visual-coherence review. |
 | **D38** | MarkdownFileView — production-only; no handoff source | Author `MarkdownFileView.module.css` from scratch. `.markdownFileView` = `padding: var(--s-4); background: var(--surface-1);`. `.markdownFileViewToolbar` = horizontal flex with `.toggleBtn` `<button>` siblings; `.toggleBtn--active` = filled accent treatment matching `.iterChip.is-active`. `.markdownFileViewContent` = vertical column. `.markdownRaw` = `font-family: var(--font-mono); font-size: var(--text-sm); white-space: pre; overflow-x: auto;`. Rendered Markdown uses the existing global Markdown styling (presumably via `tokens.css`'s document defaults or a shared MarkdownRenderer component). | Production-only affordance for `.md`/`.markdown` file paths. Treatment matches the surrounding diff-pane surface. Logged for PR9. |
 | **D39** | Composer outer-classes are 3 modules; inner-classes are 7 globals in `tokens.css` | Three composer-outer classes (`inline-comment-composer`, `reply-composer`, the PrRootReplyComposer outer already ported in PR3) each get their own `.module.css` for the outer container only — flex layout, padding, surface, border. The 7 inner classes (D26) all live globally in `tokens.css` post-Task 4. JSX consumes the outer as `${styles.x}` and the inner classes as literal global strings. PR3's `PrRootReplyComposer.module.css` keeps its outer rule (already correct); the local `.composerActions` rule is REMOVED at Task 4 because the global takes over. | Mirrors PR3's test-seam-and-styling-hook unification (D16). Outer is unique per composer (different padding/background — e.g., InlineCommentComposer is mounted inside a `<table>` colspan-3 cell with no surface; ReplyComposer is mounted inside `ExistingCommentWidget` with no surface; PrRootReplyComposer sits on Overview with a `var(--surface-2)` surface). Inner classes are shared treatment — the lift consolidates them. |
@@ -39,7 +40,7 @@ These are PR4-discovered gaps. Each is a deliberate choice surfaced during plan-
 
 ## File structure
 
-**New module CSS files (12):**
+**New module CSS files (14):**
 
 - Create: `frontend/src/components/PrDetail/FilesTab/FilesTab.module.css`
 - Create: `frontend/src/components/PrDetail/FilesTab/IterationTabStrip.module.css`
@@ -82,9 +83,9 @@ These are PR4-discovered gaps. Each is a deliberate choice surfaced during plan-
 
 Vitest selectors that currently use `.querySelector('.file-tree-file')`, `.querySelector('.iteration-tab')`, `.querySelector('.diff-pane')`, etc. migrate to `getByTestId(...)` or module-imported `styles.x`. Exact file list determined by Task 1 Step 1.2 grep.
 
-**Modified shared CSS (D26 + D27 + D39 lift):**
+**Modified shared CSS (D26 + D27 + D34 + D39 lifts):**
 
-- Modify: `frontend/src/styles/tokens.css` — append 7 composer-inner global rules at Task 4 Step 4.2 + replace PR3's `PrRootReplyComposer.module.css` `.composerActions` rule by lifting it as `.composer-actions` (with `margin-top` dropped per D27).
+- Modify: `frontend/src/styles/tokens.css` — append 6 composer-inner global rules at Task 4 Step 4.2 (`.composer-textarea`, `.composer-preview-toggle`, `.composer-badge` + 4 variant modifiers, `.composer-discard`, `.composer-closed-banner`, `.composer-actions` with `margin-top` dropped per D27); append 4 diff-line global rules at Task 10 Step 10.4 (`.diff-line`, `.diff-line--insert`, `.diff-line--delete`, `.diff-line--hunk-header`); replace PR3's `PrRootReplyComposer.module.css` `.composerActions` rule by lifting it as `.composer-actions`.
 - Modify: `frontend/src/components/PrDetail/Composer/PrRootReplyComposer.module.css` — drop the local `.composerActions` rule (Task 4 Step 4.3); keep the `.prRootReplyComposer` outer rule untouched.
 
 **Playwright spec un-fixme + baseline captures (Tasks 20-21):**
@@ -93,7 +94,7 @@ Vitest selectors that currently use `.querySelector('.file-tree-file')`, `.query
 - Create: `frontend/e2e/__screenshots__/win32/pr-detail-files-tree.png` (first capture)
 - Create: `frontend/e2e/__screenshots__/win32/pr-detail-files-diff.png` (first capture)
 
-**Deferrals sidecar (append D25-D42):**
+**Deferrals sidecar (append D25-D42 + D32a):**
 
 - Modify: `docs/specs/2026-05-29-design-parity-recovery-deferrals.md`
 
@@ -104,7 +105,7 @@ Vitest selectors that currently use `.querySelector('.file-tree-file')`, `.query
 **Files:**
 - Read-only scans across `frontend/src/` and `frontend/__tests__/` and `frontend/e2e/`.
 
-- [ ] **Step 1.1: Verify the production class strings PR4 will rewrite are limited to the 13 component files this plan lists**
+- [ ] **Step 1.1: Verify the production class strings PR4 will rewrite are limited to the 15 JSX files this plan lists**
 
 Run from worktree root:
 
@@ -113,9 +114,9 @@ grep -rn --include="*.tsx" --include="*.ts" \
   -e "iteration-tab" -e "iteration-dropdown" -e "iteration-option" \
   -e "commit-multi-select-picker" -e "commit-picker-" \
   -e "compare-picker" \
-  -e "file-tree" -e "file-status" \
+  -e "file-tree" -e "file-status" -e "skeleton-row" \
   -e "files-tab" \
-  -e "diff-pane" -e "diff-gutter" -e "diff-table" -e "diff-content" -e "diff-hunk-header" -e "diff-comment-affordance" -e "diff-comment-row" -e "diff-composer-row" \
+  -e "diff-pane" -e "diff-gutter" -e "diff-table" -e "diff-content" -e "diff-hunk-header" -e "diff-comment-affordance" -e "diff-comment-row" -e "diff-composer-row" -e "diff-line" \
   -e "ai-hunk" \
   -e "comment-widget" -e "comment-thread" -e "comment-entry" -e "comment-meta" -e "comment-author" -e "comment-time" -e "comment-body" \
   -e "diff-truncation-banner" \
@@ -191,7 +192,7 @@ git commit -m "docs(pr4): amend plan after Task 1 pre-flight surfaced <discrepan
 ## Task 2: Add `data-testid` attributes to PR4 components
 
 **Files:**
-- Modify each of the 16 JSX files listed in the "Modified JSX files" section as needed.
+- Modify each of the 15 JSX files listed in the "Modified JSX files" section as needed.
 
 `data-testid` attributes are the selectors PR4's vitest migration (Task 3) and the parity-baselines `pr-detail-files-tree` + `pr-detail-files-diff` zones (Tasks 20-21) consume. Add them in one focused pass before any styling work.
 
@@ -245,7 +246,7 @@ In `ComparePicker.tsx:38`:
 <div className="compare-picker" data-testid="compare-picker">
 ```
 
-- [ ] **Step 2.5: Add `data-testid="file-tree"` to FileTree root + per-row `data-testid="files-tab-tree-row"` + `data-path` (D41)**
+- [ ] **Step 2.5: Add `data-testid="file-tree"` to FileTree root + per-row `data-testid="files-tab-tree-row"` (D41 — `data-path` already exists)**
 
 In `FileTree.tsx:43`:
 
@@ -253,15 +254,15 @@ In `FileTree.tsx:43`:
 <div className="file-tree" role="tree" aria-label="File tree" data-testid="file-tree">
 ```
 
-In `FileTree.tsx:135` (the `FileTreeFileNode`), add `data-testid="files-tab-tree-row"` + `data-path={node.file.path}`:
+In `FileTree.tsx:135` (the `FileTreeFileNode`): production already emits `data-path={node.path}` on this row (verified at `FileTree.tsx:138`). PR4 adds only `data-testid="files-tab-tree-row"`:
 
 ```tsx
 className={`file-tree-file${isSelected ? ' file-tree-file--selected' : ''}`}
 data-testid="files-tab-tree-row"
-data-path={node.file.path}
+data-path={node.path}  // pre-existing — verify it's already on the line
 ```
 
-Both attributes are the D41 fix — `pr-detail-files-diff` test re-selects the file row using `[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]` at Task 20 Step 20.2.
+The combined selector `[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]` consumes both attributes; D41 tightens the test at Task 20 Step 20.2.
 
 Also in the empty-state branch (`FileTree.tsx:35`):
 
@@ -415,15 +416,19 @@ After the `.ai-validator-card__show-me:disabled` rule on line 673, append:
   background: var(--surface-3);
   color: var(--text-2);
 }
-.composer-badge--saving {
-  background: var(--info-soft);
-  color: var(--info-fg);
-}
 .composer-badge--saved {
   background: var(--success-soft);
   color: var(--success-fg);
 }
-.composer-badge--error {
+.composer-badge--saving {
+  background: var(--info-soft);
+  color: var(--info-fg);
+}
+.composer-badge--unsaved {
+  background: var(--warning-soft);
+  color: var(--warning-fg);
+}
+.composer-badge--rejected {
   background: var(--danger-soft);
   color: var(--danger-fg);
 }
@@ -438,12 +443,10 @@ After the `.ai-validator-card__show-me:disabled` rule on line 673, append:
 .composer-discard:hover {
   text-decoration: underline;
 }
-.composer-save {
-  /* Composes with .btn .btn-primary .btn-sm globals in JSX; this module hook is
-     reserved for any composer-save-specific behavior (e.g., loading spinner
-     slot). Currently empty — present to keep the literal class as a stable
-     styling-hook anchor for future state work. */
-}
+/* `.composer-save` is NOT defined here — production JSX (`InlineCommentComposer.tsx:274`,
+   etc.) composes `composer-save btn btn-primary btn-sm`, and the .btn / .btn-primary /
+   .btn-sm globals supply the full visual treatment. An empty `.composer-save` stub
+   would be a speculative future-anchor with no current consumer. */
 .composer-closed-banner {
   font-size: var(--text-sm);
   padding: var(--s-2) var(--s-3);
@@ -462,7 +465,7 @@ After the `.ai-validator-card__show-me:disabled` rule on line 673, append:
 }
 ```
 
-If any of the badge state variants don't exist in production today (verify against `InlineCommentComposer.tsx:256` template literal expansion — `composer-badge composer-badge--${badge}`), the unused selectors become dormant. Per PR3 D17 precedent, dormant *coherent multi-element treatments* are OK to ship as a set; the badge variants are exactly such a set (3 states for a single semantic widget). Document under D26.
+The 4 badge variants align with production `ComposerSaveBadge = 'saved' | 'saving' | 'unsaved' | 'rejected'` (verified at `frontend/src/hooks/useComposerAutoSave.ts:5`). No dormant selectors; all four match real production states. Document under D26.
 
 - [ ] **Step 4.3: Drop the local `.composerActions` rule from `PrRootReplyComposer.module.css`**
 
@@ -511,28 +514,61 @@ git commit -m "feat(pr4): lift 7 composer-inner classes to tokens.css (D15 fulfi
 
 **Files:**
 - Create: `frontend/src/components/PrDetail/FilesTab/IterationTabStrip.module.css`
-- Modify: `frontend/src/components/PrDetail/FilesTab/IterationTabStrip.tsx` (additive JSX: chip-num / chip-label / chip-meta / iter-new-dot inner `<span>`s per D28)
+- Modify: `frontend/src/components/PrDetail/FilesTab/IterationTabStrip.tsx` (additive JSX: chip-num / chip-label / chip-meta inner `<span>`s per D28; iter-new-dot deferred to PR9)
 
 Source the visual treatment from `screens.css:129-209` (the `.iter-*` block).
 
 - [ ] **Step 5.1: Read `IterationTabStrip.tsx` to confirm available data on the iteration prop**
 
-The chip-meta needs `+adds` / `-rems` counts; chip-num needs the iteration index; iter-new-dot needs a "this iteration arrived during the current session" flag (likely a derived `isNew` boolean). Confirm these fields exist before authoring the additive JSX. If `isNew` isn't on the prop, the iter-new-dot is rendered only when the data supports it (degraded gracefully); log the gap to D28 in the sidecar.
+Production `IterationDto` (`frontend/src/api/types.ts:162-168`) carries `{ number, beforeSha, afterSha, commits: CommitDto[], hasResolvableRange }`. No `additions`/`deletions`/`isNew`/`label`/`index` fields. PR4 derives:
+
+- `chip-num` text: `iteration.number` directly.
+- `chip-label` text: keep the existing `Iter ${iter.number}` computed string the production renders today (see `IterationTabStrip.tsx:84`).
+- `chip-meta` adds/rems: client-side sum across `iteration.commits[].additions` and `iteration.commits[].deletions` (CommitDto exposes these per `types.ts:158-159`). Inline the sum at render time — no new helper unless the same sum lands in more than one place.
+- `iter-new-dot`: NOT rendered. No production "this iteration is new" flag exists; synthesizing one needs new state. Logged under D28 as PR9 deferral.
+
+This step is read-only confirmation. No code change yet.
 
 - [ ] **Step 5.2: Write the failing vitest test for chip-meta rendering**
 
-In `frontend/__tests__/IterationTabStrip.test.tsx` (or create if absent):
+In `frontend/__tests__/IterationTabStrip.test.tsx` (existing — augment alongside the existing `getByText('Iter 3')`-style tests; do NOT delete them, the chip-label visible text stays so the existing assertions keep passing):
 
 ```tsx
 import { render, screen } from '@testing-library/react';
 import { IterationTabStrip } from '../src/components/PrDetail/FilesTab/IterationTabStrip';
+import type { IterationDto, CommitDto } from '../src/api/types';
 
-test('renders chip-meta +adds/-rems for each iteration', () => {
-  render(<IterationTabStrip iterations={[
-    { index: 1, label: 'Iter 1', additions: 12, deletions: 3 },
-    { index: 2, label: 'Iter 2', additions: 5, deletions: 18 },
-  ]} activeRange={...} onSelect={() => {}} />);
-  // Validate that both chip-meta spans rendered the +/- counts
+function makeCommit(additions: number, deletions: number): CommitDto {
+  return {
+    sha: 'abc',
+    shortSha: 'abc',
+    message: 'msg',
+    additions,
+    deletions,
+    authoredAt: '2026-05-30T00:00:00Z',
+  };
+}
+
+test('renders chip-meta +adds/-rems summed from iteration.commits', () => {
+  const iterations: IterationDto[] = [
+    {
+      number: 1,
+      beforeSha: 'x',
+      afterSha: 'y',
+      commits: [makeCommit(10, 2), makeCommit(2, 1)],
+      hasResolvableRange: true,
+    },
+    {
+      number: 2,
+      beforeSha: 'y',
+      afterSha: 'z',
+      commits: [makeCommit(5, 18)],
+      hasResolvableRange: true,
+    },
+  ];
+  // Pass remaining required props per the actual IterationTabStripProps shape;
+  // verify against the IterationTabStrip.tsx export at Step 5.1.
+  render(<IterationTabStrip iterations={iterations} /* + other required props */ />);
   expect(screen.getByText('+12')).toBeInTheDocument();
   expect(screen.getByText('-3')).toBeInTheDocument();
   expect(screen.getByText('+5')).toBeInTheDocument();
@@ -540,13 +576,15 @@ test('renders chip-meta +adds/-rems for each iteration', () => {
 });
 ```
 
-Run to verify failure:
+The pre-existing `getByText('Iter 3')` assertions in `IterationTabStrip.test.tsx` continue to match because the chip-label `<span>` still contains the literal text `"Iter 3"` — D28 keeps the visible label string intact. The chip-num `<span>` (`{iteration.number}`) sits BESIDE the chip-label span, not inside it, so it's not part of the `Iter 3` accessible-name token.
+
+Run to verify failure of the new test:
 
 ```bash
 cd frontend && npm run test -- --run IterationTabStrip 2>&1 | tail -10
 ```
 
-Expected: FAIL (chip-meta `<span>`s don't exist yet).
+Expected: FAIL on the new chip-meta assertions; existing assertions still PASS.
 
 - [ ] **Step 5.3: Author `IterationTabStrip.module.css`**
 
@@ -627,13 +665,10 @@ Expected: FAIL (chip-meta `<span>`s don't exist yet).
 .iterationChipAdd { color: var(--success-fg); }
 .iterationChipRem { color: var(--danger-fg); }
 
-.iterationNewDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  margin-left: 4px;
-}
+/* .iterationNewDot — dormant. No production data path for "new iteration"
+   flag (IterationDto has no isNew field). Authoring a rule speculatively was
+   considered and rejected per D28 — wire the flag in PR9 and add the rule
+   then. */
 
 .iterationTabOverflow {
   position: relative;
@@ -693,20 +728,20 @@ Example for the per-iteration chip (`IterationTabStrip.tsx:74`):
   role="tab"
   aria-selected={isActive}
   className={`iteration-tab${isActive ? ' iteration-tab--active' : ''}${disabled ? ' iteration-tab--disabled' : ''} ${styles.iterationTab}${isActive ? ` ${styles.iterationTabActive}` : ''}${disabled ? ` ${styles.iterationTabDisabled}` : ''}`}
-  onClick={() => onSelect(iteration.index)}
+  onClick={() => onSelect(iteration.number)}
   disabled={disabled}
 >
-  <span className={`iteration-chip-num ${styles.iterationChipNum}`}>{iteration.index}</span>
-  <span className={`iteration-chip-label ${styles.iterationChipLabel}`}>{iteration.label}</span>
+  <span className={`iteration-chip-num ${styles.iterationChipNum}`}>{iteration.number}</span>
+  <span className={`iteration-chip-label ${styles.iterationChipLabel}`}>{`Iter ${iteration.number}`}</span>
   <span className={`iteration-chip-meta ${styles.iterationChipMeta}`}>
-    <span className={`iteration-chip-add ${styles.iterationChipAdd}`}>+{iteration.additions}</span>
-    <span className={`iteration-chip-rem ${styles.iterationChipRem}`}>-{iteration.deletions}</span>
+    <span className={`iteration-chip-add ${styles.iterationChipAdd}`}>+{iteration.commits.reduce((sum, c) => sum + c.additions, 0)}</span>
+    <span className={`iteration-chip-rem ${styles.iterationChipRem}`}>-{iteration.commits.reduce((sum, c) => sum + c.deletions, 0)}</span>
   </span>
-  {iteration.isNew && <span className={`iteration-new-dot ${styles.iterationNewDot}`} aria-label="New iteration" />}
+  {/* iter-new-dot omitted — no production data path; PR9 deferral per D28 */}
 </button>
 ```
 
-Apply the same structured-contents pattern to the "All" chip (`activeRange === 'all'` case) and the `iteration-tab--more` overflow chip. For "All", the chip-num is "·" or omitted; chip-meta sums all iterations' adds/rems (or is omitted). For "more", chip-num is "+N" and chip-meta is omitted.
+Apply the same structured-contents pattern to the "All" chip (`activeRange === 'all'` case) and the `iteration-tab--more` overflow chip. For "All", the chip-num is omitted; chip-meta sums all iterations' commits' adds/rems (`iterations.flatMap(i => i.commits).reduce(...)`). For "more", chip-num is "+N" (N being the count of overflowed iterations) and chip-meta is omitted.
 
 Apply the literal-class-and-module pattern (D16) consistently: keep the bare `iteration-tab` etc. literals AND add the `${styles.iterationTab}` hashed class. The hashed class supplies the paint; the literal is the test seam.
 
@@ -876,7 +911,13 @@ git commit -m "feat(pr4): port CommitMultiSelectPicker CSS to module (no handoff
 }
 ```
 
-- [ ] **Step 7.2: Wire the module into `ComparePicker.tsx` using the literal-class-and-module pattern.**
+- [ ] **Step 7.2: Wire the module into `ComparePicker.tsx` using the literal-class-and-module pattern + mark `⇄` arrow decorative.**
+
+The `<span className="compare-picker-arrow">⇄</span>` at `ComparePicker.tsx:57` gets `aria-hidden="true"` — the two labeled `<select>` elements already communicate the comparison direction; the arrow is decorative.
+
+```tsx
+<span className={`compare-picker-arrow ${styles.comparePickerArrow}`} aria-hidden="true">⇄</span>
+```
 
 - [ ] **Step 7.3: Run vitest + commit**
 
@@ -968,11 +1009,22 @@ Source visual treatment from `screens.css:523-585` (the `.tree-*` block).
   font-size: var(--text-xs);
   font-weight: 600;
 }
+/* FileChangeStatus union per frontend/src/api/types.ts:209 — 4 values only.
+   No `removed`, no `copied`. */
 .fileStatusAdded { background: var(--success-soft); color: var(--success-fg); }
-.fileStatusRemoved { background: var(--danger-soft); color: var(--danger-fg); }
 .fileStatusModified { background: var(--warning-soft); color: var(--warning-fg); }
+.fileStatusDeleted { background: var(--danger-soft); color: var(--danger-fg); }
 .fileStatusRenamed { background: var(--info-soft); color: var(--info-fg); }
-.fileStatusCopied { background: var(--info-soft); color: var(--info-fg); }
+
+/* Dormant per D32a — production JSX has no AI-focus-dot wiring today.
+   Rule is ready for PR9 to enable via a small JSX conditional render. */
+.fileTreeAi {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
 
 .fileTreeFileName {
   flex: 1;
@@ -1169,15 +1221,25 @@ If splitting, draft `docs/plans/2026-05-30-design-parity-recovery-pr4b-diff-pane
 
 Source visual treatment from `screens.css:591-679` (`.diff-area`, `.diff-toolbar`, `.diff-body`, `.diff-headers`, `.diff-hunk`, `.diff-line`, `.diff-line-sbs`) but apply to production's `<table>`-based DOM (D34).
 
-- [ ] **Step 10.1: Decide on the Loading… overlay approach (D36)**
+- [ ] **Step 10.1: Thread `isLoading` prop through `DiffPaneProps` (D36)**
 
-Read `DiffPane.tsx` to confirm whether a Loading branch already exists. Pick option A or B and document in this Task 10 commit.
+Production `DiffPaneProps` (`DiffPane.tsx:12-33`) does NOT carry `isLoading`. PR4 adds it as an optional `isLoading?: boolean` prop and threads from `FilesTab.tsx` (the parent owns the diff-fetch state — `diff.isLoading` on the `useFileDiff` hook). Verify the exact `FilesTab.tsx` mount line (around `:378-385`) before editing.
 
-**Option A — CSS-only attribute-driven:** Add `data-loading={isLoading ? 'true' : undefined}` to the diff-pane-header (small JSX touch per §2.2) and a `.diffPaneHeader[data-loading="true"]::after { content: "Loading…"; }` rule.
+```tsx
+// In DiffPane.tsx — extend the props interface
+export interface DiffPaneProps {
+  // ...existing fields
+  isLoading?: boolean;
+}
 
-**Option B — JSX-driven:** Render a `<span>Loading…</span>` conditionally inside the header.
+// In FilesTab.tsx — pass on the existing <DiffPane> mount
+<DiffPane
+  // ...existing props
+  isLoading={diff.isLoading}
+/>
+```
 
-Both are §2.2-compliant. Option A is preferred (no React state changes, lighter diff); Option B if the existing JSX already wires the conditional.
+The Loading… overlay is then rendered as a JSX `<span>` inside the diff-pane header (see Step 10.3). The CSS-only `::after { content: "Loading…" }` approach is **rejected** because CSS-generated content is not announced by screen readers (WCAG 2.1 F87 failure). JSX rendering puts the text in the accessibility tree.
 
 - [ ] **Step 10.2: Author `DiffPane.module.css`**
 
@@ -1208,12 +1270,12 @@ Both are §2.2-compliant. Option A is preferred (no React state changes, lighter
   font-size: var(--text-xs);
   color: var(--text-1);
 }
-.diffPaneHeader[data-loading='true']::after {
-  /* D36 Option A — CSS-only Loading… overlay */
-  content: 'Loading…';
-  color: var(--text-3);
-  font-size: var(--text-xs);
+.diffPaneLoading {
+  /* D36 — JSX `<span className={`diff-pane-loading muted ${styles.diffPaneLoading}`}>Loading…</span>`
+     conditionally rendered when isLoading is true. CSS-generated content via
+     ::after was rejected for WCAG 2.1 F87 (CSS content not announced). */
   margin-left: auto;
+  font-size: var(--text-xs);
 }
 .diffPanePath {
   font-family: var(--font-mono);
@@ -1262,23 +1324,12 @@ Both are §2.2-compliant. Option A is preferred (no React state changes, lighter
   overflow: visible;
 }
 
-/* Add/Remove row tinting — handoff `diff-line.diff-add` / `diff-line.diff-rem` */
-.diffPane tr[data-kind='add'] {
-  background: var(--diff-add-bg);
-}
-.diffPane tr[data-kind='add'] .diffContent::before {
-  content: '+';
-  color: var(--success-fg);
-  margin-right: 4px;
-}
-.diffPane tr[data-kind='rem'] {
-  background: var(--diff-rem-bg);
-}
-.diffPane tr[data-kind='rem'] .diffContent::before {
-  content: '-';
-  color: var(--danger-fg);
-  margin-right: 4px;
-}
+/* Add/Remove row tinting lives in tokens.css as GLOBAL rules on the literal
+   class strings production already emits (`diff-line diff-line--insert` /
+   `diff-line diff-line--delete`, see DiffPane.tsx:193). See Task 10 Step 10.2
+   "Append to tokens.css" below for the lifted rules. The module CSS scopes only
+   the diff-pane-specific surfaces (header, gutter, content, hunk-header, etc.)
+   that don't share styling with other components. */
 
 /* Comment-affordance gutter button */
 .diffCommentAffordance {
@@ -1314,15 +1365,52 @@ Both are §2.2-compliant. Option A is preferred (no React state changes, lighter
 }
 ```
 
-If the JSX-side has data attributes that don't match this CSS (`data-kind='add'` etc.), inspect `DiffPane.tsx` and prefer adding the data attribute over rewriting the CSS — the data attribute is the cleaner selector hook than a state class (`diff-line.diff-add`-style modifier).
+Diff-line add/remove tinting is NOT in this module file — it lives as global rules on the literal `diff-line diff-line--insert/--delete` BEM classes that production already emits at `DiffPane.tsx:193`. See Step 10.4 below for the `tokens.css` lift.
 
-- [ ] **Step 10.3: Wire the module into `DiffPane.tsx`** with the literal-class-and-module pattern. If Option A was chosen for D36, add `data-loading` to the header element.
+- [ ] **Step 10.3: Wire the module into `DiffPane.tsx`** with the literal-class-and-module pattern. Render the JSX Loading… span conditional on `isLoading` inside the diff-pane header:
 
-- [ ] **Step 10.4: Run vitest + commit**
+```tsx
+<div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+  <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
+  {isLoading && (
+    <span className={`diff-pane-loading muted ${styles.diffPaneLoading}`}>Loading…</span>
+  )}
+</div>
+```
+
+- [ ] **Step 10.4: Append diff-line tint globals to `tokens.css`**
+
+After the composer-inner globals appended in Task 4 Step 4.2, append the diff-line tints. These match production's literal `diff-line diff-line--{insert,delete,context,hunk-header}` class strings (verified at `DiffPane.tsx:193`):
+
+```css
+
+/* Diff-line tints (spec §4.4, D34). Lifted from the per-row literal class
+   strings DiffPane emits — `.diff-line diff-line--insert` / `--delete` /
+   `--context` / `--hunk-header`. Global because the literal is what JSX emits
+   and no scoping is gained by hashing. Sourced from screens.css L637-678
+   (`.diff-line.diff-add` / `.diff-line.diff-rem` equivalents). */
+.diff-line {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.diff-line--insert {
+  background: var(--diff-add-bg);
+}
+.diff-line--delete {
+  background: var(--diff-rem-bg);
+}
+.diff-line--hunk-header {
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: var(--text-xs);
+}
+```
+
+- [ ] **Step 10.5: Run vitest + commit**
 
 ```bash
 cd frontend && npm run test -- --run DiffPane 2>&1 | tail -10
-git add frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.module.css
+git add frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.module.css frontend/src/components/PrDetail/FilesTab/FilesTab.tsx frontend/src/styles/tokens.css
 git commit -m "feat(pr4): port DiffPane CSS incl. empty-state + Loading overlay (D34/D35/D36)"
 ```
 
@@ -1423,13 +1511,16 @@ Source visual treatment from `screens.css:728-732` (`.comment-meta`, `.comment-a
   background: var(--surface-2);
 }
 .commentThread {
+  /* Handoff `.thread-widget` border-left accent rail (screens.css L708-715) */
   display: flex;
   flex-direction: column;
   gap: var(--s-2);
   padding: var(--s-2);
   background: var(--surface-1);
   border: 1px solid var(--border-1);
+  border-left: 2px solid var(--accent);
   border-radius: var(--radius-3);
+  overflow: hidden;
 }
 .commentThreadResolved {
   opacity: 0.7;
@@ -1818,11 +1909,9 @@ For each delta, decide: (a) ports cleanly with a one-line CSS adjustment — app
 
 Same exercise for the diff-pane / hunk-header / diff-line / comment-thread / composer surfaces.
 
-- [ ] **Step 22.5: Quick verify D24 (AiSummaryCard active shape) on a fresh look**
-
-Bring up the Overview tab side-by-side on the same fixture. Confirm or revise PR3's D24 disposition. If preference changes (the `.overview-card-hero` shape is preferred over the smaller `.pr-ai-summary` shape from PR3), apply now via the D24 revert recipe: drop the `padding` + `border-radius` overrides from `AiSummaryCard.module.css`'s `.aiSummaryCard` rule, letting the global `.overview-card-hero` win. Add a brief D24 update to the sidecar at Task 23.
-
 (No commit from Task 22 itself — any follow-up CSS adjustments commit in Task 22 as feat(pr4) follow-ups.)
+
+**Out-of-scope note on PR3 D24:** the side-by-side review may surface an opinion on whether the AiSummaryCard hero-shape adjudication from PR3 D24 should flip. PR4 does NOT modify `AiSummaryCard.module.css` — that's a PR3 file and the D24 verdict was deferred to PR9 (the audit pass). If side-by-side review surfaces a confident verdict, log it as a one-line update to D24 in the deferrals sidecar with the implementer's name + reasoning so PR9 has fresh signal. Do not edit the AiSummaryCard rule in this PR.
 
 ---
 
@@ -1846,12 +1935,12 @@ Author one entry per D-number from this plan's deviation table, using the same s
 
 **Status:** Applied in PR4.
 
-### D26 — Composer-inner class lift to `tokens.css` (PR3 D15 fulfillment)
+### D26 — 6 composer-inner classes lifted to `tokens.css` (PR3 D15 fulfillment); badge variants aligned with production union
 
 **Date:** 2026-05-30 (PR4 Task 4).
 **Spec position:** §3.1 lift-on-second-use rule; §4.4 lists all 3 composers; D15 (PR3) explicitly deferred the lift to PR4.
-**Reality:** Three composers (`InlineCommentComposer`, `ReplyComposer`, `PrRootReplyComposer`) all consume the same 7 inner classes (`composer-textarea`, `composer-preview-toggle`, `composer-badge`, `composer-badge--{saving|saved|error}`, `composer-discard`, `composer-save`, `composer-closed-banner`). Lift-on-second-use → lift-on-third-use unambiguously qualifies for `tokens.css`.
-**Plan resolution:** Append 7 global rules to `tokens.css` at Task 4 Step 4.2. PrRootReplyComposer's local `.composerActions` rule (PR3) is dropped and replaced by the global `.composer-actions` consumed via literal class.
+**Reality:** Three composers (`InlineCommentComposer`, `ReplyComposer`, `PrRootReplyComposer`) all consume the same 6 inner classes (`composer-textarea`, `composer-preview-toggle`, `composer-badge` + `composer-badge--{saved,saving,unsaved,rejected}` modifiers, `composer-discard`, `composer-closed-banner`, `composer-actions`). The badge state union is `'saved' | 'saving' | 'unsaved' | 'rejected'` (verified at `frontend/src/hooks/useComposerAutoSave.ts:5`). Lift-on-third-use unambiguously qualifies for `tokens.css`. `.composer-save` is NOT lifted — the `.btn .btn-primary .btn-sm` globals supply the full visual treatment in production JSX; an empty stub would be speculative.
+**Plan resolution:** Append 6 global rules to `tokens.css` at Task 4 Step 4.2. PrRootReplyComposer's local `.composerActions` rule (PR3) is dropped and replaced by the global `.composer-actions` consumed via literal class.
 **Status:** Applied in PR4.
 **Cross-refs:** PR3 D15.
 
@@ -1864,13 +1953,13 @@ Author one entry per D-number from this plan's deviation table, using the same s
 **Status:** Applied in PR4.
 **Cross-refs:** PR3 b4a916b annotation; PR3 D15; PR3 D21.
 
-### D28 — IterationTabStrip — small additive JSX permitted per §4.4 chip anatomy
+### D28 — IterationTabStrip chip-num + chip-meta inner spans only; iter-new-dot DEFERRED (no production data source)
 
 **Date:** 2026-05-30 (PR4 Task 5).
 **Spec position:** §4.4 line 249 — "iteration tab strip (chip cards with +/− counts, new-iteration dot)". §2.2 permits "small JSX restructuring".
-**Reality:** Production JSX renders only `{iterationLabel}` text inside each chip. The handoff chip renders structured contents (chip-num + chip-label + chip-meta with +/- spans + iter-new-dot).
-**Plan resolution:** Add 4-6 inner `<span>` elements per chip (chip-num, chip-label, chip-meta, iter-add, iter-rem, iter-new-dot). All data sourced from existing iteration prop fields (`index`, `label`, `additions`, `deletions`, `isNew`-equivalent). No state changes; existing click and aria-selected wiring stays.
-**Status:** Applied in PR4. If any iteration prop field is genuinely missing, the relevant inner `<span>` renders conditionally and the gap is logged here.
+**Reality:** Production `IterationDto` (`frontend/src/api/types.ts:162-168`) carries `{ number, beforeSha, afterSha, commits: CommitDto[], hasResolvableRange }` — there are NO `additions`/`deletions`/`isNew`/`label`/`index` fields. The chip-num + chip-label + chip-meta DOM is constructable from existing data; iter-new-dot is not.
+**Plan resolution:** Ship 3 of the 4 inner spans: (a) chip-num renders `{iteration.number}`; (b) chip-label preserves the existing visible "Iter N" computed text so pre-existing `getByText('Iter 3')` tests still match; (c) chip-meta with `+adds`/`-rems` computed inline as `iteration.commits.reduce((s, c) => s + c.additions, 0)`. iter-new-dot is NOT rendered; the omission is documented for PR9 to wire via a state hook if needed.
+**Status:** Applied in PR4 (chip-num + chip-meta); iter-new-dot deferred to PR9.
 **Cross-refs:** Spec §4.4; §2.2 small-JSX-restructuring carve-out.
 
 ### D29 — IterationTabStrip overflow chip + dropdown styled production-only
@@ -1889,21 +1978,30 @@ Author one entry per D-number from this plan's deviation table, using the same s
 **Plan resolution:** Style for keyboard-affordance clarity (visible focused state) and consistency with the iteration strip surface tokens.
 **Status:** Applied in PR4. Flagged for PR9 visual-coherence review.
 
-### D31 — ComparePicker — production-only interaction shape
+### D31 — ComparePicker — production-only interaction shape; component is currently dead code (no production import)
 
 **Date:** 2026-05-30 (PR4 Task 7).
 **Spec position:** Handoff `iter-compare` is one chip that opens a comparison flyout; production renders two side-by-side `<select>`s with an arrow between.
-**Reality:** S3-era decision to use native `<select>` controls instead of a flyout — different interaction model than the handoff prototype.
-**Plan resolution:** Style derived from surrounding chip-card surface tokens (`var(--surface-2)` background + `var(--border-1)` border). Arrow uses `var(--text-3)`.
-**Status:** Applied in PR4. Flagged for PR9 visual-coherence review.
+**Reality:** S3-era decision to use native `<select>` controls instead of a flyout — different interaction model than the handoff prototype. ADDITIONALLY: grep for `import.*ComparePicker` and `<ComparePicker` across `frontend/src/` returns zero matches (verified 2026-05-30). The component file + its vitest test exist, but nothing mounts it in the running app — `FilesTab.tsx` renders only `IterationTabStrip` or `CommitMultiSelectPicker` depending on the clustering path. PR4's CSS work for ComparePicker is forward-compat only; the parity-baseline `pr-detail-files-tree` zone does NOT capture ComparePicker because it doesn't render.
+**Plan resolution:** Style derived from surrounding chip-card surface tokens (`var(--surface-2)` background + `var(--border-1)` border). Arrow uses `var(--text-3)`. Arrow `⇄` carries `aria-hidden="true"` since the two labeled selects already communicate direction. Ship the CSS even though the component is dormant — keeping styling current avoids a later re-port pass when ComparePicker mounts.
+**Status:** Applied in PR4 (CSS shipped; mount path is a separate slice's concern). Flagged for PR9 visual-coherence review on whether the styled-but-dormant component should be removed or wired.
 
-### D32 — FileTree — port handoff `tree-*` under production `file-tree*` names
+### D32 — FileTree — port handoff `tree-*` under production `file-tree*` names; file-status enum is `'added' | 'modified' | 'deleted' | 'renamed'`
 
 **Date:** 2026-05-30 (PR4 Task 8).
 **Spec position:** Production family is wider than handoff (directory grouping + dir chevron + dir toggle have no handoff equivalent — production added directory grouping as a usability win).
-**Reality:** Mapping: `tree-row` → `.fileTreeFile`; `tree-row.is-selected` → `.fileTreeFileSelected`; `tree-status-success/warning/danger/info` → `.fileStatusAdded/Removed/Modified/Renamed/Copied`; `tree-name` → `.fileTreeFileName`; `tree-counts` + `tree-add` + `tree-rem` → small module rules with `.tnum`; `tree-ai` AI focus dot → `.fileTreeAi` (canned-data + `aiPreview`-gated).
+**Reality:** Mapping: `tree-row` → `.fileTreeFile`; `tree-row.is-selected` → `.fileTreeFileSelected`; `tree-status-success/warning/danger/info` → `.fileStatusAdded` / `.fileStatusModified` / `.fileStatusDeleted` / `.fileStatusRenamed` (verified against `FileChangeStatus` union at `frontend/src/api/types.ts:209` — 4 values, no `removed`, no `copied`); `tree-name` → `.fileTreeFileName`; `tree-counts` + `tree-add` + `tree-rem` → small module rules with `.tnum`.
 **Plan resolution:** Module CSS authored under production class names; handoff visual treatment ported.
 **Status:** Applied in PR4.
+
+### D32a — `.fileTreeAi` ships as a dormant rule; JSX wiring deferred to PR9
+
+**Date:** 2026-05-30 (PR4 Task 8).
+**Spec position:** §4.4 line 249 names "AI focus dot when `aiPreview` is on" as a restored visual; production has no data path for it today.
+**Reality:** `FileTree.tsx` has no `aiPreview` consumption, no `aiFocus`-shaped prop on `FileChange`, no `<span class="file-tree-ai">` render. Adding the JSX wiring requires both a new state hook AND a data extension on `FileChange` — out of §2.2 scope for a CSS-only slice.
+**Plan resolution:** `.fileTreeAi` rule (`6px × 6px` accent dot) lands in `FileTree.module.css` as a dormant module rule. PR9 can wire the JSX conditional render alongside other AI-surface decisions.
+**Status:** Dormant rule applied in PR4; wiring deferred to PR9.
+**Cross-refs:** PR3 D17 dormant-CSS precedent; §6.2 dormant-CSS policy.
 
 ### D33 — FileTree viewed-state is on the checkbox; CSS `:has()` selector bridges it
 
@@ -1913,13 +2011,13 @@ Author one entry per D-number from this plan's deviation table, using the same s
 **Plan resolution:** Bridge via the CSS `:has()` selector (`.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeFileName { ... }`). Baseline 2023; supported in all current Chromium, Safari, Firefox. PRism's targeted browsers (per `package.json` browserslist or default Vite) include these. Fallback if a future browser context lacks `:has()`: wire `aria-checked` on the row and a sibling state class via small JSX touch.
 **Status:** Applied in PR4. Documented for future-coverage audit.
 
-### D34 — DiffPane DOM is `<table>` rows; handoff is `<div>` rows — visual treatment ports
+### D34 — DiffPane diff-line tinting uses production literal BEM classes lifted to `tokens.css`
 
 **Date:** 2026-05-30 (PR4 Task 10).
-**Spec position:** Spec §4.4 names DiffPane as scope; handoff uses `<div>` shape.
-**Reality:** Production scaffolds the diff body as a `<table>` with `<tr class="diff-line">`-style rows. Handoff uses `<div>` rows with `.diff-line` / `.diff-line-sbs` / `.diff-half` modifiers. Visual treatments (add/rem background, gutter font-mono, sign color) are scaffold-independent.
-**Plan resolution:** Port handoff visual treatments onto production's `<table>` scaffold via data attributes (`tr[data-kind='add']`-style). Side-by-side diff (`.diff-line-sbs`) is NOT ported in PR4 — production is unified-only today; SBS is a separate S3 deferral.
-**Status:** Applied in PR4. SBS gap logged separately as out-of-scope production gap, not a PR4 regression.
+**Spec position:** Spec §4.4 names DiffPane as scope.
+**Reality:** Production `DiffPane.tsx:193` emits `rowClass = \`diff-line diff-line--${line.type}\`` where `line.type` is `'context' | 'insert' | 'delete' | 'hunk-header'`. The literal classes are bare strings with no rules today — exactly the §3.1 lift-on-second-use case (every diff row IS a consumer). The handoff prototype uses different rule names but the visual treatments map cleanly.
+**Plan resolution:** Lift 4 global rules to `tokens.css` at Task 10 Step 10.4: `.diff-line` (font-mono base), `.diff-line--insert` (add tint), `.diff-line--delete` (rem tint), `.diff-line--hunk-header` (header surface). DiffPane.module.css supplies the gutter, content, comment-row, composer-row, header surfaces that are diff-pane-specific. Side-by-side diff (`.diff-line-sbs`) is NOT ported in PR4 — production is unified-only today.
+**Status:** Applied in PR4. The CSS-only-data-attribute approach considered in the original plan draft (`tr[data-kind='add']`) was rejected because production already emits the literal BEM class strings; adding `data-kind` would have been a JSX touch with no payoff.
 
 ### D35 — `.diff-pane--empty` no-file-selected rule is new production-only design
 
@@ -1929,13 +2027,13 @@ Author one entry per D-number from this plan's deviation table, using the same s
 **Plan resolution:** `.diffPaneEmpty` rule = centered muted text + min-height. Visual derivation matches `DraftListEmpty` and `compare-picker-empty` precedents.
 **Status:** Applied in PR4. Flagged for PR9 visual-coherence review.
 
-### D36 — Loading… overlay implementation chosen at Task 10 Step 10.1
+### D36 — Loading… overlay is JSX-driven `<span>`; `isLoading` prop threaded through `DiffPaneProps`
 
 **Date:** 2026-05-30 (PR4 Task 10).
 **Spec position:** Spec §4.4 line 253 describes a `var(--text-3)` Loading… overlay in the diff toolbar area during in-flight diff fetches.
-**Reality:** Inspecting `DiffPane.tsx` determines whether a Loading branch already exists.
-**Plan resolution (chosen option recorded at Task 10 commit):** Option A — CSS-only `data-loading` attribute-driven, `.diffPaneHeader[data-loading="true"]::after { content: "Loading…"; }`. Option B — JSX-driven conditional `<span>Loading…</span>`. Both §2.2-compliant; Option A preferred (no React state changes, lighter diff).
-**Status:** Applied in PR4 (record final A/B choice in this entry at commit time).
+**Reality:** `DiffPane.tsx:12-33` `DiffPaneProps` does NOT carry `isLoading` (the prop lives on `FileTree`, not `DiffPane`). PR4 adds `isLoading?: boolean` to `DiffPaneProps` and threads `isLoading={diff.isLoading}` on the `<DiffPane>` mount in `FilesTab.tsx`.
+**Plan resolution:** JSX `<span className="diff-pane-loading muted">Loading…</span>` rendered conditionally inside the diff-pane header when `isLoading` is true. The CSS-only `::after { content: "Loading…" }` approach was rejected per WCAG 2.1 F87 — CSS-generated content is not in the accessibility tree. JSX rendering puts the text in the a11y tree where screen readers can find it.
+**Status:** Applied in PR4.
 
 ### D37 — WordDiffOverlay — production-only; no handoff source
 
