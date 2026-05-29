@@ -65,7 +65,7 @@ function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
       {label}
       {count !== undefined && count > 0 && (
         <>
-          <span className="pr-tab-count" aria-hidden="true">
+          <span className="pr-tab-count" data-testid="pr-tab-count" aria-hidden="true">
             {count}
           </span>
           {/* SR companion so the tab announces "Files, 3 items" rather than
