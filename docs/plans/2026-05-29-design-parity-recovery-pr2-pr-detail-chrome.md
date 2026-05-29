@@ -101,11 +101,14 @@ If any of these greps surface a query the plan didn't enumerate, **stop and repo
 
 ## Task 2: Add data-testid hooks before classname rename
 
-**Goal:** Add `data-testid="pr-title"` and `data-testid="pr-tab-count"` to the JSX so the test-selector migration in Task 3 has a stable target. Adding the attributes first lets the existing tests pass through the rename in any order.
+**Goal:** Add `data-testid="pr-title"`, `data-testid="pr-tab-count"`, and `data-testid="imported-drafts-banner"` to the JSX so the test-selector migration in Task 3 has a stable target. Adding the attributes first lets the existing tests pass through the rename in any order.
+
+**Plan amendment (2026-05-29 pre-flight).** The third `data-testid` (`imported-drafts-banner`) is added in response to Task 1's discovery: `frontend/e2e/s5-submit-foreign-pending-review.spec.ts:64` queries `.locator('.imported-drafts-banner')`. After Task 8 module-scopes the class, the global selector would break. Same migration pattern as the other two — add a `data-testid` in Task 2, migrate the query in Task 3.
 
 **Files:**
 - Modify: `frontend/src/components/PrDetail/PrHeader.tsx:285`
 - Modify: `frontend/src/components/PrDetail/PrSubTabStrip.tsx:68`
+- Modify: `frontend/src/components/PrDetail/ForeignPendingReviewModal/ImportedDraftsBanner.tsx:38`
 
 - [ ] **Step 1: Add `data-testid="pr-title"` to the `<h1>` in PrHeader**
 
@@ -137,7 +140,22 @@ After:
 </span>
 ```
 
-- [ ] **Step 3: Run vitest to confirm no regression from attribute additions**
+- [ ] **Step 3: Add `data-testid="imported-drafts-banner"` to the outer `<div>` in ImportedDraftsBanner**
+
+Edit `frontend/src/components/PrDetail/ForeignPendingReviewModal/ImportedDraftsBanner.tsx:38`:
+
+Before:
+```tsx
+<div className="imported-drafts-banner banner-warning" role="status">
+```
+After:
+```tsx
+<div className="imported-drafts-banner banner-warning" data-testid="imported-drafts-banner" role="status">
+```
+
+Preserve `role="status"` — it's the existing semantic identity for screen-reader announcement.
+
+- [ ] **Step 4: Run vitest to confirm no regression from attribute additions**
 
 Run:
 ```powershell
@@ -145,16 +163,21 @@ cd frontend; npm test -- --run PrSubTabStrip
 ```
 Expected: 9/9 tests in `PrSubTabStrip.test.tsx` pass (the existing `.querySelector('.pr-tab-count')` still matches because the class is still there).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```powershell
 cd ..
-git add frontend/src/components/PrDetail/PrHeader.tsx frontend/src/components/PrDetail/PrSubTabStrip.tsx
-git commit -m "feat(pr2): add data-testid hooks for pr-title and pr-tab-count
+git add frontend/src/components/PrDetail/PrHeader.tsx frontend/src/components/PrDetail/PrSubTabStrip.tsx frontend/src/components/PrDetail/ForeignPendingReviewModal/ImportedDraftsBanner.tsx
+git commit -m "feat(pr2): add data-testid hooks for pr-title, pr-tab-count, imported-drafts-banner
 
 Stable test-selector targets ahead of the CSS module rename in PR2.
 Adding the data-testid first lets existing classname-based queries
 continue to pass through the rename in any order.
+
+Third hook (imported-drafts-banner) added in response to Task 1
+pre-flight discovery: s5-submit-foreign-pending-review.spec.ts:64
+queries .imported-drafts-banner as a global class; Task 8 hashes it,
+so the Playwright assertion would silently fail without this hook.
 
 Spec: docs/specs/2026-05-29-design-parity-recovery-design.md §4.1.3
 Plan: docs/plans/2026-05-29-design-parity-recovery-pr2-pr-detail-chrome.md"
@@ -196,6 +219,19 @@ Same `.pr-tab-count` → `[data-testid="pr-tab-count"]` replacement.
 
 Two occurrences of `.locator('.pr-tab-count')` to migrate. Both lines: replace `.pr-tab-count` with `[data-testid="pr-tab-count"]`.
 
+- [ ] **Step 4b: Update `frontend/e2e/s5-submit-foreign-pending-review.spec.ts:64`**
+
+Before:
+```ts
+await expect(page.locator('.imported-drafts-banner')).toContainText(
+```
+After:
+```ts
+await expect(page.locator('[data-testid="imported-drafts-banner"]')).toContainText(
+```
+
+This selector was added to the migration list during Task 1 pre-flight (it wasn't in the original spec §6.1 survey). The rest of the assertion (text content, options) stays unchanged.
+
 - [ ] **Step 5: Update `frontend/e2e/no-layout-shift-on-banner.spec.ts` (BOTH `h1.pr-title` occurrences — lines 52 and 59)**
 
 The spec has two `h1.pr-title` references:
@@ -236,11 +272,14 @@ Expected: 9/9 tests pass (data-testid query now resolves; classname removed).
 
 ```powershell
 cd ..
-git add frontend/__tests__/PrSubTabStrip.test.tsx frontend/e2e/s4-multi-tab-consistency.spec.ts frontend/e2e/s4-drafts-survive-restart.spec.ts frontend/e2e/s5-marker-prefix-collision.spec.ts frontend/e2e/no-layout-shift-on-banner.spec.ts
-git commit -m "test(pr2): migrate .pr-tab-count and h1.pr-title queries to data-testid
+git add frontend/__tests__/PrSubTabStrip.test.tsx frontend/e2e/s4-multi-tab-consistency.spec.ts frontend/e2e/s4-drafts-survive-restart.spec.ts frontend/e2e/s5-marker-prefix-collision.spec.ts frontend/e2e/s5-submit-foreign-pending-review.spec.ts frontend/e2e/no-layout-shift-on-banner.spec.ts
+git commit -m "test(pr2): migrate .pr-tab-count, h1.pr-title, .imported-drafts-banner queries to data-testid
 
-Switches 5 test/spec files off CSS class selectors ahead of the
-PrHeader and PrSubTabStrip CSS module rename. Spec §6.1 mitigation.
+Switches 6 test/spec files off CSS class selectors ahead of the
+PrHeader, PrSubTabStrip, and ImportedDraftsBanner CSS module renames.
+Spec §6.1 mitigation. The s5-submit-foreign-pending-review.spec.ts
+migration was added during Task 1 pre-flight (the .imported-drafts-banner
+query wasn't in the original spec §6.1 survey).
 
 Spec: docs/specs/2026-05-29-design-parity-recovery-design.md §4.2 + §6.1"
 ```
