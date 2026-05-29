@@ -37,7 +37,7 @@ PR2 does **not** add `data-testid="pr-actions"` because no test queries it today
 - `frontend/src/components/PrDetail/BannerRefresh.module.css` — No handoff source; layout-only (action-group flex). Composes with `.banner` global.
 - `frontend/src/components/PrDetail/CrossTabPresenceBanner.module.css` — No handoff source; layout-only (action-group flex, optional warning tint via `.banner-warning`). Composes with `.banner`.
 - `frontend/src/components/PrDetail/ForeignPendingReviewModal/ImportedDraftsBanner.module.css` — No handoff source; multi-paragraph spacing only.
-- `frontend/e2e/__screenshots__/win32/parity-baselines.spec.ts/pr-detail-header.png` — First viewport baseline captured during this slice (committed as binary).
+- `frontend/e2e/__screenshots__/win32/pr-detail-header.png` — First viewport baseline captured during this slice (committed as binary).
 
 **Modify (13):**
 - `frontend/src/components/PrDetail/PrHeader.tsx` — Classname swap to `styles.*`; add `data-testid="pr-title"` to `<h1>` at line 285; keep dormant bare classes `pr-subtitle-author`, `pr-subtitle-branch`, `pr-meta-repo` per spec §6.2 spirit.
@@ -758,7 +758,7 @@ Deviation: deferrals sidecar PR2 → D6, D7"
 
 **Files:**
 - Modify: `frontend/e2e/parity-baselines.spec.ts:127-134`
-- Create: `frontend/e2e/__screenshots__/win32/parity-baselines.spec.ts/pr-detail-header.png` (binary; via `--update-snapshots`)
+- Create: `frontend/e2e/__screenshots__/win32/pr-detail-header.png` (binary; via `--update-snapshots`)
 
 - [ ] **Step 1: Un-fixme the pr-detail-header block**
 
@@ -781,7 +781,7 @@ In the worktree's `frontend/` directory (no other PowerShell needed):
 ```powershell
 cd frontend; npx playwright test parity-baselines --update-snapshots --grep "pr-detail-header" --project=prod
 ```
-Expected: Playwright spawns the Test-env backend + Vite dev server, the test passes, and one new file at `frontend/e2e/__screenshots__/win32/parity-baselines.spec.ts/pr-detail-header.png` is written.
+Expected: Playwright spawns the Test-env backend + Vite dev server, the test passes, and one new file at `frontend/e2e/__screenshots__/win32/pr-detail-header.png` is written.
 
 `--project=prod` matches the canonical CI baseline path (CI runs only `prod` per `playwright.config.ts:132`). Locally without the filter, both `dev` and `prod` projects would run and contend on the same baseline file.
 
@@ -798,7 +798,7 @@ Expected: 1 pass (diff against the committed baseline). Playwright tears down th
 
 ```powershell
 cd ..
-git add frontend/e2e/parity-baselines.spec.ts frontend/e2e/__screenshots__/win32/parity-baselines.spec.ts/pr-detail-header.png
+git add frontend/e2e/parity-baselines.spec.ts frontend/e2e/__screenshots__/win32/pr-detail-header.png
 git commit -m "test(pr2): un-fixme pr-detail-header parity baseline + capture first PNG
 
 Locks the PR Detail header zone (PrHeader + PrSubTabStrip + actions)
