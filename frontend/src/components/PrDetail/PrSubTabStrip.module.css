@@ -1,0 +1,60 @@
+.prTabs {
+  display: flex;
+  gap: 2px;
+  margin-top: var(--s-4);
+  margin-left: -4px;
+}
+
+.prTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 14px;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  font-weight: 500;
+  position: relative;
+}
+
+.prTab:hover {
+  color: var(--text-1);
+}
+
+.prTab.isActive {
+  color: var(--text-1);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.prTab.isDisabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.prTabCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border-radius: 999px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.prTab.isActive .prTabCount {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.prTabCountWarn {
+  background: var(--warning-soft) !important;
+  color: var(--warning-fg) !important;
+}

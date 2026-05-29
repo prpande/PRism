@@ -1,0 +1,9 @@
+.importedDraftsBanner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.importedDraftsBanner p {
+  margin: 0;
+}

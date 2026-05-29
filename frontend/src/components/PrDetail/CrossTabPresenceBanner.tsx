@@ -1,3 +1,5 @@
+import styles from './CrossTabPresenceBanner.module.css';
+
 interface CrossTabPresenceBannerProps {
   visible: boolean;
   // True when a peer tab has CLAIMED ownership of this PR via the take-over
@@ -35,9 +37,13 @@ export function CrossTabPresenceBanner({
     ? 'Another tab claimed this PR. Composer actions are disabled here. Switch to that tab to keep editing.'
     : 'This PR is open in another tab. Saves may overwrite each other.';
   return (
-    <div role="alert" aria-live="assertive" className="cross-tab-presence-banner">
-      <span className="cross-tab-presence-banner-message">{message}</span>
-      <div className="cross-tab-presence-banner-actions">
+    <div
+      role="alert"
+      aria-live="assertive"
+      className={`banner ${readOnly ? 'banner-warning' : ''}`.trim()}
+    >
+      <span className={styles.crossTabPresenceBannerMessage}>{message}</span>
+      <div className={styles.crossTabPresenceBannerActions}>
         <button type="button" className="btn btn-secondary btn-sm" onClick={onSwitchToOther}>
           Switch to other tab
         </button>
@@ -53,7 +59,7 @@ export function CrossTabPresenceBanner({
           // forces it visible), so the button would appear to do nothing.
           // Hide it to avoid a confusing no-op control. Recovery from
           // read-only is via Switch-to-other-tab or a page reload.
-          <button type="button" className="btn btn-link btn-sm" onClick={onDismiss}>
+          <button type="button" className="btn btn-link" onClick={onDismiss}>
             Dismiss for this session
           </button>
         )}

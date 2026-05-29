@@ -1,3 +1,5 @@
+import styles from './BannerRefresh.module.css';
+
 interface BannerRefreshProps {
   hasUpdate: boolean;
   headShaChanged: boolean;
@@ -21,15 +23,15 @@ export function BannerRefresh({
   if (!message) return null;
 
   return (
-    <div role="status" aria-live="polite" className="banner-refresh" data-testid="reload-banner">
-      <span className="banner-refresh-message">{message}</span>
-      <div className="banner-refresh-actions">
+    <div role="status" aria-live="polite" className="banner" data-testid="reload-banner">
+      <span className={styles.bannerRefreshMessage}>{message}</span>
+      <div className={styles.bannerRefreshActions}>
         <button type="button" className="btn btn-primary btn-sm" onClick={onReload}>
           Reload
         </button>
         <button
           type="button"
-          className="btn-icon banner-refresh-dismiss"
+          className={`btn-icon ${styles.bannerRefreshDismiss}`}
           onClick={onDismiss}
           aria-label="Dismiss banner"
         >

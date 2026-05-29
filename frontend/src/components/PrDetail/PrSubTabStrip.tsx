@@ -1,3 +1,5 @@
+import styles from './PrSubTabStrip.module.css';
+
 export type PrTabId = 'overview' | 'files' | 'drafts';
 
 interface PrSubTabStripProps {
@@ -14,7 +16,7 @@ export function PrSubTabStrip({
   draftsCount,
 }: PrSubTabStripProps) {
   return (
-    <div role="tablist" className="pr-tabs">
+    <div role="tablist" className={styles.prTabs}>
       <Tab
         id="overview"
         label="Overview"
@@ -56,7 +58,9 @@ function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
       aria-selected={active}
       aria-disabled={disabled || undefined}
       tabIndex={disabled ? -1 : 0}
-      className={`pr-tab ${active ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}`.trim()}
+      className={[styles.prTab, active && styles.isActive, disabled && styles.isDisabled]
+        .filter(Boolean)
+        .join(' ')}
       data-testid={`pr-tab-${id}`}
       onClick={() => {
         if (!disabled) onSelect(id);
@@ -65,7 +69,7 @@ function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
       {label}
       {count !== undefined && count > 0 && (
         <>
-          <span className="pr-tab-count" aria-hidden="true">
+          <span className={styles.prTabCount} data-testid="pr-tab-count" aria-hidden="true">
             {count}
           </span>
           {/* SR companion so the tab announces "Files, 3 items" rather than

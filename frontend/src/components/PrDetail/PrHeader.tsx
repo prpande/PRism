@@ -19,6 +19,7 @@ import { SubmitButton } from './SubmitButton';
 import { SubmitInProgressBadge } from './SubmitInProgressBadge';
 import { DiscardAllDraftsButton } from './DiscardAllDraftsButton';
 import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDraftsBanner';
+import styles from './PrHeader.module.css';
 import { AskAiButton } from './AskAiButton';
 import { AskAiEmptyState } from './AskAiEmptyState';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
@@ -272,8 +273,8 @@ export function PrHeader({
   };
 
   return (
-    <div className="pr-header" data-testid="pr-header">
-      <div className="pr-header-top">
+    <div className={styles.prHeader} data-testid="pr-header">
+      <div className={styles.prHeaderTop}>
         <div className="pr-meta col gap-1">
           <div className="row gap-2 muted-2 pr-meta-repo">
             <span>
@@ -282,8 +283,10 @@ export function PrHeader({
             <span aria-hidden="true">·</span>
             <span>#{reference.number}</span>
           </div>
-          <h1 className="pr-title">{title}</h1>
-          <div className="row gap-3 muted-2 pr-subtitle">
+          <h1 className={styles.prTitle} data-testid="pr-title">
+            {title}
+          </h1>
+          <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
             <span className="pr-subtitle-author">{author}</span>
             {branchInfo && (
               <span className="pr-subtitle-branch">
@@ -299,7 +302,7 @@ export function PrHeader({
             {iterationLabel && <span className="chip">{iterationLabel}</span>}
           </div>
         </div>
-        <div className="pr-actions">
+        <div className={styles.prActions}>
           {/* Only when nothing is in flight in *this* tab — re-firing submit()
               over an active pipeline would 409 and (caught) wedge the dialog. */}
           {session && submit.state.kind === 'idle' && (

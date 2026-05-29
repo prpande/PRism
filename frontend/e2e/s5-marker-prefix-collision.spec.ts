@@ -65,7 +65,9 @@ test('S5 marker-prefix collision — a body carrying the PRism client-id marker 
   await page.reload();
   await page.getByRole('tab', { name: /^Drafts/i }).click();
   await expect(page.getByText(/prism:client-id:fake/)).toHaveCount(0);
-  await expect(page.getByRole('tab', { name: /^Drafts/i }).locator('.pr-tab-count')).toHaveCount(0);
+  await expect(
+    page.getByRole('tab', { name: /^Drafts/i }).locator('[data-testid="pr-tab-count"]'),
+  ).toHaveCount(0);
 });
 
 test('S5 marker-prefix collision — the same substring inside a fenced code block is accepted', async ({
@@ -92,8 +94,7 @@ test('S5 marker-prefix collision — the same substring inside a fenced code blo
   await page.reload();
   await page.getByRole('tab', { name: /^Drafts/i }).click();
   await expect(page.getByText('prism:client-id:literal').first()).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole('tab', { name: /^Drafts/i }).locator('.pr-tab-count')).toHaveText(
-    '1',
-    { timeout: 10_000 },
-  );
+  await expect(
+    page.getByRole('tab', { name: /^Drafts/i }).locator('[data-testid="pr-tab-count"]'),
+  ).toHaveText('1', { timeout: 10_000 });
 });

@@ -124,7 +124,7 @@ test.describe('parity baselines — Settings', () => {
 });
 
 test.describe('parity baselines — PR Detail', () => {
-  test.fixme('pr-detail-header', async ({ page }) => {
+  test('pr-detail-header', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });

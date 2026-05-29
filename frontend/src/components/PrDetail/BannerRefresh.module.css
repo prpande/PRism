@@ -1,0 +1,19 @@
+.bannerRefreshMessage {
+  flex: 1;
+  min-width: 0;
+}
+
+.bannerRefreshActions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex: none;
+}
+
+.bannerRefreshDismiss {
+  color: var(--text-3);
+}
+
+.bannerRefreshDismiss:hover {
+  color: var(--text-1);
+}

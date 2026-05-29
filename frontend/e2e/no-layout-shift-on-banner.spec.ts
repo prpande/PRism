@@ -49,14 +49,18 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   // page.waitForLoadState('networkidle') — the active-PR poller fires every 1s
   // (PRISM_POLLER_CADENCE_SECONDS=1 in playwright.config.ts) and never lets
   // networkidle settle.
-  await expect(page.locator('h1.pr-title')).toHaveText('Calc utilities');
+  await expect(page.locator('[data-testid="pr-title"]')).toHaveText('Calc utilities');
   await expect(page.locator('[data-testid="pr-tab-files"]')).toBeVisible();
   await subscriptionPosted;
   await page.addStyleTag({
     content: '*, *::before, *::after { animation: none !important; transition: none !important; }',
   });
 
-  const targets = ['[data-testid="pr-header"]', 'h1.pr-title', '[data-testid="pr-tab-files"]'];
+  const targets = [
+    '[data-testid="pr-header"]',
+    '[data-testid="pr-title"]',
+    '[data-testid="pr-tab-files"]',
+  ];
   const captureBoxes = (sels: string[]) =>
     page.evaluate((selectors) => {
       return selectors.map((sel) => {

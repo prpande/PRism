@@ -62,6 +62,6 @@ describe('PrSubTabStrip', () => {
   it('does NOT render a "0" count next to Drafts tab when draftsCount is 0', () => {
     render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} draftsCount={0} />);
     const drafts = screen.getByRole('tab', { name: /drafts/i });
-    expect(drafts.querySelector('.pr-tab-count')).toBeNull();
+    expect(drafts.querySelector('[data-testid="pr-tab-count"]')).toBeNull();
   });
 });
