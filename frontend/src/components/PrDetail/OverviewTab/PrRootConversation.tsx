@@ -3,6 +3,7 @@ import type { DraftCommentDto, IssueCommentDto, PrReference } from '../../../api
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
+import styles from './PrRootConversation.module.css';
 
 export interface PrRootConversationReplyContext {
   prRef: PrReference;
@@ -27,16 +28,16 @@ interface PrRootConversationProps {
 
 export function PrRootConversation({ comments, replyContext }: PrRootConversationProps) {
   return (
-    <section className="overview-card pr-root-conversation">
+    <section className={`overview-card ${styles.prRootConversation}`}>
       {comments.map((comment) => (
-        <article key={comment.id} className="pr-root-comment" data-testid="pr-root-comment">
-          <header className="pr-root-comment-meta">
-            <span className="pr-root-comment-author">{comment.author}</span>
-            <time className="pr-root-comment-time" dateTime={comment.createdAt}>
+        <article key={comment.id} className={styles.prRootComment} data-testid="pr-root-comment">
+          <header className={styles.prRootCommentMeta}>
+            <span className={styles.prRootCommentAuthor}>{comment.author}</span>
+            <time className={styles.prRootCommentTime} dateTime={comment.createdAt}>
               {new Date(comment.createdAt).toLocaleDateString()}
             </time>
           </header>
-          <div className="pr-root-comment-body">
+          <div className={styles.prRootCommentBody}>
             <MarkdownRenderer source={comment.body} />
           </div>
         </article>
@@ -49,7 +50,9 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
         // (e.g., a future Drafts-tab preview slot). The S3-shipped message
         // ("Reply lands when…S4") was retired with PR5; the new fallback
         // is stable across slices.
-        <p className="pr-root-conversation-footer muted">Composer not available in this context.</p>
+        <p className={`${styles.prRootConversationFooter} muted`}>
+          Composer not available in this context.
+        </p>
       )}
     </section>
   );
@@ -83,10 +86,10 @@ function PrRootConversationActions({
   };
 
   return (
-    <div className="pr-root-conversation-actions">
-      <div className="pr-root-conversation-actions-row">
+    <div className={styles.prRootConversationActions}>
+      <div className={styles.prRootConversationActionsRow}>
         {!composerOpen && (
-          <button type="button" className="pr-root-reply-button" onClick={handleReplyClick}>
+          <button type="button" className={styles.prRootReplyButton} onClick={handleReplyClick}>
             Reply
           </button>
         )}

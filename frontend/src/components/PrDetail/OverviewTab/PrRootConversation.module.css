@@ -1,0 +1,135 @@
+.prRootConversation {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/*
+ * Per D13, comments form a vertical timeline. The 28px padding-left reserves
+ * a "rail" gutter column matching the handoff's `grid-template-columns: 28px 1fr`
+ * shape. The ::before line and ::after dot live inside this gutter; the comment
+ * body sits to the right of it.
+ */
+.prRootComment {
+  position: relative;
+  padding: 0 0 var(--s-4) 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prRootComment:last-of-type {
+  padding-bottom: 0;
+}
+
+.prRootComment::before {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-1);
+}
+
+.prRootComment:last-of-type::before {
+  bottom: 50%;
+}
+
+.prRootComment::after {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.prRootCommentMeta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-size: var(--text-xs);
+  flex-wrap: wrap;
+}
+
+.prRootCommentAuthor {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.prRootCommentTime {
+  color: var(--text-3);
+}
+
+.prRootCommentBody {
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-3);
+  padding: var(--s-3) var(--s-4);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  line-height: 1.55;
+}
+
+.prRootCommentBody p {
+  margin: 0 0 8px;
+  text-wrap: pretty;
+  white-space: pre-wrap;
+}
+
+.prRootCommentBody p:last-child {
+  margin: 0;
+}
+
+.prRootCommentBody code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  background: var(--surface-3);
+  border-radius: 3px;
+  color: var(--text-1);
+}
+
+.prRootConversationActions {
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.prRootConversationActionsRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.prRootReplyButton {
+  display: inline-flex;
+  align-items: center;
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--text-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: 8px 12px;
+  cursor: text;
+  transition: all var(--t-fast);
+}
+
+.prRootReplyButton:hover {
+  border-color: var(--border-strong);
+  color: var(--text-2);
+}
+
+.prRootConversationFooter {
+  font-size: var(--text-xs);
+  margin-top: var(--s-3);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--border-1);
+}
