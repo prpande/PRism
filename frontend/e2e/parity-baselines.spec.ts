@@ -35,6 +35,9 @@ const SCREENSHOT_OPTS = {
   maxDiffPixelRatio: 0.02,
 };
 
+const KILL_ANIMATIONS_CSS =
+  '*, *::before, *::after { animation: none !important; transition: none !important; }';
+
 test.beforeEach(async () => {
   const ctx = await request.newContext();
   await resetBackendState(ctx);
@@ -48,10 +51,7 @@ test.describe('parity baselines — Inbox', () => {
     // setupAndOpenScenarioPr lands on '/', so wait for the inbox list to
     // mount.
     await page.locator('main').waitFor();
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(page.locator('main')).toHaveScreenshot('inbox.png', SCREENSHOT_OPTS);
   });
 
@@ -63,10 +63,7 @@ test.describe('parity baselines — Inbox', () => {
     // viewport satisfies this.
     const rail = page.locator('[data-testid="activity-rail"]');
     await rail.waitFor();
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(rail).toHaveScreenshot('inbox-activity-rail.png', SCREENSHOT_OPTS);
   });
 });
@@ -77,10 +74,7 @@ test.describe('parity baselines — Setup', () => {
     await page.goto('/setup');
     const card = page.locator('[data-testid="setup-card"]');
     await card.waitFor();
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(card).toHaveScreenshot('setup-card.png', SCREENSHOT_OPTS);
   });
 });
@@ -91,10 +85,7 @@ test.describe('parity baselines — Settings', () => {
     await setupAndOpenScenarioPr(page);
     await page.goto('/settings');
     await page.locator('[data-testid="settings-page"]').waitFor();
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(page.locator('[data-testid="settings-page"]')).toHaveScreenshot(
       'settings-page.png',
       SCREENSHOT_OPTS,
@@ -106,10 +97,7 @@ test.describe('parity baselines — PR Detail', () => {
   test('pr-detail-header', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(page.locator('[data-testid="pr-header"]')).toHaveScreenshot(
       'pr-detail-header.png',
       SCREENSHOT_OPTS,
@@ -121,10 +109,7 @@ test.describe('parity baselines — PR Detail', () => {
     await setupAndOpenHandoffParityFixture(page);
     const overview = page.locator('[data-testid="overview-tab"]');
     await overview.waitFor();
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(overview).toHaveScreenshot('pr-detail-overview.png', SCREENSHOT_OPTS);
   });
 
@@ -134,10 +119,7 @@ test.describe('parity baselines — PR Detail', () => {
     await page.goto('/pr/acme/api/123/files');
     const tree = page.locator('[data-testid="files-tab-tree"]');
     await tree.waitFor();
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(tree).toHaveScreenshot('pr-detail-files-tree.png', SCREENSHOT_OPTS);
   });
 
@@ -150,10 +132,7 @@ test.describe('parity baselines — PR Detail', () => {
     await page.locator('[data-testid="files-tab-tree"]').getByText('Calc.cs').click();
     const diff = page.locator('[data-testid="files-tab-diff"]');
     await diff.waitFor();
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
 
@@ -163,10 +142,7 @@ test.describe('parity baselines — PR Detail', () => {
     await page.goto('/pr/acme/api/123/drafts');
     const drafts = page.locator('[data-testid="drafts-tab"]');
     await drafts.waitFor();
-    await page.addStyleTag({
-      content:
-        '*, *::before, *::after { animation: none !important; transition: none !important; }',
-    });
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(drafts).toHaveScreenshot('pr-detail-drafts.png', SCREENSHOT_OPTS);
   });
 
