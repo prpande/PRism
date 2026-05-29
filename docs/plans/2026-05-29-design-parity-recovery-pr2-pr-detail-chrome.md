@@ -645,7 +645,7 @@ Find the `.btn-icon` block in `frontend/src/styles/tokens.css` (around line 331-
 }
 
 .btn-link:hover {
-  color: var(--accent-strong);
+  color: var(--accent-hover);
   text-decoration: none;
 }
 ```

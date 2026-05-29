@@ -349,7 +349,7 @@ a:hover { text-decoration: underline; }
 }
 
 .btn-link:hover {
-  color: var(--accent-strong);
+  color: var(--accent-hover);
   text-decoration: none;
 }
 
