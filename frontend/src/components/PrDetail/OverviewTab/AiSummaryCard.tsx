@@ -8,7 +8,10 @@ export function AiSummaryCard({ summary }: AiSummaryCardProps) {
   if (!summary) return null;
 
   return (
-    <section className="ai-summary-card overview-card overview-card-hero ai-tint">
+    <section
+      className="ai-summary-card overview-card overview-card-hero ai-tint"
+      data-testid="ai-summary-card"
+    >
       <div className="ai-summary-chip muted">
         AI preview — sample content, not generated from this PR
       </div>

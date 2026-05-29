@@ -29,7 +29,7 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
   return (
     <section className="overview-card pr-root-conversation">
       {comments.map((comment) => (
-        <article key={comment.id} className="pr-root-comment">
+        <article key={comment.id} className="pr-root-comment" data-testid="pr-root-comment">
           <header className="pr-root-comment-meta">
             <span className="pr-root-comment-author">{comment.author}</span>
             <time className="pr-root-comment-time" dateTime={comment.createdAt}>

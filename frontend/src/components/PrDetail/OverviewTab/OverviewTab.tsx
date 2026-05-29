@@ -83,7 +83,7 @@ export function OverviewTab() {
   );
 
   return (
-    <div className="overview-tab overview-grid">
+    <div className="overview-tab overview-grid" data-testid="overview-tab">
       <AiSummaryCard summary={aiSummary} />
       <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiPreview} />
       <StatsTiles

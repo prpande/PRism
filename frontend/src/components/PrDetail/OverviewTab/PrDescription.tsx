@@ -13,7 +13,7 @@ export function PrDescription({ title, body, aiPreview }: PrDescriptionProps) {
     : 'overview-card pr-description overview-card-hero-no-ai';
 
   return (
-    <section className={cardClass}>
+    <section className={cardClass} data-testid="pr-description">
       {!aiPreview && <div className="pr-description-title">{title}</div>}
       {isEmptyBody ? (
         <p className="pr-description-empty muted">No description provided</p>
