@@ -37,7 +37,11 @@ export function ImportedDraftsBanner({ snapshotA, snapshotB, hasResolvedImports 
   return (
     // role="status" already implies aria-live="polite" — the note is announced
     // when this banner mounts after a Resume.
-    <div className={`${styles.importedDraftsBanner} banner-warning`} data-testid="imported-drafts-banner" role="status">
+    <div
+      className={`${styles.importedDraftsBanner} banner-warning`}
+      data-testid="imported-drafts-banner"
+      role="status"
+    >
       {countDrift && (
         <p>
           The pending review changed during the prompt — {snapshotB.threadCount} thread(s) /{' '}

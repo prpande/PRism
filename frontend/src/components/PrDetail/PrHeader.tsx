@@ -283,7 +283,9 @@ export function PrHeader({
             <span aria-hidden="true">·</span>
             <span>#{reference.number}</span>
           </div>
-          <h1 className={styles.prTitle} data-testid="pr-title">{title}</h1>
+          <h1 className={styles.prTitle} data-testid="pr-title">
+            {title}
+          </h1>
           <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
             <span className="pr-subtitle-author">{author}</span>
             {branchInfo && (

@@ -56,7 +56,11 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
     content: '*, *::before, *::after { animation: none !important; transition: none !important; }',
   });
 
-  const targets = ['[data-testid="pr-header"]', '[data-testid="pr-title"]', '[data-testid="pr-tab-files"]'];
+  const targets = [
+    '[data-testid="pr-header"]',
+    '[data-testid="pr-title"]',
+    '[data-testid="pr-tab-files"]',
+  ];
   const captureBoxes = (sels: string[]) =>
     page.evaluate((selectors) => {
       return selectors.map((sel) => {

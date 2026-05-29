@@ -37,7 +37,11 @@ export function CrossTabPresenceBanner({
     ? 'Another tab claimed this PR. Composer actions are disabled here. Switch to that tab to keep editing.'
     : 'This PR is open in another tab. Saves may overwrite each other.';
   return (
-    <div role="alert" aria-live="assertive" className={`banner ${readOnly ? 'banner-warning' : ''}`.trim()}>
+    <div
+      role="alert"
+      aria-live="assertive"
+      className={`banner ${readOnly ? 'banner-warning' : ''}`.trim()}
+    >
       <span className={styles.crossTabPresenceBannerMessage}>{message}</span>
       <div className={styles.crossTabPresenceBannerActions}>
         <button type="button" className="btn btn-secondary btn-sm" onClick={onSwitchToOther}>

@@ -53,7 +53,9 @@ test('cross-tab presence banner + draft sync across two pages', async ({ browser
 
   // Tab B picks up the state-changed SSE event and refetches the session;
   // the Drafts-tab badge transitions 0 → 1.
-  await expect(pageB.locator('[data-testid="pr-tab-count"]')).toContainText('1', { timeout: 15_000 });
+  await expect(pageB.locator('[data-testid="pr-tab-count"]')).toContainText('1', {
+    timeout: 15_000,
+  });
 
   await context.close();
 });
