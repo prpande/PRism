@@ -337,6 +337,22 @@ a:hover { text-decoration: underline; }
 }
 .btn-icon:hover { background: var(--surface-3); color: var(--text-1); }
 
+.btn-link {
+  background: transparent;
+  color: var(--accent);
+  border: none;
+  padding: 0;
+  height: auto;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.btn-link:hover {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
 /* Kbd */
 .kbd {
   display: inline-flex;
