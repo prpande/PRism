@@ -4,7 +4,7 @@ import { StatsTiles } from '../src/components/PrDetail/OverviewTab/StatsTiles';
 
 function findTile(label: string) {
   const heading = screen.getByText(new RegExp(`^${label}$`, 'i'));
-  return heading.closest('.stats-tile') as HTMLElement;
+  return heading.closest('[data-testid="stats-tile"]') as HTMLElement;
 }
 
 describe('StatsTiles', () => {

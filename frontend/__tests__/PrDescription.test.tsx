@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { PrDescription } from '../src/components/PrDetail/OverviewTab/PrDescription';
 
@@ -20,7 +20,7 @@ describe('PrDescription', () => {
     const { container } = render(
       <PrDescription title="Title" body="Body content" aiPreview={false} />,
     );
-    const card = container.querySelector('.pr-description');
+    const card = within(container).getByTestId('pr-description');
     expect(card).toHaveClass('overview-card-hero-no-ai');
     expect(card).toHaveClass('overview-card');
   });
@@ -28,6 +28,7 @@ describe('PrDescription', () => {
   it('renders the leading title row when aiPreview is false', () => {
     render(<PrDescription title="Renewal worker batches" body="Body" aiPreview={false} />);
     const titleEl = screen.getByText('Renewal worker batches');
+    // TODO: Migrate to `closest(\`.\${styles.prDescriptionTitle}\`)` after Task 6 creates the CSS module.
     expect(titleEl.closest('.pr-description-title')).toBeTruthy();
   });
 
@@ -35,7 +36,7 @@ describe('PrDescription', () => {
     const { container } = render(
       <PrDescription title="Title" body="Body content" aiPreview={true} />,
     );
-    const card = container.querySelector('.pr-description');
+    const card = within(container).getByTestId('pr-description');
     expect(card).not.toHaveClass('overview-card-hero-no-ai');
     expect(card).toHaveClass('overview-card');
   });
