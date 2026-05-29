@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text;
 using FluentAssertions;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
@@ -13,12 +14,19 @@ namespace PRism.Web.Tests.Endpoints;
 public class EventsSubscriptionsEndpointTests
 {
     [Fact]
-    public async Task Subscribe_returns_401_when_no_cookie_session_present()
+    public async Task Subscribe_returns_403_when_no_cookie_session_present()
     {
         // Endpoint's own no-cookie defense (middleware would also 401 if X-PRism-Session
         // were missing). Use an unauthenticated client + manual X-PRism-Session header
         // + a same-origin Origin header so SessionToken AND OriginCheck middleware pass
         // — the test isolates the endpoint's no-cookie branch.
+        //
+        // Status changed from 401 → 403 in design-parity-recovery PR1 (§4.1.2): 401 means
+        // "session token is bad — re-auth"; 403 means "this operation requires SSE connect
+        // first." The user IS authenticated; the missing cookie is a sequencing
+        // prerequisite, not an auth failure. Prevents apiClient.ts:75-77 from dispatching
+        // prism-auth-rejected and bouncing the user to /setup in dev mode where Vite
+        // serves the SPA on :5173 and Kestrel never stamped the cookie on :5180.
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateUnauthenticatedClient();
 
@@ -28,9 +36,15 @@ public class EventsSubscriptionsEndpointTests
         };
         req.Headers.Add("X-PRism-Session", factory.SessionToken);
         req.Headers.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
-        // No Cookie header — the endpoint must reject with 401.
+        // No Cookie header — the endpoint must reject with 403.
         var resp = await client.SendAsync(req);
-        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        // Pin the response body's problem type to /events/no-session so this test
+        // doesn't silently pass if a future middleware change emits 403 from a
+        // different layer (e.g., OriginCheckMiddleware also returns 403 for a wrong
+        // Origin). The body-type assertion isolates the endpoint's no-cookie branch.
+        var problem = await resp.Content.ReadFromJsonAsync<ProblemDetails>();
+        problem!.Type.Should().Be("/events/no-session");
     }
 
     [Fact]
