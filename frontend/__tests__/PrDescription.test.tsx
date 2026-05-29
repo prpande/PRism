@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { PrDescription } from '../src/components/PrDetail/OverviewTab/PrDescription';
+import styles from '../src/components/PrDetail/OverviewTab/PrDescription.module.css';
 
 describe('PrDescription', () => {
   it('renders the body as Markdown', () => {
@@ -28,8 +29,7 @@ describe('PrDescription', () => {
   it('renders the leading title row when aiPreview is false', () => {
     render(<PrDescription title="Renewal worker batches" body="Body" aiPreview={false} />);
     const titleEl = screen.getByText('Renewal worker batches');
-    // TODO: Migrate to `closest(\`.\${styles.prDescriptionTitle}\`)` after Task 6 creates the CSS module.
-    expect(titleEl.closest('.pr-description-title')).toBeTruthy();
+    expect(titleEl.closest(`.${styles.prDescriptionTitle}`)).toBeTruthy();
   });
 
   it('omits the hero modifier when aiPreview is true (AiSummaryCard takes the hero)', () => {

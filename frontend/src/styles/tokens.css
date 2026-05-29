@@ -491,6 +491,19 @@ a:hover { text-decoration: underline; }
   background: linear-gradient(135deg, var(--surface-1), color-mix(in oklch, var(--accent-soft) 40%, var(--surface-1)));
   border: 1px solid color-mix(in oklch, var(--accent) 25%, var(--border-1));
 }
+
+.overview-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-3);
+  padding: var(--s-4) var(--s-5);
+}
+
+.overview-card-hero {
+  border-radius: var(--radius-4);
+  padding: var(--s-5) var(--s-5);
+}
+
 .ai-icon {
   display: inline-flex;
   align-items: center;
