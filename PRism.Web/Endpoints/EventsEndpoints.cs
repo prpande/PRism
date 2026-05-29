@@ -63,10 +63,18 @@ internal static class EventsEndpoints
         var cookieSessionId = ctx.Request.Cookies["prism-session"];
         if (string.IsNullOrEmpty(cookieSessionId))
         {
+            // 401 means "session token is bad — re-auth"; 403 means "this operation
+            // requires the SSE connect prerequisite." The user IS authenticated (the
+            // middleware bypass in dev mode passed them through); the missing cookie
+            // is a sequencing prerequisite, not an auth failure. Returning 401 here
+            // caused apiClient.ts to dispatch prism-auth-rejected, flipping the SPA's
+            // isAuthed to false and force-redirecting protected routes to /setup in
+            // dev mode (Vite serves SPA on :5173, Kestrel stamps cookie on :5180 only).
+            // See docs/specs/2026-05-29-design-parity-recovery-design.md §4.1.2.
             return TypedResults.Problem(
-                detail: "No prism-session cookie present on this request.",
+                detail: "No prism-session cookie present on this request — connect to /api/events first.",
                 type: "/events/no-session",
-                statusCode: StatusCodes.Status401Unauthorized);
+                statusCode: StatusCodes.Status403Forbidden);
         }
 
         // SseChannel resolves the cookie's most-recent still-connected subscriberId AND
