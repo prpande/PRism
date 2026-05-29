@@ -52,7 +52,7 @@ describe('PrRootConversation', () => {
 
   it('renders no comment entries when comments is empty', () => {
     const { container } = render(<PrRootConversation comments={[]} />);
-    expect(container.querySelectorAll('.pr-root-comment')).toHaveLength(0);
+    expect(within(container).queryAllByTestId('pr-root-comment')).toHaveLength(0);
   });
 
   it('renders a single comment with author, timestamp, and Markdown body', () => {
@@ -82,13 +82,13 @@ describe('PrRootConversation', () => {
 
   it('keys comments by id (no React duplicate-key warning when shapes differ)', () => {
     const { container } = render(<PrRootConversation comments={[aliceComment, bobComment]} />);
-    const items = container.querySelectorAll('.pr-root-comment');
+    const items = within(container).queryAllByTestId('pr-root-comment');
     expect(items).toHaveLength(2);
   });
 
   it('isolates each comment so author is scoped to its entry', () => {
     const { container } = render(<PrRootConversation comments={[aliceComment, bobComment]} />);
-    const entries = container.querySelectorAll('.pr-root-comment');
+    const entries = within(container).queryAllByTestId('pr-root-comment');
     expect(within(entries[0] as HTMLElement).getByText('alice')).toBeInTheDocument();
     expect(within(entries[1] as HTMLElement).getByText('bob')).toBeInTheDocument();
   });

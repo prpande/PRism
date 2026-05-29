@@ -1,0 +1,20 @@
+.overviewCta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--s-3) var(--s-2);
+  margin-top: var(--s-2);
+}
+
+.overviewCtaEmpty {
+  font-size: var(--text-xs);
+  margin: 0 var(--s-3) 0 0;
+}
+
+.overviewCtaFooter {
+  font-size: var(--text-xs);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useFirstActivePrPollComplete } from '../../../hooks/useFirstActivePrPollComplete';
 import { sendPatch } from '../../../api/draft';
 import type { PrReference } from '../../../api/types';
+import styles from './MarkAllReadButton.module.css';
 
 // Caveat for future maintainers: in the current PoC, the backend
 // `markAllRead` patch resolves to `PatchOutcome.NoOp` until
@@ -67,7 +68,7 @@ export function MarkAllReadButton({ prRef, readOnly = false }: MarkAllReadButton
   return (
     <button
       type="button"
-      className="mark-all-read-button"
+      className={`btn btn-ghost btn-sm ${styles.markAllReadButton}`}
       disabled={disabled}
       title={
         readOnly

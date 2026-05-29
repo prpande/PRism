@@ -1,3 +1,5 @@
+import styles from './ReviewFilesCta.module.css';
+
 interface ReviewFilesCtaProps {
   hasFiles: boolean;
   onReviewFiles: () => void;
@@ -7,7 +9,7 @@ const EMPTY_HELP_ID = 'review-files-empty-help';
 
 export function ReviewFilesCta({ hasFiles, onReviewFiles }: ReviewFilesCtaProps) {
   return (
-    <div className="overview-cta">
+    <div className={styles.overviewCta}>
       <button
         type="button"
         className="btn btn-primary"
@@ -18,11 +20,11 @@ export function ReviewFilesCta({ hasFiles, onReviewFiles }: ReviewFilesCtaProps)
         Review files
       </button>
       {!hasFiles && (
-        <p id={EMPTY_HELP_ID} className="overview-cta-empty muted">
+        <p id={EMPTY_HELP_ID} className={`${styles.overviewCtaEmpty} muted`}>
           No files to review yet
         </p>
       )}
-      <p className="overview-cta-footer muted">
+      <p className={`${styles.overviewCtaFooter} muted`}>
         <kbd>j</kbd> next file · <kbd>k</kbd> previous · <kbd>v</kbd> mark viewed
       </p>
     </div>

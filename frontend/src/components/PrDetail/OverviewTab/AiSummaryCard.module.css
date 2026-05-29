@@ -1,0 +1,80 @@
+/*
+ * Intentionally tighter padding + smaller border-radius than `.overview-card-hero`
+ * (handoff `.pr-ai-summary` shape — `screens.css:84-89`). The JSX composes
+ * `overview-card overview-card-hero ai-tint` literal classes alongside this
+ * hashed module class; Vite injects CSS-modules AFTER the global tokens.css,
+ * so this rule wins the equal-specificity cascade over `.overview-card-hero`'s
+ * larger padding/radius. This is the production active-shape parity delta from
+ * handoff `pr-detail.jsx:194` (which uses `overview-card overview-card-hero`
+ * without the smaller AI-summary override) — see D24 in the deferrals sidecar.
+ */
+.aiSummaryCard {
+  margin-top: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius-3);
+  font-size: var(--text-sm);
+}
+
+.aiSummaryChip {
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 600;
+  margin-bottom: var(--s-3);
+}
+
+.aiSummaryBody {
+  color: var(--text-1);
+  margin-bottom: 6px;
+  line-height: 1.55;
+}
+
+.aiSummaryCategory {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  margin-top: var(--s-2);
+}
+
+/* Dormant: not yet rendered by production JSX. See D17 in deferrals. */
+.aiSummaryHead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: 4px;
+}
+
+.aiSummaryLabel {
+  font-weight: 600;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.aiSummaryBullets {
+  margin: 4px 0 6px 0;
+  padding-left: var(--s-4);
+  color: var(--text-2);
+  list-style: none;
+}
+
+.aiSummaryBullets li {
+  margin: 2px 0;
+  display: flex;
+  gap: 10px;
+  line-height: 1.5;
+  align-items: baseline;
+}
+
+.aiRisk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-2);
+  font-size: var(--text-xs);
+  margin-top: 4px;
+  background: var(--warning-soft);
+  color: var(--warning-fg);
+}

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet, useLocation } from 'react-router-dom';
@@ -220,7 +220,7 @@ describe('OverviewTab', () => {
   it('applies overview-card-hero-no-ai when aiPreview is off (PoC default)', async () => {
     const { container } = mountOverview({ aiPreview: false });
     await screen.findByText('Task.WhenAll');
-    expect(container.querySelector('.pr-description')).toHaveClass('overview-card-hero-no-ai');
+    expect(within(container).getByTestId('pr-description')).toHaveClass('overview-card-hero-no-ai');
   });
 
   it('renders stats with files from diff fetch and threads from reviewComments', async () => {
@@ -406,7 +406,7 @@ describe('OverviewTab', () => {
   it('does NOT render AiSummaryCard when aiPreview is off (PoC default)', async () => {
     const { container } = mountOverview({ aiPreview: false });
     await screen.findByText('Task.WhenAll');
-    expect(container.querySelector('.ai-summary-card')).toBeNull();
+    expect(within(container).queryByTestId('ai-summary-card')).toBeNull();
   });
 
   it('renders AiSummaryCard with PlaceholderPrSummarizer content when aiPreview is on', async () => {
@@ -429,7 +429,9 @@ describe('OverviewTab', () => {
       aiSummary: { body: 'Hero', category: 'cat' },
     });
     await screen.findByText('Hero');
-    expect(container.querySelector('.pr-description')).not.toHaveClass('overview-card-hero-no-ai');
-    expect(container.querySelector('.ai-summary-card')).toHaveClass('overview-card-hero');
+    expect(within(container).getByTestId('pr-description')).not.toHaveClass(
+      'overview-card-hero-no-ai',
+    );
+    expect(within(container).getByTestId('ai-summary-card')).toHaveClass('overview-card-hero');
   });
 });

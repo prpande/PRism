@@ -12,6 +12,7 @@ import { PrDescription } from './PrDescription';
 import { StatsTiles } from './StatsTiles';
 import { PrRootConversation, type PrRootConversationReplyContext } from './PrRootConversation';
 import { ReviewFilesCta } from './ReviewFilesCta';
+import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
   const { prDetail, draftSession, readOnly } = useOutletContext<PrDetailOutletContext>();
@@ -83,7 +84,7 @@ export function OverviewTab() {
   );
 
   return (
-    <div className="overview-tab overview-grid">
+    <div className={`${styles.overviewTab} ${styles.overviewGrid}`} data-testid="overview-tab">
       <AiSummaryCard summary={aiSummary} />
       <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiPreview} />
       <StatsTiles

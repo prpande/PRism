@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { AiSummaryCard } from '../src/components/PrDetail/OverviewTab/AiSummaryCard';
 
@@ -27,7 +27,7 @@ describe('AiSummaryCard', () => {
 
   it('applies the overview-card-hero + ai-tint hero classes when summary is supplied', () => {
     const { container } = render(<AiSummaryCard summary={{ body: 'b', category: 'c' }} />);
-    const card = container.querySelector('.ai-summary-card');
+    const card = within(container).getByTestId('ai-summary-card');
     expect(card).toHaveClass('overview-card');
     expect(card).toHaveClass('overview-card-hero');
     expect(card).toHaveClass('ai-tint');
