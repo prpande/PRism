@@ -183,6 +183,7 @@ export function ReplyComposer({
       role="form"
       aria-label={replyAriaLabel(parentThreadId)}
       data-composer="true"
+      data-testid="reply-composer"
       className="reply-composer"
     >
       {closedBanner && (
@@ -217,7 +218,11 @@ export function ReplyComposer({
           {previewMode ? 'Edit' : 'Preview'}
         </button>
 
-        <span className={`composer-badge composer-badge--${badge}`} role="status">
+        <span
+          className={`composer-badge composer-badge--${badge}`}
+          role="status"
+          data-testid="composer-badge"
+        >
           {badge}
         </span>
 

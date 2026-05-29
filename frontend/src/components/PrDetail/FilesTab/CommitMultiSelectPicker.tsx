@@ -98,7 +98,7 @@ export function CommitMultiSelectPicker({
   const listboxId = `${instanceId}-commit-picker-listbox`;
 
   return (
-    <div className="commit-multi-select-picker">
+    <div className="commit-multi-select-picker" data-testid="commit-multi-select-picker">
       <button
         ref={triggerRef}
         role="combobox"

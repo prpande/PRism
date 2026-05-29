@@ -333,7 +333,7 @@ export function FilesTab() {
   );
 
   return (
-    <div className="files-tab">
+    <div className="files-tab" data-testid="files-tab">
       <div className="files-tab-toolbar">
         {isLowQuality ? (
           <CommitMultiSelectPicker
@@ -357,7 +357,7 @@ export function FilesTab() {
       )}
 
       <div className="files-tab-content">
-        <div className="files-tab-tree">
+        <div className="files-tab-tree" data-testid="files-tab-tree">
           {diff.showSkeleton ? (
             <div className="file-tree-skeleton" aria-label="Loading files" aria-busy="true">
               <div className="skeleton-row" />
@@ -375,7 +375,7 @@ export function FilesTab() {
             />
           )}
         </div>
-        <div className="files-tab-diff">
+        <div className="files-tab-diff" data-testid="files-tab-diff">
           <DiffPane
             selectedPath={selectedPath}
             file={selectedFile}

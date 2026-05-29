@@ -10,7 +10,7 @@ export function WordDiffOverlay({ oldText, newText, type }: WordDiffOverlayProps
   const changes = diffWords(oldText, newText);
 
   return (
-    <span className="word-diff-overlay">
+    <span className="word-diff-overlay" data-testid="word-diff-overlay">
       {changes.map((change, i) => {
         if (change.added && type === 'insert') {
           return (

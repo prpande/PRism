@@ -100,7 +100,7 @@ export function DiffPane({
 }: DiffPaneProps) {
   if (!selectedPath) {
     return (
-      <div className="diff-pane diff-pane--empty">
+      <div className="diff-pane diff-pane--empty" data-testid="diff-pane">
         <p className="muted">Select a file from the tree to view its diff.</p>
       </div>
     );
@@ -108,7 +108,7 @@ export function DiffPane({
 
   if (!file || file.hunks.length === 0) {
     return (
-      <div className="diff-pane">
+      <div className="diff-pane" data-testid="diff-pane">
         <div className="diff-pane-header">
           <span className="diff-pane-path">{selectedPath}</span>
         </div>
@@ -134,7 +134,7 @@ export function DiffPane({
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
 
   return (
-    <div className={`diff-pane ${modeClass}`}>
+    <div className={`diff-pane ${modeClass}`} data-testid="diff-pane">
       <div className="diff-pane-header">
         <span className="diff-pane-path">{selectedPath}</span>
       </div>

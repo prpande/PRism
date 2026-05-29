@@ -35,7 +35,7 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
   const isSameIter = effectiveFrom === effectiveTo;
 
   return (
-    <div className="compare-picker">
+    <div className="compare-picker" data-testid="compare-picker">
       <label className="compare-picker-label">
         <span className="compare-picker-label-text">Compare</span>
         <select

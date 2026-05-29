@@ -25,7 +25,12 @@ export function IterationTabStrip({
   const hasOverflow = overflowIters.length > 0;
 
   return (
-    <div className="iteration-tab-strip" role="tablist" aria-label="Iteration selector">
+    <div
+      className="iteration-tab-strip"
+      role="tablist"
+      aria-label="Iteration selector"
+      data-testid="iteration-tab-strip"
+    >
       <button
         className={`iteration-tab${activeRange === 'all' ? ' iteration-tab--active' : ''}`}
         role="tab"

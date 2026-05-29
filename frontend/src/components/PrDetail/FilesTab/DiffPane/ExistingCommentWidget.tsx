@@ -27,7 +27,7 @@ export function ExistingCommentWidget({ threads, replyContext }: ExistingComment
   if (threads.length === 0) return null;
 
   return (
-    <div className="comment-widget">
+    <div className="comment-widget" data-testid="comment-widget">
       {threads.map((thread) => (
         <ThreadView key={thread.threadId} thread={thread} replyContext={replyContext} />
       ))}

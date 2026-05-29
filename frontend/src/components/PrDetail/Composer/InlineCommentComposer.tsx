@@ -219,6 +219,7 @@ export function InlineCommentComposer({
       role="form"
       aria-label={composerAriaLabel(anchor)}
       data-composer="true"
+      data-testid="inline-comment-composer"
       className="inline-comment-composer"
     >
       {closedBanner && (
@@ -253,7 +254,11 @@ export function InlineCommentComposer({
           {previewMode ? 'Edit' : 'Preview'}
         </button>
 
-        <span className={`composer-badge composer-badge--${badge}`} role="status">
+        <span
+          className={`composer-badge composer-badge--${badge}`}
+          role="status"
+          data-testid="composer-badge"
+        >
           {badge}
         </span>
 

@@ -32,7 +32,7 @@ export function FileTree({
   if (files.length === 0) {
     if (isLoading) return null;
     return (
-      <div className="file-tree">
+      <div className="file-tree" data-testid="file-tree">
         <div className="file-tree-header">Files</div>
         <p className="file-tree-empty muted">No files in this diff.</p>
       </div>
@@ -40,7 +40,7 @@ export function FileTree({
   }
 
   return (
-    <div className="file-tree" role="tree" aria-label="File tree">
+    <div className="file-tree" role="tree" aria-label="File tree" data-testid="file-tree">
       <div className="file-tree-header">
         Files · {viewedCount}/{files.length} viewed
       </div>
@@ -134,6 +134,7 @@ function FileNodeComponent({
     <div
       className={`file-tree-file${isSelected ? ' file-tree-file--selected' : ''}`}
       role="treeitem"
+      data-testid="files-tab-tree-row"
       data-selected={isSelected}
       data-path={node.path}
       style={{ paddingLeft: `${(depth + 1) * 16}px` }}

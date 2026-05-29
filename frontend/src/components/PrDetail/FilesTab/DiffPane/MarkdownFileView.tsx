@@ -10,11 +10,15 @@ export function MarkdownFileView({ rawContent, isLoading }: MarkdownFileViewProp
   const [mode, setMode] = useState<'rendered' | 'raw'>('rendered');
 
   if (isLoading) {
-    return <div className="markdown-file-view muted">Loading file content…</div>;
+    return (
+      <div className="markdown-file-view muted" data-testid="markdown-file-view">
+        Loading file content…
+      </div>
+    );
   }
 
   return (
-    <div className="markdown-file-view">
+    <div className="markdown-file-view" data-testid="markdown-file-view">
       <div className="markdown-file-view-toolbar">
         <button
           className={`toggle-btn ${mode === 'rendered' ? 'toggle-btn--active' : ''}`}
