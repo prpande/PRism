@@ -59,7 +59,7 @@ export function CrossTabPresenceBanner({
           // forces it visible), so the button would appear to do nothing.
           // Hide it to avoid a confusing no-op control. Recovery from
           // read-only is via Switch-to-other-tab or a page reload.
-          <button type="button" className="btn btn-link btn-sm" onClick={onDismiss}>
+          <button type="button" className="btn btn-link" onClick={onDismiss}>
             Dismiss for this session
           </button>
         )}
