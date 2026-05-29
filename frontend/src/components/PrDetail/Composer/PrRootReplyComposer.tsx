@@ -185,7 +185,7 @@ export function PrRootReplyComposer({
         />
       )}
 
-      <div className={styles.composerActions}>
+      <div className="composer-actions">
         <button
           type="button"
           className="composer-preview-toggle"
