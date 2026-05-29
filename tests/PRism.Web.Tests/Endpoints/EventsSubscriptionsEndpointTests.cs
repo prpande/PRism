@@ -24,9 +24,9 @@ public class EventsSubscriptionsEndpointTests
         // Status changed from 401 → 403 in design-parity-recovery PR1 (§4.1.2): 401 means
         // "session token is bad — re-auth"; 403 means "this operation requires SSE connect
         // first." The user IS authenticated; the missing cookie is a sequencing
-        // prerequisite, not an auth failure. Prevents apiClient.ts:75-77 from dispatching
-        // prism-auth-rejected and bouncing the user to /setup in dev mode where Vite
-        // serves the SPA on :5173 and Kestrel never stamped the cookie on :5180.
+        // prerequisite, not an auth failure. Prevents apiClient.ts's 401→prism-auth-rejected
+        // dispatch from bouncing the user to /setup in dev mode where Vite serves the
+        // SPA on :5173 and Kestrel never stamped the cookie on :5180.
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateUnauthenticatedClient();
 
