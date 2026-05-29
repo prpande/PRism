@@ -1,0 +1,34 @@
+.prHeader {
+  padding: var(--s-5) var(--s-6) 0;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.prHeaderTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--s-6);
+}
+
+.prTitle {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 4px 0 6px;
+  text-wrap: pretty;
+  max-width: 70ch;
+}
+
+.prSubtitle {
+  font-size: var(--text-xs);
+  flex-wrap: wrap;
+  gap: var(--s-3);
+}
+
+.prActions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  flex: none;
+}
