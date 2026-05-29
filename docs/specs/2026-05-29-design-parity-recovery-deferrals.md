@@ -182,6 +182,8 @@ Per **D21**, PR3's parity baseline captures the composer-CLOSED state (Reply but
 
 **Status:** Partially applied (outer + composer-actions ported); inner-class lift deferred to PR4.
 
+**Note for PR4 (surfaced by claude[bot] iter-2 review of PR #89):** `.composerActions` currently has `margin-top: var(--s-2)` on top of the parent `.prRootReplyComposer`'s `gap: var(--s-2)` — open-composer state will paint the actions row with doubled spacing (parent gap + own margin-top). PR3's parity baseline captures composer-CLOSED state (D21) so this isn't visible in the regression gate, but PR4's author should drop the `margin-top` (or the parent's `gap`, whichever ends up redundant once inner composer primitives lift to `tokens.css`) before un-fixme-ing the open-composer parity baseline.
+
 ### D16 — Test-selector migration via data-testid + literal-class retention
 
 **Spec position:** §6.1 names PR2-specific selector renames; PR3 inherits the same risk for 5 vitest unit-test files (`OverviewTab.test.tsx`, `PrDescription.test.tsx`, `StatsTiles.test.tsx`, `PrRootConversation.test.tsx`, `AiSummaryCard.test.tsx`).
