@@ -60,15 +60,23 @@ jobs:
       - name: Test (.NET)
         run: dotnet test --no-build --configuration Release --settings .runsettings --logger "trx;LogFileName=test-results.trx"
 
+      # `--with-deps` is a Linux-only flag (apt-get install of system libs).
+      # On the windows-latest runner it's a no-op in the happy path but has
+      # surfaced as an intermittent hang in 2026-05-29 runs (chromium download
+      # blocked for hours with no output). Dropping the flag and adding a
+      # fail-fast timeout keeps future hangs visible rather than silently
+      # consuming the 6h job ceiling.
       - name: Playwright install
         working-directory: frontend
-        run: npx playwright install chromium --with-deps
+        run: npx playwright install chromium
+        timeout-minutes: 10
 
       - name: Playwright tests
         working-directory: frontend
         run: npx playwright test
         env:
           CI: 'true'
+        timeout-minutes: 30
 
       - name: Upload test artifacts
         if: failure()
