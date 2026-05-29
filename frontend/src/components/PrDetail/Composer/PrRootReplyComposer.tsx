@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import styles from './PrRootReplyComposer.module.css';
 import { useComposerAutoSave, COMPOSER_CREATE_THRESHOLD } from '../../../hooks/useComposerAutoSave';
 import { sendPatch } from '../../../api/draft';
 import { Modal } from '../../Modal/Modal';
@@ -160,7 +161,7 @@ export function PrRootReplyComposer({
       role="form"
       aria-label="Reply to this PR"
       data-composer="true"
-      className="pr-root-reply-composer"
+      className={styles.prRootReplyComposer}
     >
       {closedBanner && (
         <div className="composer-closed-banner muted" role="status">
@@ -184,7 +185,7 @@ export function PrRootReplyComposer({
         />
       )}
 
-      <div className="composer-actions">
+      <div className={styles.composerActions}>
         <button
           type="button"
           className="composer-preview-toggle"
