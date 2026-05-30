@@ -17,6 +17,9 @@ import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
 import { OpenTabsProvider } from './contexts/OpenTabsContext';
+import { AskAiDrawerProvider } from './contexts/AskAiDrawerContext';
+import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
+import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
 import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
 import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
 
@@ -67,6 +70,8 @@ export function App() {
     <>
       <Header hasToken={authState.hasToken} />
       <PrTabStrip />
+      <AskAiDrawer />
+      <DrawerEffects />
       <TabSignals />
       <Routes>
         <Route path="/setup" element={<SetupPage />} />
@@ -95,7 +100,9 @@ export function App() {
       <ToastProvider>
         <CheatsheetProvider>
           <OpenTabsProvider>
-            {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+            <AskAiDrawerProvider>
+              {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+            </AskAiDrawerProvider>
           </OpenTabsProvider>
         </CheatsheetProvider>
       </ToastProvider>
