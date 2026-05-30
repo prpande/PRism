@@ -1,0 +1,33 @@
+.wrap {
+  position: relative;
+}
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 8px 36px 8px 10px;
+  font-size: var(--text-sm);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  color: var(--text-1);
+}
+.input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+/* Local size override (D65): handoff line 1277 defines `.btn-icon-sm`
+   (18×18) immediately before `.setup-eye`, but `.btn-icon-sm` is NOT in
+   tokens.css (only `.btn-icon` 30×30 exists). Lifting `.btn-icon-sm`
+   globally would be a speculative lift (no second consumer yet); instead,
+   `.eye` carries the smaller size locally, sized to fit inside the 36px-tall
+   input without overflow. If PR9 needs `.btn-icon-sm` for another surface,
+   it lifts to tokens.css then. */
+.eye {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+}
