@@ -1,6 +1,8 @@
+import styles from './DraftListEmpty.module.css';
+
 export function DraftListEmpty() {
   return (
-    <div className="drafts-tab-empty muted">
+    <div className={`drafts-tab-empty muted ${styles.draftsTabEmpty}`}>
       No drafts on this PR yet. Open any line in the Files tab to start one.
     </div>
   );

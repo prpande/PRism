@@ -5,6 +5,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { DraftsTab } from '../src/components/PrDetail/DraftsTab/DraftsTab';
 import draftsTabStyles from '../src/components/PrDetail/DraftsTab/DraftsTab.module.css';
 import itemStyles from '../src/components/PrDetail/DraftsTab/DraftListItem.module.css';
+import emptyStyles from '../src/components/PrDetail/DraftsTab/DraftListEmpty.module.css';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -108,7 +109,9 @@ describe('DraftsTab', () => {
 
   it('RendersEmptyState_WhenNoDrafts', () => {
     renderDraftsTab({ session: mkSession(), status: 'ready' });
-    expect(screen.getByText(/No drafts on this PR yet/i)).toBeInTheDocument();
+    const empty = screen.getByText(/No drafts on this PR yet/i);
+    expect(empty).toBeInTheDocument();
+    expect(empty).toHaveClass(emptyStyles.draftsTabEmpty);
     expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
   });
 
