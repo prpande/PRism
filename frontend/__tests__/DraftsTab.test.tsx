@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { DraftsTab } from '../src/components/PrDetail/DraftsTab/DraftsTab';
+import draftsTabStyles from '../src/components/PrDetail/DraftsTab/DraftsTab.module.css';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -108,6 +109,16 @@ describe('DraftsTab', () => {
     renderDraftsTab({ session: mkSession(), status: 'ready' });
     expect(screen.getByText(/No drafts on this PR yet/i)).toBeInTheDocument();
     expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
+  });
+
+  it('AppliesBothLiteralAndModuleClasses_OnDraftsTabRoot', () => {
+    renderDraftsTab({
+      session: mkSession({ draftComments: [mkComment()] }),
+      status: 'ready',
+    });
+    const root = screen.getByTestId('drafts-tab');
+    expect(root).toHaveClass('drafts-tab');
+    expect(root).toHaveClass(draftsTabStyles.draftsTab);
   });
 
   it('RendersDraftsGroupedByFile', () => {
