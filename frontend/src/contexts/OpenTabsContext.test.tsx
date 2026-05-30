@@ -64,6 +64,16 @@ describe('OpenTabsContext', () => {
     expect(result.current.unreadKeys.has('acme/api/1')).toBe(false);
   });
 
+  it('markUnread sees the post-addTab state in the same act() batch', () => {
+    const { result } = renderHook(() => useOpenTabs(), { wrapper });
+    const a = { owner: 'acme', repo: 'api', number: 7 };
+    act(() => {
+      result.current.addTab(a, null);
+      result.current.markUnread('acme/api/7');
+    });
+    expect(result.current.unreadKeys.has('acme/api/7')).toBe(true);
+  });
+
   it('markUnread is a no-op for unknown prRefKeys', () => {
     const { result } = renderHook(() => useOpenTabs(), { wrapper });
     act(() => result.current.markUnread('ghost/repo/99'));
