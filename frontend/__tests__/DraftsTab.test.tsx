@@ -6,6 +6,7 @@ import { DraftsTab } from '../src/components/PrDetail/DraftsTab/DraftsTab';
 import draftsTabStyles from '../src/components/PrDetail/DraftsTab/DraftsTab.module.css';
 import itemStyles from '../src/components/PrDetail/DraftsTab/DraftListItem.module.css';
 import emptyStyles from '../src/components/PrDetail/DraftsTab/DraftListEmpty.module.css';
+import skelStyles from '../src/components/PrDetail/DraftsTab/DraftsTabSkeleton.module.css';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -91,7 +92,9 @@ afterEach(() => {
 describe('DraftsTab', () => {
   it('RendersLoadingSkeleton_WhilePending', () => {
     renderDraftsTab({ session: null, status: 'loading' });
-    expect(screen.getByTestId('drafts-tab-skeleton')).toBeInTheDocument();
+    const skel = screen.getByTestId('drafts-tab-skeleton');
+    expect(skel).toBeInTheDocument();
+    expect(skel).toHaveClass(skelStyles.draftsTabSkeleton);
   });
 
   it('RendersErrorCard_OnLoadFailure', () => {
