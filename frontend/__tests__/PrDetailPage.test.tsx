@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { PrDetailPage } from '../src/pages/PrDetailPage';
 import { EventStreamProvider } from '../src/hooks/useEventSource';
 import { OpenTabsProvider } from '../src/contexts/OpenTabsContext';
+import { AskAiDrawerProvider } from '../src/contexts/AskAiDrawerContext';
 import type { PrDetailDto } from '../src/api/types';
 
 class FakeEventSource {
@@ -73,13 +74,15 @@ function mountAt(path: string, fetchImpl?: typeof fetch): ReactNode {
     <MemoryRouter initialEntries={[path]}>
       <EventStreamProvider>
         <OpenTabsProvider>
-          <Routes>
-            <Route path="/pr/:owner/:repo/:number" element={<PrDetailPage />}>
-              <Route index element={<div data-testid="overview-content">OVERVIEW</div>} />
-              <Route path="files/*" element={<div data-testid="files-content">FILES</div>} />
-              <Route path="drafts" element={<div data-testid="drafts-content">DRAFTS</div>} />
-            </Route>
-          </Routes>
+          <AskAiDrawerProvider>
+            <Routes>
+              <Route path="/pr/:owner/:repo/:number" element={<PrDetailPage />}>
+                <Route index element={<div data-testid="overview-content">OVERVIEW</div>} />
+                <Route path="files/*" element={<div data-testid="files-content">FILES</div>} />
+                <Route path="drafts" element={<div data-testid="drafts-content">DRAFTS</div>} />
+              </Route>
+            </Routes>
+          </AskAiDrawerProvider>
         </OpenTabsProvider>
       </EventStreamProvider>
     </MemoryRouter>
@@ -188,14 +191,16 @@ describe('PrDetailPage', () => {
       <MemoryRouter initialEntries={['/pr/octocat/hello/42/files-extra']}>
         <EventStreamProvider>
           <OpenTabsProvider>
-            <Routes>
-              <Route path="/pr/:owner/:repo/:number" element={<PrDetailPage />}>
-                <Route index element={<div data-testid="overview-content">OVERVIEW</div>} />
-                <Route path="files/*" element={<div data-testid="files-content">FILES</div>} />
-                <Route path="drafts" element={<div data-testid="drafts-content">DRAFTS</div>} />
-                <Route path="*" element={<div data-testid="nomatch">NOMATCH</div>} />
-              </Route>
-            </Routes>
+            <AskAiDrawerProvider>
+              <Routes>
+                <Route path="/pr/:owner/:repo/:number" element={<PrDetailPage />}>
+                  <Route index element={<div data-testid="overview-content">OVERVIEW</div>} />
+                  <Route path="files/*" element={<div data-testid="files-content">FILES</div>} />
+                  <Route path="drafts" element={<div data-testid="drafts-content">DRAFTS</div>} />
+                  <Route path="*" element={<div data-testid="nomatch">NOMATCH</div>} />
+                </Route>
+              </Routes>
+            </AskAiDrawerProvider>
           </OpenTabsProvider>
         </EventStreamProvider>
       </MemoryRouter>,

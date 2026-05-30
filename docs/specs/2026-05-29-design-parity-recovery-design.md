@@ -323,44 +323,75 @@ Side-by-side capture target: `app-chrome-tabstrip` zone with three open PRs (two
 
 ### 4.8 PR8 — Ask AI drawer (behavior, working stub chat)
 
-Second behavior PR. Replaces the existing `AskAiButton` → `AskAiEmptyState` modal flow with a right-side slide-in drawer that supports a working stub chat.
+Second behavior PR. Replaces the existing `AskAiButton` → `AskAiEmptyState` inline-section flow with a right-side slide-in drawer that supports a working stub chat. Brainstorm pass completed 2026-05-30; resolutions captured below.
 
-**Component.** New `AskAiDrawer.tsx` + `AskAiDrawer.module.css`. Mounts as a portal at the App level (or as a fixed-position sibling of the Outlet — decided in PR8's brainstorm).
+**Components.**
+- `AskAiDrawer.tsx` + `AskAiDrawer.module.css` — the drawer surface.
+- `AskAiDrawerProvider` (new context) — App-level state container. Exposes `useAskAiDrawer()` → `{ isOpen, cycleIndex, toggle(), close(), getThread(prRefKey), setInput(prRefKey, value), sendMessage(prRefKey), clearAll() }`. Note: `sendMessage` reads the draft body from `thread.input` (set via `setInput`) — it does not take a `body` argument. The session-level `cycleIndex` is exposed for tests and downstream consumers.
+- `components/AskAiDrawer/askAiUnavailableResponses.ts` (colocated, NOT under `lib/` per D76 — PRism's lift-on-second-use rule from § 3.1) — exports `AI_UNAVAILABLE_RESPONSES: readonly string[]` (5 entries) + `pickAiUnavailableResponse(cycleIndex)` helper. **Reused downstream**: any future AI-integration code path that needs an "AI is unavailable / not configured / unreachable" fallback imports the same constant. The strings are written to fit BOTH PR8's "AI hasn't been built yet" and v1.x+'s "AI exists but failed" states without rewording.
 
-**State (component-local).**
-- `messages: Array<{ role: 'user' | 'ai', body: string, ts: number }>`.
-- `input: string` — composer textarea.
-- `pendingAiReply: boolean` — between user submit and canned response.
+**Mount.** App-level fixed-position sibling of `<Routes>` in `App.tsx`, between `<PrTabStrip />` and `<Routes>`. NO `createPortal` (PRism has no portal infrastructure today; sibling pattern matches PR7's `<PrTabStrip />` placement). `position: fixed; right: 0; top: 0; bottom: 0` per handoff `.ai-drawer` (`screens.css:791-800`); z-index `50` per handoff. AskAiDrawerProvider wraps in App.tsx alongside `OpenTabsProvider` (siblings under `CheatsheetProvider`, outside `EventStreamProvider`).
+
+**State (provider-held).** Provider holds `{ isOpen: boolean, cycleIndex: number, threads: Map<prRefKey, ChatThread> }` where `cycleIndex` is session-level (single counter incremented on every reply land) and `ChatThread = { messages: ChatMessage[], input: string, pendingAiReply: boolean }` and `ChatMessage = { role: 'user' | 'ai', body: string, ts: number }`. Threads are per-PR (`prRefKey` = `${owner}/${repo}/${number}` — slash-separated, matching `frontend/src/api/types.ts:82-84`'s `prRefKey()` helper output; NOT the `#`-separated format earlier draft used); selecting a different PR shows that PR's thread or an empty one. Threads persist across drawer close/reopen on the same PR AND across PR-to-PR navigation. Threads are wiped only by: hard page reload, `prism-identity-changed` event (matches `OpenTabsContext` pattern from PR7).
 
 **Behavior.**
-- Open via the existing `AskAiButton` in `PrHeader`. Close via X button or ESC key. Click-outside-to-close is **not** wired (the drawer is non-modal; the user can keep interacting with the diff pane and PR Detail keyboard shortcuts while the drawer is open). This matches the handoff's `.ai-drawer` which has no backdrop element. PR Detail kbd shortcuts (j/k file nav, c comment, v viewed) remain active while the drawer is open and the textarea is unfocused.
-- Composer: textarea + Send button. Submit (button click or Cmd/Ctrl+Enter) appends `{ role: 'user', body }` to messages, clears input, sets `pendingAiReply: true`, schedules a `setTimeout(~600ms)` to append a canned response from a small pool. **While `pendingAiReply` is true**, the Send button is `disabled`, the textarea remains enabled but submits are dropped (Enter does nothing), and a three-dot typing-indicator (`.ai-msg-typing` in `AskAiDrawer.module.css`) renders as the next message in the list to telegraph "thinking…". This prevents a user from queueing N messages before the first canned response fires (which the single-shot `setTimeout` model can't handle).
-- Canned response pool size + copy: deferred to PR8's brainstorm pass. Default ≥3 distinct responses to avoid feeling like a static surface; ≤6 to avoid bloating the spec. **Selection**: cycle through the pool (not random) so the same user prompt yields different responses on subsequent submits, reducing the "this AI is bad" impression.
-- Messages persist for the lifetime of the SPA session (in-memory state, not localStorage). New page load → empty drawer.
-- **Empty state.** First open with no messages shows a single `--text-3` muted line in the drawer body: `Ask anything about this PR.` Plus a single keyboard hint chip at the bottom of the body area: `⌘ ⏎ to send`. No example-question chips (keeps the surface honest about the canned-response limitation).
-- **Message rendering.** User and AI message bodies render as **plain text** (no Markdown). This is a deliberate choice to avoid the `MarkdownRenderer` → `MermaidBlock` `dangerouslySetInnerHTML` seam — even though the drawer is local-only and message content comes from the user's own input + canned strings, plain-text rendering keeps the surface free of an XSS vector that doesn't earn its keep here. Markdown rendering can be added in v1.x if the AI integration justifies it.
+- **Trigger.** `AskAiButton` in `PrHeader` calls `useAskAiDrawer().toggle()` — click opens if closed, closes if open. Matches GitHub Copilot/Slack thread-button pattern.
+- **Close.** X button or ESC key. Click-outside-to-close is **NOT** wired. There is NO backdrop element. The drawer coexists with the diff pane; PR Detail kbd shortcuts (`j`/`k`/`c`/`v`) remain functional when the textarea isn't focused.
+- **Pathname-based auto-close.** Navigation away from a PR Detail route (`/pr/:owner/:repo/:number`) closes the drawer (`isOpen: false`). Thread state is preserved; navigation BACK to PR Detail does NOT auto-reopen — user must click `AskAiButton` again.
+- **Composer.** Textarea + Send button. Plain Enter inserts a newline (multi-line composer). `Cmd/Ctrl+Enter` submits. Send button is `disabled` when input is empty-or-whitespace-only OR when `pendingAiReply === true`; `Cmd+Enter` is a no-op in the same conditions. Whitespace-only submits drop silently (no error chip). Input is hard-capped at 4000 chars (truncated at submit if exceeded — prevents diff-paste DoS on message-list rendering). Textarea grows up to ~4 rows then internal scrolls.
+- **Submit flow.** On submit: append `{ role: 'user', body, ts: Date.now() }` to thread.messages, clear thread.input, set `thread.pendingAiReply = true`, schedule a `setTimeout(~600ms)` callback. The callback captures `prRefKey` AND a session-level `cycleIndex` snapshot at schedule time so it lands in the right thread even if user navigates to a different PR before the timer fires. On fire: append `{ role: 'ai', body: pickAiUnavailableResponse(snapshotCycleIndex), ts: Date.now() }` to thread.messages, increment the provider's session-level `cycleIndex`, set `thread.pendingAiReply = false`. The setTimeout is **not** cancelled on PR-to-PR nav — the user's mental model is "I sent it, I'll get a reply when I return."
+- **Typing indicator.** While `pendingAiReply === true`, a three-dot typing indicator (`.ai-msg-typing` in `AskAiDrawer.module.css`) renders as the next message in the list to telegraph "thinking…".
+- **Message rendering.** User and AI message bodies render as **plain text** (no Markdown). Avoids the `MarkdownRenderer` → `MermaidBlock` `dangerouslySetInnerHTML` seam. Markdown can be added in v1.x if real AI integration justifies it.
+- **Empty state.** First open with no messages shows a single `--text-3` muted line in the drawer body: `Ask anything about this PR.` Plus a single keyboard hint chip at the bottom of the body area: `⌘ ⏎ to send`. No example-question chips.
 
-**Visuals (per handoff).**
-- Right-side slide-in panel. Animates with `--ease-out` over `--t-med` duration.
-- Header: sparkle icon + "Ask about this PR" + X close button.
-- Body: scrollable message list. User messages right-aligned, AI messages left-aligned with sparkle icon.
-- Footer: textarea + Send button.
-- Backdrop: lighter than the modal scrim (`oklch(0 0 0 / 0.2)` approximate; finalize from handoff).
+**Canned response pool.** Five entries, cycle (not random), **session-level cycle index** (single counter on the provider increments on every reply land regardless of which PR; avoids the cross-PR "every first message gets response #1" repeat pattern that adversarial review flagged 2026-05-30):
+1. "AI isn't available right now. When it is, it would summarize the diff per file and highlight risky areas."
+2. "AI isn't available right now. When it is, it would surface tests that exercise the changed lines."
+3. "AI isn't available right now. When it is, it would explain how a specific function got refactored."
+4. "AI isn't available right now. When it is, it would compare the head SHA to the base and call out behavior changes."
+5. "AI isn't available right now. When it is, it would flag drafts whose anchor lines moved in the latest iteration."
 
-**Accessibility.**
-- ARIA dialog semantics (`role="dialog"`, `aria-modal="true"`, `aria-labelledby` pointing at the header title).
-- Focus trap inside the drawer while open.
-- ESC closes (don't break browser ESC defaults).
-- Focus returns to the `AskAiButton` on close.
+The "AI isn't available right now / when it is" phrasing avoids the false implication that AI EXISTS-but-is-DISCONNECTED that "AI is not connected" leaves room for. Honest in both PR8 today (no AI backend at all) and v1.x+ (AI exists but failed/disabled/unconfigured).
 
-**Header label.** The drawer header reads `Ask about this PR · Preview — responses are mocked` in `--text-2` muted treatment for the second clause. Honest about the canned-response limitation so the N=3 trial cohort isn't misled into rating "the AI as bad" when the AI is in fact absent. The "Preview" framing matches the existing `aiPreview` flag vocabulary.
+**Visuals (per handoff `.ai-drawer` — `screens.css:791-819`).**
+- Right-side slide-in panel. Width `400px`. `transform: translateX(100%)` closed, `translateX(0)` open. Transition `transform 220ms var(--ease-out)`.
+- `border-left: 1px solid var(--border-1)`, `box-shadow: var(--shadow-3)`, `background: var(--surface-1)`, `z-index: 50`.
+- Header (`.ai-drawer-head` equivalent): sparkle icon + label + X close button. `padding: var(--s-3) var(--s-4)`, `border-bottom: 1px solid var(--border-1)`.
+- Body (`.ai-drawer-body` equivalent): flex column, scrollable, `padding: var(--s-4)`, `gap: var(--s-3)`. User messages right-aligned (`background: var(--surface-2)`, `border-radius: var(--radius-3)`, `max-width: 85%`). AI messages left-aligned with sparkle icon.
+- Composer (`.ai-drawer-input` equivalent): flex row, `padding: var(--s-3)`, `border-top: 1px solid var(--border-1)`. Textarea `min-height: 36px; resize: none`. Send button `btn btn-primary btn-sm`.
+- **NO backdrop element.** Handoff has none; non-modal posture confirmed.
+
+**Accessibility (true non-modal drawer).**
+- `role="dialog"`, `aria-modal="false"` (or omitted — explicit false documents intent), `aria-labelledby` pointing at the header title.
+- **NO focus trap.** Tab can move out of the drawer to the diff pane and back (handoff coexistence intent). Spec line 351's prior "focus trap inside the drawer while open" requirement is **rescinded** — it conflicted with the non-modal posture in spec line 336. PR9 a11y revisit adjudicates if N=3 cohort flags it.
+- Initial focus on open: the composer textarea.
+- ESC closes (don't break browser ESC defaults). **Modal-coexistence guard**: drawer's ESC handler skips when a `[aria-modal="true"]` element is open in the DOM (mirrors `Cheatsheet.tsx`'s capture-phase check at `useCheatsheetShortcut.ts:53`). Prevents single ESC keystroke from closing both an open Submit/Discard modal AND the drawer at once.
+- Focus restoration on close: capture `document.activeElement` on `open()`, restore on `close()`. If the captured element is no longer in the DOM (e.g., navigated to a different PR and original AskAiButton unmounted), restoration silently fails to body — matches `Modal.tsx` behavior and is acceptable a11y posture.
+- `aria-hidden={!isOpen}` **AND** `inert={!isOpen}` on the `<aside>` to hide from AT AND make the subtree non-focusable when closed. Per D81 amendment: the drawer is App-level-mounted and ALWAYS in the DOM (transform-translateX(100%) hides it visually). Focusable elements inside an `aria-hidden=true` subtree violate WCAG 2.1 SC 4.1.2 (`aria-hidden-focus`). The `inert` HTML attribute (React 19 native prop) makes the entire subtree non-focusable + non-interactive + removed from accessibility tree — covers the failure mode without unmounting the component or losing the slide-in/out animation.
+
+**Header label.** The drawer header reads `Ask about this PR · AI unavailable` with `--text-2` muted treatment for the second clause. The shorter "AI unavailable" framing is honest in both states (today: no AI backend; v1.x+: AI exists but failed/disabled/unconfigured) without the misleading "currently disconnected" implication that earlier draft "AI not connected" wording carried.
 
 **Removal of existing surface.**
-- The static `AskAiEmptyState` modal component is deleted in this PR — but **only in PR8**. Between PR2 (when PrHeader styling lands) and PR7 (the last PR before this one), `AskAiButton` continues to open the existing `AskAiEmptyState` modal unchanged. The wiring flips in PR8 only. This preserves the "no component-logic changes" rule (§ 2.2) for PR2-PR7 and limits the wiring-change scope to PR8.
+- The static `AskAiEmptyState` component (currently rendered inline below PrHeader as a `<section>`) is deleted in PR8. The `askAiOpen` local state in `PrHeader.tsx` and the inline render are removed; `AskAiButton`'s `onClick` is rewired to `useAskAiDrawer().toggle()`. Between PR2 and PR7, `AskAiButton` continues to open the existing `AskAiEmptyState` unchanged. The wiring flips in PR8 only.
 
-**v1-trial gating.** Given the AI-during-trial signal-pollution risk (§ 1.3), PR8 ships **gated on `aiPreview === true`** (the existing preference flag in `usePreferences()`). With the default `aiPreview: false` for the N=3 cohort, the `AskAiButton` is hidden entirely (existing behavior per `PrHeader.tsx`). N=3 reviewers who enable `aiPreview` in Settings see the drawer; the default-off posture keeps the canned-AI surface invisible to the trial-signal path. Revisit in PR9 once trial signal arrives.
+**v1-trial gating.** Per § 1.3's AI-during-trial signal-pollution concern, PR8 ships **gated on `aiPreview === true`** via the existing `AskAiButton` guard (`AskAiButton.tsx:11` already returns `null` when `aiPreview === false`). With the default `aiPreview: false` for the N=3 cohort, the button is invisible and the drawer is unreachable. N=3 reviewers who enable `aiPreview` in Settings see the drawer. The trial-signal pollution risk is symmetric with status quo — the gate is unchanged; only the surface behind the gate flips from a static `<section>` to a working stub chat.
 
-Side-by-side capture target: `ask-ai-drawer` zone with two user messages + one canned AI reply.
+**Side-by-side capture target.** `ask-ai-drawer` zone with two user messages + one canned AI reply visible.
+
+**Deferrals introduced (D71–D80, full bodies in `2026-05-29-design-parity-recovery-deferrals.md`).**
+- D71 — true non-modal dialog: `aria-modal="false"` + no focus trap (spec line 351 rescinded).
+- D72 — App-level fixed-position sibling mount; portal pattern deferred.
+- D73 — Per-PR thread state preserved across PR-to-PR nav; pathname-based auto-close on PR Detail exit.
+- D74 — `setTimeout(~600ms)` canned-reply mechanism: captures `prRefKey` + session cycleIndex snapshot, fires regardless of route, no cancel-on-nav. Session-level cycle index (not per-PR) — adversarial-pass amendment 2026-05-30.
+- D75 — Hard 4000-char input cap; whitespace-only drops silently; up-to-4-row textarea growth. Cmd+Enter silent-drop while pending accepted (disabled Send button IS the affordance).
+- D76 — `askAiUnavailableResponses` (colocated under `components/AskAiDrawer/`, NOT `lib/`) dual-purpose: PR8 mock today + v1.x+ unavailable-fallback. "AI isn't available right now" framing — explicitly NOT "AI is not connected" (adversarial-pass rewording 2026-05-30).
+- D77 — Identity-change wipes all threads + closes drawer (matches `OpenTabsContext` pattern). aiPreview-toggle-off mid-cycle: setTimeouts continue and land in state silently; reopening drawer later in same session shows the landed reply (accepted quirk).
+- D78 — `AskAiButton` toggle behavior (open ↔ close) replaces simple-open.
+- D79 — `parsePrRefFromPathname` colocated under `components/AskAiDrawer/`, NOT extracted to `frontend/src/lib/`. Single-consumer scope.
+- D80 — z-index ordering: drawer 50 = PrTabStrip overflow menu 50; drawer renders later in App.tsx → wins paint-order tie. Modal at 1000 always wins. Documented to anchor the stacking decision.
+- D81 — `inert` attribute on the closed drawer `<aside>`. WCAG 2.1 SC 4.1.2 fix discovered during Task 13 a11y-audit. `aria-hidden={!isOpen}` alone leaves focusable children (Close button, textarea, Send button) in the focus tree when the drawer is closed.
+- D82 — `PrTabStrip` nested-interactive a11y violation (PR7-vintage). Surfaced after D81 unmasked layered a11y audits. Deferred to PR9 a11y revisit per § 4.9.
+- D83 — `parity-baselines.spec.ts` `inbox` test Loading-vs-populated race (pre-existing D64 weakness). Out of PR8 scope.
 
 ### 4.9 PR9 — Revisit pass (audit + documentation)
 
@@ -448,8 +479,8 @@ These need PR-level brainstorming, not roadmap-level decisions.
 
 - **PR7 `openTabs` persistence policy.** localStorage is the default. Edge cases: stale references (PR no longer accessible), large tab counts. PR7 brainstorm finalizes.
 - **PR7 closing-tab edge cases.** Composer-open, modal-open, submit-in-flight. § 6.5 defaults are working assumptions; PR7 brainstorm validates.
-- **PR8 canned Ask AI responses.** Pool size and copy. Spec says ≥3, ≤6, distinct. PR8 brainstorm picks the actual responses.
-- **PR8 drawer mount strategy.** React portal vs fixed-position sibling. Implementation detail for PR8 brainstorm.
+- ~~**PR8 canned Ask AI responses.**~~ Resolved 2026-05-30: 5 entries, cycle, **session-level** index, "AI isn't available right now. When it is, it would…" framing reused as v1.x+ unavailable fallback. See § 4.8 + D74 + D76.
+- ~~**PR8 drawer mount strategy.**~~ Resolved 2026-05-30: App-level fixed-position sibling of `<Routes>`. No portal. See § 4.8 + D72.
 - **PR4 split decision.** Per-slice judgment per § 6.6. Implementer decides at work time.
 - **PR9 revisit verdicts.** Whole purpose of PR9 — adjudicated there, not pre-committed here.
 

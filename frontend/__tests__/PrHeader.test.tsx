@@ -1,8 +1,9 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PrHeader } from '../src/components/PrDetail/PrHeader';
 import { ToastProvider } from '../src/components/Toast/useToast';
 import { ToastContainer } from '../src/components/Toast/ToastContainer';
+import { AskAiDrawerProvider, useAskAiDrawer } from '../src/contexts/AskAiDrawerContext';
 import { SubmitConflictError } from '../src/api/submit';
 import type { ReactNode } from 'react';
 import type {
@@ -91,14 +92,24 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+// Every PrHeader test needs the AskAiDrawerProvider wrap: PR8 rewired
+// AskAiButton.onClick → useAskAiDrawer().toggle(), and the hook throws if
+// rendered outside the provider. `render` is shadowed so existing tests don't
+// need per-call updates.
+function render(node: ReactNode) {
+  return rtlRender(<AskAiDrawerProvider>{node}</AskAiDrawerProvider>);
+}
+
 // Wraps the SUT in a real ToastProvider + ToastContainer so tests can assert
 // on the rendered toast nodes after PrHeader's catch handlers fire `show`.
 function renderWithToast(node: ReactNode) {
-  return render(
-    <ToastProvider>
-      {node}
-      <ToastContainer />
-    </ToastProvider>,
+  return rtlRender(
+    <AskAiDrawerProvider>
+      <ToastProvider>
+        {node}
+        <ToastContainer />
+      </ToastProvider>
+    </AskAiDrawerProvider>,
   );
 }
 
@@ -176,7 +187,7 @@ describe('PrHeader', () => {
     expect(screen.queryByRole('button', { name: /ask ai/i })).not.toBeInTheDocument();
   });
 
-  it('renders the Ask AI button + opens the empty-state container when aiPreview is on', () => {
+  it('renders the Ask AI button + clicking it toggles the AskAiDrawer when aiPreview is on', () => {
     preferencesValue.preferences = {
       ui: { theme: 'system', accent: 'indigo', aiPreview: true },
       inbox: {
@@ -194,12 +205,27 @@ describe('PrHeader', () => {
         logsPath: '/fake/logs',
       },
     };
-    render(<PrHeader {...baseProps} session={readySession} />);
+    // PR8 § 4.8: the static "coming in v2" empty-state was removed. The Ask AI
+    // button now opens the global AskAiDrawer (mounted in App.tsx, outside
+    // PrHeader). This probe shares the test's provider so the toggle state is
+    // observable in-tree.
+    function DrawerProbe() {
+      const { isOpen } = useAskAiDrawer();
+      return <span data-testid="drawer-state">{isOpen ? 'open' : 'closed'}</span>;
+    }
+    rtlRender(
+      <AskAiDrawerProvider>
+        <PrHeader {...baseProps} session={readySession} />
+        <DrawerProbe />
+      </AskAiDrawerProvider>,
+    );
     const askAi = screen.getByRole('button', { name: /ask ai/i });
     expect(askAi).toBeInTheDocument();
-    expect(screen.queryByText(/coming in v2/i)).not.toBeInTheDocument();
+    expect(screen.getByTestId('drawer-state')).toHaveTextContent('closed');
     fireEvent.click(askAi);
-    expect(screen.getByText(/coming in v2/i)).toBeInTheDocument();
+    expect(screen.getByTestId('drawer-state')).toHaveTextContent('open');
+    fireEvent.click(askAi);
+    expect(screen.getByTestId('drawer-state')).toHaveTextContent('closed');
   });
 
   it('does not render the branch arrow when branchInfo is absent and the dialog is closed', () => {

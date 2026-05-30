@@ -616,21 +616,6 @@ a:hover { text-decoration: underline; }
 .submit-in-progress-badge { cursor: pointer; border: none; }
 .submit-in-progress-badge:hover { filter: brightness(0.96); }
 
-/* Ask AI button + static empty-state container (spec § 14.2) */
-.ask-ai-empty-state {
-  margin: var(--s-3) var(--s-4);
-  padding: var(--s-4);
-  border-radius: var(--radius-3);
-}
-.ask-ai-empty-state__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--s-2);
-}
-.ask-ai-empty-state__title { margin: 0; font-size: var(--text-md); font-weight: 600; }
-.ask-ai-empty-state__body { margin: 0; color: var(--text-2); font-size: var(--text-sm); line-height: 1.5; }
-
 /* Submit dialog */
 .submit-dialog { display: flex; flex-direction: column; gap: var(--s-4); }
 .submit-dialog__status {

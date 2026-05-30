@@ -1,7 +1,5 @@
-// "Ask AI" header button (spec § 14.2). The originally-planned interactive
-// drawer was cut; the button + the static empty state (AskAiEmptyState)
-// preserve the architectural seam without a fake-feeling chat surface. Hidden
-// unless aiPreview is on; no backend touchpoint.
+// "Ask AI" header button (spec § 14.2 + PR8 § 4.8). Opens the AskAiDrawer via
+// useAskAiDrawer().toggle(). Hidden unless aiPreview is on; no backend touchpoint.
 interface Props {
   aiPreview: boolean;
   onClick(): void;

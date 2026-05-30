@@ -731,6 +731,145 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Status:** Deferred to PR9.
 **Cross-refs:** spec §4.6; handoff screens.css:1289-1295.
 
+### D71 — True non-modal drawer: `aria-modal="false"` + no focus trap (spec line 351 rescinded)
+
+**Source:** PR8 brainstorm pass (2026-05-30).
+**Spec position (original):** § 4.8 lines 350-352 — `role="dialog"`, `aria-modal="true"`, focus trap inside the drawer while open.
+**Spec position (resolved):** § 4.8 Accessibility — `role="dialog"`, `aria-modal="false"`, NO focus trap, NO backdrop element, Tab moves freely between drawer and diff pane.
+**Reason:** Internally inconsistent spec — line 336 said "user can keep interacting with diff pane and PR Detail keyboard shortcuts while the drawer is open" (non-modal posture), but line 351 said `aria-modal="true"` + focus trap (modal posture). WAI-ARIA's `aria-modal="true"` semantically requires the rest of the page to be treated as inert; a real focus trap blocks Tab from reaching the diff pane. The two are incompatible. Brainstorm resolved to the non-modal posture because (a) it matches the handoff's `.ai-drawer` (no backdrop element in `screens.css`); (b) the "diff pane stays interactive" intent is the whole reason the drawer beats the modal it replaces; (c) the original focus-trap clause reads as cargo-culted from generic dialog patterns.
+**Implementation:** Composer textarea is initial focus on open. ESC handler kept. Focus restoration on close preserved (capture activeElement on open, restore on close, fall back to body if captured element unmounted).
+**Risk:** A screen-reader user opens the drawer, Tabs out into the diff pane unaware they've left the dialog. Mitigation: header announces "Ask about this PR · AI unavailable" on open via `aria-labelledby`; the message-body `role="log" aria-live="polite"` announces incoming AI replies even when focus has moved away (per preflight adversarial round); pathname-based auto-close ensures the drawer never persists on a non-PR-Detail route where it would be most confusing.
+**Status:** PR9 a11y revisit re-evaluates if N=3 cohort flags it. Trial-cohort feedback wins.
+**Cross-refs:** Spec § 4.8 Accessibility; § 1.3 (trial cohort risk shape).
+
+### D72 — App-level fixed-position sibling mount; React portal pattern deferred
+
+**Source:** PR8 brainstorm pass (2026-05-30).
+**Spec position (original):** § 4.8 line 328 — "Mounts as a portal at the App level (or as a fixed-position sibling of the Outlet — decided in PR8's brainstorm)."
+**Spec position (resolved):** § 4.8 Mount — App-level fixed-position sibling of `<Routes>` in `App.tsx`, between `<PrTabStrip />` and `<Routes>`. No `createPortal`.
+**Reason:** PRism has zero `createPortal` usage today (verified via Grep across `frontend/src`). Adding the portal pattern is new infrastructure for a single consumer that doesn't earn the cost. `position: fixed` correctly overlays everything because no ancestor in App.tsx's tree sets `transform`/`filter`/`will-change`. The sibling pattern matches how `<PrTabStrip />` was just mounted in PR7. If a future stacking-context issue arises (e.g., a new ancestor introduces `transform`), swap to `createPortal(content, document.body)` is mechanical and out of scope today.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 Mount.
+
+### D73 — Per-PR thread state preserved across PR-to-PR navigation; pathname-based auto-close on PR Detail exit
+
+**Source:** PR8 brainstorm pass (2026-05-30).
+**Spec position (original):** § 4.8 line 339 — "Messages persist for the lifetime of the SPA session (in-memory state, not localStorage). New page load → empty drawer." (ambiguous — could mean SPA-global single thread, OR per-PR threads.)
+**Spec position (resolved):** § 4.8 State — `Map<prRefKey, ChatThread>` in provider state. Per-PR threads. Switching from PR A to PR B with drawer open swaps the visible thread. Drawer auto-closes when navigating away from PR Detail (`/pr/:owner/:repo/:number`); thread state is preserved; navigating BACK does NOT auto-reopen (user clicks AskAiButton again).
+**Reason:** "Ask about THIS PR" semantically argues per-PR — mixing PR A's and PR B's chats in one thread breaks the user's mental model. Per-PR preservation across nav requires App-level mount (PrDetailPage unmount would clear local state).
+**Edge case:** User on PR A sends message, navigates to PR B before setTimeout fires, navigates back to PR A. setTimeout closure captures PR A's `prRefKey` at schedule time and lands the response in PR A's thread regardless of current route — the response is visible when user returns. See D74.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 State + Behavior; D74.
+
+### D74 — Canned-reply `setTimeout` captures `prRefKey` + session `cycleIndex` at schedule time; fires regardless of route; session-level cycle (not per-PR)
+
+**Source:** PR8 brainstorm pass (2026-05-30) + adversarial-pass amendment (2026-05-30).
+**Spec position (original):** § 4.8 line 337 — `setTimeout(~600ms)` to append canned response. Behavior across PR-to-PR nav unspecified. Initial brainstorm resolution: per-PR cycle index.
+**Spec position (resolved):** § 4.8 Behavior → Submit flow — setTimeout closure captures `prRefKey` AND a snapshot of the session-level `cycleIndex` at schedule time. The response lands in the named thread regardless of current route. Not cancelled on nav.
+**Cycle index scope amendment.** Adversarial review (2026-05-30) flagged that per-PR cycle index produces "every first message in every PR returns response #1" — a cross-PR repeat pattern a reviewer of 5-10 PRs/day notices within an hour. Session-level cycle (single counter on the provider, increments on every reply land regardless of PR) eliminates this without behavior loss within a single PR's conversation.
+**Reason for fire-regardless-of-route:** Matches the user's mental model — "I sent it, I'll get a reply when I return." Cancel-on-nav would leave PR A's thread stuck with `pendingAiReply=true` and no response.
+**Implementation:** The provider's `sendMessage(prRefKey, body)` schedules a `setTimeout` whose callback explicitly references both `prRefKey` and `cycleIndexAtSend` (snapshotted, not read-from-state at fire time). Provider holds a `Set<TimeoutHandle>` for cleanup-on-unmount (provider lifetime = App lifetime, so this matters mostly for vitest's StrictMode + cleanup).
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 Behavior + Canned response pool; D73.
+
+### D75 — Hard 4000-char input cap; whitespace-only drops silently; up-to-4-row textarea growth; user-bubble max-height; Cmd+Enter silent-drop accepted
+
+**Source:** PR8 brainstorm pass (2026-05-30) + adversarial-pass amendment (2026-05-30).
+**Spec position (original):** § 4.8 line 337 — composer mechanics unspecified for length/multi-line/empty-submit.
+**Spec position (resolved):** § 4.8 Behavior → Composer. Hard cap 4000 chars (enforced at submit time via slice; not via `maxlength` attribute so paste UX isn't broken mid-typing); whitespace-only drops silently with no error chip; textarea has `min-height: 36px` per handoff and grows up to ~4 rows then internal-scrolls; plain Enter inserts newline; Cmd/Ctrl+Enter submits; Send button disabled when empty-or-whitespace or `pendingAiReply`.
+**User-bubble max-height (adversarial amendment).** A 4000-char message rendered as plain text would produce a multi-screen-tall bubble that pushes the AI reply far below the fold. Apply `max-height: 60vh; overflow-y: auto` to `.msgUser` in `AskAiDrawer.module.css` so long submissions remain scoped within their bubble.
+**Cmd+Enter silent-drop while pending (adversarial amendment).** Reviewer flagged: while `pendingAiReply=true`, the textarea remains enabled and the user can type a refinement, but Cmd+Enter is no-op (silent failure). Accepted because the disabled Send button IS the affordance — a user typing while the button is greyed has the visible signal that submit is not available. No additional toast/banner needed; the cycle is short (~600ms) and the natural mitigation is the visible button state.
+**Reason for 4000:** Hard cap prevents diff-paste DoS on the message-list rendering. 4000 chars is generous enough for any honest prompt. Silent drop on whitespace matches Slack/Discord composer UX.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 Behavior → Composer; § 4.8 Visuals (.msgUser bubble max-height).
+
+### D76 — `askAiUnavailableResponses` colocated under `components/AskAiDrawer/`; "AI isn't available right now" framing (NOT "AI is not connected")
+
+**Source:** PR8 brainstorm pass (2026-05-30, owner-directed) + adversarial-pass amendment (2026-05-30).
+**Spec position (original):** § 4.8 line 338 — "Canned response pool size + copy: deferred to PR8's brainstorm pass."
+**Spec position (resolved):** § 4.8 Components + Canned response pool — new module `frontend/src/components/AskAiDrawer/askAiUnavailableResponses.ts` exports `AI_UNAVAILABLE_RESPONSES: readonly string[]` (5 entries) + `pickAiUnavailableResponse(cycleIndex: number): string` helper. PR8's drawer imports these as its canned-reply pool. Future AI-integration code paths import the same module as the AI-unavailable fallback (e.g., when the AI call times out, the API key is unset, or the user has disabled AI in Settings).
+**Location amendment.** Initial brainstorm draft placed the module at `frontend/src/lib/askAiUnavailableResponses.ts`. Scope-guardian reviewer flagged that PRism has no `lib/` directory today and a single-consumer extraction violates the project's lift-on-second-use rule (§ 3.1). Moved to `frontend/src/components/AskAiDrawer/askAiUnavailableResponses.ts` — colocated with its sole consumer. When a second consumer materializes (v1.x+ AI integration's catch block), lift to a shared location at that time.
+**Copy amendment.** Initial brainstorm pattern `"AI is not connected. When connected, it would [X]."` was flagged by adversarial review: "AI is not connected" semantically implies (a) an AI exists, (b) it would normally be connected, (c) it currently isn't, and (d) the user can fix the connection. None are true in PR8. New pattern: `"AI isn't available right now. When it is, it would [X]."` — honest in both PR8 today (no AI backend at all) and v1.x+ (AI exists but failed/disabled/unconfigured) without the misleading config-is-broken implication.
+**Header label** shifted from initial "Preview — responses are mocked" → through "AI not connected" → to final "AI unavailable" for the same dual-purpose reuse.
+**Reason:** Owner-directed during brainstorm — "the messages we create in this effort [should be] available for usage down the line in the future." Centralizing the constant prevents two divergent copies of the strings in the codebase. Colocation (not `lib/`) keeps the abstraction scoped to its consumer set today.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 Components + Canned response pool; Spec § 1.3 (AI surface gating); Spec § 3.1 (lift-on-second-use).
+
+### D77 — Identity-change wipes all threads + closes drawer; aiPreview-toggle-off mid-cycle accepted quirk
+
+**Source:** PR8 brainstorm pass (2026-05-30) + adversarial-pass amendment (2026-05-30).
+**Spec position (original):** § 4.8 — identity-change handling unspecified.
+**Spec position (resolved):** § 4.8 State — provider subscribes to the `prism-identity-changed` window event (same bridge `OpenTabsContext` uses, per PR7's `WINDOW_EVENT_BRIDGE` in `frontend/src/api/events.ts`). On fire: wipe all threads (`new Map()`) + `setIsOpen(false)`. The provider's pending-timeouts set is also cleared on this event so in-flight canned replies don't land in the wiped-then-recreated thread map.
+**aiPreview-toggle-off mid-cycle (adversarial amendment).** Adversarial review flagged: user enables aiPreview, opens drawer, sends message, navigates to Settings, toggles aiPreview off (button now hidden, drawer unreachable), and ~600ms later the setTimeout fires and lands a canned reply in the (now-orphaned) thread. If user re-enables aiPreview later in the same session, reopens the drawer on the same PR, they see a reply they don't recall queueing this minute. **Accepted as quirk** — the response IS from their session (not stale-from-prior-identity), and the natural mental model recovery ("oh right, I was using this earlier") is reasonable. Not worth cancelling the timeout on aiPreview-flip because (a) the same fix would need to address every aiPreview-gated SSE/poll surface for consistency, and (b) the case is rare enough that the cost-of-fix exceeds the cost-of-quirk.
+**Reason for clear-on-identity:** Identity change = different GitHub user = different PoC session. Threads from the prior identity shouldn't leak. Matches the PR7 OpenTabsContext clear-all-tabs behavior — same event, same handler shape.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 State; PR7 `OpenTabsContext` identity-change handler.
+
+### D78 — `AskAiButton` toggle behavior (open ↔ close) replaces simple-open
+
+**Source:** PR8 brainstorm pass (2026-05-30).
+**Spec position (original):** § 4.8 — `AskAiButton` click behavior unspecified ("Open via the existing `AskAiButton` in `PrHeader`" implies open-only).
+**Spec position (resolved):** § 4.8 Behavior → Trigger — `AskAiButton.onClick` calls `useAskAiDrawer().toggle()`. First click opens, second click closes, third click reopens.
+**Reason:** Matches GitHub Copilot's "Ask Copilot" button and Slack's "Open thread" button — clicking the trigger when the surface is already open closes it. Simple-open would make the button a no-op while the drawer is visible, which surprises users.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 Behavior → Trigger.
+
+### D79 — `parsePrRefFromPathname` colocated under `components/AskAiDrawer/`, NOT extracted to `frontend/src/lib/`
+
+**Source:** PR8 adversarial-pass amendment (2026-05-30).
+**Spec position (original):** Plan task 2 placed the helper at `frontend/src/lib/parsePrRefFromPathname.ts`.
+**Spec position (resolved):** Helper colocated at `frontend/src/components/AskAiDrawer/parsePrRefFromPathname.ts` and used by both `AskAiDrawer.tsx` (current-thread lookup) and `DrawerEffects.tsx` (pathname-based auto-close).
+**Reason:** Scope-guardian review flagged that PRism has no `lib/` directory and the helper has a single consumer set (the AskAiDrawer component family). The project's lift-on-second-use rule (§ 3.1) applies. Reviewer's alternative — pass `reference` as a prop from PrHeader — doesn't work for the App-level mount: the drawer renders OUTSIDE the matching route so `useParams()` returns empty. Pathname parsing IS necessary; colocation is the right scoping. If a future consumer (e.g., header palette deriving prRef from URL) materializes, lift to a shared location then.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 3.1 (lift-on-second-use); Plan task 2.
+
+### D80 — z-index ordering: drawer 50 = PrTabStrip overflow menu 50; drawer renders later → paints on top
+
+**Source:** PR8 design-lens-pass amendment (2026-05-30).
+**Spec position (original):** § 4.8 — drawer at z-index 50 per handoff; no stacking analysis vs other PRism z-index users.
+**Spec position (resolved):** § 4.8 Visuals — drawer z-index 50; PrTabStrip overflow menu z-index 50 (`PrTabStrip.module.css:177`); both at the same level, paint order resolves the tie. The drawer renders LATER in App.tsx's tree (`<PrTabStrip />` mounts before `<AskAiDrawer />`), so when both surfaces are open simultaneously the drawer paints on top. Modal at z-index 1000 (`tokens.css`) always wins over both. Sticky `UnresolvedPanel` at z-index 1 paints below all three.
+**Reason:** The overflow menu opens from the top-center area of the strip; the drawer slides from the right and is 400px wide. Visual overlap is bounded (only if the overflow menu's options column extends to the rightmost 400px of the viewport, which it shouldn't at typical viewport widths). When overlap does occur, drawer-on-top is the right call because (a) drawer is the more-recently-opened surface and (b) Submit/SubmitDialog at z-index 1000 still always wins, preserving the modal-flow gate.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 Visuals; `PrTabStrip.module.css:177`; `tokens.css` modal-overlay rule.
+
+### D81 — `inert` attribute on closed drawer `<aside>` (WCAG 2.1 SC 4.1.2 fix)
+
+**Source:** PR8 Task 13 a11y-audit discovery (2026-05-30).
+**Spec position (original):** § 4.8 Accessibility — `aria-hidden={!isOpen}` on the `<aside>` to hide from AT when closed.
+**Spec position (resolved):** § 4.8 Accessibility — `aria-hidden={!isOpen}` AND `inert={!isOpen}`.
+**Failure mode:** The drawer is mounted at App level and always present in the DOM (transform-translateX(100%) hides it visually). When closed, the textarea + Send button + Close X button remain focusable via Tab. axe-core's `aria-hidden-focus` rule (WCAG 2.1 SC 4.1.2) flagged this on all 6 page-scoped a11y audits (setup, inbox, PR overview, PR files, PR drafts, settings). Real spec-vs-a11y conflict that the brainstorm pass missed.
+**Reason:** The `inert` HTML attribute (React 19 native, no library needed) renders the entire subtree non-focusable, non-interactive, and removes it from the accessibility tree. Tab skips inert subtrees. Click events inside don't fire. This is the platform-native fix for the focus-leak pattern without unmounting the component (which would lose slide-out animation) or using `display: none` (which would also lose animation since `display` doesn't transition).
+**Alternatives considered:**
+- Unmount when closed → loses slide-out animation; also requires reflow on every open.
+- `display: none` when closed → same animation loss.
+- `pointer-events: none` + `tabindex="-1"` on each focusable child → fragile, has to be repeated for every interactive descendant.
+- `inert` attribute → covers all interactive descendants with one boolean prop.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 Accessibility; WCAG 2.1 SC 4.1.2; React 19 native `inert` prop support.
+
+### D82 — `PrTabStrip` nested-interactive a11y violation (PR7-vintage; deferred to PR9 a11y revisit)
+
+**Source:** PR8 Task 13 a11y-audit discovery (2026-05-30) — surfaced after D81 unmasked layered audits.
+**Spec position:** § 4.9 PR9 — Revisit pass already owns a11y polish.
+**Reality:** Once D81's `inert` fix landed and unmasked the page-scoped a11y audits, the PR-Detail-scoped tests (overview, files, drafts) failed on axe-core's `nested-interactive` rule (serious). Root cause is `PrTabStrip.tsx`'s `<div role="tab" tabIndex={0}>` containing a `<button>Close tab</button>` — WAI-ARIA forbids interactive widgets nested inside other interactive widgets at the structural level. The pattern was introduced by PR7 (route-b visual-only resolution); it was masked from a11y audits because `aria-hidden-focus` (the PR8-introduced violation) failed first on those same pages.
+**Verification this is PR7-vintage, NOT PR8-introduced:** `git log --oneline -- frontend/src/components/PrTabStrip/PrTabStrip.tsx` shows PR7 (2026-05-30) introduced the file; no PR8 changes. CI on `main` has been "green" via `continue-on-error: true` on Playwright steps (PR #87 b59f094 stopgap), masking these failures since the design-parity-recovery slice started.
+**Resolution options for PR9:**
+- (i) Lift the close button OUTSIDE the `role="tab"` element via flex layout (tab body and close button as siblings, both focusable, but only the tab body has `role="tab"`).
+- (ii) Use the WAI-ARIA `aria-owns` pattern to re-associate a sibling close button with the tab semantically.
+- (iii) Remove the close button from the tab strip entirely (close via context menu or middle-click — middle-click already works per PR7 D58).
+**Status:** Deferred to PR9 a11y revisit per spec § 4.9.
+**Cross-refs:** Spec § 4.9; D81 (which unmasked this); PR7 route-b brainstorm resolution.
+
+### D83 — `parity-baselines.spec.ts` `inbox` test Loading-vs-populated race (pre-existing D64 weakness)
+
+**Source:** PR8 Task 13 a11y-audit discovery (2026-05-30).
+**Spec position:** D64 already documented this as a known weak baseline (the test was captured during the Loading state, not populated Inbox, because `await page.locator('main').waitFor()` returns before content renders).
+**New failure mode discovered in Task 13:** The baseline image on disk is 1440x18 (Loading state). On Task 13 run, the test captured 1280x858 (fully-rendered Inbox — the 1280 width comes from `InboxPage.module.css`'s `max-width: 1280px` on the `.page` container). `--update-snapshots` failed to update because on retry the test happened to capture Loading state again, matching the existing baseline. Race: the test is non-deterministically Loading-state OR populated-state depending on timing.
+**Why PR8 didn't introduce it:** `git diff main..HEAD frontend/e2e/parity-baselines.spec.ts` shows no PR8 changes; the 1.1KB baseline pre-dates PR8 (mod time before today's work). PR8's drawer (App-level mounted, hidden via `transform: translateX(100%)`) doesn't affect the `<main>` element's layout.
+**Resolution:** Defer to a future slice. The genuine fix changes `await page.locator('main').waitFor()` to a more specific wait target like `await page.getByText(/Review requested/).waitFor()` — then re-capture the baseline at the populated state.
+**Status:** Deferred. Out of PR8 scope.
+**Cross-refs:** D64 (original deferral); Spec § 4.9 a11y/baseline polish.
+
 ## Implementation-time deferrals — PR7 (browser-style PR tab strip, route b)
 
 ### D58 — Keyboard bindings (`⌘W`, `⌘1-9`) deferred to post-shell-decision

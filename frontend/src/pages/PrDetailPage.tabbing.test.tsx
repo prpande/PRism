@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { OpenTabsProvider, useOpenTabs } from '../contexts/OpenTabsContext';
+import { AskAiDrawerProvider } from '../contexts/AskAiDrawerContext';
 import { PrDetailPage } from './PrDetailPage';
 
 vi.mock('../hooks/usePrDetail', () => ({
@@ -80,12 +81,14 @@ describe('PrDetailPage on direct URL load', () => {
     render(
       <MemoryRouter initialEntries={['/pr/acme/api/42']}>
         <OpenTabsProvider>
-          <Probe />
-          <Routes>
-            <Route path="/pr/:owner/:repo/:number" element={<PrDetailPage />}>
-              <Route index element={<div>Overview</div>} />
-            </Route>
-          </Routes>
+          <AskAiDrawerProvider>
+            <Probe />
+            <Routes>
+              <Route path="/pr/:owner/:repo/:number" element={<PrDetailPage />}>
+                <Route index element={<div>Overview</div>} />
+              </Route>
+            </Routes>
+          </AskAiDrawerProvider>
         </OpenTabsProvider>
       </MemoryRouter>,
     );
