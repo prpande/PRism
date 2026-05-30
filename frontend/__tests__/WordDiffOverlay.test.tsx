@@ -34,9 +34,7 @@ describe('WordDiffOverlay', () => {
   });
 
   it('handles complete line replacement', () => {
-    render(
-      <WordDiffOverlay oldText="function foo() {" newText="function bar() {" type="insert" />,
-    );
+    render(<WordDiffOverlay oldText="function foo() {" newText="function bar() {" type="insert" />);
     const overlay = screen.getByTestId('word-diff-overlay');
     const inserts = overlay.querySelectorAll('.word-diff-insert');
     expect(inserts.length).toBeGreaterThan(0);
