@@ -16,7 +16,6 @@ function StateProbe({
   const navigate = useNavigate();
   useEffect(() => {
     onMount(toggle, navigate);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
     onState(isOpen);

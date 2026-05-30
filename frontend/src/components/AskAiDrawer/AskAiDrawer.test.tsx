@@ -202,7 +202,6 @@ function OpenOnMount() {
   const { isOpen, toggle } = useAskAiDrawer();
   useEffect(() => {
     if (!isOpen) toggle();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return null;
 }
