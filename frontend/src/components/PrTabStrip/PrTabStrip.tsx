@@ -189,6 +189,7 @@ function PrTabStripBody() {
               onClick={() => setMenuOpen((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={menuOpen}
+              aria-label={`Show ${overflowed.length} more open PR${overflowed.length === 1 ? '' : 's'}`}
             >
               + {overflowed.length} more
             </button>

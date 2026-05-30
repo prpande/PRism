@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { OpenTabsProvider, useOpenTabs } from '../../contexts/OpenTabsContext';
 import { PrTabStrip } from './PrTabStrip';
 import { useEffect } from 'react';
@@ -197,7 +197,7 @@ describe('PrTabStrip overflow menu', () => {
         </>,
       ),
     );
-    expect(screen.getByRole('button', { name: /\+ 1 more/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /show 1 more/i })).toBeInTheDocument();
   });
 
   it('inline tabs are the first 6; menu holds the rest', async () => {
@@ -212,7 +212,7 @@ describe('PrTabStrip overflow menu', () => {
     const tabs = screen.getAllByRole('tab');
     expect(tabs).toHaveLength(6);
     expect(tabs[5].getAttribute('data-prref')).toBe('acme/api/6');
-    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    await userEvent.click(screen.getByRole('button', { name: /show 1 more/i }));
     const items = screen.getAllByRole('menuitem');
     expect(items).toHaveLength(1);
     expect(items[0]).toHaveTextContent('T7');
@@ -227,10 +227,10 @@ describe('PrTabStrip overflow menu', () => {
         </>,
       ),
     );
-    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    await userEvent.click(screen.getByRole('button', { name: /show 1 more/i }));
     const closeBtn = screen.getByLabelText('Close T7');
     await userEvent.click(closeBtn);
-    expect(screen.queryByRole('button', { name: /\+ 1 more/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /show 1 more/i })).toBeNull();
     expect(screen.getAllByRole('tab')).toHaveLength(6);
   });
 
@@ -244,7 +244,7 @@ describe('PrTabStrip overflow menu', () => {
         </>,
       ),
     );
-    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    await userEvent.click(screen.getByRole('button', { name: /show 1 more/i }));
     expect(screen.getByRole('menu')).toBeInTheDocument();
     await userEvent.click(screen.getByTestId('outside'));
     expect(screen.queryByRole('menu')).toBeNull();
@@ -259,7 +259,7 @@ describe('PrTabStrip overflow menu', () => {
         </>,
       ),
     );
-    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    await userEvent.click(screen.getByRole('button', { name: /show 1 more/i }));
     expect(screen.getByRole('menu')).toBeInTheDocument();
     await userEvent.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).toBeNull();
@@ -274,10 +274,107 @@ describe('PrTabStrip overflow menu', () => {
         </>,
       ),
     );
-    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    await userEvent.click(screen.getByRole('button', { name: /show 1 more/i }));
     expect(screen.getByRole('menu')).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText('Close T7'));
     expect(screen.queryByRole('menu')).toBeNull();
-    expect(screen.queryByRole('button', { name: /\+ 1 more/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /show 1 more/i })).toBeNull();
+  });
+
+  it('disabled close in overflow menu when submit is in flight', async () => {
+    vi.mocked(useSubmitInFlight).mockReturnValue({ inFlight: true, prRef: 'acme/api/7' });
+    render(
+      wrap(
+        <>
+          <Seed7 />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /show 1 more/i }));
+    const closeT7 = screen.getByLabelText('Close T7') as HTMLButtonElement;
+    expect(closeT7).toBeDisabled();
+    expect(closeT7.getAttribute('title')).toMatch(/submit in progress/i);
+  });
+});
+
+describe('PrTabStrip close navigation', () => {
+  beforeEach(() => {
+    vi.mocked(useSubmitInFlight).mockReturnValue({ inFlight: false, prRef: null });
+  });
+
+  // LocationProbe: reads the current pathname into a data-testid so tests
+  // can assert post-close routing.
+  function LocationProbe() {
+    const loc = useLocation();
+    return <div data-testid="path">{loc.pathname}</div>;
+  }
+
+  function SeedTwo() {
+    const { addTab } = useOpenTabs();
+    useEffect(() => {
+      addTab({ owner: 'acme', repo: 'api', number: 1 }, 'A');
+      addTab({ owner: 'acme', repo: 'api', number: 2 }, 'B');
+    }, [addTab]);
+    return null;
+  }
+
+  function SeedOne() {
+    const { addTab } = useOpenTabs();
+    useEffect(() => {
+      addTab({ owner: 'acme', repo: 'api', number: 1 }, 'Solo');
+    }, [addTab]);
+    return null;
+  }
+
+  it('closing the active tab navigates to the left neighbour', async () => {
+    render(
+      <MemoryRouter initialEntries={['/pr/acme/api/2']}>
+        <OpenTabsProvider>
+          <SeedTwo />
+          <PrTabStrip />
+          <LocationProbe />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    const closeB = screen
+      .getByRole('tab', { name: /B/i })
+      .querySelector('[aria-label="Close tab"]') as HTMLElement;
+    await userEvent.click(closeB);
+    expect(screen.getByTestId('path').textContent).toBe('/pr/acme/api/1');
+  });
+
+  it('closing the first active tab navigates to the next remaining tab', async () => {
+    render(
+      <MemoryRouter initialEntries={['/pr/acme/api/1']}>
+        <OpenTabsProvider>
+          <SeedTwo />
+          <PrTabStrip />
+          <LocationProbe />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    const closeA = screen
+      .getByRole('tab', { name: /A/i })
+      .querySelector('[aria-label="Close tab"]') as HTMLElement;
+    await userEvent.click(closeA);
+    expect(screen.getByTestId('path').textContent).toBe('/pr/acme/api/2');
+  });
+
+  it('closing the only tab navigates to /', async () => {
+    render(
+      <MemoryRouter initialEntries={['/pr/acme/api/1']}>
+        <OpenTabsProvider>
+          <SeedOne />
+          <PrTabStrip />
+          <LocationProbe />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    const close = screen
+      .getByRole('tab', { name: /Solo/i })
+      .querySelector('[aria-label="Close tab"]') as HTMLElement;
+    await userEvent.click(close);
+    expect(screen.getByTestId('path').textContent).toBe('/');
   });
 });
