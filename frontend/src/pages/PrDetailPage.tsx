@@ -109,12 +109,11 @@ function PrDetailPageInner({
 
   // 1. Add tab when route params change. addTab is idempotent on prRefKey —
   //    re-adding an already-open tab is a no-op, so this is safe to fire
-  //    every time owner/repo/number change.
+  //    every time owner/repo/number change. Deps are primitives, not the
+  //    `{ owner, repo, number }` object literal, so the effect doesn't
+  //    re-fire on every render (the literal would have fresh identity).
   useEffect(() => {
     addTab({ owner, repo, number }, data?.pr.title ?? null);
-    // The `{ owner, repo, number }` literal would re-fire every render if the
-    // lint rule's auto-fix were applied; primitives are the right deps here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addTab, owner, repo, number]);
 
   // 2. Fill in the title once usePrDetail resolves it. Skipped while title
@@ -123,8 +122,6 @@ function PrDetailPageInner({
     if (data?.pr.title) {
       setTitle({ owner, repo, number }, data.pr.title);
     }
-    // See note above re: object-literal vs primitives in deps.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.pr.title, setTitle, owner, repo, number]);
 
   // 3. Active tab clears unread on focus. refKey is derived from primitives,
