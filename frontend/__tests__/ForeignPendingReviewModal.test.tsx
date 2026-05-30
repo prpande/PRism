@@ -1,8 +1,10 @@
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { ForeignPendingReviewModal } from '../src/components/PrDetail/ForeignPendingReviewModal/ForeignPendingReviewModal';
 import type { SubmitForeignPendingReviewEvent } from '../src/api/types';
 import styles from '../src/components/PrDetail/ForeignPendingReviewModal/ForeignPendingReviewModal.module.css';
+import subStyles from '../src/components/PrDetail/ForeignPendingReviewModal/DiscardConfirmationSubModal.module.css';
 
 const snapshot: SubmitForeignPendingReviewEvent = {
   prRef: 'o/r/1',
@@ -121,5 +123,14 @@ describe('ForeignPendingReviewModal', () => {
     const body = document.querySelector('.foreign-prr-modal');
     expect(body).not.toBeNull();
     expect(body).toHaveClass(styles.foreignPrrModal);
+  });
+
+  it('DiscardSubModal_AppliesBothLiteralAndModuleClasses', async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await user.click(screen.getByRole('button', { name: /discard/i }));
+    const subModalBody = document.querySelector('.discard-confirmation-sub-modal');
+    expect(subModalBody).not.toBeNull();
+    expect(subModalBody).toHaveClass(subStyles.discardConfirmationSubModal);
   });
 });
