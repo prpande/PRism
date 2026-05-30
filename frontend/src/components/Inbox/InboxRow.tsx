@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
+import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { DiffBar } from './DiffBar';
 import styles from './InboxRow.module.css';
 
@@ -27,10 +28,13 @@ function formatAge(updatedAt: string): string {
 
 export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
   const navigate = useNavigate();
+  const { addTab } = useOpenTabs();
   const fr = freshness(pr.updatedAt);
   const isFirstVisit = pr.lastViewedHeadSha == null;
-  const onClick = () =>
+  const onClick = () => {
+    addTab(pr.reference, pr.title);
     navigate(`/pr/${pr.reference.owner}/${pr.reference.repo}/${pr.reference.number}`);
+  };
 
   const frClass =
     fr === 'fresh' ? styles.rowFresh : fr === 'today' ? styles.rowToday : styles.rowOlder;
