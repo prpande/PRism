@@ -290,7 +290,11 @@ describe('DraftsTab', () => {
       status: 'ready',
     });
     await userEvent.click(screen.getByRole('button', { name: /Discard all stale/i }));
-    expect(screen.getByRole('list')).toHaveClass(discardStyles.discardAllPreviewList);
+    // Use literal-class selector for consistency with sibling assertions in this file;
+    // getByRole('list') would throw if a future failed-discard surface added a second list.
+    const previewList = document.querySelector('ul.discard-all-preview-list');
+    expect(previewList).not.toBeNull();
+    expect(previewList).toHaveClass(discardStyles.discardAllPreviewList);
   });
 
   it('DiscardAllStale_OnConfirm_FiresDeletePerStaleId', async () => {
