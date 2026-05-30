@@ -390,6 +390,8 @@ The "AI isn't available right now / when it is" phrasing avoids the false implic
 - D79 — `parsePrRefFromPathname` colocated under `components/AskAiDrawer/`, NOT extracted to `frontend/src/lib/`. Single-consumer scope.
 - D80 — z-index ordering: drawer 50 = PrTabStrip overflow menu 50; drawer renders later in App.tsx → wins paint-order tie. Modal at 1000 always wins. Documented to anchor the stacking decision.
 - D81 — `inert` attribute on the closed drawer `<aside>`. WCAG 2.1 SC 4.1.2 fix discovered during Task 13 a11y-audit. `aria-hidden={!isOpen}` alone leaves focusable children (Close button, textarea, Send button) in the focus tree when the drawer is closed.
+- D82 — `PrTabStrip` nested-interactive a11y violation (PR7-vintage). Surfaced after D81 unmasked layered a11y audits. Deferred to PR9 a11y revisit per § 4.9.
+- D83 — `parity-baselines.spec.ts` `inbox` test Loading-vs-populated race (pre-existing D64 weakness). Out of PR8 scope.
 
 ### 4.9 PR9 — Revisit pass (audit + documentation)
 
