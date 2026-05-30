@@ -114,6 +114,26 @@ export function DiffPane({
     );
   }
 
+  // Loading-state branch — intercept in-flight fetches before the empty-file
+  // branch fires. Without this, a `file === null` mid-fetch falsely renders
+  // "Empty file — no changes to display." (Copilot iter 1 #1).
+  if (isLoading && !file) {
+    return (
+      <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
+        <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+          <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
+          <span
+            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
+            role="status"
+            aria-live="polite"
+          >
+            Loading…
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   if (!file || file.hunks.length === 0) {
     return (
       <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
@@ -148,7 +168,13 @@ export function DiffPane({
       <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
         {isLoading && (
-          <span className={`diff-pane-loading muted ${styles.diffPaneLoading}`}>Loading…</span>
+          <span
+            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
+            role="status"
+            aria-live="polite"
+          >
+            Loading…
+          </span>
         )}
       </div>
       <div className={`diff-pane-body ${styles.diffPaneBody}`}>

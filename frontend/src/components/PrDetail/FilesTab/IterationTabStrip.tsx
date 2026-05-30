@@ -85,6 +85,7 @@ export function IterationTabStrip({
             onClick={() => setDropdownOpen((o) => !o)}
             aria-expanded={dropdownOpen}
             aria-haspopup="listbox"
+            aria-label={`Show ${overflowIters.length} more iterations`}
           >
             <span className={`iteration-chip-num ${styles.iterationChipNum}`}>
               +{overflowIters.length}

@@ -96,7 +96,7 @@ function ThreadView({
         <div className={`comment-thread-actions ${styles.commentThreadActions}`}>
           <button
             type="button"
-            className="comment-thread-reply"
+            className="comment-thread-reply btn btn-ghost btn-sm"
             aria-label={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
             onClick={handleReplyClick}
           >
