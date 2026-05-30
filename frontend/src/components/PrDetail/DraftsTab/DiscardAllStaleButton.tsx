@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Modal } from '../../Modal/Modal';
 import { sendPatch } from '../../../api/draft';
 import type { DraftCommentDto, DraftReplyDto, PrReference } from '../../../api/types';
+import styles from './DiscardAllStaleButton.module.css';
 
 interface DiscardAllStaleButtonProps {
   prRef: PrReference;
@@ -139,16 +140,18 @@ export function DiscardAllStaleButton({
           This will discard <strong>{total}</strong> stale draft{total === 1 ? '' : 's'}.
         </p>
         {failedCount > 0 && (
-          <p role="alert" className="discard-all-error">
+          <p role="alert" className={`discard-all-error ${styles.discardAllError}`}>
             {failedCount} draft{failedCount === 1 ? '' : 's'} could not be discarded. Successful
             ones have been removed; click Discard to retry the remainder.
           </p>
         )}
-        <ul className="discard-all-preview-list">
+        <ul className={`discard-all-preview-list ${styles.discardAllPreviewList}`}>
           {previews.map((p) => (
             <li key={p.id}>
               <span className="muted-2">{p.label}</span>
-              <pre className="discard-all-preview-body">{p.body}</pre>
+              <pre className={`discard-all-preview-body ${styles.discardAllPreviewBody}`}>
+                {p.body}
+              </pre>
             </li>
           ))}
         </ul>

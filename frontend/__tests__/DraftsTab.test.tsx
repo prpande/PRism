@@ -8,6 +8,7 @@ import itemStyles from '../src/components/PrDetail/DraftsTab/DraftListItem.modul
 import emptyStyles from '../src/components/PrDetail/DraftsTab/DraftListEmpty.module.css';
 import skelStyles from '../src/components/PrDetail/DraftsTab/DraftsTabSkeleton.module.css';
 import errStyles from '../src/components/PrDetail/DraftsTab/DraftsTabError.module.css';
+import discardStyles from '../src/components/PrDetail/DraftsTab/DiscardAllStaleButton.module.css';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -279,6 +280,17 @@ describe('DraftsTab', () => {
     expect(dialog).toHaveTextContent(/preview-rep/);
     expect(dialog).toHaveTextContent(/src\/Foo\.cs/);
     expect(dialog).toHaveTextContent(/PRRT_abc/);
+  });
+
+  it('DiscardAllStaleModal_AppliesModuleClasses_OnPreviewList', async () => {
+    renderDraftsTab({
+      session: mkSession({
+        draftComments: [mkComment({ status: 'stale' })],
+      }),
+      status: 'ready',
+    });
+    await userEvent.click(screen.getByRole('button', { name: /Discard all stale/i }));
+    expect(screen.getByRole('list')).toHaveClass(discardStyles.discardAllPreviewList);
   });
 
   it('DiscardAllStale_OnConfirm_FiresDeletePerStaleId', async () => {
