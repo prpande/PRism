@@ -1,12 +1,14 @@
 import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { inboxApi } from '../../api/inbox';
+import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import styles from './PasteUrlInput.module.css';
 
 export function PasteUrlInput() {
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { addTab } = useOpenTabs();
   // Set to true by onPaste; cleared when onChange consumes it.
   const pasteInProgress = useRef(false);
 
@@ -16,6 +18,9 @@ export function PasteUrlInput() {
     try {
       const resp = await inboxApi.parsePrUrl(raw.trim());
       if (resp.ok && resp.ref) {
+        // Title is null at paste time — PrDetailPage will fill in the title
+        // via setTitle once usePrDetail resolves.
+        addTab(resp.ref, null);
         navigate(`/pr/${resp.ref.owner}/${resp.ref.repo}/${resp.ref.number}`);
         setValue('');
         return;
