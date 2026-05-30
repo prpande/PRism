@@ -2,7 +2,6 @@
   display: flex;
   flex-direction: column;
   background: var(--surface-1);
-  border-right: 1px solid var(--border-1);
   min-width: 240px;
   max-width: 360px;
   overflow-y: auto;

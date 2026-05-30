@@ -489,6 +489,7 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Reality:** `<div role="listbox">` has no `onKeyDown` handler; `<div role="option">` items have no `tabIndex` or keyboard handlers. Keyboard-only users cannot interact with the overflow dropdown.
 **Plan resolution:** Adding arrow-key navigation requires new state + key event handlers + focus management — behavior changes out of §2.2 scope. Defer to PR9 audit.
 **Status:** Deferred to PR9.
+**Iter 2 update (2026-05-30):** Misleading ARIA roles dropped — `aria-haspopup="listbox"`, `role="listbox"` container, and `<div role="option">` items all removed. Per-iteration `<div>` switched to native `<button type="button">` for free Tab focus + Space/Enter activation. The remaining gap (arrow-key navigation between dropdown options, focus management on open/close) stays deferred to PR9. Behavior delta minimized: dropdown is now a button-list rather than a listbox.
 **Cross-refs:** claude[bot] iter 1 finding #4.
 
 ### D45 — FileTree treeitem keyboard navigation gap (pre-existing) NOT addressed in PR4

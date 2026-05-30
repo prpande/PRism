@@ -84,7 +84,6 @@ export function IterationTabStrip({
             }
             onClick={() => setDropdownOpen((o) => !o)}
             aria-expanded={dropdownOpen}
-            aria-haspopup="listbox"
             aria-label={`Show ${overflowIters.length} more iterations`}
           >
             <span className={`iteration-chip-num ${styles.iterationChipNum}`}>
@@ -97,7 +96,6 @@ export function IterationTabStrip({
           {dropdownOpen && (
             <div
               className={`iteration-dropdown ${styles.iterationDropdown}`}
-              role="listbox"
               aria-label="All iterations"
             >
               {overflowIters.map((iter) => (
@@ -173,18 +171,18 @@ function IterationOption({
     ? `Iter ${iter.number}`
     : `Iter ${iter.number} (snapshot lost)`;
   return (
-    <div
+    <button
+      type="button"
       className={
         `iteration-option${disabled ? ' iteration-option--disabled' : ''} ` +
         `${styles.iterationOption}${disabled ? ` ${styles.iterationOptionDisabled}` : ''}`
       }
-      role="option"
       aria-selected={isActive}
-      aria-disabled={disabled}
+      disabled={disabled}
       onClick={onSelect}
     >
       <span className={`iteration-chip-num ${styles.iterationChipNum}`}>{iter.number}</span>
       <span className={`iteration-chip-label ${styles.iterationChipLabel}`}>{labelText}</span>
-    </div>
+    </button>
   );
 }
