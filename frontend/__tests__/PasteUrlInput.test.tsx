@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PasteUrlInput } from '../src/components/Inbox/PasteUrlInput';
+import { OpenTabsProvider } from '../src/contexts/OpenTabsContext';
 
 vi.mock('../src/api/inbox', () => ({
   inboxApi: {
@@ -15,13 +16,15 @@ import { inboxApi } from '../src/api/inbox';
 function renderInput() {
   return render(
     <MemoryRouter initialEntries={['/']}>
-      <Routes>
-        <Route path="/" element={<PasteUrlInput />} />
-        <Route
-          path="/pr/:owner/:repo/:number"
-          element={<div data-testid="pr-detail">PR detail</div>}
-        />
-      </Routes>
+      <OpenTabsProvider>
+        <Routes>
+          <Route path="/" element={<PasteUrlInput />} />
+          <Route
+            path="/pr/:owner/:repo/:number"
+            element={<div data-testid="pr-detail">PR detail</div>}
+          />
+        </Routes>
+      </OpenTabsProvider>
     </MemoryRouter>,
   );
 }

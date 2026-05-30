@@ -3,6 +3,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect } from 'vitest';
 import { InboxRow } from '../src/components/Inbox/InboxRow';
+import { OpenTabsProvider } from '../src/contexts/OpenTabsContext';
 import type { PrInboxItem, InboxItemEnrichment } from '../src/api/types';
 
 const basePr: PrInboxItem = {
@@ -28,23 +29,25 @@ function renderRow(
 ) {
   return render(
     <MemoryRouter initialEntries={['/']}>
-      <Routes>
-        <Route
-          path="/"
-          element={
-            <InboxRow
-              pr={pr}
-              enrichment={opts.enrichment}
-              showCategoryChip={opts.showCategoryChip ?? false}
-              maxDiff={100}
-            />
-          }
-        />
-        <Route
-          path="/pr/:owner/:repo/:number"
-          element={<div data-testid="pr-detail">PR detail</div>}
-        />
-      </Routes>
+      <OpenTabsProvider>
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <InboxRow
+                pr={pr}
+                enrichment={opts.enrichment}
+                showCategoryChip={opts.showCategoryChip ?? false}
+                maxDiff={100}
+              />
+            }
+          />
+          <Route
+            path="/pr/:owner/:repo/:number"
+            element={<div data-testid="pr-detail">PR detail</div>}
+          />
+        </Routes>
+      </OpenTabsProvider>
     </MemoryRouter>,
   );
 }

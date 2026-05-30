@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { InboxResponse, AiCapabilities, PreferencesResponse } from '../src/api/types';
 import { InboxPage } from '../src/pages/InboxPage';
+import { OpenTabsProvider } from '../src/contexts/OpenTabsContext';
 
 vi.mock('../src/hooks/useInbox', () => ({
   useInbox: vi.fn(),
@@ -116,7 +117,9 @@ const emptyData: InboxResponse = {
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/']}>
-      <InboxPage />
+      <OpenTabsProvider>
+        <InboxPage />
+      </OpenTabsProvider>
     </MemoryRouter>,
   );
 }
