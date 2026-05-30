@@ -26,6 +26,10 @@ export function AskAiDrawer() {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // IME composition guard: Asian-language input methods fire keydown
+      // with isComposing=true while the user is still mid-composition;
+      // Enter at that moment commits the composition, not the message.
+      if (e.nativeEvent.isComposing) return;
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSubmit();
@@ -85,7 +89,7 @@ export function AskAiDrawer() {
           ✕
         </button>
       </div>
-      <div className={styles.body}>
+      <div className={styles.body} role="log" aria-live="polite" aria-relevant="additions">
         {!hasMessages && !thread?.pendingAiReply && (
           <>
             <p className={styles.emptyHint}>Ask anything about this PR.</p>

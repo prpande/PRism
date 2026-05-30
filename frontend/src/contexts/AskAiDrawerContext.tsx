@@ -55,10 +55,19 @@ export function AskAiDrawerProvider({ children }: { children: ReactNode }) {
   // inside each setThreads updater (see OpenTabsContext ref-mirror pattern).
   const threadsRef = useRef<ReadonlyMap<string, ChatThread>>(threads);
 
-  // Track pending timeouts for cleanup on clearAll (and indirectly on unmount
-  // via React 19 dev-mode StrictMode double-invoke; provider lifetime = App
-  // lifetime in production).
+  // Track pending timeouts so clearAll, identity-change, and provider unmount
+  // can drain them. Provider lifetime = App lifetime in production, so unmount
+  // cleanup matters mostly for vitest StrictMode rerenders and any future
+  // dev-time auth-state remount that swaps the App tree.
   const pendingTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
+  useEffect(() => {
+    const handles = pendingTimeoutsRef;
+    return () => {
+      for (const h of handles.current) clearTimeout(h);
+      handles.current.clear();
+    };
+  }, []);
 
   const updateThread = useCallback(
     (prRefKey: string, mutator: (thread: ChatThread) => ChatThread) => {
