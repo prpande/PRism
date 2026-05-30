@@ -1,9 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { OpenTabsProvider, useOpenTabs } from '../../contexts/OpenTabsContext';
 import { PrTabStrip } from './PrTabStrip';
 import { useEffect } from 'react';
+
+vi.mock('../../hooks/useSubmitInFlight', () => ({
+  useSubmitInFlight: vi.fn(() => ({ inFlight: false, prRef: null })),
+}));
+
+import { useSubmitInFlight } from '../../hooks/useSubmitInFlight';
 
 function Seed({ count }: { count: number }) {
   const { addTab } = useOpenTabs();
@@ -94,9 +101,74 @@ describe('PrTabStrip', () => {
       }, [addTab, markUnread]);
       return null;
     }
-    render(wrap(<><Seed /><PrTabStrip /></>));
+    render(
+      wrap(
+        <>
+          <Seed />
+          <PrTabStrip />
+        </>,
+      ),
+    );
     const tab = screen.getByRole('tab', { name: /Has unread/i });
     // CSS-module class names are hashed; assert via partial class match.
     expect(tab.className).toMatch(/tabUnread/);
+  });
+});
+
+describe('PrTabStrip close affordance', () => {
+  it('clicking × removes the tab from openTabs', async () => {
+    vi.mocked(useSubmitInFlight).mockReturnValue({ inFlight: false, prRef: null });
+    function Harness() {
+      const { addTab } = useOpenTabs();
+      useEffect(() => {
+        addTab({ owner: 'acme', repo: 'api', number: 1 }, 'A');
+        addTab({ owner: 'acme', repo: 'api', number: 2 }, 'B');
+      }, [addTab]);
+      return <PrTabStrip />;
+    }
+    render(wrap(<Harness />));
+    const tab1 = screen.getByRole('tab', { name: /A/i });
+    const close1 = tab1.querySelector('[aria-label="Close tab"]') as HTMLElement;
+    expect(close1).not.toBeNull();
+    await userEvent.click(close1);
+    expect(screen.queryByRole('tab', { name: /A/i })).toBeNull();
+    expect(screen.getByRole('tab', { name: /B/i })).toBeInTheDocument();
+  });
+
+  it('middle-click on a tab closes it', () => {
+    vi.mocked(useSubmitInFlight).mockReturnValue({ inFlight: false, prRef: null });
+    function Harness() {
+      const { addTab } = useOpenTabs();
+      useEffect(() => {
+        addTab({ owner: 'acme', repo: 'api', number: 1 }, 'A');
+      }, [addTab]);
+      return <PrTabStrip />;
+    }
+    render(wrap(<Harness />));
+    const tab = screen.getByRole('tab', { name: /A/i });
+    fireEvent.mouseDown(tab, { button: 1 });
+    expect(screen.queryByRole('tab')).toBeNull();
+  });
+
+  it('close button is disabled when submit is in flight for that tab', () => {
+    vi.mocked(useSubmitInFlight).mockReturnValue({ inFlight: true, prRef: 'acme/api/1' });
+    function Harness() {
+      const { addTab } = useOpenTabs();
+      useEffect(() => {
+        addTab({ owner: 'acme', repo: 'api', number: 1 }, 'A');
+        addTab({ owner: 'acme', repo: 'api', number: 2 }, 'B');
+      }, [addTab]);
+      return <PrTabStrip />;
+    }
+    render(wrap(<Harness />));
+    const closeA = screen
+      .getByRole('tab', { name: /A/i })
+      .querySelector('[aria-label="Close tab"]') as HTMLButtonElement;
+    const closeB = screen
+      .getByRole('tab', { name: /B/i })
+      .querySelector('[aria-label="Close tab"]') as HTMLButtonElement;
+    expect(closeA).toBeDisabled();
+    expect(closeA.getAttribute('title')).toMatch(/submit in progress/i);
+    expect(closeB).not.toBeDisabled();
   });
 });
