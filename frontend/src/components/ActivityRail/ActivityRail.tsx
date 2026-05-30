@@ -3,7 +3,7 @@ import styles from './ActivityRail.module.css';
 
 export function ActivityRail() {
   return (
-    <aside className={styles.rail} aria-label="Activity">
+    <aside className={styles.rail} aria-label="Activity" data-testid="activity-rail">
       <section className={styles.section}>
         <header className={styles.head}>
           <span className={styles.title}>Activity</span>

@@ -55,7 +55,7 @@ test.beforeEach(async () => {
 });
 
 test.describe('parity baselines — Inbox', () => {
-  test.fixme('inbox', async ({ page }) => {
+  test('inbox', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
     // setupAndOpenScenarioPr lands on '/', so wait for the inbox list to
@@ -65,7 +65,7 @@ test.describe('parity baselines — Inbox', () => {
     await expect(page.locator('main')).toHaveScreenshot('inbox.png', SCREENSHOT_OPTS);
   });
 
-  test.fixme('inbox-activity-rail', async ({ page }) => {
+  test('inbox-activity-rail', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
     // Activity rail only renders when preferences.ui.aiPreview === true; enable
@@ -189,8 +189,76 @@ test.describe('parity baselines — PR Detail', () => {
   });
 });
 
-// PR7-only zones (added when the PR tab strip ships):
-// test('app-chrome-tabstrip', ...) — see PR7 plan.
-//
+test.describe('parity baselines — app chrome', () => {
+  test('app-chrome-tabstrip', async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await setupAndOpenScenarioPr(page);
+    // Open the single fixture PR (acme/api/123). PrDetailPage's addTab effect
+    // (Task 6) seeds openTabs with this ref; the Task 6 setTitle effect fills
+    // in the title once usePrDetail resolves.
+    await page.goto('/pr/acme/api/123');
+    await page.locator('[data-testid="pr-header"]').waitFor();
+    // Navigate back to Inbox via SPA routing (NOT page.goto, which would
+    // trigger a hard reload and wipe the in-memory openTabs state per D59).
+    // The Header has a <Link to="/">Inbox</Link> that uses react-router
+    // pushState — openTabs survives.
+    await page.getByRole('link', { name: 'Inbox' }).click();
+    await page.waitForURL(/\/$/);
+    await page.locator('[data-testid="pr-tabstrip"]').waitFor();
+    // SSE per-PR fanout is subscription-gated: SseChannel.OnActivePrUpdated only
+    // delivers `pr-updated` to subscribers registered for that prRef via
+    // POST /api/events/subscriptions. useActivePrUpdates auto-subscribes on
+    // PrDetailPage mount AND auto-unsubscribes on unmount — so navigating to
+    // Inbox above DELETED the subscription. Without re-subscribing here, the
+    // emit-pr-updated POST below fans out to zero subscribers, useTabUnreadSignal
+    // never sees the event, and the tabUnread class never appears. Resubscribe
+    // explicitly so the inactive-tab unread visual can be captured. The Origin
+    // header satisfies OriginCheckMiddleware (matches the loopback pattern in
+    // helpers/s4-setup.ts).
+    const subResp = await page.request.post('/api/events/subscriptions', {
+      data: { PrRef: 'acme/api/123' },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    if (!subResp.ok()) {
+      throw new Error(
+        `POST /api/events/subscriptions failed: ${subResp.status()} ${await subResp.text()}`,
+      );
+    }
+    // Mark the tab unread via the existing /test/emit-pr-updated hook (S6 PR9).
+    // Endpoint binds EmitPrUpdatedRequest(Owner, Repo, Number, HeadShaChanged,
+    // CommentCountChanged, NewHeadSha, CommentCountDelta) — see
+    // PRism.Web/TestHooks/TestEndpoints.cs:42-49 + :137-153 for the validation
+    // rules. We use CommentCountChanged=true + delta=1 to fire an unread signal
+    // without an SHA change (head-sha change would also work but requires the
+    // backend to know the next sha; not needed here).
+    const emitResp = await page.request.post('/test/emit-pr-updated', {
+      data: {
+        Owner: 'acme',
+        Repo: 'api',
+        Number: 123,
+        HeadShaChanged: false,
+        CommentCountChanged: true,
+        NewHeadSha: null,
+        CommentCountDelta: 1,
+      },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    if (!emitResp.ok()) {
+      throw new Error(
+        `POST /test/emit-pr-updated failed: ${emitResp.status()} ${await emitResp.text()}`,
+      );
+    }
+    // Wait for the unread dot to render. CSS-module classes are hashed —
+    // match on partial class. If the selector turns out flaky, add a
+    // `data-state="unread"` attribute to the tab via a follow-up.
+    await page.locator('[data-testid="pr-tabstrip"] [class*="tabUnread"]').first().waitFor();
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
+    await expect(page.locator('[data-testid="pr-tabstrip"]')).toHaveScreenshot(
+      'app-chrome-tabstrip.png',
+      SCREENSHOT_OPTS,
+    );
+  });
+});
+
 // PR8-only zones (added when the Ask AI drawer ships):
 // test('ask-ai-drawer', ...) — see PR8 plan.
