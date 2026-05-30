@@ -18,6 +18,12 @@ import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
 import { OpenTabsProvider } from './contexts/OpenTabsContext';
 import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
+import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
+
+function TabSignals() {
+  useTabUnreadSignal();
+  return null;
+}
 
 export function App() {
   const { authState, error, refetch } = useAuth();
@@ -61,6 +67,7 @@ export function App() {
     <>
       <Header hasToken={authState.hasToken} />
       <PrTabStrip />
+      <TabSignals />
       <Routes>
         <Route path="/setup" element={<SetupPage />} />
         <Route
