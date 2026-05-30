@@ -4,6 +4,7 @@ import { sendPatch } from '../../../api/draft';
 import { Modal } from '../../Modal/Modal';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
+import styles from './InlineCommentComposer.module.css';
 import type { DraftSide, PrReference } from '../../../api/types';
 
 export interface InlineAnchor {
@@ -219,7 +220,8 @@ export function InlineCommentComposer({
       role="form"
       aria-label={composerAriaLabel(anchor)}
       data-composer="true"
-      className="inline-comment-composer"
+      data-testid="inline-comment-composer"
+      className={`inline-comment-composer ${styles.inlineCommentComposer}`}
     >
       {closedBanner && (
         <div className="composer-closed-banner muted" role="status">
@@ -253,7 +255,11 @@ export function InlineCommentComposer({
           {previewMode ? 'Edit' : 'Preview'}
         </button>
 
-        <span className={`composer-badge composer-badge--${badge}`} role="status">
+        <span
+          className={`composer-badge composer-badge--${badge}`}
+          role="status"
+          data-testid="composer-badge"
+        >
           {badge}
         </span>
 

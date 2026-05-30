@@ -1,0 +1,37 @@
+.comparePicker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: var(--s-2) 0;
+}
+.comparePickerLabel {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.comparePickerLabelText {
+  /* Composes with handoff `iter-compare` muted label tone */
+  color: var(--text-3);
+}
+.comparePickerSelect {
+  /* Composes with surface tokens; matches the iter-chip-card aesthetic */
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  min-width: 8em;
+}
+.comparePickerArrow {
+  color: var(--text-3);
+  font-size: var(--text-sm);
+  padding: 0 var(--s-1);
+}
+.comparePickerEmpty {
+  /* Composes with .muted global */
+  font-size: var(--text-sm);
+}

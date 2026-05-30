@@ -1,4 +1,5 @@
 import type { IterationDto } from '../../../api/types';
+import styles from './ComparePicker.module.css';
 
 export interface ComparePickerProps {
   iterations: IterationDto[];
@@ -35,14 +36,16 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
   const isSameIter = effectiveFrom === effectiveTo;
 
   return (
-    <div className="compare-picker">
-      <label className="compare-picker-label">
-        <span className="compare-picker-label-text">Compare</span>
+    <div className={`compare-picker ${styles.comparePicker}`} data-testid="compare-picker">
+      <label className={`compare-picker-label ${styles.comparePickerLabel}`}>
+        <span className={`compare-picker-label-text ${styles.comparePickerLabelText}`}>
+          Compare
+        </span>
         <select
           aria-label="From iteration"
           value={effectiveFrom}
           onChange={handleFromChange}
-          className="compare-picker-select"
+          className={`compare-picker-select ${styles.comparePickerSelect}`}
         >
           {iterations.map((iter) => (
             <option key={iter.number} value={iter.number} disabled={!iter.hasResolvableRange}>
@@ -54,14 +57,16 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
         </select>
       </label>
 
-      <span className="compare-picker-arrow">⇄</span>
+      <span className={`compare-picker-arrow ${styles.comparePickerArrow}`} aria-hidden="true">
+        ⇄
+      </span>
 
-      <label className="compare-picker-label">
+      <label className={`compare-picker-label ${styles.comparePickerLabel}`}>
         <select
           aria-label="To iteration"
           value={effectiveTo}
           onChange={handleToChange}
-          className="compare-picker-select"
+          className={`compare-picker-select ${styles.comparePickerSelect}`}
         >
           {iterations.map((iter) => (
             <option key={iter.number} value={iter.number} disabled={!iter.hasResolvableRange}>
@@ -74,7 +79,7 @@ export function ComparePicker({ iterations, fromIter, toIter, onCompare }: Compa
       </label>
 
       {isSameIter && (
-        <span className="compare-picker-empty" role="status">
+        <span className={`compare-picker-empty muted ${styles.comparePickerEmpty}`} role="status">
           No changes between Iter {effectiveFrom} and Iter {effectiveTo}.
         </span>
       )}

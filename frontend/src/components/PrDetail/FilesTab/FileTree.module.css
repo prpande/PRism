@@ -1,0 +1,154 @@
+.fileTree {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+  min-width: 240px;
+  max-width: 360px;
+  overflow-y: auto;
+}
+.fileTreeHeader {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--border-1);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-1);
+}
+.fileTreeEmpty {
+  /* Composes with .muted global */
+  padding: var(--s-4);
+  font-size: var(--text-sm);
+}
+.fileTreeList {
+  display: flex;
+  flex-direction: column;
+}
+
+/* File rows — handoff `tree-row` treatment */
+.fileTreeFile {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 6px var(--s-3);
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.fileTreeFile:hover {
+  background: var(--surface-3);
+}
+.fileTreeFileSelected {
+  background: color-mix(in oklch, var(--accent-soft) 40%, var(--surface-2));
+  color: var(--text-1);
+}
+
+/* Viewed-state — handoff strikethrough via :has() sibling selector (D33).
+   Baseline 2023; supported in current Chrome, Safari, Firefox. */
+.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeFileName {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--border-strong);
+  text-decoration-thickness: 1px;
+}
+
+/* File-status badges — handoff `tree-status-*` treatment.
+   FileChangeStatus union per types.ts:209 — 4 values only.
+   No `removed`, no `copied`. */
+.fileStatus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5em;
+  height: 1.5em;
+  border-radius: var(--radius-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.fileStatusAdded {
+  background: var(--success-soft);
+  color: var(--success-fg);
+}
+.fileStatusModified {
+  background: var(--warning-soft);
+  color: var(--warning-fg);
+}
+.fileStatusDeleted {
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+}
+.fileStatusRenamed {
+  background: var(--info-soft);
+  color: var(--info-fg);
+}
+
+/* Dormant per D32a — production JSX has no AI-focus-dot wiring today.
+   Rule is ready for PR9 to enable via a small JSX conditional render. */
+.fileTreeAi {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.fileTreeFileName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fileTreeSpacer {
+  flex: none;
+  margin-left: auto;
+}
+.fileTreeViewedCheckbox {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeViewedCheckbox {
+  /* Match handoff `tree-row.is-viewed .tree-viewed` filled-accent treatment */
+  accent-color: var(--accent);
+}
+
+/* Directory rows — production-only structure; no handoff source */
+.fileTreeDir {
+  display: flex;
+  flex-direction: column;
+}
+.fileTreeDirHeader {
+  display: flex;
+  align-items: center;
+  padding: 6px var(--s-3);
+}
+.fileTreeDirToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.fileTreeChevron {
+  display: inline-block;
+  width: 1em;
+  text-align: center;
+  color: var(--text-3);
+  transition: transform var(--t-fast);
+}
+.fileTreeChevronOpen {
+  transform: rotate(90deg);
+}
+.fileTreeDirName {
+  font-weight: 500;
+}

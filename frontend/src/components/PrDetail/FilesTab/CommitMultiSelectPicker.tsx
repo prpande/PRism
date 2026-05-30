@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo, useId } from 'react';
 import type { CommitDto } from '../../../api/types';
+import styles from './CommitMultiSelectPicker.module.css';
 
 export interface CommitMultiSelectPickerProps {
   commits: CommitDto[];
@@ -98,14 +99,17 @@ export function CommitMultiSelectPicker({
   const listboxId = `${instanceId}-commit-picker-listbox`;
 
   return (
-    <div className="commit-multi-select-picker">
+    <div
+      className={`commit-multi-select-picker ${styles.commitMultiSelectPicker}`}
+      data-testid="commit-multi-select-picker"
+    >
       <button
         ref={triggerRef}
         role="combobox"
         aria-expanded={open}
         aria-controls={listboxId}
         aria-haspopup="listbox"
-        className="commit-picker-trigger"
+        className={`commit-picker-trigger ${styles.commitPickerTrigger}`}
         onClick={() => {
           setOpen((o) => !o);
           setFocusIndex(0);
@@ -123,14 +127,14 @@ export function CommitMultiSelectPicker({
           aria-label="Select commits"
           aria-activedescendant={focusIndex >= 0 ? `${instanceId}-option-${focusIndex}` : undefined}
           tabIndex={-1}
-          className="commit-picker-listbox"
+          className={`commit-picker-listbox ${styles.commitPickerListbox}`}
           onKeyDown={handleKeyDown}
         >
           <div
             id={`${instanceId}-option-0`}
             role="option"
             aria-selected={isShowAll}
-            className={`commit-picker-option${focusIndex === 0 ? ' commit-picker-option--focused' : ''}`}
+            className={`commit-picker-option${focusIndex === 0 ? ' commit-picker-option--focused' : ''} ${styles.commitPickerOption}${focusIndex === 0 ? ` ${styles.commitPickerOptionFocused}` : ''}`}
             onClick={handleShowAll}
           >
             Show all
@@ -143,10 +147,10 @@ export function CommitMultiSelectPicker({
                 id={`${instanceId}-option-${i + 1}`}
                 role="option"
                 aria-selected={isSelected}
-                className={`commit-picker-option${focusIndex === i + 1 ? ' commit-picker-option--focused' : ''}`}
+                className={`commit-picker-option${focusIndex === i + 1 ? ' commit-picker-option--focused' : ''} ${styles.commitPickerOption}${focusIndex === i + 1 ? ` ${styles.commitPickerOptionFocused}` : ''}`}
                 onClick={() => handleToggleCommit(c.sha)}
               >
-                <span className="commit-picker-message">
+                <span className={`commit-picker-message ${styles.commitPickerMessage}`}>
                   {c.message.length > 72 ? c.message.slice(0, 72) + '…' : c.message}
                 </span>
               </div>

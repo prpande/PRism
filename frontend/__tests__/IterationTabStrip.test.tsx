@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { IterationTabStrip } from '../src/components/PrDetail/FilesTab/IterationTabStrip';
-import type { IterationDto } from '../src/api/types';
+import type { IterationDto, CommitDto } from '../src/api/types';
 
 function iter(n: number, hasResolvableRange = true): IterationDto {
   return {
@@ -10,6 +10,16 @@ function iter(n: number, hasResolvableRange = true): IterationDto {
     afterSha: `after${n}`,
     commits: [],
     hasResolvableRange,
+  };
+}
+
+function makeCommit(additions: number, deletions: number): CommitDto {
+  return {
+    sha: 'abc',
+    message: 'msg',
+    committedDate: '2026-05-30T00:00:00Z',
+    additions,
+    deletions,
   };
 }
 
@@ -84,5 +94,32 @@ describe('IterationTabStrip', () => {
     render(<IterationTabStrip iterations={iterations} activeRange="all" onRangeChange={vi.fn()} />);
     const allTab = screen.getByText('All changes').closest('[role="tab"]');
     expect(allTab?.getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('renders chip-meta +adds/-rems summed from iteration.commits', () => {
+    const iterations: IterationDto[] = [
+      {
+        number: 1,
+        beforeSha: 'x',
+        afterSha: 'y',
+        commits: [makeCommit(10, 2), makeCommit(2, 1)],
+        hasResolvableRange: true,
+      },
+      {
+        number: 2,
+        beforeSha: 'y',
+        afterSha: 'z',
+        commits: [makeCommit(5, 18)],
+        hasResolvableRange: true,
+      },
+    ];
+    render(<IterationTabStrip iterations={iterations} activeRange="all" onRangeChange={vi.fn()} />);
+    expect(screen.getByText('+12')).toBeInTheDocument();
+    expect(screen.getByText('-3')).toBeInTheDocument();
+    expect(screen.getByText('+5')).toBeInTheDocument();
+    expect(screen.getByText('-18')).toBeInTheDocument();
+    // "All changes" chip-meta sums every iteration: iter1 +12/-3 + iter2 +5/-18 = +17/-21
+    expect(screen.getByText('+17')).toBeInTheDocument();
+    expect(screen.getByText('-21')).toBeInTheDocument();
   });
 });

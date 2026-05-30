@@ -1,0 +1,21 @@
+.aiHunk {
+  /* Composes with .ai-tint global for surface tint */
+  margin: var(--s-2) var(--s-4);
+  padding: var(--s-3);
+  border-radius: var(--radius-3);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+}
+.aiHunkMeta {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.aiHunkActions {
+  margin-top: 6px;
+  display: flex;
+  gap: var(--s-1);
+}

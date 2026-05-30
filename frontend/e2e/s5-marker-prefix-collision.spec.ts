@@ -42,7 +42,7 @@ async function openInlineComposer(page: Page) {
 // Scoped to the composer's <span class="composer-badge"> so we read THIS
 // composer's state, not some other status region on the page.
 function composerBadge(page: Page) {
-  return page.locator('.inline-comment-composer .composer-badge');
+  return page.locator('[data-testid="inline-comment-composer"] [data-testid="composer-badge"]');
 }
 
 test('S5 marker-prefix collision — a body carrying the PRism client-id marker (bare) is rejected by the server', async ({

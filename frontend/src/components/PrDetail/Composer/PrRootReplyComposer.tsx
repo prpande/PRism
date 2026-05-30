@@ -185,7 +185,7 @@ export function PrRootReplyComposer({
         />
       )}
 
-      <div className={styles.composerActions}>
+      <div className="composer-actions">
         <button
           type="button"
           className="composer-preview-toggle"
@@ -195,7 +195,11 @@ export function PrRootReplyComposer({
           {previewMode ? 'Edit' : 'Preview'}
         </button>
 
-        <span className={`composer-badge composer-badge--${badge}`} role="status">
+        <span
+          className={`composer-badge composer-badge--${badge}`}
+          role="status"
+          data-testid="composer-badge"
+        >
           {badge}
         </span>
 

@@ -6,6 +6,7 @@ import {
 } from './ExistingCommentWidget';
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
+import styles from './DiffPane.module.css';
 
 export type DiffMode = 'side-by-side' | 'unified';
 
@@ -30,6 +31,9 @@ export interface DiffPaneProps {
   // `<ReplyComposer>`. Absent → DiffPane test harnesses render threads
   // read-only.
   replyContext?: ExistingCommentWidgetReplyContext;
+  // D36 — when true, renders a Loading… span in the diff-pane header. JSX
+  // (not CSS ::after) so screen readers announce it (WCAG 2.1 F87).
+  isLoading?: boolean;
 }
 
 interface DiffLine {
@@ -97,22 +101,48 @@ export function DiffPane({
   onLineClick,
   renderComposerForLine,
   replyContext,
+  isLoading = false,
 }: DiffPaneProps) {
   if (!selectedPath) {
     return (
-      <div className="diff-pane diff-pane--empty">
+      <div
+        className={`diff-pane diff-pane--empty ${styles.diffPane} ${styles.diffPaneEmpty}`}
+        data-testid="diff-pane"
+      >
         <p className="muted">Select a file from the tree to view its diff.</p>
+      </div>
+    );
+  }
+
+  // Loading-state branch — intercept in-flight fetches before the empty-file
+  // branch fires. Without this, a `file === null` mid-fetch falsely renders
+  // "Empty file — no changes to display." (Copilot iter 1 #1).
+  if (isLoading && !file) {
+    return (
+      <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
+        <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+          <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
+          <span
+            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
+            role="status"
+            aria-live="polite"
+          >
+            Loading…
+          </span>
+        </div>
       </div>
     );
   }
 
   if (!file || file.hunks.length === 0) {
     return (
-      <div className="diff-pane">
-        <div className="diff-pane-header">
-          <span className="diff-pane-path">{selectedPath}</span>
+      <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
+        <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+          <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
         </div>
-        <div className="diff-pane-body muted">Empty file — no changes to display.</div>
+        <div className={`diff-pane-body muted ${styles.diffPaneBody}`}>
+          Empty file — no changes to display.
+        </div>
       </div>
     );
   }
@@ -134,12 +164,21 @@ export function DiffPane({
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
 
   return (
-    <div className={`diff-pane ${modeClass}`}>
-      <div className="diff-pane-header">
-        <span className="diff-pane-path">{selectedPath}</span>
+    <div className={`diff-pane ${modeClass} ${styles.diffPane}`} data-testid="diff-pane">
+      <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+        <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
+        {isLoading && (
+          <span
+            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
+            role="status"
+            aria-live="polite"
+          >
+            Loading…
+          </span>
+        )}
       </div>
-      <div className="diff-pane-body">
-        <table className="diff-table">
+      <div className={`diff-pane-body ${styles.diffPaneBody}`}>
+        <table className={`diff-table ${styles.diffTable}`}>
           <tbody>
             {allLines.map((line, idx) => {
               // Attach comments to new-side line numbers (insert/context), matching GitHub convention
@@ -153,7 +192,6 @@ export function DiffPane({
                   line={line}
                   pair={pair}
                   threadsAtLine={threadsAtLine}
-                  isSplit={isSplit}
                   filePath={selectedPath}
                   onLineClick={onLineClick}
                   renderComposerForLine={renderComposerForLine}
@@ -173,7 +211,6 @@ interface DiffLineRowProps {
   line: DiffLine;
   pair: DiffLine | null;
   threadsAtLine: ReviewThreadDto[] | undefined;
-  isSplit: boolean;
   filePath: string;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
@@ -184,7 +221,6 @@ function DiffLineRow({
   line,
   pair,
   threadsAtLine,
-  isSplit,
   filePath,
   onLineClick,
   renderComposerForLine,
@@ -194,7 +230,7 @@ function DiffLineRow({
 
   const renderContent = () => {
     if (line.type === 'hunk-header') {
-      return <span className="diff-hunk-header">{line.content}</span>;
+      return <span className={`diff-hunk-header ${styles.diffHunkHeader}`}>{line.content}</span>;
     }
 
     if ((line.type === 'insert' || line.type === 'delete') && pair) {
@@ -233,50 +269,35 @@ function DiffLineRow({
     });
   };
 
+  // PoC scope: split-vs-unified mode currently renders the same two-gutter
+  // layout regardless. The `isSplit`-driven modeClass on the outer .diff-pane
+  // wrapper is the seam if/when split-mode introduces a real layout fork
+  // (e.g., side-by-side old/new content columns). Collapsed the dead ternary
+  // per claude[bot] iter 1 #1 — see also the wrapper class plumbing above.
   return (
     <>
       <tr className={rowClass}>
-        {isSplit ? (
-          <>
-            <td className="diff-gutter diff-gutter--old">{line.oldLineNum ?? ''}</td>
-            <td className="diff-gutter diff-gutter--new">
-              {commentLineNum !== null && canComment ? (
-                <button
-                  type="button"
-                  className="diff-comment-affordance"
-                  aria-label={`Add comment on line ${commentLineNum}`}
-                  onClick={handleClick}
-                >
-                  {line.newLineNum ?? line.oldLineNum ?? ''}
-                </button>
-              ) : (
-                (line.newLineNum ?? '')
-              )}
-            </td>
-          </>
-        ) : (
-          <>
-            <td className="diff-gutter diff-gutter--old">{line.oldLineNum ?? ''}</td>
-            <td className="diff-gutter diff-gutter--new">
-              {commentLineNum !== null && canComment ? (
-                <button
-                  type="button"
-                  className="diff-comment-affordance"
-                  aria-label={`Add comment on line ${commentLineNum}`}
-                  onClick={handleClick}
-                >
-                  {line.newLineNum ?? line.oldLineNum ?? ''}
-                </button>
-              ) : (
-                (line.newLineNum ?? '')
-              )}
-            </td>
-          </>
-        )}
-        <td className="diff-content">{renderContent()}</td>
+        <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
+          {line.oldLineNum ?? ''}
+        </td>
+        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
+          {commentLineNum !== null && canComment ? (
+            <button
+              type="button"
+              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
+              aria-label={`Add comment on line ${commentLineNum}`}
+              onClick={handleClick}
+            >
+              {line.newLineNum ?? line.oldLineNum ?? ''}
+            </button>
+          ) : (
+            (line.newLineNum ?? '')
+          )}
+        </td>
+        <td className={`diff-content ${styles.diffContent}`}>{renderContent()}</td>
       </tr>
       {threadsAtLine && threadsAtLine.length > 0 && (
-        <tr className="diff-comment-row">
+        <tr className={`diff-comment-row ${styles.diffCommentRow}`}>
           <td colSpan={3}>
             <ExistingCommentWidget threads={threadsAtLine} replyContext={replyContext} />
           </td>
@@ -308,7 +329,7 @@ function ComposerSlot({
   const node = render(filePath, lineNumber);
   if (!node) return null;
   return (
-    <tr className="diff-composer-row">
+    <tr className={`diff-composer-row ${styles.diffComposerRow}`}>
       <td colSpan={3}>{node}</td>
     </tr>
   );

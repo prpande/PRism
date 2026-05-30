@@ -671,3 +671,111 @@ a:hover { text-decoration: underline; }
 .ai-validator-card__message { flex: 1; min-width: 0; }
 .ai-validator-card__show-me { font-size: var(--text-xs); color: var(--text-3); cursor: default; }
 .ai-validator-card__show-me:disabled { opacity: 0.6; }
+
+/* Composer-inner primitives (spec §4.4 + D26). Shared across InlineCommentComposer,
+   ReplyComposer, and PrRootReplyComposer. Lifted to tokens.css per §3.1
+   lift-on-second-use rule. Sourced from screens.css L760-776 plus production
+   extensions for badge state variants. */
+.composer-textarea {
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  padding: var(--s-2);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  color: var(--text-1);
+}
+.composer-textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.composer-preview-toggle {
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  padding: var(--s-1) var(--s-2);
+  cursor: pointer;
+}
+.composer-preview-toggle:hover {
+  color: var(--text-1);
+}
+.composer-badge {
+  font-size: var(--text-xs);
+  padding: 2px var(--s-2);
+  border-radius: var(--radius-1);
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+.composer-badge--saved {
+  background: var(--success-soft);
+  color: var(--success-fg);
+}
+.composer-badge--saving {
+  background: var(--info-soft);
+  color: var(--info-fg);
+}
+.composer-badge--unsaved {
+  background: var(--warning-soft);
+  color: var(--warning-fg);
+}
+.composer-badge--rejected {
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+}
+.composer-discard {
+  font-size: var(--text-sm);
+  color: var(--danger-fg);
+  background: transparent;
+  border: none;
+  padding: var(--s-1) var(--s-2);
+  cursor: pointer;
+}
+.composer-discard:hover {
+  text-decoration: underline;
+}
+/* `.composer-save` is NOT defined here — production JSX (InlineCommentComposer.tsx:274,
+   etc.) composes `composer-save btn btn-primary btn-sm`, and the .btn / .btn-primary /
+   .btn-sm globals supply the full visual treatment. An empty `.composer-save` stub
+   would be a speculative future-anchor with no current consumer. */
+.composer-closed-banner {
+  font-size: var(--text-sm);
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-2);
+  border-radius: var(--radius-2);
+}
+.composer-actions {
+  /* Sourced from screens.css L776 minus the margin-top: 8px token. The parent
+     composer outer provides gap: var(--s-2) via flex-direction: column, so
+     margin-top here doubles the visual gap on the open-composer state. PR3
+     b4a916b documented this gotcha; PR4 closes it via the lift. (See D27.) */
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Diff-line tints (spec §4.4, D34). Lifted from the per-row literal class
+   strings DiffPane emits — `.diff-line diff-line--insert` / `--delete` /
+   `--hunk-header`. `--context` lines stay transparent (no rule needed —
+   inherits the diff-pane background). Global because the literal is what JSX
+   emits and no scoping is gained by hashing. Sourced from screens.css L637-678
+   (`.diff-line.diff-add` / `.diff-line.diff-rem` equivalents). */
+.diff-line {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.diff-line--insert {
+  background: var(--diff-add-bg);
+}
+.diff-line--delete {
+  background: var(--diff-rem-bg);
+}
+.diff-line--hunk-header {
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: var(--text-xs);
+}

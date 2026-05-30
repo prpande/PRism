@@ -1,0 +1,10 @@
+.inlineCommentComposer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  margin: var(--s-2) 0;
+}
