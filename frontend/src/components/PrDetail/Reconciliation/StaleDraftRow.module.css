@@ -1,0 +1,37 @@
+/* Ports handoff `.stale-row*` (screens.css:473-495) under production
+   class names. Mounted as <li> children of UnresolvedPanel's .unresolvedPanelRows ul.
+   D48: .stale-ai (handoff AI suggestion span) NOT ported — production has no
+   aiPreview data path on draft DTOs; deferred to PR9.
+   D55: deliberately deviates from handoff's `flex-direction: column` — production
+   keeps the `row gap-2` global compose on the JSX <li>; the body quote gets
+   `flex: 1 1 100%` to push onto its own line, approximating the handoff
+   blockquote effect without restructuring the JSX. */
+
+.staleDraftRow {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--border-1);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.staleDraftRow:last-child {
+  border-bottom: 0;
+}
+
+.staleDraftRowAnchor {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+
+.staleDraftRowPreview {
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  font-style: italic;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-2);
+  flex: 1 1 100%;
+  margin: 4px 0 0;
+}

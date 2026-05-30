@@ -4,6 +4,7 @@ import { Modal } from '../../Modal/Modal';
 import { sendPatch } from '../../../api/draft';
 import type { PrReference } from '../../../api/types';
 import type { DraftLike } from '../draftKinds';
+import styles from './StaleDraftRow.module.css';
 
 // StaleDraftRow operates on the same shape as DraftListItem — see
 // `../draftKinds.ts` for the canonical alias.
@@ -100,10 +101,14 @@ export function StaleDraftRow({ prRef, draft, onMutated }: StaleDraftRowProps) {
         : 'PR-root';
 
   return (
-    <li className="stale-draft-row row gap-2">
+    <li className={`stale-draft-row row gap-2 ${styles.staleDraftRow}`}>
       <span className="chip chip-status-stale">Stale</span>
-      <span className="muted-2 stale-draft-row-anchor">{anchorLabel}</span>
-      <span className="stale-draft-row-preview">{previewBody(body)}</span>
+      <span className={`muted-2 stale-draft-row-anchor ${styles.staleDraftRowAnchor}`}>
+        {anchorLabel}
+      </span>
+      <span className={`stale-draft-row-preview ${styles.staleDraftRowPreview}`}>
+        {previewBody(body)}
+      </span>
       <button
         type="button"
         className="btn btn-secondary btn-sm"
