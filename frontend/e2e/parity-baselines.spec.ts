@@ -153,7 +153,7 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(tree).toHaveScreenshot('pr-detail-files-tree.png', SCREENSHOT_OPTS);
   });
 
-  test.fixme('pr-detail-files-diff', async ({ page }) => {
+  test('pr-detail-files-diff', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.goto('/pr/acme/api/123/files');
