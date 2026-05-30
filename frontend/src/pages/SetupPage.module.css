@@ -1,6 +1,13 @@
+/* `flex: 1` is the handoff's hook for an ancestor `<.app display:flex height:100vh>`
+   layout that PRism's App.tsx doesn't have. `min-height: 100vh` makes the screen
+   fill the viewport on its own so the card vertically centers and the radial
+   gradient backdrop paints across the full viewport even without a flex ancestor.
+   The page picks up a small Header-height scrollbar; acceptable trade-off vs the
+   alternative of a top-aligned card with an unfilled gradient. */
 .screen {
   position: relative;
   flex: 1;
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -54,7 +54,10 @@
   align-items: center;
   gap: 6px;
   font-size: var(--text-sm);
-  margin-bottom: var(--s-3);
+  /* No margin-bottom: the link is a flex child of `.sectionHead`
+     (align-items: center, single-row), so margin-bottom would not separate
+     it from any sibling — `.sectionHead`'s own margin-bottom controls the
+     gap to the next element. */
 }
 .permissions {
   display: grid;
