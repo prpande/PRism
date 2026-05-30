@@ -160,13 +160,15 @@ export function SetupPage() {
 
   return (
     <>
-      <SetupForm
-        host={authState.host}
-        onSubmit={isReplaceMode ? onReplace : onConnect}
-        error={error}
-        busy={busy}
-        isReplaceMode={isReplaceMode}
-      />
+      <div data-testid="setup-card">
+        <SetupForm
+          host={authState.host}
+          onSubmit={isReplaceMode ? onReplace : onConnect}
+          error={error}
+          busy={busy}
+          isReplaceMode={isReplaceMode}
+        />
+      </div>
       {showWarning && (
         <NoReposWarningModal onContinue={onContinueAnyway} onEdit={onEdit} busy={busy} />
       )}
