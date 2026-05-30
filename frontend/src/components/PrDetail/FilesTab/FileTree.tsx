@@ -135,13 +135,16 @@ function FileNodeComponent({
   const isSelected = selectedPath === node.path;
   const isViewed = viewedPaths.has(node.path);
 
-  const handleCheckboxClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onToggleViewed(node.path);
-    },
-    [onToggleViewed, node.path],
-  );
+  // onChange (not onClick + readOnly) so Space-key activation toggles the
+  // checkbox consistently across browsers (claude[bot] iter 1 #10). The
+  // stopPropagation guard still applies to the click path so toggling the
+  // checkbox does not bubble to the row-level onSelectFile handler.
+  const handleCheckboxClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+  }, []);
+  const handleCheckboxChange = useCallback(() => {
+    onToggleViewed(node.path);
+  }, [onToggleViewed, node.path]);
 
   return (
     <div
@@ -164,7 +167,7 @@ function FileNodeComponent({
       <input
         type="checkbox"
         checked={isViewed}
-        readOnly
+        onChange={handleCheckboxChange}
         onClick={handleCheckboxClick}
         aria-label={`Viewed ${node.name}`}
         className={`file-tree-viewed-checkbox ${styles.fileTreeViewedCheckbox}`}

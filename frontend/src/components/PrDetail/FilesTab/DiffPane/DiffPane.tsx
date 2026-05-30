@@ -192,7 +192,6 @@ export function DiffPane({
                   line={line}
                   pair={pair}
                   threadsAtLine={threadsAtLine}
-                  isSplit={isSplit}
                   filePath={selectedPath}
                   onLineClick={onLineClick}
                   renderComposerForLine={renderComposerForLine}
@@ -212,7 +211,6 @@ interface DiffLineRowProps {
   line: DiffLine;
   pair: DiffLine | null;
   threadsAtLine: ReviewThreadDto[] | undefined;
-  isSplit: boolean;
   filePath: string;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
@@ -223,7 +221,6 @@ function DiffLineRow({
   line,
   pair,
   threadsAtLine,
-  isSplit,
   filePath,
   onLineClick,
   renderComposerForLine,
@@ -272,58 +269,31 @@ function DiffLineRow({
     });
   };
 
+  // PoC scope: split-vs-unified mode currently renders the same two-gutter
+  // layout regardless. The `isSplit`-driven modeClass on the outer .diff-pane
+  // wrapper is the seam if/when split-mode introduces a real layout fork
+  // (e.g., side-by-side old/new content columns). Collapsed the dead ternary
+  // per claude[bot] iter 1 #1 — see also the wrapper class plumbing above.
   return (
     <>
       <tr className={rowClass}>
-        {isSplit ? (
-          <>
-            <td
-              className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}
+        <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
+          {line.oldLineNum ?? ''}
+        </td>
+        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
+          {commentLineNum !== null && canComment ? (
+            <button
+              type="button"
+              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
+              aria-label={`Add comment on line ${commentLineNum}`}
+              onClick={handleClick}
             >
-              {line.oldLineNum ?? ''}
-            </td>
-            <td
-              className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}
-            >
-              {commentLineNum !== null && canComment ? (
-                <button
-                  type="button"
-                  className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
-                  aria-label={`Add comment on line ${commentLineNum}`}
-                  onClick={handleClick}
-                >
-                  {line.newLineNum ?? line.oldLineNum ?? ''}
-                </button>
-              ) : (
-                (line.newLineNum ?? '')
-              )}
-            </td>
-          </>
-        ) : (
-          <>
-            <td
-              className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}
-            >
-              {line.oldLineNum ?? ''}
-            </td>
-            <td
-              className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}
-            >
-              {commentLineNum !== null && canComment ? (
-                <button
-                  type="button"
-                  className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
-                  aria-label={`Add comment on line ${commentLineNum}`}
-                  onClick={handleClick}
-                >
-                  {line.newLineNum ?? line.oldLineNum ?? ''}
-                </button>
-              ) : (
-                (line.newLineNum ?? '')
-              )}
-            </td>
-          </>
-        )}
+              {line.newLineNum ?? line.oldLineNum ?? ''}
+            </button>
+          ) : (
+            (line.newLineNum ?? '')
+          )}
+        </td>
         <td className={`diff-content ${styles.diffContent}`}>{renderContent()}</td>
       </tr>
       {threadsAtLine && threadsAtLine.length > 0 && (

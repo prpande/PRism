@@ -118,5 +118,8 @@ describe('IterationTabStrip', () => {
     expect(screen.getByText('-3')).toBeInTheDocument();
     expect(screen.getByText('+5')).toBeInTheDocument();
     expect(screen.getByText('-18')).toBeInTheDocument();
+    // "All changes" chip-meta sums every iteration: iter1 +12/-3 + iter2 +5/-18 = +17/-21
+    expect(screen.getByText('+17')).toBeInTheDocument();
+    expect(screen.getByText('-21')).toBeInTheDocument();
   });
 });
