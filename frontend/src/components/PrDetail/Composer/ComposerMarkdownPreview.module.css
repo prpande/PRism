@@ -1,0 +1,10 @@
+.composerMarkdownPreview {
+  min-height: 80px;
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  overflow-y: auto;
+}

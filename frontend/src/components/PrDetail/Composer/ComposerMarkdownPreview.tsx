@@ -1,4 +1,5 @@
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
+import styles from './ComposerMarkdownPreview.module.css';
 
 export interface ComposerMarkdownPreviewProps {
   body: string;
@@ -13,7 +14,8 @@ export function ComposerMarkdownPreview({ body }: ComposerMarkdownPreviewProps) 
       role="region"
       aria-label="Markdown preview"
       tabIndex={0}
-      className="composer-markdown-preview"
+      className={`composer-markdown-preview ${styles.composerMarkdownPreview}`}
+      data-testid="composer-markdown-preview"
     >
       {body.trim().length === 0 ? (
         <p className="muted">Nothing to preview yet.</p>
