@@ -455,7 +455,7 @@
   - `.continue` keeps the existing class (no `.btn-primary` token override — composes globals per § 4.6 spec ordering).
   - **`.cancel` keeps `align-self: flex-start`** matching the existing production state — the handoff has no `.cancel` rule, so no centering justification exists.
   - Drops `.scopes` (line 11 of old file — `display: flex; gap: var(--s-2)`) — it was unused (verified by grep: only this file references it).
-  - **`.section:first-of-type` reset note**: the rule fires correctly here because the first `<section className={styles.section}>` IS the first `<section>` element under `<form>` (preceded only by `<header className={styles.brand}>` and followed by `<FirstRunDisclosure />` which renders `<details>`, neither of which is a `<section>` type). Implementer must visually confirm the first section has NO top border and NO top padding when reviewing the `setup-card.png` baseline in Task 9.
+  - **`.section:first-of-type` reset note**: the rule fires correctly here because the first `<section className={styles.section}>` IS the first `<section>` element under `<form>` (preceded only by `<div className={styles.brand}>` and followed by `<FirstRunDisclosure />` which renders `<details>`, neither of which is a `<section>` type). Implementer must visually confirm the first section has NO top border and NO top padding when reviewing the `setup-card.png` baseline in Task 9.
 
 - [ ] **Step 2: Modify `SetupForm.tsx` — restructure JSX for numbered-step + brand header**
 
