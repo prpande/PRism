@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { DraftReplyDto, PrReference, ReviewThreadDto } from '../../../../api/types';
 import { MarkdownRenderer } from '../../../Markdown/MarkdownRenderer';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
+import styles from './ExistingCommentWidget.module.css';
 
 export interface ExistingCommentWidgetReplyContext {
   prRef: PrReference;
@@ -27,7 +28,7 @@ export function ExistingCommentWidget({ threads, replyContext }: ExistingComment
   if (threads.length === 0) return null;
 
   return (
-    <div className="comment-widget" data-testid="comment-widget">
+    <div className={`comment-widget ${styles.commentWidget}`} data-testid="comment-widget">
       {threads.map((thread) => (
         <ThreadView key={thread.threadId} thread={thread} replyContext={replyContext} />
       ))}
@@ -74,25 +75,25 @@ function ThreadView({
 
   return (
     <div
-      className={`comment-thread ${thread.isResolved ? 'comment-thread--resolved' : ''}`}
+      className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}${thread.isResolved ? ` ${styles.commentThreadResolved}` : ''}`}
       data-thread-id={thread.threadId}
     >
       {thread.comments.map((comment) => (
-        <div key={comment.commentId} className="comment-entry">
-          <div className="comment-meta">
-            <span className="comment-author">{comment.author}</span>
-            <time className="comment-time" dateTime={comment.createdAt}>
+        <div key={comment.commentId} className={`comment-entry ${styles.commentEntry}`}>
+          <div className={`comment-meta ${styles.commentMeta}`}>
+            <span className={`comment-author ${styles.commentAuthor}`}>{comment.author}</span>
+            <time className={`comment-time ${styles.commentTime}`} dateTime={comment.createdAt}>
               {new Date(comment.createdAt).toLocaleDateString()}
             </time>
           </div>
-          <div className="comment-body">
+          <div className={`comment-body ${styles.commentBody}`}>
             <MarkdownRenderer source={comment.body} />
           </div>
         </div>
       ))}
 
       {replyContext && !composerOpen && (
-        <div className="comment-thread-actions">
+        <div className={`comment-thread-actions ${styles.commentThreadActions}`}>
           <button
             type="button"
             className="comment-thread-reply"
