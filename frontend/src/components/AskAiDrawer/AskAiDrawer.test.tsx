@@ -1,7 +1,7 @@
 // frontend/src/components/AskAiDrawer/AskAiDrawer.test.tsx
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import { useEffect, useRef } from 'react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { AskAiDrawer } from './AskAiDrawer';
 import { AskAiDrawerProvider, useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
@@ -100,5 +100,88 @@ describe('AskAiDrawer chrome', () => {
   it('composer textarea is initial focus on open', () => {
     render(<Harness openOnMount={true} />);
     expect(document.activeElement).toBe(screen.getByRole('textbox'));
+  });
+});
+
+// Probe exposes the context API to the test body via a ref handle, so the
+// test can drive setInput/sendMessage in SEPARATE act() calls (each flushes
+// before the next reads `threadsRef.current` inside the context). Driving
+// these from a single useEffect batches the updates and `sendMessage` reads
+// stale input → early-returns. Mirrors the renderHook+act pattern that
+// AskAiDrawerContext.test.tsx uses for the same context.
+interface SeedHandle {
+  setInput: (key: string, value: string) => void;
+  sendMessage: (key: string) => void;
+  toggle: () => void;
+}
+function ApiProbe({ handle }: { handle: { current: SeedHandle | null } }) {
+  const ctx = useAskAiDrawer();
+  handle.current = { setInput: ctx.setInput, sendMessage: ctx.sendMessage, toggle: ctx.toggle };
+  return null;
+}
+
+function HarnessWithApi({ handle }: { handle: { current: SeedHandle | null } }) {
+  return (
+    <MemoryRouter initialEntries={['/pr/acme/api/1']}>
+      <AskAiDrawerProvider>
+        <ApiProbe handle={handle} />
+        <AskAiDrawer />
+      </AskAiDrawerProvider>
+    </MemoryRouter>
+  );
+}
+
+function seed(
+  handle: { current: SeedHandle | null },
+  messages: Array<{ role: 'user' | 'ai'; body: string }>,
+) {
+  const api = handle.current!;
+  // Separate act() calls force `setThreads` to commit before the next read of
+  // `threadsRef.current` (sendMessage checks input length via the ref). The
+  // matching pattern is AskAiDrawerContext.test.tsx's renderHook + act flow.
+  act(() => api.toggle());
+  for (const m of messages) {
+    if (m.role === 'user') {
+      act(() => api.setInput('acme/api/1', m.body));
+      act(() => api.sendMessage('acme/api/1'));
+    }
+  }
+}
+
+describe('AskAiDrawer messages', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('renders user bubble for user messages', () => {
+    const handle = { current: null as SeedHandle | null };
+    render(<HarnessWithApi handle={handle} />);
+    seed(handle, [{ role: 'user', body: 'why?' }]);
+    expect(screen.getByText('why?')).toBeInTheDocument();
+  });
+
+  it('renders typing indicator while pendingAiReply', () => {
+    const handle = { current: null as SeedHandle | null };
+    render(<HarnessWithApi handle={handle} />);
+    seed(handle, [{ role: 'user', body: 'why?' }]);
+    expect(screen.getByTestId('ai-typing-indicator')).toBeInTheDocument();
+  });
+
+  it('renders AI bubble after timeout fires', () => {
+    const handle = { current: null as SeedHandle | null };
+    render(<HarnessWithApi handle={handle} />);
+    seed(handle, [{ role: 'user', body: 'why?' }]);
+    act(() => {
+      vi.advanceTimersByTime(700);
+    });
+    expect(screen.queryByTestId('ai-typing-indicator')).not.toBeInTheDocument();
+    expect(screen.getByText(/AI isn't available right now\./)).toBeInTheDocument();
+  });
+
+  it('renders bodies as plain text, not HTML (XSS guard)', () => {
+    const handle = { current: null as SeedHandle | null };
+    render(<HarnessWithApi handle={handle} />);
+    seed(handle, [{ role: 'user', body: '<script>x</script>' }]);
+    expect(screen.getByText('<script>x</script>')).toBeInTheDocument();
+    expect(document.querySelector('script')).toBeNull();
   });
 });

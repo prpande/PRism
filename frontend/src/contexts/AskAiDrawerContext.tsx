@@ -150,9 +150,14 @@ export function AskAiDrawerProvider({ children }: { children: ReactNode }) {
     setIsOpen(false);
   }, []);
 
+  // `threads` is in the deps even though it isn't in the value object: the
+  // ref-mirror pattern means `getThread` always reads the latest data, but
+  // consumers won't re-render to call it again unless the context value
+  // identity changes. Including `threads` here re-creates the value object
+  // on every Map mutation, which is the consumer-visible re-render trigger.
   const value = useMemo<AskAiDrawerContextValue>(
     () => ({ isOpen, cycleIndex, toggle, close, getThread, setInput, sendMessage, clearAll }),
-    [isOpen, cycleIndex, toggle, close, getThread, setInput, sendMessage, clearAll],
+    [isOpen, cycleIndex, threads, toggle, close, getThread, setInput, sendMessage, clearAll],
   );
 
   return <AskAiDrawerContext.Provider value={value}>{children}</AskAiDrawerContext.Provider>;

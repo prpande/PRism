@@ -68,13 +68,38 @@ export function AskAiDrawer() {
         </button>
       </div>
       <div className={styles.body}>
-        {!hasMessages && (
+        {!hasMessages && !thread?.pendingAiReply && (
           <>
             <p className={styles.emptyHint}>Ask anything about this PR.</p>
             <span className={`kbd ${styles.emptyKbdHint}`}>⌘ ⏎ to send</span>
           </>
         )}
-        {/* Message rendering lands in Task 5 */}
+        {thread?.messages.map((m, i) =>
+          m.role === 'user' ? (
+            <div key={i} className={styles.msgUser}>
+              {m.body}
+            </div>
+          ) : (
+            <div key={i} className={styles.msgAi}>
+              <span className="ai-icon" aria-hidden="true">
+                ✨
+              </span>
+              <div className={styles.msgAiBody}>{m.body}</div>
+            </div>
+          ),
+        )}
+        {thread?.pendingAiReply && (
+          <div className={styles.msgAi} data-testid="ai-typing-indicator">
+            <span className="ai-icon" aria-hidden="true">
+              ✨
+            </span>
+            <span className={styles.typing} aria-label="AI is responding">
+              <span className={styles.typingDot} />
+              <span className={styles.typingDot} />
+              <span className={styles.typingDot} />
+            </span>
+          </div>
+        )}
       </div>
       <div className={styles.composer}>
         <textarea
