@@ -472,3 +472,30 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Plan resolution:** Continue single-PR4. Tasks 10-19 added ~600 more CSS LOC + 10 more component touches; total PR4 LOC ~1120, total components ~15. Review weight is heavier than PR3 but within tolerance for a single PR given the slice's coherence (all components belong to FilesTab + DiffPane + Composer + their close neighbors).
 **Status:** Decided at Task 9.5; PR4 ships single.
 **Cross-refs:** Spec §6.6.
+
+### D43 — Dropdown click-outside close DEFERRED to PR9 (CommitMultiSelectPicker + IterationTabStrip)
+
+**Date:** 2026-05-30 (PR4 iter 1 claude[bot] review).
+**Spec position:** §2.2 — "no state, no routing, no data fetching" changes in parity-restoration slices.
+**Reality:** `CommitMultiSelectPicker.tsx` and `IterationTabStrip.tsx`'s overflow dropdown both open on button click but have no `useEffect` attached `mousedown`/`click` listener to `document`. Clicking outside leaves the listbox open indefinitely until the user clicks the trigger button again.
+**Plan resolution:** Adding click-outside close requires new state + a `document` event listener — a behavior change explicitly out of §2.2 scope for parity slices. Defer to PR9 audit or a follow-up behavior slice that can verify against the handoff prototype's dropdown UX.
+**Status:** Deferred to PR9 (or a behavior-slice follow-up).
+**Cross-refs:** claude[bot] iter 1 finding #3.
+
+### D44 — IterationTabStrip dropdown keyboard navigation DEFERRED to PR9
+
+**Date:** 2026-05-30 (PR4 iter 1 claude[bot] review).
+**Spec position:** §2.2 (no logic changes); ARIA listbox spec mandates arrow-key navigation.
+**Reality:** `<div role="listbox">` has no `onKeyDown` handler; `<div role="option">` items have no `tabIndex` or keyboard handlers. Keyboard-only users cannot interact with the overflow dropdown.
+**Plan resolution:** Adding arrow-key navigation requires new state + key event handlers + focus management — behavior changes out of §2.2 scope. Defer to PR9 audit.
+**Status:** Deferred to PR9.
+**Cross-refs:** claude[bot] iter 1 finding #4.
+
+### D45 — FileTree treeitem keyboard navigation gap (pre-existing) NOT addressed in PR4
+
+**Date:** 2026-05-30 (PR4 iter 1 claude[bot] review).
+**Spec position:** §2.2 (no logic changes); ARIA treeitem spec mandates up/down/left/right arrow key handling.
+**Reality:** `<div role="treeitem">` has `onClick` + `tabIndex` but no `onKeyDown`. The gap is pre-existing — PR4 added CSS but did not introduce or address the keyboard handler.
+**Plan resolution:** Pre-existing accessibility gap, not a PR4 regression. Defer to PR9 audit or a dedicated a11y slice.
+**Status:** Acknowledged pre-existing; deferred to PR9.
+**Cross-refs:** claude[bot] iter 1 finding #5.
