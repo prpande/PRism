@@ -7,6 +7,7 @@ import draftsTabStyles from '../src/components/PrDetail/DraftsTab/DraftsTab.modu
 import itemStyles from '../src/components/PrDetail/DraftsTab/DraftListItem.module.css';
 import emptyStyles from '../src/components/PrDetail/DraftsTab/DraftListEmpty.module.css';
 import skelStyles from '../src/components/PrDetail/DraftsTab/DraftsTabSkeleton.module.css';
+import errStyles from '../src/components/PrDetail/DraftsTab/DraftsTabError.module.css';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -101,6 +102,7 @@ describe('DraftsTab', () => {
     renderDraftsTab({ session: null, status: 'error' });
     expect(screen.getByText(/Couldn't load drafts/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveClass(errStyles.draftsTabError);
   });
 
   it('Retry_button_invokes_refetch', async () => {
