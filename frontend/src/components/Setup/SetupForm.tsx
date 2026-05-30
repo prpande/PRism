@@ -36,13 +36,17 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
 
   return (
     <form onSubmit={handleSubmit} className={styles.form}>
-      <h1>Connect to GitHub</h1>
-      <p>PRism is local-first. Your token never leaves this machine.</p>
-      <div>
-        <strong>1.</strong>{' '}
-        <a href={patPageUrl} target="_blank" rel="noreferrer">
-          Generate a token
-        </a>
+      <header className={styles.brand}>
+        <h1 className={styles.title}>Connect to GitHub</h1>
+        <p className={styles.sub}>PRism is local-first. Your token never leaves this machine.</p>
+      </header>
+      <section className={styles.section}>
+        <h2 className={styles.sectionHead}>
+          <span className={styles.num}>1</span>
+          <a href={patPageUrl} target="_blank" rel="noreferrer" className={styles.link}>
+            Generate a token
+          </a>
+        </h2>
         <dl className={styles.permissions}>
           {PERMISSIONS.map((p) => (
             <div key={p.name} className={styles.permissionRow}>
@@ -59,10 +63,13 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
           Already have a classic PAT? It needs the <code>repo</code>, <code>read:user</code>, and{' '}
           <code>read:org</code> scopes.
         </p>
-      </div>
+      </section>
       <FirstRunDisclosure />
-      <div>
-        <strong>2.</strong> Paste it below
+      <section className={styles.section}>
+        <h2 className={styles.sectionHead}>
+          <span className={styles.num}>2</span>
+          Paste it below
+        </h2>
         <MaskedInput
           id="pat"
           value={pat}
@@ -70,13 +77,17 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
           placeholder="ghp_… or github_pat_…"
           ariaLabel="Personal access token"
         />
-      </div>
+      </section>
       {error && (
         <div role="alert" className={styles.error}>
           {error}
         </div>
       )}
-      <button type="submit" className={styles.continue} disabled={pat.trim().length === 0 || busy}>
+      <button
+        type="submit"
+        className={`${styles.continue} btn btn-primary`}
+        disabled={pat.trim().length === 0 || busy}
+      >
         {busy ? 'Validating…' : 'Continue'}
       </button>
       {isReplaceMode &&
