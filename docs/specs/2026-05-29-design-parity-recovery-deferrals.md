@@ -668,14 +668,14 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Status:** Applied in PR6 (Task 4, commit `64687e7`). The original plan draft had `aria-hidden="true"` on the badge AND renamed the link text to "Open GitHub fine-grained PAT page" — ce-doc-review feasibility caught the test collision; adversarial caught the wayfinding strip. Both corrections applied before implementation.
 **Cross-refs:** spec §4.6; setup-page.test.tsx:78.
 
-### D64 — Brand header wraps into `<header><h1 title><p sub>`
+### D64 — Brand block wraps into `<div className=brand><h1 title><p sub>` (NOT `<header>`)
 
-**Date:** 2026-05-30 (PR6 plan-writing pass).
+**Date:** 2026-05-30 (PR6 plan-writing pass + preflight adversarial review).
 **Spec position:** §4.6 ("centered card on the accent radial-gradient wash").
-**Reality:** Handoff `.setup-brand` / `.setup-title` / `.setup-sub` block at the top of the card. Each maps to one module class.
-**Plan resolution:** `<header className={styles.brand}><h1 className={styles.title}>Connect to GitHub</h1><p className={styles.sub}>PRism is local-first…</p></header>`. `<header>` inside `<form>` is HTML-valid; the resulting banner-landmark nested in a form region is unusual but harmless for PoC.
-**Status:** Applied in PR6 (Task 4, commit `64687e7`).
-**Cross-refs:** D61.
+**Reality:** Handoff `.setup-brand` / `.setup-title` / `.setup-sub` block at the top of the card. Each maps to one module class. The original plan draft used `<header>` for the wrapper — preflight adversarial review caught that `<header>` inside `<form>` IS mapped to `role=banner` (the HTML AAM exclusion list is article/aside/main/nav/section — `<form>` is NOT in it), which would have created a duplicate banner landmark alongside the App-level `<Header />` on /setup.
+**Plan resolution:** Wrap with `<div className={styles.brand}>` instead. Preserves the visual grouping (D62/D63 styling unaffected) without duplicating the banner landmark.
+**Status:** Applied in PR6 (Task 4 commit `64687e7`; preflight fix subsequently corrected `<header>` → `<div>`).
+**Cross-refs:** D61; preflight adversarial review.
 
 ### D65 — MaskedInput inline style → module + local eye-button size override
 
@@ -703,6 +703,15 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Plan resolution:** No lifts. If PR9 catalogs ScopePill back into a real consumer or adds another Setup-style surface, the lift happens then.
 **Status:** Applied in PR6 (no tokens.css additions).
 **Cross-refs:** PR3 D22; PR4 D34; PR5 D47.
+
+### D68 — Conditional `--text-lg` token-vocabulary fallback — NOT TRIGGERED
+
+**Date:** 2026-05-30 (Task 8 Step 2).
+**Spec position:** PR6 plan Task 8 Step 2 (`Grep pattern="--text-lg" path="frontend/src/styles/tokens.css"`).
+**Reality:** Reserved during plan-writing in case `--text-lg` was missing from tokens.css (token-vocabulary regression scenario). The grep at Task 8 Step 2 confirmed `--text-lg: 17px` exists at tokens.css line 19; the conditional fallback to `var(--font-size-lg, 1.125rem)` was NOT applied.
+**Plan resolution:** Stub retained so the D58-D70 sequence is contiguous and auditable. No code change; entry exists only to preserve numbering.
+**Status:** Conditional, did not trigger.
+**Cross-refs:** PR6 plan Task 8.
 
 ### D69 — SINGLE-PR6 vs SPLIT decision at Task 8.5
 

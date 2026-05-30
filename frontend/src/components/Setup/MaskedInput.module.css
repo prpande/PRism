@@ -24,7 +24,12 @@
    `.eye` carries the smaller size locally, sized to fit inside the 36px-tall
    input without overflow. If PR9 needs `.btn-icon-sm` for another surface,
    it lifts to tokens.css then. */
-.eye {
+/* Descendant selector `.wrap .eye` (specificity 0,2,0) outranks the global
+   `.btn-icon` (0,1,0) so the local 18×18 size override wins regardless of
+   CSS-injection order. Without this, the cascade depends on Vite injecting
+   the module CSS AFTER tokens.css — which is the current behavior, but
+   making it explicit removes a hidden tooling dependency. */
+.wrap .eye {
   position: absolute;
   top: 8px;
   right: 8px;

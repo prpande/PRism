@@ -36,10 +36,15 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
 
   return (
     <form onSubmit={handleSubmit} className={styles.form}>
-      <header className={styles.brand}>
+      {/* <div> not <header> — the App-level <Header /> already exposes a
+          banner landmark, and <header> inside <form> is NOT excluded from
+          the banner-role mapping per the HTML AAM (the exclusion list is
+          article/aside/main/nav/section). Using <div> preserves the visual
+          grouping without duplicating the banner role. */}
+      <div className={styles.brand}>
         <h1 className={styles.title}>Connect to GitHub</h1>
         <p className={styles.sub}>PRism is local-first. Your token never leaves this machine.</p>
-      </header>
+      </div>
       <section className={styles.section}>
         <h2 className={styles.sectionHead}>
           <span className={styles.num}>1</span>
