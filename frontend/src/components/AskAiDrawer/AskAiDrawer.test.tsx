@@ -1,5 +1,6 @@
 // frontend/src/components/AskAiDrawer/AskAiDrawer.test.tsx
 import { act, render, screen, fireEvent } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import { useEffect, useRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -183,5 +184,102 @@ describe('AskAiDrawer messages', () => {
     seed(handle, [{ role: 'user', body: '<script>x</script>' }]);
     expect(screen.getByText('<script>x</script>')).toBeInTheDocument();
     expect(document.querySelector('script')).toBeNull();
+  });
+});
+
+function ComposerHarness() {
+  return (
+    <MemoryRouter initialEntries={['/pr/acme/api/1']}>
+      <AskAiDrawerProvider>
+        <OpenOnMount />
+        <AskAiDrawer />
+      </AskAiDrawerProvider>
+    </MemoryRouter>
+  );
+}
+
+function OpenOnMount() {
+  const { isOpen, toggle } = useAskAiDrawer();
+  useEffect(() => {
+    if (!isOpen) toggle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
+describe('AskAiDrawer composer', () => {
+  beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+  afterEach(() => vi.useRealTimers());
+
+  it('typing in textarea updates input via setInput', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ComposerHarness />);
+    const textarea = screen.getByRole('textbox');
+    await user.type(textarea, 'hello');
+    expect((textarea as HTMLTextAreaElement).value).toBe('hello');
+  });
+
+  it('Send button is disabled when input is empty', () => {
+    render(<ComposerHarness />);
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+
+  it('Send button is disabled when input is whitespace-only', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ComposerHarness />);
+    await user.type(screen.getByRole('textbox'), '   ');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+
+  it('Send button enables when input has non-whitespace chars', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ComposerHarness />);
+    await user.type(screen.getByRole('textbox'), 'x');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+  });
+
+  it('clicking Send appends user message + sets pending', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ComposerHarness />);
+    await user.type(screen.getByRole('textbox'), 'why?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(screen.getByText('why?')).toBeInTheDocument();
+    expect(screen.getByTestId('ai-typing-indicator')).toBeInTheDocument();
+  });
+
+  it('Cmd/Ctrl+Enter submits', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ComposerHarness />);
+    const textarea = screen.getByRole('textbox');
+    await user.type(textarea, 'why?');
+    await user.keyboard('{Control>}{Enter}{/Control}');
+    expect(screen.getByText('why?')).toBeInTheDocument();
+  });
+
+  it('plain Enter inserts newline, does NOT submit', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ComposerHarness />);
+    const textarea = screen.getByRole('textbox');
+    await user.type(textarea, 'line1{Enter}line2');
+    expect((textarea as HTMLTextAreaElement).value).toBe('line1\nline2');
+    expect(screen.queryByTestId('ai-typing-indicator')).not.toBeInTheDocument();
+  });
+
+  it('Send button disabled while pendingAiReply', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ComposerHarness />);
+    await user.type(screen.getByRole('textbox'), 'first');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await user.type(screen.getByRole('textbox'), 'second');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+
+  it('input is cleared after successful submit', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ComposerHarness />);
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+    await user.type(textarea, 'why?');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    expect(textarea.value).toBe('');
   });
 });

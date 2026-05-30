@@ -1,5 +1,5 @@
 // frontend/src/components/AskAiDrawer/AskAiDrawer.tsx
-import { useEffect, useId, useRef } from 'react';
+import { useCallback, useEffect, useId, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { parsePrRefFromPathname } from './parsePrRefFromPathname';
@@ -7,7 +7,7 @@ import { prRefKey } from '../../api/types';
 import styles from './AskAiDrawer.module.css';
 
 export function AskAiDrawer() {
-  const { isOpen, close, getThread } = useAskAiDrawer();
+  const { isOpen, close, getThread, setInput, sendMessage } = useAskAiDrawer();
   const { pathname } = useLocation();
   const titleId = useId();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -16,6 +16,23 @@ export function AskAiDrawer() {
   const prRef = parsePrRefFromPathname(pathname);
   const prKey = prRef ? prRefKey(prRef) : '';
   const thread = prKey ? getThread(prKey) : null;
+  const inputValue = thread?.input ?? '';
+  const canSubmit = !!thread && !thread.pendingAiReply && inputValue.trim().length > 0;
+
+  const handleSubmit = useCallback(() => {
+    if (!prKey || !canSubmit) return;
+    sendMessage(prKey);
+  }, [prKey, canSubmit, sendMessage]);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSubmit();
+      }
+    },
+    [handleSubmit],
+  );
 
   // Focus capture-on-open + restore-on-close. Composer is the initial focus target.
   useEffect(() => {
@@ -108,8 +125,16 @@ export function AskAiDrawer() {
           placeholder="Ask about this PR…"
           rows={2}
           aria-label="Message"
+          value={inputValue}
+          onChange={(e) => prKey && setInput(prKey, e.target.value)}
+          onKeyDown={handleKeyDown}
         />
-        <button type="button" className="btn btn-primary btn-sm" disabled>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={!canSubmit}
+          onClick={handleSubmit}
+        >
           Send
         </button>
       </div>
