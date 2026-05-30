@@ -11,7 +11,9 @@ import { useStateChangedSubscriber } from '../hooks/useStateChangedSubscriber';
 import { useCrossTabPrPresence } from '../hooks/useCrossTabPrPresence';
 import { useReconcile } from '../hooks/useReconcile';
 import type { PrDetailDto, PrReference } from '../api/types';
-import { useCallback } from 'react';
+import { prRefKey } from '../api/types';
+import { useCallback, useEffect } from 'react';
+import { useOpenTabs } from '../contexts/OpenTabsContext';
 
 // Single source of truth for the per-PR draft session is the PrDetailPage.
 // Tabs read it via Outlet context; the sticky-top UnresolvedPanel + tab-strip
@@ -94,6 +96,42 @@ function PrDetailPageInner({
     headSha: data?.pr.headSha ?? null,
     onReloadComplete: handleReconcileComplete,
   });
+
+  // Open-tabs integration (spec § PR7 Task 6). On direct URL load — and any
+  // subsequent route-param change — we register the tab, fill in the title
+  // once usePrDetail resolves it, and clear unread on focus. Effects depend
+  // on PRIMITIVE owner/repo/number, NOT the `ref` object: `ref` is
+  // reconstructed every render in the outer PrDetailPage, so using it as a
+  // dep would thrash all three effects on every render.
+  const { addTab, setTitle, clearUnread } = useOpenTabs();
+  const { owner, repo, number } = ref;
+  const refKey = prRefKey(ref);
+
+  // 1. Add tab when route params change. addTab is idempotent on prRefKey —
+  //    re-adding an already-open tab is a no-op, so this is safe to fire
+  //    every time owner/repo/number change.
+  useEffect(() => {
+    addTab({ owner, repo, number }, data?.pr.title ?? null);
+    // The `{ owner, repo, number }` literal would re-fire every render if the
+    // lint rule's auto-fix were applied; primitives are the right deps here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addTab, owner, repo, number]);
+
+  // 2. Fill in the title once usePrDetail resolves it. Skipped while title
+  //    is still null/undefined (initial load + error states).
+  useEffect(() => {
+    if (data?.pr.title) {
+      setTitle({ owner, repo, number }, data.pr.title);
+    }
+    // See note above re: object-literal vs primitives in deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.pr.title, setTitle, owner, repo, number]);
+
+  // 3. Active tab clears unread on focus. refKey is derived from primitives,
+  //    so the dep array is stable across renders.
+  useEffect(() => {
+    clearUnread(refKey);
+  }, [clearUnread, refKey]);
 
   const handleTabChange = (tab: PrTabId) => {
     if (tab === 'overview') navigate(basePath);
