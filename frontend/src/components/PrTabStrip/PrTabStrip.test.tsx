@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -170,5 +170,114 @@ describe('PrTabStrip close affordance', () => {
     expect(closeA).toBeDisabled();
     expect(closeA.getAttribute('title')).toMatch(/submit in progress/i);
     expect(closeB).not.toBeDisabled();
+  });
+});
+
+describe('PrTabStrip overflow menu', () => {
+  function Seed7() {
+    const { addTab } = useOpenTabs();
+    useEffect(() => {
+      for (let i = 1; i <= 7; i++) {
+        addTab({ owner: 'acme', repo: 'api', number: i }, `T${i}`);
+      }
+    }, [addTab]);
+    return null;
+  }
+
+  beforeEach(() => {
+    vi.mocked(useSubmitInFlight).mockReturnValue({ inFlight: false, prRef: null });
+  });
+
+  it('shows + N more chevron when openTabs.length > 6', () => {
+    render(
+      wrap(
+        <>
+          <Seed7 />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    expect(screen.getByRole('button', { name: /\+ 1 more/i })).toBeInTheDocument();
+  });
+
+  it('inline tabs are the first 6; menu holds the rest', async () => {
+    render(
+      wrap(
+        <>
+          <Seed7 />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs).toHaveLength(6);
+    expect(tabs[5].getAttribute('data-prref')).toBe('acme/api/6');
+    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    const items = screen.getAllByRole('menuitem');
+    expect(items).toHaveLength(1);
+    expect(items[0]).toHaveTextContent('T7');
+  });
+
+  it('menu item close removes the overflowed tab without navigating', async () => {
+    render(
+      wrap(
+        <>
+          <Seed7 />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    const closeBtn = screen.getByLabelText('Close T7');
+    await userEvent.click(closeBtn);
+    expect(screen.queryByRole('button', { name: /\+ 1 more/i })).toBeNull();
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
+  });
+
+  it('clicking outside the overflow menu closes it', async () => {
+    render(
+      wrap(
+        <>
+          <Seed7 />
+          <PrTabStrip />
+          <div data-testid="outside">Outside</div>
+        </>,
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('outside'));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('Escape closes the overflow menu', async () => {
+    render(
+      wrap(
+        <>
+          <Seed7 />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('menu auto-closes when the last overflowed tab is closed via the menu', async () => {
+    render(
+      wrap(
+        <>
+          <Seed7 />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText('Close T7'));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByRole('button', { name: /\+ 1 more/i })).toBeNull();
   });
 });
