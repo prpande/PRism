@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent } from 'react';
+import styles from './MaskedInput.module.css';
 
 interface Props {
   id: string;
@@ -11,7 +12,7 @@ interface Props {
 export function MaskedInput({ id, value, onChange, placeholder, ariaLabel }: Props) {
   const [shown, setShown] = useState(false);
   return (
-    <div style={{ position: 'relative' }}>
+    <div className={styles.wrap}>
       <input
         id={id}
         type={shown ? 'text' : 'password'}
@@ -19,13 +20,15 @@ export function MaskedInput({ id, value, onChange, placeholder, ariaLabel }: Pro
         onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        className={styles.input}
       />
       <button
         type="button"
         onClick={() => setShown((s) => !s)}
         aria-label={shown ? 'Hide token' : 'Show token'}
+        className={`${styles.eye} btn-icon`}
       >
-        {shown ? '👁' : '👁'}
+        {shown ? '🙈' : '👁'}
       </button>
     </div>
   );

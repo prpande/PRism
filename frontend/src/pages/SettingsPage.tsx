@@ -6,7 +6,7 @@ import styles from './SettingsPage.module.css';
 
 export function SettingsPage() {
   return (
-    <main className={styles.page}>
+    <main className={styles.page} data-testid="settings-page">
       <h1>Settings</h1>
       <AppearanceSection />
       <InboxSectionsSection />

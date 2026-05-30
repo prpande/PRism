@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SetupForm } from '../components/Setup/SetupForm';
 import { NoReposWarningModal } from '../components/Setup/NoReposWarningModal';
 import { LoadingScreen } from '../components/LoadingScreen';
+import styles from './SetupPage.module.css';
 import { apiClient, ApiError } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../components/Toast';
@@ -160,13 +161,18 @@ export function SetupPage() {
 
   return (
     <>
-      <SetupForm
-        host={authState.host}
-        onSubmit={isReplaceMode ? onReplace : onConnect}
-        error={error}
-        busy={busy}
-        isReplaceMode={isReplaceMode}
-      />
+      <div className={styles.screen}>
+        <div className={styles.bg} aria-hidden="true" />
+        <div className={styles.card} data-testid="setup-card">
+          <SetupForm
+            host={authState.host}
+            onSubmit={isReplaceMode ? onReplace : onConnect}
+            error={error}
+            busy={busy}
+            isReplaceMode={isReplaceMode}
+          />
+        </div>
+      </div>
       {showWarning && (
         <NoReposWarningModal onContinue={onContinueAnyway} onEdit={onEdit} busy={busy} />
       )}

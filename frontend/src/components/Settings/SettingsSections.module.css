@@ -1,29 +1,31 @@
 .section {
   display: flex;
   flex-direction: column;
-  gap: var(--s-3, 12px);
-  padding: var(--s-5, 20px);
-  border-radius: 8px;
+  gap: var(--s-3);
+  padding: var(--s-5);
+  border-radius: var(--radius-3);
   background: var(--surface-1);
   border: 1px solid var(--border-1);
 }
 .section h2 {
-  margin: 0 0 var(--s-2, 8px) 0;
-  font-size: var(--font-size-lg, 1.125rem);
+  margin: 0 0 var(--s-2);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 .row {
   display: flex;
   align-items: center;
-  gap: var(--s-3, 12px);
+  gap: var(--s-3);
 }
 .radioLabel {
   display: inline-flex;
   align-items: center;
-  gap: var(--s-1, 4px);
-  margin-right: var(--s-3, 12px);
+  gap: var(--s-1);
+  margin-right: var(--s-3);
 }
 .help {
-  font-size: var(--font-size-sm, 0.875rem);
+  font-size: var(--text-sm);
   color: var(--text-2);
 }
 .linkDisabled {
