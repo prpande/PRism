@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -149,6 +150,17 @@ export function AskAiDrawerProvider({ children }: { children: ReactNode }) {
     setCycleIndex(0);
     setIsOpen(false);
   }, []);
+
+  // identity-changed → wipe threads + close drawer + cancel pending timeouts.
+  // Mirrors the OpenTabsContext pattern: api/events.ts WINDOW_EVENT_BRIDGE
+  // re-dispatches every identity-changed SSE frame as a 'prism-identity-changed'
+  // window event. AskAiDrawerProvider is mounted outside EventStreamProvider
+  // in App.tsx, so the window bridge is the intended cross-provider API here.
+  useEffect(() => {
+    const onIdentityChange = () => clearAll();
+    window.addEventListener('prism-identity-changed', onIdentityChange);
+    return () => window.removeEventListener('prism-identity-changed', onIdentityChange);
+  }, [clearAll]);
 
   // `threads` is in the deps even though it isn't in the value object: the
   // ref-mirror pattern means `getThread` always reads the latest data, but

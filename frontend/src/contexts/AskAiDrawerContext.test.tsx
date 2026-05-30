@@ -149,3 +149,28 @@ describe('AskAiDrawerContext', () => {
     );
   });
 });
+
+describe('AskAiDrawerContext identity-change', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('clears all threads + closes drawer when prism-identity-changed fires', () => {
+    const { result } = renderHook(() => useAskAiDrawer(), { wrapper });
+    act(() => result.current.setInput(keyA, 'hi'));
+    act(() => result.current.sendMessage(keyA));
+    act(() => result.current.toggle());
+    expect(result.current.isOpen).toBe(true);
+    expect(result.current.getThread(keyA).messages).toHaveLength(1);
+
+    act(() => {
+      window.dispatchEvent(new Event('prism-identity-changed'));
+    });
+
+    expect(result.current.isOpen).toBe(false);
+    expect(result.current.getThread(keyA).messages).toHaveLength(0);
+  });
+});
