@@ -102,7 +102,7 @@ test.describe('parity baselines — Inbox', () => {
 });
 
 test.describe('parity baselines — Setup', () => {
-  test.fixme('setup-card', async ({ page }) => {
+  test('setup-card', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await page.goto('/setup');
     const card = page.locator('[data-testid="setup-card"]');
@@ -113,7 +113,7 @@ test.describe('parity baselines — Setup', () => {
 });
 
 test.describe('parity baselines — Settings', () => {
-  test.fixme('settings-page', async ({ page }) => {
+  test('settings-page', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
     await page.goto('/settings');
