@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
-import type { FileChange } from '../../../api/types';
+import type { FileChange, FileChangeStatus } from '../../../api/types';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
+import styles from './FileTree.module.css';
 
 export interface FileTreeProps {
   files: FileChange[];
@@ -18,6 +19,13 @@ const STATUS_LABELS: Record<string, string> = {
   renamed: 'R',
 };
 
+const FILE_STATUS_MODULE: Record<FileChangeStatus, string> = {
+  added: styles.fileStatusAdded,
+  modified: styles.fileStatusModified,
+  deleted: styles.fileStatusDeleted,
+  renamed: styles.fileStatusRenamed,
+};
+
 export function FileTree({
   files,
   selectedPath,
@@ -32,19 +40,24 @@ export function FileTree({
   if (files.length === 0) {
     if (isLoading) return null;
     return (
-      <div className="file-tree" data-testid="file-tree">
-        <div className="file-tree-header">Files</div>
-        <p className="file-tree-empty muted">No files in this diff.</p>
+      <div className={`file-tree ${styles.fileTree}`} data-testid="file-tree">
+        <div className={`file-tree-header ${styles.fileTreeHeader}`}>Files</div>
+        <p className={`file-tree-empty muted ${styles.fileTreeEmpty}`}>No files in this diff.</p>
       </div>
     );
   }
 
   return (
-    <div className="file-tree" role="tree" aria-label="File tree" data-testid="file-tree">
-      <div className="file-tree-header">
+    <div
+      className={`file-tree ${styles.fileTree}`}
+      role="tree"
+      aria-label="File tree"
+      data-testid="file-tree"
+    >
+      <div className={`file-tree-header ${styles.fileTreeHeader}`}>
         Files · {viewedCount}/{files.length} viewed
       </div>
-      <div className="file-tree-list">
+      <div className={`file-tree-list ${styles.fileTreeList}`}>
         {tree.map((node) => (
           <TreeNodeComponent
             key={nodeKey(node)}
@@ -132,7 +145,7 @@ function FileNodeComponent({
 
   return (
     <div
-      className={`file-tree-file${isSelected ? ' file-tree-file--selected' : ''}`}
+      className={`file-tree-file${isSelected ? ' file-tree-file--selected' : ''} ${styles.fileTreeFile}${isSelected ? ` ${styles.fileTreeFileSelected}` : ''}`}
       role="treeitem"
       data-testid="files-tab-tree-row"
       data-selected={isSelected}
@@ -141,18 +154,20 @@ function FileNodeComponent({
       onClick={() => onSelectFile(node.path)}
       tabIndex={isSelected ? 0 : -1}
     >
-      <span className={`file-status file-status--${node.file.status}`}>
+      <span
+        className={`file-status file-status--${node.file.status} ${styles.fileStatus} ${FILE_STATUS_MODULE[node.file.status]}`}
+      >
         {STATUS_LABELS[node.file.status] ?? '?'}
       </span>
-      <span className="file-tree-file-name">{node.name}</span>
-      <span className="file-tree-spacer" />
+      <span className={`file-tree-file-name ${styles.fileTreeFileName}`}>{node.name}</span>
+      <span className={`file-tree-spacer ${styles.fileTreeSpacer}`} />
       <input
         type="checkbox"
         checked={isViewed}
         readOnly
         onClick={handleCheckboxClick}
         aria-label={`Viewed ${node.name}`}
-        className="file-tree-viewed-checkbox"
+        className={`file-tree-viewed-checkbox ${styles.fileTreeViewedCheckbox}`}
       />
     </div>
   );
@@ -176,18 +191,23 @@ function DirectoryNodeComponent({
   const [expanded, setExpanded] = useState(true);
 
   return (
-    <div className="file-tree-dir" role="treeitem" aria-expanded={expanded}>
-      <div className="file-tree-dir-header" style={{ paddingLeft: `${depth * 16}px` }}>
+    <div className={`file-tree-dir ${styles.fileTreeDir}`} role="treeitem" aria-expanded={expanded}>
+      <div
+        className={`file-tree-dir-header ${styles.fileTreeDirHeader}`}
+        style={{ paddingLeft: `${depth * 16}px` }}
+      >
         <button
-          className="file-tree-dir-toggle"
+          className={`file-tree-dir-toggle ${styles.fileTreeDirToggle}`}
           onClick={() => setExpanded((e) => !e)}
           aria-label={`Toggle ${node.name}`}
         >
-          <span className={`file-tree-chevron${expanded ? ' file-tree-chevron--open' : ''}`}>
+          <span
+            className={`file-tree-chevron${expanded ? ' file-tree-chevron--open' : ''} ${styles.fileTreeChevron}${expanded ? ` ${styles.fileTreeChevronOpen}` : ''}`}
+          >
             ▸
           </span>
         </button>
-        <span className="file-tree-dir-name">{node.name}</span>
+        <span className={`file-tree-dir-name ${styles.fileTreeDirName}`}>{node.name}</span>
       </div>
       {expanded && (
         <div role="group">
