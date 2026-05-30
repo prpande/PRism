@@ -1,0 +1,16 @@
+.wordDiffOverlay {
+  display: inline;
+}
+.wordDiffInsert {
+  background: var(--diff-add-bg);
+  color: var(--success-fg);
+  padding: 1px 2px;
+  border-radius: 2px;
+}
+.wordDiffDelete {
+  background: var(--diff-rem-bg);
+  color: var(--danger-fg);
+  text-decoration: line-through;
+  padding: 1px 2px;
+  border-radius: 2px;
+}
