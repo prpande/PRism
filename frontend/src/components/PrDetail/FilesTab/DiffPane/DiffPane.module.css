@@ -1,0 +1,117 @@
+.diffPane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+.diffPaneEmpty {
+  /* D35 — no-file-selected state */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s-5);
+  min-height: 200px;
+}
+.diffPaneHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 6px var(--s-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-1);
+  font-size: var(--text-xs);
+  color: var(--text-1);
+}
+.diffPaneLoading {
+  /* D36 — JSX-rendered `<span>Loading…</span>` conditional on isLoading.
+     CSS-generated content via ::after was rejected for WCAG 2.1 F87
+     (CSS content not announced by screen readers). */
+  margin-left: auto;
+  font-size: var(--text-xs);
+}
+.diffPanePath {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-1);
+}
+.diffPaneBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Diff table — handoff `.diff-body` / `.diff-line` treatment on production <table> scaffold */
+.diffTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+.diffHunkHeader {
+  display: block;
+  padding: 4px var(--s-4);
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: var(--text-xs);
+}
+.diffGutter {
+  padding: 0 var(--s-2);
+  text-align: right;
+  color: var(--text-3);
+  user-select: none;
+  width: 1%;
+  white-space: nowrap;
+  min-width: 3em;
+}
+.diffGutterOld {
+  border-right: 1px solid var(--border-1);
+}
+.diffGutterNew {
+  position: relative;
+}
+.diffContent {
+  padding: 0 var(--s-2);
+  white-space: pre;
+  overflow: visible;
+}
+
+/* Diff-line add/remove tinting lives in tokens.css as GLOBAL rules on the literal
+   class strings production already emits (`diff-line diff-line--insert` /
+   `diff-line diff-line--delete`, see DiffPane.tsx:193). See Step 10.4. The module
+   CSS scopes only the diff-pane-specific surfaces. */
+
+/* Comment-affordance gutter button */
+.diffCommentAffordance {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--t-fast);
+}
+.diffPane tr:hover .diffCommentAffordance,
+.diffCommentAffordance:focus-visible {
+  opacity: 1;
+}
+
+/* Embedded comment + composer rows live as colspan-3 <tr>s */
+.diffCommentRow {
+  background: var(--surface-2);
+}
+.diffComposerRow {
+  background: var(--surface-2);
+}

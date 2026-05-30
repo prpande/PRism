@@ -391,6 +391,7 @@ export function FilesTab() {
             onLineClick={handleLineClick}
             renderComposerForLine={renderComposerForLine}
             replyContext={replyContext}
+            isLoading={diff.isLoading}
           />
         </div>
       </div>

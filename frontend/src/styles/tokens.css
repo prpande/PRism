@@ -757,3 +757,24 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: var(--s-2);
 }
+
+/* Diff-line tints (spec §4.4, D34). Lifted from the per-row literal class
+   strings DiffPane emits — `.diff-line diff-line--insert` / `--delete` /
+   `--context` / `--hunk-header`. Global because the literal is what JSX emits
+   and no scoping is gained by hashing. Sourced from screens.css L637-678
+   (`.diff-line.diff-add` / `.diff-line.diff-rem` equivalents). */
+.diff-line {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.diff-line--insert {
+  background: var(--diff-add-bg);
+}
+.diff-line--delete {
+  background: var(--diff-rem-bg);
+}
+.diff-line--hunk-header {
+  background: var(--surface-2);
+  color: var(--accent);
+  font-size: var(--text-xs);
+}
