@@ -4,6 +4,7 @@ import { sendPatch } from '../../../api/draft';
 import { Modal } from '../../Modal/Modal';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
+import styles from './InlineCommentComposer.module.css';
 import type { DraftSide, PrReference } from '../../../api/types';
 
 export interface InlineAnchor {
@@ -220,7 +221,7 @@ export function InlineCommentComposer({
       aria-label={composerAriaLabel(anchor)}
       data-composer="true"
       data-testid="inline-comment-composer"
-      className="inline-comment-composer"
+      className={`inline-comment-composer ${styles.inlineCommentComposer}`}
     >
       {closedBanner && (
         <div className="composer-closed-banner muted" role="status">
