@@ -140,6 +140,7 @@ export function UnresolvedPanel({
       aria-label="Unresolved drafts"
       tabIndex={-1}
       className="unresolved-panel"
+      data-testid="unresolved-panel"
     >
       <header className="unresolved-panel-summary">
         <span aria-live="polite" className="unresolved-panel-announce">

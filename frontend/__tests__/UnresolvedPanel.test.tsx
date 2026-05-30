@@ -74,6 +74,7 @@ describe('UnresolvedPanel', () => {
     });
     renderPanel(session);
     expect(screen.getByRole('region', { name: /unresolved drafts/i })).toBeInTheDocument();
+    expect(screen.getByTestId('unresolved-panel')).toBeInTheDocument();
   });
 
   it('OverriddenStaleDraft_NotCountedTowardStaleCount', () => {
