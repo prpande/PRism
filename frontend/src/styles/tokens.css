@@ -391,6 +391,21 @@ a:hover { text-decoration: underline; }
 .chip-info { background: var(--info-soft); color: var(--info-fg); }
 .chip-accent { background: var(--accent-soft); color: var(--accent); }
 
+/* Status chips for draft / reconciliation rows.
+   Consumers (lift-justifying):
+   - .chip-status-stale: 4 producers —
+       * StaleDraftRow.tsx:104 ("Stale" anchor chip),
+       * DraftsTab.tsx:146 (header "N stale" chip),
+       * UnresolvedPanel.tsx:155 verdict-reconfirm row chip ("Verdict"),
+       * DraftListItem.tsx:81 dynamic interpolation `chip-status-${status.modifier}`
+   - .chip-override: 1 module producer (DraftListItem) + 1 Playwright literal-test consumer
+     (s4-keep-anyway-survives-reload.spec.ts:82 asserts on the literal class).
+   The other two `chip-status-*` variants (.chip-status-moved, .chip-status-draft) stay local
+   to DraftListItem.module.css per D47 — single consumer file each, fails lift-on-second-use.
+*/
+.chip-status-stale { background: var(--danger-soft); color: var(--danger-fg); }
+.chip-override     { background: var(--surface-3); color: var(--text-2); border: 1px dashed var(--border-strong); }
+
 .dot {
   width: 6px;
   height: 6px;
