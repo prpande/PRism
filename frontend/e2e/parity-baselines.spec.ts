@@ -1,6 +1,9 @@
 import { test, expect, request } from '@playwright/test';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
-import { setupAndOpenHandoffParityFixture } from './helpers/parity-fixture';
+import {
+  setupAndOpenHandoffParityFixture,
+  setupAndOpenHandoffParityFixtureWithStaleDraft,
+} from './helpers/parity-fixture';
 
 // Viewport baseline regression for the design-parity-recovery roadmap. Per
 // spec §4.1.3:
@@ -176,11 +179,14 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(drafts).toHaveScreenshot('pr-detail-drafts.png', SCREENSHOT_OPTS);
   });
 
-  // pr-detail-reconciliation-panel intentionally NOT included in PR1.
-  // UnresolvedPanel exposes only `data-testid="unresolved-panel-announce"`
-  // (an aria-live region inside the component, not the visible container).
-  // Adding a container `data-testid` is a JSX touch that belongs in PR5.
-  // See docs/specs/2026-05-29-design-parity-recovery-deferrals.md D2.
+  test('pr-detail-reconciliation-panel', async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await setupAndOpenHandoffParityFixtureWithStaleDraft(page);
+    const panel = page.locator('[data-testid="unresolved-panel"]');
+    await panel.waitFor();
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
+    await expect(panel).toHaveScreenshot('pr-detail-reconciliation-panel.png', SCREENSHOT_OPTS);
+  });
 });
 
 // PR7-only zones (added when the PR tab strip ships):
