@@ -200,9 +200,12 @@ function ComposerHarness() {
 
 function OpenOnMount() {
   const { isOpen, toggle } = useAskAiDrawer();
+  const fired = useRef(false);
   useEffect(() => {
-    if (!isOpen) toggle();
-  }, []);
+    if (fired.current || isOpen) return;
+    fired.current = true;
+    toggle();
+  }, [isOpen, toggle]);
   return null;
 }
 

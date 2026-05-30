@@ -1,17 +1,12 @@
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { AskAiDrawerProvider, useAskAiDrawer, type ChatThread } from './AskAiDrawerContext';
-import type { PrReference } from '../api/types';
+import { prRefKey, type PrReference } from '../api/types';
 
 const refA: PrReference = { owner: 'acme', repo: 'api', number: 1 };
 const refB: PrReference = { owner: 'acme', repo: 'api', number: 2 };
-const keyA = 'acme/api#1';
-const keyB = 'acme/api#2';
-
-// Touch the typed refs so the import isn't pruned by the linter — the keys
-// derive from them logically and keeping the symbols documents the mapping.
-void refA;
-void refB;
+const keyA = prRefKey(refA);
+const keyB = prRefKey(refB);
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return <AskAiDrawerProvider>{children}</AskAiDrawerProvider>;

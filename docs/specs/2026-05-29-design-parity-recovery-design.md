@@ -327,8 +327,8 @@ Second behavior PR. Replaces the existing `AskAiButton` → `AskAiEmptyState` in
 
 **Components.**
 - `AskAiDrawer.tsx` + `AskAiDrawer.module.css` — the drawer surface.
-- `AskAiDrawerProvider` (new context) — App-level state container. Exposes `useAskAiDrawer()` → `{ isOpen, toggle(), close(), getThread(prRefKey), sendMessage(prRefKey, body) }`.
-- `lib/askAiUnavailableResponses.ts` — exports `AI_UNAVAILABLE_RESPONSES: readonly string[]` (5 entries) + `pickAiUnavailableResponse(cycleIndex)` helper. **Reused downstream**: any future AI-integration code path that needs an "AI is unavailable / not configured / unreachable" fallback imports the same constant. The strings are written to fit BOTH PR8's "AI hasn't been built yet" and v1.x+'s "AI exists but failed" states without rewording.
+- `AskAiDrawerProvider` (new context) — App-level state container. Exposes `useAskAiDrawer()` → `{ isOpen, cycleIndex, toggle(), close(), getThread(prRefKey), setInput(prRefKey, value), sendMessage(prRefKey), clearAll() }`. Note: `sendMessage` reads the draft body from `thread.input` (set via `setInput`) — it does not take a `body` argument. The session-level `cycleIndex` is exposed for tests and downstream consumers.
+- `components/AskAiDrawer/askAiUnavailableResponses.ts` (colocated, NOT under `lib/` per D76 — PRism's lift-on-second-use rule from § 3.1) — exports `AI_UNAVAILABLE_RESPONSES: readonly string[]` (5 entries) + `pickAiUnavailableResponse(cycleIndex)` helper. **Reused downstream**: any future AI-integration code path that needs an "AI is unavailable / not configured / unreachable" fallback imports the same constant. The strings are written to fit BOTH PR8's "AI hasn't been built yet" and v1.x+'s "AI exists but failed" states without rewording.
 
 **Mount.** App-level fixed-position sibling of `<Routes>` in `App.tsx`, between `<PrTabStrip />` and `<Routes>`. NO `createPortal` (PRism has no portal infrastructure today; sibling pattern matches PR7's `<PrTabStrip />` placement). `position: fixed; right: 0; top: 0; bottom: 0` per handoff `.ai-drawer` (`screens.css:791-800`); z-index `50` per handoff. AskAiDrawerProvider wraps in App.tsx alongside `OpenTabsProvider` (siblings under `CheatsheetProvider`, outside `EventStreamProvider`).
 
@@ -479,7 +479,7 @@ These need PR-level brainstorming, not roadmap-level decisions.
 
 - **PR7 `openTabs` persistence policy.** localStorage is the default. Edge cases: stale references (PR no longer accessible), large tab counts. PR7 brainstorm finalizes.
 - **PR7 closing-tab edge cases.** Composer-open, modal-open, submit-in-flight. § 6.5 defaults are working assumptions; PR7 brainstorm validates.
-- ~~**PR8 canned Ask AI responses.**~~ Resolved 2026-05-30: 5 entries, cycle, per-PR index, "AI is not connected. When connected, it would…" framing reused as v1.x+ unavailable fallback. See § 4.8 + D76.
+- ~~**PR8 canned Ask AI responses.**~~ Resolved 2026-05-30: 5 entries, cycle, **session-level** index, "AI isn't available right now. When it is, it would…" framing reused as v1.x+ unavailable fallback. See § 4.8 + D74 + D76.
 - ~~**PR8 drawer mount strategy.**~~ Resolved 2026-05-30: App-level fixed-position sibling of `<Routes>`. No portal. See § 4.8 + D72.
 - **PR4 split decision.** Per-slice judgment per § 6.6. Implementer decides at work time.
 - **PR9 revisit verdicts.** Whole purpose of PR9 — adjudicated there, not pre-committed here.

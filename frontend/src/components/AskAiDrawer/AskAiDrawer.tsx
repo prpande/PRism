@@ -96,13 +96,13 @@ export function AskAiDrawer() {
             <span className={`kbd ${styles.emptyKbdHint}`}>⌘ ⏎ to send</span>
           </>
         )}
-        {thread?.messages.map((m, i) =>
+        {thread?.messages.map((m) =>
           m.role === 'user' ? (
-            <div key={i} className={styles.msgUser}>
+            <div key={m.ts} className={styles.msgUser}>
               {m.body}
             </div>
           ) : (
-            <div key={i} className={styles.msgAi}>
+            <div key={m.ts} className={styles.msgAi}>
               <span className="ai-icon" aria-hidden="true">
                 ✨
               </span>
