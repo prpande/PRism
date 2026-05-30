@@ -21,7 +21,7 @@ import { DiscardAllDraftsButton } from './DiscardAllDraftsButton';
 import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDraftsBanner';
 import styles from './PrHeader.module.css';
 import { AskAiButton } from './AskAiButton';
-import { AskAiEmptyState } from './AskAiEmptyState';
+import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 
 // Closed/merged PRs can't accept a review submit; the verdict picker is hidden
@@ -111,7 +111,7 @@ export function PrHeader({
   // submit-orphan-cleanup-failed (spec § 11.4 / § 13.2).
   useSubmitToasts(reference, { showToast: (message) => show({ kind: 'info', message }) });
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [askAiOpen, setAskAiOpen] = useState(false);
+  const { toggle: toggleAskAi } = useAskAiDrawer();
   const isClosedOrMerged = prState !== 'open';
 
   // Any active submit flow freezes the header verdict picker (spec § 8.3 — held
@@ -333,10 +333,9 @@ export function PrHeader({
             disabled={!session || inSubmitFlow || isClosedOrMerged}
             onSubmit={() => setDialogOpen(true)}
           />
-          <AskAiButton aiPreview={aiPreview} onClick={() => setAskAiOpen(true)} />
+          <AskAiButton aiPreview={aiPreview} onClick={toggleAskAi} />
         </div>
       </div>
-      <AskAiEmptyState open={askAiOpen} onClose={() => setAskAiOpen(false)} />
       <PrSubTabStrip
         activeTab={activeTab}
         onTabChange={onTabChange}
