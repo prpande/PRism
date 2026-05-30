@@ -500,3 +500,112 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Plan resolution:** Pre-existing accessibility gap, not a PR4 regression. Defer to PR9 audit or a dedicated a11y slice.
 **Status:** Acknowledged pre-existing; deferred to PR9.
 **Cross-refs:** claude[bot] iter 1 finding #5.
+
+---
+
+## PR5 — Drafts tab + reconciliation surface (CSS)
+
+### D46 — UnresolvedPanel + StaleDraftRow are the only handoff-derived PR5 components
+
+**Date:** 2026-05-30 (PR5 plan-writing pre-flight).
+**Spec position:** §4.5 names 10 components in scope. §3.1 implies handoff source applies to each.
+**Reality:** Handoff prototype renders the Drafts sub-tab strip button (`pr-detail.jsx:127-135`) but the only DOM the prototype defines for the broader Drafts surface is `StaleDraftPanel` — used either standalone or `is-embedded` inside the Overview grid. The handoff has NO Drafts-tab content surface (drafts grouped by file with edit/delete actions), NO foreign-pending-review modal, NO discard-confirmation sub-modal. Only `StaleDraftPanel`'s structure maps to production `UnresolvedPanel` + `StaleDraftRow`.
+**Plan resolution:** Port `.stale-panel*` / `.stale-row*` (screens.css:457-495) under production `.unresolvedPanel*` / `.staleDraftRow*` names. The other 8 components author production-only CSS derived from PR3/PR4 surface tokens, `.banner-warning`, the composer surface language, and (where needed) PR4's `.diffPaneEmpty` precedent for empty states.
+**Status:** Applied in PR5.
+
+### D47 — `chip-status-stale` + `chip-override` lifted to `tokens.css`; `chip-status-moved` + `chip-status-draft` stay LOCAL
+
+**Date:** 2026-05-30 (PR5 plan-writing + ce-doc-review pass).
+**Spec position:** §3.1 lift-on-second-use; §6.2 dormant-attribute policy.
+**Reality:** Production JSX uses `chip-status-stale` at 3 explicit sites (StaleDraftRow.tsx:104, DraftsTab.tsx:146, UnresolvedPanel.tsx:155) + 1 dynamic interpolation in DraftListItem.tsx:81 — 4 producers. `chip-override` at 1 explicit site (DraftListItem.tsx:82) + 1 Playwright literal-test consumer (s4-keep-anyway-survives-reload.spec.ts:82 asserts on `.chip.chip-override`). `chip-status-moved` and `chip-status-draft` are emitted ONLY via the dynamic interpolation in DraftListItem.tsx:81 — single producer file each. Lift-on-second-use is satisfied for the first pair, not the second.
+**Plan resolution:** Append `.chip-status-stale` (danger-soft/danger-fg) + `.chip-override` (surface-3/text-2 + dashed border) to `tokens.css`. Author `.chip-status-moved` (warning-soft/warning-fg) + `.chip-status-draft` (info-soft/info-fg) as `:global(...)` rules in `DraftListItem.module.css` — the dynamic literal interpolation in JSX continues to match these globals at render time. Initial draft of D47 attempted to lift all 4 as a "coherent semantic family"; ce-doc-review (scope-guardian) caught that this re-litigated D52's correct single-consumer rejection on structurally identical evidence, and the lift was narrowed.
+**Status:** Applied in PR5 with the narrowed scope.
+**Cross-refs:** D52 (verdict-reconfirm-row single-consumer rejection precedent); ce-doc-review scope-guardian finding S1.
+
+### D48 — Stale-row AI suggestion span deferred to PR9
+
+**Date:** 2026-05-30 (PR5 plan-writing).
+**Spec position:** §4.5 line 263 names "AI-suggestion chip when `aiPreview` is on"; §6.4 says "Per slice, the styling lands; the data path stays canned."
+**Reality:** `StaleDraftRow.tsx` has no `aiPreview` consumption, no `aiSuggestion` field on `DraftCommentDto`/`DraftReplyDto`. Restoring the handoff `.stale-ai` span requires (a) plumbing `aiPreview` via `usePreferences()`, (b) extending the DTOs with a canned `aiSuggestion` field, (c) authoring the `<span className="stale-ai ai-tint">` render conditional in JSX. Steps (a)+(b)+(c) collectively are a logic-and-data-flow change per §2.2.
+**Plan resolution:** Skip in PR5. Same shape as PR4 D32a (FileTree AI focus dot). No dormant rule authored (would require a JSX touch to mount).
+**Status:** Deferred to PR9 alongside other AI-surface wiring decisions.
+**Cross-refs:** PR4 D32a; spec §6.4.
+
+### D49 — PR1 D2 closed: data-testid + reconciliation-panel test + baseline
+
+**Date:** 2026-05-30 (PR5 implementation).
+**Spec position:** §4.1.3 + PR1 D2.
+**Reality:** PR1 D2 explicitly deferred `[data-testid="unresolved-panel"]` JSX addition and the `pr-detail-reconciliation-panel` parity-baseline test to PR5.
+**Plan resolution:** Task 3 added the testid on the visible `<section>` (UnresolvedPanel.tsx:137-143). Task 18 authored the `setupAndOpenHandoffParityFixtureWithStaleDraft` helper + the test definition. Task 20 captured the baseline (`pr-detail-reconciliation-panel.png`, 12.0 KB).
+**Status:** Applied in PR5 (Tasks 3 + 18 + 20).
+**Cross-refs:** PR1 D2.
+
+### D50 — BEM class names port as literal-class-and-module
+
+**Date:** 2026-05-30 (PR5 plan-writing + ce-doc-review pass).
+**Spec position:** §3.1 module-CSS convention.
+**Reality:** ForeignPendingReviewModal + DiscardConfirmationSubModal use BEM (`foreign-prr-modal__body`, `discard-confirmation-sub-modal__footer`, etc.). The Vite/postcss-modules default `camelCase` setting (no explicit `localsConvention` in `frontend/vite.config.ts`) exposes BOTH camelCase and kebab keys, but the project convention across PR2-PR4 (~26 modules) authors camelCase keys exclusively. Initial D50 draft cited `'camelCaseOnly'` as the Vite default — incorrect; ce-doc-review feasibility caught the rationale error.
+**Plan resolution:** Author camelCase module keys (`.foreignPrrModal`, `.foreignPrrModalBody`, etc.). Production JSX keeps the literal BEM kebab classes as test seams + hashed module classes composed alongside via template literal. Matches PR4 D16 literal-class-and-module pattern.
+**Status:** Applied in PR5 with the rationale corrected.
+**Cross-refs:** PR4 D16; ce-doc-review feasibility finding F2.
+
+### D51 — DiscardAllStaleButton.module.css authors modal-content rules only
+
+**Date:** 2026-05-30 (PR5 plan-writing).
+**Spec position:** §3.1.
+**Reality:** The component is named after its trigger button but most of its rendered DOM lives inside a `<Modal>` confirming the destructive action. The trigger button uses `.btn .btn-danger .btn-sm` globals already in `tokens.css` — adding speculative trigger-button rules would be dead code.
+**Plan resolution:** Author 3 module rules (`.discardAllPreviewList` ul, `.discardAllPreviewBody` pre, `.discardAllError` p). Leave the trigger button JSX untouched.
+**Status:** Applied in PR5.
+
+### D52 — `.verdictReconfirmRow` stays in UnresolvedPanel.module.css (single consumer)
+
+**Date:** 2026-05-30 (PR5 plan-writing).
+**Spec position:** §3.1 lift-on-second-use.
+**Reality:** Single consumer (UnresolvedPanel verdict-reconfirm row); no second consumer planned.
+**Plan resolution:** Author one module rule with row layout. Do NOT lift to `tokens.css`. Speculative lift would be pre-mature abstraction.
+**Status:** Applied in PR5.
+
+### D53 — `setupAndOpenHandoffParityFixtureWithStaleDraft` helper authored in parity-fixture.ts
+
+**Date:** 2026-05-30 (PR5 plan-writing + Task 18 implementation).
+**Spec position:** §4.1.3 (parity baseline zones).
+**Reality:** Both PR5 parity baselines (drafts + reconciliation panel) require a non-empty stale-draft fixture state. Authoring two separate helpers (one for "1 draft" and one for "1 stale draft") would duplicate the composer-save + advanceHead dance. One shared helper covers both.
+**Plan resolution:** Append `setupAndOpenHandoffParityFixtureWithStaleDraft(page)` to `frontend/e2e/helpers/parity-fixture.ts` alongside the existing `setupAndOpenHandoffParityFixture`. Helper uses `[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]` (PR4 D41 selector) + `getByRole('button', { name: /add comment on line 3/i })` (matches `aria-label="Add comment on line 3"` at `DiffPane.tsx:288`) + advanceHead + reload.
+**Status:** Applied in PR5 (Task 18, commit `1463cbf`).
+**Cross-refs:** PR4 D41; spec §4.1.3.
+
+### D54 — PR5 split-checkpoint at Task 12.5: SINGLE-PR5 (override OR-tripwire on judgment grounds)
+
+**Date:** 2026-05-30 (PR5 Task 12.5 measurement).
+**Spec position:** §4.4 line 255 (split-policy carve-out PR4 also used).
+**Reality:** Measured at end of Task 12: 311 LOC of CSS added across 8 module files + `tokens.css`. 9 review-meaningful changes (1 tokens.css lift + 8 module files). LOC tracks well below the 600 threshold (~half PR4's 520-at-checkpoint measurement); change count hits the 8 tripwire.
+**Plan resolution:** Continue SINGLE-PR5. The OR-tripwire is informational, not absolute; PR4 precedent: judged single at the checkpoint (6 changes / 520 LOC) and shipped at 15/1120 with no split regret. PR5 coherence is higher than PR4 (8 modules across 2 dirs — DraftsTab + Reconciliation — vs PR4's 13 modules across 4 dirs). Review burden is CSS-only ports with literal-class-and-module continuity. Final PR5 LOC at ship: ~411 + ~70 BEM modals + ~40 deferrals append = ~520-600 LOC total — well under PR4's exit LOC.
+**Status:** Decided at Task 12.5; PR5 ships single.
+**Cross-refs:** PR4 D42.
+
+### D55 — StaleDraftRow horizontal layout deviates from handoff's `flex-direction: column`
+
+**Date:** 2026-05-30 (PR5 plan-writing + ce-doc-review pass).
+**Spec position:** §2.2 ("Any deviation in a slice requires a justification in that slice's deferrals sidecar").
+**Reality:** Handoff `.stale-row` (screens.css:473-476) is `display: flex; flex-direction: column; gap: 8px`. Production JSX `StaleDraftRow.tsx:103` uses `<li className="stale-draft-row row gap-2">`. The `row gap-2` global (from `tokens.css`) supplies `display: flex; flex-direction: row` — keeping production's horizontal layout already in place. Overriding to column would require either (a) dropping the `row gap-2` global compose (JSX restructuring beyond §2.2), or (b) module rule overriding the global at equal specificity (cascade complexity that would clash with the literal-class-and-module pattern).
+**Plan resolution:** Author `.staleDraftRow` with `display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap` — matches the row-gap-2 production layout. Push the preview onto its own line via `.staleDraftRowPreview { flex: 1 1 100%; margin: 4px 0 0 }` — approximates the handoff blockquote effect (body quote becomes a full-width subordinate row below meta+actions).
+**Status:** Applied in PR5 (Task 6, commit `2a618e4`). Side-by-side review will show the row-layout delta as expected; flag in PR description.
+**Cross-refs:** ce-doc-review design-lens finding U-1.
+
+### D56 — StaleDraftRow's "Delete" button label NOT renamed to handoff's "Discard"
+
+**Date:** 2026-05-30 (PR5 plan-writing + ce-doc-review pass).
+**Spec position:** §2.2 ("Class names, layout, and small JSX restructuring are in scope; state, routing, and data fetching are out").
+**Reality:** Handoff `pr-detail.jsx:347` reads "Discard"; production `StaleDraftRow.tsx:129` reads "Delete". Renaming the button text would touch all 5 callers of the same delete-action verb across PRism (StaleDraftRow + DraftListItem + multiple composer surfaces) where production has used "Delete" since S4. Existing vitest tests assert on `/delete/i` regex; an existing Playwright spec (`s4-keep-anyway-survives-reload`) also clicks the Delete button.
+**Plan resolution:** Keep "Delete". Button label is JSX text content but the cross-cutting nature of the rename pushes it out of §2.2 scope. PR9 revisit owns the copy adjudication if uniform "Discard" is preferred at trial-cohort feedback time.
+**Status:** Deferred to PR9 (or a follow-up content-rename slice if trial signal demands earlier action).
+**Cross-refs:** ce-doc-review design-lens finding U-2.
+
+### D57 — UnresolvedPanel sticky-top implemented via `position: sticky; top: 0; z-index: 1`
+
+**Date:** 2026-05-30 (PR5 plan-writing + ce-doc-review pass).
+**Spec position:** §4.5 line 263 ("the unresolved-panel sticky-top reconciliation surface").
+**Reality:** Spec calls out "sticky-top" behavior but the original plan draft authored no `position: sticky` rule on `.unresolvedPanel` — ce-doc-review design-lens caught the gap. `PrDetailPage.tsx` has no module CSS file today, so the parent wrapper has no explicit `overflow` declaration; `position: sticky` operates against the nearest ancestor with non-`visible` overflow, which is the viewport.
+**Plan resolution:** Add `position: sticky; top: 0; z-index: 1` to `.unresolvedPanel` in `UnresolvedPanel.module.css`. Sticky against the viewport matches the spec's "stays pinned to the visible top of PR Detail while the user scrolls" intent. If a future PrDetailPage layout introduces an inner scroll container, the rule carries forward without change here. If side-by-side review shows the panel scrolling off in a way that conflicts with handoff intent, PR9 can add an inner-scroll container at PrDetailPage.
+**Status:** Applied in PR5 (Task 5, commit `1f6fd0f`).
+**Cross-refs:** ce-doc-review design-lens finding U-3.
