@@ -832,6 +832,21 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Status:** Applied in PR8.
 **Cross-refs:** Spec § 4.8 Visuals; `PrTabStrip.module.css:177`; `tokens.css` modal-overlay rule.
 
+### D81 — `inert` attribute on closed drawer `<aside>` (WCAG 2.1 SC 4.1.2 fix)
+
+**Source:** PR8 Task 13 a11y-audit discovery (2026-05-30).
+**Spec position (original):** § 4.8 Accessibility — `aria-hidden={!isOpen}` on the `<aside>` to hide from AT when closed.
+**Spec position (resolved):** § 4.8 Accessibility — `aria-hidden={!isOpen}` AND `inert={!isOpen}`.
+**Failure mode:** The drawer is mounted at App level and always present in the DOM (transform-translateX(100%) hides it visually). When closed, the textarea + Send button + Close X button remain focusable via Tab. axe-core's `aria-hidden-focus` rule (WCAG 2.1 SC 4.1.2) flagged this on all 6 page-scoped a11y audits (setup, inbox, PR overview, PR files, PR drafts, settings). Real spec-vs-a11y conflict that the brainstorm pass missed.
+**Reason:** The `inert` HTML attribute (React 19 native, no library needed) renders the entire subtree non-focusable, non-interactive, and removes it from the accessibility tree. Tab skips inert subtrees. Click events inside don't fire. This is the platform-native fix for the focus-leak pattern without unmounting the component (which would lose slide-out animation) or using `display: none` (which would also lose animation since `display` doesn't transition).
+**Alternatives considered:**
+- Unmount when closed → loses slide-out animation; also requires reflow on every open.
+- `display: none` when closed → same animation loss.
+- `pointer-events: none` + `tabindex="-1"` on each focusable child → fragile, has to be repeated for every interactive descendant.
+- `inert` attribute → covers all interactive descendants with one boolean prop.
+**Status:** Applied in PR8.
+**Cross-refs:** Spec § 4.8 Accessibility; WCAG 2.1 SC 4.1.2; React 19 native `inert` prop support.
+
 ## Implementation-time deferrals — PR7 (browser-style PR tab strip, route b)
 
 ### D58 — Keyboard bindings (`⌘W`, `⌘1-9`) deferred to post-shell-decision

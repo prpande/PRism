@@ -68,6 +68,7 @@ export function AskAiDrawer() {
       aria-modal="false"
       aria-labelledby={titleId}
       aria-hidden={!isOpen}
+      inert={!isOpen}
       data-testid="ask-ai-drawer"
       className={`${styles.drawer} ${isOpen ? styles.isOpen : ''}`}
     >

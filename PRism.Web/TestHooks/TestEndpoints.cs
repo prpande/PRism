@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 
 using PRism.Core;
+using PRism.Core.Auth;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
@@ -199,6 +200,18 @@ internal static class TestEndpoints
                 ok = true,
                 sessions = after.Reviews.Sessions.Count,
             });
+        });
+
+        // PR8 Task 13 — Clears the persisted PAT from ITokenStore so cold-start.spec.ts
+        // (which expects no-token state on /) does not see a token leaked from a prior spec
+        // that called setupAndOpenScenarioPr. /test/reset wipes state.json + the
+        // FakeReviewBackingStore session state, but the PAT lives in the TokenStore cache
+        // file under DataDir and survives reset. Specs that need a fully-clean auth state
+        // (i.e., the Setup screen) call this in afterEach.
+        app.MapPost("/test/clear-tokens", async (ITokenStore tokens, CancellationToken ct) =>
+        {
+            await tokens.ClearAsync(ct).ConfigureAwait(false);
+            return Results.Ok(new { ok = true });
         });
 
         app.MapPost("/test/set-commit-reachable", (SetCommitReachableRequest req, IServiceProvider sp) =>

@@ -367,7 +367,7 @@ The "AI isn't available right now / when it is" phrasing avoids the false implic
 - Initial focus on open: the composer textarea.
 - ESC closes (don't break browser ESC defaults). **Modal-coexistence guard**: drawer's ESC handler skips when a `[aria-modal="true"]` element is open in the DOM (mirrors `Cheatsheet.tsx`'s capture-phase check at `useCheatsheetShortcut.ts:53`). Prevents single ESC keystroke from closing both an open Submit/Discard modal AND the drawer at once.
 - Focus restoration on close: capture `document.activeElement` on `open()`, restore on `close()`. If the captured element is no longer in the DOM (e.g., navigated to a different PR and original AskAiButton unmounted), restoration silently fails to body — matches `Modal.tsx` behavior and is acceptable a11y posture.
-- `aria-hidden={!isOpen}` on the `<aside>` to hide from AT when closed.
+- `aria-hidden={!isOpen}` **AND** `inert={!isOpen}` on the `<aside>` to hide from AT AND make the subtree non-focusable when closed. Per D81 amendment: the drawer is App-level-mounted and ALWAYS in the DOM (transform-translateX(100%) hides it visually). Focusable elements inside an `aria-hidden=true` subtree violate WCAG 2.1 SC 4.1.2 (`aria-hidden-focus`). The `inert` HTML attribute (React 19 native prop) makes the entire subtree non-focusable + non-interactive + removed from accessibility tree — covers the failure mode without unmounting the component or losing the slide-in/out animation.
 
 **Header label.** The drawer header reads `Ask about this PR · AI unavailable` with `--text-2` muted treatment for the second clause. The shorter "AI unavailable" framing is honest in both states (today: no AI backend; v1.x+: AI exists but failed/disabled/unconfigured) without the misleading "currently disconnected" implication that earlier draft "AI not connected" wording carried.
 
@@ -389,6 +389,7 @@ The "AI isn't available right now / when it is" phrasing avoids the false implic
 - D78 — `AskAiButton` toggle behavior (open ↔ close) replaces simple-open.
 - D79 — `parsePrRefFromPathname` colocated under `components/AskAiDrawer/`, NOT extracted to `frontend/src/lib/`. Single-consumer scope.
 - D80 — z-index ordering: drawer 50 = PrTabStrip overflow menu 50; drawer renders later in App.tsx → wins paint-order tie. Modal at 1000 always wins. Documented to anchor the stacking decision.
+- D81 — `inert` attribute on the closed drawer `<aside>`. WCAG 2.1 SC 4.1.2 fix discovered during Task 13 a11y-audit. `aria-hidden={!isOpen}` alone leaves focusable children (Close button, textarea, Send button) in the focus tree when the drawer is closed.
 
 ### 4.9 PR9 — Revisit pass (audit + documentation)
 

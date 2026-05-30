@@ -22,7 +22,7 @@
 // (per the windows-fixed-delay flake memo).
 
 import { test, expect } from '@playwright/test';
-import { setupAndOpenScenarioPr } from './helpers/s4-setup';
+import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 async function enableAiPreview(page: import('@playwright/test').Page): Promise<void> {
   const resp = await page.request.post('http://localhost:5180/api/preferences', {
@@ -33,6 +33,46 @@ async function enableAiPreview(page: import('@playwright/test').Page): Promise<v
 }
 
 test.describe('Ask AI drawer', () => {
+  test.beforeEach(async ({ request }) => {
+    await resetBackendState(request);
+  });
+
+  test.afterEach(async ({ page, request }) => {
+    // Leave clean state for downstream specs. Three orthogonal stores need
+    // reset and /test/reset only covers state.json + FakeReviewBackingStore:
+    //   1. POST /api/preferences { aiPreview: false } — config.json IConfigStore;
+    //      without this no-layout-shift-on-banner.spec.ts (and others) see the
+    //      aiPreview=true left over from this spec's enableAiPreview(), which
+    //      renders the AI summary card + 'Ask AI' button and shifts pixels.
+    //      Uses page.request (NOT the test-fixture `request`) so the session
+    //      cookie from SessionTokenMiddleware carries through; otherwise the
+    //      auth-gated /api/preferences POST 401s with session-stale.
+    //   2. /test/reset       — state.json + FakeReviewBackingStore session state
+    //   3. /test/clear-tokens — TokenStore cache file (PAT) — without this the
+    //      cold-start.spec.ts ('lands on Setup screen when no token') sees a
+    //      leaked token and times out waiting for the Setup heading.
+    // Order matters: preferences POST is auth-gated by SessionTokenMiddleware,
+    // so it must run BEFORE /test/clear-tokens invalidates the session.
+    const prefResp = await page.request.post('http://localhost:5180/api/preferences', {
+      data: { aiPreview: false },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    if (!prefResp.ok()) {
+      throw new Error(
+        `POST /api/preferences { aiPreview:false } failed: ${prefResp.status()} ${await prefResp.text()}`,
+      );
+    }
+    await resetBackendState(request);
+    const tokensResp = await request.post('http://localhost:5180/test/clear-tokens', {
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    if (!tokensResp.ok()) {
+      throw new Error(
+        `/test/clear-tokens failed: ${tokensResp.status()} ${await tokensResp.text()}`,
+      );
+    }
+  });
+
   test('open, send, canned reply lands, preserved across close+reopen', async ({ page }) => {
     await setupAndOpenScenarioPr(page);
     await enableAiPreview(page);

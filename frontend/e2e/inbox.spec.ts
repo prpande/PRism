@@ -222,7 +222,7 @@ test('URL paste with valid PR URL navigates to PR detail page', async ({ page })
 
   await expect(page.getByRole('heading', { name: /Sample PR for navigation test/i })).toBeVisible();
   await expect(page.getByText('foo/bar', { exact: true })).toBeVisible();
-  await expect(page.getByText('#9', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('pr-header').getByText('#9', { exact: true })).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
