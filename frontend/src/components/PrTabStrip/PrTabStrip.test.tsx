@@ -64,4 +64,24 @@ describe('PrTabStrip', () => {
     const tab = screen.getByRole('tab', { name: /acme\/api#42/i });
     expect(tab).toBeInTheDocument();
   });
+
+  it('marks the matching tab active when on a nested PR route', () => {
+    function Seed() {
+      const { addTab } = useOpenTabs();
+      useEffect(() => {
+        addTab({ owner: 'acme', repo: 'api', number: 99 }, 'Match me');
+      }, [addTab]);
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={['/pr/acme/api/99/files']}>
+        <OpenTabsProvider>
+          <Seed />
+          <PrTabStrip />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    const tab = screen.getByRole('tab', { name: /Match me/i });
+    expect(tab).toHaveAttribute('aria-selected', 'true');
+  });
 });

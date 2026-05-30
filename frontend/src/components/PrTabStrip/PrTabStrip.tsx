@@ -1,7 +1,16 @@
 import { useLocation } from 'react-router-dom';
-import { useOpenTabs } from '../../contexts/OpenTabsContext';
+import { useOpenTabs, type OpenTab } from '../../contexts/OpenTabsContext';
 import { prRefKey } from '../../api/types';
 import styles from './PrTabStrip.module.css';
+
+function tabLabel(t: OpenTab): string {
+  return t.title ?? `${t.ref.owner}/${t.ref.repo}#${t.ref.number}`;
+}
+
+function isActiveTab(pathname: string, t: OpenTab): boolean {
+  const prefix = `/pr/${t.ref.owner}/${t.ref.repo}/${t.ref.number}`;
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
 
 /**
  * PrTabStrip — Row 2 browser-style strip listing every open PR tab.
@@ -23,9 +32,9 @@ export function PrTabStrip() {
       <div className={styles.inner}>
         {openTabs.map((t) => {
           const key = prRefKey(t.ref);
-          const active = location.pathname === `/pr/${t.ref.owner}/${t.ref.repo}/${t.ref.number}`;
+          const active = isActiveTab(location.pathname, t);
           const unread = unreadKeys.has(key);
-          const label = t.title ?? `${t.ref.owner}/${t.ref.repo}#${t.ref.number}`;
+          const label = tabLabel(t);
           const className = [
             styles.tab,
             active ? styles.tabActive : '',
