@@ -107,6 +107,7 @@ describe('DraftsTab', () => {
   it('RendersEmptyState_WhenNoDrafts', () => {
     renderDraftsTab({ session: mkSession(), status: 'ready' });
     expect(screen.getByText(/No drafts on this PR yet/i)).toBeInTheDocument();
+    expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
   });
 
   it('RendersDraftsGroupedByFile', () => {
@@ -121,6 +122,7 @@ describe('DraftsTab', () => {
     // Two file group headers
     expect(screen.getByText('src/Foo.cs')).toBeInTheDocument();
     expect(screen.getByText('src/Bar.cs')).toBeInTheDocument();
+    expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
   });
 
   it('RendersHeader_CountsDraftsAndFiles', () => {

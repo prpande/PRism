@@ -121,7 +121,7 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
 
   if (summary.total === 0) {
     return (
-      <div className="drafts-tab">
+      <div className="drafts-tab" data-testid="drafts-tab">
         <div className="drafts-tab-header">
           <span className="drafts-tab-header-title">0 drafts</span>
         </div>
@@ -131,7 +131,7 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
   }
 
   return (
-    <div className="drafts-tab">
+    <div className="drafts-tab" data-testid="drafts-tab">
       <div className="drafts-tab-header row gap-2">
         <span className="drafts-tab-header-title">
           {summary.total} draft{summary.total === 1 ? '' : 's'}

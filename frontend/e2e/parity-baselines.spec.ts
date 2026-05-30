@@ -169,9 +169,9 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
 
-  test.fixme('pr-detail-drafts', async ({ page }) => {
+  test('pr-detail-drafts', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
-    await setupAndOpenHandoffParityFixture(page);
+    await setupAndOpenHandoffParityFixtureWithStaleDraft(page);
     await page.goto('/pr/acme/api/123/drafts');
     const drafts = page.locator('[data-testid="drafts-tab"]');
     await drafts.waitFor();
