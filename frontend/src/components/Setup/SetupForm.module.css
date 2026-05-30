@@ -91,7 +91,11 @@
   background: var(--surface-2);
   padding: 0 4px;
   border-radius: var(--radius-2);
-  font-size: var(--text-sm);
+  /* Match the surrounding .footnote font-size (var(--text-xs) = 12px); the
+     prior var(--text-sm) (13px) rendered code tokens 1px LARGER than the
+     enclosing text — handoff doesn't specify footnote-code styling, so the
+     consistent choice is the parent size. */
+  font-size: var(--text-xs);
 }
 .error {
   display: flex;

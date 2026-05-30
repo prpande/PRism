@@ -10,20 +10,20 @@
 
 **Plan deviations table (D58 onwards, log to `docs/specs/2026-05-29-design-parity-recovery-deferrals.md` as Task 12):**
 
-| ID | Deviation | Decision |
-|----|-----------|----------|
-| D58 | `ScopePill.module.css` deferred (spec § 4.6 mandate vs. production reality) | `ScopePill.tsx` has ZERO production consumers (verified via Grep over `frontend/src` — only its own definition matches). Creating a module CSS file for an unrendered component is a speculative anchor — same trap PR4 D26 explicitly rejected for `.composer-save` / `.commentThreadReply` / `.iterationNewDot`. PR9 catalog determines whether ScopePill stays as dead code or gets deleted; if it gets a consumer in PR9 the module CSS lands then. NOT creating `frontend/src/components/Setup/ScopePill.module.css` in PR6. |
-| D59 | No per-section module CSS files (`AppearanceSection.module.css` etc.) | Spec § 4.6 says "polish to `SettingsSections.module.css`, plus any new module CSS the section components need". The 4 section components (Appearance / InboxSections / Connection / Auth) all compose `SettingsSections.module.css` cleanly with no per-section styling divergence. Splitting into per-component modules would be YAGNI — same precedent as PR3 keeping shared `tokens.css` globals for `.chip-*` until the second-consumer trigger fires. SettingsSections.module.css stays as the single shared module for all 4 sections. |
-| D60 | Settings half acceptance is **subjective** (no handoff reference) but bound by falsifiable token targets | Spec § 4.6 explicitly: "The Settings half of PR6 is the only PR with subjective 'feels right' review criteria; the maintainer's side-by-side judgment is the gate." Coherence with PR3 Overview cards is the gate, and the token values are **empirically verified against `frontend/src/styles/tokens.css:506-511`**: `.overview-card { background: var(--surface-1); border: 1px solid var(--border-1); border-radius: var(--radius-3); padding: var(--s-4) var(--s-5); }` — **NO box-shadow**. Settings sections therefore land at: `var(--surface-1)` background, `var(--border-1)` border, `var(--radius-3)` (8px) radius — UNCHANGED from current 8px hard-code, just tokenized, `var(--s-5)` padding, `var(--text-lg)` h2. **No `box-shadow` added** — PR3 Overview cards have none, so adding one breaks the coherence claim. If post-merge regret surfaces a token-level mismatch, the diff to revert is explicit. Maintainer signs off on the `settings-page.png` parity baseline as the canonical "this is what coherence looks like." Higher review noise expected. |
-| D61 | SetupPage JSX gains a 3-element wrapper structure (`.screen` > `.bg` + `.card` > children) | Currently `SetupPage.tsx` returns `<><SetupForm /><NoReposWarningModal/></>` with zero outer wrapper. The centered-card-on-radial-gradient layout REQUIRES a positioned outer wrapper (`.screen` for flex centering + scroll), an absolutely-positioned background layer (`.bg` for the radial gradient), and a relatively-positioned card host (`.card` for the form's chrome). This is structural CSS layering — adds DOM nodes but ZERO behavior change. Inside spec § 2.2's "no component-logic changes" rule per PR2-PR5 precedent (PR3 added `<span>Loading…</span>` for WCAG; PR4 added `.diff-line` BEM wrappers; both were structural CSS changes). |
-| D62 | SetupForm.module.css `.form` drops `padding` / `background` / `border` / `border-radius` (currently lines 5-9) | The handoff `.setup-card` owns the surface treatment (background + border + radius + padding + shadow at lines 1215-1224 of `screens.css`). Moving that responsibility to `SetupPage.module.css .card` means `SetupForm.module.css .form` becomes a pure flex column with gap (single-responsibility). Adds one DOM nesting level but the existing tests assert via `getByRole/getByText` only — no class assertions to migrate. |
-| D63 | `<strong>1.</strong>` / `<strong>2.</strong>` markup replaced with `<span className={styles.num}>1</span>` inside a numbered-step section header. **Step 1 wraps the link inside the heading; ordinal stays in the a11y tree.** | Handoff `.setup-num` is a 20×20 circle with accent-soft background and accent text color (line 1249) — cannot be styled on inline `<strong>` text alone. **Critical test constraint:** `setup-page.test.tsx:78` asserts `findByRole('link', { name: /generate a token/i })` — the link text MUST remain "Generate a token". Resolution: Step 1's heading is `<h2 className={styles.sectionHead}><span className={styles.num}>1</span> <a href={patPageUrl} className={styles.link}>Generate a token</a></h2>` (the link IS the labeled portion of the heading). Step 2's heading is `<h2 className={styles.sectionHead}><span className={styles.num}>2</span> Paste it below</h2>` (no link to host). **Ordinal in a11y tree:** the numbered `<span>` is NOT `aria-hidden` — SR users hear "1 Generate a token" / "2 Paste it below" preserving step-ordinality wayfinding. Visible glyph "1"/"2" reads naturally as the cardinal number. (Reviewer-driven correction — original plan had `aria-hidden="true"` which stripped wayfinding from SR.) |
-| D64 | `<h1>Connect to GitHub</h1>` and the subtitle paragraph wrap into `<header className={styles.brand}><h1 className={styles.title}>…</h1><p className={styles.sub}>…</p></header>` | Handoff `.setup-brand` (1225), `.setup-title` (1226), `.setup-sub` (1232) form a 3-element block at the top of the card. Each maps to one module class. No behavior change; no test asserts `<h1>` is a direct child of `<form>`. |
-| D65 | MaskedInput's inline `style={{ position: 'relative' }}` and inline eye `<button>` get hoisted into a `.wrap` + `.eye` module | Replaces the runtime style prop with a CSS rule. **Eye-button sizing**: handoff line 1277 defines `.btn-icon-sm { width: 18px; height: 18px; }` IMMEDIATELY before `.setup-eye` (1279) — implying the intended composition was `.btn-icon .btn-icon-sm`. But `.btn-icon-sm` is **not** in `frontend/src/styles/tokens.css` (verified — only `.btn-icon` 30×30 exists). Lift-on-second-use says don't lift speculatively, so `.eye` carries a **local size override** (`width: 18px; height: 18px;`) alongside its position rules, sized to fit inside the 36px-tall input without overflow. Handoff line 1279 position (`top: 8px; right: 8px`) preserved. (Reviewer-driven correction — original plan composed `.btn-icon` 30×30 which would have overflowed the input.) |
-| D66 | Eye-toggle glyph swaps to `{shown ? '🙈' : '👁'}` (visible-state feedback) | Current MaskedInput.tsx has `{shown ? '👁' : '👁'}` — both branches identical (copy-paste defect). **Reviewer-driven correction**: original plan kept single `👁` and deferred the variant to PR9, but that means PR6's `setup-card.png` baseline locks in same-glyph-both-states behavior; fixing it in PR9 would require a baseline re-capture. PR6 ships `{shown ? '🙈' : '👁'}` (see-no-evil monkey ↔ eye — widely-supported emoji pair) so the baseline captures the visible-toggle feedback from the start. aria-label still announces "Show token"/"Hide token" for AT. No icon library dependency. |
-| D67 | No `.setup-*` rules lifted to `tokens.css` in PR6 | Inventory (per D58-D59 scope reductions, ScopePill is deferred) confirmed every `.setup-*` handoff rule **ported in PR6** has exactly ONE production consumer (SetupPage owns `.screen`/`.bg`/`.card`; SetupForm owns `.brand`/`.title`/`.sub`/`.section`/`.sectionHead`/`.num`/`.link`/`.permissions`/`.permissionRow`/`.permissionsNote`/`.footnote`/`.error`/`.continue`/`.cancel`/`.cancelDisabled`; FirstRunDisclosure owns `.fineprint`; MaskedInput owns `.wrap`/`.eye`). Lift-on-second-use is the documented trigger per PR3 D22 / PR4 D34 / PR5 D47 — no second consumer exists in PR6 scope. If PR9 catalogs ScopePill back into a real consumer or adds another Setup-style surface, the lift happens then. |
-| D70 | `.fineprint` lock icon deferred to PR9 a11y polish | Spec § 4.6 calls for "fineprint with lock icon" but the handoff doesn't ship a glyph source (no SVG token, no icon-library import). Adding a lock icon requires a design call about source: emoji `🔒` (cross-platform-inconsistent rendering), SVG inlined into the JSX (visual fidelity but more code), or an icon library (new dependency). Spec § 2.2 ("no redesign, handoff is the visual spec") doesn't speak to icon sources for new PRism-only elements. **Decision:** ship `.fineprint` typography (margin / font-size / color) without a glyph in PR6; PR9 polish picks the glyph source and re-captures the `setup-card.png` baseline. The handoff `.setup-fineprint` flex+gap+center rules **intentionally NOT ported** to `.fineprint` because the disclosure widget is a `<details>` block, not a flex row — the flex rules don't apply meaningfully to multi-line collapsible content. If PR9 adds a `<span aria-hidden="true">🔒</span>` prefix to the `<summary>`, the flex+gap+center rules land then. |
-| D69 | SINGLE-PR6 vs SPLIT decision at Task 8.5 | **Measured:** 344 LOC net (265 inserts + 79 deletes) across 11 files in 4 directories, 7 review-meaningful changes (Tasks 2 + 3 + 4 + 5 + 6 + 7 + 8). Both metrics below LOC>700 / changes>18 thresholds. **SINGLE-PR6 selected.** Override-tripwire NOT applied — same-maintainer / same-review-window precedent from PR2-PR5 (PR4 shipped at 1120 LOC / 15 changes as single, PR5 at 311 LOC / 9 changes; PR6 at 344 LOC / 7 changes is well within the empirical SINGLE band). Subjective-Settings concern (D60) bound by falsifiable token targets per the post-ce-doc-review correction; reviewer can litigate exact tokens against tokens.css:506-511 rather than vibes. |
+| ID  | Deviation                                                                                                                                                                                                                       | Decision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D58 | `ScopePill.module.css` deferred (spec § 4.6 mandate vs. production reality)                                                                                                                                                     | `ScopePill.tsx` has ZERO production consumers (verified via Grep over `frontend/src` — only its own definition matches). Creating a module CSS file for an unrendered component is a speculative anchor — same trap PR4 D26 explicitly rejected for `.composer-save` / `.commentThreadReply` / `.iterationNewDot`. PR9 catalog determines whether ScopePill stays as dead code or gets deleted; if it gets a consumer in PR9 the module CSS lands then. NOT creating `frontend/src/components/Setup/ScopePill.module.css` in PR6.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| D59 | No per-section module CSS files (`AppearanceSection.module.css` etc.)                                                                                                                                                           | Spec § 4.6 says "polish to `SettingsSections.module.css`, plus any new module CSS the section components need". The 4 section components (Appearance / InboxSections / Connection / Auth) all compose `SettingsSections.module.css` cleanly with no per-section styling divergence. Splitting into per-component modules would be YAGNI — same precedent as PR3 keeping shared `tokens.css` globals for `.chip-*` until the second-consumer trigger fires. SettingsSections.module.css stays as the single shared module for all 4 sections.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| D60 | Settings half acceptance is **subjective** (no handoff reference) but bound by falsifiable token targets                                                                                                                        | Spec § 4.6 explicitly: "The Settings half of PR6 is the only PR with subjective 'feels right' review criteria; the maintainer's side-by-side judgment is the gate." Coherence with PR3 Overview cards is the gate, and the token values are **empirically verified against `frontend/src/styles/tokens.css:506-511`**: `.overview-card { background: var(--surface-1); border: 1px solid var(--border-1); border-radius: var(--radius-3); padding: var(--s-4) var(--s-5); }` — **NO box-shadow**. Settings sections therefore land at: `var(--surface-1)` background, `var(--border-1)` border, `var(--radius-3)` (8px) radius — UNCHANGED from current 8px hard-code, just tokenized, `var(--s-5)` padding, `var(--text-lg)` h2. **No `box-shadow` added** — PR3 Overview cards have none, so adding one breaks the coherence claim. If post-merge regret surfaces a token-level mismatch, the diff to revert is explicit. Maintainer signs off on the `settings-page.png` parity baseline as the canonical "this is what coherence looks like." Higher review noise expected. |
+| D61 | SetupPage JSX gains a 3-element wrapper structure (`.screen` > `.bg` + `.card` > children)                                                                                                                                      | Currently `SetupPage.tsx` returns `<><SetupForm /><NoReposWarningModal/></>` with zero outer wrapper. The centered-card-on-radial-gradient layout REQUIRES a positioned outer wrapper (`.screen` for flex centering + scroll), an absolutely-positioned background layer (`.bg` for the radial gradient), and a relatively-positioned card host (`.card` for the form's chrome). This is structural CSS layering — adds DOM nodes but ZERO behavior change. Inside spec § 2.2's "no component-logic changes" rule per PR2-PR5 precedent (PR3 added `<span>Loading…</span>` for WCAG; PR4 added `.diff-line` BEM wrappers; both were structural CSS changes).                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| D62 | SetupForm.module.css `.form` drops `padding` / `background` / `border` / `border-radius` (currently lines 5-9)                                                                                                                  | The handoff `.setup-card` owns the surface treatment (background + border + radius + padding + shadow at lines 1215-1224 of `screens.css`). Moving that responsibility to `SetupPage.module.css .card` means `SetupForm.module.css .form` becomes a pure flex column with gap (single-responsibility). Adds one DOM nesting level but the existing tests assert via `getByRole/getByText` only — no class assertions to migrate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| D63 | `<strong>1.</strong>` / `<strong>2.</strong>` markup replaced with `<span className={styles.num}>1</span>` inside a numbered-step section header. **Step 1 wraps the link inside the heading; ordinal stays in the a11y tree.** | Handoff `.setup-num` is a 20×20 circle with accent-soft background and accent text color (line 1249) — cannot be styled on inline `<strong>` text alone. **Critical test constraint:** `setup-page.test.tsx:78` asserts `findByRole('link', { name: /generate a token/i })` — the link text MUST remain "Generate a token". Resolution: Step 1's heading is `<h2 className={styles.sectionHead}><span className={styles.num}>1</span> <a href={patPageUrl} className={styles.link}>Generate a token</a></h2>` (the link IS the labeled portion of the heading). Step 2's heading is `<h2 className={styles.sectionHead}><span className={styles.num}>2</span> Paste it below</h2>` (no link to host). **Ordinal in a11y tree:** the numbered `<span>` is NOT `aria-hidden` — SR users hear "1 Generate a token" / "2 Paste it below" preserving step-ordinality wayfinding. Visible glyph "1"/"2" reads naturally as the cardinal number. (Reviewer-driven correction — original plan had `aria-hidden="true"` which stripped wayfinding from SR.)                              |
+| D64 | `<h1>Connect to GitHub</h1>` and the subtitle paragraph wrap into `<div className={styles.brand}><h1 className={styles.title}>…</h1><p className={styles.sub}>…</p></div>`                                                      | Handoff `.setup-brand` (1225), `.setup-title` (1226), `.setup-sub` (1232) form a 3-element block at the top of the card. Each maps to one module class. **NOT `<header>`** — preflight adversarial review caught that `<header>` inside `<form>` maps to `role=banner` per the HTML AAM (the exclusion list is article/aside/main/nav/section — `<form>` is NOT in it), which would duplicate the App-level `<Header />` banner landmark. `<div>` preserves the visual grouping without the landmark duplication. No behavior change; no test asserts `<h1>` is a direct child of `<form>`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| D65 | MaskedInput's inline `style={{ position: 'relative' }}` and inline eye `<button>` get hoisted into a `.wrap` + `.eye` module                                                                                                    | Replaces the runtime style prop with a CSS rule. **Eye-button sizing**: handoff line 1277 defines `.btn-icon-sm { width: 18px; height: 18px; }` IMMEDIATELY before `.setup-eye` (1279) — implying the intended composition was `.btn-icon .btn-icon-sm`. But `.btn-icon-sm` is **not** in `frontend/src/styles/tokens.css` (verified — only `.btn-icon` 30×30 exists). Lift-on-second-use says don't lift speculatively, so `.eye` carries a **local size override** (`width: 18px; height: 18px;`) alongside its position rules, sized to fit inside the 36px-tall input without overflow. Handoff line 1279 position (`top: 8px; right: 8px`) preserved. (Reviewer-driven correction — original plan composed `.btn-icon` 30×30 which would have overflowed the input.)                                                                                                                                                                                                                                                                                                       |
+| D66 | Eye-toggle glyph swaps to `{shown ? '🙈' : '👁'}` (visible-state feedback)                                                                                                                                                      | Current MaskedInput.tsx has `{shown ? '👁' : '👁'}` — both branches identical (copy-paste defect). **Reviewer-driven correction**: original plan kept single `👁` and deferred the variant to PR9, but that means PR6's `setup-card.png` baseline locks in same-glyph-both-states behavior; fixing it in PR9 would require a baseline re-capture. PR6 ships `{shown ? '🙈' : '👁'}` (see-no-evil monkey ↔ eye — widely-supported emoji pair) so the baseline captures the visible-toggle feedback from the start. aria-label still announces "Show token"/"Hide token" for AT. No icon library dependency.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| D67 | No `.setup-*` rules lifted to `tokens.css` in PR6                                                                                                                                                                               | Inventory (per D58-D59 scope reductions, ScopePill is deferred) confirmed every `.setup-*` handoff rule **ported in PR6** has exactly ONE production consumer (SetupPage owns `.screen`/`.bg`/`.card`; SetupForm owns `.brand`/`.title`/`.sub`/`.section`/`.sectionHead`/`.num`/`.link`/`.permissions`/`.permissionRow`/`.permissionsNote`/`.footnote`/`.error`/`.continue`/`.cancel`/`.cancelDisabled`; FirstRunDisclosure owns `.fineprint`; MaskedInput owns `.wrap`/`.eye`). Lift-on-second-use is the documented trigger per PR3 D22 / PR4 D34 / PR5 D47 — no second consumer exists in PR6 scope. If PR9 catalogs ScopePill back into a real consumer or adds another Setup-style surface, the lift happens then.                                                                                                                                                                                                                                                                                                                                                         |
+| D70 | `.fineprint` lock icon deferred to PR9 a11y polish                                                                                                                                                                              | Spec § 4.6 calls for "fineprint with lock icon" but the handoff doesn't ship a glyph source (no SVG token, no icon-library import). Adding a lock icon requires a design call about source: emoji `🔒` (cross-platform-inconsistent rendering), SVG inlined into the JSX (visual fidelity but more code), or an icon library (new dependency). Spec § 2.2 ("no redesign, handoff is the visual spec") doesn't speak to icon sources for new PRism-only elements. **Decision:** ship `.fineprint` typography (margin / font-size / color) without a glyph in PR6; PR9 polish picks the glyph source and re-captures the `setup-card.png` baseline. The handoff `.setup-fineprint` flex+gap+center rules **intentionally NOT ported** to `.fineprint` because the disclosure widget is a `<details>` block, not a flex row — the flex rules don't apply meaningfully to multi-line collapsible content. If PR9 adds a `<span aria-hidden="true">🔒</span>` prefix to the `<summary>`, the flex+gap+center rules land then.                                                        |
+| D69 | SINGLE-PR6 vs SPLIT decision at Task 8.5                                                                                                                                                                                        | **Measured:** 344 LOC net (265 inserts + 79 deletes) across 11 files in 4 directories, 7 review-meaningful changes (Tasks 2 + 3 + 4 + 5 + 6 + 7 + 8). Both metrics below LOC>700 / changes>18 thresholds. **SINGLE-PR6 selected.** Override-tripwire NOT applied — same-maintainer / same-review-window precedent from PR2-PR5 (PR4 shipped at 1120 LOC / 15 changes as single, PR5 at 311 LOC / 9 changes; PR6 at 344 LOC / 7 changes is well within the empirical SINGLE band). Subjective-Settings concern (D60) bound by falsifiable token targets per the post-ce-doc-review correction; reviewer can litigate exact tokens against tokens.css:506-511 rather than vibes.                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ---
 
@@ -44,6 +44,7 @@
 ## Task 1: Pre-flight catalog
 
 **Files:**
+
 - Read-only: `frontend/src/pages/SetupPage.tsx`, `frontend/src/pages/SettingsPage.tsx`, `frontend/src/components/Setup/SetupForm.tsx`, `frontend/src/components/Setup/FirstRunDisclosure.tsx`, `frontend/src/components/Setup/MaskedInput.tsx`, `frontend/src/components/Setup/ScopePill.tsx`, `frontend/src/components/Setup/SetupForm.module.css`, `frontend/src/components/Settings/AppearanceSection.tsx`, `frontend/src/components/Settings/AuthSection.tsx`, `frontend/src/components/Settings/ConnectionSection.tsx`, `frontend/src/components/Settings/InboxSectionsSection.tsx`, `frontend/src/components/Settings/SettingsSections.module.css`, `frontend/src/pages/SettingsPage.module.css`, `design/handoff/screens.css:1199-1295`
 
 - [ ] **Step 1: Grep ScopePill consumers**
@@ -77,6 +78,7 @@
   Run: `wc -l frontend/src/pages/SetupPage.tsx frontend/src/pages/SettingsPage.tsx frontend/src/pages/SettingsPage.module.css frontend/src/components/Settings/SettingsSections.module.css frontend/src/components/Setup/SetupForm.tsx frontend/src/components/Setup/SetupForm.module.css frontend/src/components/Setup/FirstRunDisclosure.tsx frontend/src/components/Setup/MaskedInput.tsx`
 
   Expected output approximately:
+
   ```
   SetupPage.tsx              175
   SettingsPage.tsx            17
@@ -107,12 +109,13 @@
 ## Task 2: Add `data-testid` to SetupPage and SettingsPage
 
 **Files:**
+
 - Modify: `frontend/src/pages/SetupPage.tsx`
 - Modify: `frontend/src/pages/SettingsPage.tsx`
 
 **Why first:** The parity baseline tests in `frontend/e2e/parity-baselines.spec.ts` (lines 105-127) already reference `[data-testid="setup-card"]` and `[data-testid="settings-page"]` as the locator targets. They are currently marked `test.fixme()` because the testids don't exist in production. Adding the testids here unblocks Tasks 9-10 (baseline capture) without coupling the testid addition to the larger restructure.
 
-**Note on `setup-card` placement:** The handoff `.setup-card` is the card element *inside* the screen wrapper (handoff line 1215). PR6's SetupPage restructure (Task 3) creates the card wrapper in `SetupPage.tsx`. For now, in this task, add the testid to a single new wrapper `<div>` in SetupPage. Task 3 replaces this stub wrapper with the full module-CSS card; the testid moves with it. (Doing it this way means parity-baselines.spec.ts is unblocked at Task 2; the testid lives on a bare div until Task 3 wraps it in the module-CSS card chrome.)
+**Note on `setup-card` placement:** The handoff `.setup-card` is the card element _inside_ the screen wrapper (handoff line 1215). PR6's SetupPage restructure (Task 3) creates the card wrapper in `SetupPage.tsx`. For now, in this task, add the testid to a single new wrapper `<div>` in SetupPage. Task 3 replaces this stub wrapper with the full module-CSS card; the testid moves with it. (Doing it this way means parity-baselines.spec.ts is unblocked at Task 2; the testid lives on a bare div until Task 3 wraps it in the module-CSS card chrome.)
 
 - [ ] **Step 1: Modify `SetupPage.tsx`**
 
@@ -133,7 +136,11 @@
         />
       </div>
       {showWarning && (
-        <NoReposWarningModal onContinue={onContinueAnyway} onEdit={onEdit} busy={busy} />
+        <NoReposWarningModal
+          onContinue={onContinueAnyway}
+          onEdit={onEdit}
+          busy={busy}
+        />
       )}
     </>
   );
@@ -179,10 +186,12 @@
 ## Task 3: SetupPage.module.css — centered card on accent radial-gradient wash
 
 **Files:**
+
 - Create: `frontend/src/pages/SetupPage.module.css`
 - Modify: `frontend/src/pages/SetupPage.tsx` (replaces the Task 2 stub wrapper with the full module-CSS structure)
 
 **Maps to handoff:**
+
 - `.setup-screen` (handoff 1199-1207) → `.screen`
 - `.setup-bg` (handoff 1208-1214) → `.bg`
 - `.setup-card` (handoff 1215-1224) → `.card`
@@ -234,7 +243,7 @@
   Add the import after line 8 (after `LoadingScreen` import):
 
   ```tsx
-  import styles from './SetupPage.module.css';
+  import styles from "./SetupPage.module.css";
   ```
 
   Replace the Task 2 wrapper block (lines 161-174 after Task 2's edit) with:
@@ -257,7 +266,11 @@
         </div>
       </div>
       {showWarning && (
-        <NoReposWarningModal onContinue={onContinueAnyway} onEdit={onEdit} busy={busy} />
+        <NoReposWarningModal
+          onContinue={onContinueAnyway}
+          onEdit={onEdit}
+          busy={busy}
+        />
       )}
     </>
   );
@@ -287,10 +300,12 @@
 ## Task 4: Polish SetupForm.module.css — numbered-step pattern + handoff brand/header
 
 **Files:**
+
 - Modify: `frontend/src/components/Setup/SetupForm.module.css`
 - Modify: `frontend/src/components/Setup/SetupForm.tsx`
 
 **New ports (handoff → module class):**
+
 - `.setup-brand` (1225) → `.brand`
 - `.setup-title` (1226-1231) → `.title`
 - `.setup-sub` (1232-1237) → `.sub`
@@ -447,82 +462,93 @@
   Replace the entire `return (...)` block (current lines 37-111) with:
 
   ```tsx
-    return (
-      <form onSubmit={handleSubmit} className={styles.form}>
-        <header className={styles.brand}>
-          <h1 className={styles.title}>Connect to GitHub</h1>
-          <p className={styles.sub}>PRism is local-first. Your token never leaves this machine.</p>
-        </header>
-        <section className={styles.section}>
-          <h2 className={styles.sectionHead}>
-            <span className={styles.num}>1</span>
-            <a href={patPageUrl} target="_blank" rel="noreferrer" className={styles.link}>
-              Generate a token
-            </a>
-          </h2>
-          <dl className={styles.permissions}>
-            {PERMISSIONS.map((p) => (
-              <div key={p.name} className={styles.permissionRow}>
-                <dt>{p.name}</dt>
-                <dd>{p.level}</dd>
-              </div>
-            ))}
-          </dl>
-          <p className={styles.permissionsNote}>
-            Metadata: Read is auto-included by GitHub. For Repository access, choose
-            <em> All repositories</em> or <em>Select repositories</em>.
-          </p>
-          <p className={styles.footnote}>
-            Already have a classic PAT? It needs the <code>repo</code>, <code>read:user</code>, and{' '}
-            <code>read:org</code> scopes.
-          </p>
-        </section>
-        <FirstRunDisclosure />
-        <section className={styles.section}>
-          <h2 className={styles.sectionHead}>
-            <span className={styles.num}>2</span>
-            Paste it below
-          </h2>
-          <MaskedInput
-            id="pat"
-            value={pat}
-            onChange={setPat}
-            placeholder="ghp_… or github_pat_…"
-            ariaLabel="Personal access token"
-          />
-        </section>
-        {error && (
-          <div role="alert" className={styles.error}>
-            {error}
-          </div>
-        )}
-        <button
-          type="submit"
-          className={`${styles.continue} btn btn-primary`}
-          disabled={pat.trim().length === 0 || busy}
-        >
-          {busy ? 'Validating…' : 'Continue'}
-        </button>
-        {isReplaceMode &&
-          (busy ? (
-            <span
-              role="link"
-              aria-disabled="true"
-              className={`${styles.cancel} ${styles.cancelDisabled}`}
-            >
-              Cancel
-            </span>
-          ) : (
-            <Link to="/settings" className={styles.cancel}>
-              Cancel
-            </Link>
+  return (
+    <form onSubmit={handleSubmit} className={styles.form}>
+      {/* <div> not <header> — App's <Header /> already exposes a banner;
+            <header> inside <form> is NOT excluded from the banner-role
+            mapping (HTML AAM exclusion list is article/aside/main/nav/section). */}
+      <div className={styles.brand}>
+        <h1 className={styles.title}>Connect to GitHub</h1>
+        <p className={styles.sub}>
+          PRism is local-first. Your token never leaves this machine.
+        </p>
+      </div>
+      <section className={styles.section}>
+        <h2 className={styles.sectionHead}>
+          <span className={styles.num}>1</span>
+          <a
+            href={patPageUrl}
+            target="_blank"
+            rel="noreferrer"
+            className={styles.link}
+          >
+            Generate a token
+          </a>
+        </h2>
+        <dl className={styles.permissions}>
+          {PERMISSIONS.map((p) => (
+            <div key={p.name} className={styles.permissionRow}>
+              <dt>{p.name}</dt>
+              <dd>{p.level}</dd>
+            </div>
           ))}
-      </form>
-    );
+        </dl>
+        <p className={styles.permissionsNote}>
+          Metadata: Read is auto-included by GitHub. For Repository access,
+          choose
+          <em> All repositories</em> or <em>Select repositories</em>.
+        </p>
+        <p className={styles.footnote}>
+          Already have a classic PAT? It needs the <code>repo</code>,{" "}
+          <code>read:user</code>, and <code>read:org</code> scopes.
+        </p>
+      </section>
+      <FirstRunDisclosure />
+      <section className={styles.section}>
+        <h2 className={styles.sectionHead}>
+          <span className={styles.num}>2</span>
+          Paste it below
+        </h2>
+        <MaskedInput
+          id="pat"
+          value={pat}
+          onChange={setPat}
+          placeholder="ghp_… or github_pat_…"
+          ariaLabel="Personal access token"
+        />
+      </section>
+      {error && (
+        <div role="alert" className={styles.error}>
+          {error}
+        </div>
+      )}
+      <button
+        type="submit"
+        className={`${styles.continue} btn btn-primary`}
+        disabled={pat.trim().length === 0 || busy}
+      >
+        {busy ? "Validating…" : "Continue"}
+      </button>
+      {isReplaceMode &&
+        (busy ? (
+          <span
+            role="link"
+            aria-disabled="true"
+            className={`${styles.cancel} ${styles.cancelDisabled}`}
+          >
+            Cancel
+          </span>
+        ) : (
+          <Link to="/settings" className={styles.cancel}>
+            Cancel
+          </Link>
+        ))}
+    </form>
+  );
   ```
 
   Changes:
-  - **Brand header** (D64): `<h1>` and the local-first `<p>` wrap into a `<header className={styles.brand}>` block. The `<h1>` gets `className={styles.title}`; the `<p>` gets `className={styles.sub}`.
+  - **Brand block** (D64): `<h1>` and the local-first `<p>` wrap into a `<div className={styles.brand}>` block (NOT `<header>` — would duplicate the App-level banner landmark per the HTML AAM exclusion list). The `<h1>` gets `className={styles.title}`; the `<p>` gets `className={styles.sub}`.
   - **Step 1 section** (D63): Replaces `<div><strong>1.</strong> <a>Generate a token</a><dl>...</dl><p>...</p><p>...</p></div>` with `<section className={styles.section}><h2 className={styles.sectionHead}><span className={styles.num}>1</span> <a className={styles.link}>Generate a token</a></h2>...</section>`. **The `<a>` link is NESTED INSIDE the h2**, so the heading itself IS the linked step label. This preserves `setup-page.test.tsx:78`'s `findByRole('link', { name: /generate a token/i })` assertion — accessible name of the `<a>` is still "Generate a token" — AND lets the numbered badge sit immediately before the link inside the heading row.
     - **Ordinal in a11y tree** (D63): NO `aria-hidden` on the `<span className={styles.num}>` — SR users hear the visible "1" as the cardinal number, preserving "Step 1 / Step 2" wayfinding. The number is read AS PART OF the heading: SR announces "Heading level 2: 1, link Generate a token" for step 1, "Heading level 2: 2, Paste it below" for step 2.
   - **Step 2 section** (D63): Mirrors step 1 structurally but no link to host — `<h2 className={styles.sectionHead}><span className={styles.num}>2</span> Paste it below</h2>`.
@@ -556,10 +582,12 @@
 ## Task 5: FirstRunDisclosure.module.css — fineprint shell
 
 **Files:**
+
 - Create: `frontend/src/components/Setup/FirstRunDisclosure.module.css`
 - Modify: `frontend/src/components/Setup/FirstRunDisclosure.tsx`
 
 **Maps to handoff:**
+
 - `.setup-fineprint` (1289-1295) → `.fineprint`
 - Disclosure-specific wrapper styling: `.details` / `.summary` / `.section` / `.heading`
 
@@ -619,38 +647,42 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
   Replace lines 13-47 (the `export function` block) with:
 
   ```tsx
-  import styles from './FirstRunDisclosure.module.css';
+  import styles from "./FirstRunDisclosure.module.css";
 
   export function FirstRunDisclosure() {
     const platform = detectPlatform();
     return (
       <details className={styles.fineprint}>
         <summary className={styles.summary}>First run on this machine?</summary>
-        {(platform === 'windows' || platform === 'unknown') && (
+        {(platform === "windows" || platform === "unknown") && (
           <section className={styles.section}>
             <h3 className={styles.heading}>Windows</h3>
             <p className={styles.body}>
-              The first time you run PRism, Windows shows a SmartScreen warning (&ldquo;Windows
-              protected your PC&rdquo;) because PRism isn&rsquo;t code-signed for the PoC. Click{' '}
-              <strong>More info</strong>, then <strong>Run anyway</strong>. Code signing arrives
-              post-PoC.
+              The first time you run PRism, Windows shows a SmartScreen warning
+              (&ldquo;Windows protected your PC&rdquo;) because PRism
+              isn&rsquo;t code-signed for the PoC. Click{" "}
+              <strong>More info</strong>, then <strong>Run anyway</strong>. Code
+              signing arrives post-PoC.
             </p>
           </section>
         )}
-        {(platform === 'macos' || platform === 'unknown') && (
+        {(platform === "macos" || platform === "unknown") && (
           <section className={styles.section}>
             <h3 className={styles.heading}>macOS</h3>
             <p className={styles.body}>
-              The binary is built on a Windows runner, so the downloaded file won&rsquo;t have the
-              Unix executable bit set. Open <strong>Terminal</strong>, <code>cd</code> to your
-              Downloads folder, and run <code>chmod +x PRism-osx-arm64</code> once before launching.
+              The binary is built on a Windows runner, so the downloaded file
+              won&rsquo;t have the Unix executable bit set. Open{" "}
+              <strong>Terminal</strong>, <code>cd</code> to your Downloads
+              folder, and run <code>chmod +x PRism-osx-arm64</code> once before
+              launching.
             </p>
             <p className={styles.body}>
-              Then, if macOS Gatekeeper blocks the binary, right-click the app and pick{' '}
-              <strong>Open</strong> the first time. The first time PRism reads your token, macOS
-              asks <strong>Allow / Always Allow / Deny</strong> &mdash; click{' '}
-              <strong>Always Allow</strong> so you aren&rsquo;t asked again. Code signing arrives
-              post-PoC.
+              Then, if macOS Gatekeeper blocks the binary, right-click the app
+              and pick <strong>Open</strong> the first time. The first time
+              PRism reads your token, macOS asks{" "}
+              <strong>Allow / Always Allow / Deny</strong> &mdash; click{" "}
+              <strong>Always Allow</strong> so you aren&rsquo;t asked again.
+              Code signing arrives post-PoC.
             </p>
           </section>
         )}
@@ -687,10 +719,12 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 ## Task 6: MaskedInput.module.css — input wrap + eye-toggle button
 
 **Files:**
+
 - Create: `frontend/src/components/Setup/MaskedInput.module.css`
 - Modify: `frontend/src/components/Setup/MaskedInput.tsx`
 
 **Maps to handoff:**
+
 - `.setup-input-wrap` (1278) → `.wrap`
 - `.setup-eye` (1279) → `.eye` (composes `btn-icon` global for the actual button reset)
 
@@ -739,8 +773,8 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
   Full file replacement:
 
   ```tsx
-  import { useState, type ChangeEvent } from 'react';
-  import styles from './MaskedInput.module.css';
+  import { useState, type ChangeEvent } from "react";
+  import styles from "./MaskedInput.module.css";
 
   interface Props {
     id: string;
@@ -750,15 +784,23 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
     ariaLabel: string;
   }
 
-  export function MaskedInput({ id, value, onChange, placeholder, ariaLabel }: Props) {
+  export function MaskedInput({
+    id,
+    value,
+    onChange,
+    placeholder,
+    ariaLabel,
+  }: Props) {
     const [shown, setShown] = useState(false);
     return (
       <div className={styles.wrap}>
         <input
           id={id}
-          type={shown ? 'text' : 'password'}
+          type={shown ? "text" : "password"}
           value={value}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
+          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+            onChange(e.target.value)
+          }
           placeholder={placeholder}
           aria-label={ariaLabel}
           className={styles.input}
@@ -766,10 +808,10 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
         <button
           type="button"
           onClick={() => setShown((s) => !s)}
-          aria-label={shown ? 'Hide token' : 'Show token'}
+          aria-label={shown ? "Hide token" : "Show token"}
           className={`${styles.eye} btn-icon`}
         >
-          {shown ? '🙈' : '👁'}
+          {shown ? "🙈" : "👁"}
         </button>
       </div>
     );
@@ -804,9 +846,11 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 ## Task 7: Polish SettingsPage.module.css — coherence with PR Detail
 
 **Files:**
+
 - Modify: `frontend/src/pages/SettingsPage.module.css`
 
 **Decisions for coherence (D60):**
+
 - Page-level `<main>` keeps `max-width: 720px` + `margin: 0 auto` (centers the column on wider viewports like PR Detail's outer chrome).
 - Inter-section gap stays `var(--s-6)` (matches PR3 Overview tab card gaps).
 - Page heading (`h1`) gets `var(--text-2xl)` (same scale as Setup brand title and PR Detail header H1).
@@ -858,9 +902,11 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 ## Task 8: Polish SettingsSections.module.css — section card coherence
 
 **Files:**
+
 - Modify: `frontend/src/components/Settings/SettingsSections.module.css`
 
 **Decisions for coherence (D60), empirically verified against tokens.css:506-511 (`.overview-card`):**
+
 - Card radius switches from hard-coded `8px` to `var(--radius-3)` (8px tokenized) — matches PR3 `.overview-card` verbatim.
 - **NO `box-shadow` added** — PR3 `.overview-card` has none; adding one breaks the coherence claim.
 - `h2` font-size switches from `var(--font-size-lg, 1.125rem)` to `var(--text-lg)` (17px per tokens.css line 19), adds explicit `font-weight: 600` for consistency with PR Detail headings.
@@ -1004,6 +1050,7 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 - [ ] **Step 4: Log the decision in the plan**
 
   Append to the deviations table a D69 entry recording the measured values + decision. Template:
+
   ```
   | D69 | SINGLE-PR6 vs SPLIT decision at Task 8.5 | Decision record — populated at Task 8.5 with measured LOC + review-meaningful change count + outcome (SINGLE-PR6 or SPLIT). Defaults to SINGLE-PR6 unless LOC > 700 or changes > 18 OR coherence-tripwire fires. |
   ```
@@ -1024,6 +1071,7 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 ## Task 9: Capture setup-card parity baseline
 
 **Files:**
+
 - Modify: `frontend/e2e/parity-baselines.spec.ts:105-112` (un-fixme the `setup-card` test)
 - Add: `frontend/e2e/__screenshots__/win32/setup-card.png` (binary, captured by `--update-snapshots`)
 
@@ -1079,6 +1127,7 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 ## Task 10: Capture settings-page parity baseline
 
 **Files:**
+
 - Modify: `frontend/e2e/parity-baselines.spec.ts:116-127` (un-fixme the `settings-page` test)
 - Add: `frontend/e2e/__screenshots__/win32/settings-page.png`
 
@@ -1131,6 +1180,7 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 ## Task 11: Append D58-D67 + D70 (and any D68/D69 that landed) to deferrals sidecar
 
 **Files:**
+
 - Modify: `docs/specs/2026-05-29-design-parity-recovery-deferrals.md`
 
 - [ ] **Step 1: Append the PR6 deferrals block**
@@ -1143,6 +1193,7 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
   ## PR6 — Setup + Settings coherence
 
   ### D58 — `ScopePill.module.css` not created
+
   Spec § 4.6 lists `ScopePill.module.css` as a new module. Pre-flight Task 1 verified
   `ScopePill.tsx` has zero production consumers (only file matching `Grep pattern="ScopePill" path="frontend/src"` is its own definition). Creating a module CSS file
   for an unrendered component is a speculative anchor — same trap PR4 D26
@@ -1151,6 +1202,7 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
   module CSS lands then. **Explicit bet:** PR6 wagers PR9 will EITHER delete ScopePill.tsx OR document it as deferred dead-code with a v1.x consumer plan. If PR9 surfaces a consumer that needs ScopePill rendered, that PR pays the module-CSS cost, not PR6.
 
   ### D59 — No per-section module CSS files in Settings
+
   Spec § 4.6 says "polish to `SettingsSections.module.css`, plus any new module CSS
   the section components need." The 4 section components (Appearance / InboxSections /
   Connection / Auth) all compose `SettingsSections.module.css` cleanly with no per-section
@@ -1158,35 +1210,44 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
   a single shared module.
 
   ### D60 — Settings half acceptance is subjective but bound by falsifiable token targets
+
   Per spec § 4.6: "the only PR with subjective 'feels right' review criteria." Coherence target empirically verified against `frontend/src/styles/tokens.css:506-511` (`.overview-card`): `var(--surface-1)` background, `var(--border-1)` border, `var(--radius-3)` (8px) radius, `var(--s-4) var(--s-5)` padding, **NO `box-shadow`**. SettingsSections.module.css `.section` matches: `var(--surface-1)` / `var(--border-1)` / `var(--radius-3)` / `var(--s-5)` padding / `var(--text-lg)` h2 / NO shadow. If post-merge regret surfaces a token mismatch, the diff to revert is explicit. Maintainer judgment on the `settings-page.png` parity baseline is the gate.
 
   ### D61 — SetupPage gains a 3-element wrapper structure
+
   `.screen` > `.bg` + `.card` > children. Required for centered-card-on-radial-gradient
   layout. Adds DOM nodes, zero behavior change. Inside spec § 2.2's "no component-logic
   changes" rule per PR2-PR5 precedent. Pseudo-element alternative for `.bg` is not viable — `.screen` uses flex with `overflow: auto`; a `::before` flex item would not absolute-position cleanly.
 
   ### D62 — SetupForm.module.css `.form` drops card-chrome
+
   Card chrome (padding/background/border/border-radius/box-shadow) moves to the new
   `.card` class in SetupPage.module.css. SetupForm.form is now pure flex-column.
 
   ### D63 — `<strong>1.</strong>` becomes `<section><h2><span class="num">1</span> <a class="link">…</a></h2>...</section>` (step 1) / `<section><h2><span class="num">2</span> Paste it below</h2>...</section>` (step 2)
+
   Handoff `.setup-num` requires its own positioned 20×20 circle element — cannot
   be styled on inline `<strong>` text. **Step 1's link "Generate a token" is nested INSIDE the `<h2>`** so the link text is preserved (the existing `setup-page.test.tsx:78` `findByRole('link', { name: /generate a token/i })` keeps passing). **Ordinal stays in a11y tree** (no `aria-hidden` on the badge span) — SR users hear "1 Generate a token" / "2 Paste it below" preserving step-ordinality wayfinding.
 
-  ### D64 — Brand header wraps into `<header><h1 className="title"><p className="sub">`
+  ### D64 — Brand block wraps into `<div className=brand><h1 className=title><p className=sub>` (NOT `<header>`)
+
   Handoff `.setup-brand` / `.setup-title` / `.setup-sub` block at the top of the card.
-  Each maps to one module class. `<header>` inside `<form>` is HTML-valid; the resulting `banner` landmark nested in a form region is unusual but harmless for PoC.
+  Each maps to one module class. **Wrapper is `<div>` not `<header>`** — preflight adversarial review caught that `<header>` inside `<form>` IS mapped to `role=banner` (the HTML AAM exclusion list is article/aside/main/nav/section — `<form>` is NOT in it), which would have duplicated the App-level `<Header />` banner landmark on /setup. `<div>` preserves the visual grouping without the landmark duplication.
 
   ### D65 — MaskedInput inline style → module + local eye-button size override
+
   `style={{ position: 'relative' }}` → `className={styles.wrap}`. **Eye-button sizing**: handoff line 1277 implies `.btn-icon-sm` (18×18) composition but `.btn-icon-sm` is NOT in tokens.css. `.eye` carries a local 18×18 size override alongside its position rules — sized to fit inside the 36px-tall input without overflow. Lift-on-second-use trigger remains for any future second consumer.
 
   ### D66 — Eye-toggle glyph: `{shown ? '🙈' : '👁'}` (visible-state feedback)
+
   Current MaskedInput.tsx has `{shown ? '👁' : '👁'}` (copy-paste defect). PR6 ships `{shown ? '🙈' : '👁'}` (see-no-evil monkey ↔ eye — widely-supported emoji pair) so sighted users see toggle-state feedback. aria-label still announces "Show token"/"Hide token" for AT. Captures correct feedback in the PR6 baseline (avoids PR9 baseline re-capture cost).
 
   ### D67 — No `.setup-*` rules lifted to tokens.css
+
   All handoff `.setup-*` rules **ported in PR6** are single-producer (per D58-D59 scope reductions). Lift-on-second-use is the documented trigger (PR3 D22 / PR4 D34 / PR5 D47). No second consumer exists in PR6 scope.
 
   ### D70 — `.fineprint` lock icon deferred to PR9 a11y polish
+
   Spec § 4.6 calls for "fineprint with lock icon" but handoff ships no glyph source. PR6 ships `.fineprint` typography (margin / font-size / color) without a glyph; PR9 polish picks the source (emoji / inline SVG / icon library) and re-captures the `setup-card.png` baseline. Handoff `.setup-fineprint` flex+gap+center rules intentionally NOT ported because the disclosure is a `<details>` block, not a flex row.
   ```
 
@@ -1261,6 +1322,7 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 ## Task 13: Final scope-review pass + plan-doc update
 
 **Files:**
+
 - Modify: `docs/plans/2026-05-30-design-parity-recovery-pr6-setup-settings.md` (this file — update the deviations table with any D68/D69 that landed during execution)
 - Optional commit: deviations-table sync
 
@@ -1272,22 +1334,22 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 
   Open `docs/specs/2026-05-29-design-parity-recovery-design.md:267-278` and verify each scope line maps to a delivered artifact:
 
-  | Spec line | Delivered |
-  |-----------|-----------|
-  | "module CSS for SetupPage" | Task 3 — `SetupPage.module.css` |
-  | "polish to SetupForm.module.css" | Task 4 — rewritten |
-  | "new FirstRunDisclosure.module.css" | Task 5 |
-  | "new MaskedInput.module.css" | Task 6 |
-  | "new ScopePill.module.css" | DEFERRED (D58) |
-  | "centered card on accent radial-gradient wash" | Task 3 — `.screen` / `.bg` / `.card` |
-  | "numbered-step pattern" | Task 4 — `.section` / `.sectionHead` / `.num` (with link inside h2 for step 1) |
-  | "required-permissions block" | Task 4 — `.permissions` / `.permissionRow` polish |
-  | "eye toggle on textarea" | Task 6 — `.eye` (with `{shown ? '🙈' : '👁'}` glyph swap and local 18×18 sizing) |
-  | "fineprint with lock icon" | Task 5 — `.fineprint` typography only; lock icon DEFERRED to PR9 per D70 |
-  | "polish to SettingsPage.module.css" | Task 7 |
-  | "polish to SettingsSections.module.css" | Task 8 (radius-3, NO shadow — verified against PR3 reference) |
-  | "any new module CSS the section components need" | NONE (D59) |
-  | "subjective 'feels right' review criteria" | D60 + maintainer review (token targets are falsifiable; PR3 verbatim match) |
+  | Spec line                                        | Delivered                                                                        |
+  | ------------------------------------------------ | -------------------------------------------------------------------------------- |
+  | "module CSS for SetupPage"                       | Task 3 — `SetupPage.module.css`                                                  |
+  | "polish to SetupForm.module.css"                 | Task 4 — rewritten                                                               |
+  | "new FirstRunDisclosure.module.css"              | Task 5                                                                           |
+  | "new MaskedInput.module.css"                     | Task 6                                                                           |
+  | "new ScopePill.module.css"                       | DEFERRED (D58)                                                                   |
+  | "centered card on accent radial-gradient wash"   | Task 3 — `.screen` / `.bg` / `.card`                                             |
+  | "numbered-step pattern"                          | Task 4 — `.section` / `.sectionHead` / `.num` (with link inside h2 for step 1)   |
+  | "required-permissions block"                     | Task 4 — `.permissions` / `.permissionRow` polish                                |
+  | "eye toggle on textarea"                         | Task 6 — `.eye` (with `{shown ? '🙈' : '👁'}` glyph swap and local 18×18 sizing) |
+  | "fineprint with lock icon"                       | Task 5 — `.fineprint` typography only; lock icon DEFERRED to PR9 per D70         |
+  | "polish to SettingsPage.module.css"              | Task 7                                                                           |
+  | "polish to SettingsSections.module.css"          | Task 8 (radius-3, NO shadow — verified against PR3 reference)                    |
+  | "any new module CSS the section components need" | NONE (D59)                                                                       |
+  | "subjective 'feels right' review criteria"       | D60 + maintainer review (token targets are falsifiable; PR3 verbatim match)      |
 
 - [ ] **Step 3: Confirm D70 lock-icon entry exists**
 
@@ -1325,12 +1387,14 @@ The handoff doesn't have a direct disclosure-element equivalent (it's a PRism-sp
 ## Test plan coverage
 
 PR6 ships:
+
 - 2 new parity baselines (setup-card.png + settings-page.png)
 - 0 new vitest cases (all 4 affected test files pass with existing assertions; class-free selectors give us coverage for free)
 - 0 new Playwright e2e cases (parity baselines.spec.ts un-fixmes 2 zones)
 - 0 backend test changes
 
 Acceptance criteria gate:
+
 - vitest 789+/789+ PASS
 - npm run lint clean
 - npm run build clean
