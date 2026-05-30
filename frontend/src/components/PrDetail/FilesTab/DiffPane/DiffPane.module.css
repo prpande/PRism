@@ -83,7 +83,11 @@
    `diff-line diff-line--delete`, see DiffPane.tsx:193). See Step 10.4. The module
    CSS scopes only the diff-pane-specific surfaces. */
 
-/* Comment-affordance gutter button */
+/* Comment-affordance gutter button.
+   Intentional: when a line is commentable, the line number is rendered inside
+   the affordance button (opacity: 0 at rest → 1 on hover). Mirrors GitHub's
+   diff-pane pattern. Non-commentable lines render the line number directly
+   in the gutter cell. */
 .diffCommentAffordance {
   position: absolute;
   left: 2px;
@@ -103,7 +107,7 @@
   opacity: 0;
   transition: opacity var(--t-fast);
 }
-.diffPane tr:hover .diffCommentAffordance,
+.diffGutterNew:hover .diffCommentAffordance,
 .diffCommentAffordance:focus-visible {
   opacity: 1;
 }
