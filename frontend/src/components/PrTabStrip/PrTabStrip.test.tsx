@@ -84,4 +84,19 @@ describe('PrTabStrip', () => {
     const tab = screen.getByRole('tab', { name: /Match me/i });
     expect(tab).toHaveAttribute('aria-selected', 'true');
   });
+
+  it('applies the unread modifier class when a tab is in unreadKeys', () => {
+    function Seed() {
+      const { addTab, markUnread } = useOpenTabs();
+      useEffect(() => {
+        addTab({ owner: 'acme', repo: 'api', number: 5 }, 'Has unread');
+        markUnread('acme/api/5');
+      }, [addTab, markUnread]);
+      return null;
+    }
+    render(wrap(<><Seed /><PrTabStrip /></>));
+    const tab = screen.getByRole('tab', { name: /Has unread/i });
+    // CSS-module class names are hashed; assert via partial class match.
+    expect(tab.className).toMatch(/tabUnread/);
+  });
 });
