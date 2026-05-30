@@ -33,5 +33,5 @@
   padding-left: 10px;
   border-left: 2px solid var(--border-2);
   flex: 1 1 100%;
-  margin: 4px 0 0;
+  margin: var(--s-1) 0 0;
 }

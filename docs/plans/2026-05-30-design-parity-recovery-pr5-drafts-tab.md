@@ -6,7 +6,7 @@
 
 **Architecture:** Component-specific layouts → colocated `.module.css` per spec §3.1. Production class names are authoritative (handoff `.stale-panel*` / `.stale-row*` rules port under production `.unresolvedPanel*` / `.staleDraftRow*` names). The chip family is lifted to `tokens.css` because four production components consume it (lift-on-second-use clears). `DraftsTab`, `DraftListItem`, `DraftListEmpty`, `DraftsTabSkeleton`, `DraftsTabError`, `DiscardAllStaleButton`, `ForeignPendingReviewModal`, `DiscardConfirmationSubModal` are production-only — no handoff source. Stale-row AI suggestion span deferred to PR9 (no production `aiPreview` data path).
 
-**Tech Stack:** React 18 + TypeScript + Vite + CSS Modules (`localsConvention: 'camelCaseOnly'`, default). Vitest + Playwright for tests. dotnet 10 for backend test hooks (`/test/advance-head` already exists from S4).
+**Tech Stack:** React 18 + TypeScript + Vite + CSS Modules. The repo does not set `css.modules.localsConvention` in `vite.config.ts`, so the postcss-modules default (`camelCase` — both kebab and camelCase keys available) applies. Project convention across PR2-PR4 modules is camelCase keys. Vitest + Playwright for tests. dotnet 10 for backend test hooks (`/test/advance-head` already exists from S4).
 
 **Worktree:** `D:/src/PRism-design-parity-pr5/` on branch `design-parity-recovery-pr5-drafts-tab` (already created).
 
@@ -19,7 +19,7 @@ These are documented upfront so the implementer doesn't re-litigate them at revi
 | # | Decision | Rationale | Action |
 |---|----------|-----------|--------|
 | **D46** | UnresolvedPanel and StaleDraftRow are the only handoff-derived PR5 components; the rest are production-only. | Handoff prototype has no Drafts-tab content surface (`pr-detail.jsx:127-135` declares the tab button but no tab-body rendering switch). `StaleDraftPanel` is the only handoff equivalent of the production reconciliation family. | Port handoff `.stale-panel*` + `.stale-row*` visual treatment under production names. Derive production-only treatments from surrounding visual language (PR3/PR4 surface tokens, `.muted` global, `.banner-warning` global). |
-| **D47** | `chip-status-stale` + `chip-override` lifted to `tokens.css`. `chip-status-moved` + `chip-status-draft` stay LOCAL to `DraftListItem.module.css`. | `chip-status-stale` has 5 consumers (StaleDraftRow + UnresolvedPanel summary chip + UnresolvedPanel verdict-reconfirm-row chip at L155 + DraftsTab header + DraftListItem dynamic interpolation) — clears lift-on-second-use. `chip-override` has 1 module consumer + 1 Playwright literal consumer (`s4-keep-anyway-survives-reload.spec.ts:82` asserts on the literal class) — the test-seam requirement makes the global-namespace placement load-bearing. `chip-status-moved` + `chip-status-draft` are emitted ONLY via `chip-status-${status.modifier}` interpolation in `DraftListItem.tsx:81` — single consumer file each, fails lift-on-second-use. Coherent-family argument was insufficient (would re-litigate D52's correct single-consumer rejection on identical evidence). | Append 2 global rules to `tokens.css` at Task 4. Author `.chip-status-moved` + `.chip-status-draft` rules INSIDE `DraftListItem.module.css` at Task 8 alongside the literal-class-and-module pattern (literal stays on JSX for the dynamic interpolation; hashed module class wins the paint via Vite injection order). |
+| **D47** | `chip-status-stale` + `chip-override` lifted to `tokens.css`. `chip-status-moved` + `chip-status-draft` stay LOCAL to `DraftListItem.module.css`. | `chip-status-stale` has 4 producers (StaleDraftRow "Stale" chip + DraftsTab header "N stale" chip + UnresolvedPanel verdict-reconfirm row chip + DraftListItem dynamic interpolation) — clears lift-on-second-use. `chip-override` has 1 module consumer + 1 Playwright literal consumer (`s4-keep-anyway-survives-reload.spec.ts:82` asserts on the literal class) — the test-seam requirement makes the global-namespace placement load-bearing. `chip-status-moved` + `chip-status-draft` are emitted ONLY via `chip-status-${status.modifier}` interpolation in `DraftListItem.tsx:81` — single consumer file each, fails lift-on-second-use. Coherent-family argument was insufficient (would re-litigate D52's correct single-consumer rejection on identical evidence). | Append 2 global rules to `tokens.css` at Task 4. Author `.chip-status-moved` + `.chip-status-draft` rules INSIDE `DraftListItem.module.css` at Task 8 alongside the literal-class-and-module pattern (literal stays on JSX for the dynamic interpolation; hashed module class wins the paint via Vite injection order). |
 | **D48** | Stale-row AI suggestion span (handoff `.stale-ai`) DEFERRED to PR9. | Production `StaleDraftRow.tsx` has no `aiPreview` consumption, no `aiSuggestion` data field on `DraftCommentDto`/`DraftReplyDto`. Restoring the visual requires a JSX touch + data extension — out of §2.2 scope. Same shape as PR4 D32a (FileTree AI dot). | Do NOT author `.staleDraftRowAi` rule. Document deferral as D48 sidecar entry. Spec §4.5 line 263 ("AI-suggestion chip when `aiPreview` is on") + §6.4 ("Per slice, the styling lands; the data path stays canned") is honored at PR9 wire-up. |
 | **D49** | PR5 closes PR1 D2: add `data-testid="unresolved-panel"` to the `<section>` container in UnresolvedPanel, add `pr-detail-reconciliation-panel` test in `parity-baselines.spec.ts`, capture the baseline in the stale-draft fixture state. | PR1 D2 explicitly deferred to PR5. | Tasks 3 + 18 + 20. |
 | **D50** | BEM-shaped class names (`foreign-prr-modal__body`, `discard-confirmation-sub-modal__footer`) author camelCase rules under `.foreignPrrModalBody` / `.discardConfirmationSubModalFooter` in their .module.css. Production JSX keeps the literal BEM kebab classes as test seams; CSS modules supply the hashed styling alongside. Matches PR4 D16 literal-class-and-module pattern. | The repo's `frontend/vite.config.ts` does NOT set `css.modules.localsConvention`, so the Vite/postcss-modules default `camelCase` applies (both `styles['kebab-name']` and `styles.kebabName` exist on the exports). The reason to author camelCase rules is **project convention** — every existing `.module.css` under `frontend/src/components/PrDetail/**` (~26 files across PR2-PR4) uses camelCase keys — not a strict Vite requirement. Keeping production BEM literals in JSX preserves test selectors and a11y hooks. | Apply to both modal components (Tasks 13 + 14). |
@@ -72,7 +72,7 @@ frontend/src/components/PrDetail/
 **Modified files:**
 
 ```
-frontend/src/styles/tokens.css     (+~30 lines — 4 chip globals at Task 4)
+frontend/src/styles/tokens.css     (+~15 lines — 2 chip globals at Task 4)
 frontend/src/components/PrDetail/DraftsTab/DraftsTab.tsx                       (testid + module import at Task 2 + Task 7)
 frontend/src/components/PrDetail/DraftsTab/DraftListItem.tsx                   (module import at Task 8)
 frontend/src/components/PrDetail/DraftsTab/DraftListEmpty.tsx                  (module import at Task 9)
@@ -285,7 +285,7 @@ git commit -m "feat(pr5): add unresolved-panel testid (closes PR1 D2 part 1)"
 
 ### Task 4: Lift `chip-status-stale` + `chip-override` to `tokens.css` (D47)
 
-> **Note**: D47 was tightened during plan-review. Only `chip-status-stale` (5 consumers) and `chip-override` (Playwright literal-test consumer) lift here. `chip-status-moved` and `chip-status-draft` (single consumer each via dynamic interpolation in `DraftListItem.tsx:81`) get authored as LOCAL rules in `DraftListItem.module.css` at Task 8.
+> **Note**: D47 was tightened during plan-review. Only `chip-status-stale` (4 producers) and `chip-override` (Playwright literal-test consumer) lift here. `chip-status-moved` and `chip-status-draft` (single consumer each via dynamic interpolation in `DraftListItem.tsx:81`) get authored as LOCAL rules in `DraftListItem.module.css` at Task 8.
 
 **Files:**
 - Modify: `frontend/src/styles/tokens.css` (append 2 global rules near the existing `.chip-success`/`.chip-warning`/`.chip-danger`/`.chip-info`/`.chip-accent` block at lines 387-392)
@@ -301,14 +301,14 @@ After the existing chip-variant block (after `.chip-accent { ... }` at line 392 
 ```css
 /* Status chips for draft / reconciliation rows.
    Consumers (lift-justifying):
-   - .chip-status-stale: 5 producers —
+   - .chip-status-stale: 4 producers —
        * StaleDraftRow ("Stale" anchor chip),
-       * UnresolvedPanel summary chip ("1 draft needs attention"),
+       * DraftsTab header ("N stale" chip),
        * UnresolvedPanel verdict-reconfirm row chip ("Verdict"),
-       * DraftsTab header chip ("N stale"),
        * DraftListItem dynamic interpolation `chip-status-${status.modifier}`
    - .chip-override: 1 module producer (DraftListItem) + 1 Playwright literal-test consumer
-     (s4-keep-anyway-survives-reload.spec.ts:82 asserts on the literal class).
+     (s4-keep-anyway-survives-reload asserts on the literal class).
+   (Line numbers intentionally omitted to avoid drift; grep for the literal class to find producers.)
    The other two `chip-status-*` variants (.chip-status-moved, .chip-status-draft) stay local
    to DraftListItem.module.css per D47 — single consumer file each, fails lift-on-second-use.
 */
