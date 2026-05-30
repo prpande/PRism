@@ -143,7 +143,7 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(overview).toHaveScreenshot('pr-detail-overview.png', SCREENSHOT_OPTS);
   });
 
-  test.fixme('pr-detail-files-tree', async ({ page }) => {
+  test('pr-detail-files-tree', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.goto('/pr/acme/api/123/files');
@@ -159,7 +159,9 @@ test.describe('parity baselines — PR Detail', () => {
     await page.goto('/pr/acme/api/123/files');
     // Select the canonical scenario file so the diff pane has content. The
     // scenario fixture defines src/Calc.cs at three iterations (Calc1/2/3).
-    await page.locator('[data-testid="files-tab-tree"]').getByText('Calc.cs').click();
+    await page
+      .locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]')
+      .click();
     const diff = page.locator('[data-testid="files-tab-diff"]');
     await diff.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
