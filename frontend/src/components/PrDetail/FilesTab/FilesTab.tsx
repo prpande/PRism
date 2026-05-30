@@ -17,6 +17,7 @@ import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { Modal } from '../../Modal/Modal';
 import type { PrDetailOutletContext } from '../../../pages/PrDetailPage';
+import styles from './FilesTab.module.css';
 
 function useViewportWidth() {
   const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
@@ -333,8 +334,8 @@ export function FilesTab() {
   );
 
   return (
-    <div className="files-tab" data-testid="files-tab">
-      <div className="files-tab-toolbar">
+    <div className={`files-tab ${styles.filesTab}`} data-testid="files-tab">
+      <div className={`files-tab-toolbar ${styles.filesTabToolbar}`}>
         {isLowQuality ? (
           <CommitMultiSelectPicker
             commits={prDetail.commits}
@@ -351,18 +352,22 @@ export function FilesTab() {
       </div>
 
       {diff.error && (
-        <div role="alert" className="files-tab-error">
+        <div role="alert" className={`files-tab-error ${styles.filesTabError}`}>
           Failed to load diff — {diff.error.message}
         </div>
       )}
 
-      <div className="files-tab-content">
-        <div className="files-tab-tree" data-testid="files-tab-tree">
+      <div className={`files-tab-content ${styles.filesTabContent}`}>
+        <div className={`files-tab-tree ${styles.filesTabTree}`} data-testid="files-tab-tree">
           {diff.showSkeleton ? (
-            <div className="file-tree-skeleton" aria-label="Loading files" aria-busy="true">
-              <div className="skeleton-row" />
-              <div className="skeleton-row" />
-              <div className="skeleton-row" />
+            <div
+              className={`file-tree-skeleton ${styles.fileTreeSkeleton}`}
+              aria-label="Loading files"
+              aria-busy="true"
+            >
+              <div className={`skeleton-row ${styles.skeletonRow}`} />
+              <div className={`skeleton-row ${styles.skeletonRow}`} />
+              <div className={`skeleton-row ${styles.skeletonRow}`} />
             </div>
           ) : (
             <FileTree
@@ -375,7 +380,7 @@ export function FilesTab() {
             />
           )}
         </div>
-        <div className="files-tab-diff" data-testid="files-tab-diff">
+        <div className={`files-tab-diff ${styles.filesTabDiff}`} data-testid="files-tab-diff">
           <DiffPane
             selectedPath={selectedPath}
             file={selectedFile}
