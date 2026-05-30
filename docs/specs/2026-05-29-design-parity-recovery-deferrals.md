@@ -847,6 +847,29 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Status:** Applied in PR8.
 **Cross-refs:** Spec § 4.8 Accessibility; WCAG 2.1 SC 4.1.2; React 19 native `inert` prop support.
 
+### D82 — `PrTabStrip` nested-interactive a11y violation (PR7-vintage; deferred to PR9 a11y revisit)
+
+**Source:** PR8 Task 13 a11y-audit discovery (2026-05-30) — surfaced after D81 unmasked layered audits.
+**Spec position:** § 4.9 PR9 — Revisit pass already owns a11y polish.
+**Reality:** Once D81's `inert` fix landed and unmasked the page-scoped a11y audits, the PR-Detail-scoped tests (overview, files, drafts) failed on axe-core's `nested-interactive` rule (serious). Root cause is `PrTabStrip.tsx`'s `<div role="tab" tabIndex={0}>` containing a `<button>Close tab</button>` — WAI-ARIA forbids interactive widgets nested inside other interactive widgets at the structural level. The pattern was introduced by PR7 (route-b visual-only resolution); it was masked from a11y audits because `aria-hidden-focus` (the PR8-introduced violation) failed first on those same pages.
+**Verification this is PR7-vintage, NOT PR8-introduced:** `git log --oneline -- frontend/src/components/PrTabStrip/PrTabStrip.tsx` shows PR7 (2026-05-30) introduced the file; no PR8 changes. CI on `main` has been "green" via `continue-on-error: true` on Playwright steps (PR #87 b59f094 stopgap), masking these failures since the design-parity-recovery slice started.
+**Resolution options for PR9:**
+- (i) Lift the close button OUTSIDE the `role="tab"` element via flex layout (tab body and close button as siblings, both focusable, but only the tab body has `role="tab"`).
+- (ii) Use the WAI-ARIA `aria-owns` pattern to re-associate a sibling close button with the tab semantically.
+- (iii) Remove the close button from the tab strip entirely (close via context menu or middle-click — middle-click already works per PR7 D58).
+**Status:** Deferred to PR9 a11y revisit per spec § 4.9.
+**Cross-refs:** Spec § 4.9; D81 (which unmasked this); PR7 route-b brainstorm resolution.
+
+### D83 — `parity-baselines.spec.ts` `inbox` test Loading-vs-populated race (pre-existing D64 weakness)
+
+**Source:** PR8 Task 13 a11y-audit discovery (2026-05-30).
+**Spec position:** D64 already documented this as a known weak baseline (the test was captured during the Loading state, not populated Inbox, because `await page.locator('main').waitFor()` returns before content renders).
+**New failure mode discovered in Task 13:** The baseline image on disk is 1440x18 (Loading state). On Task 13 run, the test captured 1280x858 (fully-rendered Inbox — the 1280 width comes from `InboxPage.module.css`'s `max-width: 1280px` on the `.page` container). `--update-snapshots` failed to update because on retry the test happened to capture Loading state again, matching the existing baseline. Race: the test is non-deterministically Loading-state OR populated-state depending on timing.
+**Why PR8 didn't introduce it:** `git diff main..HEAD frontend/e2e/parity-baselines.spec.ts` shows no PR8 changes; the 1.1KB baseline pre-dates PR8 (mod time before today's work). PR8's drawer (App-level mounted, hidden via `transform: translateX(100%)`) doesn't affect the `<main>` element's layout.
+**Resolution:** Defer to a future slice. The genuine fix changes `await page.locator('main').waitFor()` to a more specific wait target like `await page.getByText(/Review requested/).waitFor()` — then re-capture the baseline at the populated state.
+**Status:** Deferred. Out of PR8 scope.
+**Cross-refs:** D64 (original deferral); Spec § 4.9 a11y/baseline polish.
+
 ## Implementation-time deferrals — PR7 (browser-style PR tab strip, route b)
 
 ### D58 — Keyboard bindings (`⌘W`, `⌘1-9`) deferred to post-shell-decision
