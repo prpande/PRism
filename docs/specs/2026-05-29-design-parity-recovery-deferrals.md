@@ -609,3 +609,115 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Plan resolution:** Add `position: sticky; top: 0; z-index: 1` to `.unresolvedPanel` in `UnresolvedPanel.module.css`. Sticky against the viewport matches the spec's "stays pinned to the visible top of PR Detail while the user scrolls" intent. If a future PrDetailPage layout introduces an inner scroll container, the rule carries forward without change here. If side-by-side review shows the panel scrolling off in a way that conflicts with handoff intent, PR9 can add an inner-scroll container at PrDetailPage.
 **Status:** Applied in PR5 (Task 5, commit `1f6fd0f`).
 **Cross-refs:** ce-doc-review design-lens finding U-3.
+
+---
+
+## PR6 — Setup + Settings coherence
+
+### D58 — `ScopePill.module.css` not created (spec mandate vs. zero-consumer reality)
+
+**Date:** 2026-05-30 (PR6 plan-writing + ce-doc-review pass).
+**Spec position:** §4.6 lists `ScopePill.module.css` as a new module for the Setup half.
+**Reality:** `ScopePill.tsx` has ZERO production consumers (Grep over `frontend/src` matches only its own definition; pre-flight Task 1 Step 1 re-verifies at implementation time). Creating a module CSS file for an unrendered component is a speculative anchor — same trap PR4 D26 explicitly rejected for `.composer-save` / `.commentThreadReply` / `.iterationNewDot`.
+**Plan resolution:** Defer `ScopePill.module.css` to PR9 (catalog round). PR6 wagers PR9 will either delete `ScopePill.tsx` OR document it as deferred dead-code with a v1.x consumer plan. If PR9 surfaces a consumer that needs ScopePill rendered, that PR pays the module-CSS cost, not PR6.
+**Status:** Deferred to PR9.
+**Cross-refs:** PR4 D26; spec §4.6 line 269.
+
+### D59 — No per-section module CSS files in Settings
+
+**Date:** 2026-05-30 (PR6 plan-writing pass).
+**Spec position:** §4.6 says "polish to SettingsSections.module.css, plus any new module CSS the section components need."
+**Reality:** The 4 section components (Appearance / InboxSections / Connection / Auth) all compose `SettingsSections.module.css` cleanly via shared classes (`.section`, `.row`, `.radioLabel`, `.help`, `.linkDisabled`, `.srOnly`). No per-section styling divergence exists in their JSX.
+**Plan resolution:** SettingsSections.module.css stays as the single shared module for all 4 sections. Splitting into per-component modules would be YAGNI.
+**Status:** Applied in PR6 (no new module files for sections).
+**Cross-refs:** spec §4.6 line 273.
+
+### D60 — Settings half acceptance is subjective but bound by falsifiable token targets
+
+**Date:** 2026-05-30 (PR6 plan-writing + ce-doc-review pass).
+**Spec position:** §4.6: "the only PR with subjective 'feels right' review criteria."
+**Reality:** Coherence target empirically verified against `frontend/src/styles/tokens.css:506-511` (`.overview-card`): `var(--surface-1)` background, `var(--border-1)` border, `var(--radius-3)` (8px) radius, `var(--s-4) var(--s-5)` padding, **NO `box-shadow`**. PR6 Task 8 SettingsSections.module.css `.section` matches: `var(--surface-1)` / `var(--border-1)` / `var(--radius-3)` / `var(--s-5)` padding / `var(--text-lg)` h2 / NO shadow.
+**Plan resolution:** Falsifiable token list; if post-merge regret surfaces a mismatch, the diff to revert is explicit. Maintainer judgment on the `settings-page.png` parity baseline is the gate.
+**Status:** Applied in PR6 (Task 8, commit `6635c85`). The original plan draft had `var(--radius-4)` + `var(--shadow-1)` — ce-doc-review adversarial caught the empirical mismatch against PR3 `.overview-card`; correction applied before implementation.
+**Cross-refs:** spec §4.6 lines 275-278; PR3 tokens.css `.overview-card`.
+
+### D61 — SetupPage gains a 3-element wrapper structure (.screen > .bg + .card)
+
+**Date:** 2026-05-30 (PR6 plan-writing pass).
+**Spec position:** §4.6 line 271 ("centered card on the accent radial-gradient wash"); §2.2 ("no component-logic changes").
+**Reality:** Current `SetupPage.tsx` returns `<><SetupForm /><NoReposWarningModal /></>` with zero outer wrapper. The centered-card-on-radial-gradient layout requires a positioned outer wrapper (`.screen` for flex centering + scroll), an absolutely-positioned background layer (`.bg` for the radial gradient), and a relatively-positioned card host (`.card` for the form chrome).
+**Plan resolution:** Add the 3-element wrapper structure. Adds DOM nodes, zero behavior change — inside spec §2.2 per PR2-PR5 precedent (PR3 added `<span>Loading…</span>` for WCAG; PR4 added `.diff-line` BEM wrappers). Pseudo-element alternative for `.bg` is not viable — `.screen` uses flex layout with `overflow: auto`; a `::before` flex item would not absolute-position cleanly.
+**Status:** Applied in PR6 (Task 3, commit `1c58130`).
+**Cross-refs:** PR3 D29; spec §4.6.
+
+### D62 — SetupForm.module.css `.form` drops card-chrome
+
+**Date:** 2026-05-30 (PR6 plan-writing pass).
+**Spec position:** §4.6 ("polish to SetupForm.module.css").
+**Reality:** Existing `.form` carries card chrome (padding, background, border, border-radius). With D61's wrapper structure, the `.card` class in `SetupPage.module.css` now owns the surface treatment.
+**Plan resolution:** `.form` becomes pure `flex-direction: column`; vertical rhythm via `.section` and `.brand` margins. Single-responsibility split between SetupPage's `.card` (chrome) and SetupForm's `.form` (layout).
+**Status:** Applied in PR6 (Task 4, commit `64687e7`).
+**Cross-refs:** D61.
+
+### D63 — Step heading restructure: `<strong>1.</strong>` → `<section><h2><span num>1</span> <a link>Generate a token</a></h2>…</section>`
+
+**Date:** 2026-05-30 (PR6 plan-writing + ce-doc-review pass).
+**Spec position:** §4.6 line 271 ("numbered-step pattern").
+**Reality:** Handoff `.setup-num` is a 20×20 circle with accent-soft background — cannot be styled on inline `<strong>` text. Critical test constraint: `setup-page.test.tsx:78` asserts `findByRole('link', { name: /generate a token/i })`. The link text "Generate a token" MUST remain.
+**Plan resolution:** Step 1's heading is `<h2 className={styles.sectionHead}><span className={styles.num}>1</span> <a className={styles.link}>Generate a token</a></h2>` — the link is nested INSIDE the heading, so the link text is preserved AND the numbered badge sits before the link inside the heading row. Step 2 has no link, so its h2 is `<h2>…<span num>2</span> Paste it below</h2>`. **Ordinal stays in a11y tree** — no `aria-hidden` on the `<span num>`; SR users hear "1, Generate a token" / "2, Paste it below" preserving step-ordinality wayfinding.
+**Status:** Applied in PR6 (Task 4, commit `64687e7`). The original plan draft had `aria-hidden="true"` on the badge AND renamed the link text to "Open GitHub fine-grained PAT page" — ce-doc-review feasibility caught the test collision; adversarial caught the wayfinding strip. Both corrections applied before implementation.
+**Cross-refs:** spec §4.6; setup-page.test.tsx:78.
+
+### D64 — Brand header wraps into `<header><h1 title><p sub>`
+
+**Date:** 2026-05-30 (PR6 plan-writing pass).
+**Spec position:** §4.6 ("centered card on the accent radial-gradient wash").
+**Reality:** Handoff `.setup-brand` / `.setup-title` / `.setup-sub` block at the top of the card. Each maps to one module class.
+**Plan resolution:** `<header className={styles.brand}><h1 className={styles.title}>Connect to GitHub</h1><p className={styles.sub}>PRism is local-first…</p></header>`. `<header>` inside `<form>` is HTML-valid; the resulting banner-landmark nested in a form region is unusual but harmless for PoC.
+**Status:** Applied in PR6 (Task 4, commit `64687e7`).
+**Cross-refs:** D61.
+
+### D65 — MaskedInput inline style → module + local eye-button size override
+
+**Date:** 2026-05-30 (PR6 plan-writing + ce-doc-review pass).
+**Spec position:** §4.6 line 271 ("eye toggle on the textarea").
+**Reality:** Current `MaskedInput.tsx` uses inline `style={{ position: 'relative' }}` and renders an inline `<button>` for the eye toggle. Handoff line 1277 defines `.btn-icon-sm` (18×18) IMMEDIATELY before `.setup-eye` (1279) — implying intended composition `.btn-icon .btn-icon-sm`. But `.btn-icon-sm` is **NOT in tokens.css** (only `.btn-icon` 30×30 exists). Composing `.btn-icon` alone would overflow the input.
+**Plan resolution:** Replace inline style with `className={styles.wrap}`. `.eye` carries a **local 18×18 size override** (`width: 18px; height: 18px`) alongside its position rules (`top: 8px; right: 8px`). `.input` adds `min-height: 36px` + `box-sizing: border-box` for a stable container. Lift-on-second-use trigger for `.btn-icon-sm` remains; if PR9 needs the 18×18 variant on another surface, it lifts then.
+**Status:** Applied in PR6 (Task 6, commit `35eca62`). The original plan draft composed `.btn-icon` (30×30) without size override — ce-doc-review feasibility + design-lens both caught the overflow risk; correction applied before implementation.
+**Cross-refs:** spec §4.6; handoff screens.css:1277-1279.
+
+### D66 — Eye-toggle glyph: `{shown ? '🙈' : '👁'}` (visible-state feedback)
+
+**Date:** 2026-05-30 (PR6 plan-writing + ce-doc-review pass).
+**Spec position:** §4.6 ("eye toggle on the textarea") + §2.2 (no behavior changes).
+**Reality:** Current `MaskedInput.tsx` has `{shown ? '👁' : '👁'}` — both branches identical (copy-paste defect from earlier slice). Sighted users get no visual feedback on toggle.
+**Plan resolution:** Replace with `{shown ? '🙈' : '👁'}` (see-no-evil monkey ↔ eye — widely-supported emoji pair). aria-label still announces "Show token" / "Hide token" for AT. Visible-state feedback captured in PR6 baseline (avoids PR9 baseline re-capture cost).
+**Status:** Applied in PR6 (Task 6, commit `35eca62`). Original plan draft kept single `'👁'` and deferred the variant to PR9 — ce-doc-review design-lens caught the baseline-re-capture cost argument; correction applied before implementation.
+**Cross-refs:** spec §4.6.
+
+### D67 — No `.setup-*` rules lifted to tokens.css
+
+**Date:** 2026-05-30 (PR6 plan-writing pass).
+**Spec position:** PR3 D22 / PR4 D34 / PR5 D47 — lift-on-second-use is the documented trigger.
+**Reality:** Inventory (per D58-D59 scope reductions, ScopePill is deferred) confirmed every `.setup-*` handoff rule ported in PR6 has exactly ONE production consumer.
+**Plan resolution:** No lifts. If PR9 catalogs ScopePill back into a real consumer or adds another Setup-style surface, the lift happens then.
+**Status:** Applied in PR6 (no tokens.css additions).
+**Cross-refs:** PR3 D22; PR4 D34; PR5 D47.
+
+### D69 — SINGLE-PR6 vs SPLIT decision at Task 8.5
+
+**Date:** 2026-05-30 (Task 8.5 split-checkpoint).
+**Spec position:** Subagent-driven-development convention; PR2-PR5 mid-plan checkpoint precedent.
+**Reality:** Measured at Task 8.5: 344 LOC net (265 inserts + 79 deletes) across 11 files in 4 directories, 7 review-meaningful changes (Tasks 2 + 3 + 4 + 5 + 6 + 7 + 8). Both metrics well below LOC>700 / changes>18 thresholds.
+**Plan resolution:** SINGLE-PR6 selected. Override-tripwire NOT applied — same-maintainer / same-review-window precedent from PR2-PR5 (PR4 shipped at 1120 LOC / 15 changes as single, PR5 at 311 LOC / 9 changes; PR6 at 344 LOC / 7 changes is well within the empirical SINGLE band). Subjective-Settings concern (D60) bound by falsifiable token targets per the post-ce-doc-review correction; reviewer can litigate exact tokens against tokens.css:506-511 rather than vibes.
+**Status:** Decided at Task 8.5; PR6 ships single.
+**Cross-refs:** D60; PR4 D42; PR5 D54.
+
+### D70 — `.fineprint` lock icon deferred to PR9 a11y polish
+
+**Date:** 2026-05-30 (PR6 plan-writing + ce-doc-review pass).
+**Spec position:** §4.6 line 271 ("fineprint with lock icon").
+**Reality:** Handoff `.setup-fineprint` (screens.css:1289-1295) defines `display: flex; align-items: center; gap: 6px; justify-content: center` — implying a flex row with an inline icon + short text. But the handoff doesn't ship a glyph source (no SVG token, no icon-library import); adding a lock icon requires a design call about source: emoji `🔒` (cross-platform-inconsistent rendering), SVG inlined into the JSX (visual fidelity but more code), or an icon library (new dependency). Furthermore, `FirstRunDisclosure` is a `<details>` block (collapsible multi-line content), not a flex row — the handoff's flex/center/gap rules don't apply meaningfully to it.
+**Plan resolution:** Ship `.fineprint` typography (margin / font-size / color) in PR6 without a glyph. The handoff `.setup-fineprint` flex+gap+center rules intentionally NOT ported because the disclosure widget is multi-line collapsible content. PR9 polish picks the glyph source and re-captures the `setup-card.png` baseline. If PR9 adds a `<span aria-hidden="true">🔒</span>` prefix to the `<summary>`, the flex+gap+center rules land then.
+**Status:** Deferred to PR9.
+**Cross-refs:** spec §4.6; handoff screens.css:1289-1295.
