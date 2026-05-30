@@ -4,6 +4,7 @@ import { sendPatch } from '../../../api/draft';
 import { Modal } from '../../Modal/Modal';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
+import styles from './ReplyComposer.module.css';
 import type { PrReference } from '../../../api/types';
 
 export interface ReplyComposerProps {
@@ -184,7 +185,7 @@ export function ReplyComposer({
       aria-label={replyAriaLabel(parentThreadId)}
       data-composer="true"
       data-testid="reply-composer"
-      className="reply-composer"
+      className={`reply-composer ${styles.replyComposer}`}
     >
       {closedBanner && (
         <div className="composer-closed-banner muted" role="status">

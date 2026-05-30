@@ -1,0 +1,9 @@
+.replyComposer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-1);
+  margin-top: var(--s-2);
+}
