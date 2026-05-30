@@ -1,0 +1,69 @@
+/* DraftListItem — production-only card-row. Visual language derived from
+   handoff `.stale-row` (chips at top, body in middle, actions at bottom).
+   Mounted as children of .draftsTabFileGroup.
+
+   Also authors the two single-consumer chip variants per D47 (the literal
+   classes are emitted via dynamic interpolation `chip-status-${status.modifier}`
+   at DraftListItem.tsx:81; literal-class-and-module pattern means the literal
+   in JSX continues to compose AND the .module.css rule applies via Vite's
+   CSS-modules injection order). */
+
+.draftListItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3) var(--s-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+}
+
+.draftListItemHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  font-size: var(--text-xs);
+}
+
+.draftListItemPreview {
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  line-height: 1.55;
+}
+
+.draftListItemPreview p {
+  margin: 0 0 var(--s-2);
+}
+
+.draftListItemPreview p:last-child {
+  margin: 0;
+}
+
+.draftListItemPreview code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  background: var(--surface-3);
+  border-radius: 3px;
+  color: var(--text-1);
+}
+
+.draftListItemActions {
+  display: flex;
+  gap: var(--s-2);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* D47: single-consumer chip variants stay LOCAL.
+   - moved → warning-soft/warning-fg (matches handoff `pr-detail.jsx:325`).
+   - draft → info-soft/info-fg (in-progress state with no urgency). */
+:global(.chip-status-moved) {
+  background: var(--warning-soft);
+  color: var(--warning-fg);
+}
+:global(.chip-status-draft) {
+  background: var(--info-soft);
+  color: var(--info-fg);
+}

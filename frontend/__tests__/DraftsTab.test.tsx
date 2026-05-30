@@ -4,6 +4,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { DraftsTab } from '../src/components/PrDetail/DraftsTab/DraftsTab';
 import draftsTabStyles from '../src/components/PrDetail/DraftsTab/DraftsTab.module.css';
+import itemStyles from '../src/components/PrDetail/DraftsTab/DraftListItem.module.css';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -119,6 +120,16 @@ describe('DraftsTab', () => {
     const root = screen.getByTestId('drafts-tab');
     expect(root).toHaveClass('drafts-tab');
     expect(root).toHaveClass(draftsTabStyles.draftsTab);
+  });
+
+  it('DraftListItem_AppliesBothLiteralAndModuleClasses', () => {
+    renderDraftsTab({
+      session: mkSession({ draftComments: [mkComment()] }),
+      status: 'ready',
+    });
+    const items = document.querySelectorAll('.draft-list-item');
+    expect(items.length).toBeGreaterThan(0);
+    expect(items[0]).toHaveClass(itemStyles.draftListItem);
   });
 
   it('RendersDraftsGroupedByFile', () => {

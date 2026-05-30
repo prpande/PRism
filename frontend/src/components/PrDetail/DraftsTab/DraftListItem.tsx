@@ -4,6 +4,7 @@ import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { sendPatch } from '../../../api/draft';
 import type { DraftStatus, PrReference } from '../../../api/types';
 import type { DraftLike } from '../draftKinds';
+import styles from './DraftListItem.module.css';
 
 interface DraftListItemProps {
   prRef: PrReference;
@@ -76,18 +77,18 @@ export function DraftListItem({ prRef, draft, onEdit, onMutated }: DraftListItem
   };
 
   return (
-    <div className="draft-list-item">
-      <div className="draft-list-item-header row gap-2">
+    <div className={`draft-list-item ${styles.draftListItem}`}>
+      <div className={`draft-list-item-header row gap-2 ${styles.draftListItemHeader}`}>
         <span className={`chip chip-status-${status.modifier}`}>{status.text}</span>
         {isOverridden && <span className="chip chip-override">User-overridden (was Stale)</span>}
         {draft.kind === 'comment' && draft.data.lineNumber != null && (
           <span className="muted-2">line {draft.data.lineNumber}</span>
         )}
       </div>
-      <div className="draft-list-item-preview">
+      <div className={`draft-list-item-preview ${styles.draftListItemPreview}`}>
         <MarkdownRenderer source={previewBody(body)} />
       </div>
-      <div className="draft-list-item-actions row gap-2">
+      <div className={`draft-list-item-actions row gap-2 ${styles.draftListItemActions}`}>
         <button
           type="button"
           className="btn btn-secondary btn-sm"
