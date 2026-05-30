@@ -260,5 +260,53 @@ test.describe('parity baselines — app chrome', () => {
   });
 });
 
-// PR8-only zones (added when the Ask AI drawer ships):
-// test('ask-ai-drawer', ...) — see PR8 plan.
+test.describe('parity baselines — Ask AI', () => {
+  test('ask-ai-drawer', async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await setupAndOpenHandoffParityFixture(page);
+
+    // Ask AI button is gated on preferences.ui.aiPreview (see AskAiButton.tsx:9).
+    // Enable it through the real backend, then reload so usePreferences refetches
+    // and the button mounts. Wire shape + Origin header pattern matches the
+    // inbox-activity-rail test above (flat dotted-path field, loopback Origin).
+    const prefResp = await page.request.post('/api/preferences', {
+      data: { aiPreview: true },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    if (!prefResp.ok()) {
+      throw new Error(
+        `POST /api/preferences (aiPreview=true) failed: ${prefResp.status()} ${await prefResp.text()}`,
+      );
+    }
+    await page.reload();
+    await page.locator('[data-testid="pr-header"]').waitFor();
+
+    // Open the drawer.
+    await page.getByRole('button', { name: 'Ask AI' }).click();
+    const drawer = page.locator('[data-testid="ask-ai-drawer"]');
+    await expect(drawer).toHaveAttribute('aria-hidden', 'false');
+
+    // Seed two user messages so the capture shows the typical post-conversation
+    // state (user bubble + AI reply, twice). cycleIndexRef is bumped
+    // synchronously at submit time (see AskAiDrawerContext.tsx:115-116), so the
+    // first reply uses AI_UNAVAILABLE_RESPONSES[0] and the second uses
+    // AI_UNAVAILABLE_RESPONSES[1]. The reply itself lands after the 600ms
+    // AI_REPLY_DELAY_MS timer.
+    const composer = drawer.getByRole('textbox', { name: 'Message' });
+    const sendButton = drawer.getByRole('button', { name: 'Send' });
+
+    await composer.fill('Why this change?');
+    await sendButton.click();
+    await expect(drawer.getByText(/summarize the diff per file/)).toBeVisible({ timeout: 5_000 });
+
+    await composer.fill('What about tests?');
+    await sendButton.click();
+    await expect(drawer.getByText(/surface tests that exercise/)).toBeVisible({ timeout: 5_000 });
+
+    // Kill the 220ms slide-in transition AFTER the reply waits — by now both
+    // replies have rendered and the drawer is fully docked, so freezing here
+    // captures the steady state.
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
+    await expect(drawer).toHaveScreenshot('ask-ai-drawer.png', SCREENSHOT_OPTS);
+  });
+});
