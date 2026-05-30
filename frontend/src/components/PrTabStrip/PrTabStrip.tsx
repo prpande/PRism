@@ -8,7 +8,7 @@ import styles from './PrTabStrip.module.css';
 const INLINE_TAB_CAP = 6;
 
 function tabLabel(t: OpenTab): string {
-  return t.title ?? `${t.ref.owner}/${t.ref.repo}#${t.ref.number}`;
+  return t.title || `${t.ref.owner}/${t.ref.repo}#${t.ref.number}`;
 }
 
 function isActiveTab(pathname: string, t: OpenTab): boolean {
@@ -42,6 +42,12 @@ function pathFor(ref: PrReference): string {
  *     auto-closes when the overflow set drains).
  */
 export function PrTabStrip() {
+  const { openTabs } = useOpenTabs();
+  if (openTabs.length === 0) return null;
+  return <PrTabStripBody />;
+}
+
+function PrTabStripBody() {
   const { openTabs, unreadKeys, closeTab } = useOpenTabs();
   const location = useLocation();
   const navigate = useNavigate();
@@ -65,6 +71,7 @@ export function PrTabStrip() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        e.stopPropagation();
         setMenuOpen(false);
         triggerEl?.focus();
       }
@@ -84,8 +91,6 @@ export function PrTabStrip() {
     }
   }, [overflowed.length, menuOpen]);
 
-  if (openTabs.length === 0) return null;
-
   // Computes the navigate target BEFORE closeTab() schedules its state update.
   // Lookup is keyed on prRefKey rather than index so a fast-second-click on
   // an adjacent tab (between React commit cycles) doesn't navigate to a stale
@@ -95,6 +100,11 @@ export function PrTabStrip() {
     const wasActive = isActiveTab(location.pathname, closingTab);
     const closingKey = prRefKey(closingTab.ref);
     const closingIdx = openTabs.findIndex((t) => prRefKey(t.ref) === closingKey);
+    if (closingIdx < 0) {
+      // Tab already gone (e.g., identity-changed cleared all tabs between
+      // render and click). Nothing to close, nothing to navigate to.
+      return;
+    }
     const remaining = openTabs.filter((t) => prRefKey(t.ref) !== closingKey);
     closeTab(closingTab.ref);
     if (!wasActive) return;
