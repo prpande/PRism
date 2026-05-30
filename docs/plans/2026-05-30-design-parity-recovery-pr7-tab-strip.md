@@ -4,7 +4,7 @@
 
 **Goal:** Ship the persistent browser-style PR tab strip across the top of the SPA (Row 2) with visual fidelity to the handoff, route-(b) scope: no keyboard bindings (`⌘W`/`⌘1-9`), no localStorage persistence, no stale-tab error chip. Click + middle-click close + close-X are the only close affordances; tabs survive only the current SPA session.
 
-**Architecture:** A new `OpenTabsContext` holds in-memory state (`openTabs: OpenTab[]`, `unreadTabs: Set<string>`, `overflowMenuOpen: boolean`). A new `PrTabStrip` component renders Row 2 between `<Header>` and `<Routes>` in `App.tsx` and is hidden when `openTabs.length === 0`. Three entry points add tabs (Inbox row click, PasteUrlInput, PrDetailPage direct load). Close uses click on the `×` + middle-click on the tab body. Submit-in-flight on the same prRef blocks close (via existing `useSubmitInFlight`). `pr-updated` SSE marks tabs unread; tab focus clears the unread flag. `identity-changed` SSE clears all open tabs.
+**Architecture:** A new `OpenTabsContext` holds in-memory state (`openTabs: OpenTab[]`, `unreadKeys: Set<string>` — `overflowMenuOpen` is kept LOCAL to `PrTabStrip` per [D61](#d61)). A new `PrTabStrip` component renders Row 2 between `<Header>` and `<Routes>` in `App.tsx` and is hidden when `openTabs.length === 0`. The first 6 tabs render inline; tabs 7+ render in a `+ N more` dropdown menu — no hard cap on `openTabs.length`. Three entry points add tabs (Inbox row click, PasteUrlInput, PrDetailPage direct load). Close uses click on the `×` + middle-click on the tab body. Submit-in-flight on the same prRef blocks close (via existing `useSubmitInFlight`). `pr-updated` SSE marks tabs unread; tab focus clears the unread flag. `identity-changed` clears all open tabs via the existing `prism-identity-changed` window-event bridge (no new SSE hook needed — see Task 9).
 
 **Tech Stack:** React 19 + TypeScript + Vite + react-router-dom; CSS Modules colocated with components; existing EventStream / useSubmitInFlight infrastructure.
 
@@ -54,7 +54,9 @@ frontend/src/
   App.tsx                                     (MODIFIED — OpenTabsProvider + PrTabStrip mount)
   hooks/
     useTabUnreadSignal.ts                     (NEW — pr-updated SSE → markUnread)
-    useTabIdentityReset.ts                    (NEW — identity-changed → clear)
+    # identity-changed → clearAllTabs handled INLINE in OpenTabsContext.tsx
+    # via window.addEventListener('prism-identity-changed', ...) — uses the
+    # existing api/events.ts WINDOW_EVENT_BRIDGE. No separate hook file.
 
 frontend/e2e/
   parity-baselines.spec.ts                    (MODIFIED — add app-chrome-tabstrip + un-fixme inbox + inbox-activity-rail)
@@ -63,7 +65,7 @@ docs/specs/
   2026-05-29-design-parity-recovery-deferrals.md  (APPENDED — D58, D59, D60)
 ```
 
-Three new modules + two new hooks + four modified files + one e2e + one deferrals sidecar.
+One new context + one new component pair (`.tsx` + `.module.css`) + one new hook (`useTabUnreadSignal`; see Task 9 — the identity-reset path uses an inline `useEffect` inside `OpenTabsProvider`, NOT a separate hook file) + four modified files + one e2e + one deferrals sidecar.
 
 ---
 
@@ -168,6 +170,21 @@ describe('OpenTabsContext', () => {
     };
     expect(() => render(<Probe />)).toThrow(/OpenTabsProvider/);
   });
+
+  it('clears all tabs when prism-identity-changed window event fires', () => {
+    const { result } = renderHook(() => useOpenTabs(), { wrapper });
+    const a = { owner: 'acme', repo: 'api', number: 1 };
+    act(() => {
+      result.current.addTab(a, 'T');
+      result.current.markUnread('acme/api/1');
+    });
+    expect(result.current.openTabs).toHaveLength(1);
+    act(() => {
+      window.dispatchEvent(new CustomEvent('prism-identity-changed'));
+    });
+    expect(result.current.openTabs).toEqual([]);
+    expect(result.current.unreadKeys.size).toBe(0);
+  });
 });
 ```
 
@@ -187,6 +204,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -244,26 +262,25 @@ export function OpenTabsProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const markUnread = useCallback((key: string) => {
-    setUnreadKeys((prev) => {
-      // No-op for keys that aren't open — keeps the set bounded by the visible tabs.
-      // The producer (useTabUnreadSignal) doesn't need to know which tabs are open;
-      // the context filters it.
-      return prev;
-    });
-    setOpenTabs((current) => {
-      const exists = current.some((t) => prRefKey(t.ref) === key);
-      if (exists) {
-        setUnreadKeys((prev) => {
-          if (prev.has(key)) return prev;
-          const next = new Set(prev);
-          next.add(key);
-          return next;
-        });
-      }
-      return current;
-    });
-  }, []);
+  // Reads `openTabs` from the closure to filter out keys not currently open. The
+  // useCallback dep on `openTabs` recreates this callback whenever the tab list
+  // changes, which is correct: the producer (useTabUnreadSignal) doesn't need to
+  // know which tabs are open; the context filters silently. Nested setState
+  // inside another setState updater is a React anti-pattern (StrictMode double-
+  // invocation can drop or duplicate the inner call) — read state from the
+  // closure instead.
+  const markUnread = useCallback(
+    (key: string) => {
+      if (!openTabs.some((t) => prRefKey(t.ref) === key)) return;
+      setUnreadKeys((prev) => {
+        if (prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+    },
+    [openTabs],
+  );
 
   const clearUnread = useCallback((key: string) => {
     setUnreadKeys((prev) => {
@@ -278,6 +295,20 @@ export function OpenTabsProvider({ children }: { children: ReactNode }) {
     setOpenTabs([]);
     setUnreadKeys(new Set());
   }, []);
+
+  // identity-changed → clear all open tabs. The existing api/events.ts
+  // WINDOW_EVENT_BRIDGE re-dispatches every identity-changed SSE frame as a
+  // 'prism-identity-changed' window event. useAuth.ts already consumes that
+  // bridge at App level — we listen on the same bridge here to avoid adding a
+  // second useEventSource subscriber for an event that already has a window
+  // bridge. OpenTabsProvider is mounted OUTSIDE EventStreamProvider in App.tsx,
+  // so it can't call useEventSource() directly — the window bridge is the
+  // intended cross-provider API for this event.
+  useEffect(() => {
+    const onIdentityChange = () => clearAllTabs();
+    window.addEventListener('prism-identity-changed', onIdentityChange);
+    return () => window.removeEventListener('prism-identity-changed', onIdentityChange);
+  }, [clearAllTabs]);
 
   const value = useMemo(
     () => ({
@@ -524,9 +555,19 @@ Expected: FAIL — `Cannot find module './PrTabStrip'`.
   color: var(--text-1);
 }
 
-.close:disabled {
+/* Disabled state — overrides the descendant :hover rule via higher-specificity
+   compound selectors. Without these, .tab:hover .close (0,2,0) outranks
+   .close:disabled (0,2,0) by source order and the disabled × renders at full
+   opacity on hover, hiding the disabled affordance. Mirrors PR4 D34 / PR6
+   pattern of compound-selector overrides for descendant-rule conflicts. */
+.tab .close:disabled,
+.tab:hover .close:disabled,
+.tabActive .close:disabled,
+.tab:focus-within .close:disabled {
   cursor: not-allowed;
   opacity: 0.4;
+  background: transparent;
+  color: var(--text-3);
 }
 
 .overflow { position: relative; display: flex; align-items: center; }
@@ -615,6 +656,17 @@ Expected: FAIL — `Cannot find module './PrTabStrip'`.
 }
 
 .menuClose:hover { background: var(--surface-2); color: var(--text-1); }
+
+/* Respect prefers-reduced-motion — drop the hover opacity / background fades.
+   The handoff CSS doesn't gate transitions; we add the override at port time. */
+@media (prefers-reduced-motion: reduce) {
+  .tab,
+  .close,
+  .more,
+  .menuItem {
+    transition: none;
+  }
+}
 ```
 
 - [ ] **Step 4: Implement skeleton `PrTabStrip` (renders tabs but no behaviour yet)**
@@ -668,8 +720,8 @@ export function PrTabStrip() {
               aria-label={tabLabel(t)}
             >
               <span className={styles.num}>#{t.ref.number}</span>
-              {unread && <span className={styles.dot} aria-hidden="true" />}
               <span className={styles.title}>{tabLabel(t)}</span>
+              {unread && <span className={styles.dot} aria-hidden="true" />}
               <span className={styles.close} aria-hidden="true">
                 ×
               </span>
@@ -727,7 +779,7 @@ import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
 
 Replace the `tree` JSX (lines 58-81) to insert `<PrTabStrip />` between `<Header>` and `<Routes>` and wrap the entire returned tree with `<OpenTabsProvider>` INSIDE the `ToastProvider`/`CheatsheetProvider` and ABOVE `EventStreamProvider` so that:
 - All consumers can call `useOpenTabs()`
-- The SSE bridges (Tasks 10, 13) can subscribe to events emitted from inside `EventStreamProvider`
+- The SSE bridge (Task 8 `useTabUnreadSignal`) can subscribe to events emitted from inside `EventStreamProvider`. Task 9 takes a different shape — see Task 9.
 
 New `App.tsx` body (replace lines 58-91 with this; preserve everything above):
 
@@ -950,14 +1002,20 @@ import { MemoryRouter } from 'react-router-dom';
 import { OpenTabsProvider, useOpenTabs } from '../../contexts/OpenTabsContext';
 import { PasteUrlInput } from './PasteUrlInput';
 
-vi.mock('../../api/parsePrUrl', () => ({
-  parsePrUrl: vi.fn(async () => ({
-    ok: true,
-    ref: { owner: 'acme', repo: 'api', number: 7 },
-    error: null,
-    configuredHost: 'github.com',
-    urlHost: 'github.com',
-  })),
+// PasteUrlInput imports `inboxApi.parsePrUrl` from '../../api/inbox' — mock the
+// actual module path, NOT a non-existent './parsePrUrl'. Confirm by reading
+// frontend/src/api/inbox.ts before authoring (the exact export shape may also
+// be `parsePrUrl` as a top-level fn — read first, mirror exactly).
+vi.mock('../../api/inbox', () => ({
+  inboxApi: {
+    parsePrUrl: vi.fn(async () => ({
+      ok: true,
+      ref: { owner: 'acme', repo: 'api', number: 7 },
+      error: null,
+      configuredHost: 'github.com',
+      urlHost: 'github.com',
+    })),
+  },
 }));
 
 function Probe() {
@@ -1122,23 +1180,35 @@ import { useOpenTabs } from '../contexts/OpenTabsContext';
 // inside PrDetailPageInner, after the existing hooks:
 const { addTab, setTitle, clearUnread } = useOpenTabs();
 
+// CRITICAL: `ref` is a fresh object literal on every render (PrDetailPage line 52
+// `const ref: PrReference = { owner, repo, number }`). Using `ref` directly in
+// dep arrays would re-fire every effect on every render — setTitle would
+// rebuild the openTabs array unconditionally, clearUnread would race the
+// pr-updated marker, and every PrDetailPage re-render would punch the context.
+// Depend on the PRIMITIVE route params instead, and inline-construct the ref.
+const refKey = `${owner}/${repo}/${numberStr}`;
+
 useEffect(() => {
-  addTab(ref, data?.pr.title ?? null);
-}, [addTab, ref]);
+  addTab({ owner, repo, number }, data?.pr.title ?? null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [addTab, owner, repo, number]);
 
 useEffect(() => {
   if (data?.pr.title) {
-    setTitle(ref, data.pr.title);
+    setTitle({ owner, repo, number }, data.pr.title);
   }
-}, [data?.pr.title, ref, setTitle]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [data?.pr.title, setTitle, owner, repo, number]);
 
 useEffect(() => {
-  // Active tab clears unread on focus. prRefKey from types module.
-  clearUnread(`${ref.owner}/${ref.repo}/${ref.number}`);
-}, [clearUnread, ref]);
+  // Active tab clears unread on focus.
+  clearUnread(refKey);
+}, [clearUnread, refKey]);
 ```
 
 Import `useEffect` from React if not already imported.
+
+`owner` / `repo` / `numberStr` come from `useParams<{owner: string; repo: string; number: string}>()` in `PrDetailPage` (line 36-40); `number` is derived as `Number(numberStr)`. `PrDetailPageInner` receives `ref: PrReference` as a prop — but for the effects above we re-derive the primitives from `useParams` directly inside `PrDetailPageInner` to keep dep arrays stable. Alternative shape (slightly leaner): accept `owner`, `repo`, `number` as separate props from `PrDetailPage` instead of bundling them into `ref`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1153,6 +1223,69 @@ Expected: PASS.
 ```bash
 git add frontend/src/pages/PrDetailPage.tsx frontend/src/pages/PrDetailPage.tabbing.test.tsx
 git commit -m "feat(pr7): PrDetailPage adds tab on direct URL load, sets title, clears unread on focus"
+```
+
+---
+
+### Task 6.5: Wrap existing PrDetailPage-rendering tests with `OpenTabsProvider`
+
+**Files:**
+- Modify: every existing vitest spec that mounts `<PrDetailPage />`, `<OverviewTab />`, `<FilesTab />`, or `<DraftsTabRoute />` — these now require an `OpenTabsProvider` ancestor because `PrDetailPage` calls `useOpenTabs()` (Task 6).
+
+Without this task, the full vitest run (Task 13 step 5) cascades — every PrDetail-rendering spec throws `useOpenTabs must be used inside OpenTabsProvider` at mount.
+
+- [ ] **Step 1: Inventory the affected specs**
+
+```bash
+cd frontend && \
+  npx grep -lr --include="*.test.tsx" --include="*.test.ts" \
+  -e "PrDetailPage\|<OverviewTab\|<FilesTab\|<DraftsTabRoute" src
+```
+
+(Or use the in-session Grep tool: pattern `PrDetailPage|<OverviewTab|<FilesTab|<DraftsTabRoute`, glob `**/*.test.tsx`.)
+
+Expected: ~5-15 spec files. Record the list before proceeding.
+
+- [ ] **Step 2: For each affected spec, wrap the `render(...)` call with `OpenTabsProvider`**
+
+Pattern — find every existing `render(<MemoryRouter ...><PrDetailPage /></MemoryRouter>)` (or sibling layout) and replace with:
+
+```tsx
+import { OpenTabsProvider } from '../contexts/OpenTabsContext';
+// adjust relative path per spec location
+
+render(
+  <MemoryRouter initialEntries={[...]}>
+    <OpenTabsProvider>
+      <PrDetailPage />
+    </OpenTabsProvider>
+  </MemoryRouter>,
+);
+```
+
+The new provider has no side effects beyond mounting an in-memory state — it does not change any spec's expected output.
+
+- [ ] **Step 3: Run the affected specs to verify green**
+
+```bash
+cd frontend && npx vitest run <each updated spec path>
+```
+
+Expected: PASS — no change in behavioural assertions; provider is purely additive.
+
+- [ ] **Step 4: Run the full vitest suite for cascade-clean confirmation**
+
+```bash
+cd frontend && npx vitest run
+```
+
+Expected: all tests PASS. If any other spec mounts a child of PrDetail directly (e.g. `<UnresolvedPanel />` standalone) without provider, it doesn't need the wrap because `useOpenTabs()` is only called inside `PrDetailPageInner` and `PrTabStrip`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/**/*.test.tsx
+git commit -m "test(pr7): wrap existing PrDetailPage-rendering specs with OpenTabsProvider"
 ```
 
 ---
@@ -1282,15 +1415,25 @@ export function PrTabStrip() {
     return null;
   }
 
-  const handleClose = (idx: number) => {
-    const tab = openTabs[idx];
-    const wasActive = isActiveTab(pathname, tab);
-    closeTab(tab.ref);
+  // Computes the navigate target BEFORE closeTab() schedules its state update.
+  // A future render then reads the new openTabs; we don't read post-close state.
+  // The lookup is keyed on prRefKey rather than index so a fast-second-click on
+  // an adjacent tab (between React commit cycles) doesn't navigate to a stale
+  // slot. Inactive tabs (including all overflow-menu items by construction)
+  // close without navigating — the active route is unaffected.
+  const handleClose = (closingTab: OpenTab) => {
+    const wasActive = isActiveTab(pathname, closingTab);
+    const closingKey = prRefKey(closingTab.ref);
+    const remaining = openTabs.filter((t) => prRefKey(t.ref) !== closingKey);
+    closeTab(closingTab.ref);
     if (!wasActive) return;
-    if (idx > 0) {
-      navigate(pathFor(openTabs[idx - 1].ref));
-    } else if (openTabs.length > 1) {
-      navigate(pathFor(openTabs[1].ref));
+    // The closed tab was active. Navigate to the neighbour in the PRE-close
+    // array so the chosen target is a tab the user will actually see post-close.
+    const closingIdx = openTabs.findIndex((t) => prRefKey(t.ref) === closingKey);
+    if (closingIdx > 0) {
+      navigate(pathFor(openTabs[closingIdx - 1].ref));
+    } else if (remaining.length > 0) {
+      navigate(pathFor(remaining[0].ref));
     } else {
       navigate('/');
     }
@@ -1330,13 +1473,13 @@ export function PrTabStrip() {
               onMouseDown={(e) => {
                 if (e.button === 1 && !closeBlocked) {
                   e.preventDefault();
-                  handleClose(idx);
+                  handleClose(t);
                 }
               }}
             >
               <span className={styles.num}>#{t.ref.number}</span>
-              {unread && <span className={styles.dot} aria-hidden="true" />}
               <span className={styles.title}>{tabLabel(t)}</span>
+              {unread && <span className={styles.dot} aria-hidden="true" />}
               <button
                 type="button"
                 aria-label="Close tab"
@@ -1345,7 +1488,7 @@ export function PrTabStrip() {
                 title={closeBlocked ? "Can't close — submit in progress" : undefined}
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleClose(idx);
+                  handleClose(t);
                 }}
               >
                 ×
@@ -1380,13 +1523,13 @@ export function PrTabStrip() {
   onMouseDown={(e) => {
     if (e.button === 1 && !closeBlocked) {
       e.preventDefault();
-      handleClose(idx);
+      handleClose(t);
     }
   }}
 >
   <span className={styles.num}>#{t.ref.number}</span>
-  {unread && <span className={styles.dot} aria-hidden="true" />}
   <span className={styles.title}>{tabLabel(t)}</span>
+  {unread && <span className={styles.dot} aria-hidden="true" />}
   <button
     type="button"
     aria-label="Close tab"
@@ -1395,7 +1538,7 @@ export function PrTabStrip() {
     title={closeBlocked ? "Can't close — submit in progress" : undefined}
     onClick={(e) => {
       e.stopPropagation();
-      handleClose(idx);
+      handleClose(t);
     }}
   >
     ×
@@ -1423,6 +1566,8 @@ git commit -m "feat(pr7): tab close via × button + middle-click; submit-in-flig
 ---
 
 ## Phase 4 — Visual States and Live Signals
+
+Wires the unread-tab signal from the existing `pr-updated` SSE event. Task 8 introduces a single hook (`useTabUnreadSignal`) and a thin App-level mount component (`TabSignals`) that hosts it inside both `EventStreamProvider` and the router context. Task 9 is a verification gate confirming the `identity-changed` clear-tabs path (already wired into `OpenTabsProvider` at Task 1 via the existing `prism-identity-changed` window-event bridge) integrates cleanly — no new code, no new commit.
 
 ### Task 8: `useTabUnreadSignal` — `pr-updated` SSE → `markUnread`
 
@@ -1604,125 +1749,48 @@ git commit -m "feat(pr7): pr-updated SSE marks non-active open tabs unread"
 
 ---
 
-### Task 9: `identity-changed` SSE clears `openTabs`
+### Task 9: `identity-changed` clears `openTabs` — verify the OpenTabsProvider window-bridge listener
 
 **Files:**
-- Create: `frontend/src/hooks/useTabIdentityReset.ts`
-- Test: `frontend/src/hooks/useTabIdentityReset.test.tsx`
-- Modify: `frontend/src/App.tsx` (mount inside `TabSignals`)
+- (No new files.) The behavior is wired in Task 1's `OpenTabsProvider` via `window.addEventListener('prism-identity-changed', clearAllTabs)`. This task ONLY verifies the cross-component integration in App.tsx and adds a focused end-to-end-shape test.
 
-A token rotation (via `/api/auth/replace`) may leave the new identity unable to see PRs the previous identity could. Without persistence we can't have "stale tabs across reload," but mid-session token-replace is possible. Clearing `openTabs` on `identity-changed` is the simplest correct posture — matches the existing useAuth refetch flow.
+**Rationale for the shape change vs the original plan draft.** The first plan draft introduced a separate `useTabIdentityReset` hook that subscribed to the `identity-changed` SSE via `useEventSource()`. `api/events.ts:73` already re-dispatches every `identity-changed` SSE frame as a `prism-identity-changed` window event (the existing `WINDOW_EVENT_BRIDGE`). `useAuth` consumes the same bridge at App-level outside `EventStreamProvider`. Adding a second SSE subscriber for an already-bridged event duplicates a code path that already works. Per ce-doc-review SG1: the simpler shape is a `useEffect` inside `OpenTabsProvider` itself (Task 1's body now carries this listener). No new hook file, no new App-mount component for it, no second listener.
 
-- [ ] **Step 1: Write the failing test**
+The Task 1 test already covers the clear-on-window-event contract (the test `'clears all tabs when prism-identity-changed window event fires'` added in Task 1 Step 1). This task verifies the App-level integration.
 
-```tsx
-// frontend/src/hooks/useTabIdentityReset.test.tsx
-import { describe, it, expect, vi } from 'vitest';
-import { render } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
-import { useEffect } from 'react';
-import { OpenTabsProvider, useOpenTabs } from '../contexts/OpenTabsContext';
-import { useTabIdentityReset } from './useTabIdentityReset';
+- [ ] **Step 1: Confirm Task 1 wired the listener**
 
-const listeners: Record<string, ((p: unknown) => void)[]> = {};
-vi.mock('./useEventSource', () => ({
-  useEventSource: () => ({
-    on: (type: string, cb: (p: unknown) => void) => {
-      (listeners[type] ??= []).push(cb);
-      return () => {
-        listeners[type] = (listeners[type] ?? []).filter((c) => c !== cb);
-      };
-    },
-    subscriberId: () => Promise.resolve('test'),
-    reconnectSignal: () => new AbortController().signal,
-    close: () => {},
-  }),
-}));
-
-function fireSse(type: string, payload: unknown) {
-  (listeners[type] ?? []).forEach((cb) => cb(payload));
-}
-
-function Probe() {
-  const { openTabs, addTab } = useOpenTabs();
-  useEffect(() => {
-    addTab({ owner: 'acme', repo: 'api', number: 1 }, 'A');
-    addTab({ owner: 'acme', repo: 'api', number: 2 }, 'B');
-  }, [addTab]);
-  useTabIdentityReset();
-  return <div data-testid="count">{openTabs.length}</div>;
-}
-
-describe('useTabIdentityReset', () => {
-  it('clears all tabs when identity-changed fires', async () => {
-    const { findByTestId } = render(
-      <MemoryRouter>
-        <OpenTabsProvider>
-          <Probe />
-        </OpenTabsProvider>
-      </MemoryRouter>,
-    );
-    expect((await findByTestId('count')).textContent).toBe('2');
-    fireSse('identity-changed', { type: 'identity-change' });
-    expect((await findByTestId('count')).textContent).toBe('0');
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```bash
-cd frontend && npx vitest run src/hooks/useTabIdentityReset.test.tsx
-```
-
-Expected: FAIL — `Cannot find module './useTabIdentityReset'`.
-
-- [ ] **Step 3: Implement the hook**
+Read `frontend/src/contexts/OpenTabsContext.tsx`. Confirm the body contains:
 
 ```ts
-// frontend/src/hooks/useTabIdentityReset.ts
-import { useEffect } from 'react';
-import { useEventSource } from './useEventSource';
-import { useOpenTabs } from '../contexts/OpenTabsContext';
-
-export function useTabIdentityReset(): void {
-  const events = useEventSource();
-  const { clearAllTabs } = useOpenTabs();
-  useEffect(() => {
-    if (!events) return;
-    return events.on('identity-changed', () => {
-      clearAllTabs();
-    });
-  }, [events, clearAllTabs]);
-}
+useEffect(() => {
+  const onIdentityChange = () => clearAllTabs();
+  window.addEventListener('prism-identity-changed', onIdentityChange);
+  return () => window.removeEventListener('prism-identity-changed', onIdentityChange);
+}, [clearAllTabs]);
 ```
 
-- [ ] **Step 4: Mount inside `TabSignals` in App.tsx**
+If missing, revisit Task 1.
 
-```tsx
-import { useTabIdentityReset } from './hooks/useTabIdentityReset';
-
-function TabSignals() {
-  useTabUnreadSignal();
-  useTabIdentityReset();
-  return null;
-}
-```
-
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 2: Confirm api/events.ts dispatches the window event**
 
 ```bash
-cd frontend && npx vitest run src/hooks/useTabIdentityReset.test.tsx
+cd frontend && npx grep -n "prism-identity-changed" src/api/events.ts
+```
+
+Expected: at least one match showing the bridge entry: `'identity-changed': 'prism-identity-changed'`.
+
+- [ ] **Step 3: Confirm via existing Task 1 unit test**
+
+```bash
+cd frontend && npx vitest run src/contexts/OpenTabsContext.test.tsx -t "clears all tabs when prism-identity-changed"
 ```
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: No commit — this task is a verification gate, not a code change.**
 
-```bash
-git add frontend/src/hooks/useTabIdentityReset.ts frontend/src/hooks/useTabIdentityReset.test.tsx frontend/src/App.tsx
-git commit -m "feat(pr7): identity-changed SSE clears all open tabs"
-```
+If Tasks 1-8 already shipped via separate commits, Task 9 produces no diff. The slice continues to Task 10.
 
 ---
 
@@ -1735,6 +1803,8 @@ git commit -m "feat(pr7): identity-changed SSE clears all open tabs"
 - Extend: `frontend/src/components/PrTabStrip/PrTabStrip.test.tsx`
 
 The first 6 tabs render inline; the remaining N go into a `+ N more` chevron menu that opens on click. Each menu item carries a per-item close affordance (handoff `.pr-tabbar-menu-close`).
+
+**Edge case the implementer should keep in mind.** If the user opens the menu and then closes the only overflowed tab via a menu item, the `{overflowed.length > 0 && (...)}` conditional makes React unmount the menu JSX. The `menuOpen` state still holds `true` after the unmount, but no menu DOM exists. When the next overflow state arrives (user opens a 7th tab again), React mounts a fresh chevron with `menuOpen = true` — which would surprise the user with an auto-open menu. The Step-5 `useEffect` that auto-closes `menuOpen` when `overflowed.length === 0` prevents this — keep the dep array correct (`[overflowed.length, menuOpen]`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1864,7 +1934,7 @@ export function PrTabStrip() {
                         className={styles.menuClose}
                         disabled={closeBlocked}
                         title={closeBlocked ? "Can't close — submit in progress" : undefined}
-                        onClick={() => handleClose(idx)}
+                        onClick={() => handleClose(t)}
                       >
                         ×
                       </button>
@@ -1913,7 +1983,7 @@ export function PrTabStrip() {
         onMouseDown={(e) => {
           if (e.button === 1 && !closeBlocked) {
             e.preventDefault();
-            handleClose(idx);
+            handleClose(t);
           }
         }}
       >
@@ -1928,7 +1998,7 @@ export function PrTabStrip() {
           title={closeBlocked ? "Can't close — submit in progress" : undefined}
           onClick={(e) => {
             e.stopPropagation();
-            handleClose(idx);
+            handleClose(t);
           }}
         >
           ×
@@ -1949,7 +2019,7 @@ cd frontend && npx vitest run src/components/PrTabStrip/PrTabStrip.test.tsx
 
 Expected: 9 tests PASS.
 
-- [ ] **Step 5: Click-outside-to-close on the menu** — small but important UX. Add a one-line `useEffect` that listens on `mousedown` and closes the menu when the click lands outside:
+- [ ] **Step 5: Add click-outside + Escape dismiss + reset on unmount** — the menu must close when the user clicks anywhere outside it, presses Escape, or when the last overflowed tab is closed (the `overflowed.length > 0` conditional unmounts the menu JSX but `menuOpen` state would persist `true` — harmless because the next mount paints with the conditional false; but we explicitly reset to keep the next overflow-state clean):
 
 ```tsx
 import { useEffect, useRef } from 'react';
@@ -1957,22 +2027,48 @@ import { useEffect, useRef } from 'react';
 // inside PrTabStrip, near the menuOpen state:
 const overflowRef = useRef<HTMLDivElement | null>(null);
 
+// Click-outside + Escape close the menu. The handlers attach only while the
+// menu is open, so the document-level listeners don't fire when no menu is
+// visible. Escape additionally returns focus to the trigger button so keyboard
+// users aren't stranded — without this, focus stays on the document body.
 useEffect(() => {
   if (!menuOpen) return;
-  const onDown = (e: MouseEvent) => {
+  const triggerEl = overflowRef.current?.querySelector(`.${styles.more}`) as HTMLElement | null;
+  const onMouseDown = (e: MouseEvent) => {
     if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
       setMenuOpen(false);
     }
   };
-  document.addEventListener('mousedown', onDown);
-  return () => document.removeEventListener('mousedown', onDown);
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setMenuOpen(false);
+      triggerEl?.focus();
+    }
+  };
+  document.addEventListener('mousedown', onMouseDown);
+  document.addEventListener('keydown', onKeyDown);
+  return () => {
+    document.removeEventListener('mousedown', onMouseDown);
+    document.removeEventListener('keydown', onKeyDown);
+  };
 }, [menuOpen]);
+
+// Auto-close the menu when the overflow set drains (e.g., last overflowed
+// tab closed via the menu's own close button). Without this, the `+ N more`
+// chevron re-renders later in another open-tabs state with menuOpen still
+// `true`, which would auto-open the menu on next overflow — surprising UX.
+useEffect(() => {
+  if (overflowed.length === 0 && menuOpen) {
+    setMenuOpen(false);
+  }
+}, [overflowed.length, menuOpen]);
 
 // attach to the .overflow wrapper:
 <div className={styles.overflow} ref={overflowRef}>
 ```
 
-Add a unit test asserting click-outside closes the menu:
+Add unit tests asserting click-outside, Escape, and drain-on-close all dismiss:
 
 ```tsx
 it('clicking outside the overflow menu closes it', async () => {
@@ -1982,7 +2078,26 @@ it('clicking outside the overflow menu closes it', async () => {
   await userEvent.click(screen.getByTestId('outside'));
   expect(screen.queryByRole('menu')).toBeNull();
 });
+
+it('Escape closes the overflow menu', async () => {
+  render(wrap(<><Seed7 /><PrTabStrip /></>));
+  await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+  expect(screen.getByRole('menu')).toBeInTheDocument();
+  await userEvent.keyboard('{Escape}');
+  expect(screen.queryByRole('menu')).toBeNull();
+});
+
+it('menu auto-closes when the last overflowed tab is closed via the menu', async () => {
+  render(wrap(<><Seed7 /><PrTabStrip /></>));
+  await userEvent.click(screen.getByRole('button', { name: /\+ 1 more/i }));
+  expect(screen.getByRole('menu')).toBeInTheDocument();
+  await userEvent.click(screen.getByLabelText('Close T7'));
+  expect(screen.queryByRole('menu')).toBeNull();
+  expect(screen.queryByRole('button', { name: /\+ 1 more/i })).toBeNull();
+});
 ```
+
+Full keyboard navigation between menu items (arrow-key) is deferred — see D58 and the Risks section. The current minimum is: Escape closes + focus returns to trigger; click-outside closes; auto-close on empty.
 
 - [ ] **Step 6: Commit**
 
@@ -2000,11 +2115,11 @@ git commit -m "feat(pr7): overflow + N more menu with per-item navigate + close 
 **Files:**
 - Modify: `frontend/e2e/parity-baselines.spec.ts`
 
-Per spec § 4.7 the capture target is three open PRs, two read + one unread. Per § 6.9, PR7 also un-fixmes `inbox` and `inbox-activity-rail` (the first time those zones get baselines committed, since no earlier PR owned them).
+Spec § 4.7 names a 3-tab capture target. **The plan deviates: 1-tab capture only.** Rationale: PRism.Web/TestHooks/FakePrReader.cs explicitly returns null/empty for every reference != `FakeReviewBackingStore.Scenario` (`acme/api/123`); there is no `/test/seed-pr-fixture` route that adds a second fixture PR. Adding two more sibling fixtures requires backend code (a new FakeReviewBackingStore.Scenarios collection + FakePrReader updates), which is out of scope for "no backend changes." The 1-tab capture exercises the strip layout, active-tab merge, and unread visual — sufficient for regression-guard purposes. The 3-tab target carries to PR9 (or a follow-up that adds multi-fixture seeding) — logged in [D62](#d62).
 
-For the tabstrip baseline: seed three tabs by navigating to three PR detail URLs in sequence (each adds to openTabs via Task 6), then return to `/` so all three render inactive. Mark the middle one unread by firing a `pr-updated` SSE via the existing `/test/emit-pr-updated` hook (S6 PR9 added this).
+Per § 6.9, PR7 also un-fixmes `inbox` and `inbox-activity-rail`.
 
-- [ ] **Step 1: Add the tabstrip zone**
+- [ ] **Step 1: Add the tabstrip zone** (1-tab, unread state)
 
 In `frontend/e2e/parity-baselines.spec.ts`, replace the trailing PR7-comment block (lines 192-196) with:
 
@@ -2013,23 +2128,32 @@ test.describe('parity baselines — app chrome', () => {
   test('app-chrome-tabstrip', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
-    // Seed three open tabs by navigating directly to three PR URLs.
-    // setupAndOpenScenarioPr's fixture exposes acme/api/123; we add two
-    // sibling refs via the cluster-test seed routes if needed. For PR7 we
-    // navigate to three fixture-known PRs.
+    // Open the single fixture PR (acme/api/123). PrDetailPage's addTab effect
+    // (Task 6) seeds openTabs with this ref; the Task 6 setTitle effect fills
+    // in the title once usePrDetail resolves.
     await page.goto('/pr/acme/api/123');
     await page.locator('[data-testid="pr-header"]').waitFor();
-    await page.goto('/pr/acme/api/124');
-    await page.locator('[data-testid="pr-header"]').waitFor();
-    await page.goto('/pr/acme/api/125');
-    await page.locator('[data-testid="pr-header"]').waitFor();
-    // Return to Inbox so all three tabs render inactive — captures the
-    // "no-active" visual state which best surfaces the three-tab strip.
+    // Return to Inbox so the tab renders INACTIVE — exercises the un-merged
+    // visual state (no top accent, no negative-margin overlap).
     await page.goto('/');
-    // Mark the middle tab unread via the test hook. POST /test/emit-pr-updated
-    // is the deterministic banner-trigger added in S6 PR9.
+    await page.locator('[data-testid="pr-tabstrip"]').waitFor();
+    // Mark the tab unread via the existing /test/emit-pr-updated hook (S6 PR9).
+    // Endpoint binds EmitPrUpdatedRequest(Owner, Repo, Number, HeadShaChanged,
+    // CommentCountChanged, NewHeadSha, CommentCountDelta) — see
+    // PRism.Web/TestHooks/TestEndpoints.cs:42-49 + :137-153 for the validation
+    // rules. We use CommentCountChanged=true + delta=1 to fire an unread signal
+    // without an SHA change (head-sha change would also work but requires the
+    // backend to know the next sha; not needed here).
     const emitResp = await page.request.post('/test/emit-pr-updated', {
-      data: { prRef: 'acme/api/124', headShaChanged: true, commentCountDelta: 1 },
+      data: {
+        Owner: 'acme',
+        Repo: 'api',
+        Number: 123,
+        HeadShaChanged: false,
+        CommentCountChanged: true,
+        NewHeadSha: null,
+        CommentCountDelta: 1,
+      },
       headers: { Origin: 'http://localhost:5180' },
     });
     if (!emitResp.ok()) {
@@ -2037,7 +2161,10 @@ test.describe('parity baselines — app chrome', () => {
         `POST /test/emit-pr-updated failed: ${emitResp.status()} ${await emitResp.text()}`,
       );
     }
-    await page.locator('[data-testid="pr-tabstrip"]').waitFor();
+    // Wait for the unread dot to render. The Task 8 hook updates openTabs's
+    // unread set on the next SSE frame; play a short DOM-attribute wait rather
+    // than a fixed timeout.
+    await page.locator('[data-testid="pr-tabstrip"] .prTabStrip_tabUnread, [data-testid="pr-tabstrip"] [class*="tabUnread"]').first().waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(page.locator('[data-testid="pr-tabstrip"]')).toHaveScreenshot(
       'app-chrome-tabstrip.png',
@@ -2048,8 +2175,8 @@ test.describe('parity baselines — app chrome', () => {
 ```
 
 Notes:
-- If `setupAndOpenScenarioPr` only seeds one PR fixture, the implementer adds two sibling fixtures in the test setup helper (or use the existing `/test/seed-…` routes — see `helpers/s4-setup.ts` for the established pattern). If sibling fixtures aren't quick to seed, document the deviation: drop to **two** open tabs (one read, one unread) and update the spec § 4.7 capture-target prose in the same commit.
-- The `/test/emit-pr-updated` endpoint exists in the test-host configuration only — confirm by grepping `PRism.Web/Endpoints/` for `emit-pr-updated`.
+- The CSS-module-class selector `[class*="tabUnread"]` is the Vite-default hashed-class workaround; replace with a `data-state="unread"` attribute on the tab if the hashed-class selector turns out flaky.
+- The `/test/emit-pr-updated` endpoint is registered ONLY when the test-host configuration runs. Playwright's webServer config in `playwright.config.ts` already wires this for the e2e suite.
 
 - [ ] **Step 2: Un-fixme `inbox` and `inbox-activity-rail`**
 
@@ -2064,8 +2191,8 @@ cd frontend && npx playwright test parity-baselines --update-snapshots
 ```
 
 Expected: three new PNGs written under `frontend/e2e/__screenshots__/<platform>/`:
-- `app-chrome-tabstrip.png` (~5–10 KB, the three-tab strip with one unread dot)
-- `inbox.png` (~50–80 KB, Inbox at Y=0 below Header, no Row 2 visible since the test sets up empty openTabs)
+- `app-chrome-tabstrip.png` (~3–6 KB, one-tab strip with the unread dot, inactive state on `/`)
+- `inbox.png` (~50–80 KB, Inbox content area. Note: `setupAndOpenScenarioPr` lands on `/` with NO open tabs, so Row 2 is hidden — the `<main>` element is captured at its no-Row-2 position. Per spec § 6.9 this is acceptable: the screenshot is element-relative (not page-relative), so the Y-position-shift concern is moot for this zone.)
 - `inbox-activity-rail.png` (~30–50 KB, activity rail render at 1440px)
 
 - [ ] **Step 4: Sanity-run without `--update-snapshots`**
@@ -2085,11 +2212,11 @@ git commit -m "test(pr7): app-chrome-tabstrip parity baseline + un-fixme inbox b
 
 ---
 
-### Task 12: Update spec § 4.7 with brainstorm-pass decisions and append deferrals D58-D60
+### Task 12: Update spec § 4.7 with brainstorm-pass decisions and append deferrals D58–D62
 
 **Files:**
 - Modify: `docs/specs/2026-05-29-design-parity-recovery-design.md` (§ 4.7)
-- Modify: `docs/specs/2026-05-29-design-parity-recovery-deferrals.md` (append D58, D59, D60)
+- Modify: `docs/specs/2026-05-29-design-parity-recovery-deferrals.md` (append D58, D59, D60, D61, D62)
 
 The spec's "edge cases deferred to PR7's brainstorm pass" block at lines 313-317 needs to be rewritten to reflect the route-(b) decisions. The deferrals sidecar gets three new D-numbers.
 
@@ -2098,16 +2225,18 @@ The spec's "edge cases deferred to PR7's brainstorm pass" block at lines 313-317
 In `docs/specs/2026-05-29-design-parity-recovery-design.md`, replace the "Native-shell coupling" + "Edge cases deferred" paragraphs (lines 311-317) with:
 
 ```markdown
-**Native-shell coupling — resolution.** PR7's brainstorm pass selected **route (b) visual-only**: NO `⌘W` (close tab), NO `⌘1-9` (jump to tab), NO middle-click? — middle-click DOES ship (mouse interaction, not a kbd binding, low rework risk), NO localStorage persistence. Tabs survive only the current SPA session and are cleared on `identity-changed`. Keyboard bindings and persistence are revisited after the native-shell framework decision lands (see [`D58`](2026-05-29-design-parity-recovery-deferrals.md#d58) keyboard, [`D59`](2026-05-29-design-parity-recovery-deferrals.md#d59) persistence). See § 1.3.
+**Native-shell coupling — resolution.** PR7's brainstorm pass selected **route (b) visual-only**: NO `⌘W` (close tab), NO `⌘1-9` (jump to tab), NO localStorage persistence. Middle-click DOES ship (no OS reservation — every candidate shell passes mouse events through to the renderer; see [`D58`](2026-05-29-design-parity-recovery-deferrals.md#d58) for the OS-reservation rationale that differentiates `⌘W` from middle-click). Tabs survive only the current SPA session and are cleared on `identity-changed` via the existing `prism-identity-changed` window-event bridge. Keyboard bindings and persistence are revisited after the native-shell framework decision lands ([`D58`](2026-05-29-design-parity-recovery-deferrals.md#d58) keyboard, [`D59`](2026-05-29-design-parity-recovery-deferrals.md#d59) persistence). See § 1.3.
 
 **Edge cases deferred to PR7's brainstorm pass — resolutions.**
 - Closing a tab with an open composer: **allow.** Drafts auto-persist server-side per S4.
-- Closing a tab with an in-flight submit: **block** while `useSubmitInFlight().inFlight && prRef === active tab's prRef`. Tooltip: "Can't close — submit in progress." Wired via `useSubmitInFlight()` which already tracks the single-slot SubmitLockRegistry.
-- Stale `openTabs` entries on reload: **N/A** — route (b) drops persistence; no reload state to recover. Mid-session token rotation handled by clearing all tabs on `identity-changed`. Stale-tab error chip visual spec **deferred to post-shell-decision follow-up** ([`D60`](2026-05-29-design-parity-recovery-deferrals.md#d60)).
-- `openTabs.length > some-large-N`: **no cap**; the `+ N more` overflow menu past 6 inline tabs handles the visual.
+- Closing a tab with an in-flight submit: **block** while `useSubmitInFlight().inFlight && prRef === closing tab's prRef`. Tooltip: "Can't close — submit in progress." Wired via `useSubmitInFlight()` which tracks the single-slot SubmitLockRegistry.
+- Stale `openTabs` entries on reload: **scope-narrowed but not fully N/A** — route (b) drops persistence which eliminates the reload-stale path; mid-session token rotation clears all tabs via `identity-changed`. PR-deleted / repo-archived / repo-visibility-changed mid-session paths remain — PR7 accepts the existing PrDetailPage error-fallback UX without a per-tab error chip. Stale-tab error chip visual spec **deferred** ([`D60`](2026-05-29-design-parity-recovery-deferrals.md#d60)).
+- `openTabs.length > some-large-N`: **no cap**; the `+ N more` overflow menu past 6 inline tabs handles the visual. Narrow-viewport (1180px) verification is in the PR7 plan's manual smoke.
+- Capture target deviation: **1-tab parity baseline** instead of the spec's 3-tab target — FakePrReader serves only one fixture and adding multi-fixture seeding is out of scope ([`D62`](2026-05-29-design-parity-recovery-deferrals.md#d62)).
+- `overflowMenuOpen` is kept LOCAL to `PrTabStrip`, not exposed on `OpenTabsContext` ([`D61`](2026-05-29-design-parity-recovery-deferrals.md#d61)).
 ```
 
-- [ ] **Step 2: Append D58, D59, D60 to the deferrals sidecar**
+- [ ] **Step 2: Append D58-D62 to the deferrals sidecar**
 
 In `docs/specs/2026-05-29-design-parity-recovery-deferrals.md`, append at the bottom (preserve the existing trailing log-entry convention used by D1-D57):
 
@@ -2118,8 +2247,8 @@ In `docs/specs/2026-05-29-design-parity-recovery-deferrals.md`, append at the bo
 
 **Source:** PR7 brainstorm pass (2026-05-30); ship-tier (b) visual-only route per spec § 4.7 + § 1.3.
 **Spec position:** § 4.7 lines 294-297 list `⌘1-9` / `⌘W` / middle-click as interactions. Plan resolves to mouse-only (click + middle-click + ×).
-**Reality:** The native-shell decision (WebView2 / Tauri / Electron / MAUI Blazor Hybrid) is unresolved; `⌘W` will likely collide with native window-close, `⌘1-9` with shell-level shortcuts. Implementing them now buys behavior we'll likely have to redesign.
-**Plan resolution:** PR7 ships NO keyboard bindings. Click + middle-click + × button only. Revisit after the shell framework is chosen; the binding architecture (in-app capture vs shell-mediated) depends on shell IPC primitives.
+**Reality:** The native-shell decision (WebView2 / Tauri / Electron / MAUI Blazor Hybrid) is unresolved. The real differentiator between mouse and keyboard bindings here is NOT "mouse-vs-kbd" — both can be intercepted by native shells — but rather **OS-level reservation**. `⌘W` is OS-reserved for window-close on macOS at the WindowManager layer; the shell delivers Cmd-W to the WindowManager before the renderer sees it (or after, depending on the shell's handler chain). `⌘1-9` is candidate for app-keymap bindings the shell sets (Electron menu accelerators, Tauri global shortcuts). Middle-click and primary-click have NO OS reservation: every candidate shell passes mouse events through to the renderer's hit-test path. The plan ships click + middle-click NOW because those will keep working under any shell; defers ⌘W + ⌘1-9 because their behavior is OS-policy-dependent.
+**Plan resolution:** PR7 ships NO keyboard bindings. Click + middle-click + × button only. The rationale is "we don't want to design kbd bindings without shell context" — not a minimum-rework promise (which is unprovable without the shell choice) but a design-discipline statement: kbd contracts should be designed against the actual shell's keymap, not against a hypothetical one.
 **Status:** Applied in PR7.
 **Cross-refs:** Spec § 1.3 (native-shell coupling risk); § 4.7 (interactions list).
 
@@ -2127,26 +2256,49 @@ In `docs/specs/2026-05-29-design-parity-recovery-deferrals.md`, append at the bo
 
 **Source:** PR7 brainstorm pass (2026-05-30); ship-tier (b) visual-only route.
 **Spec position:** § 4.7 line 284 originally specified `prism.openTabs.v1` localStorage key + parse/validate path.
-**Reality:** Same shell-coupling rationale as D58. Native shells may carry their own window-state restoration; competing with it produces drift. The persistence surface area is small to add later once the shell choice fixes the semantics.
-**Plan resolution:** PR7 ships in-memory `openTabs` state only. Reload clears tabs. The cost is small: closing the browser/tab loses the open-tab list (the user can re-open from Inbox in two clicks).
+**Reality:** Same shell-coupling rationale as D58. Native shells may carry their own window-state restoration; competing with it produces drift.
+**Plan resolution:** PR7 ships in-memory `openTabs` state only. **The cost is non-trivial when honestly accounted.** Reload triggers in PRism include: (a) Vite dev hot-reload (frequent during PR review); (b) `LoadingScreen`'s "Reload" button on auth-state errors; (c) the ErrorBoundary fallback; (d) accidental Cmd-R / F5; (e) the Replace-token flow. Each wipes the open-tab list. With 5+ open tabs, recovery is 5+ Inbox-row clicks, not "two clicks." The decision still holds — the shell-pending rationale is stronger than the friction cost — but the disclosure should reflect the actual user experience.
 **Status:** Applied in PR7.
-**Cross-refs:** D58 (kbd bindings); spec § 1.3.
+**Cross-refs:** D58 (kbd bindings); D60 (stale-tab chip reopens with this); spec § 1.3.
 
-### D60 — Stale-tab error chip visual spec deferred — no surface in route (b)
+### D60 — Stale-tab error chip visual spec deferred — narrowed but NOT fully N/A
 
 **Source:** PR7 brainstorm pass (2026-05-30); ship-tier (b) visual-only route.
 **Spec position:** § 4.7 line 316 — "Visual spec for the stale-tab error chip is new design with no handoff reference and lands in PR7's brainstorm — flagged as a small redesign carve-out per § 2.2."
-**Reality:** The error chip exists to handle two stale scenarios: (i) PR no longer accessible on reload because `openTabs` was persisted, and (ii) mid-session token rotation. Route (b) drops persistence — (i) cannot occur. (ii) is handled by clearing all tabs on `identity-changed` SSE — strictly simpler than rendering a per-tab error chip.
-**Plan resolution:** No error chip ships. The small-redesign carve-out under § 2.2 is NOT consumed. If persistence is added back via a future follow-up (D59 reopens), this deferral reopens too — the chip is needed when reload state can be stale.
-**Status:** Applied in PR7. Reopens with D59.
+**Reality:** Removing persistence (D59) eliminates the LARGEST stale-tab path (reload-with-persisted-tabs-the-current-identity-can't-see). But several mid-session paths remain even without persistence:
+  - PR is deleted on GitHub (rare).
+  - PR is transferred to another org the current login can't see (token boundary changes WITHOUT identity changing — `identity-changed` doesn't fire).
+  - Repo is archived or visibility flipped to private without identity-changing.
+  - Token scope reduced via the GitHub settings UI without rotation (rare).
+In any of these, the user's openTabs entry stays alive; clicking the tab navigates to PrDetailPage; usePrDetail returns an error; PrDetailPage's existing error fallback renders. **No tab-strip visual hint indicates which tab broke.** The user discovers it by clicking.
+**Plan resolution:** PR7 accepts the error-fallback-on-click UX explicitly. No tab-strip chip. The full chip design is deferred to a follow-up (or PR9 revisit) when at least one of: (a) the first stale-mid-session user report comes in, (b) persistence reopens (D59), (c) shell decision lands and may resurface persistence anyway.
+**Status:** Applied in PR7. Open for follow-up the moment either (a) or (b) lands.
 **Cross-refs:** D59; spec § 2.2 redesign carve-out policy.
+
+### D61 — `overflowMenuOpen` kept local to `PrTabStrip`, not exposed on the context
+
+**Source:** PR7 plan-time decision (2026-05-30) on context shape.
+**Spec position:** § 4.7 line 286 lists `overflowMenuOpen: boolean` as part of the App-level state shape.
+**Reality:** `overflowMenuOpen` has a single consumer (`PrTabStrip`). Exposing it through the context buys nothing for component composition and creates a wider context surface to test and migrate. Single-consumer booleans don't earn context promotion.
+**Plan resolution:** Kept as `useState(false)` local to `PrTabStrip`. The context exposes only `openTabs` + `unreadKeys` + mutator methods.
+**Status:** Applied in PR7. Trivial scope-shrink, not load-bearing for future work.
+**Cross-refs:** Spec § 4.7.
+
+### D62 — `app-chrome-tabstrip` parity baseline captured at 1 tab, not the spec's 3-tab target
+
+**Source:** PR7 plan-time decision (2026-05-30) on baseline capture scope.
+**Spec position:** § 4.7 line 319 — "Side-by-side capture target: `app-chrome-tabstrip` zone with three open PRs (two read, one unread)."
+**Reality:** `PRism.Web/TestHooks/FakePrReader.cs` returns null/empty for every PR reference != `FakeReviewBackingStore.Scenario` (acme/api/123). No `/test/seed-pr-fixture` route adds secondary fixtures. Capturing a 3-tab strip would require adding multi-fixture seeding to FakeReviewBackingStore + FakePrReader (real backend changes), which is out of scope for "no backend changes."
+**Plan resolution:** PR7 captures `app-chrome-tabstrip.png` with one tab in the unread-inactive state. This exercises strip layout, inactive-tab visual, unread dot, and the close affordance — sufficient for regression-guard purposes. The 3-tab visual diff remains uncaptured.
+**Status:** Applied in PR7. Reopens when multi-fixture seeding lands (likely a PR9 prerequisite, possibly bundled with the Inbox-multi-section parity work).
+**Cross-refs:** Spec § 4.7 capture target.
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add docs/specs/2026-05-29-design-parity-recovery-design.md docs/specs/2026-05-29-design-parity-recovery-deferrals.md
-git commit -m "docs(pr7): record route-(b) brainstorm decisions + append D58/D59/D60 deferrals"
+git commit -m "docs(pr7): record route-(b) brainstorm decisions + append D58-D62 deferrals"
 ```
 
 ---
@@ -2175,7 +2327,7 @@ cd frontend && npm run build
 
 Expected: build succeeds. Inspect `dist/assets/index-*.css` size — should grow by ~3–5 KB for the new PrTabStrip module (the handoff CSS port plus close/overflow/menu rules). Document the delta in the PR body if it's > 8 KB.
 
-- [ ] **Step 3: Run `dotnet build` (top-level — backend may have moved with `useSubmitInFlight` wiring even if unmodified)**
+- [ ] **Step 3: Run `dotnet build` (full pre-push checklist mandates this even when no backend file changed — see user-feedback `feedback_run_full_pre_push_checklist`)**
 
 ```bash
 dotnet build --configuration Release
@@ -2234,8 +2386,9 @@ If the lockfile was modified, diff it against `main` to ensure no `@emnapi/*`, `
 7. Click the `×` on the active tab → it closes; route navigates to the left neighbour.
 8. Close the last tab → Row 2 disappears; route is at `/`.
 9. Open seven PRs → `+ 1 more` chevron appears; click it; verify the 7th appears in the menu with `×` affordance.
-10. Click outside the menu → menu closes.
-11. Open Settings, click Replace token, replace with the same PAT → `identity-changed` SSE fires → all tabs clear.
+10. Click outside the menu → menu closes. Press Escape with menu open → menu closes + focus returns to the `+ N more` button.
+11. **Narrow-viewport check** (A10 from ce-doc-review): resize the window to 1180px and verify the `+ N more` chevron is still visible and clickable at 7+ open tabs. If the chevron clips off-screen, lower `INLINE_TAB_CAP` or shrink `.tab` `max-width`.
+12. Open Settings, click Replace token, replace with the same PAT → `identity-changed` SSE fires → all tabs clear.
 
 Document any deviation in the PR body.
 
@@ -2269,7 +2422,7 @@ Wait for the loop to complete. Address findings per the loop's instructions.
   - § 4.7 closing-tab edge cases → Task 7 submit block + composer allow ✓
   - § 6.5 (composer + modal + submit) → Task 7 ✓
   - § 6.9 Inbox baseline re-capture → Task 11 ✓
-  - § 1.3 native-shell coupling risk → spec patch + D58/D59/D60 ✓
+  - § 1.3 native-shell coupling risk → spec patch + D58/D59/D60/D61/D62 ✓
 
 - [ ] **Placeholder scan:** no "TBD" / "implement later" / vague-handling phrases in steps.
 
@@ -2283,11 +2436,14 @@ Wait for the loop to complete. Address findings per the loop's instructions.
 
 ## Risks and open questions
 
-- **Q1: Three-tab capture in Task 11 requires three accessible fixture PRs.** If `setupAndOpenScenarioPr` only seeds one, the deviation is documented and the capture drops to two tabs (one unread). Implementer judgment at Task 11 time.
-- **Q2: Test-hook `/test/emit-pr-updated`.** Confirmed present per memory (S6 PR9). If grepping shows the endpoint is gated to a different test-host configuration than parity-baselines runs under, fall back to opening + closing a draft on the middle PR to trigger a real `pr-updated` SSE.
-- **Q3: Click-outside-menu listener leaks if `PrTabStrip` unmounts while menu is open.** The hook's cleanup returns `removeEventListener` — verified safe; no leak.
-- **Q4: `useSubmitInFlight` runs in every consumer that calls it.** PrTabStrip is mounted ONCE at App level. The hook polls via `prism-state-changed` window events, NOT intervals. No regression.
-- **Q5: Tab-strip a11y semantics.** `role="tablist"` traditionally implies arrow-key navigation between tabs. With kbd-deferred (D58), tab keys move focus via the document tab order (one tab per `tabindex={0}` per tab). Acceptable; document as PR9 follow-up if needed.
+- **Q1: Single-tab capture in Task 11 deviates from the spec's 3-tab target.** Logged as D62. Fixed by future multi-fixture-seeding work; not load-bearing for PR7.
+- **Q2: Test-hook `/test/emit-pr-updated`.** Confirmed present in `PRism.Web/TestHooks/TestEndpoints.cs:137`. Body shape `(Owner, Repo, Number, HeadShaChanged, CommentCountChanged, NewHeadSha, CommentCountDelta)` — NOT `prRef`. If the endpoint is gated to a different test-host configuration than parity-baselines runs under, fall back to opening + closing a draft on the PR to trigger a real `pr-updated` SSE.
+- **Q3: Click-outside-menu listener leaks if `PrTabStrip` unmounts while menu is open.** The hook's cleanup returns `removeEventListener` — verified safe; no leak. Same for the Escape keydown listener.
+- **Q4: `useSubmitInFlight` is single-slot today** (`SubmitLockRegistry` allows one in-flight submit at a time). The plan's `submit.prRef === key` gate silently mis-classifies if the registry goes multi-slot — at that point the hook's return shape should widen to `Set<string>` and all `prRef ===` consumers should migrate to `.has(key)`. Out of scope for PR7; consumers are listed at PR7 commit time for future audit.
+- **Q5: Tab-strip a11y semantics.** `role="tablist"` traditionally implies arrow-key navigation between tabs. With kbd-deferred (D58), tab keys move focus via the document tab order (one tab per `tabindex={0}` per tab). The strip provides the structural role for assistive tech without the keyboard contract — accepted gap, document as PR9 follow-up if any N=3 review surfaces it.
+- **Q6: Touch / pointer:coarse devices** — the close `×` is opacity 0 by default (hover-revealed). On touch, hover doesn't fire and the only close affordance is middle-click — which also doesn't exist on touch. PRism's PoC target is desktop, so accept the gap. If touch use ever becomes a target, add `@media (hover: none) { .close { opacity: 1; } }` as a one-line fix.
+- **Q7: Empty-state layout seam.** When `openTabs.length` drops 1 → 0, the `PrTabStrip` div unmounts and the Header's bottom border becomes adjacent to the page content. No double-border because the strip's border-bottom is replaced by the strip's absence, not added on top. Manual smoke step 8 verifies; if a visible reflow appears, add a fixed 0-height placeholder that retains the seam offset.
+- **Q8: PR-delete / repo-archive / repo-transfer mid-session** — tabs for PRs that became inaccessible mid-session render normally in the strip; clicking them surfaces the existing PrDetailPage error fallback. No tab-strip chip in PR7 (D60). Acceptable for the v1 trial cohort; reopens with D60 if reported.
 
 ---
 
