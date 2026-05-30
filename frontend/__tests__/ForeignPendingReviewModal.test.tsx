@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { ForeignPendingReviewModal } from '../src/components/PrDetail/ForeignPendingReviewModal/ForeignPendingReviewModal';
 import type { SubmitForeignPendingReviewEvent } from '../src/api/types';
+import styles from '../src/components/PrDetail/ForeignPendingReviewModal/ForeignPendingReviewModal.module.css';
 
 const snapshot: SubmitForeignPendingReviewEvent = {
   prRef: 'o/r/1',
@@ -113,5 +114,12 @@ describe('ForeignPendingReviewModal', () => {
     const dialog = document.querySelector('.modal-dialog');
     expect(dialog).not.toBeNull();
     expect(dialog!.querySelector('.submit-dialog')).toBeNull();
+  });
+
+  it('AppliesBothLiteralAndModuleClasses_OnModalBody', () => {
+    renderModal();
+    const body = document.querySelector('.foreign-prr-modal');
+    expect(body).not.toBeNull();
+    expect(body).toHaveClass(styles.foreignPrrModal);
   });
 });
