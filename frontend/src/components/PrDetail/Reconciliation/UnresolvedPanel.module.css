@@ -1,0 +1,74 @@
+/* Ports handoff `.stale-panel*` (screens.css:457-471) under production
+   class names. Sticky-top reconciliation surface mounted at PrDetailPage
+   layout root, visible across Overview / Files / Drafts tabs.
+   D57: position: sticky + top:0 + z-index:1 implements spec §4.5's
+   "sticky-top reconciliation surface" intent. No PrDetailPage module
+   CSS exists today; the sticky positions against the viewport (the
+   nearest ancestor with non-`visible` overflow), which matches the
+   spec language. If a future PrDetailPage layout introduces an inner
+   scroll container, the sticky behavior continues to work against
+   the new ancestor without change here. */
+
+.unresolvedPanel {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: var(--s-4) var(--s-6) 0;
+  background: var(--surface-1);
+  border: 1px solid var(--warning);
+  border-left-width: 3px;
+  border-radius: var(--radius-3);
+  overflow: hidden;
+}
+
+.unresolvedPanelSummary {
+  padding: var(--s-3) var(--s-4);
+  background: var(--warning-soft);
+  border-bottom: 1px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.unresolvedPanelAnnounce {
+  font-weight: 600;
+  color: var(--warning-fg);
+  font-size: var(--text-sm);
+}
+
+.unresolvedPanelRows {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* D52: single-consumer rule; not lifted to tokens.css. */
+.verdictReconfirmRow {
+  padding: var(--s-3) var(--s-4);
+  border-bottom: 1px solid var(--border-1);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.verdictReconfirmRow:last-child {
+  border-bottom: 0;
+}
+
+/* Used when the panel transitions to staleCount = 0 and the announce-only
+   div takes over (UnresolvedPanel.tsx:120-130). Visually hidden, but kept
+   in the document for screen readers. */
+.unresolvedPanelAnnounceOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -3,6 +3,12 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { DraftsTab } from '../src/components/PrDetail/DraftsTab/DraftsTab';
+import draftsTabStyles from '../src/components/PrDetail/DraftsTab/DraftsTab.module.css';
+import itemStyles from '../src/components/PrDetail/DraftsTab/DraftListItem.module.css';
+import emptyStyles from '../src/components/PrDetail/DraftsTab/DraftListEmpty.module.css';
+import skelStyles from '../src/components/PrDetail/DraftsTab/DraftsTabSkeleton.module.css';
+import errStyles from '../src/components/PrDetail/DraftsTab/DraftsTabError.module.css';
+import discardStyles from '../src/components/PrDetail/DraftsTab/DiscardAllStaleButton.module.css';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -88,13 +94,16 @@ afterEach(() => {
 describe('DraftsTab', () => {
   it('RendersLoadingSkeleton_WhilePending', () => {
     renderDraftsTab({ session: null, status: 'loading' });
-    expect(screen.getByTestId('drafts-tab-skeleton')).toBeInTheDocument();
+    const skel = screen.getByTestId('drafts-tab-skeleton');
+    expect(skel).toBeInTheDocument();
+    expect(skel).toHaveClass(skelStyles.draftsTabSkeleton);
   });
 
   it('RendersErrorCard_OnLoadFailure', () => {
     renderDraftsTab({ session: null, status: 'error' });
     expect(screen.getByText(/Couldn't load drafts/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveClass(errStyles.draftsTabError);
   });
 
   it('Retry_button_invokes_refetch', async () => {
@@ -106,7 +115,30 @@ describe('DraftsTab', () => {
 
   it('RendersEmptyState_WhenNoDrafts', () => {
     renderDraftsTab({ session: mkSession(), status: 'ready' });
-    expect(screen.getByText(/No drafts on this PR yet/i)).toBeInTheDocument();
+    const empty = screen.getByText(/No drafts on this PR yet/i);
+    expect(empty).toBeInTheDocument();
+    expect(empty).toHaveClass(emptyStyles.draftsTabEmpty);
+    expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
+  });
+
+  it('AppliesBothLiteralAndModuleClasses_OnDraftsTabRoot', () => {
+    renderDraftsTab({
+      session: mkSession({ draftComments: [mkComment()] }),
+      status: 'ready',
+    });
+    const root = screen.getByTestId('drafts-tab');
+    expect(root).toHaveClass('drafts-tab');
+    expect(root).toHaveClass(draftsTabStyles.draftsTab);
+  });
+
+  it('DraftListItem_AppliesBothLiteralAndModuleClasses', () => {
+    renderDraftsTab({
+      session: mkSession({ draftComments: [mkComment()] }),
+      status: 'ready',
+    });
+    const items = document.querySelectorAll('.draft-list-item');
+    expect(items.length).toBeGreaterThan(0);
+    expect(items[0]).toHaveClass(itemStyles.draftListItem);
   });
 
   it('RendersDraftsGroupedByFile', () => {
@@ -121,6 +153,7 @@ describe('DraftsTab', () => {
     // Two file group headers
     expect(screen.getByText('src/Foo.cs')).toBeInTheDocument();
     expect(screen.getByText('src/Bar.cs')).toBeInTheDocument();
+    expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
   });
 
   it('RendersHeader_CountsDraftsAndFiles', () => {
@@ -247,6 +280,21 @@ describe('DraftsTab', () => {
     expect(dialog).toHaveTextContent(/preview-rep/);
     expect(dialog).toHaveTextContent(/src\/Foo\.cs/);
     expect(dialog).toHaveTextContent(/PRRT_abc/);
+  });
+
+  it('DiscardAllStaleModal_AppliesModuleClasses_OnPreviewList', async () => {
+    renderDraftsTab({
+      session: mkSession({
+        draftComments: [mkComment({ status: 'stale' })],
+      }),
+      status: 'ready',
+    });
+    await userEvent.click(screen.getByRole('button', { name: /Discard all stale/i }));
+    // Use literal-class selector for consistency with sibling assertions in this file;
+    // getByRole('list') would throw if a future failed-discard surface added a second list.
+    const previewList = document.querySelector('ul.discard-all-preview-list');
+    expect(previewList).not.toBeNull();
+    expect(previewList).toHaveClass(discardStyles.discardAllPreviewList);
   });
 
   it('DiscardAllStale_OnConfirm_FiresDeletePerStaleId', async () => {

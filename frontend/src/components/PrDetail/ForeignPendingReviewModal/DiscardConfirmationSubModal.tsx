@@ -1,4 +1,5 @@
 import { Modal } from '../../Modal/Modal';
+import styles from './DiscardConfirmationSubModal.module.css';
 
 // Spec § 11.2: second-tier confirmation before deleting a foreign pending review
 // on github.com. Destructive — defaultFocus on Cancel (the discard-saved-draft
@@ -29,12 +30,14 @@ export function DiscardConfirmationSubModal({
       onClose={onCancel}
       defaultFocus="cancel"
     >
-      <div className="discard-confirmation-sub-modal">
+      <div className={`discard-confirmation-sub-modal ${styles.discardConfirmationSubModal}`}>
         <p>
           Its {threadCount} thread(s) and {replyCount} reply(ies) will be permanently removed. This
           cannot be undone.
         </p>
-        <footer className="discard-confirmation-sub-modal__footer">
+        <footer
+          className={`discard-confirmation-sub-modal__footer ${styles.discardConfirmationSubModalFooter}`}
+        >
           <button
             type="button"
             className="btn btn-secondary"

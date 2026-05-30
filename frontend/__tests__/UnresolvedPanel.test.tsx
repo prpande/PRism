@@ -5,6 +5,8 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { UnresolvedPanel } from '../src/components/PrDetail/Reconciliation/UnresolvedPanel';
 import * as draftApi from '../src/api/draft';
 import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../src/api/types';
+import styles from '../src/components/PrDetail/Reconciliation/UnresolvedPanel.module.css';
+import staleStyles from '../src/components/PrDetail/Reconciliation/StaleDraftRow.module.css';
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -74,6 +76,24 @@ describe('UnresolvedPanel', () => {
     });
     renderPanel(session);
     expect(screen.getByRole('region', { name: /unresolved drafts/i })).toBeInTheDocument();
+    expect(screen.getByTestId('unresolved-panel')).toBeInTheDocument();
+  });
+
+  it('AppliesBothLiteralAndModuleClasses_OnVisibleSection', () => {
+    const session = mkSession({ draftComments: [mkComment({ id: 'a', status: 'stale' })] });
+    renderPanel(session);
+    const section = screen.getByTestId('unresolved-panel');
+    expect(section).toHaveClass('unresolved-panel');
+    expect(section).toHaveClass(styles.unresolvedPanel);
+  });
+
+  it('StaleDraftRow_AppliesBothLiteralAndModuleClasses', () => {
+    const session = mkSession({ draftComments: [mkComment({ id: 'a', status: 'stale' })] });
+    renderPanel(session);
+    const region = screen.getByRole('region', { name: /unresolved drafts/i });
+    const li = region.querySelector('li.stale-draft-row');
+    expect(li).not.toBeNull();
+    expect(li).toHaveClass(staleStyles.staleDraftRow);
   });
 
   it('OverriddenStaleDraft_NotCountedTowardStaleCount', () => {

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Modal } from '../../Modal/Modal';
 import { DiscardConfirmationSubModal } from './DiscardConfirmationSubModal';
 import type { SubmitForeignPendingReviewEvent } from '../../../api/types';
+import styles from './ForeignPendingReviewModal.module.css';
 
 // Spec § 11: surfaced when POST /submit returns ForeignPendingReviewPromptRequired
 // (useSubmit.state.kind === 'foreign-pending-review-prompt'). Three choices:
@@ -49,14 +50,14 @@ export function ForeignPendingReviewModal({
         onClose={onCancel}
         defaultFocus="cancel"
       >
-        <div className="foreign-prr-modal">
-          <p className="foreign-prr-modal__body">
+        <div className={`foreign-prr-modal ${styles.foreignPrrModal}`}>
+          <p className={`foreign-prr-modal__body ${styles.foreignPrrModalBody}`}>
             You have a pending review on this PR from {humanized}. It contains{' '}
             <strong>{snapshot.threadCount} thread(s)</strong> and{' '}
             <strong>{snapshot.replyCount} reply(ies)</strong>. Resume it (you&rsquo;ll see the
             contents before submit), discard it and start fresh, or cancel?
           </p>
-          <footer className="foreign-prr-modal__footer">
+          <footer className={`foreign-prr-modal__footer ${styles.foreignPrrModalFooter}`}>
             <button
               type="button"
               className="btn btn-secondary"

@@ -1,0 +1,48 @@
+/* DraftsTab — production-only surface (handoff has no Drafts-tab body
+   rendering). Layout derived from PR3's overview-card visual language:
+   surface-1 background, surface-2 file-group sub-surfaces, comfortable
+   vertical rhythm matching Inbox sections. */
+
+.draftsTab {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  padding: var(--s-4) var(--s-6);
+}
+
+.draftsTabHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.draftsTabHeaderTitle {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.draftsTabBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+.draftsTabFileGroup {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-3);
+  padding: var(--s-3) var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.draftsTabFileHeading {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 0 0 var(--s-2);
+}

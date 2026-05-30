@@ -3,6 +3,7 @@ import { sendPatch } from '../../../api/draft';
 import type { PrReference, ReviewSessionDto } from '../../../api/types';
 import { StaleDraftRow } from './StaleDraftRow';
 import type { DraftLike } from '../draftKinds';
+import styles from './UnresolvedPanel.module.css';
 
 interface UnresolvedPanelProps {
   prRef: PrReference;
@@ -121,7 +122,7 @@ export function UnresolvedPanel({
       return (
         <div
           aria-live="polite"
-          className="unresolved-panel-announce-only"
+          className={`unresolved-panel-announce-only ${styles.unresolvedPanelAnnounceOnly}`}
           data-testid="unresolved-panel-announce"
         >
           All drafts reconciled.
@@ -139,19 +140,23 @@ export function UnresolvedPanel({
       role="region"
       aria-label="Unresolved drafts"
       tabIndex={-1}
-      className="unresolved-panel"
+      className={`unresolved-panel ${styles.unresolvedPanel}`}
+      data-testid="unresolved-panel"
     >
-      <header className="unresolved-panel-summary">
-        <span aria-live="polite" className="unresolved-panel-announce">
+      <header className={`unresolved-panel-summary ${styles.unresolvedPanelSummary}`}>
+        <span
+          aria-live="polite"
+          className={`unresolved-panel-announce ${styles.unresolvedPanelAnnounce}`}
+        >
           {summary}
         </span>
       </header>
-      <ul className="unresolved-panel-rows">
+      <ul className={`unresolved-panel-rows ${styles.unresolvedPanelRows}`}>
         {counts.stale.map((d) => (
           <StaleDraftRow key={d.data.id} prRef={prRef} draft={d} onMutated={onMutated} />
         ))}
         {counts.needsReconfirm && (
-          <li className="verdict-reconfirm-row row gap-2">
+          <li className={`verdict-reconfirm-row row gap-2 ${styles.verdictReconfirmRow}`}>
             <span className="chip chip-status-stale">Verdict</span>
             <span>Verdict needs re-confirm after the head shifted.</span>
             <button

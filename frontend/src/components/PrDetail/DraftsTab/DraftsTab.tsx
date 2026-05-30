@@ -13,6 +13,7 @@ import { DraftsTabError } from './DraftsTabError';
 import { DraftListEmpty } from './DraftListEmpty';
 import { DraftListItem } from './DraftListItem';
 import { DiscardAllStaleButton } from './DiscardAllStaleButton';
+import styles from './DraftsTab.module.css';
 
 interface DraftsTabProps {
   prRef: PrReference;
@@ -121,9 +122,9 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
 
   if (summary.total === 0) {
     return (
-      <div className="drafts-tab">
-        <div className="drafts-tab-header">
-          <span className="drafts-tab-header-title">0 drafts</span>
+      <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab">
+        <div className={`drafts-tab-header ${styles.draftsTabHeader}`}>
+          <span className={`drafts-tab-header-title ${styles.draftsTabHeaderTitle}`}>0 drafts</span>
         </div>
         <DraftListEmpty />
       </div>
@@ -131,9 +132,9 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
   }
 
   return (
-    <div className="drafts-tab">
-      <div className="drafts-tab-header row gap-2">
-        <span className="drafts-tab-header-title">
+    <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab">
+      <div className={`drafts-tab-header row gap-2 ${styles.draftsTabHeader}`}>
+        <span className={`drafts-tab-header-title ${styles.draftsTabHeaderTitle}`}>
           {summary.total} draft{summary.total === 1 ? '' : 's'}
           {summary.files > 0 && (
             <>
@@ -154,7 +155,7 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
           />
         )}
       </div>
-      <div className="drafts-tab-body">
+      <div className={`drafts-tab-body ${styles.draftsTabBody}`}>
         {groups.map((g) => (
           <FileGroupSection
             key={g.filePath ?? '__pr-root__'}
@@ -185,8 +186,8 @@ function FileGroupSection({
   // without misleading users that the section is replies-only.
   const heading = group.filePath ?? 'PR conversation drafts';
   return (
-    <section className="drafts-tab-file-group">
-      <h3 className="drafts-tab-file-heading">{heading}</h3>
+    <section className={`drafts-tab-file-group ${styles.draftsTabFileGroup}`}>
+      <h3 className={`drafts-tab-file-heading ${styles.draftsTabFileHeading}`}>{heading}</h3>
       {group.comments.map((c) => (
         <DraftListItem
           key={c.id}

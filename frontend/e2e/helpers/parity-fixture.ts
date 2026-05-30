@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { setupAndOpenScenarioPr } from './s4-setup';
+import { setupAndOpenScenarioPr, advanceHead, reloadPr } from './s4-setup';
 
 // Sets up the dev-mode Playwright context for parity comparison work and
 // navigates to the PR Detail surface that side-by-side reviews use as the
@@ -32,4 +32,40 @@ export async function setupAndOpenHandoffParityFixture(page: Page): Promise<void
   // assert without a follow-up wait. `data-testid="pr-header"` exists at
   // PrHeader.tsx (added during the no-layout-shift-on-banner spec work).
   await page.locator('[data-testid="pr-header"]').waitFor();
+}
+
+/**
+ * Loads the scenario PR (acme/api/123 per PR1 D1), saves a draft on Calc.cs
+ * line 3 via the composer, then advances head to invalidate the anchor →
+ * draft re-classifies Stale → UnresolvedPanel mounts with one row.
+ *
+ * Used by the pr-detail-reconciliation-panel + pr-detail-drafts parity
+ * baselines (PR5).
+ */
+export async function setupAndOpenHandoffParityFixtureWithStaleDraft(page: Page): Promise<void> {
+  await setupAndOpenScenarioPr(page);
+  await page.goto('/pr/acme/api/123/files');
+  await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+  await page.getByRole('button', { name: /add comment on line 3/i }).click();
+
+  const savePromise = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/pr/acme/api/123/draft') &&
+      r.request().method() === 'PUT' &&
+      r.status() === 200,
+    { timeout: 10_000 },
+  );
+  await page.getByRole('textbox', { name: /comment body/i }).fill('parity baseline draft');
+  await savePromise;
+
+  const newHeadSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  await advanceHead(page, newHeadSha, [
+    {
+      path: 'src/Calc.cs',
+      content:
+        'namespace Acme;\npublic static class Calc {\n  public static int Sub(int a, int b) => a - b;\n}\n',
+    },
+  ]);
+  await reloadPr(page, { owner: 'acme', repo: 'api', number: 123 }, newHeadSha);
+  await page.reload();
 }
