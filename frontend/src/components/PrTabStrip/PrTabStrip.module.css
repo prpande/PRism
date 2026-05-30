@@ -1,0 +1,246 @@
+/*
+ * PrTabStrip — Row 2 browser-style tab strip for open PRs.
+ * Ported from design/handoff/screens.css:1442-1604 (.pr-tabbar*) under
+ * CSS-module camelCase class names per project convention.
+ */
+
+.tabbar {
+  background: var(--surface-0);
+  border-bottom: 1px solid var(--border-1);
+  padding: 0 var(--s-3);
+  /* Subtle gradient bottom-shadow to anchor tabs to the page below */
+  position: relative;
+  z-index: 2;
+}
+
+.inner {
+  display: flex;
+  gap: 2px;
+  align-items: stretch;
+  min-height: 36px;
+  overflow: hidden;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  height: 36px;
+  max-width: 240px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-top: 2px solid transparent;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  position: relative;
+  transition:
+    background var(--t-fast),
+    color var(--t-fast);
+  user-select: none;
+}
+
+.tab:hover {
+  background: var(--surface-1);
+  color: var(--text-1);
+}
+
+.tabActive {
+  background: var(--surface-1);
+  border-color: var(--border-1);
+  border-top-color: var(--accent);
+  color: var(--text-1);
+  font-weight: 500;
+  /* Pull the active tab's bottom edge over the tabbar's bottom border so it
+     visually merges with the page below (browser-tab effect). */
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+}
+
+.num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-3);
+  flex: none;
+}
+
+.tabActive .num {
+  color: var(--accent);
+}
+
+.title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.tabUnread .title {
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: var(--text-3);
+  background: transparent;
+  flex: none;
+  opacity: 0;
+  transition:
+    opacity var(--t-fast),
+    background var(--t-fast),
+    color var(--t-fast);
+}
+
+.tab:hover .close,
+.tabActive .close,
+.tab:focus-within .close {
+  opacity: 1;
+}
+
+.close:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+/*
+ * Disabled-state override per ce-doc-review D1: the standard
+ * `.tab:hover .close` (specificity 0,2,0) ties with `.close:disabled`
+ * (0,2,0) by source order. The disabled rule needs HIGHER specificity to
+ * win on hover, so we compound each interactive ancestor with :disabled.
+ */
+.tab .close:disabled,
+.tab:hover .close:disabled,
+.tabActive .close:disabled,
+.tab:focus-within .close:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  background: transparent;
+  color: var(--text-3);
+}
+
+/* --- OVERFLOW CHEVRON + MENU (pre-staged; consumed in Task 10) --- */
+.overflow {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  margin-left: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+  background: var(--surface-1);
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-2);
+}
+
+.more:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-style: solid;
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 280px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-3);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: 4px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: var(--text-xs);
+  color: var(--text-1);
+  background: transparent;
+  border-radius: var(--radius-2);
+  text-align: left;
+  width: 100%;
+}
+
+.menuItem:hover {
+  background: var(--surface-3);
+}
+
+.menuNum {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+  font-size: 11px;
+  flex: none;
+}
+
+.menuTitle {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.menuClose {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  border-radius: 4px;
+  flex: none;
+}
+
+.menuClose:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.menuClose:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  background: transparent;
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab,
+  .close,
+  .more,
+  .menuItem {
+    transition: none;
+  }
+}

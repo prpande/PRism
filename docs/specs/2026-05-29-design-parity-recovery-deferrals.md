@@ -730,3 +730,77 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Plan resolution:** Ship `.fineprint` typography (margin / font-size / color) in PR6 without a glyph. The handoff `.setup-fineprint` flex+gap+center rules intentionally NOT ported because the disclosure widget is multi-line collapsible content. PR9 polish picks the glyph source and re-captures the `setup-card.png` baseline. If PR9 adds a `<span aria-hidden="true">🔒</span>` prefix to the `<summary>`, the flex+gap+center rules land then.
 **Status:** Deferred to PR9.
 **Cross-refs:** spec §4.6; handoff screens.css:1289-1295.
+
+## Implementation-time deferrals — PR7 (browser-style PR tab strip, route b)
+
+### D58 — Keyboard bindings (`⌘W`, `⌘1-9`) deferred to post-shell-decision
+
+**Source:** PR7 brainstorm pass (2026-05-30); ship-tier (b) visual-only route per spec § 4.7 + § 1.3.
+**Spec position:** § 4.7 lines 294-297 list `⌘1-9` / `⌘W` / middle-click as interactions. Plan resolves to mouse-only (click + middle-click + ×).
+**Reality:** The native-shell decision (WebView2 / Tauri / Electron / MAUI Blazor Hybrid) is unresolved. The real differentiator between mouse and keyboard bindings here is NOT "mouse-vs-kbd" — both can be intercepted by native shells — but rather **OS-level reservation**. `⌘W` is OS-reserved for window-close on macOS at the WindowManager layer; the shell delivers Cmd-W to the WindowManager before the renderer sees it (or after, depending on the shell's handler chain). `⌘1-9` is candidate for app-keymap bindings the shell sets (Electron menu accelerators, Tauri global shortcuts). Middle-click and primary-click have NO OS reservation: every candidate shell passes mouse events through to the renderer's hit-test path. The plan ships click + middle-click NOW because those will keep working under any shell; defers ⌘W + ⌘1-9 because their behavior is OS-policy-dependent.
+**Plan resolution:** PR7 ships NO keyboard bindings. Click + middle-click + × button only. The rationale is "we don't want to design kbd bindings without shell context" — not a minimum-rework promise (which is unprovable without the shell choice) but a design-discipline statement: kbd contracts should be designed against the actual shell's keymap, not against a hypothetical one.
+**Status:** Applied in PR7.
+**Cross-refs:** Spec § 1.3 (native-shell coupling risk); § 4.7 (interactions list).
+
+### D59 — `openTabs` localStorage persistence deferred to post-shell-decision
+
+**Source:** PR7 brainstorm pass (2026-05-30); ship-tier (b) visual-only route.
+**Spec position:** § 4.7 line 284 originally specified `prism.openTabs.v1` localStorage key + parse/validate path.
+**Reality:** Same shell-coupling rationale as D58. Native shells may carry their own window-state restoration; competing with it produces drift.
+**Plan resolution:** PR7 ships in-memory `openTabs` state only. **The cost is non-trivial when honestly accounted.** Reload triggers in PRism include: (a) Vite dev hot-reload (frequent during PR review); (b) `LoadingScreen`'s "Reload" button on auth-state errors; (c) the ErrorBoundary fallback; (d) accidental Cmd-R / F5; (e) the Replace-token flow. Each wipes the open-tab list. With 5+ open tabs, recovery is 5+ Inbox-row clicks, not "two clicks." The decision still holds — the shell-pending rationale is stronger than the friction cost — but the disclosure should reflect the actual user experience.
+**Status:** Applied in PR7.
+**Cross-refs:** D58 (kbd bindings); D60 (stale-tab chip reopens with this); spec § 1.3.
+
+### D60 — Stale-tab error chip visual spec deferred — narrowed but NOT fully N/A
+
+**Source:** PR7 brainstorm pass (2026-05-30); ship-tier (b) visual-only route.
+**Spec position:** § 4.7 line 316 — "Visual spec for the stale-tab error chip is new design with no handoff reference and lands in PR7's brainstorm — flagged as a small redesign carve-out per § 2.2."
+**Reality:** Removing persistence (D59) eliminates the LARGEST stale-tab path (reload-with-persisted-tabs-the-current-identity-can't-see). But several mid-session paths remain even without persistence:
+  - PR is deleted on GitHub (rare).
+  - PR is transferred to another org the current login can't see (token boundary changes WITHOUT identity changing — `identity-changed` doesn't fire).
+  - Repo is archived or visibility flipped to private without identity-changing.
+  - Token scope reduced via the GitHub settings UI without rotation (rare).
+In any of these, the user's openTabs entry stays alive; clicking the tab navigates to PrDetailPage; usePrDetail returns an error; PrDetailPage's existing error fallback renders. **No tab-strip visual hint indicates which tab broke.** The user discovers it by clicking.
+**Plan resolution:** PR7 accepts the error-fallback-on-click UX explicitly. No tab-strip chip. The full chip design is deferred to a follow-up (or PR9 revisit) when at least one of: (a) the first stale-mid-session user report comes in, (b) persistence reopens (D59), (c) shell decision lands and may resurface persistence anyway.
+**Status:** Applied in PR7. Open for follow-up the moment either (a) or (b) lands.
+**Cross-refs:** D59; spec § 2.2 redesign carve-out policy.
+
+### D61 — `overflowMenuOpen` kept local to `PrTabStrip`, not exposed on the context
+
+**Source:** PR7 plan-time decision (2026-05-30) on context shape.
+**Spec position:** § 4.7 line 286 lists `overflowMenuOpen: boolean` as part of the App-level state shape.
+**Reality:** `overflowMenuOpen` has a single consumer (`PrTabStrip`). Exposing it through the context buys nothing for component composition and creates a wider context surface to test and migrate. Single-consumer booleans don't earn context promotion.
+**Plan resolution:** Kept as `useState(false)` local to `PrTabStrip`. The context exposes only `openTabs` + `unreadKeys` + mutator methods.
+**Status:** Applied in PR7. Trivial scope-shrink, not load-bearing for future work.
+**Cross-refs:** Spec § 4.7.
+
+### D62 — `app-chrome-tabstrip` parity baseline captured at 1 tab, not the spec's 3-tab target
+
+**Source:** PR7 plan-time decision (2026-05-30) on baseline capture scope.
+**Spec position:** § 4.7 line 319 — "Side-by-side capture target: `app-chrome-tabstrip` zone with three open PRs (two read, one unread)."
+**Reality:** `PRism.Web/TestHooks/FakePrReader.cs` returns null/empty for every PR reference != `FakeReviewBackingStore.Scenario` (acme/api/123). No `/test/seed-pr-fixture` route adds secondary fixtures. Capturing a 3-tab strip would require adding multi-fixture seeding to FakeReviewBackingStore + FakePrReader (real backend changes), which is out of scope for "no backend changes."
+**Plan resolution:** PR7 captures `app-chrome-tabstrip.png` with one tab in the unread-inactive state. This exercises strip layout, inactive-tab visual, unread dot, and the close affordance — sufficient for regression-guard purposes. The 3-tab visual diff remains uncaptured.
+**Status:** Applied in PR7. Reopens when multi-fixture seeding lands (likely a PR9 prerequisite, possibly bundled with the Inbox-multi-section parity work).
+**Cross-refs:** Spec § 4.7 capture target.
+
+### D63 — Unread-tab signal coverage is narrower than the spec implies (per-prRef subscription gate)
+
+**Source:** PR7 Task 11 implementation-time discovery (2026-05-30).
+**Spec position:** § 4.7 "Unread tabs show a small accent dot before the × close button + bold title." Implicit assumption: `pr-updated` SSE fires for any open tab when activity changes.
+**Reality:** The backend's `SseChannel.OnActivePrUpdated` fans `pr-updated` events out to subscribers registered for that prRef via `ActivePrSubscriberRegistry.SubscribersFor`. `useActivePrUpdates` (mounted by `PrDetailPage`) auto-subscribes on mount and auto-unsubscribes on unmount. So after a user opens PR A, navigates to Inbox, then PR A updates on GitHub — the SSE event fires with zero subscribers, `useTabUnreadSignal` never receives it, and the tab never gets the unread dot. The Task 11 parity baseline test works around this by explicitly POSTing `/api/events/subscriptions` for the captured prRef, but production has no equivalent.
+**Plan resolution:** PR7 ships the unread-dot visual and the `useTabUnreadSignal` wiring AS-IS. The dot WILL render when:
+- The user is on the PR's tab and a `pr-updated` event fires — but then the tab is active and the signal is filtered out by design.
+- The user opens a second PR (creating a second active subscription) and the first PR updates while still subscribed — but PrDetailPage auto-unsubscribes on unmount, so this window is narrow.
+The dot will NOT render in the most common case (open PR, navigate away, PR updates) without an additional subscription-management hook. PR7 does not ship this hook.
+**Follow-up shape:** A future slice should add a per-open-tab subscription manager — either a hook inside `OpenTabsProvider` that POSTs `/api/events/subscriptions` on `addTab` and DELETEs on `closeTab`, OR a backend change that fans out `pr-updated` to all SSE connections (not just per-prRef subscribers). The hook approach is the smaller diff; the backend change is the cleaner long-term shape.
+**Status:** Applied in PR7. The unread feature has narrow production coverage. Logged for follow-up.
+**Cross-refs:** Spec § 4.7 (unread visual); Task 11 plan section (test workaround).
+
+### D64 — `inbox.png` parity baseline captures the Loading state, not the populated Inbox
+
+**Source:** PR7 Task 11 implementation-time discovery (2026-05-30).
+**Spec position:** § 6.9 "PR7 explicitly re-captures `inbox` and `inbox-activity-rail` baselines as part of its scope."
+**Reality:** The existing `inbox` test (predates PR7 — only un-fixme'd in this slice) does `setupAndOpenScenarioPr` then `await page.locator('main').waitFor()`. `<main>` mounts during the loading state, so the screenshot captures "Loading..." text rather than the populated Inbox. The test passes (only on retry) but the baseline isn't a useful regression gate.
+**Plan resolution:** PR7 ships the captured "Loading..." baseline AS-IS. A future slice should change the wait target from `main` to a more specific Inbox element (e.g., the "Review requested" section header) and re-capture.
+**Status:** Applied in PR7. Cosmetic gap; the regression gate is weakened but the baseline file exists.
+**Cross-refs:** Spec § 6.9 (Inbox baseline re-capture).

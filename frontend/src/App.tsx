@@ -16,6 +16,14 @@ import { DraftsTabRoute } from './components/PrDetail/DraftsTab/DraftsTabRoute';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
+import { OpenTabsProvider } from './contexts/OpenTabsContext';
+import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
+import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
+
+function TabSignals() {
+  useTabUnreadSignal();
+  return null;
+}
 
 export function App() {
   const { authState, error, refetch } = useAuth();
@@ -58,6 +66,8 @@ export function App() {
   const tree: ReactNode = (
     <>
       <Header hasToken={authState.hasToken} />
+      <PrTabStrip />
+      <TabSignals />
       <Routes>
         <Route path="/setup" element={<SetupPage />} />
         <Route
@@ -84,7 +94,9 @@ export function App() {
     <ErrorBoundary>
       <ToastProvider>
         <CheatsheetProvider>
-          {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+          <OpenTabsProvider>
+            {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+          </OpenTabsProvider>
         </CheatsheetProvider>
       </ToastProvider>
     </ErrorBoundary>

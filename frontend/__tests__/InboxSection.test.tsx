@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect } from 'vitest';
 import { InboxSection } from '../src/components/Inbox/InboxSection';
+import { OpenTabsProvider } from '../src/contexts/OpenTabsContext';
 import type { InboxSection as InboxSectionDto, PrInboxItem } from '../src/api/types';
 
 const examplePr: PrInboxItem = {
@@ -36,7 +37,9 @@ const populatedSection: InboxSectionDto = {
 function renderSection(section: InboxSectionDto) {
   return render(
     <MemoryRouter>
-      <InboxSection section={section} enrichments={{}} showCategoryChip={false} maxDiff={10} />
+      <OpenTabsProvider>
+        <InboxSection section={section} enrichments={{}} showCategoryChip={false} maxDiff={10} />
+      </OpenTabsProvider>
     </MemoryRouter>,
   );
 }
