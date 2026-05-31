@@ -80,6 +80,8 @@ async function setupSettingsMocks(page: import('@playwright/test').Page) {
           store.ui.accent = value as Preferences['ui']['accent'];
         } else if (key === 'aiPreview' && typeof value === 'boolean') {
           store.ui.aiPreview = value;
+        } else if (key === 'density' && typeof value === 'string') {
+          store.ui.density = value as Preferences['ui']['density'];
         } else if (key.startsWith('inbox.sections.')) {
           const id = key.slice('inbox.sections.'.length) as SectionId;
           if (typeof value === 'boolean' && id in store.inbox.sections) {

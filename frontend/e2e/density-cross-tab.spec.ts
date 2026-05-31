@@ -115,8 +115,15 @@ test('density toggle in tab A propagates to tab B on focus refetch', async ({ br
   await expect(tabA.locator('html')).not.toHaveAttribute('data-density', /.+/, { timeout: 30_000 });
   await expect(tabB.locator('html')).not.toHaveAttribute('data-density', /.+/, { timeout: 30_000 });
 
-  // Toggle in tab A.
+  // Toggle in tab A. Wait for the POST to land so the mock store is mutated
+  // BEFORE tabB's focus-triggered refetch reads it. Without the wait, slow
+  // Windows CI runners (memory: feedback_windows_ci_fixed_delay_flake) can
+  // race the focus refetch ahead of the in-flight POST → stale read → flake.
+  const postPromise = tabA.waitForResponse(
+    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
+  );
   await tabA.getByLabel('Density').selectOption('compact');
+  await postPromise;
   await expect(tabA.locator('html')).toHaveAttribute('data-density', 'compact');
 
   // Bring tab B to the front + fire focus. usePreferences' `focus` listener

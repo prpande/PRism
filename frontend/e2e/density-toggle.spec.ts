@@ -114,7 +114,15 @@ test('toggling density flips data-density and persists across reload', async ({ 
   await expect(page.locator('html')).not.toHaveAttribute('data-density', /.+/, { timeout: 30_000 });
 
   // Toggle to compact — optimistic apply lands before the POST resolves.
+  // Wait for the POST to fully land so the mock store is mutated BEFORE the
+  // reload's GET fires; otherwise slow CI runners race the reload ahead of
+  // the in-flight POST and read the pre-mutation store (memory:
+  // feedback_windows_ci_fixed_delay_flake).
+  const postPromise = page.waitForResponse(
+    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
+  );
   await page.getByLabel('Density').selectOption('compact');
+  await postPromise;
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
 
   // Reload — POST persisted to the mock store; the next GET returns density=compact;
