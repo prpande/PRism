@@ -1107,6 +1107,17 @@ Root cause matches the Task 7 Step 1 caveat (pixel-diff caveat per design-lens r
 
 Pre-existing test-flakiness note: the test was observed as "flaky" — the first attempt timed out at 30s on the PAT-label step of `setupAndOpenScenarioPr` (the FakeReviewService init path appears to be slow on first attempt under cold backend), the retry succeeded. This flake is NOT introduced by PR9a (the unread-class selector `[class*="tabUnread"]` still matches the wrapper post-lift since `.tabUnread` moved with the other state classes per the plan's CSS-cascade note). Surfaced here for visibility; no PR9a action needed.
 
+### 2026-05-31 — Task 8 inbox baseline race fix needed two extras [IN-SCOPE per Category 1]
+
+The plan's Task 8 specified a single one-line wait-target swap (`page.locator('main').waitFor()` → `page.getByText(/Review requested/).waitFor()`). Implementation surfaced two pre-existing flake sources that the new wait target exposes:
+
+1. **AuthGuard re-bounce after `setupAndOpenScenarioPr`.** `setupAndOpenScenarioPr` ends with `waitForURL('/')`, but `waitForURL` matches a transient '/' navigation. The SPA's `App.tsx` AuthGuard then re-bounces to `/setup` if `authInvalidated` flips during the next microtask (observed via Playwright's failure `page snapshot` showing the Setup form with disabled Continue button, ~30s into the test). The previous `main.waitFor()` worked accidentally — `<main>` mounts on `/setup` too, and the Loading-state baseline (1.1 KB) captured the Setup page silhouette. The new `Review requested` wait correctly demands the Inbox to actually render. **Fix:** add `await page.goto('/')` after `setupAndOpenScenarioPr(page)` to force-navigate past the re-bounce. Mirrors the recovery pattern in the sibling `inbox-activity-rail` test (line 95) which also `page.reload()`s after the helper for the same reason.
+2. **Cold-start backend population exceeds the 30s default test timeout.** The fake-mode swap installs after Program.cs construction, but the first `GitHubSectionQueryRunner` tick still hits real GitHub with the fake token and gets 401, eating ~370ms × 5 sections before the orchestrator settles. Cold Kestrel + cold static-asset cache adds more. The first `prod`-project attempt consistently hit 30s timeout on `Review requested`. **Fix:** `test.setTimeout(60_000)` + `waitFor({ timeout: 45_000 })` on the locator, leaving 15s of headroom for the screenshot capture inside the bumped budget.
+
+**IN-SCOPE per § 4.9.1 Category 1 a11y harm-fix:** both extras are in service of the same D83 wait-target swap — without them the swap regresses an existing passing test. Total addition: 2 lines of code (one `goto('/')`, one `test.setTimeout`), one locator-timeout argument, plus three explanatory comments. No new test scaffolding, no new helpers, no behavior change in production.
+
+Verify run on `--project=prod` (the CI-relevant project): **1 passed in 15.0s** with no retry needed. The `dev` project still flakes on Vite cold-start (`getByLabel` never resolves) — pre-existing and documented in `playwright.config.ts:27-30`; CI does not run `dev` (per the `isCI ? [prodProject] : [devProject, prodProject]` split). The 47.9 KB inbox.png baseline was captured against the `prod` project — the CI canonical.
+
 ---
 
 ## Self-review checklist
