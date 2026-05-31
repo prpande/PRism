@@ -5,9 +5,8 @@ namespace PRism.AI.Placeholder;
 internal static class PlaceholderData
 {
     public const string SummaryBody =
-        "Refactors the Calc utilities to consolidate validation logic, simplifies error mapping, " +
-        "and tightens partial-failure semantics. Behavior is preserved; tests added for the new " +
-        "boundary cases.";
+        "Refactors the Calc utilities to tighten arithmetic boundary handling and simplify error mapping. " +
+        "Behavior is preserved; tests added for the new boundary cases.";
 
     public const string SummaryCategory = "Refactor";
 
