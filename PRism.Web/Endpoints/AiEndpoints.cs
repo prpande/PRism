@@ -26,6 +26,22 @@ internal static class AiEndpoints
                 return summary is null ? Results.NoContent() : Results.Ok(summary);
             });
 
+        // PR9b-ai-gating § 3.2. Mirrors /ai/summary's seam-resolve-and-map.
+        // D111: No per-PR IsSubscribed check while seam is canned-data only.
+        // When the binding swaps to a real AI implementation (real generation,
+        // not Noop/Placeholder), add an IsSubscribed gate before the seam call
+        // — DO NOT merge the seam swap without this gate.
+        app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/file-focus",
+            async (string owner, string repo, int number,
+                   IAiSeamSelector ai, CancellationToken ct) =>
+            {
+                var ranker = ai.Resolve<IFileFocusRanker>();
+                var entries = await ranker
+                    .RankAsync(new PrReference(owner, repo, number), ct)
+                    .ConfigureAwait(false);
+                return entries.Count == 0 ? Results.NoContent() : Results.Ok(entries);
+            });
+
         return app;
     }
 }
