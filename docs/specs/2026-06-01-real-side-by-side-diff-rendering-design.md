@@ -201,10 +201,10 @@ New rules under `:global(.diff-pane--split)`:
 - **Column widths via `<colgroup>`.** The table emits a `<colgroup>` in split mode with four `<col>` widths: `[3em, auto, 3em, auto]`. The two `auto` content columns share remaining width equally via `table-layout: fixed` scoped to split mode.
 - **Vertical pane separator.** `:global(.diff-pane--split) .diffGutterNew { border-left: 1px solid var(--border-1); }`. This places the divider between the old-content column and the new-gutter column — the same boundary the handoff's `.diff-half + .diff-half` rule at `design/handoff/screens.css:674` targets.
 - **Empty-cell visual treatment.** `:global(.diff-pane--split) .diffCellEmpty { background: var(--surface-1); }`. This neutralizes the row tint on the empty half of solo-delete and solo-insert rows. Without this, a delete-row tint cascades into the empty right cells and produces a uniformly red row across both panes — the wrong visual signal.
-- **Row tint isolation.** In split mode the `.diff-line--insert` / `.diff-line--delete` row classes color only the populated content cell (`:global(.diff-pane--split) .diff-line--insert .diffContent { background: var(--diff-insert-bg); }` and the symmetric delete rule). The row-level tint rules from `tokens.css` continue to apply in unified mode (where they target the full row).
+- **Row tint isolation.** In split mode the `.diff-line--insert` / `.diff-line--delete` row classes color only the populated content cell (`:global(.diff-pane--split) .diff-line--insert .diffContent { background: var(--diff-add-bg); }` and the symmetric delete rule). The row-level tint rules from `tokens.css` continue to apply in unified mode (where they target the full row).
 - **Long-line policy.** Split-mode content cells use `white-space: pre; overflow: visible` (the same policy as unified mode). The table widens past the pane to accommodate long lines and the body's `overflow: auto` handles horizontal scroll. The empty-side scroll trade-off is documented in § 4.3 and DSx4.
 
-No changes to global `tokens.css` — the existing `--diff-insert-bg` / `--diff-delete-bg` tokens are reused for cell-level tints.
+No changes to global `tokens.css` — the existing `--diff-add-bg` / `--diff-rem-bg` tokens are reused for cell-level tints.
 
 ### 6.4 No backend changes
 
