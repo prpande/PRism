@@ -190,30 +190,8 @@ export function DiffPane({
   const colSpan = isSplit ? 4 : 3;
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
 
-  return (
-    <div className={`diff-pane ${modeClass} ${styles.diffPane}`} data-testid="diff-pane">
-      <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
-        <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
-        {isLoading && (
-          <span
-            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
-            role="status"
-            aria-live="polite"
-          >
-            Loading…
-          </span>
-        )}
-      </div>
-      <div className={`diff-pane-body ${styles.diffPaneBody}`}>
-        <table className={`diff-table ${styles.diffTable}`}>
-          <tbody>{renderDiffRows()}</tbody>
-        </table>
-      </div>
-      {truncated && <DiffTruncationBanner prUrl={prUrl} />}
-    </div>
-  );
-
   function renderDiffRows(): React.ReactNode[] {
+    const path = selectedPath ?? '';
     const rows: React.ReactNode[] = [];
     let hunkCounter = -1;
     for (let idx = 0; idx < allLines.length; idx++) {
@@ -228,7 +206,7 @@ export function DiffPane({
           line={line}
           pair={pair}
           threadsAtLine={threadsAtLine}
-          filePath={selectedPath!}
+          filePath={path}
           colSpan={colSpan}
           onLineClick={onLineClick}
           renderComposerForLine={renderComposerForLine}
@@ -254,6 +232,29 @@ export function DiffPane({
     }
     return rows;
   }
+
+  return (
+    <div className={`diff-pane ${modeClass} ${styles.diffPane}`} data-testid="diff-pane">
+      <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+        <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
+        {isLoading && (
+          <span
+            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
+            role="status"
+            aria-live="polite"
+          >
+            Loading…
+          </span>
+        )}
+      </div>
+      <div className={`diff-pane-body ${styles.diffPaneBody}`}>
+        <table className={`diff-table ${styles.diffTable}`}>
+          <tbody>{renderDiffRows()}</tbody>
+        </table>
+      </div>
+      {truncated && <DiffTruncationBanner prUrl={prUrl} />}
+    </div>
+  );
 }
 
 interface DiffLineRowProps {
