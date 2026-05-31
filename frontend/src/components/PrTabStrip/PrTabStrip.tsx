@@ -23,10 +23,21 @@ function pathFor(ref: PrReference): string {
 /**
  * PrTabStrip — Row 2 browser-style strip listing every open PR tab.
  *
- * The outer tab element is a `<div role="tab" tabIndex={0}>` rather than a
- * `<button>` because the close `×` is a real `<button>` child — nesting
- * interactives inside a `<button>` is invalid HTML. The div keeps full
- * keyboard activation (Enter / Space) via the `onKeyDown` handler.
+ * DOM shape per tab (post-D92 lift, 2026-05-31):
+ *   <div className="tab tabActive? tabUnread?" data-prref>     // outer wrapper
+ *     <div role="tab" tabIndex={0} aria-selected ...>
+ *       ... #N, title, optional unread dot ...
+ *     </div>
+ *     <button aria-label="Close tab">×</button>                 // sibling action
+ *   </div>
+ * The close button is a sibling of role="tab" (not a child) to satisfy WAI-
+ * ARIA's no-nested-interactives rule (axe-core nested-interactive). The inner
+ * `<div role="tab">` keeps full keyboard activation (Enter / Space) via the
+ * `onKeyDown` handler.
+ *
+ * Note: the overflow menu's `<div role="menuitem">` structure has a related
+ * nested-interactive shape (two button children); see plan-deviations note
+ * + D85 a11y bundle. Not addressed in this PR.
  *
  * Close interactions:
  *   - Click on the `×` button — closes the tab (stopPropagation prevents the
@@ -130,36 +141,40 @@ function PrTabStripBody() {
     const active = isActiveTab(location.pathname, t);
     const unread = unreadKeys.has(key);
     const closeBlocked = submit.inFlight && submit.prRef === key;
-    const className = [styles.tab, active ? styles.tabActive : '', unread ? styles.tabUnread : '']
+    const wrapperClassName = [
+      styles.tab,
+      active ? styles.tabActive : '',
+      unread ? styles.tabUnread : '',
+    ]
       .filter(Boolean)
       .join(' ');
     const label = tabLabel(t);
     return (
-      <div
-        key={key}
-        role="tab"
-        tabIndex={0}
-        aria-selected={active}
-        className={className}
-        data-prref={key}
-        aria-label={label}
-        onClick={() => handleTabClick(t)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            handleTabClick(t);
-          }
-        }}
-        onMouseDown={(e) => {
-          if (e.button === 1 && !closeBlocked) {
-            e.preventDefault();
-            handleClose(t);
-          }
-        }}
-      >
-        <span className={styles.num}>#{t.ref.number}</span>
-        <span className={styles.title}>{label}</span>
-        {unread && <span className={styles.dot} aria-hidden="true" />}
+      <div key={key} className={wrapperClassName} data-prref={key}>
+        <div
+          role="tab"
+          tabIndex={0}
+          aria-selected={active}
+          className={styles.tabBody}
+          aria-label={label}
+          onClick={() => handleTabClick(t)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleTabClick(t);
+            }
+          }}
+          onMouseDown={(e) => {
+            if (e.button === 1 && !closeBlocked) {
+              e.preventDefault();
+              handleClose(t);
+            }
+          }}
+        >
+          <span className={styles.num}>#{t.ref.number}</span>
+          <span className={styles.title}>{label}</span>
+          {unread && <span className={styles.dot} aria-hidden="true" />}
+        </div>
         <button
           type="button"
           aria-label="Close tab"
