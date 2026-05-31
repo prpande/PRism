@@ -183,6 +183,11 @@ test.describe('parity baselines — PR Detail', () => {
     await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
     const diff = page.locator('[data-testid="files-tab-diff"]');
     await diff.waitFor();
+    // Wait for at least one diff-line row to render — the diff data fetch
+    // completes asynchronously, so the container may exist before the rows do.
+    // Without this gate the screenshot is a race (empty container vs populated),
+    // which produced a 219 px vs 296 px flake after the two-pane renderer landed.
+    await diff.locator('tr').first().waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
