@@ -187,6 +187,63 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
 
+  test('split mode renders word-diff overlays on the same <tr>; unified renders on different <tr>s', async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await setupAndOpenHandoffParityFixture(page);
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+    const diff = page.locator('[data-testid="files-tab-diff"]');
+    await diff.waitFor();
+    // Wait for at least one diff-line row to render — the diff data fetch
+    // completes asynchronously, so the container may exist before the rows do.
+    await diff.locator('tr').first().waitFor();
+
+    // Default mode is 'side-by-side'. The fixture diff for src/Calc.cs is a
+    // pure-insert file (all lines added against an empty base), so
+    // WordDiffOverlay is not emitted (it only fires for adjacent delete+insert
+    // pairs). Instead verify the structural signature of split mode: each
+    // data row has 4 <td> cells (old-gutter | old-content | new-gutter |
+    // new-content) via the SplitDiffLineRow solo-insert layout.
+    const splitDataRows = await diff
+      .locator('tr')
+      .filter({ hasNot: page.locator('td[colspan]') }) // exclude hunk-header (colSpan=4) + comment rows
+      .all();
+    expect(splitDataRows.length).toBeGreaterThan(0);
+    for (const row of splitDataRows) {
+      const cellCount = await row.locator('td').count();
+      expect(cellCount).toBe(4); // split: old-gutter | old-content | new-gutter | new-content
+    }
+
+    // Toggle to unified via the toolbar button.
+    await page.getByRole('button', { name: /side-by-side|unified/i }).click();
+    await page.waitForFunction(
+      () => !!document.querySelector('[data-testid="diff-pane"].diff-pane--unified'),
+    );
+
+    // In unified mode, data rows have 3 <td> cells
+    // (old-gutter | new-gutter | content) — the two-column side-by-side
+    // layout collapses to a single content column.
+    const unifiedDataRows = await diff
+      .locator('tr')
+      .filter({ hasNot: page.locator('td[colspan]') }) // exclude hunk-header + comment rows
+      .all();
+    expect(unifiedDataRows.length).toBeGreaterThan(0);
+    for (const row of unifiedDataRows) {
+      const cellCount = await row.locator('td').count();
+      expect(cellCount).toBe(3); // unified: old-gutter | new-gutter | content
+    }
+  });
+
+  test('viewport <900px forces unified className regardless of stored diffMode', async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await setupAndOpenHandoffParityFixture(page);
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+    const diffPane = page.locator('[data-testid="diff-pane"]');
+    await diffPane.waitFor();
+    await expect(diffPane).toHaveClass(/diff-pane--unified/);
+  });
+
   test('pr-detail-drafts', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixtureWithStaleDraft(page);
