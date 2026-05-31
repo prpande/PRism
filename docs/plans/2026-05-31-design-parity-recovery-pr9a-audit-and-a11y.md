@@ -1079,6 +1079,34 @@ Document any flakes, new warnings, or environment differences in this plan's Dev
 
 (empty at plan-write time; implementer fills in)
 
+### 2026-05-31 — Task 1 + Task 2 pre-flight gates: both PASS
+
+- **[Verified] D89 ScopePill** — grep across `frontend/src` returns exactly one match: the definition at `frontend/src/components/Setup/ScopePill.tsx:5`. Zero consumers. No adjacent module CSS file. Task 12 deletion proceeds.
+- **[Verified] D103 count prop scope** — `frontend/src/components/PrDetail/PrSubTabStrip.tsx:50` declares `count?: number` directly on `TabProps`. The Tab subcomponent receives the count as a prop; no new prop chain needed. `.prTabCountWarn` rule confirmed at `PrSubTabStrip.module.css:57` (`background: var(--warning-soft) !important; color: var(--warning-fg) !important`). Task 10-11 wiring proceeds.
+
+### 2026-05-31 — Task 10/11 refinement: warn class is drafts-only, not count-based [IN-SCOPE per Category 2]
+
+The plan's Task 11 Step 2 JSX applied `prTabCountWarn` whenever `count > 0`. Verification against the handoff source (`design/handoff/pr-detail.jsx:124` + `:134`) shows the handoff applies warn **drafts-only**:
+
+- Files tab (handoff line 124): `<span className="pr-tab-count">{fileCount}</span>` — base class only, no warn.
+- Drafts tab (handoff line 134): `{draftCount > 0 && <span className="pr-tab-count pr-tab-count-warn">{draftCount}</span>}` — both classes, drafts-only.
+
+The production code's existing `count !== undefined && count > 0` conditional render covers BOTH tabs uniformly. So the wiring refinement is: apply `prTabCountWarn` only when `id === 'drafts'`, not based on count.
+
+**IN-SCOPE per § 4.9.1 Category 2 cheap-keep:** still <20 LOC (single inline ternary), no new state, no new prop chain (uses existing `id` prop from `TabProps`). Justification: spec-named D11 verdict is "wire the warn variant"; the implementer chose the semantically correct trigger (drafts-only per handoff) over the plan's broader approximation. Tests assert drafts-only behavior with a positive assertion (drafts → warn applies) and a negative assertion (files → warn does NOT apply).
+
+The corrected Task 11 Step 2 JSX is documented inline in Task 11 below (revised post-discovery).
+
+### 2026-05-31 — Task 7 baseline re-capture produced zero pixel delta [IN-SCOPE per Category 1]
+
+Ran `npx playwright test parity-baselines.spec.ts -g "app-chrome-tabstrip" --project=prod --update-snapshots` against the post-D92-lift JSX + CSS. Playwright wrote the snapshot but `git diff --stat` shows zero changes to `frontend/e2e/__screenshots__/win32/app-chrome-tabstrip.png` — byte-identical to the PR8-vintage baseline. Verification run without `--update-snapshots` passed in 14.1s, confirming the post-lift state matches the existing baseline.
+
+Root cause matches the Task 7 Step 1 caveat (pixel-diff caveat per design-lens review): the `.close` rule sets `opacity: 0` at rest, the existing `app-chrome-tabstrip` test captures the unread-inactive state without hovering, and the close button is invisible in both pre-lift and post-lift snapshots. The structural restructure produces zero visible pixel delta.
+
+**Resolution:** ship an empty commit (`git commit --allow-empty`) at the Task 7 boundary with the plan-specified message so the 5-commit contract for Tasks 3-7 holds and the post-lift baseline review is documented in the git history. **IN-SCOPE per § 4.9.1 Category 1 a11y harm-fix:** the empty commit documents that the parity baseline was reviewed against the post-lift JSX/CSS and confirmed to match — defensive evidence even when the diff is zero. Future readers can see at a glance that Task 7 was executed and verified, not skipped.
+
+Pre-existing test-flakiness note: the test was observed as "flaky" — the first attempt timed out at 30s on the PAT-label step of `setupAndOpenScenarioPr` (the FakeReviewService init path appears to be slow on first attempt under cold backend), the retry succeeded. This flake is NOT introduced by PR9a (the unread-class selector `[class*="tabUnread"]` still matches the wrapper post-lift since `.tabUnread` moved with the other state classes per the plan's CSS-cascade note). Surfaced here for visibility; no PR9a action needed.
+
 ---
 
 ## Self-review checklist
