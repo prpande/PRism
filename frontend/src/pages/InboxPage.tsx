@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
-import { useCapabilities } from '../hooks/useCapabilities';
-import { usePreferences } from '../hooks/usePreferences';
+import { useAiGate } from '../hooks/useAiGate';
 import { InboxBanner } from '../components/Inbox/InboxBanner';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
 import { InboxSection } from '../components/Inbox/InboxSection';
@@ -14,11 +13,9 @@ import styles from './InboxPage.module.css';
 export function InboxPage() {
   const { data, error, isLoading, reload } = useInbox();
   const updates = useInboxUpdates();
-  const { capabilities } = useCapabilities();
-  const { preferences } = usePreferences();
 
-  const showCategoryChip = capabilities?.inboxEnrichment === true;
-  const showActivityRail = preferences?.ui.aiPreview === true;
+  const showCategoryChip = useAiGate('inboxEnrichment');
+  const showActivityRail = useAiGate('inboxRanking');
   const sections = data?.sections ?? [];
   const allEmpty = sections.length > 0 && sections.every((s) => s.items.length === 0);
 
