@@ -1,7 +1,6 @@
 /* Ports handoff `.stale-row*` (screens.css:473-495) under production
    class names. Mounted as <li> children of UnresolvedPanel's .unresolvedPanelRows ul.
-   D48: .stale-ai (handoff AI suggestion span) NOT ported — production has no
-   aiPreview data path on draft DTOs; deferred to PR9.
+   D48 closed in PR9b-ai-gating per § 4.5 — .staleAi now ported.
    D55: deliberately deviates from handoff's `flex-direction: column` — production
    keeps the `row gap-2` global compose on the JSX <li>; the body quote gets
    `flex: 1 1 100%` to push onto its own line, approximating the handoff
@@ -45,7 +44,6 @@
   padding: var(--s-2) var(--s-3);
   border-radius: var(--radius-2);
   font-size: var(--text-xs);
-  flex: 1 1 100%;
 }
 
 .staleAiBody {
