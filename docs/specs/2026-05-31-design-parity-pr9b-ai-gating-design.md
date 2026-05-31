@@ -17,6 +17,8 @@ Third and final sub-PR of the PR9b family. Closes D24 (AiSummaryCard active-shap
 
 The slice's PR9b family is split into three sub-PRs (density toggle, global-search stub, AI-gating sweep) per spec § 4.9.2. PR9b-density (PR #96) and PR9b-search (PR #96 — bundled) merged 2026-05-31. PR9b-ai-gating closes the family by wiring the four named AI surfaces from origin § 6.4 (AI summary card, AI hunk annotations, AI focus dots in file tree, AI suggestion in stale-draft rows) under a single coherent gating policy.
 
+**Scope-reconciliation note (vs origin § 4.9.2's PR9b-ai-gating candidate list).** Origin § 4.9.2 enumerates the PR9b-ai-gating candidate set as "D24 + D28 + D32a + D48." This spec reclassifies **D28 (iter-new-dot)** out of the AI-gating sweep entirely — the dot is structurally a session-state signal (newest iteration on first load), not an AI-derived signal, despite its handoff framing in the IterationTabStrip. D28's right home is a separate session-memory design pass (D106). The closure claim "PR9b family closes" is honest against origin § 6.4's four-surface list (all wired) but narrows origin § 4.9.2's four-deferral list by one (D28). This is a deliberate scope re-categorization, not an oversight.
+
 ## 2. Scope
 
 ### 2.1 In scope
@@ -48,7 +50,10 @@ The slice's PR9b family is split into three sub-PRs (density toggle, global-sear
   - Rename `.fileTreeAi` → `.fileTreeAiMed` (existing dormant rule, now Medium-shaped with handoff `opacity: 0.6`); add new `.fileTreeAiHigh` with handoff glow.
   - Add a wrapper `.fileTreeAi` column that reserves width unconditionally and collapses to `width: 0` when `aiPreview` is off — prevents row layout shift on toggle (handoff `screens.css:580-581` pattern).
   - Replace existing stub `AiHunkAnnotation.module.css` to port handoff `.ai-hunk` + `.ai-hunk-meta`; drop the existing dormant `.aiHunkActions` rule per D108.
-  - Add minimal `.stale-ai` styling to `StaleDraftRow.module.css` per handoff `screens.css` AI-suggestion span pattern.
+  - Add `.staleAi` + `.staleAiBody` + `.staleAiLabel` rules to `StaleDraftRow.module.css` per handoff `screens.css:489-494` shape (icon + labeled body, `display: flex; gap`).
+
+- **Backend placeholder alignment (§ 4.7):**
+  - Update `PlaceholderData.cs` to target `src/Calc.cs` (the canned `FakePrReader` PR's actual file) instead of the fictional `services/leases/…` paths. One-file edit (~10 LOC) so the wiring is visually demonstrable in cohort demos without requiring endpoint mocks.
 
 - **Tests:**
   - 6 new vitest specs (`useAiGate`, `useAiFileFocus`, `useAiHunkAnnotations`, `useAiDraftSuggestions`, `AiHunkAnnotation`, `AskAiButton`).
@@ -58,12 +63,13 @@ The slice's PR9b family is split into three sub-PRs (density toggle, global-sear
   - 1 new Playwright spec (`ai-gating-sweep.spec.ts`) covering off → on → off flow with all five AI-surface classes (AiSummaryCard / FileTree dots / AiHunkAnnotation / StaleDraftRow ai-suggestion / AskAiButton) plus InboxPage activity rail.
   - Re-capture 3 existing parity baselines (`pr-detail-files-tree.png`, `pr-detail-files-diff.png`, `pr-detail-reconciliation-panel.png`) — the new DOM is inside their zones.
 
-- **Deferrals (4 new D-entries to land in the slice sidecar):**
+- **Deferrals (6 new D-entries to land in the slice sidecar):**
   - D106 — D28 iter-new-dot DEFER-TO-V1.X (no backend signal; session-memory work, not AI).
   - D108 — `AiHunkAnnotation` action buttons (Quote / Dismiss) DEFER-TO-V1.X.
-  - D109 — Hunk-annotations + draft-suggestions endpoint per-PR vs per-hunk/per-file seam-shape divergence.
+  - D109 — Hunk-annotations endpoint per-PR vs per-hunk seam-shape divergence.
   - D110 — D24 verdict CONFIRMED (smaller shape).
-  - D111 — Per-endpoint `IsSubscribed` gating on `/ai/*` family deferred to V1.X (real-AI-backend swap trigger).
+  - D111 — Per-endpoint `IsSubscribed` gating on `/ai/*` family deferred to V1.X (real-AI-backend swap trigger, atomically enforced).
+  - D112 — `useAiGate` two-factor abstraction's behavioral payoff is post-backend-decoupling; `composerAssist` + `inboxRanking` key-choice semantic-imprecision liabilities documented.
 
   D107 (D48 deferral) is NOT created — the original premise that no `IDraftSuggester` seam exists was empirically wrong (verified during ce-doc-review). D48 is wired in this sub-PR; the "would-have-been-D107" slot is documented in the sidecar as "closed; rationale superseded — see § 4.5."
 
@@ -78,6 +84,8 @@ The slice's PR9b family is split into three sub-PRs (density toggle, global-sear
 ## 3. Architecture
 
 ### 3.1 The gating policy
+
+**Wire coupling caveat (read first).** Today, `AiCapabilities` are derived 1:1 from `AiPreviewState.IsOn` at the backend (`CapabilitiesEndpoints.cs:13` returns `state.IsOn ? AiCapabilities.AllOn : AiCapabilities.AllOff`; `PreferencesEndpoints.cs:47` mirrors `aiState.IsOn = config.Current.Ui.AiPreview`). This means every `useAiGate(key)` call returns the same value as `aiPreview` regardless of which capability key is named — the two-factor shape is forward-compat scaffolding for a future product where individual capabilities flip independently of `aiPreview` (e.g., per-user feature flags, A/B rollout of an inbox-ranking algorithm, real-AI seam-swap with cost-controlled per-capability rollout). The migration's behavioral payoff TODAY is consistency of abstraction, not divergent gating. The `AskAiButton` tightening (§ 4.2) and `InboxPage` tightenings (§ 4.6) are no-ops on the current wire — they ensure that when the backend decouples capabilities from `aiPreview` (a V1.X-shaped change), the frontend doesn't need a second sweep. This caveat affects how we frame the work: "wire each AI surface under a single gating policy so future capability decoupling is a backend-only change" — not "fix a bug." See D112 for the deferred backend-decoupling decision.
 
 Today every AI surface independently computes its own gate:
 
@@ -296,7 +304,7 @@ export function AskAiButton({ onClick }: { onClick: () => void }) {
 
 Component loses its `aiPreview: boolean` prop; `PrHeader.tsx:336` drops the prop and stops passing it (verified call site).
 
-**Framing — UI consistency fix, not a bug.** The component's own header comment notes "no backend touchpoint" — the original `aiPreview`-only gate was defensible (the button itself makes no AI call). The sweep tightens this to align with the surrounding `AiComposerAssistant`, which gates on `composerAssist` for the same question-answering surface area. Picking `'composerAssist'` (over `'summary'` or a new dedicated `'askAi'` key) couples Q&A with composer-assist on the assumption that an operator who wants composer assist off also wants Ask AI off. Reversal cost if cohort signal disagrees: add a dedicated `'askAi'` capability key (one-line addition to `AiCapabilities` + this hook arg). The current tightening pays for itself even if reversed.
+**Framing — abstraction consistency, not behavior change.** The component's own header comment notes "no backend touchpoint" — the original `aiPreview`-only gate was defensible (the button itself makes no AI call). Today the change is a no-op behaviorally because capabilities are coupled to `aiPreview` on the wire (see § 3.1 caveat). The sweep tightens this to align with the surrounding `AiComposerAssistant`, which already gates on `composerAssist` for the same question-answering surface area. Picking `'composerAssist'` (over `'summary'` or a new dedicated `'askAi'` key) couples Q&A with composer-assist on the assumption that when the backend decouples capabilities, an operator who wants composer assist off also wants Ask AI off. Note that § 4.6 picks the key by semantic name (`'inboxRanking'` because the activity rail surfaces ranked PR activity); § 4.2 picks by adjacent-surface coupling. The two strategies are reconciled by: name-match where a precise key exists; closest-coupling-surface where it doesn't (no `'askAi'` key exists today). Reversal cost if cohort signal disagrees post-decoupling: add a dedicated `'askAi'` capability key (one-line addition to `AiCapabilities` + this hook arg).
 
 ### 4.3 FileTree focus dot (D32a)
 
@@ -352,12 +360,12 @@ const focusLevel = focusByPath?.get(node.path) ?? null;
 <span
   className={`file-tree-ai ${styles.fileTreeAi}`}
   data-on={aiPreview ? '1' : '0'}
+  aria-hidden="true"
 >
   {focusLevel && focusLevel !== 'low' && (
     <span
       className={focusLevel === 'high' ? styles.fileTreeAiHigh : styles.fileTreeAiMed}
       title={`AI focus: ${focusLevel}`}
-      aria-hidden="true"
     />
   )}
 </span>
@@ -507,6 +515,8 @@ export function AiHunkAnnotation({ annotation }: AiHunkAnnotationProps) {
 
 Drops the no-op stub interface. Tone-to-chip mapping replaces the boolean ternary so the wire's `'concern'` value renders as `chip-danger` "Concern" rather than silently falling through to `chip-info` "Note". `chip-info`, `chip-warning`, and `chip-danger` globals are all already in `tokens.css` from prior PRs. `.ai-icon` is also already global.
 
+**`'concern'` tone is forward-compat without handoff parity gate.** Handoff `diff.jsx:134-136` defines only binary severity (`warn` → `chip-warning` "Behavior change"; else → `chip-info` "Note"); there is no handoff visual reference for the `'concern'` tone. The TypeScript exhaustiveness check on `TONE_CHIP` (`Record<AnnotationTone, ...>`) is the correctness mechanism — when a future placeholder or v2 backend emits the third value, the renderer maps it deterministically rather than narrowing silently. Visual review for the `'concern'` chip happens at the moment a real producer emits it; until then, the Playwright spec (§ 5.5 step 4) exercises the chip-danger render path via mocked data so the variant is at least screenshotted before merge. Acknowledged as forward-compat scaffolding with no handoff parity gate.
+
 **Action buttons NOT shipped.** Handoff `.ai-hunk-actions` (Quote in comment / Dismiss) requires composer-seed plumbing for Quote and per-session dismissal state for Dismiss. Both are cross-cutting V1.X work — deferred via D108.
 
 **Replace existing stub `AiHunkAnnotation.module.css`:** (the file ships today as a stub with `.aiHunk`/`.aiHunkMeta`/`.aiHunkActions` — the rewrite replaces it. Drop the dormant `.aiHunkActions` rule since action buttons are deferred per D108.)
@@ -558,7 +568,9 @@ The `.aiHunkRow > td` selector covers the table-row wrapper added in DiffPane.
 **Data path:**
 
 ```tsx
-// UnresolvedPanel.tsx — call site
+// UnresolvedPanel.tsx — call site (DraftLike is the existing comment|reply discriminated
+// union at frontend/src/components/PrDetail/draftKinds.ts; reply drafts have no file
+// anchor so they never match a suggestion).
 const draftSuggestionsEnabled = useAiGate('draftSuggestions');
 const allSuggestions = useAiDraftSuggestions(prRef, draftSuggestionsEnabled);
 
@@ -574,20 +586,23 @@ const suggestionFor = useMemo(() => {
   return m;
 }, [allSuggestions]);
 
-// Pass down to each StaleDraftRow
+// Pass down to each StaleDraftRow. Discriminate on draft.kind first — DraftReplyDto
+// has no filePath/lineNumber so the suggestion is always null for reply drafts.
 <StaleDraftRow
   ...existing props
   aiSuggestion={
-    draft.data.filePath != null && draft.data.lineNumber != null
+    draft.kind === 'comment' &&
+    draft.data.filePath != null &&
+    draft.data.lineNumber != null
       ? suggestionFor?.get(`${draft.data.filePath}:${draft.data.lineNumber}`) ?? null
       : null
   }
 />
 ```
 
-The anchor key `(filePath, lineNumber)` matches the placeholder data's emission shape (`PlaceholderDraftSuggester.cs:12` returns `("services/leases/LeaseRenewalProcessor.cs", 142, "Worth a comment on the retry budget here?")`). PR-root drafts (filePath/lineNumber null) never match — appropriate behavior; the suggestion surface is anchor-scoped.
+The anchor key `(filePath, lineNumber)` matches the placeholder data's emission shape (`PlaceholderDraftSuggester.cs:12` returns `("services/leases/LeaseRenewalProcessor.cs", 142, "Worth a comment on the retry budget here?")`). PR-root comment drafts (filePath/lineNumber null) and reply drafts (no anchor at all) never match — appropriate behavior; the suggestion surface is line-anchored. § 4.7 aligns `PlaceholderDraftSuggester` with the canned PR so the surface renders in the cohort demo.
 
-**StaleDraftRow gains a prop + conditional render:**
+**StaleDraftRow gains a prop + handoff-faithful conditional render** (mirrors handoff `pr-detail.jsx:336-342` — a `<div>` flex container with a sparkles icon, a labeled "AI suggestion" header row, and the body text):
 
 ```tsx
 // StaleDraftRow.tsx — extend Props
@@ -597,35 +612,55 @@ interface Props {
 }
 
 // In return, between .stale-draft-row-preview and the action buttons:
+// (aiSuggestion.body is rendered as a React text node — never via
+// dangerouslySetInnerHTML or a markdown parser. The DraftSuggestion contract
+// is plain string; any future rich-text rendering requires explicit security
+// review.)
 {aiSuggestion && (
-  <span
+  <div
     className={`stale-ai ai-tint ${styles.staleAi}`}
     data-testid="stale-draft-ai-suggestion"
   >
-    {aiSuggestion.body}
-  </span>
+    <span className="ai-icon" aria-hidden="true">✨</span>
+    <div className={styles.staleAiBody}>
+      <div className={`ai-summary-label ${styles.staleAiLabel}`}>AI suggestion</div>
+      <div>{aiSuggestion.body}</div>
+    </div>
+  </div>
 )}
 ```
 
-The `.ai-tint` global (already in `tokens.css:525-528`) supplies the accent-tinted background; the local `.staleAi` rule adds row-fit sizing + padding to integrate with `.staleDraftRow`'s `flex` layout.
+The element is a `<div>` (not `<span>`) because it contains block-level children — `<span>` enclosing `<div>` is invalid HTML. The `.ai-tint` global (already in `tokens.css:525-528`) supplies the accent-tinted background; `.ai-icon` (already in `tokens.css:530-539`) supplies the icon surface; `.ai-summary-label` (already in `screens.css:91` as a global; verify portage to production globals at implementation time — if absent, lift to `tokens.css` per § 3.1's lift-on-second-use policy since `AiSummaryCard` is the second consumer).
 
 **CSS (append to `StaleDraftRow.module.css`):**
 
 ```css
-/* AI suggestion span — visible when useAiGate('draftSuggestions') is true AND
-   a placeholder seam emits a suggestion matching the draft's anchor.
-   D48 closure in PR9b-ai-gating. */
+/* AI suggestion row — handoff `pr-detail.jsx:336-342` shape (icon + labeled
+   body). Visible when useAiGate('draftSuggestions') is true AND a placeholder
+   seam emits a suggestion matching the draft's anchor. D48 closure in
+   PR9b-ai-gating. Ports handoff `screens.css:489-494`. */
 .staleAi {
-  padding: 2px var(--s-2);
-  border-radius: var(--radius-1);
+  display: flex;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-2);
   font-size: var(--text-xs);
-  color: var(--text-2);
-  flex: 1 1 auto;
+  flex: 1 1 100%;
+}
+
+.staleAiBody {
+  flex: 1;
   min-width: 0;
+}
+
+.staleAiLabel {
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 2px;
 }
 ```
 
-Production placeholder data targets `services/leases/LeaseRenewalProcessor.cs:142` — does NOT match the canned `FakePrReader` PR's `src/Calc.cs`. The Playwright spec (§ 5.5) mocks the endpoint to match the stale-draft fixture's anchor. Aligning placeholder data with the canned PR is a follow-up.
+`flex: 1 1 100%` matches the existing `.staleDraftRowPreview` row-wrap pattern (verified at `StaleDraftRow.module.css` — preview also wraps to full width). When the suggestion row is present it consumes its own line below the preview; when absent, no slot is reserved.
 
 ### 4.6 InboxPage gating tightening (audit findings)
 
@@ -641,9 +676,47 @@ const showCategoryChip = useAiGate('inboxEnrichment');
 const showActivityRail = useAiGate('inboxRanking');
 ```
 
-The first migration adds the `aiPreview` gate (was capability-only). The second adds the capability gate (was `aiPreview`-only). Both align with the surrounding AI-surface gating pattern. `useCapabilities` and `usePreferences` direct reads stay only for non-AI fields (none currently in InboxPage). The inline `const { capabilities } = useCapabilities(); const { preferences } = usePreferences();` lines at the top of the function can be removed if no other consumers remain — verify at implementation time.
+The first migration adds the `aiPreview` gate (was capability-only). The second adds the capability gate (was `aiPreview`-only). Both align with the surrounding AI-surface gating pattern. Per § 3.1's coupling caveat, both migrations are no-ops on the current wire — `inboxRanking` and `inboxEnrichment` flip in lockstep with `aiPreview` today. The behavioral payoff lands when the backend decouples capabilities (D112). `useCapabilities` and `usePreferences` direct reads stay only for non-AI fields (none currently in InboxPage). The inline `const { capabilities } = useCapabilities(); const { preferences } = usePreferences();` lines at the top of the function can be removed if no other consumers remain — verify at implementation time.
 
-**Capability key choice for the activity rail:** `inboxRanking` — the activity rail surfaces ranked PR activity, which is what the capability key was named for. If a future cohort signal indicates a coupling problem (e.g., "I want enrichment off but the rail on, or vice versa"), splitting is one capability key edit + one call-site swap.
+**Capability key choice for the activity rail:** `inboxRanking` — chosen as the closest semantic match in the current `AiCapabilities` shape (the rail surfaces ranked PR activity). The choice carries a semantic-imprecision liability: a future schema split that introduces a dedicated `activityRail` key would leave this site bound to the wrong key. The reversal cost is named in D112 (one key addition + one call-site swap).
+
+**Layout behavior when the rail is gated away.** When `useAiGate('inboxRanking')` returns false, `<ActivityRail />` doesn't mount. The InboxPage `<div className={styles.grid}>` (verify the actual grid-template-columns at implementation time against `InboxPage.module.css`) collapses to single-column display — the main PR queue expands to fill the row. This is the post-decoupling user experience for capability-off + aiPreview-on; the Playwright spec (§ 5.5 step 2) asserts the single-column state in the off-mode assertion suite.
+
+### 4.7 PlaceholderData alignment with canned PR fixture
+
+The current `PlaceholderData.cs` targets fictional paths from S3-era spec text (`services/leases/LeaseRenewalProcessor.cs`) that don't exist in the canned `FakePrReader` PR (`src/Calc.cs`). Against the placeholder seam (not mocked endpoints), all three new surfaces render nothing in the default cohort fixture — and the cohort demo for D32a + D48 + AiHunkAnnotation appears broken.
+
+Fold the alignment fix into THIS sub-PR (one-file edit, ~10 LOC) so the wiring is visually demonstrable in cohort demos without requiring endpoint mocks:
+
+```csharp
+// PRism.AI.Placeholder/PlaceholderData.cs — replace path targets with canned PR's actual file
+public static IReadOnlyList<FileFocus> FileFocus { get; } = new[]
+{
+    new FileFocus("src/Calc.cs", FocusLevel.High),
+    // Single-file canned PR — only one entry. When FakePrReader grows to
+    // multiple files in a future slice, add a Medium entry for the second.
+};
+
+public static IReadOnlyList<HunkAnnotation> HunkAnnotations { get; } = new[]
+{
+    new HunkAnnotation("src/Calc.cs", 0, "Reads cleaner - same behavior.", AnnotationTone.Calm),
+    // Hunk index 0 is the single hunk in the canned PR. Adding a second
+    // entry (HeadsUp at index 1) is deferred until FakePrReader emits a
+    // multi-hunk diff — see § 9 follow-on.
+};
+
+public static IReadOnlyList<DraftSuggestion> DraftSuggestions { get; } = new[]
+{
+    new DraftSuggestion("src/Calc.cs", 5, "Worth a comment on the validation here?"),
+    // Anchor at line 5 (or whichever line the canned PR's stale-draft
+    // fixture targets — verify at implementation time against
+    // FakeReviewBackingStore.Scenario's stale-draft anchor).
+};
+```
+
+The verify-at-implementation-time note for line 5 is real: the canned stale-draft fixture's anchor must match the suggestion line exactly. Read `PRism.Core/PrDetail/FakeReviewBackingStore.cs` for the stale-comment anchor and align. The Playwright spec (§ 5.5) continues to mock endpoints for the multi-tone HunkAnnotation case (Calm + HeadsUp + Concern) since the placeholder ships only one canned hunk annotation — placeholder alignment + Playwright mocks are complementary, not redundant.
+
+The single-tone placeholder constraint is acknowledged: the cohort demo shows one Calm annotation; the Playwright spec exercises all three tones. § 9 carries the follow-on "grow FakePrReader to multi-hunk + add HeadsUp/Concern placeholder entries."
 
 ## 5. Tests
 
@@ -686,27 +759,27 @@ Specs that test the migrated component's other behavior (not the gate) can keep 
 
 | File | Coverage |
 |---|---|
-| `tests/PRism.Web.Tests/Endpoints/AiFileFocusEndpointTests.cs` | 200 with array body when seam returns populated; 204 when seam returns empty; route binding correct (owner/repo/number passed through). |
-| `tests/PRism.Web.Tests/Endpoints/AiHunkAnnotationsEndpointTests.cs` | Same two cases. |
-| `tests/PRism.Web.Tests/Endpoints/AiDraftSuggestionsEndpointTests.cs` | Same two cases. |
+| `tests/PRism.Web.Tests/Endpoints/AiFileFocusEndpointTests.cs` | 200 with array body when seam returns populated; 204 when seam returns empty; route binding correct (owner/repo/number passed through); **401 without `X-PRism-Session` header / cookie** (asserts the new endpoint is covered by `SessionTokenMiddleware`'s `/api/*` enforcement — catches accidental middleware exemptions). |
+| `tests/PRism.Web.Tests/Endpoints/AiHunkAnnotationsEndpointTests.cs` | Same three cases (200, 204, 401). |
+| `tests/PRism.Web.Tests/Endpoints/AiDraftSuggestionsEndpointTests.cs` | Same three cases (200, 204, 401). |
 
-Mirrors `tests/PRism.Web.Tests/Endpoints/AiEndpointsTests.cs` structure verbatim. No per-endpoint `IsSubscribed` test needed — endpoints follow `/ai/summary`'s no-per-endpoint-gate precedent per § 3.2. The session-token middleware enforcement is covered by existing `SessionTokenMiddleware` tests.
+Mirrors `tests/PRism.Web.Tests/Endpoints/AiEndpointsTests.cs` structure verbatim. The 401-without-session-token assertion is added explicitly so an implementer who accidentally widens `SessionTokenMiddleware`'s `/api/health`-style exemption to include `/ai/*` paths is caught by CI rather than shipping unauthenticated AI endpoints. No per-endpoint `IsSubscribed` test needed — endpoints follow `/ai/summary`'s no-per-endpoint-gate precedent per § 3.2. The middleware enforcement is also covered by existing `SessionTokenMiddleware` unit tests at the middleware level; these new tests add per-route spot-checks.
 
 ### 5.5 Playwright e2e — new (1 spec)
 
 `frontend/e2e/ai-gating-sweep.spec.ts` — single spec covering the canonical user flow:
 
 1. Land on PR detail with `aiPreview` off (default fixture).
-2. Assert: no AI summary card visible (`getByTestId('ai-summary-card')` not present); no FileTree dots (`.fileTreeAiHigh, .fileTreeAiMed` count zero — the outer `.fileTreeAi` slot exists but is collapsed); no `.ai-hunk` blocks (`getByTestId('ai-hunk-annotation')` count zero); no Ask AI button (`getByRole('button', { name: 'Ask AI' })` not present); no `.stale-ai` span (`getByTestId('stale-draft-ai-suggestion')` not present); navigate to Inbox tab and assert no activity rail visible.
+2. Assert: no AI summary card visible (`getByTestId('ai-summary-card')` not present); no FileTree dots (`.fileTreeAiHigh, .fileTreeAiMed` count zero — the outer `.fileTreeAi` slot exists but is collapsed); no `.ai-hunk` blocks (`getByTestId('ai-hunk-annotation')` count zero); no Ask AI button (`getByRole('button', { name: 'Ask AI' })` not present); no `.stale-ai` row (`getByTestId('stale-draft-ai-suggestion')` not present); navigate to Inbox tab and assert no activity rail visible AND the inbox grid is single-column (`getByTestId('inbox-grid')` has only one column child — verify the assertion shape against InboxPage.module.css's grid layout at implementation time).
 3. Register endpoint mocks BEFORE toggling (intercept-first pattern — eliminates the race window):
    - `POST /api/preferences` → 204
    - `GET /api/pr/.../ai/summary` → 200 placeholder summary
    - `GET /api/pr/.../ai/file-focus` → 200 `[{path: 'src/Calc.cs', level: 'high'}, {path: 'src/Calc.Tests.cs', level: 'medium'}]` (kebab-case enum per § 3.3 wire-shape note)
    - `GET /api/pr/.../ai/hunk-annotations` → 200 with at least one Calm + one HeadsUp + one Concern annotation matching real hunk indices in the canned PR's first file
    - `GET /api/pr/.../ai/draft-suggestions` → 200 with at least one suggestion matching the stale-draft fixture's anchor
-4. Toggle `aiPreview` on via the AI preview toggle in `HeaderControls` — locator `getByRole('switch', { name: /AI preview/i })` OR the existing `data-testid="ai-preview-toggle"` if present (verify at implementation time). Use `waitForResponse('/api/preferences')` on the toggle POST before subsequent assertions.
-5. Assert: AI summary card visible; FileTree shows one `.fileTreeAiHigh` + one `.fileTreeAiMed` (outer `.fileTreeAi` slot count matches files.length, regardless of toggle state); DiffPane (after navigating to Files tab + selecting the matching file) shows all three `.ai-hunk` blocks (Calm → "Note", HeadsUp → "Behavior change", Concern → "Concern") immediately after their matching hunk headers; the stale-draft fixture row shows `.stale-ai` with body text; Ask AI button visible; activity rail visible on Inbox tab.
-6. Toggle `aiPreview` off; assert all surface classes disappear (FileTree `.fileTreeAi` slot collapses to `width: 0` but remains in the DOM).
+4. Toggle `aiPreview` on via the AI preview toggle in `HeaderControls` — locator `getByRole('button', { name: /AI preview/i })` (the toggle is a `<button>` with `aria-pressed`, not `role="switch"` — verified at `AiPreviewToggle.tsx:8-11`). Use `waitForResponse('/api/preferences')` on the toggle POST before subsequent assertions.
+5. Assert: AI summary card visible; FileTree shows one `.fileTreeAiHigh` + one `.fileTreeAiMed` (outer `.fileTreeAi` slot count matches files.length, regardless of toggle state); DiffPane (after navigating to Files tab + selecting the matching file) shows all three `.ai-hunk` blocks (Calm → "Note" / `chip-info`, HeadsUp → "Behavior change" / `chip-warning`, Concern → "Concern" / `chip-danger`) immediately after their matching hunk headers; the stale-draft fixture row shows `.stale-ai` with sparkles icon + "AI suggestion" label + body text; Ask AI button visible; activity rail visible on Inbox tab; inbox grid is two-column.
+6. Toggle `aiPreview` off; assert all surface classes disappear (FileTree `.fileTreeAi` slot collapses to `width: 0` but remains in the DOM; inbox grid collapses back to single-column).
 
 **Race prevention:** Mock registrations BEFORE the toggle fires (Playwright `page.route` calls precede `page.locator(...).click()`). Use `waitForResponse` on the toggle POST before subsequent assertions, per `feedback_windows_ci_fixed_delay_flake` memory. Don't use fixed sub-second delays. The `feedback_test_factory_configurewebhost` precedent applies for backend test factories.
 
@@ -768,19 +841,13 @@ What the AI family lacks (relative to mutating endpoints like submit/resume/disc
 
 This reasoning holds for canned-data seams. When the seam binding swaps to real AI (V1.X+, see D109 for endpoint redesign trigger), the seam may produce data derived from the actual PR content — per-file paths, per-hunk-content annotations, real-draft-content suggestions. At that point, adding `IsSubscribed` becomes worth re-evaluating: a session-authenticated caller without an active subscription would otherwise be able to enumerate seam output for arbitrary PRs. See D111.
 
-### 7.6 Placeholder data mismatch with canned `FakePrReader` PR
+### 7.6 PlaceholderData multi-tone constraint
 
-`PlaceholderData.cs` emits FileFocus + HunkAnnotation + DraftSuggestion entries targeting `services/leases/LeaseRenewalProcessor.cs` (a fictional file referenced from S3-era spec text). The canned `FakePrReader` PR serves `src/Calc.cs` only. Against the placeholder seam, the AI surfaces render nothing in the default cohort fixture — they only render with mocked endpoints (Playwright path).
+After § 4.7 alignment, `PlaceholderData.cs` targets `src/Calc.cs` and the canned fixture renders the FileTree dot + AiHunkAnnotation + StaleDraftRow suggestion in default cohort demos. One residual constraint: the placeholder ships ONE hunk annotation (Calm tone) because the canned `FakePrReader` PR emits a single hunk. The HeadsUp and Concern tone variants only render through Playwright-mocked responses (§ 5.5 step 4 ships all three) — the cohort demo shows the wiring without exercising every tone variant. § 9 carries the follow-on "grow FakePrReader to multi-hunk + add HeadsUp/Concern placeholder entries" for when the canned fixture gains a second hunk.
 
-This means demo / cohort scenarios that DON'T mock the endpoints won't see the dots/annotations/suggestions even with `aiPreview` on. Two follow-up options:
-- (a) Update `PlaceholderData.cs` to align with `src/Calc.cs` paths + hunk indices the canned PR actually contains.
-- (b) Grow the `FakePrReader` PR to include the placeholder's named files.
+## 8. Deferrals (6 new D-entries)
 
-Neither is blocking PR9b-ai-gating ship — the Playwright spec demonstrates the wiring; cohort demos that need the surfaces visible can mock endpoints in the dev console. Logged as a follow-up in § 9.
-
-## 8. Deferrals (4 new D-entries)
-
-All four entries land in `docs/specs/2026-05-29-design-parity-recovery-deferrals.md` under a new `## PR9b-ai-gating — Selective wirings` section appended after the existing `## PR9b-search` and `## PR9b-density` sections.
+All six entries land in `docs/specs/2026-05-29-design-parity-recovery-deferrals.md` under a new `## PR9b-ai-gating — Selective wirings` section appended after the existing `## PR9b-search` and `## PR9b-density` sections.
 
 (D107 — the originally-planned D48 deferral — is NOT created. The ce-doc-review pass surfaced that the `IDraftSuggester` seam, `PlaceholderDraftSuggester`, `AiCapabilities.DraftSuggestions`, and the frontend wire shape ALL already exist. The original "no seam exists" premise was empirically wrong. D48 is wired in this sub-PR — see § 4.5.)
 
@@ -830,17 +897,28 @@ All four entries land in `docs/specs/2026-05-29-design-parity-recovery-deferrals
 **Reality:** The session-token middleware (`SessionTokenMiddleware.cs:59`) gates all `/api/*` paths including `/ai/summary` and the three new AI endpoints. Per-endpoint `IsSubscribed` check (the per-PR subscription presence check from `IActivePrCache.IsSubscribed`) is absent from `/ai/summary` and not added to the new endpoints.
 **Verdict rationale:** `IsSubscribed` is a presence-not-identity check that protects write semantics against PRs the user never loaded. Read-only AI endpoints with no mutation side effects don't require it when the seam returns canned data — anyone gets the same placeholder. This reasoning ages badly when the seam swaps to real AI: the same endpoint path would surface PR-content-derived output to any session-authenticated caller. The seam swap is V1.X-shaped (D109); the auth-gating decision swaps at the same time.
 **Status:** DEFER-TO-V1.X.
-**Reopener:** Same trigger as D109 — real AI backend swap-in at any of the three seams. When real generation lands, add per-endpoint `IsSubscribed` gate (mirroring the mutating-endpoint pattern) before the canned binding flips.
+**Reopener (enforced):** Same trigger as D109 — real AI backend swap-in at any of the three seams. **The seam-swap PR MUST include the per-endpoint `IsSubscribed` gate in the same atomic merge** (mirroring the mutating-endpoint pattern). Merging a real-AI seam binding without D111 closure is a security regression. Inline `// D111` comments at each of the three new `app.MapGet(...)` calls in `AiEndpoints.cs` anchor the reopener in the code the implementer touches when swapping the binding, so the reminder isn't sidecar-doc-only. Comment template: `// D111: No per-PR IsSubscribed check while seam is canned-data only. When the binding swaps to a real AI implementation (real generation, not Noop/Placeholder), add an IsSubscribed gate before the seam call — DO NOT merge the seam swap without this gate.`
 **Cross-refs:** D109; § 7.5.
+
+### 8.6 D112 — `useAiGate` two-factor abstraction's behavioral payoff is post-decoupling
+
+**Source:** PR9b-ai-gating ce-doc-review adversarial round 2 (adv-r2-001).
+**Spec position:** § 3.1 wire-coupling caveat; § 4.2 + § 4.6 framing.
+**Reality:** Today, `CapabilitiesEndpoints.cs:13` returns `AllOn` xor `AllOff` based on `AiPreviewState.IsOn`, and `PreferencesEndpoints.cs:47` mirrors `aiState.IsOn = config.Current.Ui.AiPreview`. Every `useAiGate(key)` call returns the same value as `aiPreview` regardless of key. The two-factor abstraction is forward-compat scaffolding for backend capability decoupling.
+**Verdict rationale:** Backend decoupling (per-user feature flags, A/B rollout of inbox ranking, real-AI seam-swap with cost-controlled per-capability rollout) is V1.X-shaped infrastructure work. The PR9b-ai-gating sweep ships the frontend gate shape now so that when the backend decouples, no frontend follow-up is required — the decoupling lands as a backend-only change. Two semantic-imprecision liabilities surface in advance: (1) `useAiGate('composerAssist')` for `AskAiButton` couples Ask AI with composer-assist; (2) `useAiGate('inboxRanking')` for the activity rail couples the rail's visibility with the ranking algorithm. Both are documented for cohort signal monitoring post-decoupling.
+**Status:** DEFER-TO-V1.X.
+**Reopener:** Backend capability decoupling lands. When `AiCapabilities` stops mirroring `AiPreviewState.IsOn`, re-evaluate the two key choices documented above; either confirm the coupling-by-name or add dedicated `askAi` / `activityRail` keys (one-line additions to `AiCapabilities` + call-site swaps).
+**Cross-refs:** § 3.1 coupling caveat; § 4.2 + § 4.6 key-choice rationale; D109 + D111 (real-AI swap pulls capability decoupling forward).
 
 ## 9. Open follow-ons (post-merge)
 
 Captured here for cohort-driven re-prioritization; not blocking PR9b-ai-gating ship:
 
-- **D109 + D111 paired reopener** — when the real AI backend ships at any of the three AI seams, redesign endpoints (per-file or per-hunk where appropriate) AND add per-endpoint `IsSubscribed` gating.
+- **D109 + D111 paired reopener** — when the real AI backend ships at any of the three AI seams, redesign endpoints (per-file or per-hunk where appropriate) AND add per-endpoint `IsSubscribed` gating atomically in the same merge.
 - **D108 reopener** — cohort Quote/Dismiss signal triggers the cross-cutting action-button work for `AiHunkAnnotation`.
 - **D106 reopener** — backend signal arrives (D28 `IterationDto.IsNew` flag).
-- **`PlaceholderData.cs` ↔ `FakePrReader` PR alignment** — placeholder paths (`services/leases/...`) don't match the canned fake PR (`src/Calc.cs`). Cohort demos see no AI surfaces unless they mock endpoints. Either update placeholder data to align with `src/Calc.cs` or grow `FakePrReader` to include the placeholder's files. See § 7.6.
+- **D112 reopener** — backend `AiCapabilities` decouples from `AiPreviewState.IsOn`. At that point, the semantic-imprecision liabilities documented in § 4.2 (`composerAssist` for AskAiButton) and § 4.6 (`inboxRanking` for activity rail) become real and may need dedicated `askAi` / `activityRail` capability keys.
+- **Multi-hunk `FakePrReader` PR + HeadsUp/Concern placeholder entries** — § 7.6 acknowledges the single-tone constraint. When `FakePrReader` grows to a multi-hunk diff, add `(src/Calc.cs, 1, "…", AnnotationTone.HeadsUp)` + a Concern entry to `PlaceholderData.HunkAnnotations` so all three tone variants render in cohort demos without endpoint mocks.
 - **Backend enum-validation gap (carried from PR #96 Deviation 6)** — `density`/`theme`/`accent` accept arbitrary strings on `POST /api/preferences`. Parallel gap for `aiPreview` (it's a `bool` so type-validation catches non-bool input; enum-validation N/A here). Worth tracking as a backend follow-up.
 - **`PrDescription` carried review note** — adv-005 surfaced that `PrDescription`'s `aiPreview` prop is a gate not a pass-through (controls card class AND title-element rendering). § 3.1 keeps the prop pass because the parent (`OverviewTab`) already computes the same `'summary'` gate — migration would duplicate the underlying hook reads. If a future refactor moves `PrDescription` out from under `OverviewTab` (e.g., to a sibling tab), migrating to `useAiGate('summary')` directly is the natural follow-up.
 
@@ -857,5 +935,5 @@ Run before handing to ce-doc-review and user-review:
 ---
 
 **Origin:** [`docs/specs/2026-05-29-design-parity-recovery-design.md § 4.9.2`](2026-05-29-design-parity-recovery-design.md).
-**Sidecar:** [`docs/specs/2026-05-29-design-parity-recovery-deferrals.md`](2026-05-29-design-parity-recovery-deferrals.md) — D106, D108-D111 land here on merge.
+**Sidecar:** [`docs/specs/2026-05-29-design-parity-recovery-deferrals.md`](2026-05-29-design-parity-recovery-deferrals.md) — D106, D108-D112 land here on merge.
 **Family siblings:** PR9b-density + PR9b-search shipped together as PR #96 (merge 2026-05-31).
