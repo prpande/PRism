@@ -249,4 +249,78 @@ describe('DiffPane', () => {
       expect(cell?.getAttribute('colSpan') ?? cell?.getAttribute('colspan')).toBe('3');
     });
   });
+
+  it('renders hunk-header as a single colSpan=4 row in split mode', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const diffPane = screen.getByTestId('diff-pane');
+    const hunkHeaderRows = diffPane.querySelectorAll('tr.diff-line--hunk-header');
+    expect(hunkHeaderRows.length).toBeGreaterThanOrEqual(1);
+    hunkHeaderRows.forEach((row) => {
+      const cells = row.querySelectorAll('td');
+      expect(cells.length).toBe(1);
+      const cell = cells[0];
+      expect(cell.getAttribute('colSpan') ?? cell.getAttribute('colspan')).toBe('4');
+      expect(cell.textContent).toMatch(/@@/);
+    });
+  });
+
+  it('renders context line with both gutters and same content on both sides in split mode', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const diffPane = screen.getByTestId('diff-pane');
+    const contextRows = diffPane.querySelectorAll('tr.diff-line--context');
+    expect(contextRows.length).toBeGreaterThanOrEqual(1);
+    const firstContext = contextRows[0];
+    const cells = firstContext.querySelectorAll('td');
+    expect(cells.length).toBe(4);
+    expect(cells[0].textContent).toMatch(/\d+/); // old line number
+    expect(cells[2].textContent).toMatch(/\d+/); // new line number
+    expect(cells[1].textContent).toBe(cells[3].textContent); // same content both sides
+    expect(cells[1].textContent).not.toBe('');
+  });
+
+  it('renders AI annotation row with colSpan=4 in split mode', () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue([
+      {
+        path: 'src/main.ts',
+        hunkIndex: 0,
+        body: 'Consider naming this clearer.',
+        tone: 'calm',
+      },
+    ]);
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const annotationCell = screen.getByTestId('ai-hunk-annotation').closest('td');
+    expect(annotationCell).not.toBeNull();
+    expect(annotationCell?.getAttribute('colSpan') ?? annotationCell?.getAttribute('colspan')).toBe('4');
+  });
 });

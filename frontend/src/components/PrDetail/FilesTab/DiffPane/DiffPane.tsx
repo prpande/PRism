@@ -191,6 +191,11 @@ export function DiffPane({
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
 
   function renderDiffRows(): React.ReactNode[] {
+    if (isSplit) return renderSplitRows();
+    return renderUnifiedRows();
+  }
+
+  function renderUnifiedRows(): React.ReactNode[] {
     const path = selectedPath ?? '';
     const rows: React.ReactNode[] = [];
     let hunkCounter = -1;
@@ -228,6 +233,71 @@ export function DiffPane({
             );
           }
         }
+      }
+    }
+    return rows;
+  }
+
+  function renderSplitRows(): React.ReactNode[] {
+    const path = selectedPath ?? '';
+    const rows: React.ReactNode[] = [];
+    let hunkCounter = -1;
+    for (let idx = 0; idx < allLines.length; idx++) {
+      const line = allLines[idx];
+
+      if (line.type === 'hunk-header') {
+        hunkCounter += 1;
+        rows.push(
+          <SplitDiffLineRow
+            key={idx}
+            kind="header"
+            content={line.content}
+            filePath={path}
+          />,
+        );
+        const annotations = annotationsForFile?.get(hunkCounter);
+        if (annotations) {
+          for (let aidx = 0; aidx < annotations.length; aidx++) {
+            rows.push(
+              <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
+                <td colSpan={colSpan}>
+                  <AiHunkAnnotation annotation={annotations[aidx]} />
+                </td>
+              </tr>,
+            );
+          }
+        }
+        continue;
+      }
+
+      if (line.type === 'context') {
+        rows.push(
+          <SplitDiffLineRow
+            key={idx}
+            kind="context"
+            oldLineNum={line.oldLineNum}
+            newLineNum={line.newLineNum}
+            content={line.content}
+            filePath={path}
+            onLineClick={onLineClick}
+          />,
+        );
+        continue;
+      }
+
+      // Modification kinds (delete/insert) added in Task 3 — content rows are
+      // placeholder-deferred. Threads that happen to anchor on these lines are
+      // preserved so comment widgets remain visible in split mode.
+      const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
+      const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
+      if (threadsAtLine && threadsAtLine.length > 0) {
+        rows.push(
+          <tr key={`thread-${idx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
+            <td colSpan={colSpan}>
+              <ExistingCommentWidget threads={threadsAtLine} replyContext={replyContext} />
+            </td>
+          </tr>,
+        );
       }
     }
     return rows;
@@ -360,6 +430,81 @@ function DiffLineRow({
       )}
     </>
   );
+}
+
+type SplitRowKind = 'header' | 'paired' | 'context' | 'solo-delete' | 'solo-insert';
+
+interface SplitDiffLineRowProps {
+  kind: SplitRowKind;
+  oldLineNum?: number | null;
+  newLineNum?: number | null;
+  oldText?: string;
+  newText?: string;
+  content?: string;
+  filePath: string;
+  onLineClick?: (anchor: InlineAnchor) => void;
+}
+
+function SplitDiffLineRow({
+  kind,
+  oldLineNum,
+  newLineNum,
+  content,
+  filePath,
+  onLineClick,
+}: SplitDiffLineRowProps) {
+  if (kind === 'header') {
+    return (
+      <tr className="diff-line diff-line--hunk-header">
+        <td colSpan={4}>
+          <span className={`diff-hunk-header ${styles.diffHunkHeader}`}>{content}</span>
+        </td>
+      </tr>
+    );
+  }
+
+  if (kind === 'context') {
+    const handleClick = () => {
+      if (!onLineClick || newLineNum == null) return;
+      onLineClick({
+        filePath,
+        lineNumber: newLineNum,
+        side: 'right',
+        anchoredSha: '',
+        anchoredLineContent: content ?? '',
+      });
+    };
+    return (
+      <tr className="diff-line diff-line--context">
+        <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
+          {oldLineNum ?? ''}
+        </td>
+        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+          <span>{content}</span>
+        </td>
+        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
+          {newLineNum != null && onLineClick ? (
+            <button
+              type="button"
+              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
+              aria-label={`Add comment on line ${newLineNum}`}
+              onClick={handleClick}
+            >
+              {newLineNum}
+            </button>
+          ) : (
+            (newLineNum ?? '')
+          )}
+        </td>
+        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+          <span>{content}</span>
+        </td>
+      </tr>
+    );
+  }
+
+  // Modification kinds (paired, solo-delete, solo-insert) added in Task 3.
+  return null;
 }
 
 // A row that renders the composer iff the parent's renderComposerForLine
