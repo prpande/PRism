@@ -67,3 +67,8 @@
     opacity: 0.85;
   }
 }
+
+.diffModeToggle {
+  margin-left: auto;
+  flex-shrink: 0;
+}

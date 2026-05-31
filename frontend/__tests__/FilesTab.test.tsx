@@ -190,4 +190,40 @@ describe('FilesTab', () => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
     });
   });
+
+  it('renders a diff-mode toggle button in the toolbar with stateful label and aria-pressed', async () => {
+    globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
+    renderFilesTab();
+    const toggleButton = await screen.findByRole('button', { name: /side-by-side|unified/i });
+    expect(toggleButton).toBeInTheDocument();
+    expect(toggleButton.getAttribute('aria-pressed')).toBe('true'); // default is 'side-by-side'
+    expect(toggleButton.textContent).toMatch(/side-by-side/i);
+  });
+
+  it('toggles diff mode when clicked', async () => {
+    globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
+    renderFilesTab();
+    const toggleButton = await screen.findByRole('button', { name: /side-by-side|unified/i });
+    fireEvent.click(toggleButton);
+    expect(toggleButton.getAttribute('aria-pressed')).toBe('false');
+    expect(toggleButton.textContent).toMatch(/unified/i);
+  });
+
+  it('disables the toggle button below 900px viewport and aria-pressed reflects forced effective mode', async () => {
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 800 });
+    window.dispatchEvent(new Event('resize'));
+    globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
+    renderFilesTab();
+    const toggleButton = (await screen.findByRole('button', {
+      name: /side-by-side|unified/i,
+    })) as HTMLButtonElement;
+    expect(toggleButton.disabled).toBe(true);
+    // Effective mode forced to 'unified' by the viewport gate; aria-pressed
+    // and label both reflect THAT (not the stored diffMode).
+    expect(toggleButton.getAttribute('aria-pressed')).toBe('false');
+    expect(toggleButton.textContent).toMatch(/unified/i);
+    // Restore for subsequent tests.
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1200 });
+    window.dispatchEvent(new Event('resize'));
+  });
 });
