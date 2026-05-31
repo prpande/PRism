@@ -36,12 +36,31 @@
   border-bottom: none;
   border-top: 2px solid transparent;
   border-radius: 6px 6px 0 0;
-  cursor: pointer;
   position: relative;
   transition:
     background var(--t-fast),
     color var(--t-fast);
   user-select: none;
+}
+
+/* Inner role="tab" element (post-D92 lift). Layout-only; the chip border /
+   radius / hover-state live on the outer .tab wrapper. Holds the inner
+   layout (#N, title, unread dot) + the keyboard focus ring. */
+.tabBody {
+  display: flex;
+  align-items: center;
+  gap: 8px; /* match the .tab gap so inner element rhythm stays */
+  flex: 1 1 auto;
+  min-width: 0; /* allow .title to truncate via overflow:hidden */
+  cursor: pointer;
+}
+.tabBody:focus-visible {
+  /* Overrides the global :focus-visible rule from tokens.css:247-250.
+     Inset offset (-2px) so the ring sits inside the chip border-radius
+     rather than overflowing onto adjacent strip elements. */
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
+  border-radius: 4px;
 }
 
 .tab:hover {

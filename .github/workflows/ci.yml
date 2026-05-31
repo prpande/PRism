@@ -61,13 +61,17 @@ jobs:
         run: dotnet test --no-build --configuration Release --settings .runsettings --logger "trx;LogFileName=test-results.trx"
 
       # `--with-deps` removed: Linux-only flag, no-op on windows-latest.
-      # Timeouts + continue-on-error are a stopgap for a 2026-05-29 runner
-      # regression: chromium download completes in ~2s but the extraction
-      # phase hangs indefinitely (AV scanning ~15K extracted files is the
-      # suspected cause). The 10-min install timeout + 30-min test timeout
-      # surface the hang fast; continue-on-error lets the rest of the suite
-      # gate the PR. Lift continue-on-error once the runner issue resolves
-      # (TODO: track in a follow-up PR — see PR #87 stuck-CI discussion).
+      # Both Playwright steps carry `continue-on-error: true`:
+      # - INSTALL step: stopgap for the 2026-05-29 runner regression where
+      #   chromium extraction hangs after a clean download (suspected AV
+      #   scanning ~15K extracted files). 10-min install timeout surfaces fast.
+      # - TEST step: D94 attempted to remove this when D82 lifted the
+      #   nested-interactive a11y violation, but the lift introduced a
+      #   different critical axe-core violation (aria-required-children on
+      #   role="tablist" with the now-sibling close button). Both are inherent
+      #   to the WAI-ARIA "deletable tabs" pattern. Restored as stopgap
+      #   pending D85's full kbd-nav redesign bundle that resolves the
+      #   trade-off cleanly. See D104 in the deferrals sidecar.
       - name: Playwright install
         working-directory: frontend
         run: npx playwright install chromium

@@ -51,6 +51,11 @@ interface TabProps {
 }
 
 function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
+  // D11/D103 — the handoff (design/handoff/pr-detail.jsx:124 + :134) applies
+  // `.pr-tab-count-warn` drafts-only, never on files. The base `.pr-tab-count`
+  // class is shared. Conditional-render of the span (count > 0) already covers
+  // both tabs; this gates ONLY the warn class.
+  const warn = id === 'drafts';
   return (
     <button
       type="button"
@@ -69,7 +74,11 @@ function Tab({ id, label, active, onSelect, disabled, count }: TabProps) {
       {label}
       {count !== undefined && count > 0 && (
         <>
-          <span className={styles.prTabCount} data-testid="pr-tab-count" aria-hidden="true">
+          <span
+            className={[styles.prTabCount, warn && styles.prTabCountWarn].filter(Boolean).join(' ')}
+            data-testid="pr-tab-count"
+            aria-hidden="true"
+          >
             {count}
           </span>
           {/* SR companion so the tab announces "Files, 3 items" rather than

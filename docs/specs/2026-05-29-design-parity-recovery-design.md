@@ -156,7 +156,7 @@ frontend/src/components/Header/
 
 ## 4. The 9-PR plan
 
-CSS-first ordering. Every PR2-PR6 is pure visual restoration (no behavior changes). PR7-PR8 add the two new chrome behaviors. PR9 audits and documents.
+CSS-first ordering. Every PR2-PR6 is pure visual restoration (no behavior changes). PR7-PR8 add the two new chrome behaviors. PR9 splits into PR9a (audit + a11y harm-fixes + 1 cheap-keep + dead-code purge) and a follow-on PR9b family (1-3 sub-PRs for selective wirings: density toggle, global-search placeholder, AI-surface `aiPreview` gating).
 
 ### 4.1 PR1 — Foundation
 
@@ -308,16 +308,16 @@ First behavior PR. Adds top-of-app Row 2 — the persistent browser-style PR tab
 
 **Persistence.** `openTabs` is JSON-serialized to localStorage under the versioned key `prism.openTabs.v1`. On load: parse, validate (each entry has `owner`, `repo`, `number` of correct types); on parse failure or shape mismatch (e.g., a future `v2` schema), silently discard the stored value and start fresh. Privacy classification: the persisted reference list contains org-level `owner/repo/number` triples — local-machine-only data, classified low-sensitivity (consistent with PRism's existing local-first threat model in `docs/spec/06-security-baseline.md`). No expiry; the close affordance is the user's pruning mechanism.
 
-**Native-shell coupling — resolution.** PR7's brainstorm pass selected **route (b) visual-only**: NO `⌘W` (close tab), NO `⌘1-9` (jump to tab), NO localStorage persistence. Middle-click DOES ship (no OS reservation — every candidate shell passes mouse events through to the renderer; see [`D58`](2026-05-29-design-parity-recovery-deferrals.md#d58) for the OS-reservation rationale that differentiates `⌘W` from middle-click). Tabs survive only the current SPA session and are cleared on `identity-changed` via the existing `prism-identity-changed` window-event bridge. Keyboard bindings and persistence are revisited after the native-shell framework decision lands ([`D58`](2026-05-29-design-parity-recovery-deferrals.md#d58) keyboard, [`D59`](2026-05-29-design-parity-recovery-deferrals.md#d59) persistence). See § 1.3.
+**Native-shell coupling — resolution.** PR7's brainstorm pass selected **route (b) visual-only**: NO `⌘W` (close tab), NO `⌘1-9` (jump to tab), NO localStorage persistence. Middle-click DOES ship (no OS reservation — every candidate shell passes mouse events through to the renderer; see [`D58a`](2026-05-29-design-parity-recovery-deferrals.md#d58a) for the OS-reservation rationale that differentiates `⌘W` from middle-click). Tabs survive only the current SPA session and are cleared on `identity-changed` via the existing `prism-identity-changed` window-event bridge. Keyboard bindings and persistence are revisited after the native-shell framework decision lands ([`D58a`](2026-05-29-design-parity-recovery-deferrals.md#d58a) keyboard, [`D59a`](2026-05-29-design-parity-recovery-deferrals.md#d59a) persistence). See § 1.3.
 
 **Edge cases deferred to PR7's brainstorm pass — resolutions.**
 - Closing a tab with an open composer: **allow.** Drafts auto-persist server-side per S4.
 - Closing a tab with an in-flight submit: **block** while `useSubmitInFlight().inFlight && prRef === closing tab's prRef`. Tooltip: "Can't close — submit in progress." Wired via `useSubmitInFlight()` which tracks the single-slot SubmitLockRegistry.
-- Stale `openTabs` entries on reload: **scope-narrowed but not fully N/A** — route (b) drops persistence which eliminates the reload-stale path; mid-session token rotation clears all tabs via `identity-changed`. PR-deleted / repo-archived / repo-visibility-changed mid-session paths remain — PR7 accepts the existing PrDetailPage error-fallback UX without a per-tab error chip. Stale-tab error chip visual spec **deferred** ([`D60`](2026-05-29-design-parity-recovery-deferrals.md#d60)).
+- Stale `openTabs` entries on reload: **scope-narrowed but not fully N/A** — route (b) drops persistence which eliminates the reload-stale path; mid-session token rotation clears all tabs via `identity-changed`. PR-deleted / repo-archived / repo-visibility-changed mid-session paths remain — PR7 accepts the existing PrDetailPage error-fallback UX without a per-tab error chip. Stale-tab error chip visual spec **deferred** ([`D60a`](2026-05-29-design-parity-recovery-deferrals.md#d60a)).
 - `openTabs.length > some-large-N`: **no cap**; the `+ N more` overflow menu past 6 inline tabs handles the visual. Narrow-viewport (1180px) verification is in the PR7 plan's manual smoke.
-- Capture target deviation: **1-tab parity baseline** instead of the spec's 3-tab target — FakePrReader serves only one fixture and adding multi-fixture seeding is out of scope ([`D62`](2026-05-29-design-parity-recovery-deferrals.md#d62)).
-- `overflowMenuOpen` is kept LOCAL to `PrTabStrip`, not exposed on `OpenTabsContext` ([`D61`](2026-05-29-design-parity-recovery-deferrals.md#d61)).
-- Unread tab signals only deliver when a per-prRef subscription is active — this means the unread dot has narrow production coverage ([`D63`](2026-05-29-design-parity-recovery-deferrals.md#d63)).
+- Capture target deviation: **1-tab parity baseline** instead of the spec's 3-tab target — FakePrReader serves only one fixture and adding multi-fixture seeding is out of scope ([`D62a`](2026-05-29-design-parity-recovery-deferrals.md#d62a)).
+- `overflowMenuOpen` is kept LOCAL to `PrTabStrip`, not exposed on `OpenTabsContext` ([`D61a`](2026-05-29-design-parity-recovery-deferrals.md#d61a)).
+- Unread tab signals only deliver when a per-prRef subscription is active — this means the unread dot has narrow production coverage ([`D63a`](2026-05-29-design-parity-recovery-deferrals.md#d63a)).
 
 Side-by-side capture target: `app-chrome-tabstrip` zone with three open PRs (two read, one unread).
 
@@ -391,22 +391,89 @@ The "AI isn't available right now / when it is" phrasing avoids the false implic
 - D80 — z-index ordering: drawer 50 = PrTabStrip overflow menu 50; drawer renders later in App.tsx → wins paint-order tie. Modal at 1000 always wins. Documented to anchor the stacking decision.
 - D81 — `inert` attribute on the closed drawer `<aside>`. WCAG 2.1 SC 4.1.2 fix discovered during Task 13 a11y-audit. `aria-hidden={!isOpen}` alone leaves focusable children (Close button, textarea, Send button) in the focus tree when the drawer is closed.
 - D82 — `PrTabStrip` nested-interactive a11y violation (PR7-vintage). Surfaced after D81 unmasked layered a11y audits. Deferred to PR9 a11y revisit per § 4.9.
-- D83 — `parity-baselines.spec.ts` `inbox` test Loading-vs-populated race (pre-existing D64 weakness). Out of PR8 scope.
+- D83 — `parity-baselines.spec.ts` `inbox` test Loading-vs-populated race (pre-existing D64a weakness — PR7-track entry renumbered in PR9a). Out of PR8 scope.
 
-### 4.9 PR9 — Revisit pass (audit + documentation)
+### 4.9 PR9 — Revisit pass (split into PR9a + PR9b family)
 
-No new visual work. Audits the restored state against handoff decisions and current product context (post-S6, pre-v1). Each candidate gets a kept / deferred / rejected verdict with one-line rationale.
+PR9 closes the slice. It splits in two for **two structural reasons**, not for optionality:
 
-**Likely candidates:**
-- **Density modes** (comfortable / compact). Handoff supports both via `[data-density="compact"]` on `<html>` and `tokens.css:216-222` already wires the compact overrides. The SPA never sets the attribute. Decide whether to wire a toggle in Settings now, defer to v1.1, or reject.
-- **Accent rotation** (indigo / amber / teal). Already shipped via `AccentPicker.tsx` (S6 PR #71); confirm parity is correct.
-- **AI focus dots in file tree, AI hunk annotations, AI summary card data.** The styling lands in PR3-PR4 with canned data. Decide whether to gate visibility more aggressively on `aiPreview` flag, or surface only when annotations exist.
-- **Floating tweaks panel** (handoff's bottom-right panel). S6 explicitly replaced this with the Settings page. PR9 documents the rationale formally so future readers don't try to revert.
-- **Stale-row AI suggestion body.** Handoff's `StaleDraftPanel` shows an AI suggestion inline. We don't have an AI for this. Gate on `aiPreview` flag or hide entirely.
-- **Global search bar** (the passive "Jump to PR or file… ⌘K" input in the header). Currently disabled / placeholder; handoff shows it as a primary chrome element. Decide: wire to a minimal palette in v1.1, leave as disabled placeholder, or remove.
-- **Submit surface drift.** If PR5 surfaces drift between existing submit-surface styling and the restored PR Detail visual language, adjudicate here.
+1. **Reviewer-pass class.** PR9a's work — adjudication verdicts + a11y harm-fixes + dead-code purge — is single-reviewer-pass work (mechanical decisions against a known checklist). PR9b's work — three independent feature wirings — is multi-decision feature work, each item benefiting from its own brainstorm + plan. Separating the two halves matches the slice's PR1-PR8 cadence of "one decision class per PR."
+2. **Sidecar churn vs code churn.** PR9a touches the sidecar in ~16 places + ≤4 code files. PR9b's three items touch separate code surfaces (Settings, header chrome, AI surfaces). Bundling them would create a high-volume cross-cutting PR with low cohesion.
 
-Each decision lands in this spec's deferrals sidecar (`docs/specs/2026-05-29-design-parity-recovery-deferrals.md`) with verdict + rationale. No code changes unless a restored rule actively harms current UX (rare).
+PR9b is a **family label**, not a single PR. Each of its three items (density toggle, global-search stub, AI-gating sweep) ships as a separate sub-PR with its own brainstorm + plan, in the order the implementer judges most efficient.
+
+**Verdict format** for every PR9-flagged entry: one of `APPLY-IN-PR9A` / `DEFER-TO-PR9B` / `DEFER-TO-V1.X` / `REJECTED` / `CONFIRMED` / `PROVISIONALLY-CONFIRMED`. Verdicts land as new D-entries (D84+) under `## PR9a — Revisit pass: audit + a11y + cheap-keep + dead-code purge` in the deferrals sidecar (`docs/specs/2026-05-29-design-parity-recovery-deferrals.md`). Each new D-entry consolidates one logical group of older D-entries and gives the group a single verdict; an index table at the top of the sidecar section maps each old D-entry to its consolidating verdict block so per-entry traceability is preserved without per-entry status edits.
+
+#### 4.9.1 PR9a — Audit + a11y harm-fixes + 1 cheap-keep + dead-code purge
+
+The original § 4.9 mandate was "no code changes unless a restored rule actively harms current UX." That criterion is **expanded to three categories** in PR9a, explicitly named so the scope is auditable:
+
+1. **a11y / test-infrastructure harm-fixes** (D82 + D83 + the `continue-on-error` removal that becomes mechanically unlocked once D82 lifts).
+2. **Cheap-keep wirings** — <20 LOC, no new state, no new prop chain, no cross-component coordination, data path already in production. Exactly **one** item qualifies after the feasibility review: D11 `.prTabCountWarn`.
+3. **Dead-code purge** — components with zero current consumers and no v1.x consumer-plan citation. Exactly one item qualifies: D89 ScopePill deletion.
+
+Any candidate that fails these gates moves to PR9b or DEFER-TO-V1.X. Two PR9 candidates moved out of PR9a after the feasibility review: D32a `.fileTreeAi` JSX wiring (the `useAiSummary` API has no `focusDots` field; data-path work is required — DEFER-TO-PR9B for sweep design), and D70 `.fineprint` lock glyph (the handoff's keychain copy doesn't exist in production — the FirstRunDisclosure `<summary>` is SmartScreen trust copy, not the keychain copy; adding a 🔒 to that `<summary>` would be semantically wrong — DEFER-TO-V1.X for when a keychain-copy element is designed).
+
+**Code changes (category 1 — a11y / test-infra harm-fixes):**
+
+- **D82 PrTabStrip nested-interactive a11y violation** (PR7-vintage; WCAG SC 4.1.2). Resolution: option (i) — lift the close button OUTSIDE the `role="tab"` element via flex layout. **Concrete structure required**: a new outer wrapper element (e.g., `<li className={styles.tab}>`) carries the chip border + radius CSS; an inner `<button role="tab">` (or `<div role="tab">`) carries `aria-selected`, `tabIndex`, the tab title text, and the unread dot; the close `<button>` is a flex sibling of the tab body inside the wrapper. The wrapper holds the `data-prref` attribute (currently on `<div role="tab">`) so existing test selectors still match. The four CSS hover/focus cascade selectors (`.tab:hover .close`, `.tabActive .close`, `.tab:focus-within .close`, and the four-way disabled override) get rewritten against the new wrapper (`.tab:hover > .close`, etc.). Estimated 30-50 LOC of JSX + CSS, not the original ~10. **DOM source order**: close button appears AFTER the tab body so AT users hear the tab title + selected state before the close affordance. **Middle-click**: the existing `onMouseDown` handler on the `<div role="tab">` moves with the tab body; middle-clicking on the tab body still closes. Middle-click on the close button itself is a no-op (the close button's primary click handler fires on left-click only; middle-click default click does nothing).
+- **D83 `parity-baselines.spec.ts` inbox Loading-vs-populated race** (pre-existing weakness, surfaced sharper during PR8 Task 13). Resolution: change the wait target from `await page.locator('main').waitFor()` to `await page.getByText(/Review requested/).waitFor()`. Verified during feasibility review that the InboxSection's section.label renders "Review requested" exactly when the FakePrDiscovery's `review-requested` section is populated. Re-capture the populated-state baseline.
+- **`continue-on-error: true` removal** from the **Playwright test execution step only** in `.github/workflows/ci.yml`. **Narrative tightened**: the stopgap originated for the Windows-runner Playwright install hang (PR #87 `b59f094` + `2fe66b1`, landed 2026-05-29). D82's `nested-interactive` violation was discovered in PR8 Task 13 (2026-05-30) AFTER D81's `inert` fix unmasked the page-scoped axe-core audits — before D81, the audits failed first on `aria-hidden-focus` and never reached `nested-interactive`. So the `continue-on-error` did NOT mask D82 "since the slice started"; it masked the resulting failure once D81 lifted the layered mask. After D82 lifts, the test-step `continue-on-error` is no longer paying for either masked failure, so remove it. The install step's `continue-on-error` stays (its rationale was the Chromium-extract hang, unrelated to D82).
+
+**Code changes (category 2 — cheap-keep wiring):**
+
+- **D11 `.prTabCountWarn` conditional render** (peeled out of D85 after the scope-guardian review). One-line JSX ternary in `PrSubTabStrip.tsx` (`className={\`pr-tab-count ${draftCount > 0 ? styles.prTabCountWarn : ''}\`}`); the `.prTabCountWarn` CSS rule was authored in PR2 and is dormant. The `draftCount` prop already exists in the production data flow. ~1 LOC + 1 Vitest test. No new state, no new prop chain.
+
+**Code changes (category 3 — dead-code purge):**
+
+- **D89 ScopePill deletion.** Zero current consumers (verified by grep at PR9a implementation-time). v1 completion roadmap (`docs/specs/2026-05-28-v1-completion-roadmap-design.md`) scopes only README + tag work; no Settings UX additions in v1; no v1.x backlog reference to ScopePill. Delete `frontend/src/components/Setup/ScopePill.tsx` (path correction: original spec said `Settings/`; actual path is `Setup/`) and any colocated module CSS file. Recoverable from git history if a future v1.x consumer-need lands.
+
+**Adjudication-only verdicts (no code change):**
+
+All other PR9-flagged sidecar entries get group verdicts in D84-D96+. Categories:
+
+- **Visual-coherence reviews** (D17, D18, D29, D30, D31, D35, D37, D38) — CONFIRMED OK as shipped after side-by-side audit. D17 carries a special note: PR9a confirms the AI summary stays at the current stub shape AND retains the 5 dormant rules (not removed in PR9a; PR9b's AI-gating sweep adjudicates the removal vs activation question uniformly).
+- **Behavior-change deferrals** (D43, D44, D45) — DEFER-TO-V1.X. **Cohort cost named**: N=3 users without mouse access will encounter friction navigating the IterationTabStrip dropdown (D44) or FileTree treeitem (D45) by keyboard. Reopener triggers on the first cohort report OR if cohort signal indicates kbd-only users in the trial. D43 (click-outside close) is a UX nicety with no a11y impact; lower-priority defer.
+- **Handoff-variant deferrals** (D19, D20, D23) — DEFER-TO-V1.X (handoff has no placement source against the restored production chrome; design-pass slice owns).
+- **AI-surface deferrals** (D24, D28, D32a, D48) — DEFER-TO-PR9B for the aiPreview-gating sweep. D32a moves into this group after the feasibility review.
+- **Copy/naming** (D56 Delete vs Discard) — DEFER-TO-V1.X trial-cohort signal.
+- **Trial-cohort re-evaluation** (D71 non-modal drawer focus trap, D42 open-composer regression coverage) — PROVISIONALLY CONFIRMED — no cohort signal flagged either, but absence-of-signal in N=3 is not proof-of-absence. Reopener: any N=3 a11y complaint about Ask AI navigation; any open-composer test-regression incident; OR cohort expansion past N=3.
+- **PR7-track deferrals** (renumbered to D58a-D64a): D60a (stale-tab error chip visual) DEFER-TO-V1.X; D62a (3-tab parity baseline) DEFER to a follow-up slice that adds multi-fixture seeding to `FakePrReader`.
+- **D70 `.fineprint` lock glyph** moves to DEFER-TO-V1.X (target-element mismatch surfaced by feasibility review; v1.x picks up when keychain copy is added to SetupForm).
+- **D32a `.fileTreeAi` wiring** moves to DEFER-TO-PR9B (API-doesn't-exist surfaced by feasibility review; PR9b's AI-gating sweep designs the data path).
+
+**Submit-surface drift (§ 4.9 candidate 7) — D102 with bounded scope:** PR9a runs the audit during implementation. The audit's resolution path is **pre-bounded**: if drift exists, log specific file/line evidence in D102 and DEFER-TO-V1.X with the concrete delta noted for the v1.x submit-restyling slice. PR9a does NOT fix drift in this PR — eliminating the "is it cheap enough" judgment call that would otherwise expand scope mid-implementation. If no drift, D102 closes as CONFIRMED.
+
+**Validation:** Documentation-PR validation per § 5 (decisions visible + rationaled in sidecar) PLUS code-PR validation for the harm-fixes + D11 cheap-keep + D89 dead-code purge (Vitest + dotnet test + Playwright + pre-push checklist). Side-by-side baseline re-capture for `inbox.png` (D83 race fix) and `app-chrome-tabstrip.png` (D82 wrapper restructure changes the close-button position relative to the tab body).
+
+#### 4.9.2 PR9b family — Selective wirings (1-3 sub-PRs)
+
+PR9b is a family label for the three remaining § 4.9 candidates that need code changes. Each ships as a separate sub-PR with its own brainstorm + plan once PR9a is merged. The implementer chooses the order based on cohort feedback or implementation efficiency. No PR9b sub-PR is gated on another.
+
+- **PR9b-density — Density mode toggle** (§ 4.9 candidate 1). Wire `[data-density="compact"]` toggle in Settings. CSS overrides already exist in `tokens.css:216-222`; the work is the Settings UI row + `applyDensityToDocument` util + persistence (`prism.densityPreference` localStorage) + Playwright coverage. Pattern follows `applyThemeToDocument` from S6 PR #71.
+- **PR9b-search — Global search bar disposition** (§ 4.9 candidate 6). Resolution: stub-with-tooltip — keep the disabled input visible, add `title="Search palette — v1.1"` (forward-looking framing, not apology) + `cursor: not-allowed`. The real palette wiring belongs in v1.1 (needs backend file-search work).
+- **PR9b-ai-gating — AI-surface `aiPreview` gating sweep** (§ 4.9 candidate 3 + D24 + D28 + D32a + D48). Sweep `useAiSummary` consumers; design the `aiPreview` gating policy + the per-file focus-dot data path (currently absent from `PrSummary`); wire each AI surface (AiSummaryCard, AiHunkAnnotation, FileTree `.fileTreeAi` dot via D32a, StaleDraftRow AI suggestion span via D48). This sub-PR owns the AI surfaces as a coherent group.
+
+The two § 4.9 candidates that don't need PR9b sub-PRs:
+
+- **Floating tweaks panel** (§ 4.9 candidate 4): REJECTED in PR9a (D100). S6 shipped Settings as the production surface for theme/accent/density/inbox/connection/auth state; the handoff's floating panel was never ported. Restoring it now would either compete with Settings (two surfaces, confusing) or replace it (regresses S6). Acknowledged opportunity cost: the floating panel offered IN-PR-Detail-context state toggles, which the Settings-only path loses. If N=3 cohort flags context-switch friction on the density toggle, v1.x can add an inline density toggle to PR Detail without restoring the full floating panel.
+- **Accent rotation** (§ 4.9 candidate 2): CONFIRMED in PR9a (D98). Already shipped via S6 PR #71.
+
+Each PR9b sub-PR matches PR1-PR8 code-PR validation (per § 5). No new parity baselines unless the wiring changes visible chrome.
+
+#### 4.9.3 Slice closure criteria
+
+The slice closes "done" when PR9a merges. PR9b sub-PRs are post-slice follow-on work. The slice's literal goal — "bring the non-Inbox surfaces into visual parity with the handoff prototype" — is met by PR1-PR8. PR9a is the audit-and-closure pass; it does NOT carry slice-blocking scope.
+
+Per-defer reopener triggers (replacing the implicit "cohort feedback can re-prioritize" gate):
+
+- **D85 (D44 IterationTabStrip kbd nav, D45 FileTree treeitem kbd nav)** — reopens on first cohort kbd-user feedback OR confirmation of kbd-only users in N=3 expansion. A kbd-blocked user may never report; cohort-signal-absence is not load-bearing evidence here.
+- **D91 (D71 non-modal drawer focus trap, D42 open-composer regression coverage)** — reopens on any a11y complaint about Ask AI navigation; any open-composer test-regression incident; cohort expansion past N=3.
+- **D95 (D60a stale-tab error chip)** — reopens on first stale-tab-mid-session confusion report.
+- **D88 (D56 Delete vs Discard label)** — reopens on first label-confusion report OR after full N=3 trial window evaluation.
+- **D70 (lock glyph)** — reopens when SetupForm gets a keychain-copy element added.
+- **D32a (`.fileTreeAi` wiring)** — reopens during PR9b-ai-gating sub-PR.
+- **D62a (3-tab parity baseline)** — reopens when multi-fixture seeding lands in `FakePrReader`.
 
 ---
 
@@ -419,7 +486,9 @@ Every parity PR (PR2-PR8) must include all of:
 3. **All existing tests pass.** Vitest, dotnet test, Playwright. Renaming `className="pr-header"` → `className={styles.prHeader}` breaks tests asserting on `.pr-header`. Affected tests update in the same PR.
 4. **Pre-push checklist** per [`.ai/docs/development-process.md`](../../.ai/docs/development-process.md): `npm run lint`, `npm run build`, `npm test`, `dotnet build --configuration Release`, `dotnet test --no-build --configuration Release`, Playwright where applicable.
 
-PR9 (revisit) has different validation — it's a documentation PR. Requirement is "decisions are visible and rationaled in the deferrals sidecar."
+PR9a (audit + a11y harm-fixes + 1 cheap-keep + dead-code purge) requires (3) and (4) for the code changes (D82 a11y fix, D83 baseline fix, `continue-on-error` removal, D11 `.prTabCountWarn` cheap-keep wiring, D89 ScopePill deletion) PLUS the documentation requirement "decisions are visible and rationaled in the deferrals sidecar" for all PR9-flagged entries. Re-captures `inbox.png` (D83 race fix) and `app-chrome-tabstrip.png` (D82 wrapper restructure) parity baselines; no new baseline zones.
+
+PR9b family (three sub-PRs: density toggle, global-search stub, AI-gating sweep) — each sub-PR matches PR1-PR8 code-PR validation in full.
 
 PR1 (foundation) requires (3) and (4) but not (1) or (2) — there's no visual delta yet.
 

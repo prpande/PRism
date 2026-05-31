@@ -56,11 +56,29 @@ test.beforeEach(async () => {
 
 test.describe('parity baselines — Inbox', () => {
   test('inbox', async ({ page }) => {
+    // Cold-start of the prod project (single-binary path) needs more wall-clock
+    // than the default 30s: the fake-mode swap initialises after the first
+    // /api/inbox request, the first GitHubSectionQueryRunner tick gets a 401
+    // from real GitHub before the orchestrator settles, and Kestrel's first
+    // static-asset request from a fresh worker is cold. Bumping the test
+    // timeout to 60s absorbs that cold-start without changing the steady-state
+    // wait targets below.
+    test.setTimeout(60_000);
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
-    // setupAndOpenScenarioPr lands on '/', so wait for the inbox list to
-    // mount.
-    await page.locator('main').waitFor();
+    // setupAndOpenScenarioPr's `waitForURL('/')` matches transiently — the SPA
+    // can bounce back to '/setup' if the AuthGuard re-evaluates before the
+    // fake-mode swap fully settles. Force-navigate to '/' once more (the
+    // backing-store has accepted the token by now) so the Inbox actually
+    // renders. Mirrors the recovery pattern in `inbox-activity-rail` below
+    // (which reloads after toggling preferences for the same reason).
+    await page.goto('/');
+    // setupAndOpenScenarioPr lands on '/', so wait for the populated Inbox
+    // section header to render, not just `<main>`. `<main>` mounts during the
+    // Loading state, which would capture "Loading..." instead of the populated
+    // list (D64a → D83 weakness). The 45s wait timeout covers the same cold-
+    // start window inside the bumped 60s test timeout.
+    await page.getByText(/Review requested/).waitFor({ timeout: 45_000 });
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(page.locator('main')).toHaveScreenshot('inbox.png', SCREENSHOT_OPTS);
   });

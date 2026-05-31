@@ -52,6 +52,27 @@ describe('PrTabStrip', () => {
     expect(screen.getByText('Title 1')).toBeInTheDocument();
   });
 
+  it('close button is a sibling of the role=tab element (not a child) — D82/D92 a11y lift', () => {
+    render(
+      wrap(
+        <>
+          <Seed count={1} />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    const tab = screen.getByRole('tab');
+    const closeBtn = screen.getByRole('button', { name: /close tab/i });
+    // The close button must NOT be a descendant of the role="tab" element.
+    // WAI-ARIA forbids nested interactives (axe-core nested-interactive rule).
+    expect(tab.contains(closeBtn)).toBe(false);
+    // Both must share a wrapper with data-prref — closest() survives future
+    // DOM-layer additions (e.g., D85 kbd-nav restructure) without re-edits.
+    const wrapper = tab.closest('[data-prref]');
+    expect(wrapper).not.toBeNull();
+    expect(wrapper!.contains(closeBtn)).toBe(true);
+  });
+
   it('falls back to "owner/repo#NNNN" when title is null', () => {
     function SeedNullTitle() {
       const { addTab } = useOpenTabs();
@@ -111,7 +132,9 @@ describe('PrTabStrip', () => {
     );
     const tab = screen.getByRole('tab', { name: /Has unread/i });
     // CSS-module class names are hashed; assert via partial class match.
-    expect(tab.className).toMatch(/tabUnread/);
+    // Post-D92 lift: `.tabUnread` lives on the outer wrapper (`.closest('[data-prref]')`).
+    const wrapper = tab.closest('[data-prref]') as HTMLElement;
+    expect(wrapper.className).toMatch(/tabUnread/);
   });
 });
 
@@ -128,7 +151,12 @@ describe('PrTabStrip close affordance', () => {
     }
     render(wrap(<Harness />));
     const tab1 = screen.getByRole('tab', { name: /A/i });
-    const close1 = tab1.querySelector('[aria-label="Close tab"]') as HTMLElement;
+    // Post-D92 lift: close button is a SIBLING of role="tab", under the .tab
+    // wrapper (queried via `closest('[data-prref]')` so the assertion survives
+    // future wrapper-layer additions, e.g. D85 kbd-nav restructure).
+    const close1 = tab1
+      .closest('[data-prref]')!
+      .querySelector('[aria-label="Close tab"]') as HTMLElement;
     expect(close1).not.toBeNull();
     await userEvent.click(close1);
     expect(screen.queryByRole('tab', { name: /A/i })).toBeNull();
@@ -161,11 +189,16 @@ describe('PrTabStrip close affordance', () => {
       return <PrTabStrip />;
     }
     render(wrap(<Harness />));
+    // Post-D92 lift: close button is a SIBLING of role="tab", under the .tab
+    // wrapper. `closest('[data-prref]')` keys on the stable wrapper attribute
+    // so this selector survives future DOM-layer additions.
     const closeA = screen
       .getByRole('tab', { name: /A/i })
+      .closest('[data-prref]')!
       .querySelector('[aria-label="Close tab"]') as HTMLButtonElement;
     const closeB = screen
       .getByRole('tab', { name: /B/i })
+      .closest('[data-prref]')!
       .querySelector('[aria-label="Close tab"]') as HTMLButtonElement;
     expect(closeA).toBeDisabled();
     expect(closeA.getAttribute('title')).toMatch(/submit in progress/i);
@@ -211,7 +244,9 @@ describe('PrTabStrip overflow menu', () => {
     );
     const tabs = screen.getAllByRole('tab');
     expect(tabs).toHaveLength(6);
-    expect(tabs[5].getAttribute('data-prref')).toBe('acme/api/6');
+    // Post-D92 lift: `data-prref` lives on the outer wrapper; `closest()` keys
+    // on the attribute itself, surviving any future intermediate-wrapper layer.
+    expect(tabs[5].closest('[data-prref]')!.getAttribute('data-prref')).toBe('acme/api/6');
     await userEvent.click(screen.getByRole('button', { name: /show 1 more/i }));
     const items = screen.getAllByRole('menuitem');
     expect(items).toHaveLength(1);
@@ -337,8 +372,11 @@ describe('PrTabStrip close navigation', () => {
         </OpenTabsProvider>
       </MemoryRouter>,
     );
+    // Post-D92 lift: close button is a sibling of role="tab" inside the .tab
+    // wrapper. `closest('[data-prref]')` is the durable selector.
     const closeB = screen
       .getByRole('tab', { name: /B/i })
+      .closest('[data-prref]')!
       .querySelector('[aria-label="Close tab"]') as HTMLElement;
     await userEvent.click(closeB);
     expect(screen.getByTestId('path').textContent).toBe('/pr/acme/api/1');
@@ -354,8 +392,11 @@ describe('PrTabStrip close navigation', () => {
         </OpenTabsProvider>
       </MemoryRouter>,
     );
+    // Post-D92 lift: close button is a sibling of role="tab" inside the .tab
+    // wrapper. `closest('[data-prref]')` is the durable selector.
     const closeA = screen
       .getByRole('tab', { name: /A/i })
+      .closest('[data-prref]')!
       .querySelector('[aria-label="Close tab"]') as HTMLElement;
     await userEvent.click(closeA);
     expect(screen.getByTestId('path').textContent).toBe('/pr/acme/api/2');
@@ -371,8 +412,10 @@ describe('PrTabStrip close navigation', () => {
         </OpenTabsProvider>
       </MemoryRouter>,
     );
+    // Post-D92 lift: close button is a SIBLING of role="tab", under the wrapper.
     const close = screen
       .getByRole('tab', { name: /Solo/i })
+      .closest('[data-prref]')!
       .querySelector('[aria-label="Close tab"]') as HTMLElement;
     await userEvent.click(close);
     expect(screen.getByTestId('path').textContent).toBe('/');
