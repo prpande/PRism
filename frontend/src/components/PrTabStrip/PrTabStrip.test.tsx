@@ -52,6 +52,25 @@ describe('PrTabStrip', () => {
     expect(screen.getByText('Title 1')).toBeInTheDocument();
   });
 
+  it('close button is a sibling of the role=tab element (not a child) — D82/D92 a11y lift', () => {
+    render(
+      wrap(
+        <>
+          <Seed count={1} />
+          <PrTabStrip />
+        </>,
+      ),
+    );
+    const tab = screen.getByRole('tab');
+    const closeBtn = screen.getByRole('button', { name: /close tab/i });
+    // The close button must NOT be a descendant of the role="tab" element.
+    // WAI-ARIA forbids nested interactives (axe-core nested-interactive rule).
+    expect(tab.contains(closeBtn)).toBe(false);
+    // Both must share a parent wrapper (the .tab class wrapper after the D92 lift).
+    expect(tab.parentElement).not.toBeNull();
+    expect(tab.parentElement!.contains(closeBtn)).toBe(true);
+  });
+
   it('falls back to "owner/repo#NNNN" when title is null', () => {
     function SeedNullTitle() {
       const { addTab } = useOpenTabs();
