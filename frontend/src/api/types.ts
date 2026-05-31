@@ -210,6 +210,37 @@ export interface PrSummary {
   category: string;
 }
 
+// PR9b-ai-gating § 3.3. The backend `FocusLevel` enum carries 3 values;
+// today's PlaceholderFileFocusRanker emits High + Medium. Wire-shape:
+// kebab-case via JsonStringEnumConverter(new KebabCaseJsonNamingPolicy())
+// — see JsonSerializerOptionsFactory.cs:44.
+export type FocusLevel = 'high' | 'medium' | 'low';
+
+export interface FileFocus {
+  path: string;
+  level: FocusLevel;
+}
+
+// AnnotationTone carries 3 backend values (PRism.AI.Contracts/Dtos/
+// HunkAnnotation.cs:5-10: Calm, HeadsUp, Concern). Today's placeholder
+// emits Calm + HeadsUp only; widening the type ensures a future
+// placeholder edit or v2 backend swap renders 'concern' deterministically
+// rather than silently narrowing.
+export type AnnotationTone = 'calm' | 'heads-up' | 'concern';
+
+export interface HunkAnnotation {
+  path: string;
+  hunkIndex: number;
+  body: string;
+  tone: AnnotationTone;
+}
+
+export interface DraftSuggestion {
+  filePath: string;
+  lineNumber: number;
+  body: string;
+}
+
 export type FileChangeStatus = 'added' | 'modified' | 'deleted' | 'renamed';
 
 export interface DiffHunk {
