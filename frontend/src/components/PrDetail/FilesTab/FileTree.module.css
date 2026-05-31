@@ -86,13 +86,37 @@
   color: var(--info-fg);
 }
 
-/* Dormant per D32a — production JSX has no AI-focus-dot wiring today.
-   Rule is ready for PR9 to enable via a small JSX conditional render. */
+/* PR9b-ai-gating § 4.3. Column slot — always emitted in JSX, collapses when
+   AI gate is off. Ports handoff `screens.css:580-581` to prevent row layout
+   shift on aiPreview toggle. */
 .fileTreeAi {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  flex: none;
+}
+.fileTreeAi[data-on='0'] {
+  width: 0;
+  overflow: hidden;
+}
+
+/* OLD .fileTreeAi (D32a dormant) renamed and re-purposed for Medium focus
+   with handoff's opacity-dimmed accent. See D110/D32a closure. */
+.fileTreeAiMed {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
+  opacity: 0.6;
+  flex: none;
+}
+
+.fileTreeAiHigh {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--accent) 25%, transparent);
   flex: none;
 }
 

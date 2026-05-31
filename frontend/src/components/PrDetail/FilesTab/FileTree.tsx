@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import type { FileChange, FileChangeStatus } from '../../../api/types';
+import type { FileChange, FileChangeStatus, FileFocus, FocusLevel } from '../../../api/types';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import styles from './FileTree.module.css';
 
@@ -10,6 +10,8 @@ export interface FileTreeProps {
   viewedPaths: Set<string>;
   onToggleViewed: (path: string) => void;
   isLoading?: boolean;
+  focusEntries: FileFocus[] | null;
+  aiPreview: boolean;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -33,9 +35,18 @@ export function FileTree({
   viewedPaths,
   onToggleViewed,
   isLoading = false,
+  focusEntries,
+  aiPreview,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
   const viewedCount = files.filter((f) => viewedPaths.has(f.path)).length;
+
+  const focusByPath = useMemo(() => {
+    if (!focusEntries) return null;
+    const m = new Map<string, FocusLevel>();
+    for (const entry of focusEntries) m.set(entry.path, entry.level);
+    return m;
+  }, [focusEntries]);
 
   if (files.length === 0) {
     if (isLoading) return null;
@@ -67,6 +78,8 @@ export function FileTree({
             viewedPaths={viewedPaths}
             onToggleViewed={onToggleViewed}
             depth={0}
+            focusByPath={focusByPath}
+            aiPreview={aiPreview}
           />
         ))}
       </div>
@@ -85,6 +98,8 @@ function TreeNodeComponent({
   viewedPaths,
   onToggleViewed,
   depth,
+  focusByPath,
+  aiPreview,
 }: {
   node: TreeNode;
   selectedPath: string | null;
@@ -92,6 +107,8 @@ function TreeNodeComponent({
   viewedPaths: Set<string>;
   onToggleViewed: (path: string) => void;
   depth: number;
+  focusByPath: Map<string, FocusLevel> | null;
+  aiPreview: boolean;
 }) {
   if (node.kind === 'file') {
     return (
@@ -102,6 +119,8 @@ function TreeNodeComponent({
         viewedPaths={viewedPaths}
         onToggleViewed={onToggleViewed}
         depth={depth}
+        focusByPath={focusByPath}
+        aiPreview={aiPreview}
       />
     );
   }
@@ -113,6 +132,8 @@ function TreeNodeComponent({
       viewedPaths={viewedPaths}
       onToggleViewed={onToggleViewed}
       depth={depth}
+      focusByPath={focusByPath}
+      aiPreview={aiPreview}
     />
   );
 }
@@ -124,6 +145,8 @@ function FileNodeComponent({
   viewedPaths,
   onToggleViewed,
   depth,
+  focusByPath,
+  aiPreview,
 }: {
   node: FileTreeNode;
   selectedPath: string | null;
@@ -131,9 +154,12 @@ function FileNodeComponent({
   viewedPaths: Set<string>;
   onToggleViewed: (path: string) => void;
   depth: number;
+  focusByPath: Map<string, FocusLevel> | null;
+  aiPreview: boolean;
 }) {
   const isSelected = selectedPath === node.path;
   const isViewed = viewedPaths.has(node.path);
+  const focusLevel = focusByPath?.get(node.path) ?? null;
 
   // onChange (not onClick + readOnly) so Space-key activation toggles the
   // checkbox consistently across browsers (claude[bot] iter 1 #10). The
@@ -164,6 +190,21 @@ function FileNodeComponent({
       </span>
       <span className={`file-tree-file-name ${styles.fileTreeFileName}`}>{node.name}</span>
       <span className={`file-tree-spacer ${styles.fileTreeSpacer}`} />
+      <span
+        className={`file-tree-ai ${styles.fileTreeAi}`}
+        data-on={aiPreview ? '1' : '0'}
+        aria-hidden="true"
+      >
+        {focusLevel && focusLevel !== 'low' && (
+          <span
+            className={focusLevel === 'high' ? styles.fileTreeAiHigh : styles.fileTreeAiMed}
+            title={`AI focus: ${focusLevel}`}
+          />
+        )}
+      </span>
+      {focusLevel && focusLevel !== 'low' && (
+        <span className="sr-only">{` AI focus: ${focusLevel}`}</span>
+      )}
       <input
         type="checkbox"
         checked={isViewed}
@@ -183,6 +224,8 @@ function DirectoryNodeComponent({
   viewedPaths,
   onToggleViewed,
   depth,
+  focusByPath,
+  aiPreview,
 }: {
   node: DirectoryTreeNode;
   selectedPath: string | null;
@@ -190,6 +233,8 @@ function DirectoryNodeComponent({
   viewedPaths: Set<string>;
   onToggleViewed: (path: string) => void;
   depth: number;
+  focusByPath: Map<string, FocusLevel> | null;
+  aiPreview: boolean;
 }) {
   const [expanded, setExpanded] = useState(true);
 
@@ -223,6 +268,8 @@ function DirectoryNodeComponent({
               viewedPaths={viewedPaths}
               onToggleViewed={onToggleViewed}
               depth={depth + 1}
+              focusByPath={focusByPath}
+              aiPreview={aiPreview}
             />
           ))}
         </div>
