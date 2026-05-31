@@ -205,6 +205,17 @@ describe('PrHeader', () => {
         logsPath: '/fake/logs',
       },
     };
+    capabilitiesValue.capabilities = {
+      summary: true,
+      fileFocus: true,
+      hunkAnnotations: true,
+      preSubmitValidators: true,
+      composerAssist: true,
+      draftSuggestions: true,
+      draftReconciliation: true,
+      inboxEnrichment: true,
+      inboxRanking: true,
+    };
     // PR8 § 4.8: the static "coming in v2" empty-state was removed. The Ask AI
     // button now opens the global AskAiDrawer (mounted in App.tsx, outside
     // PrHeader). This probe shares the test's provider so the toggle state is
