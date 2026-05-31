@@ -35,3 +35,26 @@
   flex: 1 1 100%;
   margin: var(--s-1) 0 0;
 }
+
+/* PR9b-ai-gating § 4.5 — D48 closure. AI suggestion row matches handoff
+   pr-detail.jsx:336-342 shape (icon + labeled body in flex container).
+   Ports handoff screens.css:489-494. Parent <li> uses column-flex layout. */
+.staleAi {
+  display: flex;
+  gap: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-2);
+  font-size: var(--text-xs);
+  flex: 1 1 100%;
+}
+
+.staleAiBody {
+  flex: 1;
+  min-width: 0;
+}
+
+.staleAiLabel {
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 2px;
+}

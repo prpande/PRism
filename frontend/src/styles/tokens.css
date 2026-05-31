@@ -538,6 +538,18 @@ a:hover { text-decoration: underline; }
   color: var(--accent);
 }
 
+/* Ports handoff screens.css:91. First production consumer: StaleDraftRow
+   AI suggestion label (PR9b-ai-gating § 4.5, D48). Lifted globally per
+   § 3.1 lift-on-second-use policy — AiSummaryCard uses camelCase module
+   class .aiSummaryLabel locally; this literal global is the shared form. */
+.ai-summary-label {
+  font-weight: 600;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
 /* Validator-severity chips (spec § 14.1) */
 .chip-status-suggestion { background: var(--info-soft); color: var(--info-fg); }
 .chip-status-concern { background: var(--warning-soft); color: var(--warning-fg); }

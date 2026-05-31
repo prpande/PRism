@@ -1,12 +1,17 @@
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { UnresolvedPanel } from '../src/components/PrDetail/Reconciliation/UnresolvedPanel';
 import * as draftApi from '../src/api/draft';
 import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../src/api/types';
 import styles from '../src/components/PrDetail/Reconciliation/UnresolvedPanel.module.css';
 import staleStyles from '../src/components/PrDetail/Reconciliation/StaleDraftRow.module.css';
+import { useAiGate } from '../src/hooks/useAiGate';
+import { useAiDraftSuggestions } from '../src/hooks/useAiDraftSuggestions';
+
+vi.mock('../src/hooks/useAiGate');
+vi.mock('../src/hooks/useAiDraftSuggestions');
 
 const ref: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -62,6 +67,12 @@ function renderPanel(session: ReviewSessionDto, opts: RenderOpts = {}) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+// Default safe values for mocked AI hooks — individual tests override as needed.
+beforeEach(() => {
+  vi.mocked(useAiGate).mockReturnValue(false);
+  vi.mocked(useAiDraftSuggestions).mockReturnValue(null);
 });
 
 describe('UnresolvedPanel', () => {
@@ -262,5 +273,55 @@ describe('UnresolvedPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('FILES_TAB_STUB')).toBeInTheDocument();
     });
+  });
+});
+
+// Helper: builds a session with a stale comment draft anchored at src/Calc.cs:3
+// (matches Task 1's PlaceholderData alignment). Copies the canonical mkSession/mkComment
+// shape used throughout this file.
+function buildSessionFixture(): ReviewSessionDto {
+  return mkSession({
+    draftComments: [
+      mkComment({
+        id: 'ai-test-d1',
+        filePath: 'src/Calc.cs',
+        lineNumber: 3,
+        status: 'stale',
+        bodyMarkdown: 'existing draft body',
+      }),
+    ],
+  });
+}
+
+describe('UnresolvedPanel — StaleDraftRow AI suggestion (D48)', () => {
+  it('renders no stale-draft-ai-suggestion when gate is off', () => {
+    vi.mocked(useAiGate).mockReturnValue(false);
+    vi.mocked(useAiDraftSuggestions).mockReturnValue(null);
+    renderPanel(buildSessionFixture());
+    expect(screen.queryByTestId('stale-draft-ai-suggestion')).not.toBeInTheDocument();
+  });
+
+  it('renders .stale-ai with sparkles icon + "AI suggestion" label + body when suggestion matches anchor', () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useAiDraftSuggestions).mockReturnValue([
+      { filePath: 'src/Calc.cs', lineNumber: 3, body: 'Worth a comment here?' },
+    ]);
+    renderPanel(buildSessionFixture());
+    const ai = screen.getByTestId('stale-draft-ai-suggestion');
+    expect(ai).toBeInTheDocument();
+    const icon = ai.querySelector('.ai-icon');
+    expect(icon).toBeInTheDocument();
+    expect(icon).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText('AI suggestion')).toBeInTheDocument();
+    expect(screen.getByText('Worth a comment here?')).toBeInTheDocument();
+  });
+
+  it('does NOT render stale-draft-ai-suggestion when suggestion does not match the draft anchor', () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useAiDraftSuggestions).mockReturnValue([
+      { filePath: 'src/Other.cs', lineNumber: 99, body: 'Mismatched anchor.' },
+    ]);
+    renderPanel(buildSessionFixture());
+    expect(screen.queryByTestId('stale-draft-ai-suggestion')).not.toBeInTheDocument();
   });
 });

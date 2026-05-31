@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Modal } from '../../Modal/Modal';
 import { sendPatch } from '../../../api/draft';
-import type { PrReference } from '../../../api/types';
+import type { PrReference, DraftSuggestion } from '../../../api/types';
 import type { DraftLike } from '../draftKinds';
 import styles from './StaleDraftRow.module.css';
 
@@ -16,6 +16,10 @@ interface StaleDraftRowProps {
   // Own-tab state-changed events are filtered (spec § 5.7), so the
   // panel must drive the refetch itself after a successful mutation.
   onMutated: () => void;
+  // PR9b-ai-gating § 4.5 — D48 closure. AI draft suggestion matching
+  // this draft's (filePath, lineNumber) anchor. Null when gate is off,
+  // when no suggestion matches, or when draft is a reply (no anchor).
+  aiSuggestion: DraftSuggestion | null;
 }
 
 const PREVIEW_CHARS = 80;
@@ -25,7 +29,7 @@ function previewBody(body: string): string {
   return body.slice(0, PREVIEW_CHARS).trimEnd() + '…';
 }
 
-export function StaleDraftRow({ prRef, draft, onMutated }: StaleDraftRowProps) {
+export function StaleDraftRow({ prRef, draft, onMutated, aiSuggestion }: StaleDraftRowProps) {
   const navigate = useNavigate();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -109,6 +113,20 @@ export function StaleDraftRow({ prRef, draft, onMutated }: StaleDraftRowProps) {
       <span className={`stale-draft-row-preview ${styles.staleDraftRowPreview}`}>
         {previewBody(body)}
       </span>
+      {aiSuggestion && (
+        <div
+          className={`stale-ai ai-tint ${styles.staleAi}`}
+          data-testid="stale-draft-ai-suggestion"
+        >
+          <span className="ai-icon" aria-hidden="true">
+            ✨
+          </span>
+          <div className={styles.staleAiBody}>
+            <div className={`ai-summary-label ${styles.staleAiLabel}`}>AI suggestion</div>
+            <div>{aiSuggestion.body}</div>
+          </div>
+        </div>
+      )}
       <button
         type="button"
         className="btn btn-secondary btn-sm"
