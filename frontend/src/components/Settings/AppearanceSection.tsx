@@ -44,10 +44,20 @@ export function AppearanceSection() {
   // PR9b-density: same key-scoped optimistic apply + on-failure rollback pattern
   // as onTheme/onAccent. applyDensityToDocument is a no-op write of `data-density`
   // on <html>, so the rollback path simply re-applies the prior value.
+  //
+  // Defensive normalization: the wire shape (UiPreferencesDto.Density) is
+  // `string`, validated server-side for type only — not enum membership
+  // (plan Deviation 6). An out-of-band edit to config.json could persist
+  // `"WTF"`; the controlled <select> below would then receive a value with
+  // no matching <option> and render an empty selection the user can't
+  // reliably correct. Normalize to the safe default before binding so the
+  // picker always reflects a valid option.
+  const density: Density = DENSITIES.includes(preferences.ui.density)
+    ? preferences.ui.density
+    : 'comfortable';
   const onDensity = (value: Density) => {
-    const priorDensity = preferences.ui.density;
     applyDensityToDocument(value);
-    void set('density', value).catch(() => applyDensityToDocument(priorDensity));
+    void set('density', value).catch(() => applyDensityToDocument(density));
   };
   const onAiToggle = (next: boolean) => {
     // usePreferences.set rethrows on POST failure (after the rollback +
@@ -99,7 +109,7 @@ export function AppearanceSection() {
         <label htmlFor="appearance-density">Density</label>
         <select
           id="appearance-density"
-          value={preferences.ui.density}
+          value={density}
           onChange={(e) => onDensity(e.target.value as Density)}
         >
           {DENSITIES.map((d) => (

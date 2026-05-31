@@ -1,4 +1,10 @@
 import { test, expect, type Route } from '@playwright/test';
+import {
+  allOffCapabilities,
+  authedAuthState,
+  makeDefaultPreferences,
+  type DensityPreferences,
+} from './fixtures/preferences';
 
 // PR9b-density (D97 closure): the density picker in Settings flips the
 // <html data-density="..."> attribute, persists through /api/preferences →
@@ -7,55 +13,8 @@ import { test, expect, type Route } from '@playwright/test';
 // + /api/auth/state route stubs, mutable store so toggles persist across
 // reload(), no real backend.
 
-const authedAuthState = {
-  hasToken: true,
-  host: 'https://github.com',
-  hostMismatch: null,
-};
-
-const allOffCapabilities = {
-  ai: {
-    summary: false,
-    fileFocus: false,
-    hunkAnnotations: false,
-    preSubmitValidators: false,
-    composerAssist: false,
-    draftSuggestions: false,
-    draftReconciliation: false,
-    inboxEnrichment: false,
-    inboxRanking: false,
-  },
-};
-
-function makeDefaultPreferences() {
-  return {
-    ui: {
-      theme: 'system' as const,
-      accent: 'indigo' as const,
-      aiPreview: false,
-      density: 'comfortable' as const,
-    },
-    inbox: {
-      sections: {
-        'review-requested': true,
-        'awaiting-author': true,
-        'authored-by-me': true,
-        mentioned: true,
-        'ci-failing': true,
-      },
-    },
-    github: {
-      host: 'https://github.com',
-      configPath: '/Users/x/AppData/Local/PRism/config.json',
-      logsPath: '/Users/x/AppData/Local/PRism/logs',
-    },
-  };
-}
-
-type Preferences = ReturnType<typeof makeDefaultPreferences>;
-
 async function setupMocks(page: import('@playwright/test').Page, opts?: { postFails?: boolean }) {
-  const store: Preferences = makeDefaultPreferences();
+  const store: DensityPreferences = makeDefaultPreferences();
 
   await page.route('**/api/auth/state', (route: Route) =>
     route.fulfill({
@@ -77,7 +36,7 @@ async function setupMocks(page: import('@playwright/test').Page, opts?: { postFa
       const body = (await route.request().postDataJSON()) as Record<string, unknown>;
       for (const [key, value] of Object.entries(body)) {
         if (key === 'density' && typeof value === 'string') {
-          store.ui.density = value as Preferences['ui']['density'];
+          store.ui.density = value as DensityPreferences['ui']['density'];
         }
       }
     }
@@ -132,8 +91,14 @@ test('toggling density flips data-density and persists across reload', async ({ 
     timeout: 10_000,
   });
 
-  // Toggle back to comfortable — attribute removed.
+  // Toggle back to comfortable — attribute removed. Symmetric waitForResponse
+  // for consistency with the compact arm above; otherwise a silently-dropped
+  // POST could pass via the optimistic-apply rollback path and mask a regression.
+  const postBackPromise = page.waitForResponse(
+    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
+  );
   await page.getByLabel('Density').selectOption('comfortable');
+  await postBackPromise;
   await expect(page.locator('html')).not.toHaveAttribute('data-density', /.+/);
 });
 

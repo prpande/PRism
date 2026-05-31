@@ -13,8 +13,9 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     private FileSystemWatcher? _watcher;
     private AppConfig _current = AppConfig.Default;
     // Allowlist + expected-type table for PatchAsync. The bare `theme` / `accent` / `aiPreview`
-    // keys are the legacy S0+S1 wire shape (under `ui.*` in config.json but flat on the wire);
-    // preserved for back-compat with the existing POST /api/preferences single-field contract.
+    // / `density` keys are the legacy S0+S1 wire shape (under `ui.*` in config.json but flat
+    // on the wire); preserved for back-compat with the existing POST /api/preferences
+    // single-field contract. `density` was added in PR9b alongside the same UiConfig sub-record.
     // The dotted-path `inbox.sections.*` keys (S6 PR1) map onto InboxSectionsConfig in
     // AppConfig.cs — canonical section set documented in docs/spec/03-poc-features.md § 11.
     //
