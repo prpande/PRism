@@ -426,7 +426,7 @@ Any candidate that fails these gates moves to PR9b or DEFER-TO-V1.X. Two PR9 can
 
 **Code changes (category 3 — dead-code purge):**
 
-- **D89 ScopePill deletion.** Zero current consumers (verified by grep at PR9a implementation-time). v1 completion roadmap (`docs/specs/2026-05-28-v1-completion-roadmap-design.md`) scopes only README + tag work; no Settings UX additions in v1; no v1.x backlog reference to ScopePill. Delete `frontend/src/components/Settings/ScopePill.tsx` and any colocated module CSS file. Recoverable from git history if a future v1.x consumer-need lands.
+- **D89 ScopePill deletion.** Zero current consumers (verified by grep at PR9a implementation-time). v1 completion roadmap (`docs/specs/2026-05-28-v1-completion-roadmap-design.md`) scopes only README + tag work; no Settings UX additions in v1; no v1.x backlog reference to ScopePill. Delete `frontend/src/components/Setup/ScopePill.tsx` (path correction: original spec said `Settings/`; actual path is `Setup/`) and any colocated module CSS file. Recoverable from git history if a future v1.x consumer-need lands.
 
 **Adjudication-only verdicts (no code change):**
 

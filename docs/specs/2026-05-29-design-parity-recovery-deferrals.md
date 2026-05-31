@@ -856,7 +856,7 @@ If the side-by-side review pass after PR3 ships determines the production AI sur
 **Resolution options for PR9:**
 - (i) Lift the close button OUTSIDE the `role="tab"` element via flex layout (tab body and close button as siblings, both focusable, but only the tab body has `role="tab"`).
 - (ii) Use the WAI-ARIA `aria-owns` pattern to re-associate a sibling close button with the tab semantically.
-- (iii) Remove the close button from the tab strip entirely (close via context menu or middle-click — middle-click already works per PR7 D58).
+- (iii) Remove the close button from the tab strip entirely (close via context menu or middle-click — middle-click already works per PR7 D58a).
 **Status:** Deferred to PR9 a11y revisit per spec § 4.9.
 **Cross-refs:** Spec § 4.9; D81 (which unmasked this); PR7 route-b brainstorm resolution.
 
@@ -1059,7 +1059,7 @@ D43 (click-outside close) is a UX nicety with no a11y impact; lower-priority def
 - **Consumer grep at PR9a verdict-time:** searching `frontend/src` for `from .*ScopePill|import.*ScopePill|ScopePill[^.]` returned matches only inside `ScopePill.tsx` itself (the definition file). No production import.
 - **v1 roadmap check:** `docs/specs/2026-05-28-v1-completion-roadmap-design.md` scopes Phase 2 README + Phase 3 tag; no Settings UX additions in v1; no ScopePill reference.
 - **S6 spec check:** `docs/specs/2026-05-15-s6-polish-and-distribution-design.md` does not reference ScopePill.
-The evidence supports the delete verdict. **PR9a implementation-time re-grep is required before deletion lands** — if a future commit between this verdict and PR9a implementation introduces a consumer, the verdict demotes to DEFER-TO-V1.X with the consumer recorded. Keeping the file as dormant code is debris — it draws future-reader attention and bit-rots without a code path exercising it. PR9a deletes `frontend/src/components/Settings/ScopePill.tsx` and any colocated module CSS file. Component is recoverable from git history if a future v1.x consumer-need lands.
+The evidence supports the delete verdict. **PR9a implementation-time re-grep is required before deletion lands** — if a future commit between this verdict and PR9a implementation introduces a consumer, the verdict demotes to DEFER-TO-V1.X with the consumer recorded. Keeping the file as dormant code is debris — it draws future-reader attention and bit-rots without a code path exercising it. PR9a deletes `frontend/src/components/Setup/ScopePill.tsx` (path correction: original spec text said `Settings/`; actual component path is `Setup/`) and any colocated module CSS file. Component is recoverable from git history if a future v1.x consumer-need lands.
 **Why not also D31 (ComparePicker)?** ComparePicker has a styled module CSS shipped in PR4 + is structurally part of the IterationTabStrip family (a sibling to CommitMultiSelectPicker). It is a "styled-but-dormant" surface, not a pure dead component. PR9a leaves it in place (covered by D84 visual-coherence verdict); a v1.x decision picks it up if no consumer ever lands.
 **Status:** REJECTED — delete `ScopePill.tsx` + module CSS file (if any) in PR9a, contingent on re-grep verification at implementation-time. Verify no imports remain (grep step in plan).
 **Cross-refs:** D58 (slice); D31; v1-completion-roadmap-design.md; spec § 4.9.1.
@@ -1141,17 +1141,21 @@ Adding 🔒 to FirstRunDisclosure's `<summary>` would put a security glyph next 
 3. **Future keyboard hook** — keyboard close (⌘W, currently deferred per D58a post-shell-decision) eventually depends on tab-focusable close affordance to receive the binding. Option (i) keeps the close button focusable as a sibling, preserving the future-kbd hook. Option (iii) removes that hook.
 
 **Status:** APPLY-IN-PR9A. Re-captures `app-chrome-tabstrip.png` parity baseline as part of the change. **Update 2026-05-31 (Task 14):** the lift surfaced a different critical axe-core violation (`aria-required-children` on `role="tablist"` — the now-sibling close button is a non-`role="tab"` child of the tablist). Inherent WAI-ARIA "deletable tabs" dilemma; both pre-lift (nested-interactive) and post-lift (aria-required-children) structures are critical axe-core violations. D82's structural lift is kept because the sibling close button is a real AT-usability improvement; the axe-core trade is documented in D104 and masked in CI via D94's restored `continue-on-error` pending D85's full kbd-nav redesign.
+
+**Minor behavioral notes (Task 14 preflight adversarial review, 2026-05-31; both accepted as Category 1 trade-offs):**
+- Middle-click handler moved from chip to inner `.tabBody` element. Wrapper padding (~10-12px each side per the existing `.tab` rule) and the gap between `.tabBody` and the close button no longer trigger middle-click close. Power-user feature scoped to a small surface area; cohort impact bounded. D85's full kbd-nav redesign can restore wrapper-level middle-click if cohort feedback flags it.
+- `cursor: pointer` moved from the wrapper to `.tabBody`. The wrapper padding area shows the default cursor instead of pointer on hover. Visual inconsistency vs. the pre-lift state but cosmetic only — no functional regression. Same D85 follow-up window.
 **Cross-refs:** D82; D81 (which unmasked this); D58a (PR7 — kbd bindings); D62a (parity baseline); D104 (axe-core trade); D94 (workflow stopgap restored); spec § 4.7, § 4.9.1.
 
 ### D93 — PR9a APPLY: D83 parity-baselines inbox race fix — wait on populated content
 
-**Source:** PR9a verdict pass; D83 + D64 originals.
+**Source:** PR9a verdict pass; D83 + D64a originals (PR7-track D64 renumbered to D64a in this PR).
 **Spec position:** § 4.9.1 — code-changes harm-fix; D83 original.
-**Covers:** D83 — `parity-baselines.spec.ts` `inbox` test Loading-vs-populated race; D64 — original "Loading-state baseline" weakness.
+**Covers:** D83 — `parity-baselines.spec.ts` `inbox` test Loading-vs-populated race; D64a — original "Loading-state baseline" weakness (PR7-track entry, renumbered in this PR).
 **Resolution:** In `frontend/e2e/parity-baselines.spec.ts`, replace `await page.locator('main').waitFor()` (for the `inbox` test only) with `await page.getByText(/Review requested/).waitFor()`. Re-capture `inbox.png` parity baseline at the populated 1280×858 state. Verify the baseline file size grows from ~1.1 KB (Loading) to the populated-state size (~ tens of KB).
 **Note:** The wait predicate uses the "Review requested" section header text per existing Inbox copy. If the Inbox copy ever changes, the test wait predicate must update — but that's true of any text-based selector. Acceptable for a baseline test.
 **Status:** APPLY-IN-PR9A.
-**Cross-refs:** D83, D64; spec § 4.9.1, § 6.9.
+**Cross-refs:** D83, D64a; spec § 4.9.1, § 6.9.
 
 ### D94 — PR9a APPLY: remove `continue-on-error: true` from Playwright test step after D82 lifts
 
