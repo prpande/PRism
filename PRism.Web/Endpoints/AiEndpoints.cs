@@ -42,6 +42,29 @@ internal static class AiEndpoints
                 return entries.Count == 0 ? Results.NoContent() : Results.Ok(entries);
             });
 
+        // PR9b-ai-gating § 3.2. The seam interface takes (prRef, filePath, hunkIndex)
+        // for v2 per-hunk queries; v1's placeholder ignores filePath/hunkIndex and
+        // returns the canned set wholesale. The endpoint surfaces all annotations
+        // for the PR in one fetch so DiffPane can index locally. D109 documents the
+        // seam-vs-endpoint divergence rationale; D111 comment below anchors the
+        // IsSubscribed-gating reopener.
+        //
+        // D111: No per-PR IsSubscribed check while seam is canned-data only. When
+        // the binding swaps to a real AI implementation (real generation, not Noop/
+        // Placeholder), add an IsSubscribed gate before the seam call — DO NOT
+        // merge the seam swap without this gate.
+        app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/hunk-annotations",
+            async (string owner, string repo, int number,
+                   IAiSeamSelector ai, CancellationToken ct) =>
+            {
+                var annotator = ai.Resolve<IHunkAnnotator>();
+                var annotations = await annotator
+                    .AnnotateAsync(new PrReference(owner, repo, number),
+                                   filePath: string.Empty, hunkIndex: 0, ct)
+                    .ConfigureAwait(false);
+                return annotations.Count == 0 ? Results.NoContent() : Results.Ok(annotations);
+            });
+
         return app;
     }
 }
