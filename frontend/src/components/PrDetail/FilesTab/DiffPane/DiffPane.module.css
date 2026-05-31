@@ -120,12 +120,62 @@
   background: var(--surface-2);
 }
 
-/* Split-mode empty half-cells (solo-delete right side / solo-insert left side).
-   Visual background matches the deleted/inserted row tint inherited from
-   tokens.css .diff-line--delete / .diff-line--insert; the cell is visually
-   blank and screen-reader-hidden via aria-hidden="true" on the element. */
+/* Slice 1 — split-mode rules. The previously-no-op `.diff-pane--split`
+   className from DiffPane.tsx:195 is finally load-bearing. See spec § 6.3
+   at docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md.
+
+   Single-combined `:global(...)` form (rather than nested `:global()`)
+   matches the existing codebase convention and keeps specificity at
+   one class selector per global-class, two with the descendant. */
+
+:global(.diff-pane--split) .diffTable {
+  table-layout: fixed;
+}
+
+/* Vertical pane separator between old-content and new-gutter.
+   Mirrors handoff design/handoff/screens.css:674 (.diff-half + .diff-half). */
+:global(.diff-pane--split) .diffGutterNew {
+  border-left: 1px solid var(--border-1);
+}
+
+/* Empty halves of solo-delete and solo-insert rows. Neutral background so
+   the row tint below doesn't bleed across the pane separator. */
 .diffCellEmpty {
+  background: var(--surface-1);
+}
+
+/* Row tint isolation in split mode.
+
+   tokens.css:784-789 sets `.diff-line--insert { background: var(--diff-add-bg) }`
+   on the row. In unified mode that's correct (single-content layout).
+   In split mode the row spans both panes, so a row-level tint would
+   color the empty right cells too — wrong visual signal. Override the
+   row tint to transparent in split mode and apply the tint to the
+   populated content cell only, targeted by data-side attribute (robust
+   against future column additions vs :first-of-type/:last-of-type). */
+
+:global(.diff-pane--split .diff-line--insert) {
   background: transparent;
+}
+:global(.diff-pane--split .diff-line--insert) .diffContent {
+  background: var(--diff-add-bg);
+}
+
+:global(.diff-pane--split .diff-line--delete) {
+  background: transparent;
+}
+:global(.diff-pane--split .diff-line--delete) .diffContent {
+  background: var(--diff-rem-bg);
+}
+
+:global(.diff-pane--split .diff-line--paired) {
+  background: transparent;
+}
+:global(.diff-pane--split .diff-line--paired) .diffContent[data-side='old'] {
+  background: var(--diff-rem-bg);
+}
+:global(.diff-pane--split .diff-line--paired) .diffContent[data-side='new'] {
+  background: var(--diff-add-bg);
 }
 
 /* PR9b-ai-gating § 4.4. AI hunk annotation row — colspan-3 <tr> emitted after

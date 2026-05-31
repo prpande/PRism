@@ -466,4 +466,39 @@ describe('DiffPane', () => {
     // and parseHunkLines assigns newLineNum=2 to the insert.
     expect(anchor.lineNumber).toBe(2);
   });
+
+  it('emits a colgroup with 4 col elements in split mode', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const diffPane = screen.getByTestId('diff-pane');
+    const colgroup = diffPane.querySelector('colgroup');
+    expect(colgroup).not.toBeNull();
+    expect(colgroup?.querySelectorAll('col').length).toBe(4);
+  });
+
+  it('does not emit a colgroup in unified mode', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const diffPane = screen.getByTestId('diff-pane');
+    const colgroup = diffPane.querySelector('colgroup');
+    expect(colgroup).toBeNull();
+  });
 });

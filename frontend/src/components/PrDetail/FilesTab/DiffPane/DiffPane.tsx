@@ -382,6 +382,14 @@ export function DiffPane({
       </div>
       <div className={`diff-pane-body ${styles.diffPaneBody}`}>
         <table className={`diff-table ${styles.diffTable}`}>
+          {isSplit && (
+            <colgroup>
+              <col style={{ width: '3em' }} />
+              <col />
+              <col style={{ width: '3em' }} />
+              <col />
+            </colgroup>
+          )}
           <tbody>{renderDiffRows()}</tbody>
         </table>
       </div>
