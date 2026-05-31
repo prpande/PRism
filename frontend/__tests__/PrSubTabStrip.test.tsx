@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { PrSubTabStrip } from '../src/components/PrDetail/PrSubTabStrip';
+import styles from '../src/components/PrDetail/PrSubTabStrip.module.css';
 
 describe('PrSubTabStrip', () => {
   it('renders three tabs: Overview, Files, Drafts', () => {
@@ -63,5 +64,26 @@ describe('PrSubTabStrip', () => {
     render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} draftsCount={0} />);
     const drafts = screen.getByRole('tab', { name: /drafts/i });
     expect(drafts.querySelector('[data-testid="pr-tab-count"]')).toBeNull();
+  });
+
+  // D11/D103 — handoff (design/handoff/pr-detail.jsx:124 + :134) applies the
+  // `.pr-tab-count-warn` class drafts-only, never on files. The base
+  // `.pr-tab-count` class is shared.
+  it('applies .prTabCountWarn class on the drafts tab when draftsCount > 0', () => {
+    render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} draftsCount={3} />);
+    const drafts = screen.getByRole('tab', { name: /drafts/i });
+    const count = drafts.querySelector('[data-testid="pr-tab-count"]');
+    expect(count).not.toBeNull();
+    expect(count?.classList.contains(styles.prTabCount)).toBe(true);
+    expect(count?.classList.contains(styles.prTabCountWarn)).toBe(true);
+  });
+
+  it('does NOT apply .prTabCountWarn class on the files tab when fileCount > 0', () => {
+    render(<PrSubTabStrip activeTab="overview" onTabChange={vi.fn()} fileCount={12} />);
+    const files = screen.getByRole('tab', { name: /files/i });
+    const count = files.querySelector('[data-testid="pr-tab-count"]');
+    expect(count).not.toBeNull();
+    expect(count?.classList.contains(styles.prTabCount)).toBe(true);
+    expect(count?.classList.contains(styles.prTabCountWarn)).toBe(false);
   });
 });
