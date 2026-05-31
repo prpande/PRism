@@ -981,7 +981,7 @@ All PR9-flagged entries from PR1-PR8 implementation work get a consolidated grou
 | § 4.9 candidate 3 (AI-surface gating) | D99 | DEFER-TO-PR9B family |
 | § 4.9 candidate 4 (floating tweaks panel) | D100 | REJECTED |
 | § 4.9 candidate 6 (global search bar) | D101 | DEFER-TO-PR9B family |
-| § 4.9 candidate 7 (submit-surface drift) | D102 | audit during PR9a; if drift → log + DEFER-TO-V1.X |
+| § 4.9 candidate 7 (submit-surface drift) | D102 | audit complete in PR9a; drift exists → DEFER-TO-V1.X |
 | `continue-on-error` removal | D94 | APPLY-IN-PR9A (mechanically coupled to D92) |
 
 ### D84 — PR9a verdict: visual-coherence reviews (D17, D18, D29, D30, D31, D35, D37, D38) — CONFIRMED OK as shipped
@@ -1265,8 +1265,17 @@ Adding 🔒 to FirstRunDisclosure's `<summary>` would put a security glyph next 
 
 **Why this gate (per scope-guardian + adversarial review):** The terms "cheap" and "cohort-visible" used in the originally-drafted resolution are subjective. An implementer mid-flow declaring drift "cheap" would expand PR9a beyond the documented scope; declaring drift "cohort-visible" without bound would paper over real differences. Pre-committing to log-and-defer eliminates both failure modes.
 
-**Status:** Audit-pending in PR9a. This entry's Status line is updated by the implementation task with either CONFIRMED + note OR audit findings + DEFER-TO-V1.X.
-**Cross-refs:** S5 work (`tokens.css:493-637`); spec § 4.9 candidate 7; § 4.9.1.
+**Status:** Audit complete; drift exists — DEFER-TO-V1.X to the submit-restyling slice. PR9a Task 13 (2026-05-31) ran the code-reading audit per the comparison protocol. Concrete deltas:
+
+- **`frontend/src/styles/tokens.css:574` (`.modal-dialog` box-shadow):** uses a raw literal `box-shadow: 0 16px 48px oklch(0 0 0 / 0.25)` instead of the existing `var(--shadow-modal)` token (defined at `tokens.css:138` light / `tokens.css:208` dark). The handoff source uses `box-shadow: var(--shadow-modal);` on `.modal` (`design/handoff/screens.css:1323`). Submit dialog inherits `.modal-dialog` so the drift hits its surface directly. Two other one-off modals (`HostChangeModal.module.css:16`, `NoReposWarningModal`) hand-roll their own literal shadows too — the same restyling slice should sweep them. (Cheatsheet at `Cheatsheet.module.css:27` already uses `var(--shadow-modal, …)`.)
+- **`frontend/src/styles/tokens.css:589-613` (`.verdict-picker` architecture):** production renders a border-divided segmented control (outer is bare flex; an inner `__segments` wrapper carries `border: 1px solid var(--border-2)` + `border-radius: var(--radius-2)` + `overflow: hidden`; each `__segment` is 30px tall with no individual radius, divided by `border-right`; selected fills with `--accent`). The handoff (`design/handoff/screens.css:104-124`) renders a floating-pill segmented control instead — outer carries `background: var(--surface-2)` + `border: 1px solid var(--border-1)` + `border-radius: var(--radius-2)` + `padding: 2px`; each `.verdict-opt` is 26px tall with its own `border-radius: 5px`; selected lifts via `background: var(--surface-1); box-shadow: var(--shadow-1)`. This is architecturally distinct (clipped strip vs floating pills), not a single-token swap — the v1.x slice will need to restructure the markup the same way PR2-PR8 restructured the rest of the chrome.
+- **`frontend/src/styles/tokens.css:597` (`.verdict-picker__segment` height):** 30px vs handoff 26px. Pulled out of the verdict-picker entry above because it would still apply even if the architectural delta were resolved.
+- **`frontend/src/styles/tokens.css:629` (`.submit-dialog__banner`):** no border on the in-dialog stale-commit-oid banner (`PrHeader.tsx:74` reference), only `padding`/`border-radius`/`font-size`. The restored PR Detail chrome uses the `.banner-warning` global (PR2's three-banner stack on PrHeader) which carries border + surface tokens. Submit-dialog's in-dialog banner doesn't compose `.banner` — minor visual inconsistency vs the rest of the surface.
+
+**Interaction-gated states deferred within D102 audit:** The submit-flash banner (post-submit success state) and full SubmitDialog runtime capture were skipped per the plan's audit-incompleteness disclosure — the Playwright submit-flow fixture wasn't spun up for this code-reading audit. The static CSS reads above cover the visible drift; runtime-only drift (animation, layout-on-mount, focus ring) is in scope for v1.x to capture.
+
+No fix lands in PR9a per D102's pre-bounded resolution path. The v1.x submit-restyling slice owns: shadow-token migration on `.modal-dialog` (+ HostChangeModal + NoReposWarningModal sweep), verdict-picker re-architecture to the floating-pill pattern, segment-height 30px→26px, and `.submit-dialog__banner` composition with `.banner`/`.banner-warning` globals.
+**Cross-refs:** S5 work (`tokens.css:493-637`); spec § 4.9 candidate 7; § 4.9.1; PR2 banner work (`design-parity-recovery-pr2`).
 
 ### D103 — PR9a APPLY: D11 `.prTabCountWarn` conditional render wiring (cheap-keep peeled from D85)
 
