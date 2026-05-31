@@ -4,6 +4,14 @@ import type { APIRequestContext, Page } from '@playwright/test';
 // Playwright run; without this, FakeReviewService head-sha mutations and
 // state.json drafts leak between specs. Spec `test.beforeEach`s call this so
 // each spec sees the canonical 3-iteration scenario from scratch.
+//
+// Also resets ui.aiPreview to false via POST /api/preferences. The backend
+// is reused across Playwright runs (reuseExistingServer: !isCI) and its
+// config.json persists in the DataDir across runs — a prior run that enabled
+// AI preview leaves AiPreviewState.IsOn = true in the reused server, which
+// makes parity-baselines and other layout-sensitive specs render AI content
+// they don't expect. /test/reset only resets state.json (sessions), not
+// config, so we patch aiPreview explicitly. No auth required on the endpoint.
 export async function resetBackendState(request: APIRequestContext): Promise<void> {
   const resp = await request.post('http://localhost:5180/test/reset', {
     headers: { Origin: 'http://localhost:5180' },
@@ -18,6 +26,16 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
   if (body.sessions !== 0) {
     throw new Error(`/test/reset did not clear state — sessions=${body.sessions} after reset`);
   }
+  // Reset AI preview preference so parity-baselines and layout-sensitive specs
+  // don't render AI content from a prior session's config.json. Best-effort:
+  // if it fails (e.g., server not yet in auth-accepting state), silently skip
+  // rather than failing the beforeEach — the test will fail for its own reason.
+  const aiResp = await request.post('http://localhost:5180/api/preferences', {
+    headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5180' },
+    data: JSON.stringify({ aiPreview: false }),
+  });
+  // Non-200 is acceptable here (e.g., 400 if config is already default).
+  void aiResp;
 }
 
 // Shared setup flow for S4 PR7 Playwright specs. Each spec runs against a
