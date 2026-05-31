@@ -195,10 +195,15 @@ test.describe('parity baselines — PR Detail', () => {
     // enabled), producing a ~77px height discrepancy in the diff container.
     // Posting from the page's own context (which has the session cookie from
     // setupAndOpenHandoffParityFixture) ensures the reset succeeds.
-    await page.request.post('/api/preferences', {
+    const prefResp = await page.request.post('/api/preferences', {
       data: { aiPreview: false },
       headers: { Origin: 'http://localhost:5180' },
     });
+    if (!prefResp.ok()) {
+      throw new Error(
+        `POST /api/preferences (aiPreview=false) failed: ${prefResp.status()} ${await prefResp.text()}`,
+      );
+    }
     await page.goto('/pr/acme/api/123/files');
     // Select the canonical scenario file so the diff pane has content. The
     // scenario fixture defines src/Calc.cs at three iterations (Calc1/2/3).
