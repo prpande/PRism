@@ -4,9 +4,7 @@
  * `overview-card overview-card-hero ai-tint` literal classes alongside this
  * hashed module class; Vite injects CSS-modules AFTER the global tokens.css,
  * so this rule wins the equal-specificity cascade over `.overview-card-hero`'s
- * larger padding/radius. This is the production active-shape parity delta from
- * handoff `pr-detail.jsx:194` (which uses `overview-card overview-card-hero`
- * without the smaller AI-summary override) — see D24 in the deferrals sidecar.
+ * larger padding/radius. Active shape confirmed in PR9b-ai-gating per D110.
  */
 .aiSummaryCard {
   margin-top: var(--s-4);

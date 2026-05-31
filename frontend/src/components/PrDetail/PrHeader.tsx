@@ -8,9 +8,8 @@ import {
   verdictToSubmitWire,
   type KnownSubmitErrorCode,
 } from '../../api/submit';
-import { useCapabilities } from '../../hooks/useCapabilities';
-import { usePreferences } from '../../hooks/usePreferences';
 import { useSubmit } from '../../hooks/useSubmit';
+import { useAiGate } from '../../hooks/useAiGate';
 import { useSubmitToasts } from '../../hooks/useSubmitToasts';
 import { useToast } from '../Toast';
 import { PrSubTabStrip, type PrTabId } from './PrSubTabStrip';
@@ -99,11 +98,9 @@ export function PrHeader({
   prState = 'open',
   onSessionRefetch,
 }: PrHeaderProps) {
-  const { capabilities } = useCapabilities();
-  const { preferences } = usePreferences();
-  const aiPreview = preferences?.ui.aiPreview ?? false;
-  const validatorResults: ValidatorResult[] =
-    aiPreview && !!capabilities?.preSubmitValidators ? CANNED_PRESUBMIT_VALIDATOR_RESULTS : [];
+  const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
+    ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
+    : [];
 
   const submit = useSubmit(reference);
   const { show } = useToast();
@@ -333,7 +330,7 @@ export function PrHeader({
             disabled={!session || inSubmitFlow || isClosedOrMerged}
             onSubmit={() => setDialogOpen(true)}
           />
-          <AskAiButton aiPreview={aiPreview} onClick={toggleAskAi} />
+          <AskAiButton onClick={toggleAskAi} />
         </div>
       </div>
       <PrSubTabStrip

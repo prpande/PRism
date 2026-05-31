@@ -1,4 +1,11 @@
-import type { FileChange, ReviewThreadDto, DraftSide } from '../../../../api/types';
+import { useMemo } from 'react';
+import type {
+  FileChange,
+  ReviewThreadDto,
+  DraftSide,
+  PrReference,
+  HunkAnnotation,
+} from '../../../../api/types';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
 import {
   ExistingCommentWidget,
@@ -6,11 +13,15 @@ import {
 } from './ExistingCommentWidget';
 import { DiffTruncationBanner } from './DiffTruncationBanner';
 import { WordDiffOverlay } from './WordDiffOverlay';
+import { AiHunkAnnotation } from './AiHunkAnnotation';
+import { useAiGate } from '../../../../hooks/useAiGate';
+import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import styles from './DiffPane.module.css';
 
 export type DiffMode = 'side-by-side' | 'unified';
 
 export interface DiffPaneProps {
+  prRef: PrReference;
   selectedPath: string | null;
   file: FileChange | null;
   diffMode: DiffMode;
@@ -91,7 +102,10 @@ function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
   return null;
 }
 
+const DIFF_TABLE_COLSPAN = 3; // gutter-old / gutter-new / content — verified at DiffPane.tsx:279-297
+
 export function DiffPane({
+  prRef,
   selectedPath,
   file,
   diffMode,
@@ -103,6 +117,20 @@ export function DiffPane({
   replyContext,
   isLoading = false,
 }: DiffPaneProps) {
+  const annotationsEnabled = useAiGate('hunkAnnotations');
+  const allAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
+
+  const annotationsForFile = useMemo(() => {
+    if (!allAnnotations || !selectedPath) return null;
+    const m = new Map<number, HunkAnnotation[]>();
+    for (const a of allAnnotations) {
+      if (a.path !== selectedPath) continue;
+      const existing = m.get(a.hunkIndex);
+      if (existing) existing.push(a);
+      else m.set(a.hunkIndex, [a]);
+    }
+    return m;
+  }, [allAnnotations, selectedPath]);
   if (!selectedPath) {
     return (
       <div
@@ -180,25 +208,49 @@ export function DiffPane({
       <div className={`diff-pane-body ${styles.diffPaneBody}`}>
         <table className={`diff-table ${styles.diffTable}`}>
           <tbody>
-            {allLines.map((line, idx) => {
-              // Attach comments to new-side line numbers (insert/context), matching GitHub convention
-              const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
-              const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
-              const pair = findAdjacentPair(allLines, idx);
+            {(() => {
+              const rows: React.ReactNode[] = [];
+              let hunkCounter = -1;
+              for (let idx = 0; idx < allLines.length; idx++) {
+                const line = allLines[idx];
+                // Attach comments to new-side line numbers (insert/context), matching GitHub convention
+                const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
+                const threadsAtLine = commentLineNum
+                  ? threadsByLine.get(commentLineNum)
+                  : undefined;
+                const pair = findAdjacentPair(allLines, idx);
 
-              return (
-                <DiffLineRow
-                  key={idx}
-                  line={line}
-                  pair={pair}
-                  threadsAtLine={threadsAtLine}
-                  filePath={selectedPath}
-                  onLineClick={onLineClick}
-                  renderComposerForLine={renderComposerForLine}
-                  replyContext={replyContext}
-                />
-              );
-            })}
+                rows.push(
+                  <DiffLineRow
+                    key={idx}
+                    line={line}
+                    pair={pair}
+                    threadsAtLine={threadsAtLine}
+                    filePath={selectedPath}
+                    onLineClick={onLineClick}
+                    renderComposerForLine={renderComposerForLine}
+                    replyContext={replyContext}
+                  />,
+                );
+
+                if (line.type === 'hunk-header') {
+                  hunkCounter += 1;
+                  const annotations = annotationsForFile?.get(hunkCounter);
+                  if (annotations) {
+                    for (let aidx = 0; aidx < annotations.length; aidx++) {
+                      rows.push(
+                        <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
+                          <td colSpan={DIFF_TABLE_COLSPAN}>
+                            <AiHunkAnnotation annotation={annotations[aidx]} />
+                          </td>
+                        </tr>,
+                      );
+                    }
+                  }
+                }
+              }
+              return rows;
+            })()}
           </tbody>
         </table>
       </div>

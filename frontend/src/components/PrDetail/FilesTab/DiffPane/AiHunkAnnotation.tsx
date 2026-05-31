@@ -1,14 +1,39 @@
-/**
- * Placeholder geometry stub for AI hunk annotations.
- * Never inserted in the PoC — placement geometry only:
- * above hunk header, gutter-aligned, max-width matches hunk width.
- */
+import type { HunkAnnotation, AnnotationTone } from '../../../../api/types';
+import styles from './AiHunkAnnotation.module.css';
+
 export interface AiHunkAnnotationProps {
-  hunkIndex: number;
-  annotation: string;
+  annotation: HunkAnnotation;
 }
 
-export function AiHunkAnnotation(_props: AiHunkAnnotationProps): null {
-  void _props;
-  return null;
+// Tone → chip variant + label lookup. Adding a tone value here is the only
+// touch required when the wire shape widens (e.g., a future v2 emits a new
+// tone): map to the appropriate chip variant + handoff-aligned label.
+const TONE_CHIP: Record<AnnotationTone, { variant: 'info' | 'warning' | 'danger'; label: string }> =
+  {
+    calm: { variant: 'info', label: 'Note' },
+    'heads-up': { variant: 'warning', label: 'Behavior change' },
+    concern: { variant: 'danger', label: 'Concern' },
+  };
+
+export function AiHunkAnnotation({ annotation }: AiHunkAnnotationProps) {
+  // Nullish fallback so an unknown wire tone (e.g. a future v2 backend that
+  // ships before the FE type is widened) renders as a neutral 'info' chip
+  // labelled with the raw tone string, rather than `undefined`-derefing on
+  // `chip.variant`. TypeScript exhaustiveness still flags new tones at
+  // compile-time once FE types catch up.
+  const chip = TONE_CHIP[annotation.tone] ?? { variant: 'info' as const, label: annotation.tone };
+  return (
+    <div className={`ai-hunk ${styles.aiHunk}`} data-testid="ai-hunk-annotation">
+      <span className="ai-icon" aria-hidden="true">
+        ✨
+      </span>
+      <div className={styles.aiHunkBody}>
+        <div className={`ai-hunk-meta ${styles.aiHunkMeta}`}>
+          <span>AI</span>
+          <span className={`chip chip-${chip.variant}`}>{chip.label}</span>
+        </div>
+        <div>{annotation.body}</div>
+      </div>
+    </div>
+  );
 }

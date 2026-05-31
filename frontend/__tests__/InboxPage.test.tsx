@@ -17,11 +17,15 @@ vi.mock('../src/hooks/useCapabilities', () => ({
 vi.mock('../src/hooks/usePreferences', () => ({
   usePreferences: vi.fn(),
 }));
+vi.mock('../src/hooks/useAiGate', () => ({
+  useAiGate: vi.fn(),
+}));
 
 import { useInbox } from '../src/hooks/useInbox';
 import { useInboxUpdates } from '../src/hooks/useInboxUpdates';
 import { useCapabilities } from '../src/hooks/useCapabilities';
 import { usePreferences } from '../src/hooks/usePreferences';
+import { useAiGate } from '../src/hooks/useAiGate';
 
 function setHooks(
   opts: {
@@ -29,6 +33,7 @@ function setHooks(
     isLoading?: boolean;
     error?: unknown;
     hasUpdate?: boolean;
+    // aiPreview now controls the inboxRanking gate (ActivityRail visibility)
     aiPreview?: boolean;
     inboxEnrichment?: boolean;
   } = {},
@@ -44,6 +49,11 @@ function setHooks(
     summary: opts.hasUpdate ? '3 new updates' : '',
     dismiss: vi.fn(),
   });
+  // InboxPage now uses useAiGate for both gates.
+  // useCapabilities / usePreferences are no longer called directly by InboxPage
+  // but are kept to satisfy the transitive mock chain (useAiGate internally calls
+  // both; its mock here short-circuits that, but the registrations prevent
+  // "unmocked module" warnings from other test paths).
   vi.mocked(useCapabilities).mockReturnValue({
     capabilities: {
       inboxEnrichment: opts.inboxEnrichment ?? false,
@@ -76,6 +86,14 @@ function setHooks(
     error: null,
     refetch: vi.fn().mockResolvedValue(undefined),
     set: vi.fn().mockResolvedValue(undefined),
+  });
+  // Wire useAiGate: inboxEnrichment → showCategoryChip, inboxRanking → showActivityRail.
+  // aiPreview maps to inboxRanking because showActivityRail was previously gated on
+  // preferences.ui.aiPreview (see migration note in InboxPage.tsx).
+  vi.mocked(useAiGate).mockImplementation((key) => {
+    if (key === 'inboxEnrichment') return opts.inboxEnrichment ?? false;
+    if (key === 'inboxRanking') return opts.aiPreview ?? false;
+    return false;
   });
 }
 
@@ -182,5 +200,95 @@ describe('InboxPage', () => {
     setHooks({ data: { ...sampleData, tokenScopeFooterEnabled: false } });
     renderPage();
     expect(screen.queryByText(/some prs may be hidden/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('InboxPage — useAiGate migrations', () => {
+  beforeEach(() => {
+    vi.mocked(useAiGate).mockReset();
+    // Provide minimal mocks so the page can render
+    vi.mocked(useInbox).mockReturnValue({
+      data: {
+        sections: [],
+        enrichments: {},
+        lastRefreshedAt: '2026-01-01T00:00:00Z',
+        tokenScopeFooterEnabled: false,
+      } as InboxResponse,
+      isLoading: false,
+      error: null,
+      reload: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.mocked(useInboxUpdates).mockReturnValue({
+      hasUpdate: false,
+      summary: '',
+      dismiss: vi.fn(),
+    });
+    // These mocks are only needed if InboxPage still calls them directly.
+    // After migration they become no-ops, but the vi.mock() hoisting keeps them registered.
+    vi.mocked(useCapabilities).mockReturnValue({
+      capabilities: { inboxEnrichment: false } as AiCapabilities,
+      error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.mocked(usePreferences).mockReturnValue({
+      preferences: {
+        ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+        inbox: {
+          sections: {
+            'review-requested': true,
+            'awaiting-author': true,
+            'authored-by-me': true,
+            mentioned: true,
+            'ci-failing': true,
+          },
+        },
+        github: {
+          host: 'https://github.com',
+          configPath: '/fake/config.json',
+          logsPath: '/fake/logs',
+        },
+      } as PreferencesResponse,
+      error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+      set: vi.fn().mockResolvedValue(undefined),
+    });
+  });
+
+  it('calls useAiGate("inboxEnrichment") and useAiGate("inboxRanking")', () => {
+    vi.mocked(useAiGate).mockReturnValue(false);
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    const calls = vi.mocked(useAiGate).mock.calls.map((c) => c[0]);
+    expect(calls).toContain('inboxEnrichment');
+    expect(calls).toContain('inboxRanking');
+  });
+
+  it('hides the activity rail when inboxRanking gate is off', () => {
+    vi.mocked(useAiGate).mockImplementation((key) => key === 'inboxEnrichment');
+    const { container } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('[data-testid="activity-rail"]')).toBeNull();
+  });
+
+  it('shows the activity rail when inboxRanking gate is on', () => {
+    vi.mocked(useAiGate).mockImplementation((key) => key === 'inboxRanking');
+    const { container } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(container.querySelector('[data-testid="activity-rail"]')).not.toBeNull();
   });
 });

@@ -1,11 +1,28 @@
+/* PR9b-ai-gating § 4.4. Port of handoff `.ai-hunk` (screens.css:824-832) and
+   `.ai-hunk-meta` (screens.css:834). The literal classes (.ai-hunk,
+   .ai-hunk-meta) stay on JSX as the test seam + visual identity; hashed
+   module classes (.aiHunk, .aiHunkBody, .aiHunkMeta) carry the paint.
+   Matches the literal-class-and-module pattern from PR4 D16. The handoff's
+   .ai-hunk-actions surface is NOT ported — Quote/Dismiss action buttons
+   are deferred per D108. */
+
 .aiHunk {
-  /* Composes with .ai-tint global for surface tint */
+  display: flex;
+  gap: var(--s-2);
   margin: var(--s-2) var(--s-4);
-  padding: var(--s-3);
-  border-radius: var(--radius-3);
-  font-size: var(--text-sm);
-  color: var(--text-1);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--radius-2);
+  background: color-mix(in oklch, var(--accent-soft) 50%, var(--surface-1));
+  border: 1px dashed color-mix(in oklch, var(--accent) 40%, var(--border-1));
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
 }
+
+.aiHunkBody {
+  flex: 1;
+  min-width: 0;
+}
+
 .aiHunkMeta {
   display: flex;
   gap: var(--s-2);
@@ -14,8 +31,7 @@
   font-weight: 600;
   color: var(--accent);
 }
-.aiHunkActions {
-  margin-top: 6px;
-  display: flex;
-  gap: var(--s-1);
-}
+
+/* `.aiHunkRow > td` lives in DiffPane.module.css — that's where the JSX
+   imports its `styles` from (DiffPane.tsx emits `<tr className={styles.aiHunkRow}>`
+   from DiffPane's module). Don't re-declare here. */

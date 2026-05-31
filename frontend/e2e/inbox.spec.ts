@@ -303,11 +303,21 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
       }),
     });
   });
+  // Capabilities are coupled to aiPreview on the real backend (CapabilitiesEndpoints.cs
+  // returns AllOn xor AllOff from AiPreviewState.IsOn). Task 17 migrated InboxPage to
+  // useAiGate('inboxRanking') which now checks BOTH capabilities.inboxRanking AND
+  // preferences.ui.aiPreview. The mock must mirror the coupling or the ActivityRail
+  // gate stays off even when aiPreview flips true. useCapabilities also subscribes to
+  // window.focus — the dispatchEvent below triggers both refetches simultaneously.
   await page.route('**/api/capabilities', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(allOffCapabilities),
+      body: JSON.stringify(
+        aiPreview
+          ? { ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true } }
+          : allOffCapabilities,
+      ),
     }),
   );
   await page.route('**/api/events', (route: Route) =>
@@ -335,7 +345,8 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
   // Each usePreferences() call in the component tree is an independent hook instance.
   // HeaderControls' instance updates immediately from the POST response; InboxPage's
   // instance only updates on the next window 'focus' event (see usePreferences.ts).
-  // Dispatch focus so InboxPage re-fetches preferences and gets aiPreview: true.
+  // useCapabilities also subscribes to focus — dispatch triggers both refetches so
+  // InboxPage sees aiPreview: true AND inboxRanking: true simultaneously.
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
 
   await expect(page.getByRole('complementary', { name: /activity/i })).toBeVisible({

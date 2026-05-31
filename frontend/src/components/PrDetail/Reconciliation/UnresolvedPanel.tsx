@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { sendPatch } from '../../../api/draft';
-import type { PrReference, ReviewSessionDto } from '../../../api/types';
+import type { PrReference, ReviewSessionDto, DraftSuggestion } from '../../../api/types';
 import { StaleDraftRow } from './StaleDraftRow';
 import type { DraftLike } from '../draftKinds';
+import { useAiGate } from '../../../hooks/useAiGate';
+import { useAiDraftSuggestions } from '../../../hooks/useAiDraftSuggestions';
 import styles from './UnresolvedPanel.module.css';
 
 interface UnresolvedPanelProps {
@@ -70,6 +72,19 @@ export function UnresolvedPanel({
   readOnly = false,
 }: UnresolvedPanelProps) {
   const counts = useMemo(() => computeCounts(session), [session]);
+
+  const draftSuggestionsEnabled = useAiGate('draftSuggestions');
+  const allSuggestions = useAiDraftSuggestions(prRef, draftSuggestionsEnabled);
+
+  const suggestionFor = useMemo(() => {
+    if (!allSuggestions) return null;
+    const m = new Map<string, DraftSuggestion>();
+    for (const s of allSuggestions) {
+      const key = `${s.filePath}:${s.lineNumber}`;
+      if (!m.has(key)) m.set(key, s);
+    }
+    return m;
+  }, [allSuggestions]);
   const containerRef = useRef<HTMLElement | null>(null);
 
   const visible = counts.stale.length > 0 || counts.movedCount > 0 || counts.needsReconfirm;
@@ -153,7 +168,17 @@ export function UnresolvedPanel({
       </header>
       <ul className={`unresolved-panel-rows ${styles.unresolvedPanelRows}`}>
         {counts.stale.map((d) => (
-          <StaleDraftRow key={d.data.id} prRef={prRef} draft={d} onMutated={onMutated} />
+          <StaleDraftRow
+            key={d.data.id}
+            prRef={prRef}
+            draft={d}
+            onMutated={onMutated}
+            aiSuggestion={
+              d.kind === 'comment' && d.data.filePath != null && d.data.lineNumber != null
+                ? (suggestionFor?.get(`${d.data.filePath}:${d.data.lineNumber}`) ?? null)
+                : null
+            }
+          />
         ))}
         {counts.needsReconfirm && (
           <li className={`verdict-reconfirm-row row gap-2 ${styles.verdictReconfirmRow}`}>

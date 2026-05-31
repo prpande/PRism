@@ -6,6 +6,8 @@ import { sendPatch } from '../../../api/draft';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
+import { useAiGate } from '../../../hooks/useAiGate';
+import { useAiFileFocus } from '../../../hooks/useAiFileFocus';
 import { FileTree } from './FileTree';
 import { DiffPane } from './DiffPane';
 import type { DiffMode } from './DiffPane';
@@ -49,6 +51,9 @@ export function FilesTab() {
   );
 
   const isLowQuality = prDetail.clusteringQuality === 'low';
+
+  const fileFocusEnabled = useAiGate('fileFocus');
+  const focusEntries = useAiFileFocus(prRef, fileFocusEnabled);
 
   const [activeRange, setActiveRange] = useState<string>('all');
   const [selectedCommits, setSelectedCommits] = useState<string[] | null>(null);
@@ -377,11 +382,14 @@ export function FilesTab() {
               viewedPaths={viewedPaths}
               onToggleViewed={handleToggleViewed}
               isLoading={diff.isLoading}
+              focusEntries={focusEntries}
+              aiPreview={fileFocusEnabled}
             />
           )}
         </div>
         <div className={`files-tab-diff ${styles.filesTabDiff}`} data-testid="files-tab-diff">
           <DiffPane
+            prRef={prRef}
             selectedPath={selectedPath}
             file={selectedFile}
             diffMode={effectiveDiffMode}

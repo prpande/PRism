@@ -1345,3 +1345,72 @@ No fix lands in PR9a per D102's pre-bounded resolution path. The v1.x submit-res
 
 **Status:** SHIPPED in PR9b-density+search.
 **Cross-refs:** D97, D101, D104; spec § 4.9.2 line 453; `applyTheme.ts`; `usePreferences.ts`; `ConfigStore._allowedFields`.
+
+---
+
+## PR9b-ai-gating — Selective wirings
+
+### D106 — D28 iter-new-dot DEFER-TO-V1.X
+
+**Source:** PR9b-ai-gating brainstorm 2026-05-31.
+**Spec position:** § 4.9.2 — PR9b-ai-gating sweep scope; D28 original deferral.
+**Covers:** D28 — IterationTabStrip iter-new-dot wiring.
+**Verdict rationale:** No backend `IterationDto.IsNew` flag exists. Adding it requires either a backend signal (would need design — what's "new"? Server-side: since last user visit? Last cluster computation? Frontend-side: relative to a session-tracked baseline?) OR a frontend-synthetic "newest iteration on first load" heuristic backed by `localStorage`/`sessionStorage`. Both paths are session-memory work whose right home is a separate design pass, not the AI-gating sweep. The dot was framed as AI in the handoff but is structurally a session-state signal, not an AI signal — conflating them muddies the sweep's purpose.
+**Status:** DEFER-TO-V1.X.
+**Reopener:** Backend `IterationDto.IsNew` flag added OR explicit cohort signal requesting iteration-recency indication.
+**Cross-refs:** D28; D87; spec § 4.9.2.
+
+### D107 — D48 stale-row AI suggestion — SUPERSEDED (wired in this PR)
+
+**Source:** PR9b-ai-gating ce-doc-review pass 2026-05-31.
+**Status:** CLOSED — the originally-planned D107 deferral premise (no `IDraftSuggester` seam exists) was empirically wrong. The seam, the `PlaceholderDraftSuggester` (returning canned data), and the `AiCapabilities.DraftSuggestions` wire flag all already exist. D48 was wired in this sub-PR — see § 4.5 of the PR9b-ai-gating spec.
+**Cross-refs:** D48 (now closed); spec § 4.5.
+
+### D108 — AiHunkAnnotation action buttons (Quote / Dismiss) DEFER-TO-V1.X
+
+**Source:** PR9b-ai-gating brainstorm 2026-05-31; surfaced during AiHunkAnnotation rewrite design.
+**Spec position:** § 4.9.2 — PR9b-ai-gating sweep scope; handoff `.ai-hunk-actions` (`diff.jsx:139-142`, `screens.css:835`).
+**Covers:** Handoff `<div className="ai-hunk-actions">` with two action buttons: "Quote in comment" + "Dismiss".
+**Verdict rationale:** Quote requires composer-seed plumbing — `InlineCommentComposer` doesn't accept a `seed: string` prop today; threading one through requires touching the composer prop chain + the open-composer registry + the per-anchor draft session. Dismiss requires per-session dismissal state — no `dismissedAnnotations` set exists; building one is session-state design work parallel to D106. Both are cross-cutting V1.X work whose absence doesn't break the informational read of the annotation.
+**Status:** DEFER-TO-V1.X. Annotation ships informational-only (sparkles icon + "AI" label + tone chip + body).
+**Reopener:** Cohort signal requesting Quote-in-comment OR a session-state design pass lands the dismissal model.
+**Cross-refs:** D87; D106 (parallel session-state shape).
+
+### D109 — Endpoint per-PR vs seam per-hunk/per-file shape divergence
+
+**Source:** PR9b-ai-gating brainstorm 2026-05-31; ce-doc-review adversarial pass sharpened the framing from "documentation note" to "contract violation."
+**Spec position:** § 4.9.2 — PR9b-ai-gating sweep scope; `IHunkAnnotator.AnnotateAsync(prRef, filePath, hunkIndex)` seam interface.
+**Reality:** The `IHunkAnnotator` seam method takes `(prRef, filePath, hunkIndex)` for v2 streaming / cost-control use. The v1 endpoint `GET /ai/hunk-annotations` returns all annotations for the PR in one fetch — calls the seam with empty path + 0 index; the placeholder ignores both args. `IFileFocusRanker.RankAsync` and `IDraftSuggester.SuggestAsync` take per-PR signatures already so their endpoints align cleanly. The hunk-annotator violation is real — a future v2 implementer that reads `filePath` for telemetry/validation silently breaks against the v1 endpoint.
+**Verdict rationale:** A future v2 real-AI backend will want per-hunk fetches (real generation is expensive; per-PR pre-generation doesn't scale). The seam interface supports that shape; the v1 endpoint doesn't. The proper fix is V1.X-shaped — either widen the seam (add a per-PR `AnnotateAllAsync(prRef, ct)` overload alongside the existing per-hunk method) or split the endpoint per-file/per-hunk. The v1 endpoint comment names the debt at the call site.
+**Status:** DEFER-TO-V1.X (endpoint redesign + seam-widening when real-AI backend ships).
+**Reopener:** Real AI backend swap-in at the `IHunkAnnotator` seam.
+**Cross-refs:** D87; D111; § 6.4; § 7.4.
+
+### D110 — D24 verdict CONFIRMED smaller AiSummaryCard shape
+
+**Source:** PR9b-ai-gating brainstorm 2026-05-31.
+**Spec position:** § 4.9.2 — PR9b-ai-gating verdict; D24 original deferral.
+**Covers:** D24 — AiSummaryCard active-shape parity delta (current smaller `.pr-ai-summary` shape vs handoff's larger `.overview-card-hero`).
+**Verdict rationale:** No cohort signal in either direction at N=3; deferring to handoff parity awaits an actual cohort prompt. The current shape ships unchanged. The `AiSummaryCard.module.css` comment header rewrites to reference D110 (this entry) instead of D24, but no rule changes. Reversal is one rule deletion (drop `padding` + `border-radius` from `.aiSummaryCard`) — cheap if a future cohort surfaces growth pressure.
+**Status:** CONFIRMED.
+**Cross-refs:** D24; D87; § 4.9.2; § 6.4.
+
+### D111 — Per-endpoint `IsSubscribed` gating on `/ai/*` family DEFER-TO-V1.X
+
+**Source:** PR9b-ai-gating ce-doc-review security-lens + adversarial pass.
+**Spec position:** § 4.9.2 — PR9b-ai-gating sweep scope; § 7.5 auth posture rationale.
+**Reality:** The session-token middleware (`SessionTokenMiddleware.cs:59`) gates all `/api/*` paths including `/ai/summary` and the three new AI endpoints. Per-endpoint `IsSubscribed` check (the per-PR subscription presence check from `IActivePrCache.IsSubscribed`) is absent from `/ai/summary` and not added to the new endpoints.
+**Verdict rationale:** `IsSubscribed` is a presence-not-identity check that protects write semantics against PRs the user never loaded. Read-only AI endpoints with no mutation side effects don't require it when the seam returns canned data — anyone gets the same placeholder. This reasoning ages badly when the seam swaps to real AI: the same endpoint path would surface PR-content-derived output to any session-authenticated caller.
+**Status:** DEFER-TO-V1.X.
+**Reopener (enforced):** Same trigger as D109 — real AI backend swap-in at any of the three seams. **The seam-swap PR MUST include the per-endpoint `IsSubscribed` gate in the same atomic merge** (mirroring the mutating-endpoint pattern). Inline `// D111` comments at each of the three new `app.MapGet(...)` calls in `AiEndpoints.cs` anchor the reopener in the code the implementer touches when swapping the binding.
+**Cross-refs:** D109; § 7.5.
+
+### D112 — `useAiGate` two-factor abstraction's behavioral payoff is post-decoupling
+
+**Source:** PR9b-ai-gating ce-doc-review adversarial round 2.
+**Spec position:** § 3.1 wire-coupling caveat; § 4.2 + § 4.6 framing.
+**Reality:** Today, `CapabilitiesEndpoints.cs:13` returns `AllOn` xor `AllOff` based on `AiPreviewState.IsOn`, and `PreferencesEndpoints.cs:47` mirrors `aiState.IsOn = config.Current.Ui.AiPreview`. Every `useAiGate(key)` call returns the same value as `aiPreview` regardless of key. The two-factor abstraction is forward-compat scaffolding for backend capability decoupling.
+**Verdict rationale:** Backend decoupling (per-user feature flags, A/B rollout of inbox ranking, real-AI seam-swap with cost-controlled per-capability rollout) is V1.X-shaped infrastructure work. The PR9b-ai-gating sweep ships the frontend gate shape now so that when the backend decouples, no frontend follow-up is required — the decoupling lands as a backend-only change. Two semantic-imprecision liabilities surface in advance: (1) `useAiGate('composerAssist')` for `AskAiButton` couples Ask AI with composer-assist; (2) `useAiGate('inboxRanking')` for the activity rail couples the rail's visibility with the ranking algorithm. Both are documented for cohort signal monitoring post-decoupling.
+**Status:** DEFER-TO-V1.X.
+**Reopener:** Backend capability decoupling lands. When `AiCapabilities` stops mirroring `AiPreviewState.IsOn`, re-evaluate the two key choices documented above; either confirm the coupling-by-name or add dedicated `askAi` / `activityRail` keys.
+**Cross-refs:** § 3.1 coupling caveat; § 4.2 + § 4.6 key-choice rationale; D109 + D111 (real-AI swap pulls capability decoupling forward).

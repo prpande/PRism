@@ -119,3 +119,10 @@
 .diffComposerRow {
   background: var(--surface-2);
 }
+
+/* PR9b-ai-gating § 4.4. AI hunk annotation row — colspan-3 <tr> emitted after
+   each hunk-header when annotationsForFile has entries for that hunk index. */
+.aiHunkRow > td {
+  padding: 0;
+  border: 0;
+}

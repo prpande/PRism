@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import type { PrReference } from '../../../api/types';
-import { useCapabilities } from '../../../hooks/useCapabilities';
 import { usePreferences } from '../../../hooks/usePreferences';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
+import { useAiGate } from '../../../hooks/useAiGate';
 import type { PrDetailOutletContext } from '../../../pages/PrDetailPage';
 import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
@@ -16,7 +16,6 @@ import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
   const { prDetail, draftSession, readOnly } = useOutletContext<PrDetailOutletContext>();
-  const { capabilities } = useCapabilities();
   const { preferences } = usePreferences();
   const navigate = useNavigate();
   const params = useParams<{ owner: string; repo: string; number: string }>();
@@ -26,8 +25,8 @@ export function OverviewTab() {
     [params.owner, params.repo, params.number],
   );
 
-  const aiPreview = preferences?.ui.aiPreview ?? false;
-  const aiOn = !!capabilities?.summary && aiPreview;
+  const aiPreview = preferences?.ui.aiPreview ?? false; // still needed for PrDescription prop
+  const aiOn = useAiGate('summary');
 
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
   const aiSummary = useAiSummary(prRef, aiOn);

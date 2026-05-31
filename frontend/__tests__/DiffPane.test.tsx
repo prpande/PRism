@@ -1,7 +1,14 @@
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DiffPane } from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane';
-import type { FileChange, ReviewThreadDto } from '../src/api/types';
+import type { FileChange, ReviewThreadDto, PrReference } from '../src/api/types';
+import { useAiGate } from '../src/hooks/useAiGate';
+import { useAiHunkAnnotations } from '../src/hooks/useAiHunkAnnotations';
+
+vi.mock('../src/hooks/useAiGate');
+vi.mock('../src/hooks/useAiHunkAnnotations');
+
+const samplePrRef: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
 const hunkBody = `@@ -1,3 +1,4 @@
  line one
@@ -49,9 +56,15 @@ const sampleThread: ReviewThreadDto = {
 };
 
 describe('DiffPane', () => {
+  beforeEach(() => {
+    vi.mocked(useAiGate).mockReturnValue(false);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
+  });
+
   it('renders empty state when no file is selected', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath={null}
         file={null}
         diffMode="side-by-side"
@@ -66,6 +79,7 @@ describe('DiffPane', () => {
   it('renders file path in header when file selected', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath="src/main.ts"
         file={sampleFile}
         diffMode="side-by-side"
@@ -80,6 +94,7 @@ describe('DiffPane', () => {
   it('renders diff lines from hunk body', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath="src/main.ts"
         file={sampleFile}
         diffMode="unified"
@@ -97,6 +112,7 @@ describe('DiffPane', () => {
   it('renders truncation banner when truncated', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath="src/main.ts"
         file={sampleFile}
         diffMode="unified"
@@ -113,6 +129,7 @@ describe('DiffPane', () => {
   it('does not render truncation banner when not truncated', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath="src/main.ts"
         file={sampleFile}
         diffMode="unified"
@@ -127,6 +144,7 @@ describe('DiffPane', () => {
   it('renders comment widget for matching thread', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath="src/main.ts"
         file={sampleFile}
         diffMode="unified"
@@ -144,6 +162,7 @@ describe('DiffPane', () => {
   it('renders empty file state for file with no hunks', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath="src/empty.ts"
         file={emptyFile}
         diffMode="unified"
@@ -158,6 +177,7 @@ describe('DiffPane', () => {
   it('renders side-by-side layout when diffMode is side-by-side', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath="src/main.ts"
         file={sampleFile}
         diffMode="side-by-side"
@@ -172,6 +192,7 @@ describe('DiffPane', () => {
   it('renders unified layout when diffMode is unified', () => {
     render(
       <DiffPane
+        prRef={samplePrRef}
         selectedPath="src/main.ts"
         file={sampleFile}
         diffMode="unified"
