@@ -8,7 +8,7 @@ const setMock = vi.fn(() => Promise.resolve());
 vi.mock('../../src/hooks/usePreferences', () => ({
   usePreferences: () => ({
     preferences: {
-      ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+      ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
       inbox: {
         sections: {
           'review-requested': true,

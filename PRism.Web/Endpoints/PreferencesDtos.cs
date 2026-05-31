@@ -21,7 +21,7 @@ internal sealed record PreferencesResponse(
     InboxPreferencesDto Inbox,
     GithubPreferencesDto Github);
 
-internal sealed record UiPreferencesDto(string Theme, string Accent, bool AiPreview);
+internal sealed record UiPreferencesDto(string Theme, string Accent, bool AiPreview, string Density);
 
 internal sealed record InboxPreferencesDto(InboxSectionsDto Sections);
 

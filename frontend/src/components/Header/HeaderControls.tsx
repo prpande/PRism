@@ -4,7 +4,7 @@ import { useCapabilities } from '../../hooks/useCapabilities';
 import { ThemeToggle } from './ThemeToggle';
 import { AccentPicker } from './AccentPicker';
 import { AiPreviewToggle } from './AiPreviewToggle';
-import { applyThemeToDocument } from '../../utils/applyTheme';
+import { applyThemeToDocument, applyDensityToDocument } from '../../utils/applyTheme';
 import styles from './HeaderControls.module.css';
 import type { Theme, Accent } from '../../api/types';
 
@@ -16,7 +16,10 @@ export function HeaderControls() {
   const { refetch: refetchCapabilities } = useCapabilities();
 
   useEffect(() => {
-    if (preferences) applyThemeToDocument(preferences.ui.theme, preferences.ui.accent);
+    if (preferences) {
+      applyThemeToDocument(preferences.ui.theme, preferences.ui.accent);
+      applyDensityToDocument(preferences.ui.density);
+    }
   }, [preferences]);
 
   if (!preferences) return null;

@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { Header } from '../src/components/Header/Header';
 
 const preferencesBody = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
   inbox: {
     sections: {
       'review-requested': true,
@@ -100,5 +100,15 @@ describe('Header', () => {
     renderAt('/setup');
     const setupTab = screen.getByRole('link', { name: /setup/i });
     expect(setupTab.textContent?.trim()).toBe('Setup');
+  });
+
+  // PR9b-search (D101 closure): the disabled global-search input gets a forward-
+  // looking tooltip so users hovering see "where this is going" instead of an
+  // unexplained disabled field. Spec § 4.9.2 line 454 — "Search palette — v1.1".
+  it('disabled global-search input carries the v1.1 tooltip', () => {
+    renderAt('/');
+    const input = screen.getByLabelText(/global search/i);
+    expect(input).toBeDisabled();
+    expect(input).toHaveAttribute('title', 'Search palette — v1.1');
   });
 });

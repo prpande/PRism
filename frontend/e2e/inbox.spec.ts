@@ -48,7 +48,7 @@ const authedAuthState = {
 // throws. Caught by Playwright on PR #69 (4 inbox tests failed at "Refactor auth
 // flow" never rendering).
 const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
   inbox: {
     sections: {
       'review-requested': true,

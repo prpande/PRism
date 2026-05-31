@@ -66,6 +66,7 @@ export function Header({ hasToken }: HeaderProps) {
       <input
         className={styles.search}
         placeholder="Jump to PR or file… ⌘K"
+        title="Search palette — v1.1"
         disabled
         aria-label="Global search (placeholder)"
       />

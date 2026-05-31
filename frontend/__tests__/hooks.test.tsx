@@ -14,7 +14,7 @@ vi.mock('../src/components/Toast', () => ({
 const server = setupServer(
   http.get('/api/preferences', () =>
     HttpResponse.json({
-      ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+      ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
       inbox: {
         sections: {
           'review-requested': true,
@@ -84,7 +84,7 @@ describe('usePreferences', () => {
     server.use(
       http.post('/api/preferences', async () =>
         HttpResponse.json({
-          ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+          ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
           inbox: {
             sections: {
               'review-requested': true,

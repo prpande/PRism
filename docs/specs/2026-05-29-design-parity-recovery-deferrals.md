@@ -1331,3 +1331,17 @@ No fix lands in PR9a per D102's pre-bounded resolution path. The v1.x submit-res
 
 **Status:** PARTIAL — D82 structural lift shipped in PR9a; axe-core violation remains masked in CI pending D85.
 **Cross-refs:** D82, D92 (the lift); D94 (workflow change deferred); D85 (D43/D44/D45 kbd-nav bundle that owns the full resolution); spec § 4.9.1.
+
+### D105 — PR9b-density+search SHIPPED
+
+**Source:** PR9b-density+search implementation (2026-05-31).
+**Spec position:** § 4.9.2 (PR9b family); closes D97 + D101 + spec § 4.9.2 line-453 persistence correction.
+**Covers:**
+- D97 (density mode toggle wiring) — SHIPPED via `UiConfig.Density` backend field + `applyDensityToDocument` util + `AppearanceSection` density picker (placed between Accent and AI preview per IA spec) + Playwright e2e (happy + POST-failure + cross-tab) + recaptured `settings-page.png` parity baseline.
+- D101 (global search bar stub-with-tooltip) — SHIPPED via `title="Search palette — v1.1"` on the disabled `<input>` at `Header.tsx:66-71`.
+- Spec correction — § 4.9.2 line 453 updated from `prism.densityPreference` localStorage → backend prefs via `/api/preferences`. The spec's localStorage reference misnamed its own precedent (`applyThemeToDocument` + `usePreferences.set` already use backend prefs). See PR9b-density+search plan Deviation 1 for the rationale of why localStorage was rejected (FOUC / offline-survival / per-machine analysis).
+
+**Verdict rationale:** Backend-prefs persistence chosen over localStorage because (a) all other `ui.*` prefs use backend prefs; (b) cross-tab + cross-account-instance sync via the existing focus-refetch contract is free; (c) one DTO field + one allowlist entry + one type-union extension is paved infrastructure. Backend allowlist accepts arbitrary `density` strings (theme/accent share this gap — flagged as plan Deviation 6); a follow-up adds enum validation across all closed-union string fields.
+
+**Status:** SHIPPED in PR9b-density+search.
+**Cross-refs:** D97, D101, D104; spec § 4.9.2 line 453; `applyTheme.ts`; `usePreferences.ts`; `ConfigStore._allowedFields`.

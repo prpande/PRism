@@ -1,7 +1,7 @@
 import { usePreferences } from '../../hooks/usePreferences';
 import { useCapabilities } from '../../hooks/useCapabilities';
-import { applyThemeToDocument } from '../../utils/applyTheme';
-import type { Accent, Theme } from '../../api/types';
+import { applyThemeToDocument, applyDensityToDocument } from '../../utils/applyTheme';
+import type { Accent, Density, Theme } from '../../api/types';
 import styles from './SettingsSections.module.css';
 
 const THEMES: readonly Theme[] = ['system', 'light', 'dark'] as const;
@@ -10,6 +10,7 @@ const ACCENTS: readonly { value: Accent; label: string }[] = [
   { value: 'amber', label: 'Amber' },
   { value: 'teal', label: 'Teal' },
 ];
+const DENSITIES: readonly Density[] = ['comfortable', 'compact'] as const;
 
 // Spec § 2.4 + 2026-05-25 Plan-resync: every input uses an explicit
 // `<label htmlFor="…"><input id="…">` association so the PR7 a11y audit
@@ -39,6 +40,24 @@ export function AppearanceSection() {
     const priorAccent = preferences.ui.accent;
     applyThemeToDocument(priorTheme, value);
     void set('accent', value).catch(() => applyThemeToDocument(priorTheme, priorAccent));
+  };
+  // PR9b-density: same key-scoped optimistic apply + on-failure rollback pattern
+  // as onTheme/onAccent. applyDensityToDocument is a no-op write of `data-density`
+  // on <html>, so the rollback path simply re-applies the prior value.
+  //
+  // Defensive normalization: the wire shape (UiPreferencesDto.Density) is
+  // `string`, validated server-side for type only — not enum membership
+  // (plan Deviation 6). An out-of-band edit to config.json could persist
+  // `"WTF"`; the controlled <select> below would then receive a value with
+  // no matching <option> and render an empty selection the user can't
+  // reliably correct. Normalize to the safe default before binding so the
+  // picker always reflects a valid option.
+  const density: Density = DENSITIES.includes(preferences.ui.density)
+    ? preferences.ui.density
+    : 'comfortable';
+  const onDensity = (value: Density) => {
+    applyDensityToDocument(value);
+    void set('density', value).catch(() => applyDensityToDocument(density));
   };
   const onAiToggle = (next: boolean) => {
     // usePreferences.set rethrows on POST failure (after the rollback +
@@ -85,6 +104,21 @@ export function AppearanceSection() {
           </label>
         ))}
       </fieldset>
+
+      <div className={styles.row}>
+        <label htmlFor="appearance-density">Density</label>
+        <select
+          id="appearance-density"
+          value={density}
+          onChange={(e) => onDensity(e.target.value as Density)}
+        >
+          {DENSITIES.map((d) => (
+            <option key={d} value={d}>
+              {d.charAt(0).toUpperCase() + d.slice(1)}
+            </option>
+          ))}
+        </select>
+      </div>
 
       <div className={styles.row}>
         <label htmlFor="appearance-ai-preview">AI preview</label>
