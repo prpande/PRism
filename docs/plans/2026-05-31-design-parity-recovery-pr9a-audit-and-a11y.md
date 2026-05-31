@@ -13,6 +13,7 @@
 ## File structure — what gets touched
 
 **Frontend (code changes):**
+
 - `frontend/src/components/PrTabStrip/PrTabStrip.tsx` — wrapper restructure (D92)
 - `frontend/src/components/PrTabStrip/PrTabStrip.module.css` — cascade rewrite (D92)
 - `frontend/src/components/PrTabStrip/PrTabStrip.test.tsx` — selector updates + new sibling-structure assertion (D92)
@@ -23,14 +24,17 @@
 - `frontend/src/components/Setup/ScopePill.module.css` (if exists) — DELETE (D89)
 
 **Frontend e2e:**
+
 - `frontend/e2e/parity-baselines.spec.ts` — wait target for inbox test (D83/D93)
 - `frontend/e2e/__snapshots__/<platform>/parity-baselines-...-inbox-...png` — re-capture (D83/D93)
 - `frontend/e2e/__snapshots__/<platform>/parity-baselines-...-app-chrome-tabstrip-...png` — re-capture (D92)
 
 **CI / workflows:**
+
 - `.github/workflows/ci.yml` — remove `continue-on-error: true` from Playwright test step only (D94)
 
 **Docs:**
+
 - `docs/specs/2026-05-29-design-parity-recovery-deferrals.md` — update D102 Status with audit findings (D102)
 - (this plan, `docs/plans/2026-05-31-design-parity-recovery-pr9a-audit-and-a11y.md`) — update Plan Deviations section as discoveries land
 
@@ -76,6 +80,7 @@ D82's fix is a structural restructure — no animation changes. No need to coord
 ### Task 1: Pre-flight grep for D89 ScopePill consumers
 
 **Files:**
+
 - Read: `frontend/src/components/Setup/ScopePill.tsx`
 - Grep: `frontend/src` for `ScopePill`
 
@@ -112,6 +117,7 @@ git commit -m "docs(pr9a): demote D89 — ScopePill consumer found at <path:line
 ### Task 2: Pre-flight verify D103 `draftCount` prop scope
 
 **Files:**
+
 - Read: `frontend/src/components/PrDetail/PrSubTabStrip.tsx`
 - Read: `frontend/src/components/PrDetail/PrSubTabStrip.module.css`
 
@@ -158,6 +164,7 @@ git commit -m "docs(pr9a): demote D103 — draftCount prop not in scope at PrSub
 ### Task 3: Write failing structural test for D82/D92 sibling close-button lift
 
 **Files:**
+
 - Modify: `frontend/src/components/PrTabStrip/PrTabStrip.test.tsx`
 
 **Spec/sidecar refs:** D82, D92.
@@ -167,7 +174,7 @@ git commit -m "docs(pr9a): demote D103 — draftCount prop not in scope at PrSub
 After the existing `'renders one tab per openTab and shows #NNNN prefix'` test (around line 39), add:
 
 ```tsx
-it('close button is a sibling of the role=tab element (not a child) — D82/D92 a11y lift', () => {
+it("close button is a sibling of the role=tab element (not a child) — D82/D92 a11y lift", () => {
   render(
     wrap(
       <>
@@ -176,8 +183,8 @@ it('close button is a sibling of the role=tab element (not a child) — D82/D92 
       </>,
     ),
   );
-  const tab = screen.getByRole('tab');
-  const closeBtn = screen.getByRole('button', { name: /close tab/i });
+  const tab = screen.getByRole("tab");
+  const closeBtn = screen.getByRole("button", { name: /close tab/i });
   // The close button must NOT be a descendant of the role="tab" element.
   // WAI-ARIA forbids nested interactives (axe-core nested-interactive rule).
   expect(tab.contains(closeBtn)).toBe(false);
@@ -210,6 +217,7 @@ git commit -m "test(pr9a): D82/D92 — failing structural test for close-button 
 ### Task 4: Refactor PrTabStrip.tsx — lift close button to wrapper sibling
 
 **Files:**
+
 - Modify: `frontend/src/components/PrTabStrip/PrTabStrip.tsx`
 
 **Spec/sidecar refs:** D82, D92.
@@ -226,11 +234,11 @@ function renderTab(t: OpenTab) {
   const closeBlocked = submit.inFlight && submit.prRef === key;
   const wrapperClassName = [
     styles.tab,
-    active ? styles.tabActive : '',
-    unread ? styles.tabUnread : '',
+    active ? styles.tabActive : "",
+    unread ? styles.tabUnread : "",
   ]
     .filter(Boolean)
-    .join(' ');
+    .join(" ");
   const label = tabLabel(t);
   return (
     <div key={key} className={wrapperClassName} data-prref={key}>
@@ -242,7 +250,7 @@ function renderTab(t: OpenTab) {
         aria-label={label}
         onClick={() => handleTabClick(t)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
+          if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             handleTabClick(t);
           }
@@ -277,6 +285,7 @@ function renderTab(t: OpenTab) {
 ```
 
 Changes vs current code:
+
 1. Outer `<div>` becomes the layout wrapper carrying `.tab`, `.tabActive`, `.tabUnread` classes (`wrapperClassName`) AND `data-prref={key}` (moved from the inner element per spec § 4.9.1 D82 + plan-deviation note). No `role`, no `tabIndex`, no event handlers, no `aria-*`.
 2. Inner `<div role="tab">` carries `role="tab"`, `tabIndex`, `aria-selected`, `aria-label`, and the click/keydown/mousedown handlers. Gets a new `styles.tabBody` class for inner layout.
 3. The close `<button>` moves OUT of the inner `<div role="tab">` and becomes a flex sibling inside the outer `.tab` wrapper. DOM source order: tab body FIRST, close button LAST (so AT users hear title+selected state before encountering the close affordance, per D92). No `tabIndex` on the close button — natural Tab stop per the close-button-keyboard-tab-stop plan deviation note above.
@@ -349,6 +358,7 @@ git commit -m "fix(pr9a): D82/D92 — lift close button as sibling of role=tab i
 ### Task 5: Rewrite CSS cascade in PrTabStrip.module.css
 
 **Files:**
+
 - Modify: `frontend/src/components/PrTabStrip/PrTabStrip.module.css`
 
 **Spec/sidecar refs:** D82, D92.
@@ -362,6 +372,7 @@ grep -n "\.tab\|\.close\|\.tabActive\|\.tabUnread\|\.tabBody" frontend/src/compo
 ```
 
 Read the file. Identify:
+
 - The `.tab` rule (chip border, radius, padding, flex behavior).
 - The `.tabActive`, `.tabUnread` rules (visual state overlays).
 - The `.close` rule (close button visual + `opacity: 0` default).
@@ -402,9 +413,11 @@ Use `--accent-ring` (defined in tokens.css:96 + :170). Do NOT use `--focus-ring`
 The `.tab` rule moves to the outer wrapper element. Preserve the EXISTING values from the current rule — including `align-items: center`, `gap: 8px` (or whatever the current value), padding, height, max-width, font-size, color, transitions, etc. The wrapper takes ON the chip's full visual treatment.
 
 What changes vs the current rule:
+
 - The wrapper is now a flex container with two children (tab body + close button) instead of containing the close button as a deeper descendant. The existing `align-items: center` + `gap: 8px` continue to position those two children correctly: tab body fills (via `flex: 1 1 auto` on `.tabBody`), close button sits to the right with 8px gap.
 
 What stays from the current rule:
+
 - Border, border-radius, background, padding, height, max-width — all unchanged.
 - The `cursor: pointer` on the wrapper is REMOVED (cursor for click-to-select belongs on the inner `.tabBody`; the wrapper's space between tab body and close button no longer triggers tab-select).
 
@@ -445,6 +458,7 @@ git commit -m "fix(pr9a): D82/D92 — add .tabBody rule + adjust .tab wrapper fo
 ### Task 6: Update PrTabStrip tests for new structure + verify all pass
 
 **Files:**
+
 - Modify: `frontend/src/components/PrTabStrip/PrTabStrip.test.tsx`
 
 **Spec/sidecar refs:** D82, D92.
@@ -452,6 +466,7 @@ git commit -m "fix(pr9a): D82/D92 — add .tabBody rule + adjust .tab wrapper fo
 - [ ] **Step 1: Enumerate the test sites that need updating (verified at plan-write time)**
 
 Read the test failures recorded in Task 4 Step 4. The verified affected test sites in `PrTabStrip.test.tsx` are:
+
 - Line ~131 (clicking × removes the tab) — uses `screen.getByRole('tab', ...).querySelector('[aria-label="Close tab"]')`.
 - Lines ~164-169 (close button disabled when submit in flight) — uses the same `screen.getByRole('tab').querySelector` pattern.
 - Lines ~214 (`tabs[5].getAttribute('data-prref')`) — `data-prref` moves to the WRAPPER per plan deviations; this test must use `tabs[5].parentElement!.getAttribute('data-prref')`.
@@ -469,12 +484,12 @@ Concrete example for the submit-in-flight close-disabled test (around lines 164-
 
 ```tsx
 // BEFORE:
-const closeA = screen.getByRole('tab', { name: /A/i }).querySelector(
-  '[aria-label="Close tab"]',
-) as HTMLElement;
+const closeA = screen
+  .getByRole("tab", { name: /A/i })
+  .querySelector('[aria-label="Close tab"]') as HTMLElement;
 
 // AFTER:
-const tabA = screen.getByRole('tab', { name: /A/i });
+const tabA = screen.getByRole("tab", { name: /A/i });
 const closeA = tabA.parentElement!.querySelector(
   '[aria-label="Close tab"]',
 ) as HTMLElement;
@@ -484,10 +499,10 @@ Concrete example for the `data-prref` test (around line 214):
 
 ```tsx
 // BEFORE:
-expect(tabs[5].getAttribute('data-prref')).toBe('acme/api/6');
+expect(tabs[5].getAttribute("data-prref")).toBe("acme/api/6");
 
 // AFTER:
-expect(tabs[5].parentElement!.getAttribute('data-prref')).toBe('acme/api/6');
+expect(tabs[5].parentElement!.getAttribute("data-prref")).toBe("acme/api/6");
 ```
 
 - [ ] **Step 3: Run all PrTabStrip tests**
@@ -524,6 +539,7 @@ git commit -m "test(pr9a): D82/D92 — update PrTabStrip tests for sibling close
 ### Task 7: Re-capture app-chrome-tabstrip.png parity baseline (D92 trigger)
 
 **Files:**
+
 - Modify (re-capture): `frontend/e2e/__snapshots__/<platform>/parity-baselines-...-app-chrome-tabstrip-...png`
 
 **Spec/sidecar refs:** D92 (trigger), D62a (1-tab baseline scope; 3-tab still deferred).
@@ -566,6 +582,7 @@ git commit -m "test(pr9a): D92 — re-capture app-chrome-tabstrip.png baseline p
 ### Task 8: D83/D93 — fix inbox baseline race + re-capture
 
 **Files:**
+
 - Modify: `frontend/e2e/parity-baselines.spec.ts`
 - Modify (re-capture): `frontend/e2e/__snapshots__/<platform>/parity-baselines-...-inbox-...png`
 
@@ -577,7 +594,7 @@ In `frontend/e2e/parity-baselines.spec.ts`, around line 63, change:
 
 ```ts
 // BEFORE:
-await page.locator('main').waitFor();
+await page.locator("main").waitFor();
 
 // AFTER:
 // Wait for the populated Inbox section header to render, not just `<main>`.
@@ -620,6 +637,7 @@ git commit -m "test(pr9a): D83/D93 — wait on Review-requested heading; re-capt
 ### Task 9: D94 — remove `continue-on-error: true` from Playwright test step
 
 **Files:**
+
 - Modify: `.github/workflows/ci.yml`
 
 **Spec/sidecar refs:** D94, coupled to D92 (Task 4).
@@ -646,7 +664,7 @@ Concrete example (adapt to the actual ci.yml structure):
 # BEFORE (test step around lines 77-83):
 - name: Playwright tests
   run: npx playwright test
-  continue-on-error: true       # ← REMOVE THIS LINE
+  continue-on-error: true # ← REMOVE THIS LINE
   timeout-minutes: 30
 
 # AFTER:
@@ -679,6 +697,7 @@ git commit -m "fix(pr9a): D94 — remove continue-on-error from Playwright test 
 ### Task 10: D11/D103 — write failing Vitest for `.prTabCountWarn` class application
 
 **Files:**
+
 - Modify: `frontend/src/components/PrDetail/PrSubTabStrip.test.tsx` (confirm exact path at impl-time via `ls frontend/src/components/PrDetail/PrSubTabStrip.test.tsx` or `ls frontend/src/components/PrDetail/__tests__/`)
 
 **Spec/sidecar refs:** D11, D103. Gated on Task 2 passing.
@@ -699,19 +718,19 @@ Identify the existing test wrapper pattern (router + provider stack).
 Use `data-testid="pr-tab-count"` as the selector (verified at plan-write time as the stable handle on the counter span). Append (or insert into the existing describe block) a test that asserts the warn class. Use the existing test-harness wrapper pattern from the file (provider/router stack as the other PrSubTabStrip tests use):
 
 ```tsx
-it('applies .prTabCountWarn class when drafts count > 0 (D11/D103)', () => {
+it("applies .prTabCountWarn class when drafts count > 0 (D11/D103)", () => {
   // Render PrSubTabStrip with props/context yielding a positive drafts count.
   // Adapt to the existing test harness wrapper pattern in this file.
   renderPrSubTabStripWith({ draftsCount: 3 });
-  const counter = screen.getByTestId('pr-tab-count');
+  const counter = screen.getByTestId("pr-tab-count");
   expect(counter.className).toMatch(/prTabCountWarn/);
 });
 
-it('does NOT apply .prTabCountWarn class when drafts count === 0 (D11/D103)', () => {
+it("does NOT apply .prTabCountWarn class when drafts count === 0 (D11/D103)", () => {
   renderPrSubTabStripWith({ draftsCount: 0 });
   // The counter may still render OR be hidden when 0 — assert the warn class
   // is absent IF it renders.
-  const counter = screen.queryByTestId('pr-tab-count');
+  const counter = screen.queryByTestId("pr-tab-count");
   if (counter) {
     expect(counter.className).not.toMatch(/prTabCountWarn/);
   }
@@ -745,6 +764,7 @@ git commit -m "test(pr9a): D11/D103 — failing test for prTabCountWarn class on
 ### Task 11: D11/D103 — implement ternary in PrSubTabStrip.tsx
 
 **Files:**
+
 - Modify: `frontend/src/components/PrDetail/PrSubTabStrip.tsx`
 
 **Spec/sidecar refs:** D11, D103. Gated on Task 2 + Task 10.
@@ -760,10 +780,17 @@ grep -n "prTabCount\|pr-tab-count" frontend/src/components/PrDetail/PrSubTabStri
 Read the line(s) found. The current JSX (verified at plan-write time) looks like:
 
 ```tsx
-<span className={styles.prTabCount} data-testid="pr-tab-count" aria-hidden="true">{count}</span>
+<span
+  className={styles.prTabCount}
+  data-testid="pr-tab-count"
+  aria-hidden="true"
+>
+  {count}
+</span>
 ```
 
 Important details from the verified shape:
+
 - The className is the CSS-module hashed value `styles.prTabCount` (camelCase, module-imported), NOT the literal string `"pr-tab-count"`.
 - The literal kebab-case `pr-tab-count` appears ONLY as the `data-testid` value (used for test selectors), NOT as a CSS rule.
 - The count variable is named `count` (in the Tab subcomponent scope), NOT `draftCount`.
@@ -774,7 +801,7 @@ Modify the JSX to:
 
 ```tsx
 <span
-  className={`${styles.prTabCount} ${count > 0 ? styles.prTabCountWarn : ''}`.trim()}
+  className={`${styles.prTabCount} ${count > 0 ? styles.prTabCountWarn : ""}`.trim()}
   data-testid="pr-tab-count"
   aria-hidden="true"
 >
@@ -783,6 +810,7 @@ Modify the JSX to:
 ```
 
 Critical preservation contract:
+
 - `styles.prTabCount` MUST remain — it carries the existing badge styling (background, color, border-radius, font-weight). Replacing it with the literal `"pr-tab-count"` would drop the styling (no CSS rule binds to the kebab-case string).
 - `data-testid="pr-tab-count"` MUST remain — existing tests + e2e selectors rely on it.
 - `aria-hidden="true"` MUST remain — the count is decorative; the tab label itself is the accessible name.
@@ -837,6 +865,7 @@ git commit -m "feat(pr9a): D11/D103 — apply .prTabCountWarn when draftCount > 
 ### Task 12: D89 — delete `ScopePill.tsx` and module CSS
 
 **Files:**
+
 - Delete: `frontend/src/components/Setup/ScopePill.tsx`
 - Delete (if exists): `frontend/src/components/Setup/ScopePill.module.css`
 
@@ -903,6 +932,7 @@ git commit -m "chore(pr9a): D89 — delete dormant ScopePill.tsx (0 consumers; n
 ### Task 13: D102 — run submit-surface drift audit + update sidecar Status
 
 **Files:**
+
 - Modify: `docs/specs/2026-05-29-design-parity-recovery-deferrals.md` (D102 Status line + audit findings)
 - (No production code changes — audit is logged-and-deferred per D102 verdict)
 
@@ -924,6 +954,7 @@ Playwright's `webServer` config auto-starts backend + Vite. The `--headed` flag 
 - [ ] **Step 2: Visually compare against the handoff prototype**
 
 Open `design/handoff/screens.jsx` or the rendered handoff prototype at the verdict-picker + submit-button section. Compare token values line-by-line:
+
 - `--radius-2` vs `--radius-3` (border-radius on the picker / submit button)
 - Shadow tokens (`--shadow-1` vs `--shadow-2` on dialogs / buttons)
 - Surface tokens (`--surface-1` vs `--surface-2` on the picker background)
@@ -953,11 +984,13 @@ Open the SubmitDialog by clicking the Submit button on PR Detail (via dev server
 Open `docs/specs/2026-05-29-design-parity-recovery-deferrals.md` and locate the D102 block. Update the `**Status:**` line with one of:
 
 **If no drift found:**
+
 ```
 **Status:** CONFIRMED — implementation-time audit found no token-level drift between the restored PR Detail visual language and the submit-surface styling (`tokens.css:493-637`). Verdict picker + submit button + submit-flash banner + SubmitDialog all align with restored chrome.
 ```
 
 **If drift found:**
+
 ```
 **Status:** Audit complete; drift exists — DEFER-TO-V1.X to the submit-restyling slice. Concrete delta:
 - <file:line>: <description of drift, e.g., "SubmitDialog uses --shadow-1 (subtle); restored .modal-content uses --shadow-2 (elevated)">
@@ -978,6 +1011,7 @@ git commit -m "docs(pr9a): D102 — submit-surface drift audit findings; <CONFIR
 ### Task 14: Pre-push checklist
 
 **Files:**
+
 - (No files modified — verification only)
 
 **Spec/sidecar refs:** Spec § 5 (per-slice validation) + `.ai/docs/development-process.md` (canonical checklist).
@@ -1045,12 +1079,14 @@ npx playwright test
 ```
 
 Playwright's `webServer` config auto-starts backend + Vite — no separate dev-server invocation. Expected: ALL pass. Specifically verify:
+
 - `parity-baselines.spec.ts > inbox` PASSES on the new populated-state baseline.
 - `parity-baselines.spec.ts > app-chrome-tabstrip` PASSES on the new lifted-close-button baseline.
 - `a11y-audit.spec.ts` ALL tests PASS — no new violations introduced relative to main.
 - PR8's `ask-ai-drawer.spec.ts` PASSES.
 
 **Handling NEW a11y violations surfaced by removing `continue-on-error`:** If `a11y-audit.spec.ts` surfaces a pre-existing violation that the stopgap was masking — including but not limited to the overflow-menu `nested-interactive` shape flagged in the "Discovered during plan-writing" section — that violation is NOT a regression introduced by PR9a; it existed on main before this PR. The correct response:
+
 1. Log it as a new D-entry in the deferrals sidecar (e.g., D104) referencing D85's deferred kbd-nav bundle.
 2. Add a `continue-on-error: true` line back to ONLY the specific a11y-audit step (NOT the broader Playwright test step) so CI can stay green pending the follow-up fix. Document the surgical re-application as part of the new D-entry.
 3. Ship PR9a.
@@ -1072,6 +1108,7 @@ Document any flakes, new warnings, or environment differences in this plan's Dev
 > Implementer: append entries here as work progresses. Each entry: timestamp, task touched, the surprise, and the resolution.
 >
 > **Verdict protocol (per scope-guardian review):** Each resolution that adds code not covered by Tasks 1-13 must classify itself as one of:
+>
 > - **IN-SCOPE** — the change fits an existing task's spec-named category (a11y harm-fix / cheap-keep wiring / dead-code purge). Cite the spec § 4.9.1 category and add a one-line justification.
 > - **DEFER** — log as a new D-entry in the sidecar (`docs/specs/2026-05-29-design-parity-recovery-deferrals.md`) with PR9b-or-V1.X disposition. No code in this PR.
 >
@@ -1117,6 +1154,21 @@ The plan's Task 8 specified a single one-line wait-target swap (`page.locator('m
 **IN-SCOPE per § 4.9.1 Category 1 a11y harm-fix:** both extras are in service of the same D83 wait-target swap — without them the swap regresses an existing passing test. Total addition: 2 lines of code (one `goto('/')`, one `test.setTimeout`), one locator-timeout argument, plus three explanatory comments. No new test scaffolding, no new helpers, no behavior change in production.
 
 Verify run on `--project=prod` (the CI-relevant project): **1 passed in 15.0s** with no retry needed. The `dev` project still flakes on Vite cold-start (`getByLabel` never resolves) — pre-existing and documented in `playwright.config.ts:27-30`; CI does not run `dev` (per the `isCI ? [prodProject] : [devProject, prodProject]` split). The 47.9 KB inbox.png baseline was captured against the `prod` project — the CI canonical.
+
+### 2026-05-31 — Task 11 surfaced a pre-existing `pr-detail-overview` baseline regression [DEFER-TO-V1.X surface for visibility]
+
+The Task 11 post-implementation parity verification (`npx playwright test parity-baselines.spec.ts -g "pr-detail-drafts|pr-detail-overview" --project=prod`) returned 1 expected + 1 unexpected:
+
+- `pr-detail-drafts` — PASSED (byte-identical against the baseline, as predicted: the `data-testid="drafts-tab"` locator captures the DraftsTab panel content, not the sub-tab strip badge, so the new warn class cannot show up in this baseline).
+- `pr-detail-overview` — FAILED on the rendered element being 920×419 vs the baseline's 920×530 (15957 pixels diff, ratio 0.04). Locator is `[data-testid="overview-tab"]`.
+
+**Falsification of attribution to Task 11.** Stashed the `PrSubTabStrip.tsx` change and re-ran the same targeted Playwright invocation against the pre-Task-11 tree (HEAD = `4a5cc41`, Task 10 commit). Result: 0 expected + 1 unexpected — `pr-detail-overview` fails identically (height 419 vs 530) without the warn-class change. **The regression is pre-existing this PR9a slice's Task 11 boundary.**
+
+The 111px height shrink combined with the warn-class change being scoped to a `<span>` inside a non-overlapping ancestor (`[data-testid="pr-tabs"]`, the sub-tab strip, not `[data-testid="overview-tab"]`) confirms the two are unrelated. Likely root cause is fixture population timing or a CSS rule change from an earlier PR (PR4 / PR5) that affects the overview-tab inner reflow — beyond Task 11 scope.
+
+**Resolution per § 4.9.1 Category 2 cheap-keep budget:** do NOT regenerate the baseline as part of Task 11's commit — that would silently fold a pre-existing regression into the warn-class commit and lose the falsifiability of the diff. Surface the finding here for visibility and DEFER-TO-V1.X (or a separate PR9a follow-up commit at Task 14 boundary if the user prefers — but explicitly OUT of Tasks 10-11). The PR9a Task 14 pre-push checklist will re-surface this as a CI-blocking failure; the fix path is either (a) a separate commit re-capturing the baseline with explanation of which earlier PR caused the reflow, or (b) DEFER-TO-V1.X via test.fixme on the `pr-detail-overview` baseline pending root-cause investigation.
+
+**Out-of-Tasks-10/11 — no action in this commit pair.** The committed pair (`4a5cc41` Task 10 + `c9f1666` Task 11) is the minimal correct set per the plan. The surfacing is documented here so Task 14 has the falsifiability evidence on hand.
 
 ---
 
