@@ -32,6 +32,7 @@ public class PreferencesEndpointsTests
         ui.GetProperty("theme").GetString().Should().Be("system");
         ui.GetProperty("accent").GetString().Should().Be("indigo");
         ui.GetProperty("aiPreview").GetBoolean().Should().BeFalse();
+        ui.GetProperty("density").GetString().Should().Be("comfortable");
 
         var sections = body.GetProperty("inbox").GetProperty("sections");
         sections.GetProperty("review-requested").GetBoolean().Should().BeTrue();
@@ -63,6 +64,30 @@ public class PreferencesEndpointsTests
         resp.IsSuccessStatusCode.Should().BeTrue();
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("ui").GetProperty("theme").GetString().Should().Be("dark");
+    }
+
+    // PR9b-density: density round-trips through the same POST+GET path as theme/accent.
+    [Fact]
+    public async Task POST_density_updates_and_round_trips()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = JsonContent.Create(new { density = "compact" }),
+        };
+        req.Headers.Add("Origin", origin);
+        var resp = await client.SendAsync(req);
+        resp.IsSuccessStatusCode.Should().BeTrue();
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("ui").GetProperty("density").GetString().Should().Be("compact");
+
+        // Round-trip via a fresh GET to confirm the value persisted across the request boundary.
+        var getResp = await client.GetAsync(new Uri("/api/preferences", UriKind.Relative));
+        getResp.IsSuccessStatusCode.Should().BeTrue();
+        var getBody = await getResp.Content.ReadFromJsonAsync<JsonElement>();
+        getBody.GetProperty("ui").GetProperty("density").GetString().Should().Be("compact");
     }
 
     [Fact]

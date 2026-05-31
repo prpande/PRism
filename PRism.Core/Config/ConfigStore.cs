@@ -33,6 +33,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["theme"]                            = ConfigFieldType.String,
             ["accent"]                           = ConfigFieldType.String,
             ["aiPreview"]                        = ConfigFieldType.Bool,
+            ["density"]                          = ConfigFieldType.String,
             ["inbox.sections.review-requested"]  = ConfigFieldType.Bool,
             ["inbox.sections.awaiting-author"]   = ConfigFieldType.Bool,
             ["inbox.sections.authored-by-me"]    = ConfigFieldType.Bool,
@@ -134,6 +135,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 "theme"     => _current with { Ui = ui with { Theme  = (string)value! } },
                 "accent"    => _current with { Ui = ui with { Accent = (string)value! } },
                 "aiPreview" => _current with { Ui = ui with { AiPreview = (bool)value! } },
+                "density"   => _current with { Ui = ui with { Density = (string)value! } },
                 "inbox.sections.review-requested" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = (bool)value! } } },
                 "inbox.sections.awaiting-author" =>

@@ -134,6 +134,9 @@ public class ConfigStorePatchAsyncDottedPathTests
         { "theme", 5 },
         { "accent", null },
         { "accent", false },
+        { "density", null },
+        { "density", true },
+        { "density", 5 },
     };
 
     [Theory]
@@ -151,6 +154,50 @@ public class ConfigStorePatchAsyncDottedPathTests
         await act.Should().ThrowAsync<ConfigPatchException>()
             .Where(e => e.Message.Contains(key) && e.Message.Contains("string"),
                 $"key '{key}' is a string field — non-string input must be rejected with a clear ConfigPatchException so the endpoint returns 400 (not 500).");
+    }
+
+    // PR9b-density: density is a string-typed `ui.*` key alongside theme/accent. Round-trips
+    // both legal values (`comfortable` | `compact`); enum-membership validation is NOT enforced
+    // server-side (Deviation 6 — same gap exists for theme/accent today).
+    [Theory]
+    [InlineData("comfortable")]
+    [InlineData("compact")]
+    public async Task PatchAsync_DensityValidString_PersistsAndReadsBack(string value)
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(
+            new Dictionary<string, object?> { ["density"] = value },
+            CancellationToken.None);
+
+        store.Current.Ui.Density.Should().Be(value);
+    }
+
+    // PR9b-density: an existing config.json written before the field was added must load
+    // with the parameter default ("comfortable"). Exercises STJ's record-positional-parameter
+    // default path — same mechanism IterationsConfig.ClusteringDisabled already uses.
+    [Fact]
+    public async Task InitAsync_LegacyConfigWithoutDensity_DefaultsToComfortable()
+    {
+        using var dir = new TempDataDir();
+        var path = Path.Combine(dir.Path, "config.json");
+        // On-disk config.json uses kebab-case naming policy (JsonSerializerOptionsFactory.Storage),
+        // so `AiPreview` serializes as `ai-preview`. The wire shape `aiPreview` is the API
+        // (camelCase) policy used by PreferencesEndpoints, NOT the storage format.
+        await File.WriteAllTextAsync(path, """
+            {
+              "ui": { "theme": "dark", "accent": "amber", "ai-preview": true }
+            }
+            """);
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Ui.Density.Should().Be("comfortable");
+        store.Current.Ui.Theme.Should().Be("dark");
+        store.Current.Ui.Accent.Should().Be("amber");
+        store.Current.Ui.AiPreview.Should().BeTrue();
     }
 
     [Fact]
