@@ -16,7 +16,12 @@ const TONE_CHIP: Record<AnnotationTone, { variant: 'info' | 'warning' | 'danger'
   };
 
 export function AiHunkAnnotation({ annotation }: AiHunkAnnotationProps) {
-  const chip = TONE_CHIP[annotation.tone];
+  // Nullish fallback so an unknown wire tone (e.g. a future v2 backend that
+  // ships before the FE type is widened) renders as a neutral 'info' chip
+  // labelled with the raw tone string, rather than `undefined`-derefing on
+  // `chip.variant`. TypeScript exhaustiveness still flags new tones at
+  // compile-time once FE types catch up.
+  const chip = TONE_CHIP[annotation.tone] ?? { variant: 'info' as const, label: annotation.tone };
   return (
     <div className={`ai-hunk ${styles.aiHunk}`} data-testid="ai-hunk-annotation">
       <span className="ai-icon" aria-hidden="true">

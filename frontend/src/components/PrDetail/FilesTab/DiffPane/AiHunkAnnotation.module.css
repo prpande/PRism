@@ -32,7 +32,6 @@
   color: var(--accent);
 }
 
-.aiHunkRow > td {
-  padding: 0;
-  border: 0;
-}
+/* `.aiHunkRow > td` lives in DiffPane.module.css — that's where the JSX
+   imports its `styles` from (DiffPane.tsx emits `<tr className={styles.aiHunkRow}>`
+   from DiffPane's module). Don't re-declare here. */

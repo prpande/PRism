@@ -37,13 +37,18 @@
 
 /* PR9b-ai-gating § 4.5 — D48 closure. AI suggestion row matches handoff
    pr-detail.jsx:336-342 shape (icon + labeled body in flex container).
-   Ports handoff screens.css:489-494. Parent <li> uses column-flex layout. */
+   Ports handoff screens.css:489-494. Parent <li>.staleDraftRow is a
+   `flex-wrap: wrap` ROW container; `flex: 1 1 100%` forces the AI banner
+   to flow onto its own line below the preview (mirrors .staleDraftRowPreview's
+   wrap pattern) rather than competing with the action buttons. */
 .staleAi {
   display: flex;
   gap: var(--s-2);
   padding: var(--s-2) var(--s-3);
   border-radius: var(--radius-2);
   font-size: var(--text-xs);
+  flex: 1 1 100%;
+  margin-top: var(--s-1);
 }
 
 .staleAiBody {
