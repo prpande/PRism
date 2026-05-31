@@ -73,9 +73,14 @@ public class AiDraftSuggestionsEndpointTests
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         var first = body[0];
-        // The seam must return the path Task 1 set: src/Calc.cs. If it returns
-        // the original `services/leases/...` fixture, PlaceholderDraftSuggester
-        // is still emitting hardcoded data instead of reading PlaceholderData.
+        // The seam must return the path AND line number Task 1 set: src/Calc.cs:3.
+        // - If filePath drifts: PlaceholderDraftSuggester is still emitting hardcoded
+        //   data instead of reading PlaceholderData.
+        // - If lineNumber drifts: the suggestionFor key lookup `src/Calc.cs:N` won't
+        //   match the canned stale-draft fixture (anchored at line 3 in Calc.cs's
+        //   `Add` method body — see FakeReviewBackingStore + parity-fixture.ts),
+        //   silently breaking cohort demos + the Playwright sweep.
         first.GetProperty("filePath").GetString().Should().Be("src/Calc.cs");
+        first.GetProperty("lineNumber").GetInt32().Should().Be(3);
     }
 }
