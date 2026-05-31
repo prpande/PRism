@@ -65,6 +65,24 @@ internal static class AiEndpoints
                 return annotations.Count == 0 ? Results.NoContent() : Results.Ok(annotations);
             });
 
+        // PR9b-ai-gating § 3.2. Third new AI endpoint. IDraftSuggester.SuggestAsync
+        // takes (prRef, ct) — clean per-PR shape, no sentinel args needed.
+        //
+        // D111: No per-PR IsSubscribed check while seam is canned-data only. When
+        // the binding swaps to a real AI implementation (real generation, not Noop/
+        // Placeholder), add an IsSubscribed gate before the seam call — DO NOT
+        // merge the seam swap without this gate.
+        app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/draft-suggestions",
+            async (string owner, string repo, int number,
+                   IAiSeamSelector ai, CancellationToken ct) =>
+            {
+                var suggester = ai.Resolve<IDraftSuggester>();
+                var suggestions = await suggester
+                    .SuggestAsync(new PrReference(owner, repo, number), ct)
+                    .ConfigureAwait(false);
+                return suggestions.Count == 0 ? Results.NoContent() : Results.Ok(suggestions);
+            });
+
         return app;
     }
 }
