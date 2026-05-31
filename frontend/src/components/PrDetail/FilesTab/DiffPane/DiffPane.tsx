@@ -35,7 +35,7 @@ export interface DiffPaneProps {
   onLineClick?: (anchor: InlineAnchor) => void;
   // Optional renderer for an inline composer mounted on the clicked line.
   // FilesTab passes its <InlineCommentComposer> here; DiffPane simply
-  // inserts it as a `colspan=3` follow-up row analogous to ExistingCommentWidget.
+  // inserts it as a full-width follow-up row analogous to ExistingCommentWidget.
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
   // Bound by FilesTab from its `useDraftSession`. Forwarded verbatim to each
   // `<ExistingCommentWidget>` so per-thread Reply buttons can mount a
@@ -101,8 +101,6 @@ function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
   }
   return null;
 }
-
-const DIFF_TABLE_COLSPAN = 3; // gutter-old / gutter-new / content — verified at DiffPane.tsx:279-297
 
 export function DiffPane({
   prRef,
@@ -189,6 +187,7 @@ export function DiffPane({
   }
 
   const isSplit = diffMode === 'side-by-side';
+  const colSpan = isSplit ? 4 : 3;
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
 
   return (
@@ -207,56 +206,54 @@ export function DiffPane({
       </div>
       <div className={`diff-pane-body ${styles.diffPaneBody}`}>
         <table className={`diff-table ${styles.diffTable}`}>
-          <tbody>
-            {(() => {
-              const rows: React.ReactNode[] = [];
-              let hunkCounter = -1;
-              for (let idx = 0; idx < allLines.length; idx++) {
-                const line = allLines[idx];
-                // Attach comments to new-side line numbers (insert/context), matching GitHub convention
-                const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
-                const threadsAtLine = commentLineNum
-                  ? threadsByLine.get(commentLineNum)
-                  : undefined;
-                const pair = findAdjacentPair(allLines, idx);
-
-                rows.push(
-                  <DiffLineRow
-                    key={idx}
-                    line={line}
-                    pair={pair}
-                    threadsAtLine={threadsAtLine}
-                    filePath={selectedPath}
-                    onLineClick={onLineClick}
-                    renderComposerForLine={renderComposerForLine}
-                    replyContext={replyContext}
-                  />,
-                );
-
-                if (line.type === 'hunk-header') {
-                  hunkCounter += 1;
-                  const annotations = annotationsForFile?.get(hunkCounter);
-                  if (annotations) {
-                    for (let aidx = 0; aidx < annotations.length; aidx++) {
-                      rows.push(
-                        <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
-                          <td colSpan={DIFF_TABLE_COLSPAN}>
-                            <AiHunkAnnotation annotation={annotations[aidx]} />
-                          </td>
-                        </tr>,
-                      );
-                    }
-                  }
-                }
-              }
-              return rows;
-            })()}
-          </tbody>
+          <tbody>{renderDiffRows()}</tbody>
         </table>
       </div>
       {truncated && <DiffTruncationBanner prUrl={prUrl} />}
     </div>
   );
+
+  function renderDiffRows(): React.ReactNode[] {
+    const rows: React.ReactNode[] = [];
+    let hunkCounter = -1;
+    for (let idx = 0; idx < allLines.length; idx++) {
+      const line = allLines[idx];
+      const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
+      const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
+      const pair = findAdjacentPair(allLines, idx);
+
+      rows.push(
+        <DiffLineRow
+          key={idx}
+          line={line}
+          pair={pair}
+          threadsAtLine={threadsAtLine}
+          filePath={selectedPath!}
+          colSpan={colSpan}
+          onLineClick={onLineClick}
+          renderComposerForLine={renderComposerForLine}
+          replyContext={replyContext}
+        />,
+      );
+
+      if (line.type === 'hunk-header') {
+        hunkCounter += 1;
+        const annotations = annotationsForFile?.get(hunkCounter);
+        if (annotations) {
+          for (let aidx = 0; aidx < annotations.length; aidx++) {
+            rows.push(
+              <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
+                <td colSpan={colSpan}>
+                  <AiHunkAnnotation annotation={annotations[aidx]} />
+                </td>
+              </tr>,
+            );
+          }
+        }
+      }
+    }
+    return rows;
+  }
 }
 
 interface DiffLineRowProps {
@@ -264,6 +261,7 @@ interface DiffLineRowProps {
   pair: DiffLine | null;
   threadsAtLine: ReviewThreadDto[] | undefined;
   filePath: string;
+  colSpan: number;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
   replyContext?: ExistingCommentWidgetReplyContext;
@@ -274,6 +272,7 @@ function DiffLineRow({
   pair,
   threadsAtLine,
   filePath,
+  colSpan,
   onLineClick,
   renderComposerForLine,
   replyContext,
@@ -321,11 +320,6 @@ function DiffLineRow({
     });
   };
 
-  // PoC scope: split-vs-unified mode currently renders the same two-gutter
-  // layout regardless. The `isSplit`-driven modeClass on the outer .diff-pane
-  // wrapper is the seam if/when split-mode introduces a real layout fork
-  // (e.g., side-by-side old/new content columns). Collapsed the dead ternary
-  // per claude[bot] iter 1 #1 — see also the wrapper class plumbing above.
   return (
     <>
       <tr className={rowClass}>
@@ -350,7 +344,7 @@ function DiffLineRow({
       </tr>
       {threadsAtLine && threadsAtLine.length > 0 && (
         <tr className={`diff-comment-row ${styles.diffCommentRow}`}>
-          <td colSpan={3}>
+          <td colSpan={colSpan}>
             <ExistingCommentWidget threads={threadsAtLine} replyContext={replyContext} />
           </td>
         </tr>
@@ -359,6 +353,7 @@ function DiffLineRow({
         <ComposerSlot
           filePath={filePath}
           lineNumber={commentLineNum}
+          colSpan={colSpan}
           render={renderComposerForLine}
         />
       )}
@@ -372,17 +367,19 @@ function DiffLineRow({
 function ComposerSlot({
   filePath,
   lineNumber,
+  colSpan,
   render,
 }: {
   filePath: string;
   lineNumber: number;
+  colSpan: number;
   render: (filePath: string, lineNumber: number) => React.ReactNode;
 }) {
   const node = render(filePath, lineNumber);
   if (!node) return null;
   return (
     <tr className={`diff-composer-row ${styles.diffComposerRow}`}>
-      <td colSpan={3}>{node}</td>
+      <td colSpan={colSpan}>{node}</td>
     </tr>
   );
 }

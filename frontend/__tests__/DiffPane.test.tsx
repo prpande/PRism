@@ -203,4 +203,50 @@ describe('DiffPane', () => {
     );
     expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--unified');
   });
+
+  it('uses colSpan=4 for full-width rows in split mode', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[sampleThread]}
+        prUrl=""
+      />,
+    );
+    const widgetRows = screen
+      .getAllByTestId('comment-widget')
+      .map((widget) => widget.closest('tr'))
+      .filter((tr): tr is HTMLTableRowElement => tr !== null);
+    expect(widgetRows.length).toBeGreaterThanOrEqual(1);
+    widgetRows.forEach((row) => {
+      const cell = row.querySelector('td');
+      expect(cell?.getAttribute('colSpan') ?? cell?.getAttribute('colspan')).toBe('4');
+    });
+  });
+
+  it('uses colSpan=3 for full-width rows in unified mode', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[sampleThread]}
+        prUrl=""
+      />,
+    );
+    const widgetRows = screen
+      .getAllByTestId('comment-widget')
+      .map((widget) => widget.closest('tr'))
+      .filter((tr): tr is HTMLTableRowElement => tr !== null);
+    expect(widgetRows.length).toBeGreaterThanOrEqual(1);
+    widgetRows.forEach((row) => {
+      const cell = row.querySelector('td');
+      expect(cell?.getAttribute('colSpan') ?? cell?.getAttribute('colspan')).toBe('3');
+    });
+  });
 });
