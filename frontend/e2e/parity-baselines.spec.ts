@@ -176,18 +176,41 @@ test.describe('parity baselines — PR Detail', () => {
 
   test('pr-detail-files-diff', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
+    // Block Google Fonts requests before any navigation so both isolated runs
+    // (cold cache) and full-suite runs (Geist cached from prior pages) render
+    // with the system fallback font. Page-level route intercepts fire before
+    // cache lookup, so aborting here is effective even when Geist IS in the
+    // Chromium session cache from earlier tests. Without this, full-suite
+    // Geist (larger metrics) vs isolated fallback (smaller metrics) produce
+    // a height difference that exceeds the 2% pixel-ratio tolerance.
+    await page.route('**/fonts.googleapis.com/**', (route) => route.abort());
+    await page.route('**/fonts.gstatic.com/**', (route) => route.abort());
     await setupAndOpenHandoffParityFixture(page);
+    // Explicitly reset aiPreview to false via an authenticated in-page request.
+    // The beforeEach resetBackendState() uses a fresh unauthenticated context
+    // which may 401 on /api/preferences (Origin-check middleware requires auth
+    // for mutating verbs). The inbox-activity-rail test enables aiPreview=true,
+    // and if the unauthenticated reset silently no-ops, the AI hunk annotation
+    // box renders in full-suite runs but not isolated runs (where AI was never
+    // enabled), producing a ~77px height discrepancy in the diff container.
+    // Posting from the page's own context (which has the session cookie from
+    // setupAndOpenHandoffParityFixture) ensures the reset succeeds.
+    await page.request.post('/api/preferences', {
+      data: { aiPreview: false },
+      headers: { Origin: 'http://localhost:5180' },
+    });
     await page.goto('/pr/acme/api/123/files');
     // Select the canonical scenario file so the diff pane has content. The
     // scenario fixture defines src/Calc.cs at three iterations (Calc1/2/3).
     await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
     const diff = page.locator('[data-testid="files-tab-diff"]');
     await diff.waitFor();
-    // Wait for at least one diff-line row to render — the diff data fetch
-    // completes asynchronously, so the container may exist before the rows do.
-    // Without this gate the screenshot is a race (empty container vs populated),
-    // which produced a 219 px vs 296 px flake after the two-pane renderer landed.
-    await diff.locator('tr').first().waitFor();
+    // Wait for ALL 8 pure-insert rows to render before screenshotting.
+    // The fixture's src/Calc.cs diff is pure-insert (8 lines), so the 8th
+    // .diff-line--insert element is the signal that the diff data is fully
+    // present. tr.first().waitFor() was insufficient: the first <tr>
+    // (hunk-header) exists before all insert rows are laid out.
+    await diff.locator('tr.diff-line--insert').nth(7).waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
