@@ -15,12 +15,13 @@
 
 ## File structure
 
-**Backend (8 files — 1 modify + 3 endpoints + 3 endpoint tests, plus 1 file deferred to Task 22):**
+**Backend (6 files — 2 modify + 3 endpoint tests + 1 endpoints file modify; sidecar at Task 21 is separate):**
 - MODIFY `PRism.AI.Placeholder/PlaceholderData.cs` — align with `src/Calc.cs`
+- MODIFY `PRism.AI.Placeholder/PlaceholderDraftSuggester.cs` — delegate to `PlaceholderData.DraftSuggestions`
 - MODIFY `PRism.Web/Endpoints/AiEndpoints.cs` — add 3 `MapGet` calls with inline `// D111` comments
 - CREATE `tests/PRism.Web.Tests/Endpoints/AiFileFocusEndpointTests.cs` — 200/204/401
 - CREATE `tests/PRism.Web.Tests/Endpoints/AiHunkAnnotationsEndpointTests.cs` — 200/204/401
-- CREATE `tests/PRism.Web.Tests/Endpoints/AiDraftSuggestionsEndpointTests.cs` — 200/204/401
+- CREATE `tests/PRism.Web.Tests/Endpoints/AiDraftSuggestionsEndpointTests.cs` — 200/204/401 + cross-file-anchor pin
 
 **Frontend types + API clients (4 files):**
 - MODIFY `frontend/src/api/types.ts` — append `FocusLevel`, `FileFocus`, widen `AnnotationTone`, `HunkAnnotation`, `DraftSuggestion`
@@ -51,6 +52,9 @@
 - MODIFY `frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.tsx` — add `aiSuggestion` prop + JSX
 - MODIFY `frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.module.css` — add `.staleAi` rules
 
+**Frontend styles:**
+- MODIFY `frontend/src/styles/tokens.css` — add `.ai-summary-label` global (first production consumer is `StaleDraftRow` in this PR)
+
 **Frontend tests (6 new + 3 extended):**
 - CREATE `frontend/__tests__/useAiGate.test.tsx`
 - CREATE `frontend/__tests__/useAiFileFocus.test.tsx`
@@ -78,18 +82,21 @@
 
 ## Phase 1: Backend (Tasks 1-4)
 
-### Task 1: Align PlaceholderData with canned PR fixture (§ 4.7)
+### Task 1: Align PlaceholderData + PlaceholderDraftSuggester with canned PR fixture (§ 4.7)
 
 **Files:**
 - Modify: `PRism.AI.Placeholder/PlaceholderData.cs`
+- Modify: `PRism.AI.Placeholder/PlaceholderDraftSuggester.cs` (currently hardcodes a literal — must delegate to `PlaceholderData.DraftSuggestions`)
 
-The current placeholder targets fictional `services/leases/…` paths from S3-era spec text. The canned `FakePrReader` PR serves only `src/Calc.cs` with a single hunk. After this task, the placeholder seam produces visually demonstrable surfaces against the cohort fixture.
+The current placeholder targets fictional `services/leases/…` paths from S3-era spec text. The canned `FakePrReader` PR (registered as `PRism.Web/TestHooks/FakeReviewBackingStore.cs` — TEST hook, registered under test-env service replacement; backs e2e + dev-mode flows) serves only `src/Calc.cs` with a single hunk. After this task, the placeholder seam produces visually demonstrable surfaces against the canned fixture when running locally or via Playwright.
+
+**Note on cohort-demo scope:** The placeholder alignment makes the new AI surfaces visible when the app runs against the canned `FakeReviewBackingStore` fixture (local dev mode + Playwright). Against real GitHub PRs (production cohort flow), the seam would receive whatever paths the actual PR contains — the `services/leases/...` paths are equally irrelevant there. The § 4.7 alignment is for canned-data demonstrability, not production correctness; both flows benefit.
 
 - [ ] **Step 1.1: Read the canned PR's stale-draft anchor**
 
-Run: `grep -n "DraftCommentDto\|filePath\|lineNumber\|StaleComment" PRism.Core/PrDetail/FakeReviewBackingStore.cs | head -20`
+Run: `grep -n "DraftCommentDto\|filePath\|lineNumber\|StaleComment\|Stale" PRism.Web/TestHooks/FakeReviewBackingStore.cs | head -20`
 
-Expected: locate the stale-comment fixture's `filePath` and `lineNumber` values. Note them — the `DraftSuggestion` anchor must match exactly so the suggestion renders on the stale-draft row.
+Expected: locate the stale-comment fixture's `filePath` and `lineNumber` values. The `DraftSuggestion` anchor must match exactly so the suggestion renders on the stale-draft row. **Note the exact `lineNumber` value** — Step 1.2 needs it.
 
 - [ ] **Step 1.2: Rewrite PlaceholderData.cs body to target src/Calc.cs**
 
@@ -126,9 +133,10 @@ internal static class PlaceholderData
     {
         // Anchor at the stale-draft fixture's (filePath, lineNumber) from
         // FakeReviewBackingStore so the suggestion renders on the existing
-        // stale-draft row. REPLACE the line number below with the value found
-        // at Step 1.1 — do not commit with a placeholder.
-        new DraftSuggestion("src/Calc.cs", /* TODO replace with Step 1.1 value */ 5,
+        // stale-draft row. REPLACE STALE_DRAFT_LINE_FROM_STEP_1_1 with the
+        // integer found at Step 1.1 — compile WILL fail until replaced
+        // (intentional — prevents silent commit-with-wrong-anchor).
+        new DraftSuggestion("src/Calc.cs", STALE_DRAFT_LINE_FROM_STEP_1_1,
             "Worth a comment on the validation here?"),
     };
 
@@ -141,31 +149,58 @@ internal static class PlaceholderData
 }
 ```
 
-**Important:** replace the `/* TODO replace with Step 1.1 value */ 5` literal with the actual value from Step 1.1 before staging. The plan's `5` is a placeholder pending Step 1.1's verification — do not commit the literal `5` if the canned fixture uses a different line.
+**Important:** Replace `STALE_DRAFT_LINE_FROM_STEP_1_1` with the actual integer (e.g., `42`) from Step 1.1's grep output. The deliberately unbound identifier makes the file fail compilation until replaced — Step 1.3's `dotnet build` is the gate that surfaces a forgotten replacement.
 
-- [ ] **Step 1.3: Build to confirm no compile errors**
+- [ ] **Step 1.3: Update `PlaceholderDraftSuggester.cs` to delegate to `PlaceholderData`**
+
+Currently `PlaceholderDraftSuggester.cs:9-13` returns a hardcoded literal (`new DraftSuggestion("services/leases/LeaseRenewalProcessor.cs", 142, "Worth a comment on the retry budget here?")`). This bypasses `PlaceholderData.DraftSuggestions` entirely — without this step, Step 1.2's PlaceholderData edit is dead code and the endpoint would still emit the wrong path.
+
+Replace the entire body of `PRism.AI.Placeholder/PlaceholderDraftSuggester.cs`:
+
+```csharp
+using PRism.AI.Contracts.Dtos;
+using PRism.AI.Contracts.Seams;
+using PRism.Core.Contracts;
+
+namespace PRism.AI.Placeholder;
+
+public sealed class PlaceholderDraftSuggester : IDraftSuggester
+{
+    public Task<IReadOnlyList<DraftSuggestion>> SuggestAsync(PrReference pr, CancellationToken ct)
+        => Task.FromResult(PlaceholderData.DraftSuggestions);
+}
+```
+
+Pattern mirrors `PlaceholderFileFocusRanker.cs:9-10` and `PlaceholderHunkAnnotator.cs:9-10`.
+
+- [ ] **Step 1.4: Build to confirm no compile errors**
 
 Run: `dotnet build PRism.AI.Placeholder/PRism.AI.Placeholder.csproj --configuration Release`
-Expected: `Build succeeded` with 0 errors. The `DraftSuggestions` property is new on `PlaceholderData`; Task 2 wires the endpoint that exposes it.
+Expected: `Build succeeded` with 0 errors. If you see `The name 'STALE_DRAFT_LINE_FROM_STEP_1_1' does not exist in the current context` — go back to Step 1.2 and replace the sentinel with the value from Step 1.1.
 
-- [ ] **Step 1.4: Run the existing AI seam tests**
+- [ ] **Step 1.5: Run the existing AI seam tests**
 
 Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --no-build --configuration Release --filter "FullyQualifiedName~PRism.Core.Tests.Ai" -v minimal`
 Expected: all existing AI tests pass. They assert on the seam-selector wiring + summary content; the path changes don't affect them.
 
-- [ ] **Step 1.5: Commit**
+- [ ] **Step 1.6: Commit**
 
 ```bash
-git add PRism.AI.Placeholder/PlaceholderData.cs
-git commit -m "feat(ai): align PlaceholderData with src/Calc.cs canned PR
+git add PRism.AI.Placeholder/PlaceholderData.cs PRism.AI.Placeholder/PlaceholderDraftSuggester.cs
+git commit -m "feat(ai): align PlaceholderData + PlaceholderDraftSuggester with src/Calc.cs canned PR
 
 § 4.7 PlaceholderData alignment. Replaces fictional services/leases/…
 paths with src/Calc.cs so the three AI surfaces (FileFocus dots,
 HunkAnnotation, DraftSuggestion) render in cohort demos against the
 canned FakePrReader PR without endpoint mocks.
 
+PlaceholderDraftSuggester previously emitted a hardcoded literal
+bypassing PlaceholderData entirely — now delegates per the
+PlaceholderFileFocusRanker / PlaceholderHunkAnnotator pattern.
+
 DraftSuggestion line number = <Step 1.1 value> (matches the canned
-stale-draft fixture's anchor in FakeReviewBackingStore)."
+stale-draft fixture's anchor in FakeReviewBackingStore at
+PRism.Web/TestHooks/)."
 ```
 
 ---
@@ -234,7 +269,7 @@ public class AiFileFocusEndpointTests
         // (a la /api/health) for the /ai/* family.
         using var factory = new PRismWebApplicationFactory();
         factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
-        var client = factory.CreateClientWithoutSessionToken();
+        var client = factory.CreateUnauthenticatedClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/file-focus", UriKind.Relative));
 
@@ -243,16 +278,7 @@ public class AiFileFocusEndpointTests
 }
 ```
 
-**Check `PRismWebApplicationFactory` for `CreateClientWithoutSessionToken`** — if it doesn't exist, search existing endpoint test classes for the "401 without session" pattern and use that helper instead. If no helper exists, inline the equivalent:
-
-```csharp
-var client = factory.CreateDefaultClient();
-client.DefaultRequestHeaders.Remove("X-PRism-Session");
-```
-
-Run: `grep -rn "CreateClientWithoutSessionToken\|401.*Unauthorized\|SessionToken" tests/PRism.Web.Tests/TestHelpers/ tests/PRism.Web.Tests/Endpoints/ | head -20`
-
-Expected: locate the existing helper or pattern. Use whichever is established.
+**Helper verified:** `PRismWebApplicationFactory.CreateUnauthenticatedClient()` (defined at `tests/PRism.Web.Tests/TestHelpers/PRismWebApplicationFactory.cs:104`) is the canonical helper for unauthenticated calls. It calls `Server.CreateClient()` directly to bypass `ConfigureClient`'s automatic auth injection. Used by existing `SessionTokenMiddlewareTests`, `PrDraftEndpointTests`, `EventsSubscriptionsEndpointTests`. Do NOT use any fallback that removes only the `X-PRism-Session` header — the factory also injects a `Cookie: prism-session=<token>` (`PRismWebApplicationFactory.cs:94-95`), and `SessionTokenMiddleware.cs:102-103` accepts either credential, so header-removal alone returns 200, not 401 (false-green security test).
 
 - [ ] **Step 2.2: Run tests to verify they fail (endpoint not yet added)**
 
@@ -396,7 +422,7 @@ public class AiHunkAnnotationsEndpointTests
     {
         using var factory = new PRismWebApplicationFactory();
         factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
-        var client = factory.CreateClientWithoutSessionToken();
+        var client = factory.CreateUnauthenticatedClient();
         // Or whatever helper / inline-pattern Task 2 settled on.
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/hunk-annotations", UriKind.Relative));
@@ -526,11 +552,34 @@ public class AiDraftSuggestionsEndpointTests
     {
         using var factory = new PRismWebApplicationFactory();
         factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
-        var client = factory.CreateClientWithoutSessionToken();
+        var client = factory.CreateUnauthenticatedClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/draft-suggestions", UriKind.Relative));
 
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
+    [Fact]
+    public async Task Get_ai_draft_suggestions_returns_anchor_from_PlaceholderData()
+    {
+        // Pins the cross-file invariant: PlaceholderData.DraftSuggestions[0]
+        // must contain the canned PR's stale-draft anchor. If Task 1 forgets to
+        // update PlaceholderDraftSuggester to delegate to PlaceholderData (or
+        // forgets the lineNumber replacement), this test catches it before the
+        // cohort demo silently breaks.
+        using var factory = new PRismWebApplicationFactory();
+        factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
+        var client = factory.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/draft-suggestions", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        var first = body[0];
+        // The seam must return the path Task 1 set: src/Calc.cs. If it returns
+        // the original `services/leases/...` fixture, PlaceholderDraftSuggester
+        // is still emitting hardcoded data instead of reading PlaceholderData.
+        first.GetProperty("filePath").GetString().Should().Be("src/Calc.cs");
     }
 }
 ```
@@ -1305,6 +1354,8 @@ git commit -m "feat(ai): add useAiDraftSuggestions hook + tests"
 
 ### Task 11: Migrate 4 existing consumers to `useAiGate`
 
+> **Atomic-pair note.** Tasks 11 and 12 are a coupled pair: Task 11 widens the source-code gating sites; Task 12 updates the test mocks that drive those sites. Between the two, the relevant tests fail (mocks don't match). The plan defers the commit until BOTH tasks have landed (Task 12.4 commits both). For subagent-driven-development: dispatch Tasks 11 and 12 as a SINGLE coupled unit; do not insert a checkpoint commit between them. A subagent should not mark Task 11 complete until Task 12's tests pass.
+
 **Files (4 modify):**
 - Modify: `frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx:29-30`
 - Modify: `frontend/src/components/PrDetail/PrHeader.tsx:104-106` (+ AskAiButton prop drop in same file)
@@ -1349,7 +1400,9 @@ Add the import. Remove the `useCapabilities` / `usePreferences` imports if they 
 
 - [ ] **Step 11.3: Migrate AskAiButton + drop the `aiPreview` prop**
 
-Read `frontend/src/components/PrDetail/AskAiButton.tsx`. Replace the body so the gate is internal and the prop is gone:
+Current `AskAiButton.tsx:11` (verified): `<button type="button" className="btn btn-secondary ask-ai-button" onClick={onClick}>`. **Preserve this className verbatim** — the spec § 4.2 framing is "abstraction consistency, not behavior change"; changing visual styling would be a regression. Only the gating mechanism and the prop interface change.
+
+Replace the body so the gate is internal and the prop is gone (verify against the actual file — preserve any icon, exact text, and any data-testid you find):
 
 ```tsx
 // frontend/src/components/PrDetail/AskAiButton.tsx
@@ -1366,14 +1419,14 @@ export function AskAiButton({ onClick }: Props) {
   const enabled = useAiGate('composerAssist');
   if (!enabled) return null;
   return (
-    <button type="button" className="btn btn-sm btn-ghost" onClick={onClick}>
+    <button type="button" className="btn btn-secondary ask-ai-button" onClick={onClick}>
       Ask AI
     </button>
   );
 }
 ```
 
-Verify the visible button JSX matches the existing component's exact shape (className, text, icon if any). Run `git diff frontend/src/components/PrDetail/AskAiButton.tsx` after edit and confirm only the gating + prop interface changed.
+Run `git diff frontend/src/components/PrDetail/AskAiButton.tsx` after edit and confirm only the gating mechanism (replaced `if (!aiPreview)` with `const enabled = useAiGate(...)`) + the Props interface (dropped `aiPreview: boolean`) changed. className, text, and any other JSX details must match HEAD.
 
 - [ ] **Step 11.4: Migrate PrHeader — both line 106 derivation AND drop the AskAiButton prop pass**
 
@@ -1681,6 +1734,8 @@ deferred per D108."
 
 ### Task 14: FileTree focus dot wiring + CSS + test extension
 
+> **Atomic-pair note.** Tasks 14 and 15 are a coupled pair: Task 14 widens `FileTreeProps` (adding required `focusEntries` + `aiPreview` props); Task 15 updates `FilesTab.tsx` to pass them. Until both land, the typecheck is RED. The plan commits both in Task 15.5 (a single commit covering Task 14 + 15). For subagent-driven-development: dispatch Tasks 14 and 15 as a SINGLE coupled unit; do not run `npx tsc --noEmit` over the whole project as a gate between them (the per-file test runs in Task 14 still pass because they mount FileTree directly). A subagent should not mark Task 14 complete until Task 15's typecheck passes.
+
 **Files:**
 - Modify: `frontend/src/components/PrDetail/FilesTab/FileTree.tsx`
 - Modify: `frontend/src/components/PrDetail/FilesTab/FileTree.module.css`
@@ -1698,10 +1753,8 @@ import type { FileChange, FileFocus } from '../src/api/types';
 
 const F = (path: string, status: FileChange['status'] = 'modified'): FileChange => ({
   path,
-  oldPath: null,
   status,
-  additions: 0,
-  deletions: 0,
+  hunks: [],
 });
 
 describe('FileTree — AI focus dot (D32a)', () => {
@@ -1867,9 +1920,30 @@ Thread `focusByPath` and `aiPreview` through to `TreeNodeComponent` and on to `F
     />
   )}
 </span>
+{focusLevel && focusLevel !== 'low' && (
+  <span className={styles.srOnly}>{` AI focus: ${focusLevel}`}</span>
+)}
 ```
 
 where `focusLevel = focusByPath?.get(node.path) ?? null`. Extend the `FileNodeComponent` props signature to receive `focusByPath: Map<string, FocusLevel> | null` and `aiPreview: boolean`. Same for `TreeNodeComponent` / `DirectoryNodeComponent` — pass through (DirectoryNode emits its own children recursively).
+
+**a11y note.** The decorative dot is wrapped in `aria-hidden="true"` (no AT announcement). A visually-hidden `.srOnly` span sits OUTSIDE the hidden slot but inside the `role="treeitem"`, so screen readers reading the row announce `"<filename> AI focus: high"`. Add `.srOnly` to `FileTree.module.css` if not already present:
+
+```css
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+```
+
+(If a global `.sr-only` exists in `tokens.css`, prefer that — grep before adding the module-scoped version. Extend Task 14.1's test to assert the sr-only span is present when focus level is High/Medium.)
 
 - [ ] **Step 14.4: Extend CSS**
 
@@ -1995,7 +2069,7 @@ const annotationsForFile = useMemo(() => {
 }, [allAnnotations, selectedPath]);
 ```
 
-(`DiffPane` already receives `prRef` from `FilesTab` via context or props — verify the actual access pattern; pass it in if it's not already available.)
+(`DiffPane` does NOT currently receive `prRef` — verified against `DiffPaneProps` at `DiffPane.tsx:13-37`. Add `prRef: PrReference` to `DiffPaneProps` and pass it from `FilesTab` where it is already computed at `FilesTab.tsx:46`. Mirrors the `UnresolvedPanel` prop pattern in `Reconciliation/`.)
 
 In the `<tbody>` rendering loop (currently lines 183-201 of DiffPane.tsx), refactor to maintain a hunk counter:
 
@@ -2109,7 +2183,17 @@ Run: `ls frontend/__tests__/UnresolvedPanel.test.tsx 2>&1; ls frontend/__tests__
 
 Expected: report whether the file exists and where stale-draft assertions currently live.
 
-- [ ] **Step 16.2: Write/extend the test**
+- [ ] **Step 16.2a: Enumerate existing `DraftsSession` test fixtures FIRST**
+
+Before writing any new test, locate the canonical `DraftsSession` fixture in the existing test suite — copying a real fixture beats inventing one. Run:
+
+```bash
+grep -rln "draftComments:" frontend/__tests__/ | head -5
+```
+
+Pick the most complete fixture (typically the one used by the largest UnresolvedPanel-adjacent test). Copy its shape verbatim into `buildSessionFixture()` for the new tests. The `as never` casts in the snippet below are placeholders only — they MUST be replaced with the actual session-fixture shape from this step before the test will run cleanly.
+
+- [ ] **Step 16.2b: Write/extend the test**
 
 If `UnresolvedPanel.test.tsx` doesn't exist, find where `StaleDraftRow` is currently covered (`grep -rn "StaleDraftRow" frontend/__tests__/`) and append to that file. Add:
 
@@ -2311,14 +2395,17 @@ In the JSX return, between `.stale-draft-row-preview` (`{previewBody(body)}`) an
 ```css
 /* PR9b-ai-gating § 4.5 — D48 closure. AI suggestion row matches handoff
    pr-detail.jsx:336-342 shape (icon + labeled body in flex container).
-   Ports handoff screens.css:489-494. */
+   Ports handoff screens.css:489-494. Parent `<li>` is rendered inside the
+   `unresolved-panel-rows` list with column-direction flex; this rule does
+   NOT use `flex: 1 1 100%` because the column-flex parent stacks block
+   children naturally — `flex: 1 1 100%` would only matter inside a
+   row-wrap parent. Verify the parent shape during implementation. */
 .staleAi {
   display: flex;
   gap: var(--s-2);
   padding: var(--s-2) var(--s-3);
   border-radius: var(--radius-2);
   font-size: var(--text-xs);
-  flex: 1 1 100%;
 }
 
 .staleAiBody {
@@ -2333,10 +2420,9 @@ In the JSX return, between `.stale-draft-row-preview` (`{previewBody(body)}`) an
 }
 ```
 
-- [ ] **Step 16.7: Verify `.ai-summary-label` is global**
+- [ ] **Step 16.7: Add `.ai-summary-label` global to `tokens.css`**
 
-Run: `grep -rn "\.ai-summary-label" frontend/src/styles/ frontend/src/components/`
-Expected: hopefully one match in `tokens.css` (global). If not present, add it to `frontend/src/styles/tokens.css` per § 3.1 lift-on-second-use:
+Production `tokens.css` does NOT currently define `.ai-summary-label` (verified — `AiSummaryCard.module.css` uses the camelCase module class `.aiSummaryLabel`, not the literal global). StaleDraftRow's JSX in this PR is the FIRST production consumer of the literal global class. Add to `frontend/src/styles/tokens.css` (ports handoff `screens.css:91`):
 
 ```css
 .ai-summary-label {
@@ -2347,6 +2433,8 @@ Expected: hopefully one match in `tokens.css` (global). If not present, add it t
   color: var(--accent);
 }
 ```
+
+Include `frontend/src/styles/tokens.css` in the Task 16.9 commit.
 
 - [ ] **Step 16.8: Run tests**
 
@@ -2365,8 +2453,8 @@ cd ..
 git add frontend/src/components/PrDetail/Reconciliation/UnresolvedPanel.tsx \
   frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.tsx \
   frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.module.css \
+  frontend/src/styles/tokens.css \
   frontend/__tests__/UnresolvedPanel.test.tsx
-# Include tokens.css if Step 16.7 added the .ai-summary-label rule
 git commit -m "feat(ai): wire D48 StaleDraftRow AI suggestion span
 
 § 4.5. UnresolvedPanel fetches DraftSuggestion[] via useAiDraftSuggestions
@@ -2411,7 +2499,17 @@ import { useAiGate } from '../src/hooks/useAiGate';
 
 vi.mock('../src/hooks/useAiGate');
 vi.mock('../src/hooks/useInbox', () => ({
-  useInbox: () => ({ data: { sections: [], enrichments: {} }, error: null, isLoading: false, reload: vi.fn() }),
+  useInbox: () => ({
+    data: {
+      sections: [],
+      enrichments: {},
+      lastRefreshedAt: '2026-01-01T00:00:00Z',
+      tokenScopeFooterEnabled: false,
+    },
+    error: null,
+    isLoading: false,
+    reload: vi.fn(),
+  }),
 }));
 vi.mock('../src/hooks/useInboxUpdates', () => ({
   useInboxUpdates: () => ({ hasUpdate: false, summary: '', dismiss: vi.fn() }),
@@ -2763,9 +2861,7 @@ no-suggestion state) matches the existing visual surface. No new zones."
 
 - [ ] **Step 21.1: Locate insertion point**
 
-Run: `grep -n "^## PR9b-density\|^## PR9b-search\|^# Design parity" docs/specs/2026-05-29-design-parity-recovery-deferrals.md | tail -5`
-
-Expected: locate the existing PR9b-density / PR9b-search section headers. The new section goes AFTER both.
+The sidecar currently has sections PR1 through PR7 plus "Implementation-time deferrals — PR7". There are NO existing PR9b-density / PR9b-search top-level sections (those slices wrote their D-entries under different headers — confirm with `grep -n "^##" docs/specs/2026-05-29-design-parity-recovery-deferrals.md | tail -10`). Append the new `## PR9b-ai-gating — Selective wirings` section at the END of the file.
 
 - [ ] **Step 21.2: Append the new section**
 
@@ -2900,15 +2996,11 @@ Expected: all specs pass (including the new `ai-gating-sweep.spec.ts` and the re
 Run: `git status` and `git log main..HEAD --oneline`
 Expected: clean working tree; the PR body should reference the spec + sidecar entries. Note the commits before pushing for the PR description.
 
-- [ ] **Step 22.8: Push + open PR via pr-autopilot**
+- [ ] **Step 22.8: Report green pre-push checklist to orchestrator**
 
-Per the user's standing default (`feedback_use_pr_autopilot.md`), invoke the `pr-autopilot` skill to push, open the PR, and run the iterative review loop. Pre-push checklist is the input.
+Pre-push verification is complete. **STOP here.** Surface the green checklist + the list of new commits (output of `git log main..HEAD --oneline`) to the orchestrator/user. The user (or the top-level Claude session) fires `pr-autopilot` from outside this plan's execution scope — `pr-autopilot` is a user-triggered skill and cannot be invoked from inside a subagent.
 
-```bash
-# Do not invoke gh pr create manually unless pr-autopilot is unavailable.
-```
-
-The skill handles: preflight adversarial review, PR body composition, opening the PR, awaiting Copilot + claude[bot] reviews, applying suggestions per the loop, and final report.
+For subagent-driven-development: terminate at this step; return the green-check report. The orchestrator then invokes `pr-autopilot` as a separate skill dispatch.
 
 ---
 
