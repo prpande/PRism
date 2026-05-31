@@ -130,7 +130,8 @@ describe('PrTabStrip', () => {
     );
     const tab = screen.getByRole('tab', { name: /Has unread/i });
     // CSS-module class names are hashed; assert via partial class match.
-    expect(tab.className).toMatch(/tabUnread/);
+    // Post-D92 lift: `.tabUnread` lives on the outer wrapper (parent of role="tab").
+    expect(tab.parentElement!.className).toMatch(/tabUnread/);
   });
 });
 
@@ -147,7 +148,8 @@ describe('PrTabStrip close affordance', () => {
     }
     render(wrap(<Harness />));
     const tab1 = screen.getByRole('tab', { name: /A/i });
-    const close1 = tab1.querySelector('[aria-label="Close tab"]') as HTMLElement;
+    // Post-D92 lift: close button is a SIBLING of role="tab", under the wrapper.
+    const close1 = tab1.parentElement!.querySelector('[aria-label="Close tab"]') as HTMLElement;
     expect(close1).not.toBeNull();
     await userEvent.click(close1);
     expect(screen.queryByRole('tab', { name: /A/i })).toBeNull();
@@ -180,12 +182,13 @@ describe('PrTabStrip close affordance', () => {
       return <PrTabStrip />;
     }
     render(wrap(<Harness />));
+    // Post-D92 lift: close button is a SIBLING of role="tab", under the wrapper.
     const closeA = screen
       .getByRole('tab', { name: /A/i })
-      .querySelector('[aria-label="Close tab"]') as HTMLButtonElement;
+      .parentElement!.querySelector('[aria-label="Close tab"]') as HTMLButtonElement;
     const closeB = screen
       .getByRole('tab', { name: /B/i })
-      .querySelector('[aria-label="Close tab"]') as HTMLButtonElement;
+      .parentElement!.querySelector('[aria-label="Close tab"]') as HTMLButtonElement;
     expect(closeA).toBeDisabled();
     expect(closeA.getAttribute('title')).toMatch(/submit in progress/i);
     expect(closeB).not.toBeDisabled();
@@ -230,7 +233,8 @@ describe('PrTabStrip overflow menu', () => {
     );
     const tabs = screen.getAllByRole('tab');
     expect(tabs).toHaveLength(6);
-    expect(tabs[5].getAttribute('data-prref')).toBe('acme/api/6');
+    // Post-D92 lift: `data-prref` lives on the outer wrapper (parent of role="tab").
+    expect(tabs[5].parentElement!.getAttribute('data-prref')).toBe('acme/api/6');
     await userEvent.click(screen.getByRole('button', { name: /show 1 more/i }));
     const items = screen.getAllByRole('menuitem');
     expect(items).toHaveLength(1);
@@ -356,9 +360,10 @@ describe('PrTabStrip close navigation', () => {
         </OpenTabsProvider>
       </MemoryRouter>,
     );
+    // Post-D92 lift: close button is a SIBLING of role="tab", under the wrapper.
     const closeB = screen
       .getByRole('tab', { name: /B/i })
-      .querySelector('[aria-label="Close tab"]') as HTMLElement;
+      .parentElement!.querySelector('[aria-label="Close tab"]') as HTMLElement;
     await userEvent.click(closeB);
     expect(screen.getByTestId('path').textContent).toBe('/pr/acme/api/1');
   });
@@ -373,9 +378,10 @@ describe('PrTabStrip close navigation', () => {
         </OpenTabsProvider>
       </MemoryRouter>,
     );
+    // Post-D92 lift: close button is a SIBLING of role="tab", under the wrapper.
     const closeA = screen
       .getByRole('tab', { name: /A/i })
-      .querySelector('[aria-label="Close tab"]') as HTMLElement;
+      .parentElement!.querySelector('[aria-label="Close tab"]') as HTMLElement;
     await userEvent.click(closeA);
     expect(screen.getByTestId('path').textContent).toBe('/pr/acme/api/2');
   });
@@ -390,9 +396,10 @@ describe('PrTabStrip close navigation', () => {
         </OpenTabsProvider>
       </MemoryRouter>,
     );
+    // Post-D92 lift: close button is a SIBLING of role="tab", under the wrapper.
     const close = screen
       .getByRole('tab', { name: /Solo/i })
-      .querySelector('[aria-label="Close tab"]') as HTMLElement;
+      .parentElement!.querySelector('[aria-label="Close tab"]') as HTMLElement;
     await userEvent.click(close);
     expect(screen.getByTestId('path').textContent).toBe('/');
   });
