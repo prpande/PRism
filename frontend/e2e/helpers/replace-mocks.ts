@@ -16,7 +16,7 @@ export const authedAuthState = {
 };
 
 export const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
   inbox: {
     sections: {
       'review-requested': true,

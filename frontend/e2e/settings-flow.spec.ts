@@ -26,7 +26,12 @@ const allOffCapabilities = {
 
 function makeDefaultPreferences() {
   return {
-    ui: { theme: 'system' as const, accent: 'indigo' as const, aiPreview: false },
+    ui: {
+      theme: 'system' as const,
+      accent: 'indigo' as const,
+      aiPreview: false,
+      density: 'comfortable' as const,
+    },
     inbox: {
       sections: {
         'review-requested': true,
