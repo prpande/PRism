@@ -273,7 +273,7 @@ describe('OverviewTab', () => {
       if (path.startsWith('/api/preferences')) {
         return Promise.resolve(
           jsonResponse({
-            ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+            ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
             inbox: {
               sections: {
                 'review-requested': true,
@@ -340,7 +340,7 @@ describe('OverviewTab', () => {
       if (path.startsWith('/api/preferences')) {
         return Promise.resolve(
           jsonResponse({
-            ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+            ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
             inbox: {
               sections: {
                 'review-requested': true,

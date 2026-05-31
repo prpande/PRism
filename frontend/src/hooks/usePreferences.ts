@@ -11,6 +11,7 @@ export type PreferenceKey =
   | 'theme'
   | 'accent'
   | 'aiPreview'
+  | 'density'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
@@ -18,12 +19,13 @@ export type PreferenceKey =
       | 'mentioned'
       | 'ci-failing'}`;
 
-type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'aiPreview'>;
+type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'aiPreview' | 'density'>;
 
 function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
   if (key === 'theme') return prefs.ui.theme;
   if (key === 'accent') return prefs.ui.accent;
   if (key === 'aiPreview') return prefs.ui.aiPreview;
+  if (key === 'density') return prefs.ui.density;
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
   return prefs.inbox.sections[id];
 }
@@ -38,6 +40,11 @@ function writeKey(
   if (key === 'accent')
     return { ...prefs, ui: { ...prefs.ui, accent: value as PreferencesResponse['ui']['accent'] } };
   if (key === 'aiPreview') return { ...prefs, ui: { ...prefs.ui, aiPreview: value as boolean } };
+  if (key === 'density')
+    return {
+      ...prefs,
+      ui: { ...prefs.ui, density: value as PreferencesResponse['ui']['density'] },
+    };
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,
   ) as keyof PreferencesResponse['inbox']['sections'];

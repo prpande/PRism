@@ -16,7 +16,7 @@ describe('HeaderControls', () => {
     server.use(
       http.get('/api/preferences', () =>
         HttpResponse.json({
-          ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+          ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
           inbox: {
             sections: {
               'review-requested': true,
@@ -49,7 +49,7 @@ describe('HeaderControls', () => {
       http.post('/api/preferences', async ({ request }) => {
         requestBody = await request.json();
         return HttpResponse.json({
-          ui: { theme: 'light', accent: 'indigo', aiPreview: false },
+          ui: { theme: 'light', accent: 'indigo', aiPreview: false, density: 'comfortable' },
           inbox: {
             sections: {
               'review-requested': true,
