@@ -187,7 +187,7 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
 
-  test('split mode renders word-diff overlays on the same <tr>; unified renders on different <tr>s', async ({ page }) => {
+  test('split mode uses 4-column <tr> layout; unified collapses to 3-column layout', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.goto('/pr/acme/api/123/files');
