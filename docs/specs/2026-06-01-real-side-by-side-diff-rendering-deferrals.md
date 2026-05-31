@@ -10,11 +10,11 @@ Each entry below is something slice 1 deliberately does NOT do. Numbering uses t
 
 ## DSx1 — Whole-file context expansion
 
-**Status:** Deferred to slice 2 (separate brainstorm after slice 1 lands).
+**Status:** Deferred to slice 2 (separate brainstorm after slice 1 lands). This is the actual P4-B8 backlog deliverable; slice 1 is the renderer prerequisite.
 
 **What:** ADO-style "show whole file" mode where every line of the file renders with unchanged context filled in between hunks. Layered on top of slice 1's two-pane renderer.
 
-**Why slice 1 doesn't do it:** Slice 1 is a renderer-architecture slice. Bundling whole-file context in adds (a) file-blob fetching at base SHA, (b) hunk-to-blob interleaving algorithm, (c) `TooLarge 413` / `Binary 415` fallback UX, and (d) the question of whether toggling whole-file should be per-file or PR-wide. Each is a substantive design decision worth its own brainstorm.
+**Why slice 1 doesn't do it:** Slice 1 is the renderer-architecture prerequisite. Bundling whole-file context in adds (a) file-blob fetching at base SHA, (b) hunk-to-blob interleaving algorithm, (c) `TooLarge 413` / `Binary 415` fallback UX, and (d) the question of whether toggling whole-file should be per-file or PR-wide. Each is a substantive design decision worth its own brainstorm.
 
 **Backend dependency status:** `GET /api/pr/{owner}/{repo}/{number}/file?path=&sha=` already exists at `PRism.Web/Endpoints/PrDetailEndpoints.cs:45`. No backend work needed for slice 2.
 
@@ -30,27 +30,29 @@ Each entry below is something slice 1 deliberately does NOT do. Numbering uses t
 
 Slice 1 makes left-pane content visible (you can now SEE the deleted lines on the left), but you still can't click them to comment. Bundling the per-iteration `beforeSha` plumbing into slice 1 would drag in the iteration-aware anchor work that S4 deliberately deferred.
 
-**Future trigger:** When per-iteration `anchoredSha` plumbing lands (the deferred S4 work), slice 1's `SplitDiffLineRow` gains a left-side affordance with one-line wiring.
+**Future trigger:** When per-iteration `anchoredSha` plumbing lands (the deferred S4 work), slice 1's `SplitDiffLineRow` gains a left-side affordance with one-line wiring. Also adds `position: relative` to `.diffGutterOld` for the affordance's positioning context.
 
 ## DSx3 — Multi-line modification block alignment
 
-**Status:** Out of slice 1 scope. Not on the P4 backlog today.
+**Status:** Out of slice 1 scope. Visual implication documented in spec § 5.4.
 
-**What:** Hunt–McIlroy-style line-level LCS to align runs of mixed deletes and inserts onto paired rows. ADO uses a heuristic variant of this; the result is that a 3-delete + 3-insert block renders as three paired rows rather than one paired row + two solo rows.
+**What:** Hunt–McIlroy / patience-diff-style line-level LCS to align runs of mixed deletes and inserts onto paired rows. ADO uses a heuristic variant of this; the result is that a 3-delete + 3-insert block renders as three paired rows rather than one paired row + two solo rows.
 
 **Why slice 1 doesn't do it:** The existing `findAdjacentPair` at `DiffPane.tsx:92-103` only pairs boundary delete + boundary insert. Slice 1 matches this algorithm to preserve "every line that's word-diffed in unified mode is word-diffed in split mode" — changing the pairing changes BOTH modes' output, which is its own design decision.
 
-**Future trigger:** Reviewer feedback that multi-line modification blocks look fragmented in split mode. Would be its own brainstorm slice; estimated effort medium.
+**Visual implication:** For `[D,D,D,I]` patterns, slice 1's split rendering shows two solo-delete rows (left filled, right empty) then one paired-modification row. The orphan-cell pattern is the fragmentation Spec § 5.4 acknowledges; the `d` shortcut / toolbar button is the escape valve.
 
-## DSx4 — Per-pane scroll sync
+**Future trigger:** Reviewer feedback that multi-line modification blocks look fragmented in split mode — concretely, the lead engineer reaches for the `d` fallback on 3+ consecutive PRs and reports the reason. Closing path: either ship alignment, or flip the default to `'unified'` per spec § 7.1.
 
-**Status:** Architecturally not needed at slice 1.
+## DSx4 — Per-pane scroll sync / single-`<table>` horizontal-scroll trade-off
 
-**What:** Synchronizing horizontal (and possibly vertical) scrolling between the two content panes.
+**Status:** Architecturally accepted at slice 1.
 
-**Why slice 1 doesn't do it:** Slice 1 uses a single `<table>` with one shared horizontal scrollbar. The two content cells are columns in the same row, so they always scroll together. No sync logic needed.
+**What:** Slice 1 uses a single `<table>` with one shared horizontal scrollbar. The two content cells are columns in the same row, so they always scroll together. No sync logic is needed — but the trade-off is that scrolling horizontally on a solo-delete row (left filled, right empty) reveals empty cells on the short side. The scrollbar position is a function of the WIDEST cell in the table, not per-side.
 
-**Future trigger:** If slice 2 (whole-file mode) or a later slice splits into two independently-scrollable `<div>`s — e.g., for column-resize handles or per-pane overflow — scroll sync becomes a real concern.
+**Why slice 1 accepts the trade-off:** Independent overflow per pane would require either (a) two parallel `<div>` panes with `overflow-x: auto` each + JS scroll-sync to keep them aligned vertically, or (b) a `colgroup` with `width: 50%` content columns + per-cell `overflow-x: auto` (which produces per-cell horizontal scrollbars — visually noisier). Either path adds layout complexity disproportionate to slice 1's scope.
+
+**Future trigger:** Slice 2's whole-file mode renders 2000-line files where one side has +500 inserts and the other -200 deletes, so vertical extents diverge significantly. If slice 2's brainstorm concludes independent vertical scroll is needed, slice 1's single-`<table>` architecture becomes a refactor target — at which point scroll sync becomes a new concern. Slice 2 should treat the renderer as a candidate for restructuring rather than a constraint.
 
 ## DSx5 — `diffMode` cross-session / cross-mount persistence
 
@@ -60,34 +62,4 @@ Slice 1 makes left-pane content visible (you can now SEE the deleted lines on th
 
 **Why slice 1 doesn't do it:** Today's `useState<DiffMode>('side-by-side')` at `FilesTab.tsx:61` resets per mount. Slice 1 preserves this. Persistence is a separate user-preference design (does it become a `UiPreferences` field? per-PR or global? UI for changing it from Settings?), worth its own slice if reviewer feedback surfaces.
 
-**Future trigger:** Reviewer feedback that "I want split mode by default" or "I want unified by default and the default keeps switching back." Would extend `UiPreferences` (backend + frontend allowlist update + AppearanceSection control) following the theme/accent/density precedent.
-
-## DSx6 — Parity baseline recapture for `pr-detail-files-diff.png`
-
-**Status:** Intentional visual change, baseline recapture is part of slice 1's plan.
-
-**What:** The Playwright parity baseline at `frontend/e2e/parity-baselines.spec.ts` (the `pr-detail-files-diff.png` snapshot, 4 KB, captured PR #90) was taken against the stubbed split mode. After slice 1 ships, it will look different (true two-pane). Slice 1's plan includes a baseline recapture step.
-
-**Why this is a deferral entry:** Spec-readers checking baseline-stability invariants should see this is intentional, not a regression to investigate.
-
-**Action:** Recapture during slice 1 implementation; commit the new baseline alongside the renderer change.
-
-## DSx7 — Toolbar `<button>` for the diff-mode toggle
-
-**Status:** Conditional — slice 1 ADDS this only if no production toolbar button exists today.
-
-**What:** A `<button aria-pressed={diffMode === 'side-by-side'}>` in the FilesTab toolbar that toggles `diffMode`. Sits next to the iteration / commit-multiselect controls.
-
-**Why this is conditional:** The brainstorm verified that the `d` keyboard shortcut exists (`useFilesTabShortcuts` → `onToggleDiffMode`) but did NOT verify whether a clickable button exists today. If one is already present, slice 1 changes nothing; if it's missing, slice 1 adds one. The implementation plan resolves this with a single grep in step 1.
-
-**Future trigger:** N/A — resolved during slice 1 plan/implementation.
-
-## DSx8 — `MarkdownFileView.tsx` dead-code cleanup
-
-**Status:** Out of slice 1 scope; flagged for visibility.
-
-**What:** `frontend/src/components/PrDetail/FilesTab/DiffPane/MarkdownFileView.tsx` is defined but never imported in production (verified via grep 2026-06-01: only self-references). Reviewers will see the file during slice 1 review and may ask whether it's used.
-
-**Why slice 1 doesn't do it:** Removing a file is its own decision (was it ever planned to wire up? what about its tests, if any?). Cleanup is a one-line commit that doesn't belong inside slice 1's scope.
-
-**Future trigger:** A small dead-code-cleanup slice, or fold-in to any future spec that touches DiffPane's file dispatch logic.
+**Future trigger:** Reviewer feedback that "I want a different default" or "the default keeps switching back when I navigate PRs". Would extend `UiPreferences` (backend + frontend allowlist update + AppearanceSection control) following the theme/accent/density precedent.
