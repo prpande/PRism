@@ -423,6 +423,25 @@ describe('DiffPane', () => {
     expect(pairedRow.querySelectorAll('.diff-comment-affordance').length).toBe(1);
   });
 
+  it('attaches comment widget to paired row in split mode (anchored to next.newLineNum)', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[sampleThread]}
+        prUrl=""
+      />,
+    );
+    const widget = screen.getByTestId('comment-widget');
+    const widgetRow = widget.closest('tr');
+    expect(widgetRow).not.toBeNull();
+    const prevRow = widgetRow?.previousElementSibling;
+    expect(prevRow?.className).toContain('diff-line--paired');
+  });
+
   it('clicking the affordance on a paired row produces an InlineAnchor with the right-side newLineNum', () => {
     const onLineClick = vi.fn();
     render(

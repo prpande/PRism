@@ -243,21 +243,33 @@ export function DiffPane({
     const rows: React.ReactNode[] = [];
     let hunkCounter = -1;
 
-    // Inline helper — emits an ExistingCommentWidget row for any threads
-    // anchored on the given right-side line number. Task 4 will replace this
-    // with the full emitWidgetAndComposerRows that also handles composer-slot
-    // rows.
-    function emitWidgetIfAnyForLine(lineIdx: number, lineNum: number | null): void {
-      if (lineNum == null) return;
-      const threads = threadsByLine.get(lineNum);
+    // Inline helper — emits an ExistingCommentWidget row (if threadsByLine has
+    // entries for the right-side line number) followed by a composer-slot row
+    // (if renderComposerForLine returns non-null). Both use the mode-aware
+    // colSpan. Solo-delete and hunk-header rows do NOT call this helper — they
+    // have no right-side line number to anchor to, consistent with
+    // unified-mode behavior.
+    function emitWidgetAndComposerRows(idx: number, anchorLineNum: number | null): void {
+      if (anchorLineNum == null) return;
+      const threads = threadsByLine.get(anchorLineNum);
       if (threads && threads.length > 0) {
         rows.push(
-          <tr key={`widget-${lineIdx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
+          <tr key={`widget-${idx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
             <td colSpan={colSpan}>
               <ExistingCommentWidget threads={threads} replyContext={replyContext} />
             </td>
           </tr>,
         );
+      }
+      if (renderComposerForLine) {
+        const node = renderComposerForLine(path, anchorLineNum);
+        if (node) {
+          rows.push(
+            <tr key={`composer-${idx}`} className={`diff-composer-row ${styles.diffComposerRow}`}>
+              <td colSpan={colSpan}>{node}</td>
+            </tr>,
+          );
+        }
       }
     }
 
@@ -301,7 +313,7 @@ export function DiffPane({
             onLineClick={onLineClick}
           />,
         );
-        emitWidgetIfAnyForLine(idx, line.newLineNum);
+        emitWidgetAndComposerRows(idx, line.newLineNum);
         continue;
       }
 
@@ -320,7 +332,7 @@ export function DiffPane({
               onLineClick={onLineClick}
             />,
           );
-          emitWidgetIfAnyForLine(idx, next.newLineNum);
+          emitWidgetAndComposerRows(idx, next.newLineNum);
           idx += 1; // consume the paired insert; the for-loop's ++ advances past it
           continue;
         }
@@ -347,7 +359,7 @@ export function DiffPane({
             onLineClick={onLineClick}
           />,
         );
-        emitWidgetIfAnyForLine(idx, line.newLineNum);
+        emitWidgetAndComposerRows(idx, line.newLineNum);
         continue;
       }
     }
