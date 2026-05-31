@@ -1104,7 +1104,7 @@ Adding 🔒 to FirstRunDisclosure's `<summary>` would put a security glyph next 
 **Concrete DOM structure** (after lift):
 
 ```
-<li className={styles.tab} data-prref={key}>            // wrapper carries chip border + data-prref
+<div className={styles.tab} data-prref={key}>           // wrapper carries chip border + data-prref
   <div role="tab" aria-selected tabIndex={0}            // tab body — handles click-to-select + middle-click close
        onMouseDown={handleTabMouseDown}>
     <span className={styles.tabTitle}>{title}</span>
@@ -1115,11 +1115,11 @@ Adding 🔒 to FirstRunDisclosure's `<summary>` would put a security glyph next 
           aria-label="Close tab">
     ×
   </button>
-</li>
+</div>
 ```
 
 **Element responsibilities (post-lift):**
-- `<li className={styles.tab}>` — the wrapper. Carries the chip border, border-radius, background, and `data-prref={key}` attribute (current selectors `[data-prref="..."]` continue to work because they're not class-based and the attribute moves to the wrapper).
+- `<div className={styles.tab}>` — the wrapper. Carries the chip border, border-radius, background, and `data-prref={key}` attribute (current selectors `[data-prref="..."]` continue to work because they're not class-based and the attribute moves to the wrapper).
 - `<div role="tab">` — tab body. Carries `role="tab"`, `aria-selected`, `tabIndex={0}`, the tab title text, the unread dot, the tab-select click handler, and the middle-click `onMouseDown` handler.
 - `<button className={styles.close}>` — sibling close button. Focusable, left-click activates close. Middle-click on the close button is a no-op (browser default for middle-click on a `<button>` does nothing because the close button has no anchor href).
 

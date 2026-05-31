@@ -181,10 +181,7 @@ function PrTabStripBody() {
           className={styles.close}
           disabled={closeBlocked}
           title={closeBlocked ? "Can't close — submit in progress" : undefined}
-          onClick={(e) => {
-            e.stopPropagation();
-            handleClose(t);
-          }}
+          onClick={() => handleClose(t)}
         >
           ×
         </button>
