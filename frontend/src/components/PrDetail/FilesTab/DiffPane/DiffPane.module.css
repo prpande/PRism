@@ -120,6 +120,14 @@
   background: var(--surface-2);
 }
 
+/* Split-mode empty half-cells (solo-delete right side / solo-insert left side).
+   Visual background matches the deleted/inserted row tint inherited from
+   tokens.css .diff-line--delete / .diff-line--insert; the cell is visually
+   blank and screen-reader-hidden via aria-hidden="true" on the element. */
+.diffCellEmpty {
+  background: transparent;
+}
+
 /* PR9b-ai-gating § 4.4. AI hunk annotation row — colspan-3 <tr> emitted after
    each hunk-header when annotationsForFile has entries for that hunk index. */
 .aiHunkRow > td {

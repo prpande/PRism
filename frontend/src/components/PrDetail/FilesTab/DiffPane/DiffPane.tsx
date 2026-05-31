@@ -242,6 +242,25 @@ export function DiffPane({
     const path = selectedPath ?? '';
     const rows: React.ReactNode[] = [];
     let hunkCounter = -1;
+
+    // Inline helper — emits an ExistingCommentWidget row for any threads
+    // anchored on the given right-side line number. Task 4 will replace this
+    // with the full emitWidgetAndComposerRows that also handles composer-slot
+    // rows.
+    function emitWidgetIfAnyForLine(lineIdx: number, lineNum: number | null): void {
+      if (lineNum == null) return;
+      const threads = threadsByLine.get(lineNum);
+      if (threads && threads.length > 0) {
+        rows.push(
+          <tr key={`widget-${lineIdx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
+            <td colSpan={colSpan}>
+              <ExistingCommentWidget threads={threads} replyContext={replyContext} />
+            </td>
+          </tr>,
+        );
+      }
+    }
+
     for (let idx = 0; idx < allLines.length; idx++) {
       const line = allLines[idx];
 
@@ -282,22 +301,54 @@ export function DiffPane({
             onLineClick={onLineClick}
           />,
         );
+        emitWidgetIfAnyForLine(idx, line.newLineNum);
         continue;
       }
 
-      // Modification kinds (delete/insert) added in Task 3 — content rows are
-      // placeholder-deferred. Threads that happen to anchor on these lines are
-      // preserved so comment widgets remain visible in split mode.
-      const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
-      const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
-      if (threadsAtLine && threadsAtLine.length > 0) {
+      if (line.type === 'delete') {
+        const next = allLines[idx + 1];
+        if (next?.type === 'insert') {
+          rows.push(
+            <SplitDiffLineRow
+              key={idx}
+              kind="paired"
+              oldLineNum={line.oldLineNum}
+              newLineNum={next.newLineNum}
+              oldText={line.content}
+              newText={next.content}
+              filePath={path}
+              onLineClick={onLineClick}
+            />,
+          );
+          emitWidgetIfAnyForLine(idx, next.newLineNum);
+          idx += 1; // consume the paired insert; the for-loop's ++ advances past it
+          continue;
+        }
         rows.push(
-          <tr key={`thread-${idx}`} className={`diff-comment-row ${styles.diffCommentRow}`}>
-            <td colSpan={colSpan}>
-              <ExistingCommentWidget threads={threadsAtLine} replyContext={replyContext} />
-            </td>
-          </tr>,
+          <SplitDiffLineRow
+            key={idx}
+            kind="solo-delete"
+            oldLineNum={line.oldLineNum}
+            content={line.content}
+            filePath={path}
+          />,
         );
+        continue;
+      }
+
+      if (line.type === 'insert') {
+        rows.push(
+          <SplitDiffLineRow
+            key={idx}
+            kind="solo-insert"
+            newLineNum={line.newLineNum}
+            content={line.content}
+            filePath={path}
+            onLineClick={onLineClick}
+          />,
+        );
+        emitWidgetIfAnyForLine(idx, line.newLineNum);
+        continue;
       }
     }
     return rows;
@@ -449,6 +500,8 @@ function SplitDiffLineRow({
   kind,
   oldLineNum,
   newLineNum,
+  oldText,
+  newText,
   content,
   filePath,
   onLineClick,
@@ -503,7 +556,117 @@ function SplitDiffLineRow({
     );
   }
 
-  // Modification kinds (paired, solo-delete, solo-insert) added in Task 3.
+  if (kind === 'solo-delete') {
+    return (
+      <tr
+        className="diff-line diff-line--delete"
+        aria-label={`Removed line ${oldLineNum ?? '?'}`}
+      >
+        <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
+          {oldLineNum ?? ''}
+        </td>
+        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+          <span>{content}</span>
+        </td>
+        <td
+          aria-hidden="true"
+          className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew} ${styles.diffCellEmpty}`}
+        ></td>
+        <td
+          aria-hidden="true"
+          data-side="new"
+          className={`diff-content ${styles.diffContent} ${styles.diffCellEmpty}`}
+        ></td>
+      </tr>
+    );
+  }
+
+  if (kind === 'solo-insert') {
+    const handleClick = () => {
+      if (!onLineClick || newLineNum == null) return;
+      onLineClick({
+        filePath,
+        lineNumber: newLineNum,
+        side: 'right',
+        anchoredSha: '',
+        anchoredLineContent: content ?? '',
+      });
+    };
+    return (
+      <tr
+        className="diff-line diff-line--insert"
+        aria-label={`Added line ${newLineNum ?? '?'}`}
+      >
+        <td
+          aria-hidden="true"
+          className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld} ${styles.diffCellEmpty}`}
+        ></td>
+        <td
+          aria-hidden="true"
+          data-side="old"
+          className={`diff-content ${styles.diffContent} ${styles.diffCellEmpty}`}
+        ></td>
+        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
+          {newLineNum != null && onLineClick ? (
+            <button
+              type="button"
+              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
+              aria-label={`Add comment on line ${newLineNum}`}
+              onClick={handleClick}
+            >
+              {newLineNum}
+            </button>
+          ) : (
+            (newLineNum ?? '')
+          )}
+        </td>
+        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+          <span>{content}</span>
+        </td>
+      </tr>
+    );
+  }
+
+  if (kind === 'paired') {
+    const handleClick = () => {
+      if (!onLineClick || newLineNum == null) return;
+      onLineClick({
+        filePath,
+        lineNumber: newLineNum,
+        side: 'right',
+        anchoredSha: '',
+        anchoredLineContent: newText ?? '',
+      });
+    };
+    return (
+      <tr className="diff-line diff-line--paired">
+        <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
+          {oldLineNum ?? ''}
+        </td>
+        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+          <WordDiffOverlay oldText={oldText ?? ''} newText={newText ?? ''} type="delete" />
+        </td>
+        <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
+          {newLineNum != null && onLineClick ? (
+            <button
+              type="button"
+              className={`diff-comment-affordance ${styles.diffCommentAffordance}`}
+              aria-label={`Add comment on line ${newLineNum}`}
+              onClick={handleClick}
+            >
+              {newLineNum}
+            </button>
+          ) : (
+            (newLineNum ?? '')
+          )}
+        </td>
+        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+          <WordDiffOverlay oldText={oldText ?? ''} newText={newText ?? ''} type="insert" />
+        </td>
+      </tr>
+    );
+  }
+
   return null;
 }
 
