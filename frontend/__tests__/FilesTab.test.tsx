@@ -159,11 +159,15 @@ describe('FilesTab', () => {
     await waitFor(() => {
       expect(screen.queryByText(/select a file from the tree/i)).not.toBeInTheDocument();
     });
-    // And the diff pane carries one of the fixture file paths in its header
-    // span — tree-order picks one; either is acceptable.
+    // Tree-order is deterministic: subdirs walk before root files
+    // (treeBuilder.ts), so fileList[0] is `src/main.ts` for sampleDiff
+    // ([src/main.ts, README.md]). Assert that exact pick — Copilot iter-1
+    // pointed out the OR variant would silently pass even if auto-select
+    // shifted to the wrong file. The negative assertion above (`select a
+    // file from the tree` absent) is the load-bearing freshness signal;
+    // this one pins the tree-walk contract.
     const diffPane = await screen.findByTestId('diff-pane');
-    const text = diffPane.textContent ?? '';
-    expect(text.includes('src/main.ts') || text.includes('README.md')).toBe(true);
+    expect(diffPane.textContent ?? '').toContain('src/main.ts');
   });
 
   it('clicking a non-selected file shifts the diff pane to that file', async () => {

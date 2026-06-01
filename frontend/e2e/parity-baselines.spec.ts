@@ -1,9 +1,30 @@
-import { test, expect, request } from '@playwright/test';
+import { test, expect, request, type Page } from '@playwright/test';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 import {
   setupAndOpenHandoffParityFixture,
   setupAndOpenHandoffParityFixtureWithStaleDraft,
 } from './helpers/parity-fixture';
+
+// Three parity tests need a deterministic aiPreview=false to keep their
+// baselines stable: resetBackendState in the beforeEach hook uses an
+// unauthenticated request context that silently 401s on the /api/preferences
+// mutating verb, so any prior test that set aiPreview=true (e.g.
+// inbox-activity-rail) leaks through. The helper does the authenticated POST
+// from the page's own session. Callers MUST trigger a fresh SPA mount after
+// (e.g. page.goto or page.reload) — usePreferences only refetches on mount or
+// window 'focus', so a POST against an already-loaded SPA leaves React state
+// stale.
+async function resetAiPreview(page: Page): Promise<void> {
+  const resp = await page.request.post('/api/preferences', {
+    data: { aiPreview: false },
+    headers: { Origin: 'http://localhost:5180' },
+  });
+  if (!resp.ok()) {
+    throw new Error(
+      `POST /api/preferences (aiPreview=false) failed: ${resp.status()} ${await resp.text()}`,
+    );
+  }
+}
 
 // Viewport baseline regression for the design-parity-recovery roadmap. Per
 // spec §4.1.3:
@@ -167,21 +188,13 @@ test.describe('parity baselines — PR Detail', () => {
   test('pr-detail-files-tree', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
-    // Same aiPreview=false reset that pr-detail-files-diff applies (see the
-    // comment block on that test). Without it, the inbox-activity-rail test's
-    // aiPreview=true bleeds through resetBackendState's unauthenticated POST,
-    // and FilesTab's now-deterministic auto-select renders the AI focus dot
-    // on the selected file row — a non-deterministic visual the baseline
-    // can't pin down.
-    const prefResp = await page.request.post('/api/preferences', {
-      data: { aiPreview: false },
-      headers: { Origin: 'http://localhost:5180' },
-    });
-    if (!prefResp.ok()) {
-      throw new Error(
-        `POST /api/preferences (aiPreview=false) failed: ${prefResp.status()} ${await prefResp.text()}`,
-      );
-    }
+    // Reset aiPreview BEFORE the goto — the goto mounts FilesTab fresh,
+    // which is when usePreferences's initial fetch picks up aiPreview=false.
+    // Without this gate, FilesTab's auto-select renders the AI focus dot on
+    // the selected file row whenever a prior test (e.g. inbox-activity-rail)
+    // has leaked aiPreview=true through resetBackendState's unauthenticated
+    // POST. See the resetAiPreview helper docstring at the top of this file.
+    await resetAiPreview(page);
     await page.goto('/pr/acme/api/123/files');
     const tree = page.locator('[data-testid="files-tab-tree"]');
     await tree.waitFor();
@@ -204,24 +217,12 @@ test.describe('parity baselines — PR Detail', () => {
     await page.route('**/fonts.googleapis.com/**', (route) => route.abort());
     await page.route('**/fonts.gstatic.com/**', (route) => route.abort());
     await setupAndOpenHandoffParityFixture(page);
-    // Explicitly reset aiPreview to false via an authenticated in-page request.
-    // The beforeEach resetBackendState() uses a fresh unauthenticated context
-    // which may 401 on /api/preferences (Origin-check middleware requires auth
-    // for mutating verbs). The inbox-activity-rail test enables aiPreview=true,
-    // and if the unauthenticated reset silently no-ops, the AI hunk annotation
-    // box renders in full-suite runs but not isolated runs (where AI was never
-    // enabled), producing a ~77px height discrepancy in the diff container.
-    // Posting from the page's own context (which has the session cookie from
-    // setupAndOpenHandoffParityFixture) ensures the reset succeeds.
-    const prefResp = await page.request.post('/api/preferences', {
-      data: { aiPreview: false },
-      headers: { Origin: 'http://localhost:5180' },
-    });
-    if (!prefResp.ok()) {
-      throw new Error(
-        `POST /api/preferences (aiPreview=false) failed: ${prefResp.status()} ${await prefResp.text()}`,
-      );
-    }
+    // Reset aiPreview BEFORE the goto so FilesTab's usePreferences picks up
+    // aiPreview=false on its initial mount. See the resetAiPreview helper
+    // docstring at the top of this file. Without this gate, the inbox-
+    // activity-rail leak produces a ~77 px height discrepancy in the diff
+    // container between full-suite and isolated runs.
+    await resetAiPreview(page);
     await page.goto('/pr/acme/api/123/files');
     // Select the canonical scenario file so the diff pane has content. The
     // scenario fixture defines src/Calc.cs at three iterations (Calc1/2/3).
@@ -312,22 +313,19 @@ test.describe('parity baselines — PR Detail', () => {
   test('pr-detail-reconciliation-panel', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixtureWithStaleDraft(page);
-    // Same aiPreview=false reset that pr-detail-files-diff and
-    // pr-detail-files-tree apply. The StaleDraftRow renders a
-    // draftSuggestionsEnabled-gated AI-suggestion span (~26 px tall) when
-    // aiPreview is true, so a leak from an earlier test (e.g.
-    // inbox-activity-rail enabling aiPreview) would silently shift the
-    // baseline by that span's height. Authenticated POST via the page
-    // session ensures the reset succeeds.
-    const prefResp = await page.request.post('/api/preferences', {
-      data: { aiPreview: false },
-      headers: { Origin: 'http://localhost:5180' },
-    });
-    if (!prefResp.ok()) {
-      throw new Error(
-        `POST /api/preferences (aiPreview=false) failed: ${prefResp.status()} ${await prefResp.text()}`,
-      );
-    }
+    // Unlike pr-detail-files-tree / pr-detail-files-diff (which `goto`
+    // /files AFTER the POST, triggering a fresh SPA mount that picks up
+    // aiPreview=false on the initial usePreferences fetch), the stale-
+    // draft fixture has ALREADY navigated to /files and reloaded by the
+    // time we're here. usePreferences only refetches on mount or window
+    // 'focus' (frontend/src/hooks/usePreferences.ts:73-80), so a bare POST
+    // updates the backend but leaves the SPA's React state pointing at
+    // whatever aiPreview was at the fixture's final reload. The reload()
+    // after the POST forces a fresh mount → fresh fetch → the
+    // StaleDraftRow's draftSuggestionsEnabled-gated AI-suggestion span
+    // (~26 px) consistently absent. Copilot iter-1 caught this race.
+    await resetAiPreview(page);
+    await page.reload();
     const panel = page.locator('[data-testid="unresolved-panel"]');
     await panel.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
