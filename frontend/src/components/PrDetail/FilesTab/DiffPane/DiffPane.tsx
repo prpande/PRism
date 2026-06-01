@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   FileChange,
   ReviewThreadDto,
@@ -7,7 +7,7 @@ import type {
   HunkAnnotation,
   DiffLine,
 } from '../../../../api/types';
-import { parseHunkLines } from './interleaveWholeFile';
+import { parseHunkLines, interleaveWholeFile } from './interleaveWholeFile';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
 import {
   ExistingCommentWidget,
@@ -18,6 +18,8 @@ import { WordDiffOverlay } from './WordDiffOverlay';
 import { AiHunkAnnotation } from './AiHunkAnnotation';
 import { useAiGate } from '../../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
+import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
+import { WholeFileFailureBanner } from './WholeFileFailureBanner';
 import styles from './DiffPane.module.css';
 
 export type DiffMode = 'side-by-side' | 'unified';
@@ -47,6 +49,12 @@ export interface DiffPaneProps {
   // D36 — when true, renders a Loading… span in the diff-pane header. JSX
   // (not CSS ::after) so screen readers announce it (WCAG 2.1 F87).
   isLoading?: boolean;
+
+  // Slice 2 additions (all optional with defaults — see destructuring below):
+  wholeFileEnabled?: boolean;
+  onWholeFileFailed?: (reason: string) => void;
+  headSha?: string;
+  baseSha?: string;
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
@@ -74,6 +82,10 @@ export function DiffPane({
   renderComposerForLine,
   replyContext,
   isLoading = false,
+  wholeFileEnabled = false,
+  onWholeFileFailed,
+  headSha = '',
+  baseSha = '',
 }: DiffPaneProps) {
   const annotationsEnabled = useAiGate('hunkAnnotations');
   const allAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
@@ -89,6 +101,87 @@ export function DiffPane({
     }
     return m;
   }, [allAnnotations, selectedPath]);
+
+  // Hook ordering rule: isSplit must be computed before the hook call so it
+  // can be passed as a parameter.
+  const isSplit = diffMode === 'side-by-side';
+
+  const wholeFile = useWholeFileContent({
+    prRef,
+    path: selectedPath,
+    file,
+    headSha,
+    baseSha,
+    enabled: wholeFileEnabled,
+    isSplit,
+  });
+
+  // Failure latch: fires onWholeFileFailed once per transition to 'failed'.
+  const [localFailure, setLocalFailure] = useState<string | null>(null);
+  const prevStatus = useRef<typeof wholeFile.fetchStatus>('idle');
+
+  useEffect(() => {
+    if (
+      prevStatus.current !== 'failed' &&
+      wholeFile.fetchStatus === 'failed' &&
+      wholeFile.failureReason
+    ) {
+      setLocalFailure(wholeFile.failureReason);
+      onWholeFileFailed?.(wholeFile.failureReason);
+    }
+    prevStatus.current = wholeFile.fetchStatus;
+  }, [wholeFile.fetchStatus, wholeFile.failureReason, onWholeFileFailed]);
+
+  const dismissBanner = () => {
+    const reason = localFailure;
+    setLocalFailure(null);
+    if (selectedPath && reason) onWholeFileFailed?.(reason);
+  };
+
+  // allLines: whole-file branch takes over when enabled + ok; else plain hunk
+  // parsing.
+  const allLines: DiffLine[] = useMemo(() => {
+    if (!file) return [];
+    if (wholeFileEnabled && wholeFile.fetchStatus === 'ok' && wholeFile.headContent !== null) {
+      return interleaveWholeFile(file, wholeFile.headContent, wholeFile.baseContent);
+    }
+    const out: DiffLine[] = [];
+    for (const hunk of file.hunks) {
+      out.push(...parseHunkLines(hunk.body));
+    }
+    return out;
+  }, [file, wholeFileEnabled, wholeFile.fetchStatus, wholeFile.headContent, wholeFile.baseContent]);
+
+  // AI annotation re-anchoring map for whole-file mode: maps row idx → annotations
+  // that should render before that row (first non-header line after each hunk-header).
+  const annotationsByRowIdx = useMemo(() => {
+    if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') return null;
+    const map = new Map<number, HunkAnnotation[]>();
+    const consumedHunks = new Set<number>();
+    let hunkCounter = -1;
+    for (let idx = 0; idx < allLines.length; idx++) {
+      const line = allLines[idx];
+      if (line.type === 'hunk-header') {
+        hunkCounter += 1;
+        continue;
+      }
+      if (hunkCounter >= 0 && !consumedHunks.has(hunkCounter)) {
+        const ann = annotationsForFile?.get(hunkCounter);
+        if (ann) map.set(idx, ann);
+        consumedHunks.add(hunkCounter);
+      }
+    }
+    return map;
+  }, [wholeFileEnabled, wholeFile.fetchStatus, allLines, annotationsForFile]);
+
+  // Scroll reset on wholeFileEnabled toggle or file navigation.
+  const diffBodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (diffBodyRef.current) diffBodyRef.current.scrollTop = 0;
+  }, [wholeFileEnabled, selectedPath]);
+
+  // ---- Early-return guards (all hooks must be above here) ----
+
   if (!selectedPath) {
     return (
       <div
@@ -141,12 +234,6 @@ export function DiffPane({
     threadsByLine.set(t.lineNumber, existing);
   }
 
-  const allLines: DiffLine[] = [];
-  for (const hunk of file.hunks) {
-    allLines.push(...parseHunkLines(hunk.body));
-  }
-
-  const isSplit = diffMode === 'side-by-side';
   const colSpan = isSplit ? 4 : 3;
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
 
@@ -161,6 +248,60 @@ export function DiffPane({
     let hunkCounter = -1;
     for (let idx = 0; idx < allLines.length; idx++) {
       const line = allLines[idx];
+
+      if (line.type === 'hunk-header') {
+        hunkCounter += 1;
+        if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') {
+          // Hunks-only mode: emit the hunk-header row + per-hunk AI annotations.
+          const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
+          const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
+          const pair = findAdjacentPair(allLines, idx);
+          rows.push(
+            <DiffLineRow
+              key={idx}
+              line={line}
+              pair={pair}
+              threadsAtLine={threadsAtLine}
+              filePath={path}
+              colSpan={colSpan}
+              onLineClick={onLineClick}
+              renderComposerForLine={renderComposerForLine}
+              replyContext={replyContext}
+            />,
+          );
+          const annotations = annotationsForFile?.get(hunkCounter);
+          if (annotations) {
+            for (let aidx = 0; aidx < annotations.length; aidx++) {
+              rows.push(
+                <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
+                  <td colSpan={colSpan}>
+                    <AiHunkAnnotation annotation={annotations[aidx]} />
+                  </td>
+                </tr>,
+              );
+            }
+          }
+        }
+        // Whole-file ok mode: emit nothing for the hunk-header itself.
+        continue;
+      }
+
+      // Whole-file ok mode: emit pre-line annotations queued in annotationsByRowIdx.
+      if (wholeFileEnabled && wholeFile.fetchStatus === 'ok' && annotationsByRowIdx) {
+        const ann = annotationsByRowIdx.get(idx);
+        if (ann) {
+          for (let aidx = 0; aidx < ann.length; aidx++) {
+            rows.push(
+              <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
+                <td colSpan={colSpan}>
+                  <AiHunkAnnotation annotation={ann[aidx]} />
+                </td>
+              </tr>,
+            );
+          }
+        }
+      }
+
       const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
       const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
       const pair = findAdjacentPair(allLines, idx);
@@ -173,27 +314,12 @@ export function DiffPane({
           threadsAtLine={threadsAtLine}
           filePath={path}
           colSpan={colSpan}
+          isFilled={line.isFilled}
           onLineClick={onLineClick}
           renderComposerForLine={renderComposerForLine}
           replyContext={replyContext}
         />,
       );
-
-      if (line.type === 'hunk-header') {
-        hunkCounter += 1;
-        const annotations = annotationsForFile?.get(hunkCounter);
-        if (annotations) {
-          for (let aidx = 0; aidx < annotations.length; aidx++) {
-            rows.push(
-              <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
-                <td colSpan={colSpan}>
-                  <AiHunkAnnotation annotation={annotations[aidx]} />
-                </td>
-              </tr>,
-            );
-          }
-        }
-      }
     }
     return rows;
   }
@@ -238,22 +364,40 @@ export function DiffPane({
 
       if (line.type === 'hunk-header') {
         hunkCounter += 1;
-        rows.push(
-          <SplitDiffLineRow key={idx} kind="header" content={line.content} filePath={path} />,
-        );
-        const annotations = annotationsForFile?.get(hunkCounter);
-        if (annotations) {
-          for (let aidx = 0; aidx < annotations.length; aidx++) {
+        if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') {
+          rows.push(
+            <SplitDiffLineRow key={idx} kind="header" content={line.content} filePath={path} />,
+          );
+          const annotations = annotationsForFile?.get(hunkCounter);
+          if (annotations) {
+            for (let aidx = 0; aidx < annotations.length; aidx++) {
+              rows.push(
+                <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
+                  <td colSpan={colSpan}>
+                    <AiHunkAnnotation annotation={annotations[aidx]} />
+                  </td>
+                </tr>,
+              );
+            }
+          }
+        }
+        continue;
+      }
+
+      // Whole-file ok mode: emit pre-line annotations queued in annotationsByRowIdx.
+      if (wholeFileEnabled && wholeFile.fetchStatus === 'ok' && annotationsByRowIdx) {
+        const ann = annotationsByRowIdx.get(idx);
+        if (ann) {
+          for (let aidx = 0; aidx < ann.length; aidx++) {
             rows.push(
               <tr key={`ann-${idx}-${aidx}`} className={styles.aiHunkRow}>
                 <td colSpan={colSpan}>
-                  <AiHunkAnnotation annotation={annotations[aidx]} />
+                  <AiHunkAnnotation annotation={ann[aidx]} />
                 </td>
               </tr>,
             );
           }
         }
-        continue;
       }
 
       if (line.type === 'context') {
@@ -265,6 +409,7 @@ export function DiffPane({
             newLineNum={line.newLineNum}
             content={line.content}
             filePath={path}
+            isFilled={line.isFilled}
             onLineClick={onLineClick}
           />,
         );
@@ -335,7 +480,20 @@ export function DiffPane({
           </span>
         )}
       </div>
-      <div className={`diff-pane-body ${styles.diffPaneBody}`}>
+      {localFailure !== null && (
+        <WholeFileFailureBanner reason={localFailure} onDismiss={dismissBanner} />
+      )}
+      <div
+        ref={diffBodyRef}
+        className={`diff-pane-body ${styles.diffPaneBody} ${
+          wholeFileEnabled && wholeFile.fetchStatus === 'loading' ? styles.diffPaneBodyLoading : ''
+        }`}
+      >
+        {wholeFileEnabled && wholeFile.fetchStatus === 'loading' && (
+          <div role="status" aria-live="polite" className={styles.diffPaneLoadingOverlay}>
+            Loading whole file…
+          </div>
+        )}
         <table className={`diff-table ${styles.diffTable}`}>
           {isSplit && (
             <colgroup>
