@@ -38,7 +38,7 @@ public sealed record AppState(
             Accounts[AccountKeys.Default] with { LastConfiguredGithubHost = newHost }) };
 
     public static AppState Default { get; } = new(
-        Version: 6,
+        Version: 7,
         UiPreferences: UiPreferences.Default,
         Accounts: ImmutableDictionary<string, AccountState>.Empty
             .Add(AccountKeys.Default, AccountState.Default));
