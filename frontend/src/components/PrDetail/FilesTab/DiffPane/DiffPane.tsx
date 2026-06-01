@@ -359,6 +359,7 @@ interface DiffLineRowProps {
   threadsAtLine: ReviewThreadDto[] | undefined;
   filePath: string;
   colSpan: number;
+  isFilled?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
   replyContext?: ExistingCommentWidgetReplyContext;
@@ -370,6 +371,7 @@ function DiffLineRow({
   threadsAtLine,
   filePath,
   colSpan,
+  isFilled,
   onLineClick,
   renderComposerForLine,
   replyContext,
@@ -419,7 +421,7 @@ function DiffLineRow({
 
   return (
     <>
-      <tr className={rowClass}>
+      <tr className={rowClass} {...(isFilled ? { 'data-fill': 'true' } : {})}>
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {line.oldLineNum ?? ''}
         </td>
@@ -468,6 +470,7 @@ interface SplitDiffLineRowProps {
   newText?: string;
   content?: string;
   filePath: string;
+  isFilled?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
 }
 
@@ -479,6 +482,7 @@ function SplitDiffLineRow({
   newText,
   content,
   filePath,
+  isFilled,
   onLineClick,
 }: SplitDiffLineRowProps) {
   if (kind === 'header') {
@@ -505,7 +509,7 @@ function SplitDiffLineRow({
       });
     };
     return (
-      <tr className="diff-line diff-line--context">
+      <tr className="diff-line diff-line--context" {...(isFilled ? { 'data-fill': 'true' } : {})}>
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
