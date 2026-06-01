@@ -1,59 +1,57 @@
-# PR-root Post path + discard own pending review — Implementation Plan
+# PR-root Post + discard own pending review — Implementation Plan (v2)
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. **Before writing any code snippet that touches an existing file, grep / Read the file first** — v1 of this plan was rewritten after ce-doc-review round 2 surfaced ~30 factual errors from snippets that didn't match real signatures. Treat the code blocks below as starting points to verify, not verbatim recipes.
 
 **Goal:** Ship the Post path for PR-root drafts + the discard-own-pending-review endpoint + the V6→V7 state migration that unifies `DraftSummaryMarkdown` into the PR-root `DraftComment`, plus the SubmitDialog inline-edit toggle.
 
-**Architecture:** Backend = new `IReviewSubmitter.CreateIssueCommentAsync` REST seam + `SubmitCancellationRegistry` primitive + extracted `SessionOverlays` helper + V6→V7 migration with multi-account loop and partial-rollback discriminator. Pipeline filters PR-root drafts out of `AttachThreads` and consumes them on success. Frontend = new shared `PrRootBodyEditor` consumed by `PrRootReplyComposer` and SubmitDialog inline-edit mode; new `DiscardPendingReviewConfirmationModal`; new `PrHeader` pill.
-
-**Tech Stack:** .NET 10 (PRism.Core / PRism.Web / PRism.GitHub) — minimal hosting, xUnit + FluentAssertions. React 19 + TypeScript + Vite + CSS modules + Vitest + Playwright.
-
 **Source spec:** `docs/specs/2026-06-01-pr-root-post-and-submit-discard-design.md`.
+
+**Verified seams (the assumptions every task rests on):**
+
+- `IReviewEventBus.Publish<TEvent>(evt)` is **synchronous** (`PRism.Core/Events/IReviewEventBus.cs:5`). No `PublishAsync`.
+- `StateChanged(PrReference PrRef, IReadOnlyList<string> FieldsTouched, string? SourceTabId)` (`PRism.Core/Events/StateChanged.cs:5-8`). Pass `SourceTabId: null` from our new endpoints.
+- `SubmitOutcome` lives in `PRism.Core/Submit/Pipeline/SubmitOutcome.cs:20` (nested-record union). Add `Cancelled` there, not in `SubmitResults.cs`.
+- `AppStateStore.MigrationSteps` (`AppStateStore.cs:21-29`) is an `(int ToVersion, Func<JsonObject, JsonObject> Transform)[]` with `.OrderBy(s => s.ToVersion).ToArray()`. Append the new step there.
+- `ReviewSessionState` has **10 fields** (`AppState.cs:47-57`): TabStamps, LastSeenCommentId, PendingReviewId, PendingReviewCommitOid, ViewedFiles, DraftComments, DraftReplies, DraftSummaryMarkdown, DraftVerdict, DraftVerdictStatus. Task 3 drops only `DraftSummaryMarkdown`.
+- State file JSON keys are **kebab-case** via `KebabCaseJsonNamingPolicy` (`PRism.Core/Json/JsonSerializerOptionsFactory.cs:19-22`). Migration reads `"draft-summary-markdown"`, `"draft-comments"`, `"side"` (single word — no hyphenation), `"file-path"`, `"line-number"`, `"body-markdown"`, `"posted-comment-id"`, `"posted-body-snapshot"`, `"status"` (PascalCase string value like `"Draft"`).
+- `useDraftSession.registerOpenComposer(draftId: string) => () => void` (`useDraftSession.ts:23,37-45`) — refcount-only `Map<string, number>`. Task 19 extends this to track ownerKeys.
+- `apiClient.post<T>(path, body, options)` (`api/client.ts:95-96`) returns `Promise<T>` and throws `ApiError` on non-2xx. There is no `.ok` field on the return value.
+- `ComposerSaveBadge` is the type name (`useComposerAutoSave.ts:5`); union of `'saved' | 'saving' | 'unsaved' | 'rejected'`. No `'posted'` value exists.
+- PUT /draft wire shape is `ReviewSessionPatch` typed record with optional named fields; verified pattern at `tests/PRism.Web.Tests/Endpoints/PrDraftEndpointTests.cs:52-72` (`SinglePatch(newRoot: new NewPrRootDraftCommentPayload(...))`).
+- `IsSubscribed` returns 401 `unauthorized` (`PrSubmitEndpoints.cs:86-87`). Not 403.
+- Lock + CTS lifetime: ownership transfers across the fire-and-forget Task.Run boundary; dispose inside the `finally`, NOT `using var` in the endpoint scope (`PrSubmitEndpoints.cs:146-225` + spec § 4.5 endpoint code block).
+- Existing test hooks: `/test/submit/inject-failure` + `FakeReviewSubmitter.InjectFailure(name, ex, afterEffect)` for forced failures; `/test/submit/set-begin-delay` + `FakeReviewSubmitter.SetBeginDelay(ms)` for in-flight delays. Both at `TestEndpoints.cs:340-357`. Do NOT introduce new force-failure or begin-delay endpoints.
+- Migration test pattern: `tests/PRism.Core.Tests/State/Migrations/AppStateMigrationsV5ToV6Tests.cs` — raw-string inline JSON via `JsonNode.Parse("""...""")!.AsObject()`. NO `Fixtures/` directory.
+
+**Pre-merge sequencing constraint.** Tasks 1, 2, 3 together flip the state schema (V6→V7) and remove `DraftSummaryMarkdown`. They MUST land in one slice without a release in between. Backend tests are red between Task 3 and Task 7 (pipeline still throws on PR-root drafts in AttachThreads until Task 7 partitions). Frontend TS build is red between Task 15 and Task 25 (consumers reference the dropped field). Plan this as a single PR; do not push to main until Task 28 is green.
 
 ---
 
-## Phase A — State model V7 + migration
+## Phase A — V7 state schema + migration
 
-### Task 1: Add `PostedCommentId` + `PostedBodySnapshot` fields to `DraftComment`
+### Task 1: Add `PostedCommentId` + `PostedBodySnapshot` to `DraftComment`
 
 **Files:**
 - Modify: `PRism.Core/State/AppState.cs:63-75`
-- Test: `tests/PRism.Core.Tests/State/AppStateRoundTripTests.cs`
+- Test: `tests/PRism.Core.Tests/State/AppStateRoundTripTests.cs` (existing file; add a new fact)
 
-- [ ] **Step 1: Write the failing round-trip test**
+- [ ] **Step 1: Read the existing record + a couple of existing round-trip cases**
 
-Add to `AppStateRoundTripTests`:
+Read `AppState.cs:63-75` and at least one existing `DraftComment` round-trip test to confirm field-order, JSON-naming, and how `AppStateRoundTripTests` invokes the serializer.
 
-```csharp
-[Fact]
-public void DraftComment_PostedFieldsRoundTrip()
-{
-    var draft = new DraftComment(
-        Id: "d1",
-        FilePath: null, LineNumber: null, Side: "pr",
-        AnchoredSha: null, AnchoredLineContent: null,
-        BodyMarkdown: "hello",
-        Status: DraftStatus.Draft,
-        IsOverriddenStale: false,
-        ThreadId: null,
-        PostedCommentId: 12345L,
-        PostedBodySnapshot: "hello");
+- [ ] **Step 2: Add the failing test**
 
-    var json = JsonSerializer.Serialize(draft, AppStateJson.Options);
-    var roundTripped = JsonSerializer.Deserialize<DraftComment>(json, AppStateJson.Options);
+Construct a `DraftComment` with PostedCommentId=12345L + PostedBodySnapshot="hello", serialize via the AppState's storage options, deserialize, assert equivalence. Pattern mirrors existing fact in that file.
 
-    roundTripped.Should().BeEquivalentTo(draft);
-}
+- [ ] **Step 3: Run and verify red**
+
+```bash
+dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~DraftComment"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+Expected: compilation fails (`PostedCommentId` / `PostedBodySnapshot` don't exist).
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~DraftComment_PostedFieldsRoundTrip"`
-Expected: FAIL — `PostedCommentId` and `PostedBodySnapshot` do not exist on `DraftComment`.
-
-- [ ] **Step 3: Add the fields with trailing defaults**
-
-Edit `PRism.Core/State/AppState.cs:63-75`:
+- [ ] **Step 4: Add fields with trailing defaults**
 
 ```csharp
 public sealed record DraftComment(
@@ -71,12 +69,16 @@ public sealed record DraftComment(
     string? PostedBodySnapshot = null);
 ```
 
-- [ ] **Step 4: Verify the test passes**
+Both new fields trail-default to null. Existing call sites do not need updating (record positional constructors with trailing defaults are compatible).
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~DraftComment_PostedFieldsRoundTrip" --no-build && dotnet build PRism.Core/PRism.Core.csproj -c Release`
-Expected: PASS + clean Release build (no CS8019 noise per memory).
+- [ ] **Step 5: Run and verify green**
 
-- [ ] **Step 5: Commit**
+```bash
+dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~DraftComment"
+dotnet build PRism.Core/PRism.Core.csproj -c Release
+```
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add PRism.Core/State/AppState.cs tests/PRism.Core.Tests/State/AppStateRoundTripTests.cs
@@ -85,160 +87,146 @@ git commit -m "feat(state): add DraftComment.PostedCommentId + PostedBodySnapsho
 
 ---
 
-### Task 2: V6→V7 migration — code + golden-fixture tests
+### Task 2: V6→V7 migration
 
 **Files:**
-- Modify: `PRism.Core/State/AppStateStore.cs:11` (CurrentVersion = 7) and `:27-29` (register migration)
+- Modify: `PRism.Core/State/AppStateStore.cs:11` (CurrentVersion) and `:21-29` (`MigrationSteps`)
+- Modify: `PRism.Core/State/AppState.cs:40-44` (`AppState.Default` Version: 6→7)
 - Modify: `PRism.Core/State/Migrations/AppStateMigrations.cs` (add `MigrateV6ToV7`)
-- Modify: `PRism.Core/State/AppState.cs` (`AppState.Default` Version → 7)
-- Test: `tests/PRism.Core.Tests/State/AppStateMigrationsTests.cs`
-- Test fixtures: `tests/PRism.Core.Tests/State/Fixtures/V6/*.json` + `tests/PRism.Core.Tests/State/Fixtures/V7/*.json`
+- Create: `tests/PRism.Core.Tests/State/Migrations/AppStateMigrationsV6ToV7Tests.cs`
 
-- [ ] **Step 1: Write failing test for summary-only lift**
+- [ ] **Step 1: Read precedent**
 
-Add to `AppStateMigrationsTests.cs`:
+Read `AppStateMigrations.cs:104-151` (V5→V6) for the multi-account iteration + partial-rollback discriminator pattern.
+Read `tests/PRism.Core.Tests/State/Migrations/AppStateMigrationsV5ToV6Tests.cs` end-to-end for the raw-string JSON test idiom (no fixture files).
+Read `PrSessionsMigrations.cs:30-62` to confirm the kebab-case JSON keys we will be reading (`"draft-comments"`, `"draft-summary-markdown"`, etc.). Note also `:41-43` for the corrupted-shape-throws precedent.
+
+- [ ] **Step 2: Write failing tests first** (~8 facts; same shape as V5→V6 tests)
+
+Create `AppStateMigrationsV6ToV7Tests.cs` with raw-string fixtures. Cover (filenames are just fact names — no fixture dir):
 
 ```csharp
-[Fact]
-public void MigrateV6ToV7_SummaryOnly_SynthesizesPrRootDraft()
-{
-    var root = LoadFixture("V6/summary_only.json");
-    var migrated = AppStateMigrations.MigrateV6ToV7(root);
-
-    var session = migrated["accounts"]!["default"]!["reviews"]!["sessions"]!["acme/api/123"]!.AsObject();
-    session.ContainsKey("draftSummaryMarkdown").Should().BeFalse();
-
-    var drafts = session["draftComments"]!.AsArray();
-    drafts.Count.Should().Be(1);
-    var draft = drafts[0]!.AsObject();
-    draft["side"]!.GetValue<string>().Should().Be("pr");
-    draft["filePath"]!.GetValue<string?>().Should().BeNull();
-    draft["bodyMarkdown"]!.GetValue<string>().Should().Be("The summary text.");
-    draft["status"]!.GetValue<string>().Should().Be("Draft");
-}
+[Fact] public void Lifts_summary_into_synthesized_pr_root_draft_when_none_exists()
+[Fact] public void Appends_summary_into_existing_pr_root_draft_body()
+[Fact] public void Idempotent_when_summary_empty_and_no_pr_root_draft()
+[Fact] public void Iterates_every_account_not_just_default()
+[Fact] public void Collapses_multiple_pr_root_drafts_with_visible_marker()
+[Fact] public void Throws_on_partial_rollback_summary_plus_posted_comment_id()
+[Fact] public void Throws_on_corrupted_draft_comments_shape()
+[Fact] public void Preserves_thread_id_on_existing_pr_root_draft()
 ```
 
-Add fixture `V6/summary_only.json`:
+Each fact builds JSON via `JsonNode.Parse("""...""")!.AsObject()`, calls `AppStateMigrations.MigrateV6ToV7(root)`, asserts on resulting nodes. Refer to existing V5→V6 fact bodies for shape.
 
-```json
-{
-  "version": 6,
-  "accounts": {
-    "default": {
-      "reviews": {
-        "sessions": {
-          "acme/api/123": {
-            "draftComments": [],
-            "draftReplies": [],
-            "draftSummaryMarkdown": "The summary text.",
-            "draftVerdict": null,
-            "draftVerdictStatus": "Draft"
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~MigrateV6ToV7_SummaryOnly"`
-Expected: FAIL — `MigrateV6ToV7` doesn't exist.
+Expected: fail-to-compile until the method exists.
 
 - [ ] **Step 3: Implement `MigrateV6ToV7`**
 
-Add to `PRism.Core/State/Migrations/AppStateMigrations.cs`:
+Add to `AppStateMigrations.cs` (between `MigrateV5ToV6` and the closing brace). Skeleton:
 
 ```csharp
 public static JsonObject MigrateV6ToV7(JsonObject root)
 {
-    if (root["accounts"] is not JsonObject accounts) return root;
+    if (root["accounts"] is not JsonObject accounts)
+    {
+        root["version"] = 7;
+        return root;
+    }
 
-    // Partial-rollback discriminator: pre-scan every session for the V7-feature-leaked-into-V6 shape.
+    // Partial-rollback discriminator (precedent: V4→V5, V5→V6). Iterate first; if any session
+    // has `draft-summary-markdown` set AND a PR-root draft carrying `posted-comment-id`, throw —
+    // that combination indicates a V7+ file rolled back to V6 then re-upgraded, and the lift
+    // would silently merge a body that was already posted.
     foreach (var (accountKey, accountNode) in accounts)
     {
-        if (accountNode is not JsonObject account) continue;
-        if (account["reviews"] is not JsonObject reviews) continue;
-        if (reviews["sessions"] is not JsonObject sessions) continue;
+        var sessions = (accountNode as JsonObject)?["reviews"]?["sessions"] as JsonObject;
+        if (sessions is null) continue;
         foreach (var (sessionKey, sessionNode) in sessions)
         {
             if (sessionNode is not JsonObject session) continue;
-            var hasSummary = session["draftSummaryMarkdown"]?.GetValue<string?>() is { Length: > 0 };
-            if (!hasSummary) continue;
-            if (session["draftComments"] is not JsonArray drafts) continue;
+            var summary = session["draft-summary-markdown"]?.GetValue<string?>();
+            if (string.IsNullOrEmpty(summary?.Trim())) continue;
+            if (session["draft-comments"] is not JsonArray drafts) continue;
             foreach (var draftNode in drafts)
             {
-                if (draftNode is not JsonObject draft) continue;
-                if (draft["side"]?.GetValue<string>() != "pr") continue;
-                if (draft["filePath"]?.GetValue<string?>() is not null) continue;
-                if (draft["postedCommentId"]?.GetValue<long?>() is not null)
-                    throw new JsonException(
-                        $"V6 session {accountKey}/{sessionKey} has draftSummaryMarkdown set AND a PR-root draft with postedCommentId — refusing to lift (looks like a V7→V6 partial rollback).");
+                if (draftNode is not JsonObject d) continue;
+                if (d["side"]?.GetValue<string?>() != "pr") continue;
+                if (d["file-path"]?.GetValue<string?>() is not null) continue;
+                if (d["posted-comment-id"] is not null && d["posted-comment-id"]!.GetValue<long?>() is not null)
+                    throw new System.Text.Json.JsonException(
+                        $"state.json session {accountKey}/{sessionKey} has draft-summary-markdown set " +
+                        "AND a PR-root draft carrying posted-comment-id. Looks like a V7→V6 partial rollback; quarantining.");
             }
         }
     }
 
-    // Lift pass: per-account loop, per-session lift.
+    // Lift pass.
     foreach (var (_, accountNode) in accounts)
     {
-        if (accountNode is not JsonObject account) continue;
-        if (account["reviews"] is not JsonObject reviews) continue;
-        if (reviews["sessions"] is not JsonObject sessions) continue;
-        foreach (var (_, sessionNode) in sessions)
+        var sessions = (accountNode as JsonObject)?["reviews"]?["sessions"] as JsonObject;
+        if (sessions is null) continue;
+        foreach (var (sessionKey, sessionNode) in sessions)
         {
             if (sessionNode is not JsonObject session) continue;
-            LiftSummaryIntoPrRootDraft(session);
+            LiftSummaryIntoPrRootDraft(sessionKey, session);
         }
     }
+
+    root["version"] = 7;
     return root;
 }
 
-private static void LiftSummaryIntoPrRootDraft(JsonObject session)
+private static void LiftSummaryIntoPrRootDraft(string sessionKey, JsonObject session)
 {
-    var summary = session["draftSummaryMarkdown"]?.GetValue<string?>();
-    var trimmedSummary = summary?.Trim() ?? "";
+    var summary = session["draft-summary-markdown"]?.GetValue<string?>();
+    var trimmed = summary?.Trim() ?? "";
 
-    if (session["draftComments"] is not JsonArray drafts) drafts = new JsonArray();
+    // Defensive shape check (precedent: PrSessionsMigrations.AddV3DraftCollections:41-43).
+    if (session["draft-comments"] is { } draftsNode && draftsNode is not JsonArray)
+        throw new System.Text.Json.JsonException(
+            $"state.json reviews.sessions['{sessionKey}'].draft-comments must be a JSON array (V6→V7)");
 
-    // Find PR-root drafts: side=="pr" AND filePath==null.
+    var drafts = (session["draft-comments"] as JsonArray) ?? new JsonArray();
+
+    // Collect PR-root drafts (side == "pr" AND file-path == null).
     var prRoots = new List<JsonObject>();
-    for (int i = 0; i < drafts.Count; i++)
+    foreach (var n in drafts)
     {
-        if (drafts[i] is not JsonObject d) continue;
-        if (d["side"]?.GetValue<string>() != "pr") continue;
-        if (d["filePath"]?.GetValue<string?>() is not null) continue;
+        if (n is not JsonObject d) continue;
+        if (d["side"]?.GetValue<string?>() != "pr") continue;
+        if (d["file-path"] is not null && d["file-path"]!.GetValue<string?>() is not null) continue;
         prRoots.Add(d);
     }
 
-    // Collapse multiples (defensive — composer's `find` hydration would shadow them today).
+    // Collapse multiples (defensive — composer hydration shadows duplicates today,
+    // but a test endpoint or hand-edit could produce them).
     if (prRoots.Count > 1)
     {
         prRoots = prRoots.OrderBy(d => d["id"]!.GetValue<string>(), StringComparer.Ordinal).ToList();
         var survivor = prRoots[^1];
-        var sb = new StringBuilder();
+        var sb = new System.Text.StringBuilder();
         for (int i = 0; i < prRoots.Count - 1; i++)
         {
-            var nonSurvivor = prRoots[i];
+            var ns = prRoots[i];
             sb.Append("<!-- migrated from previously-shadowed draft ");
-            sb.Append(nonSurvivor["id"]!.GetValue<string>());
+            sb.Append(ns["id"]!.GetValue<string>());
             sb.Append(" -->\n\n");
-            sb.Append(nonSurvivor["bodyMarkdown"]?.GetValue<string>() ?? "");
+            sb.Append(ns["body-markdown"]?.GetValue<string>() ?? "");
             sb.Append("\n\n");
-            drafts.Remove(nonSurvivor);
+            drafts.Remove(ns);
         }
-        sb.Append(survivor["bodyMarkdown"]?.GetValue<string>() ?? "");
-        survivor["bodyMarkdown"] = sb.ToString();
+        sb.Append(survivor["body-markdown"]?.GetValue<string>() ?? "");
+        survivor["body-markdown"] = sb.ToString();
         prRoots = new List<JsonObject> { survivor };
     }
 
-    // Lift the summary (if any).
-    if (trimmedSummary.Length > 0)
+    // Lift summary (if any).
+    if (trimmed.Length > 0)
     {
         if (prRoots.Count == 1)
         {
-            var existing = prRoots[0]["bodyMarkdown"]?.GetValue<string>() ?? "";
-            prRoots[0]["bodyMarkdown"] = existing.Length > 0
+            var existing = prRoots[0]["body-markdown"]?.GetValue<string>() ?? "";
+            prRoots[0]["body-markdown"] = existing.Length > 0
                 ? existing + "\n\n" + summary
                 : summary;
         }
@@ -247,299 +235,238 @@ private static void LiftSummaryIntoPrRootDraft(JsonObject session)
             var synthesized = new JsonObject
             {
                 ["id"] = Guid.NewGuid().ToString(),
-                ["filePath"] = null,
-                ["lineNumber"] = null,
+                ["file-path"] = null,
+                ["line-number"] = null,
                 ["side"] = "pr",
-                ["anchoredSha"] = null,
-                ["anchoredLineContent"] = null,
-                ["bodyMarkdown"] = summary,
+                ["anchored-sha"] = null,
+                ["anchored-line-content"] = null,
+                ["body-markdown"] = summary,
                 ["status"] = "Draft",
-                ["isOverriddenStale"] = false,
-                ["threadId"] = null,
-                ["postedCommentId"] = null,
-                ["postedBodySnapshot"] = null,
+                ["is-overridden-stale"] = false,
+                ["thread-id"] = null,
+                ["posted-comment-id"] = null,
+                ["posted-body-snapshot"] = null,
             };
             drafts.Add(synthesized);
-            session["draftComments"] = drafts;
+            session["draft-comments"] = drafts;
         }
     }
 
-    session.Remove("draftSummaryMarkdown");
+    session.Remove("draft-summary-markdown");
 }
 ```
 
-Update `AppStateStore.cs:24-28`:
+**Important:** verify EVERY kebab-case key against an actual round-tripped V6 state file from a running PoC OR against `JsonSerializerOptionsFactory.cs` naming policy + `ReviewSessionState` / `DraftComment` field names. Run a quick round-trip print before trusting key names.
+
+- [ ] **Step 4: Register the migration step**
+
+Edit `AppStateStore.cs:21-29`:
 
 ```csharp
-private static readonly (int Version, Func<JsonObject, JsonObject> Migration)[] Migrations =
-{
-    (2, AppStateMigrations.MigrateV1ToV2),
-    (3, AppStateMigrations.MigrateV2ToV3),
-    (4, AppStateMigrations.MigrateV3ToV4),
-    (5, AppStateMigrations.MigrateV4ToV5),
-    (6, AppStateMigrations.MigrateV5ToV6),
-    (7, AppStateMigrations.MigrateV6ToV7),
-};
+private static readonly (int ToVersion, Func<JsonObject, JsonObject> Transform)[] MigrationSteps =
+    new (int ToVersion, Func<JsonObject, JsonObject> Transform)[]
+    {
+        (2, AppStateMigrations.MigrateV1ToV2),
+        (3, AppStateMigrations.MigrateV2ToV3),
+        (4, AppStateMigrations.MigrateV3ToV4),
+        (5, AppStateMigrations.MigrateV4ToV5),
+        (6, AppStateMigrations.MigrateV5ToV6),
+        (7, AppStateMigrations.MigrateV6ToV7),
+    }.OrderBy(s => s.ToVersion).ToArray();
 ```
 
-Update `AppStateStore.cs:11`:
+Edit `AppStateStore.cs:11`:
 
 ```csharp
 private const int CurrentVersion = 7;
 ```
 
-Update `AppState.cs` `AppState.Default`:
+Edit `AppState.cs:40-44`:
 
 ```csharp
-public static AppState Default { get; } = new AppState(Version: 7, ...);
+public static AppState Default { get; } = new(
+    Version: 7,
+    UiPreferences: UiPreferences.Default,
+    Accounts: ImmutableDictionary<string, AccountState>.Empty
+        .Add(AccountKeys.Default, AccountState.Default));
 ```
 
-- [ ] **Step 4: Verify summary-only test passes**
-
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~MigrateV6ToV7_SummaryOnly"`
-Expected: PASS.
-
-- [ ] **Step 5: Add remaining migration cases**
-
-Add tests + fixtures in pairs:
-
-```csharp
-[Fact]
-public void MigrateV6ToV7_PrRootOnly_NoSummary_Untouched()
-{
-    var root = LoadFixture("V6/pr_root_only.json");
-    var migrated = AppStateMigrations.MigrateV6ToV7(root);
-    var session = migrated["accounts"]!["default"]!["reviews"]!["sessions"]!["acme/api/123"]!.AsObject();
-    session.ContainsKey("draftSummaryMarkdown").Should().BeFalse();
-    var drafts = session["draftComments"]!.AsArray();
-    drafts.Count.Should().Be(1);
-    drafts[0]!["bodyMarkdown"]!.GetValue<string>().Should().Be("Existing PR-root body.");
-}
-
-[Fact]
-public void MigrateV6ToV7_BothPresent_AppendsSummary()
-{
-    var migrated = AppStateMigrations.MigrateV6ToV7(LoadFixture("V6/both_present.json"));
-    var draft = migrated["accounts"]!["default"]!["reviews"]!["sessions"]!["acme/api/123"]!["draftComments"]!.AsArray()[0]!.AsObject();
-    draft["bodyMarkdown"]!.GetValue<string>().Should().Be("Existing PR-root body.\n\nThe summary text.");
-}
-
-[Fact]
-public void MigrateV6ToV7_BothEmpty_NoSynthesis()
-{
-    var migrated = AppStateMigrations.MigrateV6ToV7(LoadFixture("V6/both_empty.json"));
-    var session = migrated["accounts"]!["default"]!["reviews"]!["sessions"]!["acme/api/123"]!.AsObject();
-    session["draftComments"]!.AsArray().Count.Should().Be(0);
-    session.ContainsKey("draftSummaryMarkdown").Should().BeFalse();
-}
-
-[Fact]
-public void MigrateV6ToV7_CollapsesMultiplePrRootDrafts_WithMarker()
-{
-    var migrated = AppStateMigrations.MigrateV6ToV7(LoadFixture("V6/multiple_pr_root.json"));
-    var drafts = migrated["accounts"]!["default"]!["reviews"]!["sessions"]!["acme/api/123"]!["draftComments"]!.AsArray();
-    drafts.Count.Should().Be(1);
-    var body = drafts[0]!["bodyMarkdown"]!.GetValue<string>();
-    body.Should().StartWith("<!-- migrated from previously-shadowed draft ");
-    body.Should().Contain("The summary text.");
-}
-
-[Fact]
-public void MigrateV6ToV7_NonDefaultAccount_AlsoMigrated()
-{
-    var migrated = AppStateMigrations.MigrateV6ToV7(LoadFixture("V6/non_default_account.json"));
-    var session = migrated["accounts"]!["github_acme"]!["reviews"]!["sessions"]!["acme/api/9"]!.AsObject();
-    session.ContainsKey("draftSummaryMarkdown").Should().BeFalse();
-    session["draftComments"]!.AsArray().Count.Should().Be(1);
-}
-
-[Fact]
-public void MigrateV6ToV7_PartialRollbackDiscriminator_Throws()
-{
-    Action act = () => AppStateMigrations.MigrateV6ToV7(LoadFixture("V6/partial_rollback.json"));
-    act.Should().Throw<JsonException>().WithMessage("*looks like a V7*V6 partial rollback*");
-}
-
-[Fact]
-public void MigrateV6ToV7_PreservesPipelineStamps_OnExistingPrRootDraft()
-{
-    var migrated = AppStateMigrations.MigrateV6ToV7(LoadFixture("V6/pr_root_with_threadid.json"));
-    var draft = migrated["accounts"]!["default"]!["reviews"]!["sessions"]!["acme/api/123"]!["draftComments"]!.AsArray()[0]!.AsObject();
-    draft["threadId"]!.GetValue<string>().Should().Be("thread-abc");
-}
-```
-
-Create matching V6 fixture JSON files under `tests/PRism.Core.Tests/State/Fixtures/V6/`.
-
-- [ ] **Step 6: Verify all migration tests pass**
-
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~MigrateV6ToV7"`
-Expected: 7 PASS.
-
-- [ ] **Step 7: Verify the full state test suite (round-trip + Default + load) still passes**
-
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~AppStateStore|FullyQualifiedName~AppStateRoundTrip|FullyQualifiedName~AppStateMigrations"`
-Expected: all green. `AppState.Default` version bump means any test that compared to `new AppState(6, ...)` literal now needs `7`; sweep and fix.
-
-- [ ] **Step 8: Commit**
+- [ ] **Step 5: Run all tests + verify green**
 
 ```bash
-git add PRism.Core/State/AppState.cs PRism.Core/State/AppStateStore.cs PRism.Core/State/Migrations/AppStateMigrations.cs tests/PRism.Core.Tests/State/AppStateMigrationsTests.cs tests/PRism.Core.Tests/State/Fixtures/V6 tests/PRism.Core.Tests/State/Fixtures/V7
-git commit -m "feat(state): V6→V7 migration unifies DraftSummaryMarkdown into PR-root DraftComment"
+dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj
+```
+
+Sweep any existing `new AppState(...)` literal in tests that passed `Version: 6` — those need to bump to 7. Same for any fixture round-trip assertion.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add PRism.Core PRism.Core.Tests
+git commit -m "feat(state): V6→V7 migration lifting DraftSummaryMarkdown into PR-root DraftComment"
 ```
 
 ---
 
-### Task 3: Drop `DraftSummaryMarkdown` from state record + propagate removal
+### Task 3: Drop `DraftSummaryMarkdown` from `ReviewSessionState`
 
 **Files:**
-- Modify: `PRism.Core/State/AppState.cs:50-57` (`ReviewSessionState`)
-- Modify: `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:173` (summaryBody source) and `:625` (ClearSubmittedSession)
-- Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs:31` (SubmittedFields constant)
-- Modify: `PRism.Web/Endpoints/PrDraftEndpoints.cs:42` (ScalarKinds) and `:245-251` (case "draftSummaryMarkdown")
-- Test: every Core/Web test that constructs `ReviewSessionState` with `DraftSummaryMarkdown` named
+- Modify: `PRism.Core/State/AppState.cs:47-57` (`ReviewSessionState`)
+- Modify: `PRism.Core/Submit/Pipeline/SubmitPipeline.cs` (every `session.DraftSummaryMarkdown` reference)
+- Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs:31` (drop `"draft-summary"` from `SubmittedFields`)
+- Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs:118-122` (drop `&& summary empty` from rule (e))
+- Modify: `PRism.Web/Endpoints/PrDraftEndpoints.cs` (drop `"draftSummaryMarkdown"` from `ScalarKinds` + the patch handler arm)
+- Modify: every existing test that constructs `ReviewSessionState` literally
 
-- [ ] **Step 1: Sweep all existing references**
+- [ ] **Step 1: Read existing references**
 
-Run: `grep -rn "DraftSummaryMarkdown\|draftSummaryMarkdown\|\"draft-summary\"" PRism.Core PRism.Web tests`
-Expected output to be replaced/removed in this task.
+```bash
+grep -rn "DraftSummaryMarkdown\|draftSummaryMarkdown\|draft-summary-markdown\|\"draft-summary\"" PRism.Core PRism.Web tests
+```
 
-- [ ] **Step 2: Remove the field from `ReviewSessionState`**
+Save the list. Each one needs updating in this task.
 
-Edit `PRism.Core/State/AppState.cs:50-57`:
+- [ ] **Step 2: Modify `ReviewSessionState`**
+
+Edit `AppState.cs:47-57` — remove ONLY the `DraftSummaryMarkdown` field. The other 9 fields stay in place and in order:
 
 ```csharp
 public sealed record ReviewSessionState(
+    IReadOnlyDictionary<string, TabStamp> TabStamps,
+    string? LastSeenCommentId,
     string? PendingReviewId,
     string? PendingReviewCommitOid,
-    Dictionary<string, TabStamp> TabStamps,
+    IReadOnlyDictionary<string, string> ViewedFiles,
     IReadOnlyList<DraftComment> DraftComments,
     IReadOnlyList<DraftReply> DraftReplies,
     DraftVerdict? DraftVerdict,
     DraftVerdictStatus DraftVerdictStatus);
 ```
 
-- [ ] **Step 3: Replace pipeline summaryBody source**
+- [ ] **Step 3: Replace the pipeline's summaryBody source**
 
-Edit `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:173` (the `BeginPendingReviewAsync` call). Add helper at the bottom of the class:
+In `SubmitPipeline.cs`, find the `BeginPendingReviewAsync(...)` call (currently `session.DraftSummaryMarkdown ?? ""` near line 173). Replace with:
 
 ```csharp
-private static string ExtractPrRootBody(ReviewSessionState session) =>
-    session.DraftComments.SingleOrDefault(d => d.FilePath is null && d.LineNumber is null)
+var summaryBody = session.DraftComments
+    .SingleOrDefault(d => d.FilePath is null && d.LineNumber is null)
+    ?.BodyMarkdown ?? "";
+```
+
+Pass `summaryBody` to `BeginPendingReviewAsync`. Add this as a private static helper at the bottom of the class if you prefer:
+
+```csharp
+private static string ExtractPrRootBody(ReviewSessionState s) =>
+    s.DraftComments.SingleOrDefault(d => d.FilePath is null && d.LineNumber is null)
         ?.BodyMarkdown ?? "";
 ```
 
-Update the call site to use `ExtractPrRootBody(session)` instead of `session.DraftSummaryMarkdown ?? ""`.
+Also remove the `DraftSummaryMarkdown = null,` line from `ClearSubmittedSession` (the field no longer exists; Task 7 will further update `ClearSubmittedSession` to partition `DraftComments`).
 
-- [ ] **Step 4: Remove `DraftSummaryMarkdown = null` from `ClearSubmittedSession`**
+- [ ] **Step 4: Update endpoints + patch handler**
 
-Edit `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:625` — drop the `DraftSummaryMarkdown = null,` line.
-
-- [ ] **Step 5: Drop the patch handler + scalar-kind from `PrDraftEndpoints`**
-
-Edit `PRism.Web/Endpoints/PrDraftEndpoints.cs:42`:
-
-```csharp
-private static readonly string[] ScalarKinds = { "draftVerdict" };
-```
-
-Delete the `case "draftSummaryMarkdown":` block (lines 245-251).
-
-- [ ] **Step 6: Drop `"draft-summary"` from `SubmittedFields`**
-
-Edit `PRism.Web/Endpoints/PrSubmitEndpoints.cs:31`:
-
+`PrSubmitEndpoints.cs:31`:
 ```csharp
 private static readonly string[] SubmittedFields = { "draft-comments", "draft-replies", "draft-verdict", "draft-verdict-status", "pending-review" };
 ```
 
-- [ ] **Step 7: Compile & sweep test breakage**
+`PrSubmitEndpoints.cs:118-122` — rule (e):
+```csharp
+if (verdict == SubmitEvent.Comment
+    && session.DraftComments.Count == 0
+    && session.DraftReplies.Count == 0)
+    return Results.Json(new SubmitErrorDto("no-content", "..."), statusCode: 400);
+```
 
-Run: `dotnet build PRism.Core/PRism.Core.csproj PRism.Web/PRism.Web.csproj -c Release && dotnet test --no-build`
-Expected: build green; tests likely break on any literal `new ReviewSessionState(...)` constructor call that passed the removed field. Sweep and fix.
+`PrDraftEndpoints.cs:42` (`ScalarKinds`):
+```csharp
+private static readonly string[] ScalarKinds = { "draftVerdict" };
+```
 
-- [ ] **Step 8: Commit**
+In the same file, find the `case "draftSummaryMarkdown":` block in the patch dispatcher (around line 245-251 in the current state) and **delete it**. The dispatcher's `default` branch will reject the kind as invalid; that's the intended behavior for stale-tab compatibility (the V6 SPA reload will 400 once and the user is prompted to refresh).
+
+Also remove the `"draftSummaryMarkdown"` from the dispatcher's `ScalarKinds` membership-check and from any helper like `ExtractUserBody`.
+
+- [ ] **Step 5: Sweep test breakage**
+
+```bash
+dotnet build -c Release
+```
+
+Every `new ReviewSessionState(...)` literal in tests breaks (one fewer field). Fix mechanically. Every test that constructed `ReviewSessionDto` with `draftSummaryMarkdown` in JSON breaks. Fix.
+
+- [ ] **Step 6: Run tests**
+
+```bash
+dotnet test
+```
+
+Expect: green except for any test that asserts pipeline behavior involving PR-root drafts AS DraftComment — those break until Task 7 partitions AttachThreads. Document that in the commit message.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add PRism.Core PRism.Web tests
-git commit -m "feat(state): drop ReviewSessionState.DraftSummaryMarkdown (V7 unification)"
+git commit -m "feat(state): drop ReviewSessionState.DraftSummaryMarkdown (V7 unification, pre-pipeline-partition)"
 ```
 
 ---
 
-## Phase B — Backend shared helpers
+## Phase B — shared backend helpers
 
 ### Task 4: Extract `ClearPendingReviewStamps` into `SessionOverlays`
 
 **Files:**
 - Create: `PRism.Core/State/SessionOverlays.cs`
-- Modify: `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:603-612` (replace private static with call into shared helper)
+- Modify: `PRism.Core/Submit/Pipeline/SubmitPipeline.cs` (replace the private static at ~line 603-612 + call sites)
 - Test: `tests/PRism.Core.Tests/State/SessionOverlaysTests.cs`
 
-- [ ] **Step 1: Write failing test for the extracted helper**
+- [ ] **Step 1: Read the current helper + its 2 call sites**
+
+```bash
+grep -n "ClearPendingReviewStamps\|WithSession" PRism.Core/Submit/Pipeline/SubmitPipeline.cs
+```
+
+Expected: the private static method definition + ALL call sites (there is more than just two — verify line by line). Also find the private `WithSession` helper to decide whether to ALSO extract it (it has multiple callers in the pipeline).
+
+- [ ] **Step 2: Decide WithSession's fate**
+
+Two options:
+- **Keep `WithSession` private in `SubmitPipeline`** — `SessionOverlays.ClearPendingReviewStamps` inlines the dictionary swap. Simpler; no new file beyond `SessionOverlays.cs`.
+- **Extract `WithSession` to a separate `internal static`** — only if simpler than inlining.
+
+Recommend: **inline the dictionary swap inside `SessionOverlays.ClearPendingReviewStamps`** to avoid introducing a second new file. The 3-line swap is not worth a new class.
+
+- [ ] **Step 3: Write failing tests**
 
 ```csharp
-[Fact]
-public void ClearPendingReviewStamps_NullsAllStamps()
+public class SessionOverlaysTests
 {
-    var state = AppStateFixtures.WithSession("acme/api/1", s => s with
+    [Fact]
+    public void ClearPendingReviewStamps_NullsAllPendingFieldsAndThreadIds()
     {
-        PendingReviewId = "PR_123",
-        PendingReviewCommitOid = "abc",
-        DraftComments = new[] {
-            new DraftComment("d1", "file.cs", 10, "RIGHT", "abc", "x", "body", DraftStatus.Draft, false, ThreadId: "T_1"),
-        },
-        DraftReplies = new[] {
-            new DraftReply("r1", "T_parent", ReplyCommentId: "C_1", "body", DraftStatus.Draft, false),
-        },
-    });
+        // Build a minimal AppState containing one session under accounts.default
+        // with PendingReviewId, ThreadId on a draft, ReplyCommentId on a reply.
+        // Call SessionOverlays.ClearPendingReviewStamps(state, sessionKey).
+        // Assert PendingReviewId/PendingReviewCommitOid null; ThreadId/ReplyCommentId null.
+    }
 
-    var cleared = SessionOverlays.ClearPendingReviewStamps(state, "acme/api/1");
-    var session = cleared.Reviews.Sessions["acme/api/1"];
-
-    session.PendingReviewId.Should().BeNull();
-    session.PendingReviewCommitOid.Should().BeNull();
-    session.DraftComments[0].ThreadId.Should().BeNull();
-    session.DraftReplies[0].ReplyCommentId.Should().BeNull();
-}
-
-[Fact]
-public void ClearPendingReviewStamps_PreservesPostedCommentId()
-{
-    var state = AppStateFixtures.WithSession("acme/api/1", s => s with
+    [Fact]
+    public void ClearPendingReviewStamps_PreservesPostedCommentIdAndSnapshot()
     {
-        DraftComments = new[] {
-            new DraftComment("d1", null, null, "pr", null, null, "body", DraftStatus.Draft, false,
-                ThreadId: null, PostedCommentId: 42L, PostedBodySnapshot: "body"),
-        },
-    });
-
-    var cleared = SessionOverlays.ClearPendingReviewStamps(state, "acme/api/1");
-    cleared.Reviews.Sessions["acme/api/1"].DraftComments[0].PostedCommentId.Should().Be(42L);
-    cleared.Reviews.Sessions["acme/api/1"].DraftComments[0].PostedBodySnapshot.Should().Be("body");
+        // Seed a PR-root draft with PostedCommentId=42, PostedBodySnapshot="x".
+        // Clear stamps. Assert both Posted* fields unchanged.
+    }
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~SessionOverlays"`
-Expected: FAIL — `SessionOverlays` class doesn't exist.
-
-- [ ] **Step 3: Create the shared helper**
-
-Create `PRism.Core/State/SessionOverlays.cs`:
+- [ ] **Step 4: Create the file**
 
 ```csharp
 namespace PRism.Core.State;
 
 public static class SessionOverlays
 {
-    /// <summary>
-    /// Nulls PendingReviewId, PendingReviewCommitOid, every DraftComment.ThreadId,
-    /// and every DraftReply.ReplyCommentId for the named session. Does NOT touch
-    /// PostedCommentId or PostedBodySnapshot — those belong to the issue-comment
-    /// lifecycle, not the review.
-    /// </summary>
     public static AppState ClearPendingReviewStamps(AppState state, string sessionKey)
     {
         if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var cur)) return state;
@@ -550,129 +477,64 @@ public static class SessionOverlays
             DraftComments = cur.DraftComments.Select(d => d.ThreadId is null ? d : d with { ThreadId = null }).ToList(),
             DraftReplies = cur.DraftReplies.Select(r => r.ReplyCommentId is null ? r : r with { ReplyCommentId = null }).ToList(),
         };
-        return AppStateMutators.WithSession(state, sessionKey, cleared);
+        var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = cleared };
+        return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
     }
 }
 ```
 
-(The existing `WithSession` private helper inside `SubmitPipeline` is extracted at the same time into `PRism.Core/State/AppStateMutators.cs` as `internal static`. Both files land in this task.)
+Verify `state.WithDefaultReviews(...)` is the actual extension used by `PrDraftEndpoints.cs` (read line 163 around the existing `state.WithDefaultReviews(...)` call to confirm; otherwise use whatever `AppState`-update helper the existing pipeline uses inside its private `WithSession`).
 
-- [ ] **Step 4: Replace pipeline's private helper with call to shared**
+- [ ] **Step 5: Replace pipeline call sites**
 
-Edit `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:603-612` — delete the `private static AppState ClearPendingReviewStamps(...)` method. Replace every call site (line 90, line 603 self-reference, and others) with `SessionOverlays.ClearPendingReviewStamps(...)`.
+In `SubmitPipeline.cs`, replace every call to the private `ClearPendingReviewStamps` with `SessionOverlays.ClearPendingReviewStamps(state, sessionKey)`. Delete the private static.
 
-- [ ] **Step 5: Verify pipeline tests + new SessionOverlays tests pass**
-
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj`
-Expected: all green.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Verify**
 
 ```bash
-git add PRism.Core/State/SessionOverlays.cs PRism.Core/State/AppStateMutators.cs PRism.Core/Submit/Pipeline/SubmitPipeline.cs tests/PRism.Core.Tests/State/SessionOverlaysTests.cs
-git commit -m "refactor(state): extract ClearPendingReviewStamps to SessionOverlays helper"
+dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add PRism.Core tests/PRism.Core.Tests/State/SessionOverlaysTests.cs
+git commit -m "refactor(state): extract ClearPendingReviewStamps to SessionOverlays"
 ```
 
 ---
 
-### Task 5: Add `SubmitCancellationRegistry` primitive
+### Task 5: `SubmitCancellationRegistry` primitive
 
 **Files:**
 - Create: `PRism.Web/Submit/SubmitCancellationRegistry.cs`
-- Modify: `PRism.Web/Composition/ServiceCollectionExtensions.cs` (DI registration)
+- Modify: `PRism.Web/Composition/ServiceCollectionExtensions.cs` (add singleton next to `SubmitLockRegistry`)
 - Test: `tests/PRism.Web.Tests/Submit/SubmitCancellationRegistryTests.cs`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Read `SubmitLockRegistry` for the precedent shape**
+
+```bash
+cat PRism.Web/Submit/SubmitLockRegistry.cs
+```
+
+Adopt the same internal-sealed-class style, ConcurrentDictionary, RegistrationHandle pattern.
+
+- [ ] **Step 2: Write failing tests**
 
 ```csharp
 public class SubmitCancellationRegistryTests
 {
-    [Fact]
-    public async Task Register_Then_RequestCancel_TripsToken()
-    {
-        var registry = new SubmitCancellationRegistry();
-        var prRef = PrReference.Parse("acme/api/1")!;
-        using var cts = new CancellationTokenSource();
-        using var registration = registry.Register(prRef, cts);
+    private static PrReference PrRef => new("acme", "api", 1);
 
-        registry.RequestCancel(prRef);
-
-        cts.IsCancellationRequested.Should().BeTrue();
-        // Should not throw when called twice.
-        var act = () => registry.RequestCancel(prRef);
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public async Task RequestCancel_OnUnknownPrRef_IsNoop()
-    {
-        var registry = new SubmitCancellationRegistry();
-        var act = () => registry.RequestCancel(PrReference.Parse("acme/api/2")!);
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void Register_WhilePriorEntryAlive_Throws()
-    {
-        var registry = new SubmitCancellationRegistry();
-        var prRef = PrReference.Parse("acme/api/3")!;
-        using var ctsA = new CancellationTokenSource();
-        using var registrationA = registry.Register(prRef, ctsA);
-
-        using var ctsB = new CancellationTokenSource();
-        Action act = () => registry.Register(prRef, ctsB);
-
-        act.Should().Throw<InvalidOperationException>()
-            .WithMessage("*registration already exists*");
-    }
-
-    [Fact]
-    public void Dispose_RemovesEntry_AllowsReRegister()
-    {
-        var registry = new SubmitCancellationRegistry();
-        var prRef = PrReference.Parse("acme/api/4")!;
-        using (var ctsA = new CancellationTokenSource())
-        {
-            registry.Register(prRef, ctsA).Dispose();
-        }
-        using var ctsB = new CancellationTokenSource();
-        var act = () => registry.Register(prRef, ctsB);
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void LateDispose_DoesNotStompFreshRegistration()
-    {
-        var registry = new SubmitCancellationRegistry();
-        var prRef = PrReference.Parse("acme/api/5")!;
-        using var ctsA = new CancellationTokenSource();
-        var registrationA = registry.Register(prRef, ctsA);
-
-        // Simulate a delayed-A scenario by registering a new CTS after A's dispose
-        // (we'd have to bypass the throw above; in production AddOrUpdate-style stomp
-        // is prevented at registration, so we test the late-dispose-vs-fresh-registration
-        // safety: the late dispose must NOT remove an entry that points to a different CTS).
-        registrationA.Dispose();
-        using var ctsB = new CancellationTokenSource();
-        var registrationB = registry.Register(prRef, ctsB);
-
-        // Late-dispose of A (idempotent) must not clear ctsB.
-        registrationA.Dispose();
-        registry.RequestCancel(prRef);
-
-        ctsB.IsCancellationRequested.Should().BeTrue();
-    }
+    [Fact] public void Register_then_RequestCancel_trips_the_token() { /* ... */ }
+    [Fact] public void RequestCancel_on_unknown_prRef_is_noop() { /* ... */ }
+    [Fact] public void Register_while_prior_registration_alive_throws_InvalidOperationException() { /* ... */ }
+    [Fact] public void Dispose_removes_entry_allows_re_register() { /* ... */ }
+    [Fact] public void Late_dispose_does_not_remove_fresh_registration() { /* ... */ }
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~SubmitCancellationRegistry"`
-Expected: FAIL — class doesn't exist.
-
-- [ ] **Step 3: Implement `SubmitCancellationRegistry`**
-
-Create `PRism.Web/Submit/SubmitCancellationRegistry.cs`:
+- [ ] **Step 3: Implement**
 
 ```csharp
 using System.Collections.Concurrent;
@@ -693,7 +555,8 @@ internal sealed class SubmitCancellationRegistry
         if (!_ctsByPrRef.TryAdd(key, cts))
         {
             throw new InvalidOperationException(
-                $"SubmitCancellationRegistry: a registration already exists for {key}. This indicates a stuck pipeline missed its finally cleanup.");
+                $"SubmitCancellationRegistry: a registration already exists for {key}. " +
+                "This indicates a stuck pipeline missed its finally cleanup.");
         }
         return new RegistrationHandle(this, key, cts);
     }
@@ -704,7 +567,7 @@ internal sealed class SubmitCancellationRegistry
         if (_ctsByPrRef.TryGetValue(reference.ToString(), out var cts))
         {
             try { cts.Cancel(); }
-            catch (ObjectDisposedException) { /* race vs pipeline finally */ }
+            catch (ObjectDisposedException) { /* race vs Task.Run finally */ }
         }
     }
 
@@ -715,17 +578,13 @@ internal sealed class SubmitCancellationRegistry
         private readonly CancellationTokenSource _cts;
         private int _disposed;
 
-        public RegistrationHandle(SubmitCancellationRegistry owner, string key, CancellationTokenSource cts)
-        {
-            _owner = owner; _key = key; _cts = cts;
-        }
+        public RegistrationHandle(SubmitCancellationRegistry o, string k, CancellationTokenSource c)
+        { _owner = o; _key = k; _cts = c; }
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
-            {
                 _owner._ctsByPrRef.TryRemove(new KeyValuePair<string, CancellationTokenSource>(_key, _cts));
-            }
         }
     }
 }
@@ -733,94 +592,77 @@ internal sealed class SubmitCancellationRegistry
 
 - [ ] **Step 4: Register the singleton**
 
-Edit `PRism.Web/Composition/ServiceCollectionExtensions.cs` — add `services.AddSingleton<SubmitCancellationRegistry>();` next to the existing `SubmitLockRegistry` registration.
+Read `PRism.Web/Composition/ServiceCollectionExtensions.cs` to find the line that registers `SubmitLockRegistry` as a singleton. Add `services.AddSingleton<SubmitCancellationRegistry>();` immediately after it.
 
-- [ ] **Step 5: Verify tests pass**
-
-Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~SubmitCancellationRegistry"`
-Expected: 5 PASS.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Verify + commit**
 
 ```bash
+dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~SubmitCancellationRegistry"
 git add PRism.Web/Submit/SubmitCancellationRegistry.cs PRism.Web/Composition/ServiceCollectionExtensions.cs tests/PRism.Web.Tests/Submit/SubmitCancellationRegistryTests.cs
-git commit -m "feat(submit): add SubmitCancellationRegistry (per-PR CTS handoff)"
+git commit -m "feat(submit): add SubmitCancellationRegistry primitive"
 ```
 
 ---
 
-## Phase C — Submit pipeline changes
+## Phase C — pipeline OCE + AttachThreads partition
 
-### Task 6: Add `SubmitOutcome.Cancelled` variant + pipeline OCE catch
+### Task 6: `SubmitOutcome.Cancelled` + pipeline OCE catch + endpoint case
 
 **Files:**
-- Modify: `PRism.Core/Submit/SubmitResults.cs` (`SubmitOutcome` discriminated union)
-- Modify: `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:160-164` (catch OCE)
-- Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (switch case)
+- Modify: `PRism.Core/Submit/Pipeline/SubmitOutcome.cs` (add the variant)
+- Modify: `PRism.Core/Submit/Pipeline/SubmitPipeline.cs` (catch OCE → return Cancelled)
+- Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs:177-207` (new case + terminal Failed SSE)
 - Test: `tests/PRism.Core.Tests/Submit/Pipeline/SubmitPipelineCancelTests.cs`
 
-- [ ] **Step 1: Add the variant**
+- [ ] **Step 1: Read the existing `SubmitOutcome.cs` + outcome switch**
 
-Edit `PRism.Core/Submit/SubmitResults.cs` — add to the `SubmitOutcome` union:
-
-```csharp
-public sealed record Cancelled(string Reason) : SubmitOutcome;
+```bash
+cat PRism.Core/Submit/Pipeline/SubmitOutcome.cs
+sed -n '170,230p' PRism.Web/Endpoints/PrSubmitEndpoints.cs
 ```
 
-- [ ] **Step 2: Write failing test for OCE catch**
+- [ ] **Step 2: Add the variant**
 
-Create `tests/PRism.Core.Tests/Submit/Pipeline/SubmitPipelineCancelTests.cs`:
+In `SubmitOutcome.cs`, inside the abstract record body:
+
+```csharp
+public sealed record Cancelled(SubmitStep LastStep, string Reason) : SubmitOutcome;
+```
+
+- [ ] **Step 3: Write failing test**
 
 ```csharp
 [Fact]
-public async Task SubmitAsync_WhenCtCanceled_ReturnsCancelledOutcome()
+public async Task SubmitAsync_when_ct_canceled_mid_step_returns_Cancelled()
 {
-    var fake = new FakeReviewSubmitter { BeginDelay = TimeSpan.FromSeconds(5) };
-    var store = AppStateFixtures.InMemoryStore(seedSession: true);
-    var pipeline = new SubmitPipeline(fake, store);
-    var progress = new Progress<SubmitProgressEvent>(_ => { });
+    var fake = /* InMemoryReviewSubmitter with BeginDelay = 2000 */;
+    var pipeline = new SubmitPipeline(fake, /* in-memory store */);
     using var cts = new CancellationTokenSource();
+    var progress = new Progress<SubmitProgressEvent>(_ => { });
 
-    var task = pipeline.SubmitAsync(
-        PrReference.Parse("acme/api/1")!, SeedSession(), SubmitEvent.Comment, "sha", progress, cts.Token);
-
-    cts.CancelAfter(TimeSpan.FromMilliseconds(50));
+    var task = pipeline.SubmitAsync(PrRef, SeedSession(), SubmitEvent.Comment, "sha", progress, cts.Token);
+    cts.CancelAfter(50);
     var outcome = await task;
 
     outcome.Should().BeOfType<SubmitOutcome.Cancelled>();
 }
 ```
 
-- [ ] **Step 3: Verify failure**
+- [ ] **Step 4: Add the OCE catch**
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~SubmitPipelineCancel"`
-Expected: FAIL — OCE escapes today.
+In `SubmitPipeline.cs`, wrap the existing try-catch (`catch (SubmitFailedException)`) with a preceding `catch (OperationCanceledException) when (ct.IsCancellationRequested)` that captures the last-emitted `SubmitStep` and returns `new SubmitOutcome.Cancelled(lastStep, "Pipeline canceled by caller (discard).")`. Track the last step via a local mutable variable updated alongside each `progress.Report(new SubmitProgressEvent(step, Started, ...))`.
 
-- [ ] **Step 4: Wrap pipeline body with OCE catch**
+- [ ] **Step 5: Add the endpoint case**
 
-Edit `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:56-164`. Add an `OperationCanceledException` catch BEFORE the existing `catch (SubmitFailedException)`:
-
-```csharp
-try
-{
-    // ... existing pipeline body ...
-}
-catch (OperationCanceledException) when (ct.IsCancellationRequested)
-{
-    return new SubmitOutcome.Cancelled("Pipeline canceled by caller (discard).");
-}
-catch (SubmitFailedException sfe) { /* existing */ }
-```
-
-- [ ] **Step 5: Add endpoint switch case**
-
-Edit `PRism.Web/Endpoints/PrSubmitEndpoints.cs` — inside the `switch (outcome)` block, add:
+In `PrSubmitEndpoints.cs`, inside the outcome switch (after the `case SubmitOutcome.StaleCommitOidRecreating:` block):
 
 ```csharp
 case SubmitOutcome.Cancelled cancelled:
-    // No SSE event — the discard endpoint owns the user-facing signal.
-    // Log at Information so this doesn't look like a contract violation.
-    s_pipelineCancelled(logger, sessionKey, cancelled.Reason, null);
+    // Emit a terminal Failed SSE for the last-known step so the SubmitDialog
+    // progress UI moves out of an orphan "Started" state. The discard endpoint
+    // owns the user-facing "discarded" signal — we don't publish anything else here.
+    progress.Report(new SubmitProgressEvent(cancelled.LastStep, SubmitStepStatus.Failed, 0, 0, "cancelled"));
+    s_pipelineCancelled(loggerFactory.CreateLogger(LoggerCategory), sessionKey, cancelled.Reason, null);
     break;
 ```
 
@@ -832,81 +674,57 @@ private static readonly Action<ILogger, string, string, Exception?> s_pipelineCa
         "Submit pipeline cancelled for {SessionKey}: {Reason}");
 ```
 
-- [ ] **Step 6: Verify test passes**
+- [ ] **Step 6: Update the OCE catch's log comment**
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~SubmitPipelineCancel" && dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj`
-Expected: all green.
+Lines 209-212 currently say "Host shutting down — per-step persists already wrote". Update the comment to acknowledge that the linked CTS will be added in Task 11 and that the catch will catch both host-shutdown AND user-discard.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Verify + commit**
 
 ```bash
-git add PRism.Core/Submit/SubmitResults.cs PRism.Core/Submit/Pipeline/SubmitPipeline.cs PRism.Web/Endpoints/PrSubmitEndpoints.cs tests/PRism.Core.Tests/Submit/Pipeline/SubmitPipelineCancelTests.cs
-git commit -m "feat(submit): SubmitOutcome.Cancelled variant for caller-initiated cancellation"
+dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~SubmitPipelineCancel"
+dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj
+git add PRism.Core/Submit/Pipeline PRism.Web/Endpoints/PrSubmitEndpoints.cs tests/PRism.Core.Tests/Submit/Pipeline/SubmitPipelineCancelTests.cs
+git commit -m "feat(submit): SubmitOutcome.Cancelled + terminal SSE event on user-discard"
 ```
 
 ---
 
-### Task 7: SubmitPipeline AttachThreads partition + ClearSubmittedSession PR-root consumption
+### Task 7: `StepAttachThreadsAsync` partition + `ClearSubmittedSession` PR-root consumption
 
 **Files:**
-- Modify: `PRism.Core/Submit/Pipeline/SubmitPipeline.cs` (StepAttachThreadsAsync ~line 212; ClearSubmittedSession ~line 616)
-- Test: `tests/PRism.Core.Tests/Submit/Pipeline/SubmitPipelineAttachThreadsTests.cs` + `tests/PRism.Core.Tests/Submit/Pipeline/SubmitPipelineSuccessClearsSessionTests.cs`
+- Modify: `PRism.Core/Submit/Pipeline/SubmitPipeline.cs` (filter + delete throw block + partition)
+- Test: `tests/PRism.Core.Tests/Submit/Pipeline/SubmitPipelineAttachThreadsTests.cs` (new + update existing `SuccessClearsSession` tests)
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Read the throw block + ClearSubmittedSession**
+
+```bash
+sed -n '275,295p' PRism.Core/Submit/Pipeline/SubmitPipeline.cs
+sed -n '614,635p' PRism.Core/Submit/Pipeline/SubmitPipeline.cs
+```
+
+- [ ] **Step 2: Write failing tests**
 
 ```csharp
 [Fact]
-public async Task AttachThreads_WithMixedDrafts_SkipsPrRootSilently()
+public async Task AttachThreads_filters_pr_root_drafts_silently()
 {
-    var prRoot = new DraftComment("d0", null, null, "pr", null, null, "pr body", DraftStatus.Draft, false);
-    var inline = new DraftComment("d1", "src/x.cs", 10, "RIGHT", "abc", "line", "inline", DraftStatus.Draft, false);
-    var session = SeedSession(drafts: new[] { prRoot, inline });
-    var fake = new FakeReviewSubmitter();
-    var pipeline = new SubmitPipeline(fake, AppStateFixtures.InMemoryStore(session));
-
-    var outcome = await pipeline.SubmitAsync(PrRef, session, SubmitEvent.Comment, "sha", NoProgress, default);
-
-    outcome.Should().BeOfType<SubmitOutcome.Succeeded>();
-    fake.AttachedThreads.Should().HaveCount(1);
-    fake.AttachedThreads[0].FilePath.Should().Be("src/x.cs");
-    // PR-root body went into review.body, not as a thread.
-    fake.BeginCalls[0].SummaryBody.Should().Be("pr body");
+    // Session with one inline draft + one PR-root draft.
+    // Run pipeline to success.
+    // Assert: fake.AttachedThreads has 1 inline (no PR-root); fake.BeginCalls[0].SummaryBody equals PR-root body.
 }
 
 [Fact]
-public async Task SuccessfulSubmit_DeletesPrRootDraft_PreservesInlineStamps()
+public async Task SuccessfulSubmit_removes_unposted_pr_root_draft_keeps_posted_one()
 {
-    // PR-root drafts are consumed (body shipped as review.body) — they disappear post-submit.
-    var prRoot = new DraftComment("d0", null, null, "pr", null, null, "body", DraftStatus.Draft, false);
-    var session = SeedSession(drafts: new[] { prRoot });
-    var fake = new FakeReviewSubmitter();
-    var store = AppStateFixtures.InMemoryStore(session);
-    var pipeline = new SubmitPipeline(fake, store);
-
-    await pipeline.SubmitAsync(PrRef, session, SubmitEvent.Comment, "sha", NoProgress, default);
-
-    var after = (await store.LoadAsync(default)).Reviews.Sessions[SessionKey];
-    after.DraftComments.Should().BeEmpty();
-}
-
-[Fact]
-public async Task SuccessfulSubmit_PreservesAlreadyPostedDraft()
-{
-    var posted = new DraftComment("d0", null, null, "pr", null, null, "body", DraftStatus.Draft, false,
-        ThreadId: null, PostedCommentId: 99L, PostedBodySnapshot: "body");
-    // ...
-    after.DraftComments.Should().ContainSingle(d => d.PostedCommentId == 99L);
+    // Session with one PR-root draft having PostedCommentId = null, AND one with PostedCommentId = 99.
+    // Run pipeline to success.
+    // Assert: post-submit session.DraftComments contains only the Posted one.
 }
 ```
 
-- [ ] **Step 2: Verify failure**
+- [ ] **Step 3: Add the partition filter**
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~AttachThreads_WithMixedDrafts|FullyQualifiedName~SuccessfulSubmit_DeletesPrRootDraft"`
-Expected: FAIL.
-
-- [ ] **Step 3: Apply the partition filter in `StepAttachThreadsAsync`**
-
-Edit `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:212`:
+In `StepAttachThreadsAsync` (around line 212):
 
 ```csharp
 var drafts = session.DraftComments
@@ -915,41 +733,30 @@ var drafts = session.DraftComments
     .ToList();
 ```
 
-Delete the throw block at `:284-292` — unreachable.
+Delete the `if (draft.FilePath is null || draft.LineNumber is null) throw ...` block at line 284-292 — unreachable after the filter.
 
-- [ ] **Step 4: Update `ClearSubmittedSession` partition**
+- [ ] **Step 4: Update `ClearSubmittedSession`**
 
-Edit `PRism.Core/Submit/Pipeline/SubmitPipeline.cs:616-630`:
+Edit the `DraftComments = new List<DraftComment>()` line to partition:
 
 ```csharp
-private static AppState ClearSubmittedSession(AppState state, string sessionKey)
-{
-    if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var cur)) return state;
-    var cleared = cur with
-    {
-        PendingReviewId = null,
-        PendingReviewCommitOid = null,
-        DraftComments = cur.DraftComments
-            .Where(d => (d.Status == DraftStatus.Stale && !d.IsOverriddenStale)
-                     || (d.PostedCommentId is not null))
-            .ToList(),
-        DraftReplies = new List<DraftReply>(),
-        DraftVerdict = null,
-        DraftVerdictStatus = DraftVerdictStatus.Draft,
-    };
-    return AppStateMutators.WithSession(state, sessionKey, cleared);
-}
+DraftComments = cur.DraftComments
+    .Where(d => (d.Status == DraftStatus.Stale && !d.IsOverriddenStale)
+             || d.PostedCommentId is not null)
+    .ToList(),
 ```
 
-- [ ] **Step 5: Verify all pipeline tests pass**
+The first clause preserves existing stale-not-overridden semantics; the second preserves PR-root drafts that were already Posted (their lifecycle is independent of submit). Unposted PR-root drafts are CONSUMED by Submit (mirrors inline-thread consumption — the body shipped as `review.body`).
 
-Run: `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~SubmitPipeline"`
-Expected: all green; sweep any existing `SuccessClearsSession*` tests that asserted full wipe.
+- [ ] **Step 5: Sweep `SuccessClearsSession*` tests**
 
-- [ ] **Step 6: Commit**
+Existing tests asserting "DraftComments empty post-submit" need updating to the partition rule. Read the existing test bodies, add explicit Posted-survives + Stale-survives cases.
+
+- [ ] **Step 6: Verify + commit**
 
 ```bash
-git add PRism.Core/Submit/Pipeline/SubmitPipeline.cs tests
+dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj
+git add PRism.Core/Submit/Pipeline tests/PRism.Core.Tests/Submit
 git commit -m "feat(submit): AttachThreads partition + PR-root consumption on success"
 ```
 
@@ -957,167 +764,168 @@ git commit -m "feat(submit): AttachThreads partition + PR-root consumption on su
 
 ## Phase D — GitHub seam
 
-### Task 8: Add `CreateIssueCommentAsync` to `IReviewSubmitter`
+### Task 8: `CreateIssueCommentAsync` on `IReviewSubmitter`
 
 **Files:**
-- Modify: `PRism.Core/IReviewSubmitter.cs` (add method + result record)
-- Modify: `PRism.GitHub/GitHubReviewService.cs` (REST implementation — new partial file recommended)
+- Modify: `PRism.Core/IReviewSubmitter.cs` (add method)
+- Modify: `PRism.Core/Submit/SubmitResults.cs` (add `CreatedIssueCommentResult`)
 - Create: `PRism.GitHub/GitHubReviewService.IssueComments.cs` (REST partial)
-- Modify: `PRism.Web/TestHooks/FakeReviewSubmitter.cs` (fake impl + force-failure registry + begin-delay knob)
+- Modify: `PRism.Web/TestHooks/FakeReviewSubmitter.cs` (implement)
+- Modify: `tests/PRism.Core.Tests/Submit/Pipeline/Fakes/InMemoryReviewSubmitter.cs` (implement — usually a no-op throw is fine; the pipeline doesn't call it)
+- Modify: `tests/PRism.Web.Tests/TestHelpers/PrDetailFakeReviewService.cs` (implement — same)
+- Modify: `tests/PRism.Web.Tests/TestHelpers/SubmitEndpointFakes.cs` (`TestReviewSubmitter` — implement)
 - Test: `tests/PRism.GitHub.Tests/GitHubReviewServiceIssueCommentsTests.cs`
 
-- [ ] **Step 1: Extend the interface**
+- [ ] **Step 1: Grep all existing IReviewSubmitter implementers**
 
-Edit `PRism.Core/IReviewSubmitter.cs` — add:
+```bash
+grep -rln ": IReviewSubmitter\|implements IReviewSubmitter" PRism.GitHub PRism.Web tests
+```
+
+Expected: at least 4 — `GitHubReviewService`, `FakeReviewSubmitter`, `InMemoryReviewSubmitter`, `TestReviewSubmitter`, possibly `PrDetailFakeReviewService`. ALL need the new method (CS0535 build break otherwise).
+
+- [ ] **Step 2: Add the interface method**
+
+`PRism.Core/IReviewSubmitter.cs`:
 
 ```csharp
-// Issue comments — independent of the pending-review pipeline (different GitHub REST endpoint).
 Task<CreatedIssueCommentResult> CreateIssueCommentAsync(
     PrReference reference,
     string bodyMarkdown,
     CancellationToken ct);
 ```
 
-Add the result record in `PRism.Core/Submit/` (or alongside existing `BeginPendingReviewResult`):
+Add `CreatedIssueCommentResult` in `PRism.Core/Submit/SubmitResults.cs`:
 
 ```csharp
 public sealed record CreatedIssueCommentResult(long Id, DateTimeOffset CreatedAt);
 ```
 
-- [ ] **Step 2: Write failing fake-roundtrip test**
+- [ ] **Step 3: Implement on every implementer**
+
+`FakeReviewSubmitter` — full impl (records the comment for tests + honors `InjectFailure("CreateIssueCommentAsync")`):
 
 ```csharp
-[Fact]
-public async Task FakeReviewSubmitter_CreateIssueComment_DefaultsToSuccess()
-{
-    var fake = new FakeReviewSubmitter();
-    var result = await fake.CreateIssueCommentAsync(PrRef, "hello", default);
-    result.Id.Should().BeGreaterThan(0);
-    fake.IssueCommentsCreated.Should().ContainSingle(c => c.Body == "hello");
-}
-
-[Fact]
-public async Task FakeReviewSubmitter_ForceFailure_GithubCreate_Throws()
-{
-    var fake = new FakeReviewSubmitter();
-    fake.RegisterRootCommentForceFailure("github-create");
-    Func<Task> act = () => fake.CreateIssueCommentAsync(PrRef, "hello", default);
-    await act.Should().ThrowAsync<HttpRequestException>();
-}
-```
-
-- [ ] **Step 3: Implement on `FakeReviewSubmitter`**
-
-Edit `PRism.Web/TestHooks/FakeReviewSubmitter.cs`. Add:
-
-```csharp
-private string? _rootCommentForceFailure;
 private long _nextIssueCommentId = 1000;
 public List<(PrReference Pr, string Body)> IssueCommentsCreated { get; } = new();
-public TimeSpan BeginDelay { get; set; } = TimeSpan.Zero;
 
-public void RegisterRootCommentForceFailure(string phase) => _rootCommentForceFailure = phase;
-public void SetBeginDelayMs(int delayMs) => BeginDelay = TimeSpan.FromMilliseconds(delayMs);
-
-public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(
-    PrReference reference, string bodyMarkdown, CancellationToken ct)
+public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
 {
-    if (_rootCommentForceFailure == "github-create")
-        throw new HttpRequestException("forced");
-    IssueCommentsCreated.Add((reference, bodyMarkdown));
-    return Task.FromResult(new CreatedIssueCommentResult(
-        Id: Interlocked.Increment(ref _nextIssueCommentId),
-        CreatedAt: DateTimeOffset.UtcNow));
-}
-```
-
-Also wire `BeginDelay` into the existing `BeginPendingReviewAsync` so cancellation tests have a real delay to race against.
-
-- [ ] **Step 4: Implement on `GitHubReviewService`**
-
-Create `PRism.GitHub/GitHubReviewService.IssueComments.cs`:
-
-```csharp
-public partial class GitHubReviewService
-{
-    public async Task<CreatedIssueCommentResult> CreateIssueCommentAsync(
-        PrReference reference,
-        string bodyMarkdown,
-        CancellationToken ct)
+    ct.ThrowIfCancellationRequested();
+    lock (_gate)
     {
-        ArgumentNullException.ThrowIfNull(reference);
-        var url = $"https://api.github.com/repos/{reference.Owner}/{reference.Repo}/issues/{reference.Number}/comments";
-        var payload = JsonSerializer.Serialize(new { body = bodyMarkdown });
-        using var req = new HttpRequestMessage(HttpMethod.Post, url)
+        // InjectFailure honored via the existing _failureByMethod registry:
+        if (_failureByMethod.TryGetValue(nameof(CreateIssueCommentAsync), out var inj))
         {
-            Content = new StringContent(payload, Encoding.UTF8, "application/json"),
-        };
-        // Inherit auth headers from existing config (same pattern as GraphQL POSTs at GitHubReviewService.cs).
-        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _tokenProvider.GetToken());
-        req.Headers.Add("Accept", "application/vnd.github+json");
-        req.Headers.Add("X-GitHub-Api-Version", "2022-11-28");
-        req.Headers.UserAgent.ParseAdd("PRism/1.0");
-
-        using var resp = await _httpClient.SendAsync(req, ct).ConfigureAwait(false);
-        resp.EnsureSuccessStatusCode();
-        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        using var doc = JsonDocument.Parse(json);
-        return new CreatedIssueCommentResult(
-            Id: doc.RootElement.GetProperty("id").GetInt64(),
-            CreatedAt: doc.RootElement.GetProperty("created_at").GetDateTimeOffset());
+            _failureByMethod.Remove(nameof(CreateIssueCommentAsync));
+            if (!inj.AfterEffect) throw inj.Ex;
+            // afterEffect=true: record the comment THEN throw (lost-response window).
+            var id = Interlocked.Increment(ref _nextIssueCommentId);
+            IssueCommentsCreated.Add((reference, bodyMarkdown));
+            throw inj.Ex;
+        }
+        var newId = Interlocked.Increment(ref _nextIssueCommentId);
+        IssueCommentsCreated.Add((reference, bodyMarkdown));
+        return Task.FromResult(new CreatedIssueCommentResult(newId, DateTimeOffset.UtcNow));
     }
 }
 ```
 
-- [ ] **Step 5: Verify tests pass**
+The other 3 test fakes (`InMemoryReviewSubmitter`, `TestReviewSubmitter`, `PrDetailFakeReviewService`) only need a stub:
 
-Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~IssueComments" && dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~FakeReviewSubmitter"`
-Expected: PASS.
+```csharp
+public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
+    => throw new NotImplementedException("CreateIssueCommentAsync is not exercised by this fake.");
+```
 
-- [ ] **Step 6: Commit**
+`GitHubReviewService` — new partial file `GitHubReviewService.IssueComments.cs`. **Read `GitHubReviewService.cs` end-to-end first** to confirm: the partial-class declaration syntax, the auth-header pattern, the HttpClient field name (`_httpClient` may differ), the token-provider seam, the JSON deserialization helpers. The REST endpoint is:
+
+```
+POST https://api.github.com/repos/{owner}/{repo}/issues/{number}/comments
+Headers: Authorization: Bearer <token>, Accept: application/vnd.github+json, X-GitHub-Api-Version: 2022-11-28
+Body: { "body": "<markdown>" }
+```
+
+Returns JSON with `id` (number) and `created_at` (ISO 8601). Throw `HttpRequestException` (with `StatusCode`) on non-2xx — that's how Task 10 maps to typed error codes.
+
+- [ ] **Step 4: Write failing tests + verify**
+
+```csharp
+[Fact]
+public async Task FakeReviewSubmitter_CreateIssueComment_records_the_comment()
+{
+    var fake = new FakeReviewSubmitter();
+    var r = await fake.CreateIssueCommentAsync(PrRef, "hi", default);
+    r.Id.Should().BeGreaterThan(0);
+    fake.IssueCommentsCreated.Should().ContainSingle(c => c.Body == "hi");
+}
+
+[Fact]
+public async Task FakeReviewSubmitter_InjectFailure_throws()
+{
+    var fake = new FakeReviewSubmitter();
+    fake.InjectFailure("CreateIssueCommentAsync", new HttpRequestException("forced"));
+    await fake.Invoking(f => f.CreateIssueCommentAsync(PrRef, "hi", default)).Should().ThrowAsync<HttpRequestException>();
+}
+```
 
 ```bash
-git add PRism.Core/IReviewSubmitter.cs PRism.Core/Submit/*.cs PRism.GitHub/GitHubReviewService.IssueComments.cs PRism.Web/TestHooks/FakeReviewSubmitter.cs tests
-git commit -m "feat(github): CreateIssueCommentAsync on IReviewSubmitter (REST issue comments)"
+dotnet build -c Release
+dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~CreateIssueComment"
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add PRism.Core PRism.GitHub PRism.Web/TestHooks tests
+git commit -m "feat(github): IReviewSubmitter.CreateIssueCommentAsync (REST seam)"
 ```
 
 ---
 
-## Phase E — Endpoints
+## Phase E — endpoints
 
-### Task 9: `newPrRootDraftComment` upsert behavior
+### Task 9: `newPrRootDraftComment` upsert
 
 **Files:**
-- Modify: `PRism.Web/Endpoints/PrDraftEndpoints.cs:271-285`
-- Test: `tests/PRism.Web.Tests/Endpoints/PrDraftEndpointTests.cs`
+- Modify: `PRism.Web/Endpoints/PrDraftEndpoints.cs` (the `case "newPrRootDraftComment":` block, ~line 271-285)
+- Test: `tests/PRism.Web.Tests/Endpoints/PrDraftEndpointTests.cs` (extend)
 
-- [ ] **Step 1: Write failing test for upsert**
+- [ ] **Step 1: Read the patch handler block + an existing test**
+
+```bash
+sed -n '85,180p' PRism.Web/Endpoints/PrDraftEndpoints.cs
+sed -n '270,300p' PRism.Web/Endpoints/PrDraftEndpoints.cs
+sed -n '50,100p' tests/PRism.Web.Tests/Endpoints/PrDraftEndpointTests.cs
+```
+
+Note: the patch handler runs INSIDE `store.UpdateAsync` (line 149-166 surrounds the `ApplyPatch` switch). `_gate` already serializes — concurrent racing `newPrRootDraftComment` PUTs both observe their first-call's persisted state because the second's load is gated.
+
+- [ ] **Step 2: Write failing tests**
+
+Extend `PrDraftEndpointTests.cs` (use the existing `SinglePatch(newRoot: ...)` helper at line 60-72):
 
 ```csharp
 [Fact]
-public async Task NewPrRootDraftComment_WhenExistingPresent_UpsertsInsteadOfDuplicate()
+public async Task NewPrRootDraftComment_when_existing_present_updates_in_place()
 {
-    var client = CreateClient();
-    var first = await client.PutDraftAsync(PrRef,
-        new { kind = "newPrRootDraftComment", payload = new { bodyMarkdown = "first" } });
-    var second = await client.PutDraftAsync(PrRef,
-        new { kind = "newPrRootDraftComment", payload = new { bodyMarkdown = "second" } });
+    var client = ClientWithTab();
+    var first = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft",
+        SinglePatch(newRoot: new NewPrRootDraftCommentPayload("first body")));
+    first.StatusCode.Should().Be(HttpStatusCode.OK);
 
-    var session = await client.GetSessionAsync(PrRef);
-    session.DraftComments.Should().ContainSingle(d => d.FilePath == null);
-    session.DraftComments.Single(d => d.FilePath == null).BodyMarkdown.Should().Be("second");
-    second.AssignedId.Should().Be(first.AssignedId);
+    var second = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft",
+        SinglePatch(newRoot: new NewPrRootDraftCommentPayload("second body")));
+    second.StatusCode.Should().Be(HttpStatusCode.OK);
+
+    var getResp = await client.GetAsync("/api/pr/acme/api/123/draft");
+    var session = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
+    session!.DraftComments.Should().ContainSingle(d => d.FilePath == null);
+    session.DraftComments.Single(d => d.FilePath == null).BodyMarkdown.Should().Be("second body");
 }
 ```
 
-- [ ] **Step 2: Verify failure**
-
-Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~NewPrRootDraftComment_WhenExistingPresent"`
-Expected: FAIL — second call appends.
-
-- [ ] **Step 3: Apply upsert in patch handler**
-
-Edit `PRism.Web/Endpoints/PrDraftEndpoints.cs:271-285`:
+- [ ] **Step 3: Apply the upsert in the case block**
 
 ```csharp
 case "newPrRootDraftComment":
@@ -1148,31 +956,10 @@ case "newPrRootDraftComment":
 }
 ```
 
-- [ ] **Step 4: Add race test**
-
-```csharp
-[Fact]
-public async Task NewPrRootDraftComment_TwoConcurrentCalls_OnlyOneRowPersisted()
-{
-    var client = CreateClient();
-    var tasks = Enumerable.Range(0, 2).Select(i =>
-        client.PutDraftAsync(PrRef,
-            new { kind = "newPrRootDraftComment", payload = new { bodyMarkdown = $"body-{i}" } })).ToArray();
-    await Task.WhenAll(tasks);
-
-    var session = await client.GetSessionAsync(PrRef);
-    session.DraftComments.Count(d => d.FilePath == null).Should().Be(1);
-}
-```
-
-- [ ] **Step 5: Verify both tests pass**
-
-Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~NewPrRootDraftComment"`
-Expected: PASS (the existing `_gate` in `AppStateStore.UpdateAsync` serializes the two calls; the second observes the first's row).
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Verify + commit**
 
 ```bash
+dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~NewPrRootDraftComment"
 git add PRism.Web/Endpoints/PrDraftEndpoints.cs tests/PRism.Web.Tests/Endpoints/PrDraftEndpointTests.cs
 git commit -m "fix(draft): newPrRootDraftComment upserts on existing PR-root row"
 ```
@@ -1183,73 +970,40 @@ git commit -m "fix(draft): newPrRootDraftComment upserts on existing PR-root row
 
 **Files:**
 - Create: `PRism.Web/Endpoints/PrRootCommentEndpoints.cs`
-- Modify: `PRism.Web/Endpoints/PrSubmitErrors.cs` (if exists) or inline the error DTO
-- Modify: `PRism.Web/Program.cs` (register endpoints)
+- Modify: `PRism.Web/Program.cs` (call `app.MapPrRootCommentEndpoints()` next to `MapPrSubmitEndpoints()`)
 - Test: `tests/PRism.Web.Tests/Endpoints/PrRootCommentEndpointTests.cs`
 
-- [ ] **Step 1: Write happy-path test**
+- [ ] **Step 1: Read the existing submit endpoint for shape parity**
 
-```csharp
-[Fact]
-public async Task PostRootComment_HappyPath_DeletesDraftAndReturns204()
-{
-    var client = CreateClient();
-    await client.PutDraftAsync(PrRef, new { kind = "newPrRootDraftComment", payload = new { bodyMarkdown = "hi" } });
-
-    var resp = await client.PostAsync($"/api/pr/{PrRef.Owner}/{PrRef.Repo}/{PrRef.Number}/root-comment/post", null);
-
-    resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
-    var fake = (FakeReviewSubmitter)Services.GetRequiredService<IReviewSubmitter>();
-    fake.IssueCommentsCreated.Should().ContainSingle(c => c.Body == "hi");
-    var session = await client.GetSessionAsync(PrRef);
-    session.DraftComments.Should().BeEmpty();
-}
-
-[Fact]
-public async Task PostRootComment_NoDraft_Returns400()
-{
-    var resp = await CreateClient().PostAsync($"/api/pr/.../root-comment/post", null);
-    resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    var body = await resp.Content.ReadFromJsonAsync<SubmitErrorDto>();
-    body!.Code.Should().Be("no-root-draft");
-}
-
-[Fact]
-public async Task PostRootComment_AlreadyPostedWithSameBody_Returns204NoGithubCall()
-{
-    // seed a draft with PostedCommentId already stamped and PostedBodySnapshot matching current body
-    // POST → expects no new GitHub call, draft deleted, 204
-}
-
-[Fact]
-public async Task PostRootComment_AlreadyPostedWithMismatchedBody_Returns409Mismatch()
-{
-    // seed a draft with PostedCommentId stamped + PostedBodySnapshot != current body
-    // POST → expects 409 already-posted-body-mismatch with postedCommentId in payload
-}
-
-[Fact]
-public async Task PostRootComment_ForceFailureGithubCreate_Returns502NetworkError()
-{
-    // /test/root-comment/force-failure phase=github-create → POST → expects 502 + draft preserved
-}
-
-[Fact]
-public async Task PostRootComment_WhenSubmitLockHeld_Returns409InProgress()
-{
-    // hold the submit lock, attempt POST → 409 submit-in-progress
-}
+```bash
+sed -n '20,170p' PRism.Web/Endpoints/PrSubmitEndpoints.cs
 ```
 
-- [ ] **Step 2: Implement the endpoint**
+Note the IsSubscribed 401 pattern (line 86-87), the SubmitLockRegistry 409 pattern (line 152-153), and the SubmitErrorDto record shape.
 
-Create `PRism.Web/Endpoints/PrRootCommentEndpoints.cs`:
+- [ ] **Step 2: Write failing tests** (use FakeReviewSubmitter introspection):
 
 ```csharp
+[Fact] public async Task PostRootComment_happy_path_returns_204_and_records_comment() { /* ... */ }
+[Fact] public async Task PostRootComment_no_session_returns_400_no_session() { /* ... */ }
+[Fact] public async Task PostRootComment_no_root_draft_returns_400_no_root_draft() { /* ... */ }
+[Fact] public async Task PostRootComment_already_posted_same_body_returns_204_no_github_call() { /* ... */ }
+[Fact] public async Task PostRootComment_already_posted_different_body_returns_409_mismatch() { /* ... */ }
+[Fact] public async Task PostRootComment_force_failure_returns_502() { /* uses /test/submit/inject-failure */ }
+[Fact] public async Task PostRootComment_lock_held_returns_409_submit_in_progress() { /* uses /test/submit/set-begin-delay */ }
+[Fact] public async Task PostRootComment_unauthorized_returns_401() { /* ... */ }
+```
+
+- [ ] **Step 3: Implement the endpoint**
+
+`PrRootCommentEndpoints.cs`:
+
+```csharp
+namespace PRism.Web.Endpoints;
+
 internal static class PrRootCommentEndpoints
 {
     private static readonly string LoggerCategory = typeof(PrRootCommentEndpoints).FullName!;
-
     private static readonly string[] FieldsTouchedDraftComments = { "draft-comments" };
 
     public static IEndpointRouteBuilder MapPrRootCommentEndpoints(this IEndpointRouteBuilder app)
@@ -1271,81 +1025,95 @@ internal static class PrRootCommentEndpoints
     {
         var prRef = new PrReference(owner, repo, number);
         var sessionKey = prRef.ToString();
-        var logger = loggerFactory.CreateLogger(LoggerCategory);
 
         if (!cache.IsSubscribed(prRef))
-            return Results.Json(new SubmitErrorDto("not-subscribed", "PR not subscribed."), statusCode: 403);
+            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR first."),
+                statusCode: StatusCodes.Status401Unauthorized);
 
-        await using var lockHandle = await lockRegistry.TryAcquireAsync(prRef, TimeSpan.Zero, ct);
-        if (lockHandle is null)
-            return Results.Json(new SubmitErrorDto("submit-in-progress", "A submit or post is in progress for this PR."), statusCode: 409);
+        // Lock — same per-PR slot Submit uses. 409 on contention.
+#pragma warning disable CA2000  // released in the finally block below; CA2000 can't see the try/finally
+        var handle = await lockRegistry.TryAcquireAsync(prRef, TimeSpan.Zero, ct).ConfigureAwait(false);
+#pragma warning restore CA2000
+        if (handle is null)
+            return Results.Json(new SubmitErrorDto("submit-in-progress", "A submit or post is in progress."),
+                statusCode: StatusCodes.Status409Conflict);
 
-        var appState = await stateStore.LoadAsync(ct).ConfigureAwait(false);
-        if (!appState.Reviews.Sessions.TryGetValue(sessionKey, out var session))
-            return Results.Json(new SubmitErrorDto("no-session", "No draft session for this PR."), statusCode: 400);
-
-        var draft = session.DraftComments.FirstOrDefault(d => d.FilePath is null && d.LineNumber is null);
-        if (draft is null)
-            return Results.Json(new SubmitErrorDto("no-root-draft", "No PR-root draft to post."), statusCode: 400);
-
-        // Already-posted path.
-        if (draft.PostedCommentId is not null)
-        {
-            if (!string.Equals(draft.PostedBodySnapshot ?? "", draft.BodyMarkdown, StringComparison.Ordinal))
-            {
-                return Results.Json(
-                    new PostMismatchErrorDto("already-posted-body-mismatch",
-                        "This comment was already posted; current body differs from posted snapshot.",
-                        PostedCommentId: draft.PostedCommentId.Value),
-                    statusCode: 409);
-            }
-            // Same body — drop the orphan draft.
-            await DeleteDraftAsync(stateStore, sessionKey, draft.Id, ct);
-            await PublishAsync(bus, prRef, draft.PostedCommentId.Value);
-            return Results.NoContent();
-        }
-
-        // Body cap (defense-in-depth — middleware already enforces 16 KiB at PUT /draft).
-        if (draft.BodyMarkdown.Length > PipelineMarker.GitHubReviewBodyMaxChars)
-            return Results.Json(new SubmitErrorDto("body-too-large", "PR-level body exceeds GitHub limit."), statusCode: 400);
-
-        CreatedIssueCommentResult created;
         try
         {
-            created = await submitter.CreateIssueCommentAsync(prRef, draft.BodyMarkdown, ct).ConfigureAwait(false);
-        }
-        catch (HttpRequestException hre)
-        {
-            var code = MapGithubError(hre);
-            return Results.Json(new SubmitErrorDto(code, "GitHub rejected the request."), statusCode: 502);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return Results.Json(new SubmitErrorDto("github-network-error", "Network failure reaching GitHub."), statusCode: 502);
-        }
+            var appState = await stateStore.LoadAsync(ct).ConfigureAwait(false);
+            if (!appState.Reviews.Sessions.TryGetValue(sessionKey, out var session))
+                return Results.Json(new SubmitErrorDto("no-session", "No draft session."), statusCode: 400);
 
-        // Stamp + snapshot.
-        await stateStore.UpdateAsync(state =>
-        {
-            if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return state;
-            var list = s.DraftComments.Select(d => d.Id == draft.Id
-                ? d with { PostedCommentId = created.Id, PostedBodySnapshot = draft.BodyMarkdown }
-                : d).ToList();
-            return AppStateMutators.WithSession(state, sessionKey, s with { DraftComments = list });
-        }, ct).ConfigureAwait(false);
+            var draft = session.DraftComments.FirstOrDefault(d => d.FilePath is null && d.LineNumber is null);
+            if (draft is null)
+                return Results.Json(new SubmitErrorDto("no-root-draft", "No PR-root draft to post."), statusCode: 400);
 
-        // Delete the (now-stamped) draft.
-        await DeleteDraftAsync(stateStore, sessionKey, draft.Id, ct);
-        await PublishAsync(bus, prRef, created.Id);
-        return Results.NoContent();
+            // Already-posted branch.
+            if (draft.PostedCommentId is not null)
+            {
+                if (!string.Equals(draft.PostedBodySnapshot ?? "", draft.BodyMarkdown, StringComparison.Ordinal))
+                {
+                    return Results.Json(
+                        new PostMismatchErrorDto("already-posted-body-mismatch",
+                            "This comment was already posted; the current body differs from what shipped.",
+                            PostedCommentId: draft.PostedCommentId.Value),
+                        statusCode: StatusCodes.Status409Conflict);
+                }
+                await DeleteDraftAsync(stateStore, sessionKey, draft.Id, ct).ConfigureAwait(false);
+                bus.Publish(new StateChanged(prRef, FieldsTouchedDraftComments, SourceTabId: null));
+                return Results.NoContent();
+            }
+
+            // Defensive body-cap (PUT /draft 16 KiB middleware is the real gate; this is defense-in-depth).
+            if (draft.BodyMarkdown.Length > PipelineMarker.GitHubReviewBodyMaxChars)
+                return Results.Json(new SubmitErrorDto("body-too-large", "PR-level body exceeds GitHub limit."), statusCode: 400);
+
+            CreatedIssueCommentResult created;
+            try
+            {
+                created = await submitter.CreateIssueCommentAsync(prRef, draft.BodyMarkdown, ct).ConfigureAwait(false);
+            }
+            catch (HttpRequestException hre)
+            {
+                return Results.Json(new SubmitErrorDto(MapGithubError(hre), "GitHub rejected the request."), statusCode: 502);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return Results.Json(new SubmitErrorDto("github-network-error", "Network failure."), statusCode: 502);
+            }
+
+            // Stamp PostedCommentId + PostedBodySnapshot (overlay #1 — observable for retry).
+            var stampedBody = draft.BodyMarkdown;
+            await stateStore.UpdateAsync(state =>
+            {
+                if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return state;
+                var list = s.DraftComments.Select(d => d.Id == draft.Id
+                    ? d with { PostedCommentId = created.Id, PostedBodySnapshot = stampedBody }
+                    : d).ToList();
+                var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
+                    { [sessionKey] = s with { DraftComments = list } };
+                return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+            }, ct).ConfigureAwait(false);
+
+            // Delete the (now-stamped) draft (overlay #2).
+            await DeleteDraftAsync(stateStore, sessionKey, draft.Id, ct).ConfigureAwait(false);
+
+            bus.Publish(new StateChanged(prRef, FieldsTouchedDraftComments, SourceTabId: null));
+            bus.Publish(new RootCommentPostedBusEvent(prRef, created.Id));  // see Task 14
+            return Results.NoContent();
+        }
+        finally
+        {
+            await handle.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private static string MapGithubError(HttpRequestException hre) => hre.StatusCode switch
     {
-        HttpStatusCode.Forbidden => "github-forbidden",
-        HttpStatusCode.UnprocessableEntity => "github-validation-error",
-        HttpStatusCode.TooManyRequests => "github-rate-limited",
-        >= HttpStatusCode.InternalServerError => "github-server-error",
+        System.Net.HttpStatusCode.Forbidden => "github-forbidden",
+        System.Net.HttpStatusCode.UnprocessableEntity => "github-validation-error",
+        System.Net.HttpStatusCode.TooManyRequests => "github-rate-limited",
+        >= System.Net.HttpStatusCode.InternalServerError => "github-server-error",
         _ => "github-network-error",
     };
 
@@ -1354,114 +1122,89 @@ internal static class PrRootCommentEndpoints
         {
             if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var s)) return state;
             var list = s.DraftComments.Where(d => d.Id != draftId).ToList();
-            return AppStateMutators.WithSession(state, sessionKey, s with { DraftComments = list });
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions)
+                { [sessionKey] = s with { DraftComments = list } };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
         }, ct);
-
-    private static Task PublishAsync(IReviewEventBus bus, PrReference prRef, long issueCommentId) =>
-        Task.WhenAll(
-            bus.PublishAsync(new StateChangedBusEvent(prRef.ToString(), FieldsTouchedDraftComments)),
-            bus.PublishAsync(new RootCommentPostedBusEvent(prRef.ToString(), issueCommentId)));
 }
 
 internal sealed record PostMismatchErrorDto(string Code, string Message, long PostedCommentId);
 ```
 
-- [ ] **Step 3: Register the endpoints**
-
-Edit `PRism.Web/Program.cs` — add `app.MapPrRootCommentEndpoints();` next to `MapPrSubmitEndpoints();`.
-
-- [ ] **Step 4: Verify all tests pass**
-
-Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~PrRootCommentEndpoint"`
-Expected: 6 PASS.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Verify state.WithDefaultReviews exists**
 
 ```bash
-git add PRism.Web/Endpoints/PrRootCommentEndpoints.cs PRism.Web/Program.cs tests/PRism.Web.Tests/Endpoints/PrRootCommentEndpointTests.cs
-git commit -m "feat(submit): POST /root-comment/post endpoint (idempotent issue comment)"
+grep -n "WithDefaultReviews" PRism.Core/State/AppState.cs PRism.Web/Endpoints/PrDraftEndpoints.cs
+```
+
+If the extension has a different name (e.g., `WithReviews` on a specific account), use that instead. The pattern must match what PrDraftEndpoints uses today.
+
+- [ ] **Step 5: Register the endpoint + verify**
+
+```csharp
+// In Program.cs, near the existing MapPrSubmitEndpoints() call:
+app.MapPrRootCommentEndpoints();
+```
+
+```bash
+dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~PrRootCommentEndpoint"
+git add PRism.Web/Endpoints/PrRootCommentEndpoints.cs PRism.Web/Program.cs tests
+git commit -m "feat(submit): POST /root-comment/post endpoint"
 ```
 
 ---
 
-### Task 11: `POST /api/pr/.../submit/discard` endpoint
+### Task 11: `POST /api/pr/.../submit/discard` endpoint + CTS register at endpoint
 
 **Files:**
-- Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (add new route + CTS register at endpoint level)
+- Modify: `PRism.Web/Endpoints/PrSubmitEndpoints.cs` (new route handler + CTS registration around the existing Task.Run)
 - Test: `tests/PRism.Web.Tests/Endpoints/PrSubmitDiscardEndpointTests.cs`
 
-- [ ] **Step 1: Update `SubmitAsync` to register CTS at endpoint**
+- [ ] **Step 1: Read the existing submit endpoint fire-and-forget pattern**
 
-Edit `PRism.Web/Endpoints/PrSubmitEndpoints.cs:150-225`. Wrap the existing `Task.Run` with the new registration:
-
-```csharp
-using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.ApplicationStopping);
-using var registration = cancellationRegistry.Register(reference, linkedCts);
-var pipelineCt = linkedCts.Token;
-// Task.Run uses pipelineCt instead of appLifetime.ApplicationStopping directly.
+```bash
+sed -n '146,230p' PRism.Web/Endpoints/PrSubmitEndpoints.cs
 ```
 
-`cancellationRegistry` is a new DI parameter on the endpoint handler.
+Note specifically: `handle` is acquired outside Task.Run (line 150), disposed INSIDE Task.Run's `finally` (line 225). The cross-task ownership transfer is intentional and `#pragma warning disable CA2000` silences the analyzer. The CTS + registration must follow the SAME pattern.
 
-- [ ] **Step 2: Write failing tests for discard endpoint**
+- [ ] **Step 2: Add CTS registration to the existing SubmitAsync handler**
+
+After line 150 (`var handle = await lockRegistry.TryAcquireAsync(...)`) and before line 156 (`var headSha = callerStamp.HeadSha;`), accept the new DI parameter `SubmitCancellationRegistry cancellationRegistry` on the endpoint signature, then:
 
 ```csharp
-[Fact]
-public async Task SubmitDiscard_NoPendingReview_IdempotentNoop()
+#pragma warning disable CA2000  // disposed in Task.Run finally
+var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.ApplicationStopping);
+IDisposable registration;
+try
 {
-    var resp = await CreateClient().PostAsync(DiscardUrl, null);
-    resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
+    registration = cancellationRegistry.Register(prRef, linkedCts);
 }
-
-[Fact]
-public async Task SubmitDiscard_WithPendingReview_DeletesAndClears()
+catch (InvalidOperationException)
 {
-    // seed a session with PendingReviewId; GitHub side has the review
-    var resp = await client.PostAsync(DiscardUrl, null);
-    resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
-
-    var fake = (FakeReviewSubmitter)Services.GetRequiredService<IReviewSubmitter>();
-    fake.DeletedPendingReviews.Should().ContainSingle();
-    (await client.GetSessionAsync(PrRef)).PendingReviewId.Should().BeNull();
+    // Stuck pipeline missed cleanup. Shouldn't normally happen — but if it does,
+    // release the lock and 409 the user. Don't crash with a 500.
+    linkedCts.Dispose();
+    await handle.DisposeAsync().ConfigureAwait(false);
+    return Results.Json(new SubmitErrorDto("submit-in-progress", "A prior submit's cleanup is still pending."),
+        statusCode: 409);
 }
+#pragma warning restore CA2000
+var pipelineCt = linkedCts.Token;  // replaces appLifetime.ApplicationStopping
+```
 
-[Fact]
-public async Task SubmitDiscard_GithubReturns404_TreatedAsSuccess()
+In the Task.Run lambda's `finally` block (line 223-226), update to also dispose registration + linkedCts:
+
+```csharp
+finally
 {
-    // seed PendingReviewId; configure FakeReviewSubmitter to throw a 404 on DeletePendingReview
-    var resp = await client.PostAsync(DiscardUrl, null);
-    resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
-    (await client.GetSessionAsync(PrRef)).PendingReviewId.Should().BeNull();
-}
-
-[Fact]
-public async Task SubmitDiscard_GithubReturns500_Returns502_StampsRemain()
-{
-    var resp = await client.PostAsync(DiscardUrl, null);
-    resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
-    (await client.GetSessionAsync(PrRef)).PendingReviewId.Should().NotBeNull();
-}
-
-[Fact]
-public async Task SubmitDiscard_WithInFlightPipeline_CancelsAndClears()
-{
-    var fake = (FakeReviewSubmitter)Services.GetRequiredService<IReviewSubmitter>();
-    fake.SetBeginDelayMs(2000);
-
-    var submitTask = client.PostAsync(SubmitUrl, ...);
-    await Task.Delay(100);  // let the pipeline acquire the lock
-    var discardResp = await client.PostAsync(DiscardUrl, null);
-
-    discardResp.StatusCode.Should().Be(HttpStatusCode.NoContent);
-    var submitResp = await submitTask;
-    // Submit endpoint should have observed SubmitOutcome.Cancelled (no SSE event, 200 with a 'cancelled' outcome envelope).
-    submitResp.StatusCode.Should().Be(HttpStatusCode.OK);
+    registration.Dispose();
+    linkedCts.Dispose();
+    await handle.DisposeAsync().ConfigureAwait(false);
 }
 ```
 
-- [ ] **Step 3: Implement the discard handler**
-
-Add to `PrSubmitEndpoints.cs`:
+- [ ] **Step 3: Add the discard route handler**
 
 ```csharp
 app.MapPost("/api/pr/{owner}/{repo}/{number:int}/submit/discard", DiscardOwnPendingReviewAsync);
@@ -1479,28 +1222,32 @@ private static async Task<IResult> DiscardOwnPendingReviewAsync(
 {
     var prRef = new PrReference(owner, repo, number);
     var sessionKey = prRef.ToString();
-    var logger = loggerFactory.CreateLogger(LoggerCategory);
 
     if (!cache.IsSubscribed(prRef))
-        return Results.Json(new SubmitErrorDto("not-subscribed", "PR not subscribed."), statusCode: 403);
+        return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR first."), statusCode: 401);
 
     // 1. Signal cancel (idempotent).
     cancellationRegistry.RequestCancel(prRef);
 
-    // 2. Acquire the lock with timeout — wait for the in-flight pipeline to release.
-    await using var lockHandle = await lockRegistry.TryAcquireAsync(prRef, TimeSpan.FromSeconds(30), ct);
-    if (lockHandle is null)
-        return Results.Json(new SubmitErrorDto("pipeline-cancellation-timeout", "Pipeline did not release within 30s."), statusCode: 504);
+    // 2. Acquire lock with 30s timeout — wait for the in-flight pipeline to release.
+    await using var handle = await lockRegistry.TryAcquireAsync(prRef, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+    if (handle is null)
+        return Results.Json(new SubmitErrorDto("pipeline-cancellation-timeout", "Pipeline did not release within 30s."),
+            statusCode: 504);
 
-    // 3. Re-fetch GitHub-side pending review (TOCTOU defense).
+    // 3. Re-fetch own pending review (TOCTOU defense).
     OwnPendingReviewSnapshot? snapshot;
     try
     {
         snapshot = await submitter.FindOwnPendingReviewAsync(prRef, ct).ConfigureAwait(false);
     }
+    catch (HttpRequestException hre)
+    {
+        return Results.Json(new SubmitErrorDto(MapGithubError(hre), "GitHub find-own failed."), statusCode: 502);
+    }
     catch (Exception ex) when (ex is not OperationCanceledException)
     {
-        return Results.Json(new SubmitErrorDto("github-find-failed", ex.Message), statusCode: 502);
+        return Results.Json(new SubmitErrorDto("github-network-error", "Network failure."), statusCode: 502);
     }
 
     if (snapshot is not null)
@@ -1509,118 +1256,117 @@ private static async Task<IResult> DiscardOwnPendingReviewAsync(
         {
             await submitter.DeletePendingReviewAsync(prRef, snapshot.PullRequestReviewId, ct).ConfigureAwait(false);
         }
-        catch (HttpRequestException hre) when (hre.StatusCode == HttpStatusCode.NotFound)
+        catch (HttpRequestException hre) when (hre.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            // Review already gone — treat as success.
+            // Already gone — proceed to clear stamps.
+        }
+        catch (HttpRequestException hre)
+        {
+            return Results.Json(new SubmitErrorDto(MapGithubError(hre), "GitHub delete failed."), statusCode: 502);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Results.Json(new SubmitErrorDto("github-delete-failed", ex.Message), statusCode: 502);
+            return Results.Json(new SubmitErrorDto("github-network-error", "Network failure."), statusCode: 502);
         }
     }
 
-    // 4. Clear stamps via shared helper.
-    await stateStore.UpdateAsync(s => SessionOverlays.ClearPendingReviewStamps(s, sessionKey), ct)
-        .ConfigureAwait(false);
+    // 4. Clear stamps via the shared overlay.
+    await stateStore.UpdateAsync(s => SessionOverlays.ClearPendingReviewStamps(s, sessionKey), ct).ConfigureAwait(false);
 
     // 5. Publish.
-    await bus.PublishAsync(new StateChangedBusEvent(sessionKey, PendingReviewFields)).ConfigureAwait(false);
+    bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
 
     return Results.NoContent();
 }
 
-private static readonly string[] PendingReviewFields = { "pending-review", "draft-comments", "draft-replies" };
+// Add MapGithubError here too (same shape as PrRootCommentEndpoints.MapGithubError).
 ```
 
-- [ ] **Step 4: Verify discard tests pass**
+`PendingReviewFields` already exists at line 32 of `PrSubmitEndpoints.cs`. Verify.
 
-Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~SubmitDiscard"`
-Expected: 5 PASS.
+- [ ] **Step 4: Add tests**
 
-- [ ] **Step 5: Commit**
+Tests for: idle no-op, GitHub 404 as success, GitHub 5xx returns 502 + stamps remain, in-flight cancellation (uses `/test/submit/set-begin-delay`), 401 unauthorized, 504 timeout.
+
+- [ ] **Step 5: Verify + commit**
 
 ```bash
+dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~SubmitDiscard"
 git add PRism.Web/Endpoints/PrSubmitEndpoints.cs tests/PRism.Web.Tests/Endpoints/PrSubmitDiscardEndpointTests.cs
-git commit -m "feat(submit): POST /submit/discard endpoint (cancel in-flight + clear stamps)"
+git commit -m "feat(submit): POST /submit/discard + endpoint-scoped CTS registration"
 ```
 
 ---
 
-### Task 12: Test endpoints — `/test/root-comment/force-failure` + `/test/submit/begin-delay`
+### Task 12: Verify test-endpoint registration is environment-gated
 
 **Files:**
-- Modify: `PRism.Web/TestHooks/TestEndpoints.cs` (add the two new routes)
+- Inspect: `PRism.Web/TestHooks/TestEndpoints.cs` + `Program.cs` registration site
 
-- [ ] **Step 1: Add the endpoints**
-
-Edit `PRism.Web/TestHooks/TestEndpoints.cs`:
-
-```csharp
-app.MapPost("/test/root-comment/force-failure",
-    (ForceRootCommentFailureRequest body, IServiceProvider sp) =>
-    {
-        if (string.IsNullOrEmpty(body.Phase))
-            return Results.Problem(type: "/test/missing-params", statusCode: 422);
-        if (sp.GetService<IReviewSubmitter>() is not FakeReviewSubmitter fake)
-            return Results.Problem(type: "/test/submitter-missing", statusCode: 500);
-        fake.RegisterRootCommentForceFailure(body.Phase);
-        return Results.NoContent();
-    });
-
-app.MapPost("/test/submit/begin-delay",
-    (BeginDelayRequest body, IServiceProvider sp) =>
-    {
-        if (sp.GetService<IReviewSubmitter>() is not FakeReviewSubmitter fake)
-            return Results.Problem(type: "/test/submitter-missing", statusCode: 500);
-        fake.SetBeginDelayMs(body.DelayMs);
-        return Results.NoContent();
-    });
-
-internal sealed record ForceRootCommentFailureRequest(string Phase);
-internal sealed record BeginDelayRequest(int DelayMs);
-```
-
-- [ ] **Step 2: Commit**
+- [ ] **Step 1: Confirm `MapTestEndpoints` is called only under `IsEnvironment("Test")`**
 
 ```bash
-git add PRism.Web/TestHooks/TestEndpoints.cs
-git commit -m "test(hooks): add force-failure + begin-delay endpoints for Playwright"
+grep -n "MapTestEndpoints\|IsEnvironment" PRism.Web/Program.cs PRism.Web/TestHooks/TestEndpoints.cs
 ```
+
+If the call is guarded → nothing to do.
+
+If unguarded → add the guard:
+
+```csharp
+if (app.Environment.IsEnvironment("Test"))
+    app.MapTestEndpoints();
+```
+
+- [ ] **Step 2: Add a negative test if absent**
+
+```csharp
+[Fact]
+public async Task TestEndpoints_return_404_in_production_environment() { /* ... */ }
+```
+
+- [ ] **Step 3: Commit (if any change)**
+
+```bash
+git add PRism.Web/Program.cs tests
+git commit -m "chore(test-hooks): gate /test/* registration on IsEnvironment(\"Test\")"
+```
+
+(If no change needed, skip this commit.)
 
 ---
 
-### Task 13: Extend `Program.cs` middleware predicate
+### Task 13: Add new endpoints to body-size middleware
 
 **Files:**
-- Modify: `PRism.Web/Program.cs:188-198` (UseWhen predicate)
+- Modify: `PRism.Web/Program.cs:173-194` (UseWhen predicate)
 
-- [ ] **Step 1: Add both new endpoints to the suffix list**
-
-Edit `PRism.Web/Program.cs`:
-
-```csharp
-app.UseWhen(ctx =>
-{
-    var p = ctx.Request.Path.Value;
-    return p is not null && (
-        p.EndsWith("/reload") ||
-        p.EndsWith("/submit") ||
-        p.EndsWith("/submit/foreign-pending-review/resume") ||
-        p.EndsWith("/submit/foreign-pending-review/discard") ||
-        p.EndsWith("/submit/discard") ||              // NEW
-        p.EndsWith("/root-comment/post") ||           // NEW
-        p.EndsWith("/drafts/discard-all"));
-}, ...);
-```
-
-- [ ] **Step 2: Verify middleware still functions**
-
-Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~Middleware|FullyQualifiedName~BodySize"`
-Expected: existing middleware tests pass; new endpoint tests pass (already added in Task 10/11).
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 1: Read the existing predicate end-to-end**
 
 ```bash
+sed -n '170,200p' PRism.Web/Program.cs
+```
+
+The predicate is method-aware (POST-only, PUT-only sub-branches). PRESERVE that structure.
+
+- [ ] **Step 2: Add two clauses to the POST branch**
+
+```csharp
+return value.EndsWith("/reload", StringComparison.Ordinal)
+    || value.EndsWith("/submit", StringComparison.Ordinal)
+    || value.EndsWith("/submit/foreign-pending-review/resume", StringComparison.Ordinal)
+    || value.EndsWith("/submit/foreign-pending-review/discard", StringComparison.Ordinal)
+    || value.EndsWith("/submit/discard", StringComparison.Ordinal)          // NEW
+    || value.EndsWith("/root-comment/post", StringComparison.Ordinal)       // NEW
+    || value.EndsWith("/drafts/discard-all", StringComparison.Ordinal);
+```
+
+Do NOT collapse the method-aware checks into a single ternary; keep the existing shape intact.
+
+- [ ] **Step 3: Verify + commit**
+
+```bash
+dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~BodySize|FullyQualifiedName~Middleware"
 git add PRism.Web/Program.cs
 git commit -m "chore(web): cap new endpoints under existing body-size middleware"
 ```
@@ -1629,217 +1375,146 @@ git commit -m "chore(web): cap new endpoints under existing body-size middleware
 
 ## Phase F — SSE / events
 
-### Task 14: `RootCommentPostedBusEvent` + SSE projection
+### Task 14: `RootCommentPostedBusEvent` + SSE projection + frontend refetch
 
 **Files:**
-- Modify: `PRism.Core/Events/SubmitBusEvents.cs` (add event record)
+- Modify: `PRism.Core/Events/SubmitBusEvents.cs` (add record)
 - Modify: `PRism.Web/Sse/SseEventProjection.cs` (wire-record + Subscribe)
-- Test: `tests/PRism.Web.Tests/Sse/SseEventProjectionTests.cs`
+- Modify: `frontend/src/hooks/usePrDetail.ts` (subscribe to the new event)
+- Test: `tests/PRism.Web.Tests/Sse/SseEventProjectionTests.cs` (extend) + `frontend/__tests__/usePrDetail.test.tsx`
 
-- [ ] **Step 1: Add the bus event**
+- [ ] **Step 1: Read precedent in both files**
 
-Edit `PRism.Core/Events/SubmitBusEvents.cs`:
-
-```csharp
-public sealed record RootCommentPostedBusEvent(string PrRef, long IssueCommentId);
+```bash
+cat PRism.Core/Events/SubmitBusEvents.cs
+grep -n "SubmitForeignPendingReview\|stream.on" PRism.Web/Sse/SseEventProjection.cs frontend/src/hooks/usePrDetail.ts frontend/src/hooks/useSubmit.ts
 ```
 
-- [ ] **Step 2: Add the wire record + subscription**
+`useSubmit.ts:76` shows the consumer pattern: `const stream = useEventSource(); stream.on('...', ...)`. `usePrDetail.ts` likely uses the same `useEventSource()` seam — verify.
 
-Edit `PRism.Web/Sse/SseEventProjection.cs`:
+- [ ] **Step 2: Add the bus event**
+
+`PRism.Core/Events/SubmitBusEvents.cs`:
+
+```csharp
+public sealed record RootCommentPostedBusEvent(PrReference PrRef, long IssueCommentId) : IReviewEvent;
+```
+
+(Confirm `IReviewEvent` is the marker interface in this file — match existing precedent.)
+
+- [ ] **Step 3: Wire the SSE projection**
+
+Add to `SseEventProjection.cs` (mirror the `SubmitForeignPendingReviewBusEvent` wire-up):
 
 ```csharp
 internal sealed record RootCommentPostedSseEvent(long issueCommentId);
 
-// In the wiring:
+// In the Subscribe block:
 bus.Subscribe<RootCommentPostedBusEvent>(evt =>
     publisher.Publish(evt.PrRef, "root-comment-posted", new RootCommentPostedSseEvent(evt.IssueCommentId)));
 ```
 
-- [ ] **Step 3: Write failing projection test**
+(Exact API of `publisher.Publish` — read the existing `SubmitForeignPendingReviewBusEvent` site to copy the signature.)
 
-```csharp
-[Fact]
-public async Task RootCommentPosted_FlowsToSse()
-{
-    var projection = new SseEventProjection(bus, publisher);
-    projection.Start();
-    await bus.PublishAsync(new RootCommentPostedBusEvent("acme/api/1", 99L));
-    publisher.PublishedEvents.Should().ContainSingle(e =>
-        e.EventName == "root-comment-posted" && ((RootCommentPostedSseEvent)e.Payload).issueCommentId == 99L);
-}
-```
+- [ ] **Step 4: Wire the frontend listener**
 
-- [ ] **Step 4: Verify**
+Edit `usePrDetail.ts` — find the `useEventSource()` consumer (or the existing pattern). Add a listener for `'root-comment-posted'` that calls the hook's existing refetch path.
 
-Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~RootCommentPosted_FlowsToSse"`
-Expected: PASS.
+If `usePrDetail.ts` does NOT currently use `useEventSource()`, the listener can live in `useReviewEventStream` (if such a hook exists) or in `useSubmit.ts` as a pass-through that calls a parent-supplied callback. Read the actual code to decide; the spec calls out "the seam that owns PR-detail re-fetches alongside other Submit* events."
 
-- [ ] **Step 5: Wire the frontend consumer**
-
-Edit `frontend/src/hooks/usePrDetail.ts` — find the existing `stream.on('...')` block (the seam that owns PR-detail re-fetches alongside other Submit* events). Add:
-
-```ts
-stream.on('root-comment-posted', () => {
-  // Re-fetch the PR detail so PrRootConversation picks up the new comment.
-  void refetch();
-});
-```
-
-Add a vitest assertion in `frontend/__tests__/usePrDetail.test.tsx`:
-
-```tsx
-it('refetches PR detail on root-comment-posted SSE event', async () => {
-  const { result, fetchSpy } = renderHookWithFakeStream(() => usePrDetail(PrRef));
-  const before = fetchSpy.mock.calls.length;
-
-  act(() => stream.emit('root-comment-posted', { issueCommentId: 99 }));
-  await waitFor(() => expect(fetchSpy.mock.calls.length).toBeGreaterThan(before));
-});
-```
-
-- [ ] **Step 6: Verify + commit**
+- [ ] **Step 5: Tests + commit**
 
 ```bash
+dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~RootCommentPosted"
 cd frontend && npm test -- usePrDetail
-git add PRism.Core/Events/SubmitBusEvents.cs PRism.Web/Sse/SseEventProjection.cs tests frontend/src/hooks/usePrDetail.ts frontend/__tests__/usePrDetail.test.tsx
+git add PRism.Core/Events PRism.Web/Sse tests frontend
 git commit -m "feat(sse): RootCommentPosted bus event + projection + frontend refetch"
 ```
 
 ---
 
-## Phase G — Frontend types + API wrappers
+## Phase G — frontend API + hooks
 
-### Task 15: `api/types.ts` wire-shape changes
+### Task 15: Drop `draftSummaryMarkdown` from `api/types.ts` + serializePatch
 
 **Files:**
-- Modify: `frontend/src/api/types.ts`
-- Modify: `frontend/src/api/draft.ts` (drop the `'draftSummaryMarkdown'` patch case)
+- Modify: `frontend/src/api/types.ts` (remove field from `ReviewSessionDto` + `DraftPatchKind` union + `ReviewSessionPatch` record)
+- Modify: `frontend/src/api/draft.ts:42-43` (remove `case 'draftSummaryMarkdown'` in `serializePatch`)
+- Modify: `frontend/src/api/types.ts` (add `postedCommentId: number | null` to `DraftCommentDto`)
 
-- [ ] **Step 1: Update DTOs**
-
-Edit `frontend/src/api/types.ts`:
-
-```ts
-// In ReviewSessionDto: REMOVE the draftSummaryMarkdown field.
-export interface ReviewSessionDto {
-  pendingReviewId: string | null;
-  pendingReviewCommitOid: string | null;
-  tabStamps: Record<string, TabStamp>;
-  draftComments: DraftCommentDto[];
-  draftReplies: DraftReplyDto[];
-  draftVerdict: DraftVerdict | null;
-  draftVerdictStatus: DraftVerdictStatus;
-}
-
-// In DraftCommentDto: ADD postedCommentId + postedBodySnapshot (both optional + nullable).
-export interface DraftCommentDto {
-  id: string;
-  filePath: string | null;
-  lineNumber: number | null;
-  side: string | null;
-  anchoredSha: string | null;
-  anchoredLineContent: string | null;
-  bodyMarkdown: string;
-  status: DraftStatus;
-  isOverriddenStale: boolean;
-  threadId: string | null;
-  postedCommentId: number | null;
-  postedBodySnapshot: string | null;
-}
-
-// In DraftPatchKind union: REMOVE 'draftSummaryMarkdown'.
-export type DraftPatchKind =
-  | 'newDraftComment'
-  | 'newPrRootDraftComment'
-  | 'updateDraftComment'
-  | 'deleteDraftComment'
-  | 'newDraftReply'
-  | 'updateDraftReply'
-  | 'deleteDraftReply'
-  | 'overrideStale'
-  | 'confirmVerdict'
-  | 'draftVerdict'
-  | 'markAllRead';
-```
-
-- [ ] **Step 2: Drop the patch builder case in `draft.ts`**
-
-Edit `frontend/src/api/draft.ts` — delete the `case 'draftSummaryMarkdown'` block in `toApplyResultPatch` (or equivalent dispatcher).
-
-- [ ] **Step 3: Run TypeScript build to surface every breakage**
-
-Run: `cd frontend && npm run build`
-Expected: a list of `Property 'draftSummaryMarkdown' does not exist on type 'ReviewSessionDto'` errors. Capture the list — Task 25 (cross-tier cleanup) will sweep them.
-
-- [ ] **Step 4: Commit (partial — build is intentionally broken; Tasks 16-25 restore green)**
+- [ ] **Step 1: Grep all references**
 
 ```bash
-git add frontend/src/api/types.ts frontend/src/api/draft.ts
-git commit -m "feat(api): drop draftSummaryMarkdown from ReviewSessionDto + DraftPatchKind"
+grep -rn "draftSummaryMarkdown" frontend/
+```
+
+Catalog every site. They divide into THIS task (api layer) and Task 25 (component consumers).
+
+- [ ] **Step 2: Update `api/types.ts`**
+
+Remove `draftSummaryMarkdown` from `ReviewSessionDto`. Remove `'draftSummaryMarkdown'` from `DraftPatchKind` union. Add `postedCommentId: number | null` to `DraftCommentDto`. **Do NOT add `postedBodySnapshot`** — it's server-side only.
+
+- [ ] **Step 3: Update `serializePatch`**
+
+Delete the `case 'draftSummaryMarkdown':` block at lines 42-43. The `default: never` exhaustiveness check guarantees the remaining union is consistent.
+
+- [ ] **Step 4: Sweep `ReviewSessionPatch`**
+
+The `ReviewSessionPatch` record at `tests/PRism.Web.Tests/Endpoints/PrDraftEndpointTests.cs:55` includes a `summary` field. Confirm whether the TS type uses the same name or different. Update both sides.
+
+- [ ] **Step 5: Build to surface every breakage**
+
+```bash
+cd frontend && npm run build
+```
+
+Capture the TS error list — Task 25 will sweep them.
+
+- [ ] **Step 6: Commit (build intentionally broken until Task 25)**
+
+```bash
+git add frontend/src/api
+git commit -m "feat(api): drop draftSummaryMarkdown wire-shape; add postedCommentId"
 ```
 
 ---
 
-### Task 16: `api/rootComment.ts` — `postRootComment`
+### Task 16: `api/rootComment.ts`
 
 **Files:**
 - Create: `frontend/src/api/rootComment.ts`
 - Test: `frontend/__tests__/api-rootComment.test.ts`
 
-- [ ] **Step 1: Write failing test**
+- [ ] **Step 1: Read `api/submit.ts` for the try/catch pattern**
 
-```ts
-import { postRootComment } from '../src/api/rootComment';
-import { setupServer } from 'msw/node';
-import { http, HttpResponse } from 'msw';
-
-describe('postRootComment', () => {
-  const server = setupServer();
-  beforeAll(() => server.listen());
-  afterEach(() => server.resetHandlers());
-  afterAll(() => server.close());
-
-  it('returns ok on 204', async () => {
-    server.use(
-      http.post('/api/pr/acme/api/1/root-comment/post', () => new HttpResponse(null, { status: 204 })),
-    );
-    const r = await postRootComment({ owner: 'acme', repo: 'api', number: 1 });
-    expect(r.ok).toBe(true);
-  });
-
-  it('maps 409 already-posted-body-mismatch with postedCommentId', async () => {
-    server.use(
-      http.post('/api/pr/acme/api/1/root-comment/post', () =>
-        HttpResponse.json({ code: 'already-posted-body-mismatch', message: 'mismatch', postedCommentId: 42 }, { status: 409 })),
-    );
-    const r = await postRootComment({ owner: 'acme', repo: 'api', number: 1 });
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.code).toBe('already-posted-body-mismatch');
-      expect(r.postedCommentId).toBe(42);
-    }
-  });
-
-  it('maps 502 github-forbidden', async () => { /* ... */ });
-  it('maps network error to github-network-error', async () => { /* ... */ });
-});
+```bash
+sed -n '50,120p' frontend/src/api/submit.ts
 ```
 
-- [ ] **Step 2: Implement**
+`submit.ts:78-80` shows the canonical `if (e instanceof ApiError)` mapping pattern.
 
-Create `frontend/src/api/rootComment.ts`:
+- [ ] **Step 2: Write failing tests** (use existing `msw` / `setupServer` test pattern from `__tests__/api-*.test.ts`)
+
+```ts
+it('returns ok on 204', async () => { /* ... */ });
+it('maps 409 already-posted-body-mismatch with postedCommentId payload', async () => { /* ... */ });
+it('maps 502 github-forbidden', async () => { /* ... */ });
+it('maps network failures to github-network-error', async () => { /* ... */ });
+it('maps 401 to unauthorized', async () => { /* ... */ });
+```
+
+- [ ] **Step 3: Implement**
 
 ```ts
 import { apiClient, ApiError } from './client';
 import type { PrReference } from './types';
-import { prRefPath } from './prRef';
 
 export interface PostRootCommentResult { ok: true; }
 export interface PostRootCommentError {
   ok: false;
   code:
-    | 'no-session' | 'no-root-draft' | 'body-too-large' | 'not-subscribed'
+    | 'unauthorized'
+    | 'no-session' | 'no-root-draft' | 'body-too-large'
     | 'submit-in-progress' | 'already-posted-body-mismatch'
     | 'github-forbidden' | 'github-validation-error' | 'github-rate-limited'
     | 'github-server-error' | 'github-network-error';
@@ -1851,15 +1526,17 @@ export async function postRootComment(
   prRef: PrReference,
 ): Promise<PostRootCommentResult | PostRootCommentError> {
   try {
-    await apiClient.post(`/api/pr/${prRefPath(prRef)}/root-comment/post`, undefined);
+    await apiClient.post<unknown>(
+      `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/root-comment/post`,
+      undefined,
+    );
     return { ok: true };
   } catch (e) {
     if (e instanceof ApiError) {
       const body = e.body as { code?: string; message?: string; postedCommentId?: number } | undefined;
-      const code = (body?.code as PostRootCommentError['code']) ?? 'github-network-error';
       return {
         ok: false,
-        code,
+        code: (body?.code as PostRootCommentError['code']) ?? 'github-network-error',
         message: body?.message ?? e.message,
         postedCommentId: body?.postedCommentId,
       };
@@ -1869,47 +1546,40 @@ export async function postRootComment(
 }
 ```
 
-- [ ] **Step 3: Verify tests pass**
-
-Run: `cd frontend && npm test -- api-rootComment`
-Expected: 4 PASS.
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Verify + commit**
 
 ```bash
+cd frontend && npm run prettier -- --write src/api/rootComment.ts __tests__/api-rootComment.test.ts
+npm test -- api-rootComment
 git add frontend/src/api/rootComment.ts frontend/__tests__/api-rootComment.test.ts
-git commit -m "feat(api): postRootComment wrapper for /root-comment/post"
+git commit -m "feat(api): postRootComment wrapper"
 ```
 
 ---
 
-### Task 17: `api/submit.ts` — `discardOwnPendingReview`
+### Task 17: `discardOwnPendingReview` in `api/submit.ts`
 
 **Files:**
 - Modify: `frontend/src/api/submit.ts`
 - Test: `frontend/__tests__/api-submit.test.ts`
 
-- [ ] **Step 1: Write failing test**
+- [ ] **Step 1: Find the `discardForeignPendingReview` precedent**
 
-```ts
-it('discardOwnPendingReview returns ok on 204', async () => {
-  server.use(http.post('/api/pr/acme/api/1/submit/discard', () => new HttpResponse(null, { status: 204 })));
-  const r = await discardOwnPendingReview({ owner: 'acme', repo: 'api', number: 1 });
-  expect(r.ok).toBe(true);
-});
-
-it('maps 504 pipeline-cancellation-timeout', async () => { /* ... */ });
-it('maps 502 github-delete-failed', async () => { /* ... */ });
+```bash
+grep -n "discardForeignPendingReview" frontend/src/api/submit.ts
 ```
 
-- [ ] **Step 2: Implement**
+Mirror its shape: same try/catch, same error shape.
+
+- [ ] **Step 2: Add `discardOwnPendingReview`**
 
 ```ts
 export interface DiscardOwnPendingReviewResult { ok: true; }
 export interface DiscardOwnPendingReviewError {
   ok: false;
-  code: 'no-session' | 'not-subscribed' | 'pipeline-cancellation-timeout'
-      | 'github-find-failed' | 'github-delete-failed' | 'github-network-error';
+  code: 'unauthorized' | 'pipeline-cancellation-timeout'
+      | 'github-find-failed' | 'github-delete-failed' | 'github-network-error'
+      | 'github-forbidden' | 'github-validation-error' | 'github-rate-limited' | 'github-server-error';
   message: string;
 }
 
@@ -1917,7 +1587,10 @@ export async function discardOwnPendingReview(
   prRef: PrReference,
 ): Promise<DiscardOwnPendingReviewResult | DiscardOwnPendingReviewError> {
   try {
-    await apiClient.post(`/api/pr/${prRefPath(prRef)}/submit/discard`, undefined);
+    await apiClient.post<unknown>(
+      `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/submit/discard`,
+      undefined,
+    );
     return { ok: true };
   } catch (e) {
     if (e instanceof ApiError) {
@@ -1938,67 +1611,59 @@ export async function discardOwnPendingReview(
 ```bash
 cd frontend && npm test -- api-submit
 git add frontend/src/api/submit.ts frontend/__tests__/api-submit.test.ts
-git commit -m "feat(api): discardOwnPendingReview wrapper for /submit/discard"
+git commit -m "feat(api): discardOwnPendingReview wrapper"
 ```
 
 ---
 
-### Task 18: `useSubmit` — expose `submitDialogOpen`, `discardOwnPendingReview`, `discardInFlight`
+### Task 18: `useSubmit` — extend with `submitDialogOpen`, `discardOwnPendingReview`, `discardInFlight`
 
 **Files:**
 - Modify: `frontend/src/hooks/useSubmit.ts`
 - Test: `frontend/__tests__/useSubmit.test.tsx`
 
-- [ ] **Step 1: Write failing test**
+- [ ] **Step 1: Read the current state shape**
 
-```tsx
-it('exposes discardOwnPendingReview that flips discardInFlight', async () => {
-  const { result } = renderHook(() => useSubmit(PrRef));
-  expect(result.current.discardInFlight).toBe(false);
-
-  act(() => { void result.current.discardOwnPendingReview(); });
-  expect(result.current.discardInFlight).toBe(true);
-
-  await waitFor(() => expect(result.current.discardInFlight).toBe(false));
-});
-
-it('exposes submitDialogOpen for PrHeader pill visibility', () => {
-  const { result } = renderHook(() => useSubmit(PrRef));
-  expect(typeof result.current.submitDialogOpen).toBe('boolean');
-});
+```bash
+sed -n '1,80p' frontend/src/hooks/useSubmit.ts
 ```
 
-- [ ] **Step 2: Extend the hook**
+Note the discriminated `SubmitState` union. Adding boolean flags is additive; do NOT touch the union shape.
 
-Edit `frontend/src/hooks/useSubmit.ts`:
+- [ ] **Step 2: Add the new returns**
+
+Extend `UseSubmitResult` (line 48-58):
 
 ```ts
-export function useSubmit(prRef: PrReference) {
-  // ... existing fields ...
-  const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
-  const [discardInFlight, setDiscardInFlight] = useState(false);
-
-  const discardOwnPendingReview = useCallback(async () => {
-    setDiscardInFlight(true);
-    try {
-      return await discardOwnPendingReviewApi(prRef);
-    } finally {
-      setDiscardInFlight(false);
-    }
-  }, [prRef]);
-
-  return {
-    // ... existing returns ...
-    submitDialogOpen,
-    openSubmitDialog: () => setSubmitDialogOpen(true),
-    closeSubmitDialog: () => setSubmitDialogOpen(false),
-    discardOwnPendingReview,
-    discardInFlight,
-  };
+export interface UseSubmitResult {
+  // ... existing ...
+  submitDialogOpen: boolean;
+  openSubmitDialog: () => void;
+  closeSubmitDialog: () => void;
+  discardOwnPendingReview: () => Promise<DiscardOwnPendingReviewResult | DiscardOwnPendingReviewError>;
+  discardInFlight: boolean;
 }
 ```
 
-- [ ] **Step 3: Verify + commit**
+Inside the hook:
+
+```ts
+const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
+const [discardInFlight, setDiscardInFlight] = useState(false);
+
+const discardOwnPendingReview = useCallback(async () => {
+  setDiscardInFlight(true);
+  try {
+    return await discardOwnPendingReviewApi(reference);
+  } finally {
+    setDiscardInFlight(false);
+  }
+}, [reference.owner, reference.repo, reference.number]);
+```
+
+Import `discardOwnPendingReview as discardOwnPendingReviewApi` from `../api/submit` and its return types.
+
+- [ ] **Step 3: Tests + commit**
 
 ```bash
 cd frontend && npm test -- useSubmit
@@ -2008,65 +1673,99 @@ git commit -m "feat(useSubmit): submitDialogOpen + discardOwnPendingReview + dis
 
 ---
 
-## Phase H — Frontend component refactor
+## Phase H — frontend component refactor
 
-### Task 19: `useCantEditRootBodyReason` hook
+### Task 19: Extend `useDraftSession.registerOpenComposer` with `ownerKey` + `useCantEditRootBodyReason` hook
 
 **Files:**
+- Modify: `frontend/src/hooks/useDraftSession.ts:23,34-45` (extend signature + storage)
 - Create: `frontend/src/hooks/useCantEditRootBodyReason.ts`
-- Test: `frontend/__tests__/useCantEditRootBodyReason.test.tsx`
+- Test: `frontend/__tests__/useDraftSession.test.tsx` + new `__tests__/useCantEditRootBodyReason.test.tsx`
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **Step 1: Read every existing call site of `registerOpenComposer`**
 
-```tsx
-it('returns null when no other editor holds the draft', () => {
-  const { result } = renderHook(() => useCantEditRootBodyReason({ prRef: PrRef, readOnly: false, ownerKey: 'submit-dialog' }));
-  expect(result.current).toBeNull();
-});
-
-it('returns editing-in-other-tab when readOnly is true', () => {
-  const { result } = renderHook(() => useCantEditRootBodyReason({ prRef: PrRef, readOnly: true, ownerKey: 'submit-dialog' }));
-  expect(result.current).toBe('editing-in-other-tab');
-});
-
-it('returns editing-in-overview-composer when composer registry has a different owner', () => {
-  // seed the open-composer registry with ownerKey='reply-composer' for this PR's PR-root draft
-  // ...
-  const { result } = renderHook(() => useCantEditRootBodyReason({ prRef: PrRef, readOnly: false, ownerKey: 'submit-dialog' }));
-  expect(result.current).toBe('editing-in-overview-composer');
-});
+```bash
+grep -rn "registerOpenComposer" frontend/src
 ```
 
-- [ ] **Step 2: Implement**
+Catalog them — they all need updating to pass an `ownerKey`.
+
+- [ ] **Step 2: Extend `useDraftSession`**
+
+Change the storage from `Map<string, number>` to `Map<string, Set<OwnerKey>>`:
 
 ```ts
-import { useOpenComposerRegistry } from './useOpenComposerRegistry';
-import type { PrReference } from '../api/types';
+export type ComposerOwnerKey = 'reply-composer' | 'submit-dialog' | 'files-tab' | 'drafts-tab';
 
-type Reason = 'editing-in-overview-composer' | 'editing-in-other-tab' | null;
+export interface UseDraftSessionResult {
+  // ... existing ...
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
+  getPrRootHolder: () => ComposerOwnerKey | null;
+}
 
-interface Args { prRef: PrReference; readOnly: boolean; ownerKey: 'reply-composer' | 'submit-dialog'; }
+// Inside the hook:
+const openComposers = useRef(new Map<string, Set<ComposerOwnerKey>>());
+const isOpen = useCallback((id: string) => (openComposers.current.get(id)?.size ?? 0) > 0, []);
 
-export function useCantEditRootBodyReason({ prRef, readOnly, ownerKey }: Args): Reason {
-  const registry = useOpenComposerRegistry(prRef);
+const registerOpenComposer = useCallback((draftId: string, ownerKey: ComposerOwnerKey): (() => void) => {
+  const m = openComposers.current;
+  let set = m.get(draftId);
+  if (!set) { set = new Set(); m.set(draftId, set); }
+  set.add(ownerKey);
+  return () => {
+    const s = m.get(draftId);
+    if (!s) return;
+    s.delete(ownerKey);
+    if (s.size === 0) m.delete(draftId);
+  };
+}, []);
+
+const getPrRootHolder = useCallback((): ComposerOwnerKey | null => {
+  // Find the session's PR-root draft id from session.draftComments.
+  // Return the first ownerKey holding it (deterministic — Set iteration is insertion order).
+  if (!session) return null;
+  const prRoot = session.draftComments.find((d) => d.filePath === null && d.lineNumber === null);
+  if (!prRoot) return null;
+  const set = openComposers.current.get(prRoot.id);
+  if (!set || set.size === 0) return null;
+  return set.values().next().value as ComposerOwnerKey;
+}, [session]);
+```
+
+- [ ] **Step 3: Update every call site**
+
+Existing `registerOpenComposer(draftId)` calls all need a second arg. Pass `'files-tab'` for inline composers under FilesTab, `'drafts-tab'` for Drafts-tab composers, etc. The two NEW callers (Tasks 20/22) pass `'reply-composer'` and `'submit-dialog'`.
+
+- [ ] **Step 4: Create `useCantEditRootBodyReason`**
+
+```ts
+import type { ComposerOwnerKey } from './useDraftSession';
+
+export type CantEditRootBodyReason = 'editing-in-overview-composer' | 'editing-in-submit-dialog' | 'editing-in-other-tab' | null;
+
+interface Args {
+  readOnly: boolean;          // cross-tab ownership (TabStamps gate)
+  ownerKey: ComposerOwnerKey; // caller's identity
+  prRootHolder: ComposerOwnerKey | null; // from useDraftSession.getPrRootHolder()
+}
+
+export function useCantEditRootBodyReason({ readOnly, ownerKey, prRootHolder }: Args): CantEditRootBodyReason {
   if (readOnly) return 'editing-in-other-tab';
-  const holder = registry.getPrRootHolder();
-  if (holder && holder !== ownerKey) {
-    return ownerKey === 'submit-dialog' ? 'editing-in-overview-composer' : 'editing-in-overview-composer';
-    // The reverse case (composer disabled while dialog edits) uses the same string; the calling component picks copy.
-  }
+  if (prRootHolder === null || prRootHolder === ownerKey) return null;
+  if (prRootHolder === 'reply-composer') return 'editing-in-overview-composer';
+  if (prRootHolder === 'submit-dialog') return 'editing-in-submit-dialog';
   return null;
 }
 ```
 
-(The `useOpenComposerRegistry` is the existing seam behind `registerOpenComposer`; expose a `getPrRootHolder()` that returns the current `ownerKey` if one is registered for the PR-root draft.)
+(Pure function — could just be a helper, but a hook signature anticipates future state.)
 
-- [ ] **Step 3: Verify + commit**
+- [ ] **Step 5: Tests + commit**
 
 ```bash
-cd frontend && npm test -- useCantEditRootBodyReason
-git add frontend/src/hooks/useCantEditRootBodyReason.ts frontend/__tests__/useCantEditRootBodyReason.test.tsx
-git commit -m "feat(hooks): useCantEditRootBodyReason for cross-surface lock"
+cd frontend && npm test -- useDraftSession useCantEditRootBodyReason
+git add frontend/src/hooks frontend/__tests__
+git commit -m "feat(hooks): registerOpenComposer ownerKey + useCantEditRootBodyReason"
 ```
 
 ---
@@ -2075,18 +1774,27 @@ git commit -m "feat(hooks): useCantEditRootBodyReason for cross-surface lock"
 
 **Files:**
 - Create: `frontend/src/components/PrDetail/Composer/PrRootBodyEditor.tsx`
-- Modify: `frontend/src/components/PrDetail/Composer/PrRootReplyComposer.tsx` (move textarea + autosave into the editor)
-- Create: `frontend/__tests__/PrRootBodyEditor.test.tsx`
+- Create: `frontend/src/components/PrDetail/Composer/PrRootBodyEditor.module.css`
+- Move tests: from `PrRootReplyComposer.test.tsx` → `PrRootBodyEditor.test.tsx` (the autosave + recovery cases)
 
-- [ ] **Step 1: Create `PrRootBodyEditor.tsx`**
+- [ ] **Step 1: Read the existing composer end-to-end**
+
+```bash
+cat frontend/src/components/PrDetail/Composer/PrRootReplyComposer.tsx
+```
+
+Identify what moves to the editor (textarea + autosave + recovery modal lifecycle) vs what stays in the composer (Discard/Post/Preview/AI affordances).
+
+- [ ] **Step 2: Create `PrRootBodyEditor.tsx`**
 
 ```tsx
-import { useEffect, useRef } from 'react';
-import { useComposerAutoSave, COMPOSER_CREATE_THRESHOLD } from '../../../hooks/useComposerAutoSave';
+import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useComposerAutoSave, COMPOSER_CREATE_THRESHOLD, type ComposerSaveBadge } from '../../../hooks/useComposerAutoSave';
 import { Modal } from '../../Modal/Modal';
-import styles from './PrRootBodyEditor.module.css';
 import type { PrReference } from '../../../api/types';
-import type { ComposerBadge } from './composerBadge';
+import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
+import styles from './PrRootBodyEditor.module.css';
 
 export interface PrRootBodyEditorProps {
   prRef: PrReference;
@@ -2094,16 +1802,19 @@ export interface PrRootBodyEditorProps {
   initialBody: string;
   draftId: string | null;
   onDraftIdChange: (id: string | null) => void;
-  registerOpenComposer: (draftId: string) => () => void;
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
+  ownerKey: ComposerOwnerKey;
   readOnly?: boolean;
   onBodyChange?: (body: string) => void;
-  onAutosaveControl?: (control: { flush: () => Promise<void>; badge: ComposerBadge }) => void;
+  onAutosaveControl?: (control: { flush: () => Promise<void>; badge: ComposerSaveBadge }) => void;
+  onDraftLost?: () => void;
 }
 
 export function PrRootBodyEditor(props: PrRootBodyEditorProps) {
   const {
     prRef, prState, initialBody, draftId, onDraftIdChange,
-    registerOpenComposer, readOnly = false, onBodyChange, onAutosaveControl,
+    registerOpenComposer, ownerKey, readOnly = false,
+    onBodyChange, onAutosaveControl, onDraftLost,
   } = props;
 
   const [body, setBody] = useState(initialBody);
@@ -2127,16 +1838,14 @@ export function PrRootBodyEditor(props: PrRootBodyEditorProps) {
 
   useEffect(() => {
     if (draftId === null) return;
-    return registerOpenComposer(draftId);
-  }, [draftId, registerOpenComposer]);
+    return registerOpenComposer(draftId, ownerKey);
+  }, [draftId, ownerKey, registerOpenComposer]);
 
   useEffect(() => { textareaRef.current?.focus(); }, []);
 
-  const closedBanner = prState !== 'open';
-
   return (
     <div className={styles.editor} data-composer="true">
-      {closedBanner && (
+      {prState !== 'open' && (
         <div className="composer-closed-banner muted" role="status">
           PR {prState === 'closed' ? 'closed' : 'merged'} — text not saved
         </div>
@@ -2155,338 +1864,194 @@ export function PrRootBodyEditor(props: PrRootBodyEditorProps) {
         {badge}
       </span>
 
-      <Modal
-        open={recoveryOpen}
-        title="PR reply draft deleted elsewhere"
-        defaultFocus="primary"
-        disableEscDismiss
-        onClose={() => setRecoveryOpen(false)}
-      >
-        <p>This draft was deleted from another window or by reload. Re-create it with the current text, or discard?</p>
-        <button type="button" data-modal-role="cancel" onClick={() => { setRecoveryOpen(false); }}>
-          Discard
-        </button>
-        <button type="button" data-modal-role="primary" onClick={async () => { setRecoveryOpen(false); await flush(); }}>
-          Re-create
-        </button>
-      </Modal>
+      {recoveryOpen && createPortal(
+        <Modal
+          open={recoveryOpen}
+          title="PR reply draft deleted elsewhere"
+          defaultFocus="primary"
+          disableEscDismiss
+          onClose={() => setRecoveryOpen(false)}
+        >
+          <p>This draft was deleted from another window or by reload. Re-create with the current text, or discard?</p>
+          <button type="button" data-modal-role="cancel" onClick={() => { setRecoveryOpen(false); onDraftLost?.(); }}>
+            Discard
+          </button>
+          <button type="button" data-modal-role="primary" onClick={async () => { setRecoveryOpen(false); await flush(); }}>
+            Re-create
+          </button>
+        </Modal>,
+        document.body,
+      )}
     </div>
   );
 }
 ```
 
-- [ ] **Step 2: Move existing composer test cases that exercise autosave + recovery into `PrRootBodyEditor.test.tsx`**
+(The portal is critical when the editor is mounted inside SubmitDialog's outer Modal — prevents stacking handler conflicts.)
 
-- [ ] **Step 3: Verify + commit**
+- [ ] **Step 3: Move autosave + recovery tests from `PrRootReplyComposer.test.tsx`**
+
+- [ ] **Step 4: Prettier + verify + commit**
 
 ```bash
-cd frontend && npm test -- PrRootBodyEditor
-git add frontend/src/components/PrDetail/Composer/PrRootBodyEditor.tsx frontend/src/components/PrDetail/Composer/PrRootBodyEditor.module.css frontend/__tests__/PrRootBodyEditor.test.tsx
-git commit -m "feat(composer): extract PrRootBodyEditor (shared body + autosave)"
+cd frontend && npm run prettier -- --write src/components/PrDetail/Composer/PrRootBodyEditor.{tsx,module.css} __tests__/PrRootBodyEditor.test.tsx
+npm test -- PrRootBodyEditor
+git add frontend/src/components/PrDetail/Composer/PrRootBodyEditor.* frontend/__tests__/PrRootBodyEditor.test.tsx
+git commit -m "feat(composer): extract PrRootBodyEditor shared component"
 ```
 
 ---
 
-### Task 21: Refactor `PrRootReplyComposer` — wrap `PrRootBodyEditor`, drop Save, add Post
+### Task 21: Refactor `PrRootReplyComposer` to wrap `PrRootBodyEditor`
 
 **Files:**
 - Modify: `frontend/src/components/PrDetail/Composer/PrRootReplyComposer.tsx`
 - Modify: `frontend/__tests__/PrRootReplyComposer.test.tsx`
 
-- [ ] **Step 1: Update the composer to wrap the editor**
+- [ ] **Step 1: Replace inner textarea+autosave with PrRootBodyEditor**
+
+The composer keeps: Discard / Post / Preview / AI buttons + the per-state copy table (§ 4.7 of spec). Drop the Save button. Ctrl+Enter → Post.
+
+Key logic for Post handler:
 
 ```tsx
-export function PrRootReplyComposer(props: PrRootReplyComposerProps) {
-  const { prRef, prState, initialBody = '', draftId, onDraftIdChange, registerOpenComposer, onClose, readOnly = false } = props;
-
-  const [body, setBody] = useState(initialBody);
-  const [previewMode, setPreviewMode] = useState(false);
-  const [postInFlight, setPostInFlight] = useState(false);
-  const [postError, setPostError] = useState<PostRootCommentError | null>(null);
-  const [discardModalOpen, setDiscardModalOpen] = useState(false);
-  const autosaveControl = useRef<{ flush: () => Promise<void>; badge: ComposerBadge } | null>(null);
-
-  const trimmedLength = body.trim().length;
-  const bodyEmpty = trimmedLength === 0;
-  const belowCreateThreshold = draftId === null && trimmedLength < COMPOSER_CREATE_THRESHOLD;
-  const postDisabled = bodyEmpty || belowCreateThreshold || readOnly || postInFlight;
-
-  const postTooltip =
-    readOnly ? 'Another tab is editing this PR.'
-    : bodyEmpty ? 'Type something to post.'
-    : belowCreateThreshold ? `Type at least ${COMPOSER_CREATE_THRESHOLD} characters to post.`
-    : '';
-
-  const handlePost = async () => {
-    if (postDisabled || !autosaveControl.current) return;
-    setPostError(null);
-    setPostInFlight(true);
-    try {
-      await autosaveControl.current.flush();
-      const result = await postRootComment(prRef);
-      if (!result.ok) {
-        setPostError(result);
-        return;
-      }
-      onClose();
-    } finally {
-      setPostInFlight(false);
+const handlePost = async () => {
+  if (postDisabled || !autosaveControl.current) return;
+  setPostError(null);
+  setPostInFlight(true);
+  try {
+    await autosaveControl.current.flush();  // drain debounce first
+    const result = await postRootComment(prRef);
+    if (!result.ok) {
+      setPostError(result);
+      return;
     }
-  };
-
-  return (
-    <div role="form" aria-label="Reply to this PR" data-composer="true" className={styles.composer}>
-      {postError && (
-        <div role="alert" data-testid="post-error" className={styles.postError}>
-          {postError.code === 'already-posted-body-mismatch' ? (
-            <>This comment was already posted. Your edits since then haven't been shipped.
-              <button type="button" onClick={() => window.open(`...`, '_blank')}>Open on GitHub</button></>
-          ) : (
-            <>Couldn't post to GitHub: {postError.message}.
-              <button type="button" onClick={handlePost}>Retry</button></>
-          )}
-        </div>
-      )}
-
-      {previewMode ? (
-        <ComposerMarkdownPreview body={body} />
-      ) : (
-        <PrRootBodyEditor
-          prRef={prRef} prState={prState} initialBody={initialBody}
-          draftId={draftId} onDraftIdChange={onDraftIdChange}
-          registerOpenComposer={registerOpenComposer}
-          readOnly={readOnly || postInFlight}
-          onBodyChange={setBody}
-          onAutosaveControl={(c) => { autosaveControl.current = c; }}
-        />
-      )}
-
-      <div className="composer-actions">
-        <button type="button" className="composer-preview-toggle" aria-pressed={previewMode} onClick={() => setPreviewMode((p) => !p)}>
-          {previewMode ? 'Edit' : 'Preview'}
-        </button>
-        <AiComposerAssistant />
-        <button type="button" className="composer-discard" onClick={() => setDiscardModalOpen(true)} disabled={readOnly || postInFlight}>
-          Discard
-        </button>
-        <button type="button" className="composer-post" disabled={postDisabled} title={postTooltip} onClick={handlePost}>
-          {postInFlight ? 'Posting…' : 'Post'}
-        </button>
-      </div>
-
-      {/* discard modal — unchanged shape from existing code, omitted */}
-    </div>
-  );
-}
+    onClose();
+  } finally {
+    setPostInFlight(false);
+  }
+};
 ```
 
-- [ ] **Step 2: Update keybindings**
+The error row (above the action bar) handles the `already-posted-body-mismatch` recovery banner + the generic retry-on-failure case.
 
-`handleKeyDown`: Ctrl+Enter now calls `handlePost` (replaces the prior Save+close).
+The composer passes `ownerKey="reply-composer"` to PrRootBodyEditor.
 
-- [ ] **Step 3: Sweep test file**
+- [ ] **Step 2: Update tests**
 
-Update `PrRootReplyComposer.test.tsx`:
-- Remove "Save button is present" tests.
-- Add "Post button is disabled while postInFlight" test.
-- Add "Post failure renders error row" test.
-- Add "Post 409 mismatch renders recovery banner" test.
-- Existing autosave/recovery tests move to `PrRootBodyEditor.test.tsx` (Task 20).
+Remove "Save button present" assertions; add Post-flow tests; existing autosave/recovery tests are in the body-editor test file now.
 
-- [ ] **Step 4: Run prettier + verify**
-
-Run: `cd frontend && npm run prettier -- --write src/components/PrDetail/Composer/ __tests__/PrRootReplyComposer.test.tsx && npm test -- PrRootReplyComposer && npm run lint`
-Expected: green; prettier reformatted any new files.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Prettier + verify + commit**
 
 ```bash
-git add frontend/src/components/PrDetail/Composer/PrRootReplyComposer.tsx frontend/__tests__/PrRootReplyComposer.test.tsx
-git commit -m "feat(composer): drop Save, add Post + error row (PR-root path)"
+cd frontend && npm run prettier -- --write src/components/PrDetail/Composer/PrRootReplyComposer.tsx __tests__/PrRootReplyComposer.test.tsx
+npm test -- PrRootReplyComposer && npm run lint
+git add frontend
+git commit -m "feat(composer): drop Save, add Post + flush-before-post flow"
 ```
 
 ---
 
-## Phase I — SubmitDialog rework
+## Phase I — SubmitDialog
 
-### Task 22: SubmitDialog — remove summary textarea + preview + Edit toggle + Discard footer
+### Task 22: SubmitDialog — preview + Edit toggle + Discard footer + state sequencing
 
 **Files:**
-- Modify: `frontend/src/components/PrDetail/SubmitDialog/SubmitDialog.tsx`
+- Modify: `frontend/src/components/PrDetail/SubmitDialog/SubmitDialog.tsx` (~383 lines today; remove summary plumbing, add preview + edit + Discard footer)
 - Modify: `frontend/src/components/PrDetail/SubmitDialog/SubmitDialog.module.css`
 - Modify: `frontend/__tests__/SubmitDialog.test.tsx`
 
-- [ ] **Step 1: Remove the summary textarea + state**
+- [ ] **Step 1: Read the existing dialog end-to-end**
 
-Edit `SubmitDialog.tsx`: delete lines 72-93 (`setSummary`, the useEffect hydration, the textarea, and the `onSummaryChange` wire).
+The summary plumbing includes: `setSummary`, the hydration useEffect, the textarea, `saveSummary`, `flushSummary`, the `onSummaryChange` wire, the `confirmReason` inline override at line 230-236, the verdict-pick logic. Cataloging precisely BEFORE deleting is essential.
 
-- [ ] **Step 2: Add the preview-or-edit body section**
+- [ ] **Step 2: Remove the summary plumbing**
 
-Insert after the verdict picker:
+Drop: the `setSummary` state, its hydration `useEffect`, the textarea, the `saveSummary`/`flushSummary` callbacks, the `onSummaryChange` prop wire. KEEP: the verdict-pick state, the Submit button, the existing modal shell, `setEscNotice` logic.
+
+- [ ] **Step 3: Add the preview + Edit toggle**
 
 ```tsx
 const prRootDraft = session.draftComments.find((d) => d.filePath === null && d.lineNumber === null) ?? null;
 const [editing, setEditing] = useState(false);
 const [bodyDraftId, setBodyDraftId] = useState<string | null>(prRootDraft?.id ?? null);
-const cantEdit = useCantEditRootBodyReason({ prRef, readOnly, ownerKey: 'submit-dialog' });
+const [editingBody, setEditingBody] = useState<string>(prRootDraft?.bodyMarkdown ?? '');
+const editorControl = useRef<{ flush: () => Promise<void>; badge: ComposerSaveBadge } | null>(null);
 
-useEffect(() => { if (!open) setEditing(false); }, [open]);
+const prRootHolder = useDraftSessionFromContext().getPrRootHolder();
+const cantEdit = useCantEditRootBodyReason({ readOnly, ownerKey: 'submit-dialog', prRootHolder });
 
-<section className={styles.prRootBodyEditorWrap} aria-label="PR-level body">
-  <header className={styles.prRootBodyHeader}>
-    <h3>PR-level body</h3>
-    {!editing && (
-      <button
-        type="button"
-        className="composer-preview-toggle"
-        disabled={cantEdit !== null}
-        title={
-          cantEdit === 'editing-in-overview-composer' ? 'Editing in the Reply composer — close it to edit here'
-          : cantEdit === 'editing-in-other-tab' ? 'Another tab is editing this PR.'
-          : ''
-        }
-        onClick={() => setEditing(true)}
-      >
-        Edit
-      </button>
-    )}
-    {editing && (
-      <button type="button" className="composer-preview-toggle" onClick={() => setEditing(false)}>
-        Done
-      </button>
-    )}
-  </header>
+// Reset to preview on open.
+useEffect(() => { if (open) setEditing(false); }, [open]);
 
-  {editing ? (
-    <PrRootBodyEditor
-      prRef={prRef} prState={prState}
-      initialBody={prRootDraft?.bodyMarkdown ?? ''}
-      draftId={bodyDraftId} onDraftIdChange={setBodyDraftId}
-      registerOpenComposer={(draftId) => registerOpenComposer(draftId, 'submit-dialog')}
-      readOnly={readOnly}
-    />
-  ) : prRootDraft && prRootDraft.bodyMarkdown.trim().length > 0 ? (
-    <MarkdownRenderer source={prRootDraft.bodyMarkdown} />
-  ) : (
-    <p className={`${styles.noPrRootBody} muted`}>No PR-level body — click Edit to add one.</p>
-  )}
-</section>
+// Override session for submitDisabledReason when in edit mode (replicates the old
+// inline-draftSummaryMarkdown-override pattern from SubmitDialog.tsx:230-236).
+const effectiveSession: ReviewSessionDto = editing
+  ? {
+      ...session,
+      draftComments: session.draftComments.map((d) =>
+        d.filePath === null && d.lineNumber === null
+          ? { ...d, bodyMarkdown: editingBody }
+          : d),
+    }
+  : session;
+const confirmReason = submitDisabledReason(effectiveSession, headShaDrift, validatorResults);
 ```
 
-- [ ] **Step 3: Add Discard footer button**
+The preview block renders the MarkdownRenderer or a placeholder; the editor block mounts PrRootBodyEditor with `ownerKey="submit-dialog"`. Edit button is disabled when `cantEdit !== null` with the appropriate tooltip.
 
-Above the existing Submit/Cancel button row, prepend:
+- [ ] **Step 4: Add the close-while-editing flush**
+
+The dialog's Cancel button / Esc handler / overlay click must `await editorControl.current?.flush()` before invoking `onClose()` when `editing` is true. Otherwise the in-flight debounce is canceled and the body is lost.
+
+- [ ] **Step 5: Add the Discard footer button**
+
+Render leftmost in the footer when `session.pendingReviewId !== null OR state.kind === 'in-flight'`:
 
 ```tsx
-{(session.pendingReviewId !== null || submitInFlight) && (
-  <button
-    type="button"
-    className={styles.dialogDiscardButton}
-    data-testid="dialog-discard"
-    onClick={() => setDiscardModalOpen(true)}
-  >
-    Discard pending review
-  </button>
-)}
+<button
+  type="button"
+  className={styles.dialogDiscardButton}
+  data-testid="dialog-discard"
+  onClick={() => setDiscardModalOpen(true)}
+>
+  Discard pending review
+</button>
 ```
 
-- [ ] **Step 4: Add the discardInFlight progress label**
+Wire to `DiscardPendingReviewConfirmationModal` (Task 23).
 
-The existing `SubmitProgressIndicator` accepts a `phase` prop today. Add a new "Cancelling…" branch driven by the `discardInFlight` flag from `useSubmit`.
+- [ ] **Step 6: Update tests**
 
-- [ ] **Step 5: Update tests**
+Negative: summary textarea absent. Positive: preview present; Edit toggle renders; clicking Edit mounts the editor; cross-surface lock disables Edit when reply composer holds the draft; cross-tab readOnly disables Edit with the other-tab tooltip; close-while-editing awaits flush.
 
-`SubmitDialog.test.tsx`:
-- Remove "summary textarea renders" tests; add "summary textarea does NOT render" negative assertion.
-- Add "PR-root body preview renders when prRootDraft exists".
-- Add "clicking Edit mounts PrRootBodyEditor" + "clicking Done dismounts it".
-- Add "Edit disabled when cross-tab readOnly" + "Edit disabled when reply composer holds the draft".
-
-- [ ] **Step 6: Run prettier + verify + commit**
+- [ ] **Step 7: Prettier + verify + commit**
 
 ```bash
 cd frontend && npm run prettier -- --write src/components/PrDetail/SubmitDialog/ __tests__/SubmitDialog.test.tsx
 npm test -- SubmitDialog && npm run lint
-git add frontend/src/components/PrDetail/SubmitDialog/ frontend/__tests__/SubmitDialog.test.tsx
-git commit -m "feat(submit-dialog): remove summary textarea; preview + Edit toggle + Discard footer"
+git add frontend
+git commit -m "feat(submit-dialog): preview + Edit toggle + Discard footer + close-while-editing flush"
 ```
 
 ---
 
-## Phase J — Modal + PrHeader pill
+## Phase J — modal + PrHeader pill
 
 ### Task 23: `DiscardPendingReviewConfirmationModal`
 
 **Files:**
-- Create: `frontend/src/components/PrDetail/DiscardPendingReviewConfirmationModal.tsx`
-- Create: `frontend/src/components/PrDetail/DiscardPendingReviewConfirmationModal.module.css`
+- Create: `frontend/src/components/PrDetail/DiscardPendingReviewConfirmationModal.tsx` + `.module.css`
 - Test: `frontend/__tests__/DiscardPendingReviewConfirmationModal.test.tsx`
 
-- [ ] **Step 1: Component**
+(See spec § 4.10 for the modal shape and state-transition table. Tests cover: default/Cancel/Discard buttons; in-flight disabled with "Discarding…" spinner; failure mode renders Close + Retry + error row.)
 
-```tsx
-import { Modal } from '../Modal/Modal';
-import styles from './DiscardPendingReviewConfirmationModal.module.css';
-import type { DiscardOwnPendingReviewError } from '../../api/submit';
-
-interface Props {
-  open: boolean;
-  inFlight: boolean;
-  error: DiscardOwnPendingReviewError | null;
-  onConfirm: () => void;
-  onClose: () => void;
-}
-
-export function DiscardPendingReviewConfirmationModal(props: Props) {
-  const { open, inFlight, error, onConfirm, onClose } = props;
-  return (
-    <Modal open={open} title="Discard pending review on GitHub?" defaultFocus="cancel"
-      disableEscDismiss={inFlight} onClose={onClose}>
-      <ul className={styles.bullets}>
-        <li>The pending review on GitHub will be deleted, along with its threads.</li>
-        <li>Your PRism drafts and replies will be unstamped, ready to submit fresh.</li>
-      </ul>
-      {error && (
-        <div role="alert" className={styles.errorRow}>
-          Couldn't discard: {error.message}.
-        </div>
-      )}
-      {inFlight ? (
-        <>
-          <button type="button" disabled aria-disabled className={styles.discardButton}>
-            <span className={styles.spinner} aria-hidden /> Discarding…
-          </button>
-        </>
-      ) : (
-        <>
-          <button type="button" data-modal-role="cancel" onClick={onClose}>
-            {error ? 'Close' : 'Cancel'}
-          </button>
-          <button type="button" data-modal-role="primary" className={styles.discardButton} onClick={onConfirm}>
-            {error ? 'Retry' : 'Discard'}
-          </button>
-        </>
-      )}
-    </Modal>
-  );
-}
-```
-
-- [ ] **Step 2: Tests**
-
-```tsx
-it('renders default state with Cancel + Discard buttons', () => { /* ... */ });
-it('shows Discarding… spinner and hides Cancel during inFlight', () => { /* ... */ });
-it('shows Close + Retry on error', () => { /* ... */ });
-it('Esc dismisses unless inFlight', () => { /* ... */ });
-```
-
-- [ ] **Step 3: Run prettier + verify + commit**
+- [ ] **Step 1: Implement + test + commit**
 
 ```bash
 cd frontend && npm run prettier -- --write src/components/PrDetail/DiscardPendingReviewConfirmationModal.* __tests__/DiscardPendingReviewConfirmationModal.test.tsx
 npm test -- DiscardPendingReviewConfirmationModal
-git add frontend/src/components/PrDetail/DiscardPendingReviewConfirmationModal.* frontend/__tests__/DiscardPendingReviewConfirmationModal.test.tsx
+git add frontend
 git commit -m "feat(submit): DiscardPendingReviewConfirmationModal"
 ```
 
@@ -2497,241 +2062,82 @@ git commit -m "feat(submit): DiscardPendingReviewConfirmationModal"
 **Files:**
 - Modify: `frontend/src/components/PrDetail/PrHeader.tsx`
 - Modify: `frontend/src/components/PrDetail/PrHeader.module.css`
-- Modify: `frontend/__tests__/PrDetailPage.test.tsx` (or a new PrHeader test file)
+- Test: extend an existing PrDetail test or add `frontend/__tests__/PrHeaderPendingReviewPill.test.tsx`
 
-- [ ] **Step 1: Add the pill**
+(See spec § 4.9. Pill visibility: `session.pendingReviewId !== null && !submitDialogOpen`. Clicking opens the Task 23 modal.)
 
-```tsx
-const { discardOwnPendingReview, discardInFlight, submitDialogOpen } = useSubmit(prRef);
-const [discardModalOpen, setDiscardModalOpen] = useState(false);
-const [discardError, setDiscardError] = useState<DiscardOwnPendingReviewError | null>(null);
-
-const handleDiscardConfirm = async () => {
-  setDiscardError(null);
-  const r = await discardOwnPendingReview();
-  if (!r.ok) { setDiscardError(r); return; }
-  setDiscardModalOpen(false);
-};
-
-{!submitDialogOpen && session.pendingReviewId !== null && (
-  <button
-    type="button"
-    className={styles.pendingReviewPill}
-    data-testid="pending-review-pill"
-    onClick={() => setDiscardModalOpen(true)}
-  >
-    Pending review on GitHub · Discard
-  </button>
-)}
-
-<DiscardPendingReviewConfirmationModal
-  open={discardModalOpen}
-  inFlight={discardInFlight}
-  error={discardError}
-  onConfirm={handleDiscardConfirm}
-  onClose={() => { setDiscardModalOpen(false); setDiscardError(null); }}
-/>
-```
-
-- [ ] **Step 2: Tests**
-
-```tsx
-it('pill renders when pendingReviewId set and dialog closed', () => { /* ... */ });
-it('pill hidden when SubmitDialog open', () => { /* ... */ });
-it('clicking pill opens the confirmation modal', () => { /* ... */ });
-```
-
-- [ ] **Step 3: Run prettier + verify + commit**
+- [ ] **Step 1: Implement + test + commit**
 
 ```bash
-cd frontend && npm run prettier -- --write src/components/PrDetail/PrHeader.* __tests__/PrDetailPage.test.tsx
+cd frontend && npm run prettier -- --write src/components/PrDetail/PrHeader.* __tests__
 npm test -- PrHeader
-git add frontend/src/components/PrDetail/PrHeader.* frontend/__tests__
-git commit -m "feat(pr-header): pending-review pill + Discard modal wiring"
+git add frontend
+git commit -m "feat(pr-header): pending-review pill + discard modal wiring"
 ```
 
 ---
 
-## Phase K — Cross-tier consumer cleanup
+## Phase K — cross-tier draftSummaryMarkdown sweep
 
-### Task 25: Migrate FE consumers of `draftSummaryMarkdown`
+### Task 25: Migrate every remaining `draftSummaryMarkdown` consumer
 
 **Files:**
-- Modify: `frontend/src/components/PrDetail/DiscardAllDraftsButton.tsx:23,44`
-- Modify: `frontend/src/components/PrDetail/SubmitButton.tsx:43-46`
-- Modify: `frontend/src/components/PrDetail/PrHeader.tsx:46` (if it has a default fixture with the field)
+- Modify: `frontend/src/components/PrDetail/DiscardAllDraftsButton.tsx:23,44` (rewrite `hasSummary` derivation)
+- Modify: `frontend/src/components/PrDetail/SubmitButton.tsx:43-46` (rewrite `isEmptyContent`)
+- Modify: `frontend/src/components/PrDetail/PrHeader.tsx:46` (if it has a default fixture)
 - Modify: every `__tests__/*.tsx` that constructs `ReviewSessionDto` with the field
 
-- [ ] **Step 1: Grep for remaining references**
+- [ ] **Step 1: Grep then sweep**
 
-Run: `grep -rn "draftSummaryMarkdown" frontend/`
-Expected: a list of files needing migration.
-
-- [ ] **Step 2: `SubmitButton.isEmptyContent`**
-
-Edit `frontend/src/components/PrDetail/SubmitButton.tsx`:
-
-```ts
-function isEmptyContent(s: ReviewSessionDto): boolean {
-  const noDrafts = s.draftComments.length === 0;
-  const noReplies = s.draftReplies.length === 0;
-  return noDrafts && noReplies;
-}
+```bash
+grep -rn "draftSummaryMarkdown" frontend/
 ```
 
-- [ ] **Step 3: `DiscardAllDraftsButton`**
+- `SubmitButton.isEmptyContent`: drop the `noSummary` clause. `isEmptyContent = noDrafts && noReplies`. (PR-root drafts count as DraftComments today, so `noDrafts` already covers them.)
+- `DiscardAllDraftsButton.hasSummary`: replace with `(session.draftComments.find((d) => d.filePath === null && d.lineNumber === null)?.bodyMarkdown ?? '').trim().length > 0`.
+- `PrHeader` default fixture: drop the field.
+- Every test fixture that includes `draftSummaryMarkdown` in baseProps / mock-session: remove.
 
-Edit `frontend/src/components/PrDetail/DiscardAllDraftsButton.tsx` — replace `hasSummary` derivation:
+- [ ] **Step 2: Verify build green + tests pass**
 
-```ts
-const hasSummary = (session.draftComments.find((d) => d.filePath === null && d.lineNumber === null)?.bodyMarkdown ?? '').trim().length > 0;
+```bash
+cd frontend && npm run build && npm run lint && npm test
 ```
 
-- [ ] **Step 4: Test fixtures**
-
-Sweep `__tests__/*.tsx` for `draftSummaryMarkdown: ...` in baseProps; remove every occurrence.
-
-- [ ] **Step 5: Verify**
-
-Run: `cd frontend && npm run build && npm run lint && npm test`
-Expected: green.
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add frontend
-git commit -m "refactor(frontend): migrate draftSummaryMarkdown consumers to PR-root draft"
+git commit -m "refactor(frontend): migrate every draftSummaryMarkdown consumer to PR-root draft"
 ```
 
 ---
 
-## Phase L — Playwright + parity baselines
+## Phase L — Playwright + parity
 
 ### Task 26: Recapture `pr-detail-overview` parity baseline
 
-**Files:**
-- Modify: `frontend/e2e/parity-baselines.spec.ts` (the existing `pr-detail-overview` test)
-- Update: `frontend/e2e/parity-baselines/pr-detail-overview.png`
-
-- [ ] **Step 1: Run the existing parity test to surface the drift**
-
 ```bash
 cd frontend && npm run dev &
-sleep 5
+# wait
 npx playwright test parity-baselines.spec.ts --update-snapshots
-```
-
-Verify the new baseline includes the Post button on the PR-root composer + the `pending-review` pill on the header (when state is appropriate).
-
-- [ ] **Step 2: Commit**
-
-```bash
 git add frontend/e2e/parity-baselines/pr-detail-overview.png
 git commit -m "test(parity): recapture pr-detail-overview baseline (Post button + pill)"
 ```
 
----
+### Task 27: `submit-discard.spec.ts` Playwright scenarios
 
-### Task 27: New `submit-discard.spec.ts` Playwright scenarios
+(See spec § 7 + § 10 acceptance criteria 4-9, 11-12. Reuses `/test/submit/inject-failure` + `/test/submit/set-begin-delay`.)
 
-**Files:**
-- Create: `frontend/e2e/submit-discard.spec.ts`
+### Task 28: `submit-dialog.spec.ts` Playwright coverage
 
-- [ ] **Step 1: Write the spec**
-
-```ts
-import { test, expect } from '@playwright/test';
-import { setupAndOpenStaleDraftFixture } from './helpers/setup';
-
-test.describe('PR-root Post + submit discard', () => {
-  test('Post happy path', async ({ page }) => {
-    await setupAndOpenStaleDraftFixture(page, /* with a fresh PR-root draft */);
-    await page.locator('[data-testid="pr-root-reply-button"]').click();
-    await page.locator('textarea[aria-label="PR-level body"]').fill('Hello from PRism');
-    await page.locator('.composer-post').click();
-    await expect(page.locator('[data-testid="composer-badge"]').filter({ hasText: /Posted/i })).toBeVisible({ timeout: 5000 });
-    // Comment appears in PrRootConversation:
-    await expect(page.locator('[data-testid="pr-root-comment"]').filter({ hasText: 'Hello from PRism' })).toBeVisible();
-  });
-
-  test('Post failure surface', async ({ page, request }) => {
-    await request.post('http://localhost:5180/test/root-comment/force-failure', {
-      data: { phase: 'github-create' },
-    });
-    // ... compose, Post, expect error row
-  });
-
-  test('Already-shipped retry (post-stamp force failure)', async ({ page, request }) => {
-    await request.post('http://localhost:5180/test/root-comment/force-failure', {
-      data: { phase: 'post-stamp' },
-    });
-    // ... compose, Post, observe success + stamped state; re-open composer; observe banner
-  });
-
-  test('Discard idle pending review', async ({ page }) => {
-    // Seed state with a pending review id; navigate; expect pill; click; confirm; assert pill disappears
-  });
-
-  test('Discard in-flight pipeline', async ({ page, request }) => {
-    await request.post('http://localhost:5180/test/submit/begin-delay', { data: { delayMs: 2000 } });
-    // click Submit, then immediately Discard from dialog footer; expect "Cancelling…"; assert clean state
-  });
-});
-```
-
-- [ ] **Step 2: Run + commit**
-
-```bash
-cd frontend && npx playwright test submit-discard.spec.ts
-git add frontend/e2e/submit-discard.spec.ts
-git commit -m "test(e2e): submit-discard Playwright scenarios"
-```
-
----
-
-### Task 28: New `submit-dialog.spec.ts` Playwright coverage
-
-**Files:**
-- Create (or extend existing): `frontend/e2e/submit-dialog.spec.ts`
-
-- [ ] **Step 1: Write the spec**
-
-```ts
-test('SubmitDialog no longer renders the legacy summary textarea', async ({ page }) => {
-  // ... open dialog
-  await expect(page.locator('textarea[aria-label="Review summary"]')).toHaveCount(0);
-});
-
-test('PR-root body preview renders when a draft exists', async ({ page }) => {
-  // seed a PR-root draft; open dialog; observe preview
-});
-
-test('Edit toggle happy path: dialog → Edit → type → Done → preview re-renders', async ({ page }) => {
-  // ...
-});
-
-test('Edit disabled when reply composer is open in the same tab', async ({ page }) => {
-  // open Reply composer; open dialog; assert Edit is disabled + tooltip
-});
-
-test('Edit disabled under cross-tab readOnly', async ({ page }) => {
-  // simulate readOnly via TabStamps fixture; assert tooltip
-});
-```
-
-- [ ] **Step 2: Run + commit**
-
-```bash
-cd frontend && npx playwright test submit-dialog.spec.ts
-git add frontend/e2e/submit-dialog.spec.ts
-git commit -m "test(e2e): submit-dialog inline-edit + cross-surface lock"
-```
+(Preview vs Edit toggle; cross-surface + cross-tab lock; close-while-editing flush; summary textarea negative.)
 
 ---
 
 ## Final pre-merge gate
 
-- [ ] **Step 1: Run the full pre-push checklist per `.ai/docs/development-process.md`**
+- [ ] **Full pre-push checklist per `.ai/docs/development-process.md`**
 
 ```bash
 dotnet build -c Release
@@ -2739,16 +2145,27 @@ dotnet test
 cd frontend && npm install && npm run lint && npm run build && npm test && npx playwright test
 ```
 
-All steps must be green before opening the PR.
+- [ ] **Deferrals sidecar**
 
-- [ ] **Step 2: Confirm the deferrals sidecar**
+If any deferrals surfaced during implementation (notably § 9 Q1 — foreign-pending-review body resume loss), populate `docs/specs/2026-06-01-pr-root-post-and-submit-discard-deferrals.md` BEFORE opening the PR. New deferrals go under `### [Defer] <title>`.
 
-If implementation surfaced any deferrals (foreign-pending-review body resume loss is the prime candidate per § 9 Q1 of the spec), populate `docs/specs/2026-06-01-pr-root-post-and-submit-discard-deferrals.md` BEFORE opening the PR. Sidecar template lives next to the spec; new deferrals go under `### [Defer] <title>`.
+- [ ] **Open the PR via `pr-autopilot`**
 
-- [ ] **Step 3: Open the PR via `pr-autopilot`**
-
-Don't `gh pr create` manually unless `pr-autopilot` is unavailable.
+Don't `gh pr create` manually unless pr-autopilot is unavailable.
 
 ---
 
+## Self-review checklist (run on this plan, not on the code)
 
+- [ ] Spec coverage: every § 4 subsection mapped to at least one task.
+- [ ] No placeholders left ("TBD", "TODO", "implement later").
+- [ ] Every code snippet was verified against the actual file before being written (or has an explicit "read this first" step).
+- [ ] No fictional types/methods (verified absences: `ComposerBadge`, `submitInFlight` boolean, `prRefPath` helper, `LoadFixture`/`Fixtures/` test infrastructure, `/test/submit/begin-delay` route, `SetBeginDelayMs` method).
+- [ ] All 5 IReviewSubmitter implementers listed in Task 8.
+- [ ] Wire shapes match: PUT /draft is `ReviewSessionPatch` typed record (not `{kind, payload}`); apiClient.post returns `T` (not `{ok}`); IReviewEventBus.Publish is sync.
+- [ ] CTS lifetime owned at the endpoint with cross-task transfer pattern (NOT `using var` in synchronous scope).
+- [ ] IsSubscribed → 401 unauthorized convention.
+- [ ] Test infrastructure reused: `/test/submit/inject-failure`, `/test/submit/set-begin-delay`. No new fakes invented.
+- [ ] Migration uses kebab-case JSON keys (KebabCaseJsonNamingPolicy).
+- [ ] V7 atomicity: AppStateStore.CurrentVersion + MigrationSteps registration + AppState.Default ALL bumped in one commit.
+- [ ] Plan acknowledges build is red between T3-T7 (.NET pipeline tests with PR-root drafts) and T15-T25 (TypeScript consumers).
