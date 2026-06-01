@@ -354,6 +354,15 @@ export function FilesTab() {
             onRangeChange={handleRangeChange}
           />
         ) : null}
+        <button
+          type="button"
+          className={`toggle-btn ${styles.diffModeToggle}`}
+          aria-pressed={effectiveDiffMode === 'side-by-side'}
+          disabled={viewportWidth < 900}
+          onClick={handleToggleDiffMode}
+        >
+          {effectiveDiffMode === 'side-by-side' ? 'Side-by-side' : 'Unified'}
+        </button>
       </div>
 
       {diff.error && (

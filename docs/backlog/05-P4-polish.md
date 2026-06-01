@@ -94,7 +94,8 @@ Priority sub-ranks here are less prescriptive than in higher tiers. Treat this a
 - **Description.** Click a diagram → modal with pan/zoom. Useful for large flowcharts.
 
 ### P4-B8: Per-file expand-context-to-full-file
-- **Effort**: S
+- **Effort**: S (slice 2 of 2; slice 1 was the renderer prerequisite)
+- **Status**: Slice 1 shipped 2026-06-01 — true two-pane side-by-side rendering (`docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md`). Slice 2 — whole-file context expansion on top of the two-pane renderer — awaits its own brainstorm.
 - **Description.** Show full file content with the diff highlighted, on demand. PoC explicitly excluded; revisit if reviewers complain.
 
 ### P4-B9: Search within an open PR

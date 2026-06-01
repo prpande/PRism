@@ -176,15 +176,109 @@ test.describe('parity baselines — PR Detail', () => {
 
   test('pr-detail-files-diff', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
+    // Block Google Fonts requests before any navigation so both isolated runs
+    // (cold cache) and full-suite runs (Geist cached from prior pages) render
+    // with the system fallback font. Page-level route intercepts fire before
+    // cache lookup, so aborting here is effective even when Geist IS in the
+    // Chromium session cache from earlier tests. Without this, full-suite
+    // Geist (larger metrics) vs isolated fallback (smaller metrics) produce
+    // a height difference that exceeds the 2% pixel-ratio tolerance.
+    await page.route('**/fonts.googleapis.com/**', (route) => route.abort());
+    await page.route('**/fonts.gstatic.com/**', (route) => route.abort());
     await setupAndOpenHandoffParityFixture(page);
+    // Explicitly reset aiPreview to false via an authenticated in-page request.
+    // The beforeEach resetBackendState() uses a fresh unauthenticated context
+    // which may 401 on /api/preferences (Origin-check middleware requires auth
+    // for mutating verbs). The inbox-activity-rail test enables aiPreview=true,
+    // and if the unauthenticated reset silently no-ops, the AI hunk annotation
+    // box renders in full-suite runs but not isolated runs (where AI was never
+    // enabled), producing a ~77px height discrepancy in the diff container.
+    // Posting from the page's own context (which has the session cookie from
+    // setupAndOpenHandoffParityFixture) ensures the reset succeeds.
+    const prefResp = await page.request.post('/api/preferences', {
+      data: { aiPreview: false },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    if (!prefResp.ok()) {
+      throw new Error(
+        `POST /api/preferences (aiPreview=false) failed: ${prefResp.status()} ${await prefResp.text()}`,
+      );
+    }
     await page.goto('/pr/acme/api/123/files');
     // Select the canonical scenario file so the diff pane has content. The
     // scenario fixture defines src/Calc.cs at three iterations (Calc1/2/3).
     await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
     const diff = page.locator('[data-testid="files-tab-diff"]');
     await diff.waitFor();
+    // Wait for ALL 8 pure-insert rows to render before screenshotting.
+    // The fixture's src/Calc.cs diff is pure-insert (8 lines), so the 8th
+    // .diff-line--insert element is the signal that the diff data is fully
+    // present. tr.first().waitFor() was insufficient: the first <tr>
+    // (hunk-header) exists before all insert rows are laid out.
+    await diff.locator('tr.diff-line--insert').nth(7).waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
+  });
+
+  test('split mode uses 4-column <tr> layout; unified collapses to 3-column layout', async ({
+    page,
+  }) => {
+    await page.setViewportSize(VIEWPORT);
+    await setupAndOpenHandoffParityFixture(page);
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+    const diff = page.locator('[data-testid="files-tab-diff"]');
+    await diff.waitFor();
+    // Wait for at least one diff-line row to render — the diff data fetch
+    // completes asynchronously, so the container may exist before the rows do.
+    await diff.locator('tr').first().waitFor();
+
+    // Default mode is 'side-by-side'. The fixture diff for src/Calc.cs is a
+    // pure-insert file (all lines added against an empty base), so
+    // WordDiffOverlay is not emitted (it only fires for adjacent delete+insert
+    // pairs). Instead verify the structural signature of split mode: each
+    // data row has 4 <td> cells (old-gutter | old-content | new-gutter |
+    // new-content) via the SplitDiffLineRow solo-insert layout.
+    const splitDataRows = await diff
+      .locator('tr')
+      .filter({ hasNot: page.locator('td[colspan]') }) // exclude hunk-header (colSpan=4) + comment rows
+      .all();
+    expect(splitDataRows.length).toBeGreaterThan(0);
+    for (const row of splitDataRows) {
+      const cellCount = await row.locator('td').count();
+      expect(cellCount).toBe(4); // split: old-gutter | old-content | new-gutter | new-content
+    }
+
+    // Toggle to unified via the toolbar button.
+    await page.getByRole('button', { name: /side-by-side|unified/i }).click();
+    await page.waitForFunction(
+      () => !!document.querySelector('[data-testid="diff-pane"].diff-pane--unified'),
+    );
+
+    // In unified mode, data rows have 3 <td> cells
+    // (old-gutter | new-gutter | content) — the two-column side-by-side
+    // layout collapses to a single content column.
+    const unifiedDataRows = await diff
+      .locator('tr')
+      .filter({ hasNot: page.locator('td[colspan]') }) // exclude hunk-header + comment rows
+      .all();
+    expect(unifiedDataRows.length).toBeGreaterThan(0);
+    for (const row of unifiedDataRows) {
+      const cellCount = await row.locator('td').count();
+      expect(cellCount).toBe(3); // unified: old-gutter | new-gutter | content
+    }
+  });
+
+  test('viewport <900px forces unified className regardless of stored diffMode', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await setupAndOpenHandoffParityFixture(page);
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+    const diffPane = page.locator('[data-testid="diff-pane"]');
+    await diffPane.waitFor();
+    await expect(diffPane).toHaveClass(/diff-pane--unified/);
   });
 
   test('pr-detail-drafts', async ({ page }) => {
