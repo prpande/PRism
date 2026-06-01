@@ -312,6 +312,22 @@ test.describe('parity baselines — PR Detail', () => {
   test('pr-detail-reconciliation-panel', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixtureWithStaleDraft(page);
+    // Same aiPreview=false reset that pr-detail-files-diff and
+    // pr-detail-files-tree apply. The StaleDraftRow renders a
+    // draftSuggestionsEnabled-gated AI-suggestion span (~26 px tall) when
+    // aiPreview is true, so a leak from an earlier test (e.g.
+    // inbox-activity-rail enabling aiPreview) would silently shift the
+    // baseline by that span's height. Authenticated POST via the page
+    // session ensures the reset succeeds.
+    const prefResp = await page.request.post('/api/preferences', {
+      data: { aiPreview: false },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    if (!prefResp.ok()) {
+      throw new Error(
+        `POST /api/preferences (aiPreview=false) failed: ${prefResp.status()} ${await prefResp.text()}`,
+      );
+    }
     const panel = page.locator('[data-testid="unresolved-panel"]');
     await panel.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });

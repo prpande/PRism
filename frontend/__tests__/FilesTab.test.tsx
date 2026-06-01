@@ -166,14 +166,26 @@ describe('FilesTab', () => {
     expect(text.includes('src/main.ts') || text.includes('README.md')).toBe(true);
   });
 
-  it('selecting a file shows its path in diff pane', async () => {
+  it('clicking a non-selected file shifts the diff pane to that file', async () => {
+    // sampleDiff order yields tree-order [src/main.ts, README.md] so
+    // src/main.ts is the auto-selected file. Clicking README.md exercises
+    // the click-handler → selectedPath update → DiffPane re-render path
+    // distinct from the auto-select. Preflight noted the old version was a
+    // tautology once auto-select pre-selected main.ts before the click.
     globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
-      expect(screen.getByText('main.ts')).toBeInTheDocument();
+      expect(screen.getByText('README.md')).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByText('main.ts'));
-    expect(screen.getByText('src/main.ts')).toBeInTheDocument();
+    const diffPane = await screen.findByTestId('diff-pane');
+    // Pre-click: auto-selected src/main.ts is showing.
+    await waitFor(() => {
+      expect(diffPane.textContent ?? '').toContain('src/main.ts');
+    });
+    fireEvent.click(screen.getByText('README.md'));
+    await waitFor(() => {
+      expect(diffPane.textContent ?? '').toContain('README.md');
+    });
   });
 
   it('shows skeleton on slow diff load', async () => {
