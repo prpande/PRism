@@ -223,7 +223,11 @@ describe('FilesTab', () => {
     expect(toggleButton.getAttribute('aria-pressed')).toBe('false');
     expect(toggleButton.textContent).toMatch(/unified/i);
     // Restore for subsequent tests.
-    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 1200 });
+    Object.defineProperty(window, 'innerWidth', {
+      writable: true,
+      configurable: true,
+      value: 1200,
+    });
     window.dispatchEvent(new Event('resize'));
   });
 });

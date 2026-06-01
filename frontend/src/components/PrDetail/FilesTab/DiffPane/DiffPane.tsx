@@ -279,12 +279,7 @@ export function DiffPane({
       if (line.type === 'hunk-header') {
         hunkCounter += 1;
         rows.push(
-          <SplitDiffLineRow
-            key={idx}
-            kind="header"
-            content={line.content}
-            filePath={path}
-          />,
+          <SplitDiffLineRow key={idx} kind="header" content={line.content} filePath={path} />,
         );
         const annotations = annotationsForFile?.get(hunkCounter);
         if (annotations) {
@@ -529,6 +524,8 @@ function SplitDiffLineRow({
   if (kind === 'header') {
     return (
       <tr className="diff-line diff-line--hunk-header">
+        {/* SplitDiffLineRow is only emitted from renderSplitRows (split mode = 4 columns always);
+            full-width rows in mode-shared code paths use the mode-aware `colSpan` constant instead. */}
         <td colSpan={4}>
           <span className={`diff-hunk-header ${styles.diffHunkHeader}`}>{content}</span>
         </td>
@@ -578,10 +575,7 @@ function SplitDiffLineRow({
 
   if (kind === 'solo-delete') {
     return (
-      <tr
-        className="diff-line diff-line--delete"
-        aria-label={`Removed line ${oldLineNum ?? '?'}`}
-      >
+      <tr className="diff-line diff-line--delete" aria-label={`Removed line ${oldLineNum ?? '?'}`}>
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
@@ -613,10 +607,7 @@ function SplitDiffLineRow({
       });
     };
     return (
-      <tr
-        className="diff-line diff-line--insert"
-        aria-label={`Added line ${newLineNum ?? '?'}`}
-      >
+      <tr className="diff-line diff-line--insert" aria-label={`Added line ${newLineNum ?? '?'}`}>
         <td
           aria-hidden="true"
           className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld} ${styles.diffCellEmpty}`}

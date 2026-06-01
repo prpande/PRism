@@ -321,7 +321,9 @@ describe('DiffPane', () => {
     );
     const annotationCell = screen.getByTestId('ai-hunk-annotation').closest('td');
     expect(annotationCell).not.toBeNull();
-    expect(annotationCell?.getAttribute('colSpan') ?? annotationCell?.getAttribute('colspan')).toBe('4');
+    expect(annotationCell?.getAttribute('colSpan') ?? annotationCell?.getAttribute('colspan')).toBe(
+      '4',
+    );
   });
 
   it('renders solo-delete row with right cells aria-hidden and row aria-label', () => {
@@ -457,7 +459,9 @@ describe('DiffPane', () => {
       />,
     );
     const pairedRow = screen.getByTestId('diff-pane').querySelector('tr.diff-line--paired')!;
-    const affordance = pairedRow.querySelector('button.diff-comment-affordance') as HTMLButtonElement;
+    const affordance = pairedRow.querySelector(
+      'button.diff-comment-affordance',
+    ) as HTMLButtonElement;
     affordance.click();
     expect(onLineClick).toHaveBeenCalledTimes(1);
     const anchor = onLineClick.mock.calls[0][0];

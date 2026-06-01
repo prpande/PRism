@@ -168,6 +168,9 @@
   background: var(--diff-rem-bg);
 }
 
+/* No base tint exists in tokens.css for --paired today (only --insert and
+   --delete). Defensive override against future tokens.css additions; keeps
+   the row's paired data-side tints in sole control of the visual. */
 :global(.diff-pane--split .diff-line--paired) {
   background: transparent;
 }

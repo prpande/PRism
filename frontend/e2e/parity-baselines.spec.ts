@@ -220,7 +220,9 @@ test.describe('parity baselines — PR Detail', () => {
     await expect(diff).toHaveScreenshot('pr-detail-files-diff.png', SCREENSHOT_OPTS);
   });
 
-  test('split mode uses 4-column <tr> layout; unified collapses to 3-column layout', async ({ page }) => {
+  test('split mode uses 4-column <tr> layout; unified collapses to 3-column layout', async ({
+    page,
+  }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
     await page.goto('/pr/acme/api/123/files');
@@ -267,7 +269,9 @@ test.describe('parity baselines — PR Detail', () => {
     }
   });
 
-  test('viewport <900px forces unified className regardless of stored diffMode', async ({ page }) => {
+  test('viewport <900px forces unified className regardless of stored diffMode', async ({
+    page,
+  }) => {
     await page.setViewportSize({ width: 800, height: 900 });
     await setupAndOpenHandoffParityFixture(page);
     await page.goto('/pr/acme/api/123/files');
