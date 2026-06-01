@@ -1,0 +1,198 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FileChange, PrReference } from '../api/types';
+
+export interface UseWholeFileContentInput {
+  prRef: PrReference;
+  path: string | null;
+  file: FileChange | null;
+  headSha: string;
+  baseSha: string;
+  enabled: boolean;
+  isSplit: boolean;
+}
+
+export interface UseWholeFileContentResult {
+  fetchStatus: 'idle' | 'loading' | 'ok' | 'failed';
+  headContent: string | null;
+  baseContent: string | null;
+  failureReason: string | null;
+}
+
+// Cache stores ONLY 'ok' results — failed results never go through the cache
+// (transient failures must remain retryable; see the `if (value.kind === 'ok')`
+// guard at the cache write site). The `failureReason` field is no longer used.
+interface CacheValue {
+  headContent: string;
+  baseContent?: string;
+}
+
+function mapProblemType(type: string | undefined): string {
+  switch (type) {
+    case '/file/too-large':
+      return 'file is too large to expand';
+    case '/file/binary':
+      return 'file is binary';
+    case '/file/missing':
+      return 'file not present at this revision';
+    case '/file/not-in-diff':
+    case '/file/truncation-window':
+      return 'file not available in current diff snapshot';
+    case '/file/snapshot-evicted':
+      return 'diff snapshot has been evicted — reload the PR';
+    default:
+      return 'could not load file';
+  }
+}
+
+async function fetchOne(
+  prRef: PrReference,
+  path: string,
+  sha: string,
+  signal: AbortSignal,
+): Promise<{ kind: 'ok'; content: string } | { kind: 'failed'; reason: string }> {
+  const url = `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/file?path=${encodeURIComponent(path)}&sha=${sha}`;
+  let resp: Response;
+  try {
+    resp = await fetch(url, { credentials: 'include', signal });
+  } catch {
+    return { kind: 'failed', reason: 'could not load file' };
+  }
+  if (resp.ok) {
+    return { kind: 'ok', content: await resp.text() };
+  }
+  // Mirror apiClient's 401 handling so the global auth-rejected recovery
+  // flow still fires when the hook bypasses apiClient (text/plain body
+  // can't go through apiClient.get; see § 6.7 of the spec). Copilot iter-1.
+  if (resp.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+  }
+  let problemType: string | undefined;
+  try {
+    const body = (await resp.json()) as { type?: string };
+    problemType = body.type;
+  } catch {
+    /* malformed problem details — fall through to default reason */
+  }
+  return { kind: 'failed', reason: mapProblemType(problemType) };
+}
+
+export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFileContentResult {
+  const { prRef, path, file, headSha, baseSha, enabled, isSplit } = input;
+  // TODO: bounded cache — PoC scope leaves this unbounded. Single-PR review
+  // sessions touch <100 keys; if cross-session caching arrives, add LRU.
+  const cacheRef = useRef<Map<string, CacheValue>>(new Map());
+  const [state, setState] = useState<UseWholeFileContentResult>({
+    fetchStatus: 'idle',
+    headContent: null,
+    baseContent: null,
+    failureReason: null,
+  });
+
+  // Deps use primitives derived from `file`, not the object reference itself.
+  // FilesTab's `selectedFile = files.find(...)` returns a new object every
+  // render; depending on the object ref would re-compute `inactive` and re-fire
+  // the effect on unrelated parent re-renders, causing spurious loading flashes.
+  const inactive = useMemo(
+    () =>
+      !enabled ||
+      path === null ||
+      file === null ||
+      file.status !== 'modified' ||
+      file.hunks.length === 0,
+    [enabled, path, file === null, file?.status, file?.hunks.length],
+  );
+
+  useEffect(() => {
+    if (inactive || path === null) {
+      setState({ fetchStatus: 'idle', headContent: null, baseContent: null, failureReason: null });
+      return;
+    }
+    const key = `${path}::${headSha}::${baseSha}::${isSplit}`;
+    const cached = cacheRef.current.get(key);
+    if (cached) {
+      // Cache only stores 'ok' results, so a hit always restores success.
+      setState({
+        fetchStatus: 'ok',
+        headContent: cached.headContent,
+        baseContent: cached.baseContent ?? null,
+        failureReason: null,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setState({ fetchStatus: 'loading', headContent: null, baseContent: null, failureReason: null });
+
+    void (async () => {
+      const headPromise = fetchOne(prRef, path, headSha, controller.signal);
+      const basePromise = isSplit
+        ? fetchOne(prRef, path, baseSha, controller.signal)
+        : Promise.resolve({ kind: 'ok', content: '' } as const);
+      const [headResult, baseResult] = await Promise.all([headPromise, basePromise]);
+
+      type Outcome =
+        | { kind: 'ok'; headContent: string; baseContent?: string }
+        | { kind: 'failed'; failureReason: string };
+      let outcome: Outcome;
+      if (headResult.kind === 'failed' && (!isSplit || baseResult.kind === 'ok')) {
+        outcome = {
+          kind: 'failed',
+          failureReason: isSplit ? `new-side ${headResult.reason}` : headResult.reason,
+        };
+      } else if (isSplit && baseResult.kind === 'failed' && headResult.kind === 'ok') {
+        outcome = { kind: 'failed', failureReason: `old-side ${baseResult.reason}` };
+      } else if (isSplit && baseResult.kind === 'failed' && headResult.kind === 'failed') {
+        outcome = { kind: 'failed', failureReason: `new-side ${headResult.reason}` };
+      } else if (headResult.kind === 'ok') {
+        outcome = {
+          kind: 'ok',
+          headContent: headResult.content,
+          baseContent: isSplit && baseResult.kind === 'ok' ? baseResult.content : undefined,
+        };
+      } else {
+        outcome = { kind: 'failed', failureReason: 'could not load file' };
+      }
+
+      // Skip cache write AND setState if the effect was cancelled — an aborted
+      // fetch (signal.aborted) would otherwise poison the cache with a stale
+      // 'could not load file' entry, served on next request for the same key.
+      if (cancelled || controller.signal.aborted) return;
+      // Only cache successful results — transient failures (network blip, 401,
+      // snapshot-evicted) must be retryable. Permanent failures (413/415) will
+      // re-fetch and re-fail on each toggle attempt; the fetch is cheap so the
+      // trade-off vs. cache-poisoning a recovery path is worth it.
+      // claude[bot] post-open Finding 1.
+      if (outcome.kind === 'ok') {
+        cacheRef.current.set(key, {
+          headContent: outcome.headContent,
+          baseContent: outcome.baseContent,
+        });
+        setState({
+          fetchStatus: 'ok',
+          headContent: outcome.headContent,
+          baseContent: outcome.baseContent ?? null,
+          failureReason: null,
+        });
+      } else {
+        setState({
+          fetchStatus: 'failed',
+          headContent: null,
+          baseContent: null,
+          failureReason: outcome.failureReason,
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+    // Spread prRef into primitive deps to match neighbor hooks
+    // (useAiHunkAnnotations / useFileDiff). A referentially-new prRef with
+    // identical fields would otherwise re-fire the effect and cause a
+    // transient 'loading' flash.
+  }, [inactive, path, headSha, baseSha, isSplit, prRef.owner, prRef.repo, prRef.number]);
+
+  return state;
+}

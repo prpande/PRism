@@ -92,6 +92,16 @@ internal sealed class FakeReviewBackingStore
             PrState = "OPEN";
 
             FileContent.Clear();
+            // BaseSha: src/Calc.cs is TREATED AS empty content at BaseSha for the
+            // purposes of split-mode whole-file expansion's parallel head+base fetch.
+            // The file did not exist at the PR's base in canonical PRism semantics
+            // (the FileChange.status is 'added' on the iteration-1 diff, so there's
+            // no real base content); we seed an empty entry rather than omitting the
+            // key so that GetFileContentAsync returns Ok(empty) instead of NotFound,
+            // letting the parity Playwright capture run without surfacing the
+            // failure banner. If a future test needs to model a true base-side
+            // missing file, omit the key (Copilot iter-1).
+            FileContent[("src/Calc.cs", BaseSha)] = string.Empty;
             FileContent[("src/Calc.cs", Sha1)] = Calc1;
             FileContent[("src/Calc.cs", Sha2)] = Calc2;
             FileContent[("src/Calc.cs", Sha3)] = Calc3;

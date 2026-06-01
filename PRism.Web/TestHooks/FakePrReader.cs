@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 
 using PRism.Core;
@@ -114,8 +115,25 @@ internal sealed class FakePrReader : IPrReader
         }
     }
 
+    private readonly ConcurrentDictionary<(string Path, string Sha), string> _forceFileFailures = new();
+
+    public void RegisterFileForceFailure(string path, string sha, string problemType)
+    {
+        _forceFileFailures[(path, sha)] = problemType;
+    }
+
     public Task<FileContentResult> GetFileContentAsync(PrReference reference, string path, string sha, CancellationToken ct)
     {
+        if (_forceFileFailures.TryRemove((path, sha), out var problemType))
+        {
+            return Task.FromResult(problemType switch
+            {
+                "/file/too-large" => new FileContentResult(FileContentStatus.TooLarge, null, 0),
+                "/file/binary"    => new FileContentResult(FileContentStatus.Binary, null, 0),
+                "/file/missing"   => new FileContentResult(FileContentStatus.NotFound, null, 0),
+                _                 => new FileContentResult(FileContentStatus.NotInDiff, null, 0),
+            });
+        }
         if (reference != FakeReviewBackingStore.Scenario)
             return Task.FromResult(new FileContentResult(FileContentStatus.NotFound, null, 0));
         lock (_store.Gate)

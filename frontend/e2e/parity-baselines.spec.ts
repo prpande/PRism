@@ -404,6 +404,109 @@ test.describe('parity baselines — app chrome', () => {
   });
 });
 
+test.describe('parity baselines — PR Detail — whole-file', () => {
+  test('pr-detail-files-diff-whole-file: toggle whole-file then capture parity baseline', async ({
+    page,
+  }) => {
+    await page.setViewportSize(VIEWPORT);
+    await setupAndOpenHandoffParityFixture(page);
+    await resetAiPreview(page);
+    // Hard-reload to /files so React state (including AskAiDrawer isOpen) is
+    // reset to initial values. SPA navigation keeps prior isOpen=true state
+    // if the drawer was opened during fixture setup; a full page load clears it.
+    await page.goto('http://localhost:5180/pr/acme/api/123/files');
+
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+    const diff = page.locator('[data-testid="files-tab-diff"]');
+    await diff.waitFor();
+    // Wait for all 8 insert rows to render — mirrors the pr-detail-files-diff baseline
+    // test. The PrDetailLoader snapshot-cache is guaranteed populated once the diff rows
+    // are present, so the subsequent whole-file fetch doesn't 422 with snapshot-evicted.
+    await diff.locator('tr.diff-line--insert').nth(7).waitFor();
+
+    const toggle = page.locator('[data-testid="whole-file-toggle"]');
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveText('Show full file');
+    expect(await page.locator('tr[data-fill="true"]').count()).toBe(0);
+
+    await toggle.click();
+    // Wait for the toggle to flip to "Hunks only" (wholeFileEnabled=true) and for
+    // hunk-header rows to disappear (fetchStatus='ok'). The fixture's hunk spans
+    // all content lines; the file's trailing newline produces ONE empty filled-
+    // context row at headLines.length (the split of a terminal-newline string
+    // emits an extra empty element). Waiting for the hunk-header to leave is the
+    // correct liveness signal; the filled-row count assertion below pins the
+    // expected behavior.
+    await expect(toggle).toHaveText('Hunks only');
+    await expect(page.locator('.diff-line--hunk-header')).toHaveCount(0);
+    await expect(page.locator('tr[data-fill="true"]')).toHaveCount(1);
+
+    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
+    await expect(page.locator('[data-testid="diff-pane"]')).toHaveScreenshot(
+      'pr-detail-files-diff-whole-file.png',
+      SCREENSHOT_OPTS,
+    );
+
+    // Toggle off + scroll-reset assertion
+    await page.locator('[data-testid="diff-pane"]').evaluate((el) => {
+      (el.querySelector('.diff-pane-body') as HTMLElement).scrollTop = 500;
+    });
+    await toggle.click();
+    await expect(toggle).toHaveText('Show full file');
+    const scrollTop = await page.locator('[data-testid="diff-pane"]').evaluate((el) => {
+      return (el.querySelector('.diff-pane-body') as HTMLElement).scrollTop;
+    });
+    expect(scrollTop).toBe(0);
+  });
+
+  test('whole-file toggle disabled when iteration is not "all"', async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await setupAndOpenHandoffParityFixture(page);
+    await page.goto('/pr/acme/api/123/files');
+    // Wait for the files tab to fully load before switching iteration.
+    await page.locator('[data-testid="files-tab-tree"]').waitFor();
+
+    // The iteration-tab-strip exposes data-testid per iteration (added in Task 10).
+    await page.locator('[data-testid="iteration-tab-1"]').click();
+
+    const toggle = page.locator('[data-testid="whole-file-toggle"]');
+    await expect(toggle).toBeDisabled();
+    await expect(toggle).toHaveAttribute('title', /'all' iteration view/);
+  });
+
+  test('whole-file force-failure renders banner and reverts toggle', async ({ page }) => {
+    await page.setViewportSize(VIEWPORT);
+    await setupAndOpenHandoffParityFixture(page);
+
+    // Canonical scenario's headSha is a known stable value.
+    const headSha = '3333333333333333333333333333333333333333';
+
+    const forceResp = await page.request.post('http://localhost:5180/test/file/force-failure', {
+      data: { path: 'src/Calc.cs', sha: headSha, problemType: '/file/too-large' },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    expect(forceResp.ok()).toBe(true);
+
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+    // Wait for the diff to fully load before clicking the toggle. This ensures
+    // the PrDetailLoader snapshot-cache is populated so the /file endpoint
+    // does not 422 with snapshot-evicted.
+    await page.locator('[data-testid="files-tab-diff"] tr.diff-line--insert').first().waitFor();
+    const toggle = page.locator('[data-testid="whole-file-toggle"]');
+    await toggle.click();
+
+    const banner = page.locator('[data-testid="whole-file-failure-banner"]');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText(/file is too large/i);
+    await expect(toggle).toHaveText('Show full file');
+
+    await banner.locator('button[aria-label="Dismiss whole-file error banner"]').click();
+    await expect(banner).toHaveCount(0);
+    await expect(toggle).toHaveText('Show full file');
+  });
+});
+
 test.describe('parity baselines — Ask AI', () => {
   test('ask-ai-drawer', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);

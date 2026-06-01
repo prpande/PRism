@@ -68,8 +68,7 @@
   }
 }
 
-.diffModeToggle {
-  margin-left: auto;
+.toolbarToggleButton {
   flex-shrink: 0;
   background: var(--surface-2);
   border: 1px solid var(--border-1);
@@ -79,12 +78,22 @@
   color: var(--text-2);
   cursor: pointer;
 }
-.diffModeToggle[aria-pressed='true'] {
+.toolbarToggleButton[aria-pressed='true'] {
   background: var(--surface-3);
   color: var(--text-1);
   border-color: var(--border-strong);
 }
-.diffModeToggle:disabled {
+.toolbarToggleButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.diffModeToggle {
+  composes: toolbarToggleButton;
+  margin-left: auto;
+}
+
+.wholeFileToggle {
+  composes: toolbarToggleButton;
+  margin-left: var(--s-2);
 }

@@ -51,6 +51,8 @@ internal static class TestEndpoints
 
     internal sealed record ClearPrSessionRequest(string Owner, string Repo, int Number);
 
+    internal sealed record ForceFileFailureRequest(string Path, string Sha, string ProblemType);
+
     // ----- /test/submit/* (plan Task 61) -----
 
     internal sealed record InjectSubmitFailureRequest(string MethodName, string? Message, bool AfterEffect = false);
@@ -475,6 +477,21 @@ internal static class TestEndpoints
             await held.DisposeAsync().ConfigureAwait(false);
             return Results.NoContent();
         });
+
+        // Registers a one-shot force-failure for a single /file?path=&sha= call, keyed by
+        // (Path, Sha) tuple. The Playwright spec re-registers before each scenario that needs
+        // a specific failure. Split-mode tests can independently force head-only or base-only
+        // failures by registering the respective (path, headSha) and (path, baseSha) tuples.
+        app.MapPost("/test/file/force-failure",
+            (ForceFileFailureRequest body, IServiceProvider sp) =>
+            {
+                if (string.IsNullOrEmpty(body.Path) || string.IsNullOrEmpty(body.Sha) || string.IsNullOrEmpty(body.ProblemType))
+                    return Results.Problem(type: "/test/missing-params", statusCode: 422);
+                if (sp.GetService<IPrReader>() is not FakePrReader fake)
+                    return Results.Problem(type: "/test/reader-missing", statusCode: 500);
+                fake.RegisterFileForceFailure(body.Path, body.Sha, body.ProblemType);
+                return Results.NoContent();
+            });
 
         return app;
     }

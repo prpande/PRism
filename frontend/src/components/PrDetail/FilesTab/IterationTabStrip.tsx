@@ -127,6 +127,7 @@ export function IterationTabStrip({
         return (
           <button
             key={iter.number}
+            data-testid={`iteration-tab-${iter.number}`}
             className={
               `iteration-tab${isActive ? ' iteration-tab--active' : ''}` +
               `${disabled ? ' iteration-tab--disabled' : ''} ` +

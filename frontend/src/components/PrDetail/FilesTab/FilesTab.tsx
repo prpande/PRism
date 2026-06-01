@@ -59,6 +59,16 @@ export function FilesTab() {
   const [selectedCommits, setSelectedCommits] = useState<string[] | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [diffMode, setDiffMode] = useState<DiffMode>('side-by-side');
+  const [wholeFilePaths, setWholeFilePaths] = useState<Set<string>>(new Set());
+
+  const iterationGatePermits = activeRange === 'all' && selectedCommits === null;
+  // wholeFileEnabled is fully derived below, after `selectedFile` is computed,
+  // so it can include the file.status + file.hunks.length gates that the
+  // toolbar button's disabled-condition uses. This keeps the button's pressed
+  // state and the prop passed to DiffPane consistent — without those extra
+  // gates, a path persisted in wholeFilePaths across a status/hunks change
+  // would leave the button showing "Hunks only" / aria-pressed=true while the
+  // hook self-disables via its inactive gate (Copilot iter-3 findings F-B + F-C).
 
   const viewportWidth = useViewportWidth();
   const effectiveDiffMode: DiffMode = viewportWidth < 900 ? 'unified' : diffMode;
@@ -113,6 +123,14 @@ export function FilesTab() {
     () => (selectedPath ? (files.find((f) => f.path === selectedPath) ?? null) : null),
     [files, selectedPath],
   );
+
+  const wholeFileEnabled =
+    selectedPath !== null &&
+    wholeFilePaths.has(selectedPath) &&
+    iterationGatePermits &&
+    selectedFile !== null &&
+    selectedFile.status === 'modified' &&
+    selectedFile.hunks.length > 0;
 
   const fileThreads = useMemo(
     () => (selectedPath ? prDetail.reviewComments.filter((t) => t.filePath === selectedPath) : []),
@@ -169,6 +187,33 @@ export function FilesTab() {
     if (viewportWidth < 900) return;
     setDiffMode((prev) => (prev === 'side-by-side' ? 'unified' : 'side-by-side'));
   }, [viewportWidth]);
+
+  const handleToggleWholeFile = useCallback(() => {
+    if (!selectedPath) return;
+    setWholeFilePaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(selectedPath)) next.delete(selectedPath);
+      else next.add(selectedPath);
+      return next;
+    });
+  }, [selectedPath]);
+
+  const handleWholeFileFailed = useCallback(
+    // Reason is part of the callback contract but not used here — FilesTab
+    // only needs to know SOMETHING failed, not what. DiffPane's local latch
+    // holds the reason string and renders the banner from it.
+    (reason: string) => {
+      void reason; // reserved — see above
+      if (!selectedPath) return;
+      setWholeFilePaths((prev) => {
+        if (!prev.has(selectedPath)) return prev;
+        const next = new Set(prev);
+        next.delete(selectedPath);
+        return next;
+      });
+    },
+    [selectedPath],
+  );
 
   useFilesTabShortcuts({
     onNextFile: handleNextFile,
@@ -377,6 +422,31 @@ export function FilesTab() {
         >
           {effectiveDiffMode === 'side-by-side' ? 'Side-by-side' : 'Unified'}
         </button>
+        <button
+          type="button"
+          className={styles.wholeFileToggle}
+          aria-pressed={wholeFileEnabled}
+          disabled={
+            selectedPath === null ||
+            !selectedFile ||
+            selectedFile.status !== 'modified' ||
+            selectedFile.hunks.length === 0 ||
+            !iterationGatePermits
+          }
+          title={
+            !iterationGatePermits
+              ? "Whole-file view available only on the 'all' iteration view"
+              : selectedFile && selectedFile.status !== 'modified'
+                ? 'Whole-file view available for modified files only'
+                : selectedFile && selectedFile.hunks.length === 0
+                  ? 'Whole-file view not available — no diff hunks to expand'
+                  : ''
+          }
+          onClick={handleToggleWholeFile}
+          data-testid="whole-file-toggle"
+        >
+          {wholeFileEnabled ? 'Hunks only' : 'Show full file'}
+        </button>
       </div>
 
       {diff.error && (
@@ -423,6 +493,10 @@ export function FilesTab() {
             renderComposerForLine={renderComposerForLine}
             replyContext={replyContext}
             isLoading={diff.isLoading}
+            wholeFileEnabled={wholeFileEnabled}
+            onWholeFileFailed={handleWholeFileFailed}
+            headSha={prDetail.pr.headSha}
+            baseSha={prDetail.pr.baseSha}
           />
         </div>
       </div>
