@@ -25,6 +25,7 @@ This spec closes the open S5 deferral at `docs/specs/2026-05-11-s5-submit-pipeli
 - A new "Post" terminal action on `PrRootReplyComposer` that sends the PR-root draft as a standalone GitHub issue comment via the issue-comments REST API (independent of the review pipeline).
 - Unification of `ReviewSessionState.DraftSummaryMarkdown` with the PR-root `DraftComment` — one canonical "PR-level body" slot, lifted via state migration V6 → V7.
 - A new `PrRootBodyEditor` shared component (textarea + autosave + readOnly + closed-banner gates) consumed by both `PrRootReplyComposer` (wrapped with Discard/Post/Preview/AI affordances) and `SubmitDialog` (wrapped with the inline-edit toggle described in § 4.8). Single source of truth for the body-editing primitive.
+- An extension to `useDraftSession.registerOpenComposer` to track WHICH editor surface owns the draft (`'reply-composer' | 'submit-dialog'`), so the cross-surface lock in § 4.8 / § 4.11 can be enforced bidirectionally. The existing registry is a refcount-only `Map<string, number>`; the V7 work upgrades it to `Map<string, Set<OwnerKey>>` with a new `getPrRootHolder()` helper.
 - Submit-pipeline change so the PR-root draft body becomes `review.body` when the user clicks Submit. The `FilePath is null` throw is removed and PR-root drafts are filtered out of the AttachThreads loop.
 - A new `POST /api/pr/{owner}/{repo}/{number}/submit/discard` endpoint that signals any in-flight pipeline, awaits release, deletes the GitHub-side pending review, and runs `ClearPendingReviewStamps`. Idempotent.
 - A new `SubmitCancellationRegistry` DI singleton (parallel to `SubmitLockRegistry`) that lets the discard endpoint cancel an in-flight pipeline at the next CancellationToken-aware boundary.
@@ -56,9 +57,9 @@ The S5 deferral at `docs/specs/2026-05-11-s5-submit-pipeline-deferrals.md:383-38
 
 **Drop `ReviewSessionState.DraftSummaryMarkdown`.** The field is removed from `AppState.cs:55`. State version bumps V6 → V7.
 
-**The PR-root `DraftComment` becomes the canonical PR-level body.** No structural change to `DraftComment` (the existing anchor-null + `Side: "pr"` shape is already the PR-root form). At most one PR-root draft per PR — the composer reliably enforces this via `existingPrRootDraft` hydration in `PrRootConversation.tsx:73-80`, but the backend `newPrRootDraftComment` patch at `PrDraftEndpoints.cs:271-285` does **not** enforce uniqueness today; it always appends. The spec adds backend enforcement via a new branch in the patch handler: when a PR-root draft already exists in the session, `newPrRootDraftComment` becomes an upsert that updates the existing draft's `BodyMarkdown` rather than creating a duplicate row. This makes the invariant self-defending and matches what the composer expects.
+**The PR-root `DraftComment` becomes the canonical PR-level body.** No structural change to `DraftComment` (the existing anchor-null + `Side: "pr"` shape is already the PR-root form). At most one PR-root draft per PR — the composer reliably enforces this via `existingPrRootDraft` hydration in `OverviewTab/PrRootConversation.tsx:73-80`, but the backend `newPrRootDraftComment` patch at `PrDraftEndpoints.cs:271-285` does **not** enforce uniqueness today; it always appends. The spec adds backend enforcement via a new branch in the patch handler: when a PR-root draft already exists in the session, `newPrRootDraftComment` becomes an upsert that updates the existing draft's `BodyMarkdown` rather than creating a duplicate row. This makes the invariant self-defending and matches what the composer expects.
 
-**Add `PostedCommentId: long?`** as a new trailing-default field on `DraftComment`:
+**Add `PostedCommentId: long?` + `PostedBodySnapshot: string?`** as new trailing-default fields on `DraftComment`:
 
 ```csharp
 public sealed record DraftComment(
@@ -72,9 +73,12 @@ public sealed record DraftComment(
     DraftStatus Status,
     bool IsOverriddenStale,
     string? ThreadId = null,
-    long? PostedCommentId = null);  // V7 — REST databaseId of the issue comment, stamped by
-                                    // /root-comment/post on success. Matches IssueCommentDto.Id
-                                    // (also long) so a frontend correlation lookup is trivial.
+    long? PostedCommentId = null,       // V7 — REST databaseId of the issue comment, stamped by
+                                         // /root-comment/post on success. Matches IssueCommentDto.Id
+                                         // (also long) so a frontend correlation lookup is trivial.
+    string? PostedBodySnapshot = null);  // V7 — body bytes shipped to GitHub at post-time.
+                                          // Server-side only; NOT projected onto DraftCommentDto.
+                                          // Used at retry-time to detect edit-after-post (§ 4.3 step 3).
 ```
 
 The trailing-default placement matches the `ThreadId` precedent at `AppState.cs:73`. Pre-V7 entries deserialize to `PostedCommentId = null` without migration touching them.
@@ -124,12 +128,12 @@ Migrate is a pure `JsonObject → JsonObject` transform, matching the V3→V4 / 
 
 **Posted-body snapshot — closing the edit-after-post race.** The autosave-vs-Post race (an in-flight `updateDraftComment` PUT racing the POST) and the external-edit-after-stamp race (PostedCommentId stamped, server crash, body edited locally before retry) both have the same root cause: the draft body at retry time may differ from what was already shipped to GitHub. The fix is two-layered:
 
-- **Snapshot stamping** — at step 5, persist `PostedBodySnapshot: string?` alongside `PostedCommentId`. A new trailing-default field on `DraftComment`. Pre-V7 entries are null; post-Post it equals the body shipped to GitHub at that instant.
-- **Body-mismatch detection** — at step 3, if `PostedBodySnapshot != current bodyMarkdown`, return 409 `already-posted-body-mismatch` with the previous comment id. The frontend renders a recovery banner: "This comment was already posted on {createdAt}. Your edits since then have not been shipped. Open on GitHub to edit, or discard the draft."
+- **Snapshot stamping** — at step 5, persist `PostedBodySnapshot: string?` alongside `PostedCommentId`. A new trailing-default field on `DraftComment`, **persisted server-side only**. It is NOT projected onto `DraftCommentDto` over the wire — the frontend only needs to know "this draft was posted" (via `PostedCommentId`), not what the originally-shipped body was. Pre-V7 entries are null; post-Post it equals the body shipped to GitHub at that instant.
+- **Body-mismatch detection** — at step 3, compare `PostedBodySnapshot` to current `bodyMarkdown` using `StringComparison.Ordinal` (byte-exact). If they differ, return 409 `already-posted-body-mismatch` with the previous comment id. The frontend renders a recovery banner: "This comment was already posted on {createdAt}. Your edits since then have not been shipped. Open on GitHub to edit, or discard the draft." The byte-exact rule is deliberate: a trailing-newline or whitespace difference produces a false-positive 409 rather than a silent skip-with-stale-body, which is the safer failure mode (user sees a banner, can review what changed, decide). Markdown-renderer whitespace trimming is irrelevant — the snapshot stores the wire body, not the rendered body.
 
 **Composer-side flush** (closes the autosave-vs-Post timing race). Before issuing POST, `PrRootReplyComposer`'s Post handler `await`s `flush()` from `useComposerAutoSave` so any pending debounced `updateDraftComment` lands before the POST is sent. Mirrors the existing Ctrl+Enter flow at `PrRootReplyComposer.tsx:141-149`. The textarea is set to `readOnly=true` during `postInFlight` to prevent new keystrokes (and cancel any in-flight debounce via the existing autosave teardown).
 
-**Auth.** `cache.IsSubscribed(prRef)`. No HEAD-SHA gate (issue comments are not commit-anchored).
+**Auth.** `cache.IsSubscribed(prRef)` returns 401 with code `unauthorized` on miss (matches the existing convention at `PrSubmitEndpoints.cs:86-87` and `PrDraftsDiscardAllEndpoint.cs:46`). No HEAD-SHA gate (issue comments are not commit-anchored).
 
 **Body-cap reconciliation.** The middleware predicate at `Program.cs:188-198` caps mutating routes at 16 KiB. `PUT /draft` (which authored the body) is in that list. So the **binding** body-cap on PR-root drafts is 16 KiB at write time, not 65,536 at post time — a draft body bigger than 16 KiB never reaches the database. The 65,536 check in step 4 is therefore defensive (state files hand-edited to over-cap, future migrations). The plan adds `/api/pr/{owner}/{repo}/{number}/root-comment/post` and `/api/pr/{owner}/{repo}/{number}/submit/discard` to the middleware predicate as defense-in-depth even though both are no-body POSTs today; a future body-carrying variant would inherit the cap.
 
@@ -143,9 +147,9 @@ Migrate is a pure `JsonObject → JsonObject` transform, matching the V3→V4 / 
 
 1. Look up the per-PR `CancellationTokenSource` in `SubmitCancellationRegistry`. If present, call `Cancel()` on it. (Idempotent — a CTS already canceled is a no-op.)
 2. Try to acquire `SubmitLockRegistry.TryAcquireAsync(prRef, timeout: 30s, ct)`. If acquisition fails, return 504 `pipeline-cancellation-timeout`. **Stamps are not cleared on timeout** — retry is correct. The 30s bound exceeds typical GitHub round-trips; if the pipeline is hung beyond this on a flaky network, the user retries.
-3. **Re-fetch the GitHub-side pending review** (TOCTOU defense — mirrors `DiscardForeignPendingReviewAsync` at `PrSubmitEndpoints.cs:356-358`). Call `IReviewSubmitter.FindOwnPendingReviewAsync(prRef, ct)`. The local stamp and GitHub may now disagree because (a) cancellation may have aborted the persist-after-Begin overlay leaving GitHub-stamped but local-unstamped, or (b) a teammate may have deleted the pending review out-of-band. Two paths:
-   - **GitHub has a pending review** (own or otherwise — the call returns a snapshot): call `IReviewSubmitter.DeletePendingReviewAsync(prRef, snapshot.PullRequestReviewId, ct)`. On 404 (review already gone between the find and the delete), treat as success and proceed to step 4. On 5xx, release the lock, return 502 `github-delete-failed`; stamps remain stamped for retry.
-   - **GitHub has no pending review**: proceed directly to step 4 (the local stamp, if any, is orphaned; we still clear it).
+3. **Re-fetch the GitHub-side pending review** (TOCTOU defense — mirrors `DiscardForeignPendingReviewAsync` at `PrSubmitEndpoints.cs:356-358`). Call `IReviewSubmitter.FindOwnPendingReviewAsync(prRef, ct)`. The method by contract returns only the viewer's OWN pending review; foreign pending reviews never surface here. The local stamp and GitHub may now disagree because (a) cancellation may have aborted the persist-after-Begin overlay leaving GitHub-stamped but local-unstamped, or (b) a teammate may have deleted the pending review out-of-band. Map GitHub errors via the same bounded typed-code mapper as `/root-comment/post` (§ 4.3 step 5): `github-find-failed` for non-404/non-5xx, `github-network-error` for network failures; never echo `ex.Message` verbatim.
+   - **Own pending review found**: call `IReviewSubmitter.DeletePendingReviewAsync(prRef, snapshot.PullRequestReviewId, ct)`. On 404 (review already gone between the find and the delete), treat as success and proceed to step 4. On other failures, release the lock, return 502 with the mapped code (`github-delete-failed`, `github-server-error`, etc.); stamps remain stamped for retry.
+   - **No own pending review on GitHub**: proceed directly to step 4 (the local stamp, if any, is orphaned and we clear it). Any foreign pending review on the PR is left alone — the user takes the foreign-pending-review modal path on next Submit if they want it removed.
 4. Run `SessionOverlays.ClearPendingReviewStamps(state, sessionKey)` — a shared helper extracted from `SubmitPipeline.cs:603`. Nulls `PendingReviewId`, `PendingReviewCommitOid`, every `DraftComment.ThreadId`, every `DraftReply.ReplyCommentId`. **Does not touch `PostedCommentId` or `PostedBodySnapshot`.** Per-key partition logic from § 4.6 preserves the PR-root draft body.
 5. Release the lock.
 6. Publish `StateChangedBusEvent` with `FieldsTouched: ["pending-review", "draft-comments", "draft-replies"]`. Note: if step 3 took the "no pending review on GitHub" branch AND the local stamp was already null, this StateChanged is a no-op for the frontend but is still emitted (one source of truth for the discard-completed signal — frontend will re-fetch and observe stable state).
@@ -157,7 +161,22 @@ Migrate is a pure `JsonObject → JsonObject` transform, matching the V3→V4 / 
 
 **Concurrency.** Two simultaneous discard requests both signal CTS (cheap), both wait on the lock; whichever acquires runs the delete; the other observes the cleared state and returns 204 no-op. Safe.
 
-**OperationCanceledException handling.** When the discard endpoint signals the in-flight pipeline's CTS, the pipeline throws OCE at its next `_submitter.*` call. The pipeline's `SubmitAsync` is updated to catch OCE explicitly and return a new `SubmitOutcome.Cancelled` outcome (rather than letting OCE escape). The submit endpoint at `PrSubmitEndpoints.cs:198-225` adds a `case SubmitOutcome.Cancelled:` branch that publishes no SSE event (the discard endpoint owns the user-facing signal) and logs at Information level (not Error) — distinguishes "user asked us to stop" from "pipeline threw outside its outcome contract."
+**OperationCanceledException handling.** Two-layered:
+
+- **Pipeline layer.** `SubmitPipeline.SubmitAsync` wraps its body to catch `OperationCanceledException when (ct.IsCancellationRequested)` and return a new `SubmitOutcome.Cancelled(string Reason)` variant rather than letting OCE escape. This prevents OCE-mid-step from looking like a programming error in the endpoint's broad `catch (Exception ex)` (which logs `s_pipelineThrew` at Error level — misleading on every discard).
+
+- **Endpoint layer.** The submit endpoint's outcome switch at `PrSubmitEndpoints.cs:177-207` adds a `case SubmitOutcome.Cancelled:` branch. To prevent the SubmitDialog progress UI from getting stuck on the last `Started` SSE event (the bridge translates `IProgress.Report` calls per-step; an OCE between a Started and its terminal Succeeded/Failed leaves an orphan Started), the Cancelled case emits a TERMINAL submit-progress SSE event marking the last-known step as Failed with a `cancelled` error code. The frontend's existing progress consumer treats Failed as terminal and the dialog progresses out of "in-flight" cleanly. Additionally publishes no `DraftSubmitted` / `StateChanged` event — the discard endpoint owns those signals.
+
+```csharp
+case SubmitOutcome.Cancelled cancelled:
+    // Terminal SSE: convert the last-known step to Failed with cancelled-by-discard text
+    // so the SubmitDialog progress UI doesn't get stuck at "Started".
+    progress.Report(new SubmitProgressEvent(cancelled.LastStep, SubmitStepStatus.Failed, 0, 0, "cancelled"));
+    s_pipelineCancelled(logger, sessionKey, cancelled.Reason, null);
+    break;
+```
+
+(The `SubmitOutcome.Cancelled` record carries the last-known `SubmitStep` from the pipeline so the bridge can emit the terminal event for the right step.)
 
 ### 4.5 New primitive — `SubmitCancellationRegistry`
 
@@ -180,10 +199,15 @@ internal sealed class SubmitCancellationRegistry
         ArgumentNullException.ThrowIfNull(reference);
         ArgumentNullException.ThrowIfNull(cts);
         var key = reference.ToString();
-        // AddOrUpdate semantics: if an entry already exists for this prRef (rare —
-        // would indicate a stuck pipeline missed its finally cleanup), the new CTS
-        // replaces it. The orphaned old CTS is harmless; nothing references it.
-        _ctsByPrRef[key] = cts;
+        // TryAdd (NOT AddOrUpdate): if an entry already exists for this prRef, throw —
+        // that would indicate a stuck pipeline missed its finally cleanup, and silently
+        // stomping the old CTS would let RequestCancel target the wrong pipeline.
+        if (!_ctsByPrRef.TryAdd(key, cts))
+        {
+            throw new InvalidOperationException(
+                $"SubmitCancellationRegistry: a registration already exists for {key}. " +
+                "This indicates a stuck pipeline missed its finally cleanup.");
+        }
         return new RegistrationHandle(this, key, cts);
     }
 
@@ -231,18 +255,31 @@ The CTS that gets registered is the pipeline's *linked* CTS (linked from `appLif
 
 **Pipeline change at `SubmitPipeline.SubmitAsync`:** none. The pipeline already accepts a `ct` through every step; the endpoint now passes a linked CT instead of `appLifetime.ApplicationStopping` directly.
 
-**Endpoint change at `PrSubmitEndpoints.SubmitAsync` (around line 150-225):**
+**Endpoint change at `PrSubmitEndpoints.SubmitAsync` (around line 146-227).** Critical lifetime note: the existing submit endpoint is fire-and-forget — `Task.Run` runs detached and the endpoint returns 200 "started" immediately at line 229. The lock handle (`SubmitLockHandle`) is acquired BEFORE Task.Run and its disposal happens INSIDE the Task.Run lambda's `finally` at line 225 — ownership transfers across the lambda boundary, with a `#pragma warning disable CA2000` to silence the analyzer (lines 149-151). The CTS + registration must follow the SAME ownership-transfer pattern: create them in the synchronous scope, but DISPOSE them inside the Task.Run lambda's `finally`. A naive `using var` in the endpoint scope would dispose at the endpoint's return point — before the pipeline observes the token — and the lock-vs-register race we set out to fix would be immediate, not just a millisecond window.
 
 ```csharp
-await using var lockHandle = await lockRegistry.TryAcquireAsync(reference, ...);
-if (lockHandle is null) { ... return 409; }
+// Outside Task.Run (same scope as `handle`):
+#pragma warning disable CA2000  // disposed inside the Task.Run finally; CA2000 can't see the transfer
+var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.ApplicationStopping);
+var registration = cancellationRegistry.Register(reference, linkedCts);
+#pragma warning restore CA2000
+var pipelineCt = linkedCts.Token;
 
-using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.ApplicationStopping);
-using var registration = cancellationRegistry.Register(reference, linkedCts);
-
-// fire-and-forget Task.Run uses linkedCts.Token instead of pipelineCt; on cancel the pipeline
-// throws OCE → caught by the new SubmitOutcome.Cancelled case.
+_ = Task.Run(async () =>
+{
+    try { /* pipeline + outcome switch */ }
+    catch (OperationCanceledException) when (pipelineCt.IsCancellationRequested) { /* user-discard OR host-shutdown */ }
+    catch (Exception ex) { /* unchanged: log s_pipelineThrew */ }
+    finally
+    {
+        registration.Dispose();
+        linkedCts.Dispose();
+        await handle.DisposeAsync();
+    }
+}, CancellationToken.None);
 ```
+
+The existing OCE catch's `when (pipelineCt.IsCancellationRequested)` filter still works — `pipelineCt` is now the linked token, so it trips on both `ApplicationStopping` AND `RequestCancel`. The log line at line 211-212 ("Host shutting down…") needs the comment updated to acknowledge user-discard as a second source of OCE.
 
 **Stomp-defense invariant.** `Register` uses `TryAdd` (not `AddOrUpdate`): if a prior entry already exists for this prRef, Register throws — this would indicate a stuck pipeline missed its finally cleanup, which is a logic bug worth surfacing rather than silently shadowing. The disposal `TryRemove` continues to use the key+value check from § 4.5 so a late dispose can't stomp a fresh registration.
 
@@ -357,8 +394,8 @@ The error is cleared on:
 - **Default view** is the read-only Markdown render of the PR-root draft body (if one exists) or a muted "No PR-level body — click Edit to add one" placeholder.
 - **"Edit" toggle** above the preview switches to the new `PrRootBodyEditor` shared component (see § 4.11), bound to the same PR-root `DraftComment` the Overview-tab composer edits. Autosave runs the same `updateDraftComment` patch on debounce (creates the draft via `newPrRootDraftComment` if none exists yet). Toggle label becomes "Done" while editing; clicking "Done" returns to the preview without closing the dialog.
 - **Cross-surface lock.** Opening the SubmitDialog's edit mode calls `registerOpenComposer(draftId)` the same way `PrRootReplyComposer` does. If the user has the Overview-tab composer already open in the same tab, the SubmitDialog edit toggle is disabled with a "Editing in the Reply composer — close it to edit here" tooltip. Cross-tab ownership (`readOnly` flag from the cross-tab stamp) disables the toggle uniformly. The reverse case — Overview composer disabled while SubmitDialog edit mode is active — uses the same registry, so only one editor surface can hold the draft at a time within a tab.
-- **Mode persistence.** The edit-vs-preview toggle state resets when the SubmitDialog opens (always opens in preview). Closing the dialog with edits in progress autosaves and exits; no "unsaved changes" prompt (autosave covers it).
-- **Footer Submit button** remains gated by the existing `submitDisabledReason` rules. When the dialog is in edit mode and the body is below `COMPOSER_CREATE_THRESHOLD`, the body is treated as empty for `isEmptyContent` purposes (matches the create-threshold gate the composer enforces).
+- **Mode persistence + Close-while-editing flush.** The edit-vs-preview toggle state resets when the SubmitDialog opens (always opens in preview). Closing the dialog with edits in progress is NOT "autosave covers it" — the cleanup-on-unmount path of `useComposerAutoSave` cancels any pending debounce timer; an in-flight 250 ms-debounced `updateDraftComment` is therefore lost. To close the race, the dialog's Cancel/close handlers `await` the editor's `flush()` (exposed via `onAutosaveControl`) before invoking the parent's `onClose`. Esc behaves identically. No prompt or modal — the await is invisible to the user but guarantees the body persists before the dialog dismounts.
+- **Footer Submit button gating during edit mode.** The current `SubmitDialog.tsx:230-236` computes `confirmReason` by passing a synthetic `ReviewSessionDto` with an inline-overridden `draftSummaryMarkdown` value — the override is how the dialog reflects in-dialog typing immediately. Post-V7 that field is gone; the analogous override threads the live body through `PrRootBodyEditor.onBodyChange` into a parent-held `editingBody: string` state, and the parent passes a synthetic session to `submitDisabledReason` with the PR-root draft's `bodyMarkdown` replaced. When `editingBody.trim().length < COMPOSER_CREATE_THRESHOLD`, the `isEmptyContent` rule sees no PR-root draft AND no inline drafts/replies → Submit is disabled with the existing copy. This preserves the immediate-reactivity the V6 textarea had.
 
 Implementation:
 
@@ -415,7 +452,14 @@ const cantEditReason = useCantEditRootBodyReason({ prRef, readOnly, openComposer
 </section>
 ```
 
-`useCantEditRootBodyReason` is a small new hook that reads the cross-tab `openComposerDraftId` registry (the same registry `registerOpenComposer` writes to inside `useComposerAutoSave`) to determine if the Overview-tab composer is currently holding the draft. Returns `'editing-in-overview-composer'` when the registry has an entry for this PR's PR-root draft that did NOT come from the SubmitDialog itself. The hook is also used by `PrRootReplyComposer` to disable its open state when SubmitDialog has the editor active — symmetric.
+`useCantEditRootBodyReason` is a small new hook backed by an extension to `useDraftSession`. The existing `registerOpenComposer(draftId)` is upgraded to `registerOpenComposer(draftId, ownerKey: 'reply-composer' | 'submit-dialog')`; the registry now tracks the SET of ownerKeys holding each draft (was: refcount). A new `getPrRootHolder(prRef)` returns the first ownerKey holding the session's PR-root draft, or `null`. The hook returns:
+
+- `'editing-in-other-tab'` when cross-tab `readOnly` is set (from the TabStamps gate).
+- `'editing-in-overview-composer'` when `getPrRootHolder()` returns `'reply-composer'` and the caller is `'submit-dialog'`.
+- `'editing-in-submit-dialog'` when `getPrRootHolder()` returns `'submit-dialog'` and the caller is `'reply-composer'`.
+- `null` otherwise.
+
+Wiring also requires `PrRootBodyEditor` to expose an `onDraftLost?: () => void` callback so the SubmitDialog edit-mode host can return to preview when the recovery modal's "Discard" branch fires (otherwise the dialog is stranded in an edit shell with a deleted draft).
 
 **Discard button in the footer.** When `session.PendingReviewId !== null` OR the submit lock is held for this PR (derived from the `/api/submit/in-flight` poll + the SSE-driven `pending-review` field touch), render a leftmost **Discard** button in the dialog footer. Secondary style (matches `DiscardAllDraftsButton`'s visual treatment). Click → confirmation modal → endpoint.
 
@@ -500,7 +544,7 @@ interface PrRootBodyEditorProps {
   readOnly?: boolean;
   // Optional callback so wrappers (PrRootReplyComposer) can plumb
   // useComposerAutoSave's flush/badge out to their action bar.
-  onAutosaveControl?: (control: { flush: () => Promise<void>; badge: ComposerBadge }) => void;
+  onAutosaveControl?: (control: { flush: () => Promise<void>; badge: ComposerSaveBadge }) => void;
 }
 ```
 
@@ -508,9 +552,10 @@ interface PrRootBodyEditorProps {
 
 - Renders the textarea + closed-banner gate (`closedBanner` from `prState !== 'open'`).
 - Owns the autosave wiring via `useComposerAutoSave` with anchor `{ kind: 'pr-root' as const }`.
-- Handles the recovery modal ("PR reply draft deleted elsewhere") because that's a draft-lifecycle concern, not a composer-action concern.
+- Handles the recovery modal ("PR reply draft deleted elsewhere") because that's a draft-lifecycle concern, not a composer-action concern. The recovery modal renders via a React portal to `document.body` (not as a sibling of the textarea) so when the editor is mounted inside SubmitDialog's outer Modal, the inner recovery modal's keyboard handlers stack at document level above the outer dialog's. Recovery's "Discard" branch fires the host-provided `onDraftLost?: () => void` callback so the SubmitDialog edit-mode host can flip `editing` back to preview rather than render an empty edit shell.
 - Respects `readOnly` (textarea + autosave disabled).
 - Exposes flush/badge via `onAutosaveControl` so a wrapper can drive its own action bar without re-running autosave.
+- Optional `onDraftLost?: () => void` callback fired when the recovery modal's "Discard" branch fires (parent uses this to exit edit mode in the SubmitDialog case).
 
 **Composer migration.** `PrRootReplyComposer.tsx`:
 
@@ -531,6 +576,7 @@ export interface PostRootCommentResult {
 export interface PostRootCommentError {
   ok: false;
   code:
+    | 'unauthorized'  // 401: IsSubscribed gate
     | 'no-session' | 'no-root-draft' | 'body-too-large'
     | 'submit-in-progress'  // 409: lock held by submit or another post
     | 'already-posted-body-mismatch'  // 409: stamp + snapshot disagree with current body
@@ -545,13 +591,24 @@ export interface PostRootCommentError {
 export async function postRootComment(
   prRef: PrReference,
 ): Promise<PostRootCommentResult | PostRootCommentError> {
-  const resp = await apiClient.post(
-    `/api/pr/${encode(prRef)}/root-comment/post`,
-    undefined,
-  );
-  if (resp.ok) return { ok: true };
-  // Map server error envelope { code, message } to the typed PostRootCommentError.
-  return mapError(resp);
+  try {
+    await apiClient.post<unknown>(
+      `/api/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/root-comment/post`,
+      undefined,
+    );
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof ApiError) {
+      const body = e.body as { code?: string; message?: string; postedCommentId?: number } | undefined;
+      return {
+        ok: false,
+        code: (body?.code as PostRootCommentError['code']) ?? 'github-network-error',
+        message: body?.message ?? e.message,
+        postedCommentId: body?.postedCommentId,
+      };
+    }
+    return { ok: false, code: 'github-network-error', message: String(e) };
+  }
 }
 ```
 
@@ -569,46 +626,23 @@ One new bus event and SSE projection wire-record:
 
 - `RootCommentPostedBusEvent { PrRef, IssueCommentId }` — new record in `PRism.Core/Events/SubmitBusEvents.cs` alongside the existing `SubmitForeignPendingReviewBusEvent` etc. Emitted by the Post endpoint on success.
 - `RootCommentPostedSseEvent { issueCommentId }` wire-record in `PRism.Web/Sse/SseEventProjection.cs`, with `Subscribe<RootCommentPostedBusEvent>` wired in the same file.
-- Frontend consumer: a new `stream.on('root-comment-posted', …)` listener in `frontend/src/hooks/usePrDetail.ts` (the seam that already owns PR-detail re-fetches). Triggers a re-fetch of `PrDetail.RootComments`, which causes `PrRootConversation` to render the new comment.
+- Frontend consumer: extend the existing `useEventSource()` consumer pattern used by `useSubmit.ts:76` and the SSE-projection sites in `usePrDetail.ts`. A new typed event `root-comment-posted` (payload: `{ issueCommentId: number }`) flows through the same dispatcher; `usePrDetail` adds a subscription that calls its existing `refetch()` (the seam that already pulls `PrDetail.RootComments`). The exact wire-up file is `usePrDetail.ts`; the dispatcher pattern matches the `useSubmit.ts:76` `stream = useEventSource(); stream.on(...)` shape (look there for the precedent).
 - No new event for discard — the existing `StateChanged` with the touched fields list is sufficient; the frontend already re-fetches on `pending-review` field touch via the same hook.
 
 ## 7. Test surfaces
 
-### 7.1 New test endpoint — `/test/root-comment/force-failure`
+### 7.1 Reuse existing test hooks where possible
 
-```csharp
-app.MapPost("/test/root-comment/force-failure",
-    (ForceRootCommentFailureRequest body, IServiceProvider sp) =>
-    {
-        if (string.IsNullOrEmpty(body.Phase))
-            return Results.Problem(type: "/test/missing-params", statusCode: 422);
-        if (sp.GetService<IReviewSubmitter>() is not FakeReviewSubmitter fake)
-            return Results.Problem(type: "/test/submitter-missing", statusCode: 500);
-        fake.RegisterRootCommentForceFailure(body.Phase);
-        return Results.NoContent();
-    });
-```
+The codebase already exposes `/test/submit/inject-failure` (`TestEndpoints.cs:340`) and `/test/submit/set-begin-delay` (`TestEndpoints.cs:351`), backed by `FakeReviewSubmitter.InjectFailure(methodName, ex, afterEffect)` and `FakeReviewSubmitter.SetBeginDelay(delayMs)`. Both fit our needs without new infrastructure:
 
-`CreateIssueCommentAsync` lives on `IReviewSubmitter` (§ 4.3); `FakeReviewSubmitter` (`PRism.Web/TestHooks/FakeReviewSubmitter.cs`) gains the implementation and the force-failure registry.
+- **`CreateIssueCommentAsync` force-failure** → use `InjectFailure("CreateIssueCommentAsync", new HttpRequestException(...), afterEffect: false)` for the github-create-rejected case, and `afterEffect: true` for the lost-response-after-success case (server stamped but local delete didn't land). No new registry, no new endpoint.
+- **In-flight cancellation tests** → use the existing `/test/submit/set-begin-delay` (no duplicate `/test/submit/begin-delay` endpoint). The endpoint already calls `FakeReviewSubmitter.SetBeginDelay`. Playwright scenario: POST `/test/submit/set-begin-delay` with `{ delayMs: 5000 }` → click Submit (pipeline acquires lock, blocks inside Begin) → click Discard → cancellation propagates → discard runs DELETE + clear → assert pending review cleared.
 
-Allowed phases: `github-create` (force `CreateIssueCommentAsync` to throw), `post-stamp` (force the overlay-update to throw between the GitHub success and the local delete — exercises the idempotency-replay path).
+Test endpoint registration: all `/test/*` routes are registered inside `MapTestEndpoints` (called from `Program.cs` ONLY when `app.Environment.IsEnvironment("Test")` — verify this gate exists; if it does not, add it as a precondition of merging this PR).
 
-### 7.2 Existing hooks extended for in-flight cancellation tests
+### 7.2 Net-new test endpoint required: none
 
-`/test/submit/hold` synthetically acquires a `SubmitLockRegistry` slot without invoking the pipeline — it can't exercise CTS cancellation. To exercise the discard-in-flight cancellation path, extend the `FakeReviewSubmitter` Begin-delay primitive (already exists as `_beginDelayMs` per memory `project_pr72_s6_pr4_shipped`) with a new test endpoint:
-
-```csharp
-app.MapPost("/test/submit/begin-delay",
-    (BeginDelayRequest body, IServiceProvider sp) =>
-    {
-        if (sp.GetService<IReviewSubmitter>() is not FakeReviewSubmitter fake)
-            return Results.Problem(type: "/test/submitter-missing", statusCode: 500);
-        fake.SetBeginDelayMs(body.DelayMs);
-        return Results.NoContent();
-    });
-```
-
-Playwright scenario: set begin-delay to 5000 → click Submit (pipeline registers CTS, acquires lock, blocks inside Begin) → click Discard → pipeline's CT trips → Begin returns OCE → lock releases → discard runs DELETE + ClearPendingReviewStamps → assert pending review cleared. The `/test/submit/hold` primitive remains useful for the `/api/submit/in-flight` poll assertion path; the new begin-delay primitive covers the cancellation handshake.
+No new test routes. The added `IReviewSubmitter.CreateIssueCommentAsync` method becomes targetable by the existing `InjectFailure` registry via its method name.
 
 ### 7.3 Playwright specs to add
 
@@ -619,8 +653,8 @@ Playwright scenario: set begin-delay to 5000 → click Submit (pipeline register
 `frontend/e2e/submit-discard.spec.ts` (new):
 
 - Post happy path (compose → Post → comment appears).
-- Post failure surface (force-failure phase=`github-create` → error row → retry).
-- Already-shipped retry (force-failure phase=`post-stamp` → re-open composer → second Post succeeds with no duplicate).
+- Post failure surface (`InjectFailure("CreateIssueCommentAsync", ..., afterEffect: false)` → error row → retry).
+- Already-shipped retry (`InjectFailure("CreateIssueCommentAsync", ..., afterEffect: true)` → re-open composer → second Post succeeds with no duplicate).
 - Discard idle pending review (PrHeader pill → confirm → pill disappears).
 - Discard in-flight pipeline (hold → Discard in dialog → release-hold → pending review cleared).
 
@@ -643,7 +677,11 @@ The migration is exercised by:
 1. `AppStateMigrationsTests.MigrateV6ToV7_*` unit cases (golden V6 → V7 fixtures): summary-only, PR-root-only, both-present, both-empty, multiple sessions, non-default account, defensive collapse of multiple PR-root drafts in one session, **partial-rollback discriminator throws** (a session with `draftSummaryMarkdown` set AND a PR-root draft with `postedCommentId` set).
 2. End-to-end smoke: start fresh V6 state via a fixture, restart with V7 binary, assert PR-root draft contains the lifted summary.
 
-**`AppStateStore.CurrentVersion` and `AppState.Default`.** Both updated to 7 in the same commit that introduces `MigrateV6ToV7`. The bump must land atomically — `AppState.Default` carrying a version lower than `CurrentVersion` would write malformed state files (the existing round-trip tests catch this).
+**`AppStateStore.CurrentVersion`, `MigrationSteps` registration, and `AppState.Default`.** All updated to 7 in the same commit that introduces `MigrateV6ToV7`. The bump must land atomically — `AppState.Default` carrying a version lower than `CurrentVersion` would write malformed state files (the existing round-trip tests catch this). The migration array is the `(int ToVersion, Func<JsonObject, JsonObject> Transform)[] MigrationSteps` at `AppStateStore.cs:21-29` (with the `.OrderBy(s => s.ToVersion).ToArray()` defensive sort); the new entry is `(7, AppStateMigrations.MigrateV6ToV7)`.
+
+**Corrupted-shape quarantine.** When iterating sessions in `MigrateV6ToV7`, if `session["draft-comments"]` exists but is not a `JsonArray` (e.g., hand-edit produced `"draft-comments": "garbage"` or a number), throw `JsonException` with a session-key-tagged message. The existing migration precedent at `PrSessionsMigrations.AddV3DraftCollections:41-43` already follows this pattern.
+
+**Test infrastructure.** Existing migration tests follow the per-pair pattern `tests/PRism.Core.Tests/State/Migrations/AppStateMigrationsV{n}To{n+1}Tests.cs` with raw-string inline JSON, NOT a `Fixtures/` directory + `LoadFixture` helper. The new tests go in `AppStateMigrationsV6ToV7Tests.cs` following the same shape (verified against the existing V5→V6 test file).
 
 ## 9. Open questions for writing-plans
 
@@ -668,8 +706,8 @@ A reviewer-walkthrough on a fresh main branch should be able to:
 8. Start a Submit (with `/test/submit/begin-delay` set), immediately click Discard from the dialog footer. Observe progress indicator switching to "Cancelling…", then the dialog closing, the pending review on GitHub removed.
 9. Provoke a stuck local stamp (e.g., kill the process between Begin success and stamp persist). Restart. Observe the pill shows "Pending review on GitHub" but GitHub side has the review (or doesn't). Click Discard. Observe the endpoint's re-fetch path: GitHub state is reconciled and local stamps cleared without `?force=true`.
 10. Inspect the V6 state file before upgrade — confirm `draftSummaryMarkdown` is populated. Launch the V7 binary. Confirm the field is gone and the PR-root draft body contains the lifted text.
-11. Force a Post failure (force-failure phase=`github-create`) and observe the error row populated with the typed code's message. Retry; observe success.
-12. Force a stamp-without-delete state (force-failure phase=`post-stamp`). Re-open the composer with an edited body. Click Post. Observe the `already-posted-body-mismatch` recovery banner.
+11. Force a Post failure (`InjectFailure("CreateIssueCommentAsync", ..., afterEffect: false)`) and observe the error row populated with the typed code's message. Retry; observe success.
+12. Force a stamp-without-delete state (`InjectFailure("CreateIssueCommentAsync", ..., afterEffect: true)`). Re-open the composer with an edited body. Click Post. Observe the `already-posted-body-mismatch` recovery banner.
 
 ## 11. References
 
