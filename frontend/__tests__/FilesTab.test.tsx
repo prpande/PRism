@@ -149,22 +149,47 @@ describe('FilesTab', () => {
     });
   });
 
-  it('renders diff pane placeholder stub', async () => {
+  it('auto-selects the first file when files arrive (GitHub/ADO/GitLab parity)', async () => {
     globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
+    // After files load, the empty-pane prompt MUST NOT appear — auto-select
+    // promotes selectedPath to fileList[0] so the diff pane renders a file
+    // path immediately. Without this assertion the test would silently pass
+    // even if auto-select regressed (the prompt's absence is the real signal).
     await waitFor(() => {
-      expect(screen.getByText(/select a file/i)).toBeInTheDocument();
+      expect(screen.queryByText(/select a file from the tree/i)).not.toBeInTheDocument();
     });
+    // Tree-order is deterministic: subdirs walk before root files
+    // (treeBuilder.ts), so fileList[0] is `src/main.ts` for sampleDiff
+    // ([src/main.ts, README.md]). Assert that exact pick — Copilot iter-1
+    // pointed out the OR variant would silently pass even if auto-select
+    // shifted to the wrong file. The negative assertion above (`select a
+    // file from the tree` absent) is the load-bearing freshness signal;
+    // this one pins the tree-walk contract.
+    const diffPane = await screen.findByTestId('diff-pane');
+    expect(diffPane.textContent ?? '').toContain('src/main.ts');
   });
 
-  it('selecting a file shows its path in diff pane', async () => {
+  it('clicking a non-selected file shifts the diff pane to that file', async () => {
+    // sampleDiff order yields tree-order [src/main.ts, README.md] so
+    // src/main.ts is the auto-selected file. Clicking README.md exercises
+    // the click-handler → selectedPath update → DiffPane re-render path
+    // distinct from the auto-select. Preflight noted the old version was a
+    // tautology once auto-select pre-selected main.ts before the click.
     globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
-      expect(screen.getByText('main.ts')).toBeInTheDocument();
+      expect(screen.getByText('README.md')).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByText('main.ts'));
-    expect(screen.getByText('src/main.ts')).toBeInTheDocument();
+    const diffPane = await screen.findByTestId('diff-pane');
+    // Pre-click: auto-selected src/main.ts is showing.
+    await waitFor(() => {
+      expect(diffPane.textContent ?? '').toContain('src/main.ts');
+    });
+    fireEvent.click(screen.getByText('README.md'));
+    await waitFor(() => {
+      expect(diffPane.textContent ?? '').toContain('README.md');
+    });
   });
 
   it('shows skeleton on slow diff load', async () => {

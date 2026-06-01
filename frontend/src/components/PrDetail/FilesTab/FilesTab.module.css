@@ -71,4 +71,20 @@
 .diffModeToggle {
   margin-left: auto;
   flex-shrink: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: var(--s-1) var(--s-3);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.diffModeToggle[aria-pressed='true'] {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-color: var(--border-strong);
+}
+.diffModeToggle:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
