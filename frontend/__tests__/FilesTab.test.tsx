@@ -149,12 +149,21 @@ describe('FilesTab', () => {
     });
   });
 
-  it('renders diff pane placeholder stub', async () => {
+  it('auto-selects the first file when files arrive (GitHub/ADO/GitLab parity)', async () => {
     globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
+    // After files load, the empty-pane prompt MUST NOT appear — auto-select
+    // promotes selectedPath to fileList[0] so the diff pane renders a file
+    // path immediately. Without this assertion the test would silently pass
+    // even if auto-select regressed (the prompt's absence is the real signal).
     await waitFor(() => {
-      expect(screen.getByText(/select a file/i)).toBeInTheDocument();
+      expect(screen.queryByText(/select a file from the tree/i)).not.toBeInTheDocument();
     });
+    // And the diff pane carries one of the fixture file paths in its header
+    // span — tree-order picks one; either is acceptable.
+    const diffPane = await screen.findByTestId('diff-pane');
+    const text = diffPane.textContent ?? '';
+    expect(text.includes('src/main.ts') || text.includes('README.md')).toBe(true);
   });
 
   it('selecting a file shows its path in diff pane', async () => {

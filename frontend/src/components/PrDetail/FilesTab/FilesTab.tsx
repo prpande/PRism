@@ -95,6 +95,16 @@ export function FilesTab() {
   const tree = useMemo(() => buildTree(files), [files]);
   const fileList = useMemo(() => flattenPaths(tree), [tree]);
 
+  // Auto-select the first file in tree order when none is selected. Mirrors
+  // GitHub / ADO / GitLab: landing on /files opens the first changed file
+  // rather than showing the empty-pane prompt. Re-fires after iteration or
+  // commit-multi-select changes (both reset selectedPath to null).
+  useEffect(() => {
+    if (selectedPath === null && fileList.length > 0) {
+      setSelectedPath(fileList[0]);
+    }
+  }, [fileList, selectedPath]);
+
   const selectedFile = useMemo(
     () => (selectedPath ? (files.find((f) => f.path === selectedPath) ?? null) : null),
     [files, selectedPath],
@@ -356,7 +366,7 @@ export function FilesTab() {
         ) : null}
         <button
           type="button"
-          className={`toggle-btn ${styles.diffModeToggle}`}
+          className={styles.diffModeToggle}
           aria-pressed={effectiveDiffMode === 'side-by-side'}
           disabled={viewportWidth < 900}
           onClick={handleToggleDiffMode}

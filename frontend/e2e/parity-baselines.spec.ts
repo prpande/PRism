@@ -167,9 +167,27 @@ test.describe('parity baselines — PR Detail', () => {
   test('pr-detail-files-tree', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixture(page);
+    // Same aiPreview=false reset that pr-detail-files-diff applies (see the
+    // comment block on that test). Without it, the inbox-activity-rail test's
+    // aiPreview=true bleeds through resetBackendState's unauthenticated POST,
+    // and FilesTab's now-deterministic auto-select renders the AI focus dot
+    // on the selected file row — a non-deterministic visual the baseline
+    // can't pin down.
+    const prefResp = await page.request.post('/api/preferences', {
+      data: { aiPreview: false },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    if (!prefResp.ok()) {
+      throw new Error(
+        `POST /api/preferences (aiPreview=false) failed: ${prefResp.status()} ${await prefResp.text()}`,
+      );
+    }
     await page.goto('/pr/acme/api/123/files');
     const tree = page.locator('[data-testid="files-tab-tree"]');
     await tree.waitFor();
+    // Wait for the auto-selected row to settle so the screenshot is captured
+    // post-selection (the row's tinted background is the new baseline).
+    await page.locator('[data-testid="files-tab-tree-row"][data-selected="true"]').waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(tree).toHaveScreenshot('pr-detail-files-tree.png', SCREENSHOT_OPTS);
   });
