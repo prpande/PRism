@@ -149,5 +149,8 @@ describe('useWholeFileContent', () => {
     rerender({ enabled: true });
     await waitFor(() => expect(result.current.fetchStatus).toBe('ok'));
     expect((fetchSpy as ReturnType<typeof vi.fn>).mock.calls.length).toBe(initialCalls);
+    // Cached content matches the original fetch — guards against a cache hit
+    // returning 'ok' status but stale/null content.
+    expect(result.current.headContent).toBe('cached-content');
   });
 });

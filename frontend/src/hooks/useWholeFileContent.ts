@@ -71,6 +71,8 @@ async function fetchOne(
 
 export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFileContentResult {
   const { prRef, path, file, headSha, baseSha, enabled, isSplit } = input;
+  // TODO: bounded cache — PoC scope leaves this unbounded. Single-PR review
+  // sessions touch <100 keys; if cross-session caching arrives, add LRU.
   const cacheRef = useRef<Map<string, CacheValue>>(new Map());
   const [state, setState] = useState<UseWholeFileContentResult>({
     fetchStatus: 'idle',
@@ -152,8 +154,11 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
         value = { kind: 'failed', failureReason: 'could not load file' };
       }
 
+      // Skip cache write AND setState if the effect was cancelled — an aborted
+      // fetch (signal.aborted) would otherwise poison the cache with a stale
+      // 'could not load file' entry, served on next request for the same key.
+      if (cancelled || controller.signal.aborted) return;
       cacheRef.current.set(key, value);
-      if (cancelled) return;
       if (value.kind === 'ok') {
         setState({
           fetchStatus: 'ok',
@@ -175,7 +180,11 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
       cancelled = true;
       controller.abort();
     };
-  }, [inactive, path, headSha, baseSha, isSplit, prRef]);
+    // Spread prRef into primitive deps to match neighbor hooks
+    // (useAiHunkAnnotations / useFileDiff). A referentially-new prRef with
+    // identical fields would otherwise re-fire the effect and cause a
+    // transient 'loading' flash.
+  }, [inactive, path, headSha, baseSha, isSplit, prRef.owner, prRef.repo, prRef.number]);
 
   return state;
 }
