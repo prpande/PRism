@@ -187,3 +187,33 @@
   padding: 0;
   border: 0;
 }
+
+/* Slice 2: whole-file context expansion.
+   Test seam — filled-context rows carry data-fill="true". No declarations
+   ship at slice-2 baseline (Q4a chose no visual distinction); the selector
+   exists so DSx7's future minimap or a polish-time tint is a one-line add. */
+[data-fill='true'] {
+  /* intentionally empty */
+}
+
+/* Whole-file fetch loading state — dim the underlying hunks-only diff and
+   show a sticky overlay status indicator. Applied via DiffPane.tsx render
+   branch when wholeFileEnabled && fetchStatus === 'loading'. */
+.diffPaneBodyLoading {
+  position: relative;
+  opacity: 0.5;
+  pointer-events: none;
+}
+.diffPaneLoadingOverlay {
+  position: sticky;
+  top: var(--s-2);
+  z-index: 2;
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  color: var(--text-2);
+  font-size: var(--text-sm);
+  width: fit-content;
+  margin: 0 auto var(--s-3);
+}
