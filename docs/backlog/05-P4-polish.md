@@ -95,7 +95,7 @@ Priority sub-ranks here are less prescriptive than in higher tiers. Treat this a
 
 ### P4-B8: Per-file expand-context-to-full-file
 - **Effort**: S (slice 2 of 2; slice 1 was the renderer prerequisite)
-- **Status**: Slice 1 shipped 2026-06-01 — true two-pane side-by-side rendering (`docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md`). Slice 2 brainstormed 2026-06-01 — whole-file context expansion design at `docs/specs/2026-06-01-whole-file-context-expansion-design.md`; implementation PR is next.
+- **Status**: COMPLETE — Slice 1 shipped 2026-06-01 (true two-pane side-by-side rendering, `docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md`); Slice 2 shipped 2026-06-01 (whole-file context expansion, `docs/specs/2026-06-01-whole-file-context-expansion-design.md`).
 - **Description.** Show full file content with the diff highlighted, on demand. PoC explicitly excluded; revisit if reviewers complain.
 
 ### P4-B9: Search within an open PR

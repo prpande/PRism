@@ -62,8 +62,13 @@ export function FilesTab() {
   const [wholeFilePaths, setWholeFilePaths] = useState<Set<string>>(new Set());
 
   const iterationGatePermits = activeRange === 'all' && selectedCommits === null;
-  const wholeFileEnabled =
-    selectedPath !== null && wholeFilePaths.has(selectedPath) && iterationGatePermits;
+  // wholeFileEnabled is fully derived below, after `selectedFile` is computed,
+  // so it can include the file.status + file.hunks.length gates that the
+  // toolbar button's disabled-condition uses. This keeps the button's pressed
+  // state and the prop passed to DiffPane consistent — without those extra
+  // gates, a path persisted in wholeFilePaths across a status/hunks change
+  // would leave the button showing "Hunks only" / aria-pressed=true while the
+  // hook self-disables via its inactive gate (Copilot iter-3 findings F-B + F-C).
 
   const viewportWidth = useViewportWidth();
   const effectiveDiffMode: DiffMode = viewportWidth < 900 ? 'unified' : diffMode;
@@ -118,6 +123,14 @@ export function FilesTab() {
     () => (selectedPath ? (files.find((f) => f.path === selectedPath) ?? null) : null),
     [files, selectedPath],
   );
+
+  const wholeFileEnabled =
+    selectedPath !== null &&
+    wholeFilePaths.has(selectedPath) &&
+    iterationGatePermits &&
+    selectedFile !== null &&
+    selectedFile.status === 'modified' &&
+    selectedFile.hunks.length > 0;
 
   const fileThreads = useMemo(
     () => (selectedPath ? prDetail.reviewComments.filter((t) => t.filePath === selectedPath) : []),

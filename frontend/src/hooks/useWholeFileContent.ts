@@ -18,11 +18,12 @@ export interface UseWholeFileContentResult {
   failureReason: string | null;
 }
 
+// Cache stores ONLY 'ok' results — failed results never go through the cache
+// (transient failures must remain retryable; see the `if (value.kind === 'ok')`
+// guard at the cache write site). The `failureReason` field is no longer used.
 interface CacheValue {
-  kind: 'ok' | 'failed';
-  headContent?: string;
+  headContent: string;
   baseContent?: string;
-  failureReason?: string;
 }
 
 function mapProblemType(type: string | undefined): string {
@@ -109,21 +110,13 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
     const key = `${path}::${headSha}::${baseSha}::${isSplit}`;
     const cached = cacheRef.current.get(key);
     if (cached) {
-      if (cached.kind === 'ok') {
-        setState({
-          fetchStatus: 'ok',
-          headContent: cached.headContent ?? null,
-          baseContent: cached.baseContent ?? null,
-          failureReason: null,
-        });
-      } else {
-        setState({
-          fetchStatus: 'failed',
-          headContent: null,
-          baseContent: null,
-          failureReason: cached.failureReason ?? 'could not load file',
-        });
-      }
+      // Cache only stores 'ok' results, so a hit always restores success.
+      setState({
+        fetchStatus: 'ok',
+        headContent: cached.headContent,
+        baseContent: cached.baseContent ?? null,
+        failureReason: null,
+      });
       return;
     }
 
@@ -138,30 +131,27 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
         : Promise.resolve({ kind: 'ok', content: '' } as const);
       const [headResult, baseResult] = await Promise.all([headPromise, basePromise]);
 
-      let value: CacheValue;
+      type Outcome =
+        | { kind: 'ok'; headContent: string; baseContent?: string }
+        | { kind: 'failed'; failureReason: string };
+      let outcome: Outcome;
       if (headResult.kind === 'failed' && (!isSplit || baseResult.kind === 'ok')) {
-        value = {
+        outcome = {
           kind: 'failed',
           failureReason: isSplit ? `new-side ${headResult.reason}` : headResult.reason,
         };
       } else if (isSplit && baseResult.kind === 'failed' && headResult.kind === 'ok') {
-        value = {
-          kind: 'failed',
-          failureReason: `old-side ${baseResult.reason}`,
-        };
+        outcome = { kind: 'failed', failureReason: `old-side ${baseResult.reason}` };
       } else if (isSplit && baseResult.kind === 'failed' && headResult.kind === 'failed') {
-        value = {
-          kind: 'failed',
-          failureReason: `new-side ${headResult.reason}`,
-        };
+        outcome = { kind: 'failed', failureReason: `new-side ${headResult.reason}` };
       } else if (headResult.kind === 'ok') {
-        value = {
+        outcome = {
           kind: 'ok',
           headContent: headResult.content,
           baseContent: isSplit && baseResult.kind === 'ok' ? baseResult.content : undefined,
         };
       } else {
-        value = { kind: 'failed', failureReason: 'could not load file' };
+        outcome = { kind: 'failed', failureReason: 'could not load file' };
       }
 
       // Skip cache write AND setState if the effect was cancelled — an aborted
@@ -173,14 +163,15 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
       // re-fetch and re-fail on each toggle attempt; the fetch is cheap so the
       // trade-off vs. cache-poisoning a recovery path is worth it.
       // claude[bot] post-open Finding 1.
-      if (value.kind === 'ok') {
-        cacheRef.current.set(key, value);
-      }
-      if (value.kind === 'ok') {
+      if (outcome.kind === 'ok') {
+        cacheRef.current.set(key, {
+          headContent: outcome.headContent,
+          baseContent: outcome.baseContent,
+        });
         setState({
           fetchStatus: 'ok',
-          headContent: value.headContent ?? null,
-          baseContent: value.baseContent ?? null,
+          headContent: outcome.headContent,
+          baseContent: outcome.baseContent ?? null,
           failureReason: null,
         });
       } else {
@@ -188,7 +179,7 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
           fetchStatus: 'failed',
           headContent: null,
           baseContent: null,
-          failureReason: value.failureReason ?? 'could not load file',
+          failureReason: outcome.failureReason,
         });
       }
     })();

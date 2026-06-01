@@ -483,14 +483,13 @@ internal static class TestEndpoints
         // a specific failure. Split-mode tests can independently force head-only or base-only
         // failures by registering the respective (path, headSha) and (path, baseSha) tuples.
         app.MapPost("/test/file/force-failure",
-            async (ForceFileFailureRequest body, IServiceProvider sp, CancellationToken ct) =>
+            (ForceFileFailureRequest body, IServiceProvider sp) =>
             {
                 if (string.IsNullOrEmpty(body.Path) || string.IsNullOrEmpty(body.Sha) || string.IsNullOrEmpty(body.ProblemType))
                     return Results.Problem(type: "/test/missing-params", statusCode: 422);
                 if (sp.GetService<IPrReader>() is not FakePrReader fake)
                     return Results.Problem(type: "/test/reader-missing", statusCode: 500);
                 fake.RegisterFileForceFailure(body.Path, body.Sha, body.ProblemType);
-                await Task.CompletedTask.ConfigureAwait(false);
                 return Results.NoContent();
             });
 
