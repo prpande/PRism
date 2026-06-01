@@ -153,4 +153,43 @@ describe('useWholeFileContent', () => {
     // returning 'ok' status but stale/null content.
     expect(result.current.headContent).toBe('cached-content');
   });
+
+  it('7. failed result is NOT cached — re-enable re-fetches so transient failures are recoverable', async () => {
+    // claude[bot] post-open Finding 1: caching failed results made transient
+    // failures (network blip, 401, snapshot-evicted) un-recoverable — the user
+    // would dismiss the banner, click "Show full file" again, and get the
+    // stale failure synchronously from the cache without a retry path. Fix:
+    // only cache 'ok' results.
+    let callCount = 0;
+    const fetchSpy = vi.fn(async () => {
+      callCount += 1;
+      // Fail on first call (transient), succeed on second call (retry).
+      return callCount === 1 ? problem('/file/too-large', 413) : okText('retry-content');
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchSpy;
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useWholeFileContent({
+          prRef,
+          path: 'src/a.ts',
+          file: modifiedFile,
+          headSha: 'h',
+          baseSha: 'b',
+          enabled,
+          isSplit: false,
+        }),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => expect(result.current.fetchStatus).toBe('failed'));
+    expect(result.current.failureReason).toBe('file is too large to expand');
+    expect((fetchSpy as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
+
+    // User dismisses banner + toggles off + toggles back on (re-enable).
+    rerender({ enabled: false });
+    rerender({ enabled: true });
+    await waitFor(() => expect(result.current.fetchStatus).toBe('ok'));
+    // A second fetch fires (cache did NOT serve the cached failure).
+    expect((fetchSpy as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2);
+    expect(result.current.headContent).toBe('retry-content');
+  });
 });

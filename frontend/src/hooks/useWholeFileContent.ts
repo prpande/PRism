@@ -168,7 +168,14 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
       // fetch (signal.aborted) would otherwise poison the cache with a stale
       // 'could not load file' entry, served on next request for the same key.
       if (cancelled || controller.signal.aborted) return;
-      cacheRef.current.set(key, value);
+      // Only cache successful results — transient failures (network blip, 401,
+      // snapshot-evicted) must be retryable. Permanent failures (413/415) will
+      // re-fetch and re-fail on each toggle attempt; the fetch is cheap so the
+      // trade-off vs. cache-poisoning a recovery path is worth it.
+      // claude[bot] post-open Finding 1.
+      if (value.kind === 'ok') {
+        cacheRef.current.set(key, value);
+      }
       if (value.kind === 'ok') {
         setState({
           fetchStatus: 'ok',
