@@ -186,7 +186,11 @@ export function FilesTab() {
   }, [selectedPath]);
 
   const handleWholeFileFailed = useCallback(
-    (_reason: string) => {
+    // Reason is part of the callback contract but not used here — FilesTab
+    // only needs to know SOMETHING failed, not what. DiffPane's local latch
+    // holds the reason string and renders the banner from it.
+    (reason: string) => {
+      void reason; // reserved — see above
       if (!selectedPath) return;
       setWholeFilePaths((prev) => {
         if (!prev.has(selectedPath)) return prev;
@@ -421,7 +425,9 @@ export function FilesTab() {
               ? "Whole-file view available only on the 'all' iteration view"
               : selectedFile && selectedFile.status !== 'modified'
                 ? 'Whole-file view available for modified files only'
-                : ''
+                : selectedFile && selectedFile.hunks.length === 0
+                  ? 'Whole-file view not available — no diff hunks to expand'
+                  : ''
           }
           onClick={handleToggleWholeFile}
           data-testid="whole-file-toggle"

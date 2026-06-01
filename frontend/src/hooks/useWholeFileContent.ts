@@ -53,7 +53,7 @@ async function fetchOne(
   let resp: Response;
   try {
     resp = await fetch(url, { credentials: 'include', signal });
-  } catch (_err) {
+  } catch {
     return { kind: 'failed', reason: 'could not load file' };
   }
   if (resp.ok) {
@@ -63,7 +63,7 @@ async function fetchOne(
   try {
     const body = (await resp.json()) as { type?: string };
     problemType = body.type;
-  } catch (_err) {
+  } catch {
     /* malformed problem details — fall through to default reason */
   }
   return { kind: 'failed', reason: mapProblemType(problemType) };
@@ -81,6 +81,10 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
     failureReason: null,
   });
 
+  // Deps use primitives derived from `file`, not the object reference itself.
+  // FilesTab's `selectedFile = files.find(...)` returns a new object every
+  // render; depending on the object ref would re-compute `inactive` and re-fire
+  // the effect on unrelated parent re-renders, causing spurious loading flashes.
   const inactive = useMemo(
     () =>
       !enabled ||
@@ -88,7 +92,7 @@ export function useWholeFileContent(input: UseWholeFileContentInput): UseWholeFi
       file === null ||
       file.status !== 'modified' ||
       file.hunks.length === 0,
-    [enabled, path, file],
+    [enabled, path, file === null, file?.status, file?.hunks.length],
   );
 
   useEffect(() => {

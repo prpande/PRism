@@ -431,12 +431,15 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
 
     await toggle.click();
     // Wait for the toggle to flip to "Hunks only" (wholeFileEnabled=true) and for
-    // hunk-header rows to disappear (fetchStatus='ok'). The fixture has a
-    // pure-insert single-hunk file so no data-fill="true" rows are produced —
-    // the hunk already spans the full file. Waiting for the hunk-header to leave
-    // is the correct liveness signal for this fixture.
+    // hunk-header rows to disappear (fetchStatus='ok'). The fixture's hunk spans
+    // all content lines; the file's trailing newline produces ONE empty filled-
+    // context row at headLines.length (the split of a terminal-newline string
+    // emits an extra empty element). Waiting for the hunk-header to leave is the
+    // correct liveness signal; the filled-row count assertion below pins the
+    // expected behavior.
     await expect(toggle).toHaveText('Hunks only');
     await expect(page.locator('.diff-line--hunk-header')).toHaveCount(0);
+    await expect(page.locator('tr[data-fill="true"]')).toHaveCount(1);
 
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(page.locator('[data-testid="diff-pane"]')).toHaveScreenshot(

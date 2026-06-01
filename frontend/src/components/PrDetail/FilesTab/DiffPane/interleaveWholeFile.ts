@@ -35,13 +35,14 @@ export function parseHunkLines(body: string): DiffLine[] {
   return lines;
 }
 
+// baseContent reserved for split-mode parity checks; current implementation derives oldLineNum
+// from cumulative-shift arithmetic per spec § 5.4, so baseContent is not consulted yet.
 export function interleaveWholeFile(
   file: FileChange,
   headContent: string,
-  // baseContent reserved for split-mode parity checks; current implementation derives oldLineNum
-  // from cumulative-shift arithmetic per spec § 5.4, so baseContent is not consulted.
-  _baseContent: string | null,
+  baseContent: string | null,
 ): DiffLine[] {
+  void baseContent; // reserved — see above
   const out: DiffLine[] = [];
   const headLines = headContent.split('\n');
   let prevNewEnd = 0;
