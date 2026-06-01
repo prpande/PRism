@@ -486,11 +486,13 @@ export function DiffPane({
       <div
         ref={diffBodyRef}
         className={`diff-pane-body ${styles.diffPaneBody} ${
-          wholeFileEnabled && wholeFile.fetchStatus === 'loading' ? styles.diffPaneBodyLoading : ''
+          wholeFileEnabled && wholeFile.fetchStatus === 'loading'
+            ? (styles.diffPaneBodyLoading ?? '')
+            : ''
         }`}
       >
         {wholeFileEnabled && wholeFile.fetchStatus === 'loading' && (
-          <div role="status" aria-live="polite" className={styles.diffPaneLoadingOverlay}>
+          <div role="status" aria-live="polite" className={styles.diffPaneLoadingOverlay ?? ''}>
             Loading whole file…
           </div>
         )}
