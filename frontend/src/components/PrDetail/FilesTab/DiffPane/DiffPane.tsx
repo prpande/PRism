@@ -132,10 +132,29 @@ export function DiffPane({
     prevStatus.current = wholeFile.fetchStatus;
   }, [wholeFile.fetchStatus, wholeFile.failureReason, onWholeFileFailed]);
 
-  const dismissBanner = () => {
-    const reason = localFailure;
+  // Clear the latch on file navigation. The banner is scoped to the file
+  // that produced the failure; carrying its reason across a file switch
+  // shows a misleading banner for the new file (Copilot iter-1 finding).
+  // Skip the initial mount — the latch detection effect above can set
+  // the latch on the same render that this effect's deps initialize,
+  // and React batches both setStates; without the skip, the clear
+  // would land last and clobber the latch.
+  const isInitialPathMount = useRef(true);
+  useEffect(() => {
+    if (isInitialPathMount.current) {
+      isInitialPathMount.current = false;
+      return;
+    }
     setLocalFailure(null);
-    if (selectedPath && reason) onWholeFileFailed?.(reason);
+  }, [selectedPath]);
+
+  // Dismiss only clears the latch — the toggle-revert callback already
+  // fired on the original failure transition (above). Calling onWholeFileFailed
+  // here would re-fire against the CURRENT selectedPath, which may be a
+  // different file than the one that produced the failure (Copilot iter-1
+  // navigation race).
+  const dismissBanner = () => {
+    setLocalFailure(null);
   };
 
   // allLines: whole-file branch takes over when enabled + ok; else plain hunk

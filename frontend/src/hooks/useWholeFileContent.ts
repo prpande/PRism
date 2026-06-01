@@ -59,6 +59,12 @@ async function fetchOne(
   if (resp.ok) {
     return { kind: 'ok', content: await resp.text() };
   }
+  // Mirror apiClient's 401 handling so the global auth-rejected recovery
+  // flow still fires when the hook bypasses apiClient (text/plain body
+  // can't go through apiClient.get; see § 6.7 of the spec). Copilot iter-1.
+  if (resp.status === 401 && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+  }
   let problemType: string | undefined;
   try {
     const body = (await resp.json()) as { type?: string };

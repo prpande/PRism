@@ -608,8 +608,10 @@ describe('DiffPane whole-file mode', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /dismiss whole-file/i }));
     expect(screen.queryByTestId('whole-file-failure-banner')).not.toBeInTheDocument();
-    expect(onFailed).toHaveBeenCalledTimes(2);
-    expect(onFailed).toHaveBeenLastCalledWith('file is too large to expand');
+    // Dismiss only clears the local latch; it does NOT re-fire
+    // onWholeFileFailed (Copilot iter-1 navigation race fix). The callback
+    // was already invoked once on the original failure transition.
+    expect(onFailed).toHaveBeenCalledTimes(1);
   });
 
   it('latch survives the toggle revert: banner stays visible when wholeFileEnabled flips false after a failure', async () => {
