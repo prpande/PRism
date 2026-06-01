@@ -95,9 +95,11 @@ const sampleModifiedDiff: DiffDto = {
       status: 'modified',
       hunks: [
         {
-          header: '@@ -1,3 +1,4 @@',
+          oldStart: 1,
+          oldLines: 3,
+          newStart: 1,
+          newLines: 4,
           body: '+added line\n context line\n-removed line\n',
-          lines: [],
         },
       ],
     },

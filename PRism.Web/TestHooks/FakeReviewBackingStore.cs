@@ -92,6 +92,10 @@ internal sealed class FakeReviewBackingStore
             PrState = "OPEN";
 
             FileContent.Clear();
+            // BaseSha: empty content — src/Calc.cs did not exist at the PR's base.
+            // Split-mode whole-file expansion fetches both head and base; without this
+            // entry the base GET returns 404 and the expansion fails.
+            FileContent[("src/Calc.cs", BaseSha)] = string.Empty;
             FileContent[("src/Calc.cs", Sha1)] = Calc1;
             FileContent[("src/Calc.cs", Sha2)] = Calc2;
             FileContent[("src/Calc.cs", Sha3)] = Calc3;

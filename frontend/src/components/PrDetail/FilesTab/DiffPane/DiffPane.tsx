@@ -253,7 +253,7 @@ export function DiffPane({
         hunkCounter += 1;
         if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') {
           // Hunks-only mode: emit the hunk-header row + per-hunk AI annotations.
-          const commentLineNum = line.type === 'delete' ? null : line.newLineNum;
+          const commentLineNum = line.newLineNum;
           const threadsAtLine = commentLineNum ? threadsByLine.get(commentLineNum) : undefined;
           const pair = findAdjacentPair(allLines, idx);
           rows.push(
