@@ -5,7 +5,9 @@ import type {
   DraftSide,
   PrReference,
   HunkAnnotation,
+  DiffLine,
 } from '../../../../api/types';
+import { parseHunkLines } from './interleaveWholeFile';
 import type { InlineAnchor } from '../../Composer/InlineCommentComposer';
 import {
   ExistingCommentWidget,
@@ -45,48 +47,6 @@ export interface DiffPaneProps {
   // D36 — when true, renders a Loading… span in the diff-pane header. JSX
   // (not CSS ::after) so screen readers announce it (WCAG 2.1 F87).
   isLoading?: boolean;
-}
-
-interface DiffLine {
-  type: 'context' | 'insert' | 'delete' | 'hunk-header';
-  content: string;
-  oldLineNum: number | null;
-  newLineNum: number | null;
-}
-
-function parseHunkLines(body: string): DiffLine[] {
-  const rawLines = body.split('\n');
-  const lines: DiffLine[] = [];
-  let oldLine = 0;
-  let newLine = 0;
-
-  for (const raw of rawLines) {
-    if (raw.startsWith('@@')) {
-      const match = /@@ -(\d+),?\d* \+(\d+),?\d* @@/.exec(raw);
-      if (match) {
-        oldLine = parseInt(match[1], 10);
-        newLine = parseInt(match[2], 10);
-      }
-      lines.push({ type: 'hunk-header', content: raw, oldLineNum: null, newLineNum: null });
-    } else if (raw.startsWith('+')) {
-      lines.push({ type: 'insert', content: raw.slice(1), oldLineNum: null, newLineNum: newLine });
-      newLine++;
-    } else if (raw.startsWith('-')) {
-      lines.push({ type: 'delete', content: raw.slice(1), oldLineNum: oldLine, newLineNum: null });
-      oldLine++;
-    } else if (raw.startsWith(' ')) {
-      lines.push({
-        type: 'context',
-        content: raw.slice(1),
-        oldLineNum: oldLine,
-        newLineNum: newLine,
-      });
-      oldLine++;
-      newLine++;
-    }
-  }
-
-  return lines;
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {

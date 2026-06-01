@@ -257,6 +257,14 @@ export interface FileChange {
   hunks: DiffHunk[];
 }
 
+export interface DiffLine {
+  type: 'context' | 'insert' | 'delete' | 'hunk-header';
+  content: string;
+  oldLineNum: number | null;
+  newLineNum: number | null;
+  isFilled?: true;
+}
+
 export interface DiffDto {
   range: string;
   files: FileChange[];
