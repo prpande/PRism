@@ -95,7 +95,7 @@ Priority sub-ranks here are less prescriptive than in higher tiers. Treat this a
 
 ### P4-B8: Per-file expand-context-to-full-file
 - **Effort**: S (slice 2 of 2; slice 1 was the renderer prerequisite)
-- **Status**: Slice 1 shipped 2026-06-01 — true two-pane side-by-side rendering (`docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md`). Slice 2 — whole-file context expansion on top of the two-pane renderer — awaits its own brainstorm.
+- **Status**: Slice 1 shipped 2026-06-01 — true two-pane side-by-side rendering (`docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md`). Slice 2 brainstormed 2026-06-01 — whole-file context expansion design at `docs/specs/2026-06-01-whole-file-context-expansion-design.md`; implementation PR is next.
 - **Description.** Show full file content with the diff highlighted, on demand. PoC explicitly excluded; revisit if reviewers complain.
 
 ### P4-B9: Search within an open PR
@@ -105,6 +105,14 @@ Priority sub-ranks here are less prescriptive than in higher tiers. Treat this a
 ### P4-B10: Performance work for very large PRs
 - **Effort**: L
 - **Description.** Virtualization for file trees with 500+ files; lazy hunk loading; streamed diff fetching.
+
+### P4-B11: Hunk-locator ruler / minimap
+- **Effort**: S–M
+- **Status**: Surfaced during slice-2 brainstorm 2026-06-01 (`docs/specs/2026-06-01-whole-file-context-expansion-design.md` § 3 + sidecar DSx7). Deferred to keep slice 2 at Effort: S.
+- **Description.** IDE-style thin vertical bar to the right of the diff body showing scaled-down representation of the file with colored regions for hunks. Click → jump-to-hunk. Useful in whole-file mode (large files become navigable) AND hunks-only mode (PRs with many hunks across long files).
+- **Implementation notes.** Two design variants worth brainstorming: scaled-text minimap (like VS Code) vs. tick-mark ruler (like Chrome's find-in-page yellow marks). Choices: render inside DiffPane as a right-edge column vs. as a peer column; sticky during scroll vs. scroll-with-content; color encoding for insert/delete/hunk-header; click-to-jump vs. scrub-drag; resize/responsive behavior at narrow viewports.
+- **Acceptance.** Visible ruler on PR detail file view; clicking a marker scrolls the diff to the corresponding hunk; rendered in both hunks-only and whole-file modes; respects viewport gate (might hide at narrow widths).
+- **Connections.** Pairs with P4-B8 slice 2 (whole-file mode); the larger the diff body, the more value the ruler adds. Pairs with P4-B10 (perf for very large PRs) — both touch large-file diff navigation.
 
 ---
 
