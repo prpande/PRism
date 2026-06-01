@@ -1,12 +1,16 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DiffPane } from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane';
 import type { FileChange, ReviewThreadDto, PrReference } from '../src/api/types';
+import type { DiffMode } from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane';
 import { useAiGate } from '../src/hooks/useAiGate';
 import { useAiHunkAnnotations } from '../src/hooks/useAiHunkAnnotations';
+import { useWholeFileContent } from '../src/hooks/useWholeFileContent';
+import styles from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane.module.css';
 
 vi.mock('../src/hooks/useAiGate');
 vi.mock('../src/hooks/useAiHunkAnnotations');
+vi.mock('../src/hooks/useWholeFileContent');
 
 const samplePrRef: PrReference = { owner: 'octocat', repo: 'hello', number: 42 };
 
@@ -59,6 +63,12 @@ describe('DiffPane', () => {
   beforeEach(() => {
     vi.mocked(useAiGate).mockReturnValue(false);
     vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'idle',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
   });
 
   it('renders empty state when no file is selected', () => {
@@ -504,5 +514,174 @@ describe('DiffPane', () => {
     const diffPane = screen.getByTestId('diff-pane');
     const colgroup = diffPane.querySelector('colgroup');
     expect(colgroup).toBeNull();
+  });
+});
+
+function makeModifiedFile(hunks: FileChange['hunks']): FileChange {
+  return { path: 'src/a.ts', status: 'modified', hunks };
+}
+
+describe('DiffPane whole-file mode', () => {
+  const defaultProps = {
+    prRef: { owner: 'o', repo: 'r', number: 1 },
+    selectedPath: 'src/a.ts',
+    file: makeModifiedFile([]),
+    diffMode: 'unified' as DiffMode,
+    truncated: false,
+    reviewThreads: [],
+    prUrl: 'https://example.com/pr/1',
+  };
+
+  beforeEach(() => {
+    vi.mocked(useAiGate).mockReturnValue(false);
+    vi.mocked(useAiHunkAnnotations).mockReturnValue(null);
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'idle',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
+  });
+
+  it('renders filled-context rows with data-fill="true" when wholeFileEnabled and fetch ok (unified)', async () => {
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'ok',
+      headContent: 'line1\nline2\nline3\nline4',
+      baseContent: null,
+      failureReason: null,
+    });
+    const file = makeModifiedFile([
+      { oldStart: 2, oldLines: 1, newStart: 2, newLines: 1, body: '@@ -2,1 +2,1 @@\n-old\n+line2' },
+    ]);
+    const { container } = render(
+      <DiffPane {...defaultProps} file={file} diffMode="unified" wholeFileEnabled={true} />,
+    );
+    const filledTrs = container.querySelectorAll('tr[data-fill="true"]');
+    expect(filledTrs.length).toBeGreaterThan(0);
+    const hunkHeaders = container.querySelectorAll('.diff-line--hunk-header');
+    expect(hunkHeaders.length).toBe(0);
+  });
+
+  it('renders filled-context rows in split mode (4-column layout)', async () => {
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'ok',
+      headContent: 'line1\nline2\nline3',
+      baseContent: 'line1\nold\nline3',
+      failureReason: null,
+    });
+    const file = makeModifiedFile([
+      { oldStart: 2, oldLines: 1, newStart: 2, newLines: 1, body: '@@ -2,1 +2,1 @@\n-old\n+line2' },
+    ]);
+    const { container } = render(
+      <DiffPane {...defaultProps} file={file} diffMode="side-by-side" wholeFileEnabled={true} />,
+    );
+    const filledTrs = container.querySelectorAll('tr[data-fill="true"]');
+    expect(filledTrs.length).toBeGreaterThan(0);
+    filledTrs.forEach((tr) => {
+      expect(tr.querySelectorAll('td').length).toBe(4);
+    });
+  });
+
+  it('renders failure banner and fires onWholeFileFailed once on transition; dismiss clears banner with the correct reason', async () => {
+    const onFailed = vi.fn();
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'failed',
+      headContent: null,
+      baseContent: null,
+      failureReason: 'file is too large to expand',
+    });
+    const fileWithHunk = makeModifiedFile([
+      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, body: '@@ -1,1 +1,1 @@\n-old\n+new' },
+    ]);
+    render(
+      <DiffPane
+        {...defaultProps}
+        file={fileWithHunk}
+        wholeFileEnabled={true}
+        onWholeFileFailed={onFailed}
+      />,
+    );
+    expect(await screen.findByTestId('whole-file-failure-banner')).toBeInTheDocument();
+    expect(screen.getByText(/file is too large to expand/)).toBeInTheDocument();
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    expect(onFailed).toHaveBeenCalledWith('file is too large to expand');
+
+    fireEvent.click(screen.getByRole('button', { name: /dismiss whole-file/i }));
+    expect(screen.queryByTestId('whole-file-failure-banner')).not.toBeInTheDocument();
+    expect(onFailed).toHaveBeenCalledTimes(2);
+    expect(onFailed).toHaveBeenLastCalledWith('file is too large to expand');
+  });
+
+  it('latch survives the toggle revert: banner stays visible when wholeFileEnabled flips false after a failure', async () => {
+    const onFailed = vi.fn();
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'failed',
+      headContent: null,
+      baseContent: null,
+      failureReason: 'file is binary',
+    });
+    const fileWithHunk = makeModifiedFile([
+      { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, body: '@@ -1,1 +1,1 @@\n-old\n+new' },
+    ]);
+    const { rerender } = render(
+      <DiffPane
+        {...defaultProps}
+        file={fileWithHunk}
+        wholeFileEnabled={true}
+        onWholeFileFailed={onFailed}
+      />,
+    );
+    expect(await screen.findByTestId('whole-file-failure-banner')).toBeInTheDocument();
+    expect(onFailed).toHaveBeenCalledTimes(1);
+
+    // Simulate FilesTab removing the path from wholeFilePaths: rerender with
+    // wholeFileEnabled=false and the hook now returning 'idle'.
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'idle',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
+    rerender(
+      <DiffPane
+        {...defaultProps}
+        file={fileWithHunk}
+        wholeFileEnabled={false}
+        onWholeFileFailed={onFailed}
+      />,
+    );
+
+    // Banner survives because DiffPane's local latch holds the reason.
+    expect(screen.getByTestId('whole-file-failure-banner')).toBeInTheDocument();
+    expect(screen.getByText(/file is binary/)).toBeInTheDocument();
+
+    // Dismiss clears the latch.
+    fireEvent.click(screen.getByRole('button', { name: /dismiss whole-file/i }));
+    expect(screen.queryByTestId('whole-file-failure-banner')).not.toBeInTheDocument();
+  });
+
+  it('renders AI annotation row before the first non-header line of each hunk in whole-file mode', async () => {
+    vi.mocked(useAiGate).mockReturnValue(true);
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'ok',
+      headContent: 'a\nb\nc\nd',
+      baseContent: null,
+      failureReason: null,
+    });
+    vi.mocked(useAiHunkAnnotations).mockReturnValue([
+      { path: 'src/a.ts', hunkIndex: 0, body: 'Annotation for hunk 0', tone: 'calm' },
+    ]);
+    const file = makeModifiedFile([
+      { oldStart: 2, oldLines: 1, newStart: 2, newLines: 1, body: '@@ -2,1 +2,1 @@\n-old\n+b' },
+    ]);
+    const { container } = render(
+      <DiffPane {...defaultProps} file={file} diffMode="unified" wholeFileEnabled={true} />,
+    );
+    const annotationRow = container.querySelector(`.${styles.aiHunkRow}`);
+    expect(annotationRow).toBeInTheDocument();
+    const allRows = Array.from(container.querySelectorAll('tr'));
+    const annotationIdx = allRows.indexOf(annotationRow as HTMLTableRowElement);
+    expect(annotationIdx).toBeGreaterThanOrEqual(0);
+    expect(allRows[annotationIdx + 1]?.classList.contains('diff-line--delete')).toBe(true);
   });
 });
