@@ -496,7 +496,7 @@ Unchanged from slice 1.
 | 3 | `wholeFileEnabled: true`, `fetchStatus: 'failed'` | `<WholeFileFailureBanner>` renders with the reason text; `onWholeFileFailed` fires on dismiss |
 | 4 | `wholeFileEnabled: true`, `fetchStatus: 'ok'`, AI annotations present | Annotation row renders immediately before the first non-header line of its hunk; not after a (filtered) hunk-header row |
 
-**Extend `frontend/__tests__/FilesTab.test.tsx`** (3 cases):
+**Extend `frontend/__tests__/FilesTab.test.tsx`** (5 cases):
 
 | # | Scenario | Assertion |
 |---|---|---|
@@ -576,7 +576,7 @@ Companion file `docs/specs/2026-06-01-whole-file-context-expansion-deferrals.md`
 7. Hunk-header rows (`@@ ... @@`) are not emitted as table rows in whole-file mode (the iteration still walks them to advance `hunkCounter` per § 8.2). Hunks-only mode emits them unchanged.
 8. Existing slice-1 acceptance criteria all continue to hold; `pr-detail-files-diff.png` parity baseline does not change.
 9. New parity baseline `pr-detail-files-diff-whole-file.png` captures the whole-file side-by-side state and is checked in.
-10. All new vitest cases per § 9.1 pass: 6 `useWholeFileContent` + 5 `interleaveWholeFile` + 4 `DiffPane` + 5 `FilesTab` = 20 new cases.
+10. All new vitest cases per § 9.1 pass: 6 `useWholeFileContent` + 5 `interleaveWholeFile` + 5 `DiffPane` (4 original + 1 latch-survival added during plan's ce-doc-review per DL6) + 5 `FilesTab` = 21 new cases.
 11. New Playwright assertions per § 9.2 pass, including the force-failure scenario via the new test-hook endpoint.
 12. Empty / loading / truncated / deleted-file / added-file / renamed-file states render per § 10.
 13. Pre-push checklist per `.ai/docs/development-process.md` clean: `npm run lint`, `npm run build`, `npm test`, `dotnet test`, `npx playwright test --project=prod`.
