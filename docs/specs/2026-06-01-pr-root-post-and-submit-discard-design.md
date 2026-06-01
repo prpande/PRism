@@ -24,6 +24,7 @@ This spec closes the open S5 deferral at `docs/specs/2026-05-11-s5-submit-pipeli
 
 - A new "Post" terminal action on `PrRootReplyComposer` that sends the PR-root draft as a standalone GitHub issue comment via the issue-comments REST API (independent of the review pipeline).
 - Unification of `ReviewSessionState.DraftSummaryMarkdown` with the PR-root `DraftComment` — one canonical "PR-level body" slot, lifted via state migration V6 → V7.
+- A new `PrRootBodyEditor` shared component (textarea + autosave + readOnly + closed-banner gates) consumed by both `PrRootReplyComposer` (wrapped with Discard/Post/Preview/AI affordances) and `SubmitDialog` (wrapped with the inline-edit toggle described in § 4.8). Single source of truth for the body-editing primitive.
 - Submit-pipeline change so the PR-root draft body becomes `review.body` when the user clicks Submit. The `FilePath is null` throw is removed and PR-root drafts are filtered out of the AttachThreads loop.
 - A new `POST /api/pr/{owner}/{repo}/{number}/submit/discard` endpoint that signals any in-flight pipeline, awaits release, deletes the GitHub-side pending review, and runs `ClearPendingReviewStamps`. Idempotent.
 - A new `SubmitCancellationRegistry` DI singleton (parallel to `SubmitLockRegistry`) that lets the discard endpoint cancel an in-flight pipeline at the next CancellationToken-aware boundary.
@@ -351,24 +352,70 @@ The error is cleared on:
 
 **Summary textarea removed.** Lines 72-93 of `SubmitDialog.tsx` (the `setSummary` state, the `useEffect` hydration, the textarea, the wire-up to the backend) are removed.
 
-**Replaced with a read-only preview** of the PR-root draft body:
+**Replaced with a read-only preview + inline-edit toggle** (pulled into this PR from § 9 Q5):
+
+- **Default view** is the read-only Markdown render of the PR-root draft body (if one exists) or a muted "No PR-level body — click Edit to add one" placeholder.
+- **"Edit" toggle** above the preview switches to the new `PrRootBodyEditor` shared component (see § 4.11), bound to the same PR-root `DraftComment` the Overview-tab composer edits. Autosave runs the same `updateDraftComment` patch on debounce (creates the draft via `newPrRootDraftComment` if none exists yet). Toggle label becomes "Done" while editing; clicking "Done" returns to the preview without closing the dialog.
+- **Cross-surface lock.** Opening the SubmitDialog's edit mode calls `registerOpenComposer(draftId)` the same way `PrRootReplyComposer` does. If the user has the Overview-tab composer already open in the same tab, the SubmitDialog edit toggle is disabled with a "Editing in the Reply composer — close it to edit here" tooltip. Cross-tab ownership (`readOnly` flag from the cross-tab stamp) disables the toggle uniformly. The reverse case — Overview composer disabled while SubmitDialog edit mode is active — uses the same registry, so only one editor surface can hold the draft at a time within a tab.
+- **Mode persistence.** The edit-vs-preview toggle state resets when the SubmitDialog opens (always opens in preview). Closing the dialog with edits in progress autosaves and exits; no "unsaved changes" prompt (autosave covers it).
+- **Footer Submit button** remains gated by the existing `submitDisabledReason` rules. When the dialog is in edit mode and the body is below `COMPOSER_CREATE_THRESHOLD`, the body is treated as empty for `isEmptyContent` purposes (matches the create-threshold gate the composer enforces).
+
+Implementation:
 
 ```tsx
-{prRootDraft ? (
-  <section className={styles.prRootBodyPreview} aria-label="PR-level body">
+const [editing, setEditing] = useState(false);
+const cantEditReason = useCantEditRootBodyReason({ prRef, readOnly, openComposerDraftId });
+// reasons: 'editing-in-overview-composer' (intra-tab conflict),
+//          'editing-in-other-tab' (readOnly from cross-tab stamp), null otherwise.
+
+<section className={styles.prRootBodyEditorWrap} aria-label="PR-level body">
+  <header className={styles.prRootBodyHeader}>
+    <h3>PR-level body</h3>
+    {!editing && (
+      <button
+        type="button"
+        className="composer-preview-toggle"
+        disabled={cantEditReason !== null}
+        title={
+          cantEditReason === 'editing-in-overview-composer'
+            ? 'Editing in the Reply composer — close it to edit here'
+            : cantEditReason === 'editing-in-other-tab'
+              ? 'Another tab is editing this PR.'
+              : ''
+        }
+        onClick={() => setEditing(true)}
+      >
+        Edit
+      </button>
+    )}
+    {editing && (
+      <button type="button" className="composer-preview-toggle" onClick={() => setEditing(false)}>
+        Done
+      </button>
+    )}
+  </header>
+
+  {editing ? (
+    <PrRootBodyEditor
+      prRef={prRef}
+      prState={prState}
+      draftId={prRootDraft?.id ?? null}
+      onDraftIdChange={setLocalDraftId}
+      registerOpenComposer={registerOpenComposer}
+      initialBody={prRootDraft?.bodyMarkdown ?? ''}
+      readOnly={readOnly}
+    />
+  ) : prRootDraft && prRootDraft.bodyMarkdown.trim().length > 0 ? (
     <MarkdownRenderer source={prRootDraft.bodyMarkdown} />
-    <p className="muted">
-      <Link to="/overview">Edit in the Reply composer on the Overview tab</Link>
+  ) : (
+    <p className={`${styles.noPrRootBody} muted`}>
+      No PR-level body — click Edit to add one.
     </p>
-  </section>
-) : (
-  <p className={`${styles.noPrRootBody} muted`}>
-    No PR-level body. Add one via the Reply composer on the Overview tab.
-  </p>
-)}
+  )}
+</section>
 ```
 
-The link target is the current PR's Overview tab; in the SPA this becomes a `useNavigate` callback that closes the dialog and navigates the tab strip.
+`useCantEditRootBodyReason` is a small new hook that reads the cross-tab `openComposerDraftId` registry (the same registry `registerOpenComposer` writes to inside `useComposerAutoSave`) to determine if the Overview-tab composer is currently holding the draft. Returns `'editing-in-overview-composer'` when the registry has an entry for this PR's PR-root draft that did NOT come from the SubmitDialog itself. The hook is also used by `PrRootReplyComposer` to disable its open state when SubmitDialog has the editor active — symmetric.
 
 **Discard button in the footer.** When `session.PendingReviewId !== null` OR the submit lock is held for this PR (derived from the `/api/submit/in-flight` poll + the SSE-driven `pending-review` field touch), render a leftmost **Discard** button in the dialog footer. Secondary style (matches `DiscardAllDraftsButton`'s visual treatment). Click → confirmation modal → endpoint.
 
@@ -433,6 +480,45 @@ A new component `DiscardPendingReviewConfirmationModal` (shape mirrors `DiscardA
 | Failure | "Retry" (destructive style), enabled | "Close", enabled | bullets above + error row: "Couldn't discard: {message}. [Retry]" |
 
 Used by both surfaces (`SubmitDialog` footer button and `PrHeader` pill).
+
+### 4.11 New shared component — `PrRootBodyEditor`
+
+Extracted from `PrRootReplyComposer`'s textarea + autosave subsystem. The composer becomes a thin wrapper around `PrRootBodyEditor` plus the Discard/Post/Preview/AI affordances; the SubmitDialog inline-edit mode also uses `PrRootBodyEditor` without the surrounding action bar.
+
+**Component file.** `frontend/src/components/PrDetail/Composer/PrRootBodyEditor.tsx` (sibling to `PrRootReplyComposer.tsx`).
+
+**Props.**
+
+```ts
+interface PrRootBodyEditorProps {
+  prRef: PrReference;
+  prState: 'open' | 'closed' | 'merged';
+  initialBody: string;
+  draftId: string | null;
+  onDraftIdChange: (id: string | null) => void;
+  registerOpenComposer: (draftId: string) => () => void;
+  readOnly?: boolean;
+  // Optional callback so wrappers (PrRootReplyComposer) can plumb
+  // useComposerAutoSave's flush/badge out to their action bar.
+  onAutosaveControl?: (control: { flush: () => Promise<void>; badge: ComposerBadge }) => void;
+}
+```
+
+**Responsibilities.**
+
+- Renders the textarea + closed-banner gate (`closedBanner` from `prState !== 'open'`).
+- Owns the autosave wiring via `useComposerAutoSave` with anchor `{ kind: 'pr-root' as const }`.
+- Handles the recovery modal ("PR reply draft deleted elsewhere") because that's a draft-lifecycle concern, not a composer-action concern.
+- Respects `readOnly` (textarea + autosave disabled).
+- Exposes flush/badge via `onAutosaveControl` so a wrapper can drive its own action bar without re-running autosave.
+
+**Composer migration.** `PrRootReplyComposer.tsx`:
+
+- The textarea, `useComposerAutoSave` invocation, and recovery modal move into `PrRootBodyEditor`.
+- The composer keeps Discard / Post / Preview / AI affordances and the discard-confirm modal.
+- The composer's `flush()` calls come through the `onAutosaveControl` callback.
+
+**Tests.** Move the existing `PrRootReplyComposer.test.tsx` autosave-and-recovery assertions to a new `PrRootBodyEditor.test.tsx`; the composer's test file keeps the Discard/Post action assertions.
 
 ## 5. Frontend — useSubmit and api/submit changes
 
@@ -540,8 +626,11 @@ Playwright scenario: set begin-delay to 5000 → click Submit (pipeline register
 
 `frontend/e2e/submit-dialog.spec.ts` (new or existing — plan picks):
 
-- Negative assertion: the SubmitDialog summary textarea no longer renders.
+- Negative assertion: the legacy SubmitDialog summary textarea no longer renders.
 - Positive assertion: when a PR-root draft exists, the body preview renders inside the dialog.
+- Inline-edit toggle happy path: open dialog → click Edit → type → autosave → click Done → preview re-renders with the new body → close dialog → reopen → still in preview mode.
+- Intra-tab cross-surface lock: open Reply composer on Overview tab → open SubmitDialog → Edit toggle is disabled with the "editing in the Reply composer" tooltip; close composer → toggle re-enables.
+- Cross-tab read-only lock: simulate `readOnly=true` from cross-tab stamp → Edit toggle disabled with the "Another tab is editing this PR" tooltip.
 
 ## 8. Migration plan
 
@@ -564,7 +653,6 @@ These do not block spec acceptance but need explicit answers in the plan.
 2. **PR state at Post time.** A closed/merged PR accepts issue comments via REST. The composer's existing `closedBanner` is purely informational. Plan should confirm we surface no extra warning.
 3. **Multi-host migration sample.** The V6→V7 fixture set must include a non-default-account variant (mirrors V4→V5 / V5→V6 multi-account loop). Plan should name the exact fixture filenames so reviewers can spot-check coverage.
 4. **AppState.Default version bump.** `AppState.cs` carries a `Default` static (currently `Version: 6`). Plan must update to `Version: 7` in the same commit that introduces the migration, with assertions in `AppStateRoundTripTests`.
-5. **Optional Post-from-SubmitDialog affordance.** Reviewers flagged a workflow concern: today the SubmitDialog summary textarea is the at-submit-time edit surface for the review body; post-V7 the user must close the dialog, navigate to the Overview tab, edit, navigate back. Plan should pilot the read-only-preview UX with the existing dogfooder before committing; if friction is real, add an inline "Edit" toggle on the preview (binds to the same PR-root draft via the existing PUT /draft autosave path) as a fast-follow PR.
 
 ## 10. Acceptance criteria
 
@@ -575,7 +663,7 @@ A reviewer-walkthrough on a fresh main branch should be able to:
 3. Type a body. Observe the autosave badge ticking.
 4. Click Post. Observe the "Posting…" state, then the optimistic "Posted ✓" badge, then composer closes; the new comment appears under the conversation list within seconds.
 5. Click Reply again, type a new body, leave it as a draft (close composer without posting). Refresh the page. Observe the draft has persisted; reopening Reply hydrates it.
-6. Click Submit review. Open the dialog. Observe the PR-root body shown as a read-only preview. Pick a verdict, hit Submit. Observe the pipeline completing. Reopen the Reply composer — the PR-root draft is gone (consumed as `review.body`).
+6. Click Submit review. Open the dialog. Observe the PR-root body shown as a read-only preview with an Edit toggle. Click Edit, modify the body, click Done — preview re-renders with the new body. Pick a verdict, hit Submit. Observe the pipeline completing. Reopen the Reply composer on the Overview tab — the PR-root draft is gone (consumed as `review.body`).
 7. Force a Submit failure (e.g., remove network mid-flight). Observe a pending review remaining on GitHub via the Pending-review pill in `PrHeader`. Click Discard. Confirm. Observe the pill disappearing and the pending review removed from GitHub.
 8. Start a Submit (with `/test/submit/begin-delay` set), immediately click Discard from the dialog footer. Observe progress indicator switching to "Cancelling…", then the dialog closing, the pending review on GitHub removed.
 9. Provoke a stuck local stamp (e.g., kill the process between Begin success and stamp persist). Restart. Observe the pill shows "Pending review on GitHub" but GitHub side has the review (or doesn't). Click Discard. Observe the endpoint's re-fetch path: GitHub state is reconciled and local stamps cleared without `?force=true`.
