@@ -94,5 +94,6 @@ describe('interleaveWholeFile', () => {
     expect(trail.map((l) => l.content)).toEqual(['tail1', 'tail2', '']);
     expect(trail[0]).toMatchObject({ oldLineNum: 2, newLineNum: 2 });
     expect(trail[1]).toMatchObject({ oldLineNum: 3, newLineNum: 3 });
+    expect(trail[2]).toMatchObject({ oldLineNum: 4, newLineNum: 4 });
   });
 });
