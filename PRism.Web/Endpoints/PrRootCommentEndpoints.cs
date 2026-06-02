@@ -111,7 +111,7 @@ internal static class PrRootCommentEndpoints
             {
                 // Body was edited after the first post — the local draft is now out of sync.
                 return Results.Json(new PostMismatchErrorDto(
-                    "posted-body-mismatch",
+                    "already-posted-body-mismatch",
                     "The draft body was edited after it was first posted. Discard the local draft or edit the comment on github.com.",
                     existingId),
                     statusCode: StatusCodes.Status409Conflict);

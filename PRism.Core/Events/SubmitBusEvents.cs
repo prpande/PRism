@@ -49,4 +49,4 @@ public sealed record SubmitDuplicateMarkerDetectedBusEvent(
 // refetch; the record lives here now so T10's endpoint compiles.
 public sealed record RootCommentPostedBusEvent(
     PrReference PrRef,
-    long PostedCommentId) : IReviewEvent;
+    long IssueCommentId) : IReviewEvent;

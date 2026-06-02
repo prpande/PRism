@@ -100,7 +100,7 @@ public class PrRootCommentEndpointTests
         // Bus events published
         ctx.Bus.Published.OfType<StateChanged>().Should().NotBeEmpty();
         ctx.Bus.Published.OfType<RootCommentPostedBusEvent>()
-            .Should().ContainSingle().Which.PostedCommentId.Should().BeGreaterThan(0);
+            .Should().ContainSingle().Which.IssueCommentId.Should().BeGreaterThan(0);
     }
 
     // ── no-session ───────────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ public class PrRootCommentEndpointTests
 
         resp.StatusCode.Should().Be(HttpStatusCode.Conflict);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
-        body.GetProperty("code").GetString().Should().Be("posted-body-mismatch");
+        body.GetProperty("code").GetString().Should().Be("already-posted-body-mismatch");
         body.GetProperty("postedCommentId").GetInt64().Should().Be(99);
     }
 
@@ -182,6 +182,15 @@ public class PrRootCommentEndpointTests
         resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
         body.GetProperty("code").GetString().Should().NotBeNullOrEmpty();
+
+        // State-preservation: the endpoint returns 502 BEFORE the stamp/delete overlays run.
+        // The PR-root draft must still exist, PostedCommentId must still be null (not stamped),
+        // and DraftComments count must be unchanged (draft not deleted).
+        var session = await ctx.LoadSessionAsync("o", "r", 24);
+        session.Should().NotBeNull("session must survive a GitHub failure");
+        session!.DraftComments.Should().HaveCount(1, "draft must not be deleted on GitHub failure");
+        var rootDraft = session.DraftComments.Single(d => d.FilePath is null && d.LineNumber is null);
+        rootDraft.PostedCommentId.Should().BeNull("PostedCommentId must not be stamped when the GitHub call fails");
     }
 
     // ── lock held → 409 ─────────────────────────────────────────────────────
