@@ -593,7 +593,7 @@ internal static class PrDraftEndpoints
 
     private static DraftCommentDto MapDraft(DraftComment d) => new(
         d.Id, d.FilePath, d.LineNumber, d.Side, d.AnchoredSha, d.AnchoredLineContent,
-        d.BodyMarkdown, d.Status, d.IsOverriddenStale);
+        d.BodyMarkdown, d.Status, d.IsOverriddenStale, d.PostedCommentId);
 
     private static DraftReplyDto MapReply(DraftReply r) => new(
         r.Id, r.ParentThreadId, r.ReplyCommentId, r.BodyMarkdown,

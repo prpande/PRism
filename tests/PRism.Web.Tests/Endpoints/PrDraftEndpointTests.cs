@@ -413,13 +413,74 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         var root = session2.DraftComments.Single(d => d.FilePath == null);
         root.BodyMarkdown.Should().Be("edited body");
         root.Id.Should().Be(seededDraftId);
-        // PostedCommentId and PostedBodySnapshot are NOT surfaced in DraftCommentDto — they are
-        // server-side bookkeeping fields (spec § T10). Assert preservation via the store directly.
+        // PostedCommentId now crosses the wire (spec § 8); the edit must preserve it.
+        // PostedBodySnapshot stays server-side-only and is asserted via the store below.
+        root.PostedCommentId.Should().Be(seededPostedCommentId);
         var storedState = await store.LoadAsync(CancellationToken.None);
         storedState.Reviews.Sessions.TryGetValue(refKey, out var storedSession).Should().BeTrue();
         var storedRoot = storedSession!.DraftComments.Single(d => d.FilePath == null);
         storedRoot.PostedCommentId.Should().Be(seededPostedCommentId);
         storedRoot.PostedBodySnapshot.Should().Be(seededPostedBodySnapshot);
+    }
+
+    [Fact]
+    public async Task GetDraft_emits_postedCommentId_on_the_wire_and_keeps_postedBodySnapshot_server_side()
+    {
+        // Spec § 8: DraftCommentDto.postedCommentId crosses the wire; PostedBodySnapshot does not.
+        // Seed a PR-root draft that has been posted (PostedCommentId=99) plus a file-anchored draft
+        // that has NOT been posted (PostedCommentId defaults to null), then GET and assert both the
+        // typed shape and the raw JSON key surface.
+        const string prOwner = "acme";
+        const string prRepo = "api";
+        const int prNumber = 7002;
+        const string refKey = "acme/api/7002";
+        const long seededPostedCommentId = 99L;
+
+        using var scope = _factory.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IAppStateStore>();
+        await store.UpdateAsync(state =>
+        {
+            var postedRoot = new DraftComment(
+                Id: "posted-root",
+                FilePath: null, LineNumber: null, Side: "pr",
+                AnchoredSha: null, AnchoredLineContent: null,
+                BodyMarkdown: "posted root body",
+                Status: DraftStatus.Draft, IsOverriddenStale: false,
+                PostedCommentId: seededPostedCommentId,
+                PostedBodySnapshot: "server-side snapshot");
+            var unpostedFile = new DraftComment(
+                Id: "unposted-file",
+                FilePath: "src/Foo.cs", LineNumber: 42, Side: "right",
+                AnchoredSha: new string('a', 40), AnchoredLineContent: "line content",
+                BodyMarkdown: "file draft body",
+                Status: DraftStatus.Draft, IsOverriddenStale: false);
+            var session = PrDraftEndpoints.NewEmptySession() with
+            {
+                DraftComments = new List<DraftComment> { postedRoot, unpostedFile },
+            };
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions, StringComparer.Ordinal)
+            {
+                [refKey] = session,
+            };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
+
+        var client = ClientWithTab();
+        var getResp = await client.GetAsync(new Uri($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft", UriKind.Relative));
+        getResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var dto = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
+        var postedRootDto = dto!.DraftComments.Single(d => d.Id == "posted-root");
+        postedRootDto.PostedCommentId.Should().Be(seededPostedCommentId);
+        var unpostedFileDto = dto.DraftComments.Single(d => d.Id == "unposted-file");
+        unpostedFileDto.PostedCommentId.Should().BeNull();
+
+        // Raw-JSON surface: the camelCase key is present, and the server-side-only field is not.
+        // Re-fetch so the content stream is fresh (the first response was already consumed above).
+        var rawResp = await client.GetAsync(new Uri($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft", UriKind.Relative));
+        var raw = await rawResp.Content.ReadAsStringAsync();
+        raw.Should().Contain("\"postedCommentId\"");
+        raw.Should().NotContain("postedBodySnapshot");
     }
 
     private sealed class FakeCache : IActivePrCache

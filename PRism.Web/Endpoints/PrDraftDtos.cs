@@ -24,7 +24,10 @@ internal sealed record DraftCommentDto(
     string? AnchoredLineContent,
     string BodyMarkdown,
     DraftStatus Status,
-    bool IsOverriddenStale);
+    bool IsOverriddenStale,
+    // Spec § 8: the posted-comment id is the only DraftComment server-side field that crosses the
+    // wire (PostedBodySnapshot stays server-side-only). null until the draft has been submitted.
+    long? PostedCommentId);
 
 internal sealed record DraftReplyDto(
     string Id,
