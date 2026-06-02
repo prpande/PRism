@@ -241,7 +241,7 @@ public class GitHubReviewServicePrDetailTests
     }
 
     [Fact]
-    public async Task ParsePr_surfaces_mergedAt_on_merged_pr()
+    public async Task GetPrDetailAsync_surfaces_mergedAt_on_merged_pr()
     {
         // Spec § 5.2.1: ParsePr must propagate mergedAt from the GraphQL payload into
         // Pr.MergedAt so consumers can display the merge timestamp.
@@ -278,7 +278,7 @@ public class GitHubReviewServicePrDetailTests
     }
 
     [Fact]
-    public async Task ParsePr_surfaces_closedAt_and_null_mergedAt_on_closed_unmerged_pr()
+    public async Task GetPrDetailAsync_surfaces_closedAt_and_null_mergedAt_on_closed_unmerged_pr()
     {
         // Spec § 5.2.1: For a PR closed without merging, ClosedAt must be non-null
         // and MergedAt must be null.

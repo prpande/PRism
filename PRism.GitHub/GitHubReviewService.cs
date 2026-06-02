@@ -978,6 +978,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var ciSummary = "";   // computed by PrDetailLoader (or by an upstream enrichment); placeholder here.
 
         var state = GetStr("state");
+        // DateTimeOffset? (nullable) — unlike GetDate, which returns default for absent/null.
         DateTimeOffset? mergedAt = pull.TryGetProperty("mergedAt", out var mAt) && mAt.ValueKind != JsonValueKind.Null
             ? mAt.GetDateTimeOffset() : null;
         DateTimeOffset? closedAt = pull.TryGetProperty("closedAt", out var cAt) && cAt.ValueKind != JsonValueKind.Null
