@@ -5,6 +5,7 @@ using PRism.Core.Hosting;
 using PRism.GitHub;
 using PRism.Web.Composition;
 using PRism.Web.Endpoints;
+using PRism.Web.Hosting;
 using PRism.Web.Logging;
 using PRism.Web.Middleware;
 using PRism.Web.TestHooks;
@@ -101,6 +102,36 @@ if (builder.Environment.IsEnvironment("Test")
         .AddHttpMessageHandler<TestFailureInjectionHandler>();
 }
 
+// Detect sidecar mode (Electron shell launch) once. Reused by the production block below.
+var sidecar = SidecarMode.Detect(Environment.GetEnvironmentVariable);
+
+// Guard: sidecar mode REQUIRES a valid parent PID. A process that thinks it's a
+// sidecar (binds 127.0.0.1, suppresses browser launch) but has no parent to watch
+// would orphan silently. The shell always passes PRISM_PARENT_PID; a missing/bad
+// one means a hand-invocation — refuse rather than run watchdog-free.
+if (sidecar.Enabled && sidecar.ParentPid is null)
+{
+    Console.Error.WriteLine("PRISM_SIDECAR=1 requires a valid PRISM_PARENT_PID. Refusing to start.");
+    Environment.Exit(1); // non-zero: signal misconfiguration explicitly, not a clean exit
+    return;
+}
+
+if (sidecar.Enabled && sidecar.ParentPid is int parentPid)
+{
+    var probe = ParentLivenessProbe.Arm(parentPid, ParentLivenessProbe.StartTimeOfProcess);
+    if (probe is null)
+    {
+        // Parent already gone before we finished starting — exit immediately, don't orphan.
+        return;
+    }
+
+    builder.Services.AddHostedService(sp =>
+        new ParentLivenessWatchdog(
+            probe,
+            sp.GetRequiredService<IHostApplicationLifetime>(),
+            TimeSpan.FromSeconds(2)));
+}
+
 var app = builder.Build();
 
 // Resolve port early so MapHealth can report the actual bound port.
@@ -120,30 +151,48 @@ if (!isTest)
     if (string.IsNullOrEmpty(explicitUrls))
     {
         app.Urls.Clear();
-        app.Urls.Add($"http://localhost:{port}");
+        // Standardize the sidecar on the 127.0.0.1 literal so the renderer's Origin,
+        // the Host-header check, and the bind all agree (avoids localhost/::1 drift).
+        // Browser-tab mode keeps localhost for backward compatibility.
+        var host = sidecar.Enabled ? "127.0.0.1" : "localhost";
+        app.Urls.Add($"http://{host}:{port}");
     }
 
     var binaryPath = Environment.ProcessPath ?? "PRism";
     var lockHandle = LockfileManager.Acquire(dataDir, binaryPath, Environment.ProcessId);
     app.Lifetime.ApplicationStopping.Register(() => lockHandle.Dispose());
 
-    // Browser launch on application started, unless --no-browser was passed (case-insensitive).
-    var noBrowser = args.Contains("--no-browser", StringComparer.OrdinalIgnoreCase);
-    if (!noBrowser)
+    var reportHost = sidecar.Enabled ? "127.0.0.1" : "localhost";
+
+    // Browser launch only in browser-tab mode. The shell passes --no-browser AND
+    // PRISM_SIDECAR=1; we never auto-open a browser when wrapped by Electron.
+    var noBrowser = args.Contains("--no-browser", StringComparer.OrdinalIgnoreCase) || sidecar.Enabled;
+
+    // Report the port AFTER the server binds (ApplicationStarted), not before app.Run().
+    // This guarantees the shell only ever parses a port the backend actually bound —
+    // a bind failure exits the process (shell's child-exit handler fails fast) instead
+    // of printing a phantom port the shell would health-poll until timeout.
+    app.Lifetime.ApplicationStarted.Register(() =>
     {
-        app.Lifetime.ApplicationStarted.Register(() =>
+        Console.WriteLine($"PRism listening on http://{reportHost}:{port} (dataDir: {dataDir})");
+        if (!noBrowser)
         {
             var launcher = new BrowserLauncher(new SystemProcessRunner(), BrowserLauncher.CurrentPlatform());
             launcher.Launch($"http://localhost:{port}");
-        });
-    }
-
-    Console.WriteLine($"PRism listening on http://localhost:{port} (dataDir: {dataDir})");
+        }
+    });
 }
 
 app.UseMiddleware<RequestIdMiddleware>();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+
+// DNS-rebinding defense for the loopback sidecar. The threat (a rebinded page
+// reaching the 127.0.0.1 socket) only exists in sidecar mode, so gate on it — NOT
+// on !IsDevelopment() alone, which would 403 a reverse-proxied Host in browser-tab
+// production. Runs before Origin/session checks (reject rebinding cheapest-first).
+app.UseMiddleware<HostHeaderCheckMiddleware>(sidecar.Enabled && !app.Environment.IsDevelopment());
+
 app.UseMiddleware<OriginCheckMiddleware>();
 app.UseMiddleware<SessionTokenMiddleware>();
 
