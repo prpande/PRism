@@ -615,4 +615,29 @@ describe('SubmitDialog', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /^cancel$/i }));
     expect(screen.getByRole('status').textContent).toMatch(/esc moved focus to cancel/i);
   });
+
+  // CountsBlock thread count must EXCLUDE the PR-root draft (filePath/lineNumber
+  // null): it ships as the review body, not a thread (StepAttachThreadsAsync
+  // filters it out). With 2 inline drafts + 1 PR-root draft the dialog must say
+  // "2 new threads", not "3". Pre-fix this asserted 3 and would fail.
+  it('CountsBlock thread count excludes the PR-root draft', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({
+            draftVerdict: 'approve',
+            draftComments: [
+              prRootDraft({ id: 'inline-1', filePath: 'a.ts', lineNumber: 10 }),
+              prRootDraft({ id: 'inline-2', filePath: 'b.ts', lineNumber: 20 }),
+              prRootDraft(),
+            ],
+          }),
+        })}
+      />,
+    );
+    const counts = document.querySelector('[data-section-counts]');
+    expect(counts).not.toBeNull();
+    expect(counts?.textContent).toMatch(/create 2 new threads/i);
+    expect(counts?.textContent).not.toMatch(/3 new threads/i);
+  });
 });

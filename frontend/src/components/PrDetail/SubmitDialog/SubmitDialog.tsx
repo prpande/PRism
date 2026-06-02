@@ -440,7 +440,13 @@ export function SubmitDialog(props: Props) {
 
           <section data-section="counts" className="submit-dialog__section">
             <CountsBlock
-              threadCount={session.draftComments.length}
+              // The PR-root draft (filePath/lineNumber null) ships as the review
+              // body, not a thread — StepAttachThreadsAsync filters it out — so
+              // exclude it from the thread count. Matches DiscardAllDraftsButton.
+              threadCount={
+                session.draftComments.filter((d) => !(d.filePath === null && d.lineNumber === null))
+                  .length
+              }
               replyCount={session.draftReplies.length}
             />
           </section>

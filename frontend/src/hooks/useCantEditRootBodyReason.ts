@@ -42,5 +42,9 @@ export function useCantEditRootBodyReason({
   if (prRootHolder === null || prRootHolder === ownerKey) return null;
   if (prRootHolder === 'reply-composer') return 'editing-in-overview-composer';
   if (prRootHolder === 'submit-dialog') return 'editing-in-submit-dialog';
+  // The remaining ownerKeys ('files-tab'/'drafts-tab') never anchor a PR-root
+  // draft — those surfaces require a file path — so reaching here means a
+  // non-root surface holds it. Treat as unblocked (the registration would be
+  // suspect, but this is a pure read, not the place to assert).
   return null;
 }
