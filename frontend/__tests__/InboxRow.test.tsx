@@ -103,4 +103,19 @@ describe('InboxRow', () => {
     renderRow({ ...basePr, updatedAt: new Date().toISOString() });
     expect(screen.getByText(/just now/i)).toBeInTheDocument();
   });
+
+  it('shows a Merged badge for a merged row', () => {
+    renderRow({ ...basePr, mergedAt: new Date().toISOString() });
+    expect(screen.getByText('Merged')).toBeInTheDocument();
+  });
+
+  it('shows a Closed badge for a closed-unmerged row', () => {
+    renderRow({ ...basePr, mergedAt: null, closedAt: new Date().toISOString() });
+    expect(screen.getByText('Closed')).toBeInTheDocument();
+  });
+
+  it('does not show the New chip on a done row even when lastViewedHeadSha is null', () => {
+    renderRow({ ...basePr, lastViewedHeadSha: null, mergedAt: new Date().toISOString() });
+    expect(screen.queryByText('New')).not.toBeInTheDocument();
+  });
 });

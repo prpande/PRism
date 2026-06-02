@@ -61,6 +61,7 @@ export function InboxPage() {
               enrichments={data.enrichments}
               showCategoryChip={showCategoryChip}
               maxDiff={maxDiff}
+              defaultOpen={s.id !== 'recently-closed'}
             />
           ))}
           {data.tokenScopeFooterEnabled && <InboxFooter />}

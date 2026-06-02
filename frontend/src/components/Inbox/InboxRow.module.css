@@ -127,6 +127,23 @@
   font-weight: 500;
 }
 
+/* Done-state badge — text is the primary signal, colour is secondary */
+.stateBadge {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.badgeMerged {
+  color: oklch(0.55 0.18 295);
+}
+
+.badgeClosed {
+  color: var(--danger-fg);
+}
+
 .counts {
   display: flex;
   gap: 6px;
