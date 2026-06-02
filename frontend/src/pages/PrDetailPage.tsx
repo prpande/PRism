@@ -220,6 +220,8 @@ function PrDetailPageInner({
           </button>
         </div>
       )}
+      {/* Like BannerRefresh, this stays visible (Reload active) for a passive cross-tab
+          readOnly viewer; handleReload already no-ops the reconcile leg when readOnly. */}
       {transitionState ? (
         <BannerTransition state={transitionState} onReload={handleReload} />
       ) : (

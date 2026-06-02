@@ -40,7 +40,8 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
         hasUpdate: true,
         headShaChanged: s.headShaChanged || event.headShaChanged,
         commentCountDelta: s.commentCountDelta + event.commentCountDelta,
-        // Latch: once true, stay true — a PR doesn't un-merge.
+        // Latched (once done, stays done). Backend guarantees isMerged/isClosed are
+        // mutually exclusive per Task 15a; if both ever arrive, PrDetailPage prioritizes merged.
         isMerged: s.isMerged || event.isMerged,
         isClosed: s.isClosed || event.isClosed,
       }));

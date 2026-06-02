@@ -7,9 +7,7 @@ describe('BannerTransition', () => {
   it('renders merged copy', () => {
     render(<BannerTransition state="merged" onReload={vi.fn()} />);
     expect(screen.getByText(/just merged/i)).toBeInTheDocument();
-    expect(
-      screen.getByText(/Unsubmitted drafts can no longer be submitted/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Unsubmitted drafts can no longer be submitted/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Reload to read-only view/i })).toBeInTheDocument();
   });
 
@@ -18,9 +16,11 @@ describe('BannerTransition', () => {
     expect(screen.getByText(/just closed/i)).toBeInTheDocument();
   });
 
-  it('has role=status for screen readers', () => {
+  it('has role=status and aria-live=polite for screen readers', () => {
     render(<BannerTransition state="merged" onReload={vi.fn()} />);
-    expect(screen.getByRole('status')).toBeInTheDocument();
+    const el = screen.getByRole('status');
+    expect(el).toBeInTheDocument();
+    expect(el).toHaveAttribute('aria-live', 'polite');
   });
 
   it('does NOT have a dismiss control', () => {
