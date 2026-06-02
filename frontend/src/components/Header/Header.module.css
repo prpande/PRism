@@ -51,8 +51,16 @@
    shipped CSS in the web build.
    -------------------------------------------------------------------------- */
 
-/* Make the whole navbar the OS drag handle so the window moves by dragging it. */
+/* The navbar IS the title bar, so it must stay pinned: the OS draws the caption
+   buttons at a fixed top-right position, and if the navbar scrolls away the
+   buttons end up floating over page content. Sticky keeps the navbar (and its
+   drag region) under the controls at all times. Gated to desktop so the browser
+   scroll behavior is unchanged. */
 :global([data-shell='desktop']) .header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  /* Make the whole navbar the OS drag handle so the window moves by dragging it. */
   -webkit-app-region: drag;
 }
 
@@ -64,19 +72,4 @@
   .header
   :where(a, button, input, select, textarea, [role='button'], [tabindex]) {
   -webkit-app-region: no-drag;
-}
-
-/* Windows: the caption-button overlay sits at the top-right. Reserve that strip
-   so the controls cluster never slides under the min/max/close buttons.
-   env(titlebar-area-width) is the draggable width Chromium exposes when the
-   Window-Controls-Overlay is active; the remainder is the buttons. The 138px
-   fallback is the 3-button width at 100% DPI. */
-:global([data-shell='desktop'][data-shell-platform='win32']) .header {
-  padding-right: calc(100% - env(titlebar-area-width, calc(100% - 138px)));
-}
-
-/* macOS: the traffic lights sit at the top-left, so pad the navbar's leading
-   edge to clear them (logo would otherwise sit under the lights). */
-:global([data-shell='desktop'][data-shell-platform='darwin']) .header {
-  padding-left: 80px;
 }

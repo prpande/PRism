@@ -1,7 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import * as path from "node:path";
 import { startSidecar, Sidecar } from "./sidecar";
-import { titleBarOverlayOptions } from "./titlebar";
 
 let sidecar: Sidecar | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -23,16 +22,18 @@ if (!gotLock) {
   // chrome — remove it app-wide so the navbar is the topmost UI.
   Menu.setApplicationMenu(null);
 
-  // Windows: recolor/resize the native caption-button overlay whenever the SPA's
-  // theme or density changes (forwarded by preload). Registered once; guarded on
-  // platform + a live window. setTitleBarOverlay is a Windows-only API.
-  ipcMain.on(
-    "prism:titlebar-state",
-    (_e, state: { theme: string; density: string }) => {
-      if (process.platform !== "win32" || !mainWindow) return;
-      mainWindow.setTitleBarOverlay(titleBarOverlayOptions(state.theme, state.density));
-    },
-  );
+  // Custom window controls: the SPA renders its own minimize/maximize/close
+  // (traffic-light) buttons in the navbar and drives them through these channels.
+  // The native OS controls are suppressed (no titleBarOverlay on Windows;
+  // setWindowButtonVisibility(false) on macOS) so the look is identical on both.
+  ipcMain.on("window:minimize", () => mainWindow?.minimize());
+  ipcMain.on("window:toggle-maximize", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+  });
+  ipcMain.on("window:close", () => mainWindow?.close());
+  ipcMain.handle("window:is-maximized", () => mainWindow?.isMaximized() ?? false);
 
   app.whenReady().then(bootstrap);
 
@@ -81,20 +82,11 @@ async function bootstrap(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
-    // Frameless custom title bar: the SPA navbar becomes the title bar. The
-    // preload sets data-shell so the navbar's gated CSS turns into a drag region
-    // and reserves space for the OS controls.
+    // Custom title bar: the SPA navbar becomes the title bar, with our own
+    // traffic-light window controls. "hidden" drops the native title bar while
+    // keeping the OS resize borders + shadow. NO titleBarOverlay — we draw the
+    // caption buttons ourselves so they match PRism's design on every platform.
     titleBarStyle: "hidden",
-    // Windows: draw the min/max/close buttons as an overlay on the right of the
-    // navbar. Initial colors assume the light/comfortable default; preload's
-    // first titlebar-state message corrects them to the persisted theme within a
-    // frame of the SPA mounting.
-    ...(process.platform === "win32"
-      ? { titleBarOverlay: titleBarOverlayOptions("light", "comfortable") }
-      : {}),
-    // macOS: float the traffic lights over the navbar, vertically centered in the
-    // 56px comfortable header. The OS draws and colors them, so no theme sync.
-    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 18, y: 20 } } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -103,8 +95,41 @@ async function bootstrap(): Promise<void> {
     },
   });
 
+  // macOS: "hidden" still shows the native traffic lights. Hide them so the SPA's
+  // own controls are the only ones — identical experience to Windows.
+  if (process.platform === "darwin") {
+    mainWindow.setWindowButtonVisibility(false);
+  }
+
+  // Tell the renderer when the window maximizes/unmaximizes so its maximize
+  // button can switch to a restore glyph.
+  const emitMaximized = () => {
+    mainWindow?.webContents.send("window:maximized-changed", mainWindow.isMaximized());
+  };
+  mainWindow.on("maximize", emitMaximized);
+  mainWindow.on("unmaximize", emitMaximized);
+
   mainWindow.on("closed", () => {
     mainWindow = null;
+  });
+
+  // Backstop: the preload sets data-shell so the navbar's gated CSS (sticky +
+  // drag region + caption inset) activates. A sandboxed preload CAN silently
+  // fail to apply a DOM write under some Electron builds, which would leave the
+  // navbar non-sticky and undraggable. Re-assert the attribute from main on
+  // dom-ready (runs in the page's main world; the SPA never touches data-shell,
+  // so this is idempotent with the preload). Theme-sync + window.prism stay in
+  // the preload — only this one load-bearing attribute is double-set.
+  mainWindow.webContents.on("dom-ready", () => {
+    const platform = JSON.stringify(process.platform);
+    mainWindow?.webContents
+      .executeJavaScript(
+        `document.documentElement.dataset.shell = "desktop";` +
+          `document.documentElement.dataset.shellPlatform = ${platform};`,
+      )
+      .catch(() => {
+        /* page navigated away mid-injection — next dom-ready re-asserts */
+      });
   });
 
   await mainWindow.loadURL(sidecar.baseUrl);

@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Header } from './components/Header/Header';
+import { AppearanceSync } from './components/AppearanceSync';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider, ToastContainer } from './components/Toast';
 import { CheatsheetProvider, Cheatsheet } from './components/Cheatsheet';
@@ -68,6 +69,7 @@ export function App() {
 
   const tree: ReactNode = (
     <>
+      <AppearanceSync />
       <Header hasToken={authState.hasToken} />
       <PrTabStrip />
       <AskAiDrawer />

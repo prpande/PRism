@@ -1,0 +1,63 @@
+/* Traffic-light window controls. Always interactive (never a drag region). */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.dot {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Subtle inner ring so dots read on both light and dark navbars. */
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.25);
+  transition: filter 120ms ease;
+}
+
+.dot:hover {
+  filter: brightness(1.08);
+}
+
+.dot:active {
+  filter: brightness(0.92);
+}
+
+.dot:focus-visible {
+  outline: 2px solid var(--accent, #5b6cff);
+  outline-offset: 2px;
+}
+
+/* macOS traffic-light palette. Order (left→right): minimize, maximize, close —
+   close stays rightmost to match the Windows control position the user asked
+   for, while keeping the recognizable dot colors. */
+.minimize {
+  background: #febc2e;
+}
+.maximize {
+  background: #28c840;
+}
+.close {
+  background: #ff5f57;
+}
+
+/* Glyphs reveal on hover of the cluster (classic macOS behavior). */
+.glyph {
+  font-size: 8px;
+  line-height: 1;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 100ms ease;
+  pointer-events: none;
+}
+
+.controls:hover .glyph,
+.dot:focus-visible .glyph {
+  opacity: 1;
+}
