@@ -40,3 +40,43 @@
   opacity: 0.7;
   cursor: not-allowed;
 }
+
+/* ----------------------------------------------------------------------------
+   Desktop shell (Electron) only — frameless custom title bar.
+
+   Every rule below is gated on :global([data-shell='desktop']), an attribute set
+   EXCLUSIVELY by the Electron preload (desktop/src/preload.ts). A plain browser
+   tab has no preload, so the attribute is never present and none of this applies
+   — the browser navbar renders exactly as it did before. These rules are inert
+   shipped CSS in the web build.
+   -------------------------------------------------------------------------- */
+
+/* Make the whole navbar the OS drag handle so the window moves by dragging it. */
+:global([data-shell='desktop']) .header {
+  -webkit-app-region: drag;
+}
+
+/* Interactive children must stay clickable — a drag region swallows clicks.
+   Element selectors (not classes) so this reaches children rendered by sibling
+   CSS-module files (HeaderControls' buttons, etc.) without importing their
+   hashed names. */
+:global([data-shell='desktop'])
+  .header
+  :where(a, button, input, select, textarea, [role='button'], [tabindex]) {
+  -webkit-app-region: no-drag;
+}
+
+/* Windows: the caption-button overlay sits at the top-right. Reserve that strip
+   so the controls cluster never slides under the min/max/close buttons.
+   env(titlebar-area-width) is the draggable width Chromium exposes when the
+   Window-Controls-Overlay is active; the remainder is the buttons. The 138px
+   fallback is the 3-button width at 100% DPI. */
+:global([data-shell='desktop'][data-shell-platform='win32']) .header {
+  padding-right: calc(100% - env(titlebar-area-width, calc(100% - 138px)));
+}
+
+/* macOS: the traffic lights sit at the top-left, so pad the navbar's leading
+   edge to clear them (logo would otherwise sit under the lights). */
+:global([data-shell='desktop'][data-shell-platform='darwin']) .header {
+  padding-left: 80px;
+}
