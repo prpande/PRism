@@ -2,12 +2,18 @@ using System.Diagnostics;
 
 namespace PRism.Core.Hosting;
 
+/// <summary>Abstraction over the parent-liveness check so the watchdog is unit-testable.</summary>
+public interface IParentLivenessProbe
+{
+    bool IsParentAlive();
+}
+
 /// <summary>
 /// Recycle-resistant check that a parent process (the Electron shell) is still the
 /// same live process. Captures the parent's start-time at arm-time; a later PID hit
 /// with a different start-time means the PID was recycled — treated as "parent dead".
 /// </summary>
-public sealed class ParentLivenessProbe
+public sealed class ParentLivenessProbe : IParentLivenessProbe
 {
     private readonly int _parentPid;
     private readonly DateTime _armedStart;
