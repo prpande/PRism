@@ -18,6 +18,7 @@ import { VerdictPicker } from './VerdictPicker';
 import { SubmitButton } from './SubmitButton';
 import { SubmitInProgressBadge } from './SubmitInProgressBadge';
 import { DiscardAllDraftsButton } from './DiscardAllDraftsButton';
+import { DiscardPendingReviewConfirmationModal } from './DiscardPendingReviewConfirmationModal';
 import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDraftsBanner';
 import styles from './PrHeader.module.css';
 import { AskAiButton } from './AskAiButton';
@@ -123,6 +124,24 @@ export function PrHeader({
   const [dialogOpen, setDialogOpen] = useState(false);
   const { toggle: toggleAskAi } = useAskAiDrawer();
   const isClosedOrMerged = prState !== 'open';
+
+  // Closed-dialog discard surface (spec § 4.9). When the SubmitDialog is shut,
+  // the pill next to Submit offers the same Discard action. It needs its OWN
+  // confirmation-modal instance + open/error state: the dialog's modal is
+  // unmounted while `dialogOpen` is false, so the pill can't share it. The two
+  // surfaces are mutually exclusive (`!dialogOpen` gates the pill), so they
+  // never both drive a discard at once. discardInFlight / discardOwnPendingReview
+  // come from the shared `submit` instance — the single in-flight flag is fine
+  // because only one surface is mounted at a time.
+  //
+  // Deviation from spec § 4.9: the visibility predicate uses PrHeader's local
+  // `dialogOpen` (which actually mounts the SubmitDialog) rather than
+  // `submit.submitDialogOpen`. Task 22 wired the dialog off `dialogOpen` and
+  // never calls openSubmitDialog/closeSubmitDialog, so the hook's flag stays
+  // false here — gating the pill on it would leave the pill visible behind the
+  // open dialog. `dialogOpen` is the faithful "is the dialog open?" signal.
+  const [pillDiscardModalOpen, setPillDiscardModalOpen] = useState(false);
+  const [pillDiscardError, setPillDiscardError] = useState<string | null>(null);
 
   // Any active submit flow freezes the header verdict picker (spec § 8.3 — held
   // from Confirm through success or failure; the stale-commitOID/failed retry
@@ -282,6 +301,21 @@ export function PrHeader({
       });
   };
 
+  // Pill-surface discard (spec § 4.9). Mirrors SubmitDialog.handleDiscard (T22):
+  // success → close the modal + optimistic toast; failure → surface the error in
+  // the modal (which appends its own period, so strip a trailing one to avoid
+  // ".."). The pill has no dialog to close on success — only its own modal.
+  const handlePillDiscard = async () => {
+    setPillDiscardError(null);
+    const r = await submit.discardOwnPendingReview();
+    if (!r.ok) {
+      setPillDiscardError(r.message.endsWith('.') ? r.message.slice(0, -1) : r.message);
+      return;
+    }
+    setPillDiscardModalOpen(false);
+    show({ kind: 'info', message: 'Pending review discarded' });
+  };
+
   return (
     <div className={styles.prHeader} data-testid="pr-header">
       <div className={styles.prHeaderTop}>
@@ -336,6 +370,21 @@ export function PrHeader({
               onDiscard={onDiscardAllDrafts}
             />
           )}
+          {/* Closed-dialog discard surface (spec § 4.9) — mutually exclusive
+              with the SubmitDialog's footer Discard button via `!dialogOpen`. */}
+          {session?.pendingReviewId != null && !dialogOpen && (
+            <button
+              type="button"
+              className={styles.pendingReviewPill}
+              data-testid="pending-review-pill"
+              onClick={() => {
+                setPillDiscardError(null);
+                setPillDiscardModalOpen(true);
+              }}
+            >
+              Pending review on GitHub · Discard
+            </button>
+          )}
           <SubmitButton
             session={session ?? EMPTY_SESSION}
             headShaDrift={headShaDrift}
@@ -387,6 +436,19 @@ export function PrHeader({
           onDiscardForeignPendingReview={onDiscardForeignPendingReview}
         />
       )}
+      {/* Pill's OWN modal instance — the SubmitDialog's modal is unmounted while
+          the dialog is closed, so the pill can't reuse it (spec § 4.9). */}
+      <DiscardPendingReviewConfirmationModal
+        open={pillDiscardModalOpen}
+        onCancel={() => {
+          if (submit.discardInFlight) return;
+          setPillDiscardModalOpen(false);
+          setPillDiscardError(null);
+        }}
+        onDiscard={() => void handlePillDiscard()}
+        discardInFlight={submit.discardInFlight}
+        errorMessage={pillDiscardError}
+      />
     </div>
   );
 }
