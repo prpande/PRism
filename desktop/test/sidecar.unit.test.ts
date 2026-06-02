@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import * as path from "node:path";
 import { planSpawn } from "../src/sidecar";
 
+// Absolute on ANY platform: the drive root on Windows (e.g. C:\), the filesystem
+// root (/) on POSIX. A hardcoded "C:\..." is RELATIVE on Linux, which made the
+// cwd assertion below pass only on Windows (Copilot + claude[bot] CI-portability
+// finding).
+const ROOT = path.parse(process.cwd()).root;
 const base = {
-  binaryPath: path.join("C:", "apps", "prism", "PRism-win-x64.exe"),
+  binaryPath: path.join(ROOT, "apps", "prism", "PRism-win-x64.exe"),
   parentPid: 4242,
 };
 

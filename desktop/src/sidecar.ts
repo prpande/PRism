@@ -79,19 +79,26 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  const port = await readPortFromStdout(child, opts.startTimeoutMs ?? 15000);
-  const baseUrl = `http://127.0.0.1:${port}`;
+  try {
+    const port = await readPortFromStdout(child, opts.startTimeoutMs ?? 15000);
+    const baseUrl = `http://127.0.0.1:${port}`;
 
-  const healthy = await pollHealth(baseUrl, opts.startTimeoutMs ?? 15000);
-  if (!healthy) {
+    const healthy = await pollHealth(baseUrl, opts.startTimeoutMs ?? 15000);
+    if (!healthy) {
+      throw new Error("PRism backend failed its health check.");
+    }
+
+    return {
+      baseUrl,
+      stop: () => stopChild(child),
+    };
+  } catch (err) {
+    // Any startup failure (spawn error, port timeout, failed health check) must not
+    // leak the child. main.ts's before-quit cleanup only runs once `sidecar` is
+    // assigned — which never happens if we throw here — so kill the child ourselves.
     child.kill();
-    throw new Error("PRism backend failed its health check.");
+    throw err;
   }
-
-  return {
-    baseUrl,
-    stop: () => stopChild(child),
-  };
 }
 
 function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<number> {
@@ -101,6 +108,7 @@ function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<num
       clearTimeout(timer);
       child.stdout?.off("data", onData);
       child.off("exit", onExit);
+      child.off("error", onError);
     };
     const onData = (chunk: Buffer) => {
       buf += chunk.toString("utf8");
@@ -117,12 +125,20 @@ function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<num
       cleanup();
       reject(new Error(`Backend exited before reporting a port (code ${code}).`));
     };
+    // A spawn failure (e.g. ENOENT for a bad binary path) emits 'error', not 'exit'.
+    // Without this listener the event is unhandled and crashes the Electron main
+    // process instead of surfacing as a controlled startup failure.
+    const onError = (err: Error) => {
+      cleanup();
+      reject(err);
+    };
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error("Timed out waiting for backend port."));
     }, timeoutMs);
     child.stdout?.on("data", onData);
     child.on("exit", onExit);
+    child.on("error", onError);
   });
 }
 
