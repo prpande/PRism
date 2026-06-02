@@ -109,8 +109,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // Recently-closed history: an extra search-API pass (gated on config) whose raw
             // items are folded into the shared enrichment pass below so they pick up
             // MergedAt/ClosedAt, then materialized into a dedicated section AFTER dedup.
+            var recentlyClosedEnabled = _config.Current.Inbox.Sections.RecentlyClosed;
             IReadOnlyList<RawPrInboxItem> closedRaw = Array.Empty<RawPrInboxItem>();
-            if (_config.Current.Inbox.Sections.RecentlyClosed)
+            if (recentlyClosedEnabled)
             {
                 closedRaw = await _sections
                     .QueryClosedHistoryAsync(InboxHistoryConstants.HistoryWindowDays, ct)
@@ -202,11 +203,11 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             // the caller's input instance — so we copy into a fresh mutable dictionary
             // rather than index-assigning into `deduped` (which would be CS0021 / unsafe).
             var sectionsFinal = deduped.ToDictionary(kv => kv.Key, kv => kv.Value);
-            if (_config.Current.Inbox.Sections.RecentlyClosed)
+            if (recentlyClosedEnabled)
             {
                 var closedItems = (IReadOnlyList<PrInboxItem>)closedRaw
                     .Select(r => byRef.TryGetValue(r.Reference, out var e) ? e : r)
-                    .Select(r => MaterializePrInboxItem(r, ciByRef, state)) // NO HeadSha filter
+                    .Select(r => MaterializePrInboxItem(r, ciByRef, state)) // NO HeadSha filter. CI status is intentionally None for history rows unless authored-by-me also populated ciByRef — CI is a live-PR concept, not a history one.
                     .OrderByDescending(i => i.MergedAt ?? i.ClosedAt ?? DateTimeOffset.MinValue)
                     .Take(InboxHistoryConstants.MaxHistoryRows)
                     .ToList();
