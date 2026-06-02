@@ -84,18 +84,18 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
 
         var queries = new[]
         {
-            $"is:pr is:closed involves:@me closed:>={cutoff} archived:false",
-            $"is:pr is:closed reviewed-by:@me closed:>={cutoff} archived:false",
+            ("recently-closed/involves", $"is:pr is:closed involves:@me closed:>={cutoff} archived:false"),
+            ("recently-closed/reviewed-by", $"is:pr is:closed reviewed-by:@me closed:>={cutoff} archived:false"),
         };
 
         var lists = await Task.WhenAll(queries.Select(async q =>
         {
-            try { return (IReadOnlyList<RawPrInboxItem>)await SearchAsync(q, token, ct).ConfigureAwait(false); }
+            try { return (IReadOnlyList<RawPrInboxItem>)await SearchAsync(q.Item2, token, ct).ConfigureAwait(false); }
 #pragma warning disable CA1031 // generic catch — per-sub-query failure isolates, consistent with QueryAllAsync. Cancellation and rate-limit propagate.
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not RateLimitExceededException)
 #pragma warning restore CA1031
             {
-                Log.SectionQueryFailed(_log, ex, "recently-closed");
+                Log.SectionQueryFailed(_log, ex, q.Item1);
                 return Array.Empty<RawPrInboxItem>();
             }
         })).ConfigureAwait(false);

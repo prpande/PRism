@@ -206,7 +206,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             if (recentlyClosedEnabled)
             {
                 var closedItems = (IReadOnlyList<PrInboxItem>)closedRaw
-                    .Select(r => byRef.TryGetValue(r.Reference, out var e) ? e : r)
+                    .Select(r => byRef.TryGetValue(r.Reference, out var e) ? e : r) // fallback: enrichment dropped this PR (e.g. 404) — sorts to bottom via MinValue; PrEnrichmentComplete log shows the input/output delta.
                     .Select(r => MaterializePrInboxItem(r, ciByRef, state)) // NO HeadSha filter. CI status is intentionally None for history rows unless authored-by-me also populated ciByRef — CI is a live-PR concept, not a history one.
                     .OrderByDescending(i => i.MergedAt ?? i.ClosedAt ?? DateTimeOffset.MinValue)
                     .Take(InboxHistoryConstants.MaxHistoryRows)
@@ -257,6 +257,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         if (s.AuthoredByMe || s.CiFailing) v.Add("authored-by-me"); // ci-failing depends on authored
         if (s.Mentioned) v.Add("mentioned");
         if (s.CiFailing) v.Add("ci-failing");
+        // recently-closed is handled separately via QueryClosedHistoryAsync — deliberately NOT in the visible set passed to QueryAllAsync.
         return v;
     }
 
