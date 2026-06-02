@@ -48,13 +48,18 @@
 
 /* Glyphs reveal on hover of the cluster (classic macOS behavior). */
 .glyph {
-  font-size: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
-  font-weight: 700;
+  /* SVG glyphs stroke with currentColor — this is the icon color. */
   color: rgba(0, 0, 0, 0.6);
   opacity: 0;
   transition: opacity 100ms ease;
   pointer-events: none;
+}
+.glyph svg {
+  display: block;
 }
 
 .controls:hover .glyph,

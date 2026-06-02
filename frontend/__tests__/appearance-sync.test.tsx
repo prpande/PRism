@@ -1,8 +1,18 @@
 import { render, waitFor } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { AppearanceSync } from '../src/components/AppearanceSync';
+
+// jsdom is not reset between tests, so the <html> data-* attributes written by
+// one test would leak into the next; clear them so each test asserts against a
+// clean document (order-independent).
+afterEach(() => {
+  delete document.documentElement.dataset.theme;
+  delete document.documentElement.dataset.density;
+  document.documentElement.style.removeProperty('--accent-h');
+  document.documentElement.style.removeProperty('--accent-c');
+});
 
 // AppearanceSync replaces HeaderControls' old mount-effect as the headless
 // boot-time applier of the saved theme/accent/density to <html>. The quick

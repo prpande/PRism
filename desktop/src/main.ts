@@ -35,14 +35,27 @@ if (!gotLock) {
   // (traffic-light) buttons in the navbar and drives them through these channels.
   // The native OS controls are suppressed (no titleBarOverlay on Windows;
   // setWindowButtonVisibility(false) on macOS) so the look is identical on both.
-  ipcMain.on("window:minimize", () => mainWindow?.minimize());
-  ipcMain.on("window:toggle-maximize", () => {
-    if (!mainWindow) return;
+  //
+  // Every handler validates event.sender against the main window's webContents:
+  // these channels act on the window, so only the window's own renderer should
+  // reach them. It's a single-window app today, but this keeps the surface tight
+  // if a second BrowserWindow/webview is ever added.
+  const fromMainWindow = (e: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) =>
+    mainWindow !== null && e.sender === mainWindow.webContents;
+  ipcMain.on("window:minimize", (e) => {
+    if (fromMainWindow(e)) mainWindow?.minimize();
+  });
+  ipcMain.on("window:toggle-maximize", (e) => {
+    if (!fromMainWindow(e) || !mainWindow) return;
     if (mainWindow.isMaximized()) mainWindow.unmaximize();
     else mainWindow.maximize();
   });
-  ipcMain.on("window:close", () => mainWindow?.close());
-  ipcMain.handle("window:is-maximized", () => mainWindow?.isMaximized() ?? false);
+  ipcMain.on("window:close", (e) => {
+    if (fromMainWindow(e)) mainWindow?.close();
+  });
+  ipcMain.handle("window:is-maximized", (e) =>
+    fromMainWindow(e) ? (mainWindow?.isMaximized() ?? false) : false,
+  );
 
   app.whenReady().then(bootstrap);
 
@@ -63,6 +76,12 @@ function resolveIconPath(): string | undefined {
   // bakes the exe/app icon, and may place assets under the app root. Return the
   // first path that exists so the window (and thus the Windows taskbar) shows
   // PRism's icon; undefined falls back to Electron's default without erroring.
+  //
+  // .ico only — this sets the WINDOWS window/taskbar icon (the dev pain point).
+  // macOS uses .icns for the dock/app icon, which is supplied at PACKAGING time
+  // by electron-builder (the later packaging slice), not by BrowserWindow.icon;
+  // on macOS this returns undefined and the dev dock icon stays Electron's
+  // default. Linux desktop icons are also packaging-time, out of scope here.
   const candidates = [
     path.join(__dirname, "..", "assets", "icon.ico"),
     path.join(process.resourcesPath, "assets", "icon.ico"),
@@ -109,6 +128,8 @@ async function bootstrap(): Promise<void> {
     // traffic-light window controls. "hidden" drops the native title bar while
     // keeping the OS resize borders + shadow. NO titleBarOverlay — we draw the
     // caption buttons ourselves so they match PRism's design on every platform.
+    // Targets Windows + macOS (the publish targets); on Linux "hidden" behavior
+    // varies by desktop environment and isn't a supported target here.
     titleBarStyle: "hidden",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -142,13 +163,13 @@ async function bootstrap(): Promise<void> {
   // the preload before it exposes window.prism). dom-ready runs once <html>
   // exists, in the page's main world; the SPA never touches data-shell, so this
   // is the single, reliable owner. window.prism is owned by the preload.
+  //
+  // Only data-shell is set — the platform is exposed solely via
+  // window.prism.platform (a data-shell-platform attribute had no remaining CSS
+  // consumer once the per-platform navbar insets were dropped, so it was dead).
   mainWindow.webContents.on("dom-ready", () => {
-    const platform = JSON.stringify(process.platform);
     mainWindow?.webContents
-      .executeJavaScript(
-        `document.documentElement.dataset.shell = "desktop";` +
-          `document.documentElement.dataset.shellPlatform = ${platform};`,
-      )
+      .executeJavaScript(`document.documentElement.dataset.shell = "desktop";`)
       .catch(() => {
         /* page navigated away mid-injection — next dom-ready re-asserts */
       });

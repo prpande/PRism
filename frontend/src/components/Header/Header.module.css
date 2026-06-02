@@ -45,8 +45,9 @@
    Desktop shell (Electron) only — frameless custom title bar.
 
    Every rule below is gated on :global([data-shell='desktop']), an attribute set
-   EXCLUSIVELY by the Electron preload (desktop/src/preload.ts). A plain browser
-   tab has no preload, so the attribute is never present and none of this applies
+   ONLY by the Electron main process (desktop/src/main.ts, injected on dom-ready —
+   not the preload, which avoids DOM writes at document-start). A plain browser
+   tab is not Electron, so the attribute is never present and none of this applies
    — the browser navbar renders exactly as it did before. These rules are inert
    shipped CSS in the web build.
    -------------------------------------------------------------------------- */

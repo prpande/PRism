@@ -1,6 +1,40 @@
 import { useEffect, useState } from 'react';
 import styles from './WindowControls.module.css';
 
+// Glyphs are inline SVG (stroke = currentColor) rather than Unicode dingbats:
+// the maximize/restore code points (e.g. ❐, ↗) render inconsistently across OS
+// font stacks — notably Windows — so SVG guarantees pixel-identical icons on
+// every platform and a consistent stroke weight.
+const ICON = { width: 8, height: 8, viewBox: '0 0 10 10', fill: 'none' } as const;
+const STROKE = {
+  stroke: 'currentColor',
+  strokeWidth: 1.3,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+};
+
+const MinimizeIcon = () => (
+  <svg {...ICON} aria-hidden="true">
+    <line x1="2" y1="5" x2="8" y2="5" {...STROKE} />
+  </svg>
+);
+const MaximizeIcon = () => (
+  <svg {...ICON} aria-hidden="true">
+    <rect x="2" y="2" width="6" height="6" {...STROKE} />
+  </svg>
+);
+const RestoreIcon = () => (
+  <svg {...ICON} aria-hidden="true">
+    <rect x="2" y="3.5" width="4.5" height="4.5" {...STROKE} />
+    <path d="M3.8 3.5 V2 H8 V6.2 H6.5" {...STROKE} />
+  </svg>
+);
+const CloseIcon = () => (
+  <svg {...ICON} aria-hidden="true">
+    <path d="M2.5 2.5 L7.5 7.5 M7.5 2.5 L2.5 7.5" {...STROKE} />
+  </svg>
+);
+
 // Custom in-navbar window controls for the Electron desktop shell. macOS-style
 // traffic-light dots, but positioned on the right (Windows order: minimize →
 // maximize → close) and rendered identically on Windows AND macOS — the native
@@ -14,9 +48,16 @@ export function WindowControls() {
   useEffect(() => {
     if (!controls) return;
     let active = true;
-    void controls.isMaximized().then((m) => {
-      if (active) setMaximized(m);
-    });
+    // isMaximized() can reject if the renderer/IPC channel tears down (e.g. during
+    // shutdown). Swallow it so it never surfaces as an unhandled rejection.
+    controls
+      .isMaximized()
+      .then((m) => {
+        if (active) setMaximized(m);
+      })
+      .catch(() => {
+        /* window closing — ignore */
+      });
     const unsubscribe = controls.onMaximizedChange((m) => setMaximized(m));
     return () => {
       active = false;
@@ -38,7 +79,7 @@ export function WindowControls() {
         title="Minimize"
       >
         <span className={styles.glyph} aria-hidden="true">
-          &#x2212;
+          <MinimizeIcon />
         </span>
       </button>
       <button
@@ -49,7 +90,7 @@ export function WindowControls() {
         title={maximizeLabel}
       >
         <span className={styles.glyph} aria-hidden="true">
-          {maximized ? '❐' : '↗'}
+          {maximized ? <RestoreIcon /> : <MaximizeIcon />}
         </span>
       </button>
       <button
@@ -60,7 +101,7 @@ export function WindowControls() {
         title="Close"
       >
         <span className={styles.glyph} aria-hidden="true">
-          &#x2715;
+          <CloseIcon />
         </span>
       </button>
     </div>
