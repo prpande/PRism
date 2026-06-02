@@ -19,3 +19,11 @@ Deferrals surfaced during implementation of `docs/plans/2026-06-01-pr-root-post-
 **Shipped instead:** `handlePost` calls `onClose()` immediately on the 204; the `RootCommentPostedBusEvent` SSE refetch (Task 14) reflects the posted comment + draft removal. Functional outcome is correct and complete — the badge is a pure perceived-latency nicety.
 
 **Deferred:** add the optimistic badge to close the "did it work?" window. Pure UX polish, no correctness/data impact.
+
+## D3 — Cross-surface lock holder read is non-reactive (ref-based registry) (Task 22, root cause Task 19)
+
+`useDraftSession`'s open-composer registry is a `useRef<Map<string, Set<ComposerOwnerKey>>>` (Task 19). `getPrRootHolder()` reads that ref during render, and ref mutations don't trigger re-renders. So if a composer claims/releases the PR-root draft *while a consumer is already mounted*, the consumer's `cantEdit`/Edit-disabled state can be stale until the next unrelated re-render — a theoretical under-locking window (both surfaces editing the same draft).
+
+**Why it's not reachable in practice today:** the lock is read on a *fresh* render at SubmitDialog open (reset-to-preview effect → fresh `getPrRootHolder()` reads the current ref), so opening the dialog over an active Overview composer correctly disables Edit. The holder only changes via composer mount/unmount (UI-driven), and the SubmitDialog's modal backdrop blocks Overview-tab interaction while it's open — so the holder cannot change underneath an open dialog through the UI. The symmetric direction (Overview composer disabling while the dialog edits) is likewise gated by the backdrop.
+
+**Deferred (correct fix):** make the registry reactive — bump a `composerVersion` state counter inside `registerOpenComposer`/its cleanup (or store `openComposers` as state rather than a ref) so `getPrRootHolder`/`isOpen` consumers re-render on registry change. Assess both surfaces together. Low priority given the backdrop makes the gap unreachable via normal UI.
