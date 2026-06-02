@@ -434,8 +434,10 @@ Expected: PASS (2 tests).
 
 ```bash
 git add PRism.Core/Hosting/ParentLivenessProbe.cs PRism.Web/Hosting/ParentLivenessWatchdog.cs tests/PRism.Web.Tests/Hosting/ParentLivenessWatchdogTests.cs
-git commit -m "feat(hosting): add ParentLivenessWatchdog hosted service"
+git commit -m "feat(hosting): add ParentLivenessWatchdog hosted service + extract IParentLivenessProbe"
 ```
+
+> Note: this commit also modifies `ParentLivenessProbe.cs` (Step 3a adds the interface). Re-run the A2 probe tests after this change — they still pass (the interface adds no behavior): `dotnet test tests/PRism.Core.Tests/PRism.Core.Tests.csproj --filter "FullyQualifiedName~ParentLivenessProbeTests"`.
 
 ---
 
@@ -594,14 +596,48 @@ public class SidecarLaunchContractTests : IClassFixture<PRismWebApplicationFacto
 Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj --filter "FullyQualifiedName~SidecarLaunchContractTests"`
 Expected: PASS already (this pins existing behavior so a future change can't silently break the shell's liveness gate). If it FAILS, the health/auth contract regressed and must be restored before proceeding.
 
-- [ ] **Step 3: Modify `Program.cs` — sidecar-mode detection + bind + watchdog**
+- [ ] **Step 3: Detect sidecar mode ONCE and register the watchdog (pre-`Build()`)**
+
+Add this in the `builder.Services` phase, *before* `var app = builder.Build();`. Detect once into a `sidecar` variable that the whole file can use (top-level statements keep it in scope for the production block below).
+
+```csharp
+// Detect sidecar mode (Electron shell launch) once. Reused by the production block below.
+var sidecar = SidecarMode.Detect(Environment.GetEnvironmentVariable);
+
+// Guard: sidecar mode REQUIRES a valid parent PID. A process that thinks it's a
+// sidecar (binds 127.0.0.1, suppresses browser launch) but has no parent to watch
+// would orphan silently. The shell always passes PRISM_PARENT_PID; a missing/bad
+// one means a hand-invocation — refuse rather than run watchdog-free.
+if (sidecar.Enabled && sidecar.ParentPid is null)
+{
+    Console.Error.WriteLine("PRISM_SIDECAR=1 requires a valid PRISM_PARENT_PID. Refusing to start.");
+    return;
+}
+
+if (sidecar.Enabled && sidecar.ParentPid is int parentPid)
+{
+    var probe = ParentLivenessProbe.Arm(parentPid, ParentLivenessProbe.StartTimeOfProcess);
+    if (probe is null)
+    {
+        // Parent already gone before we finished starting — exit immediately, don't orphan.
+        return;
+    }
+
+    builder.Services.AddHostedService(sp =>
+        new ParentLivenessWatchdog(
+            probe,
+            sp.GetRequiredService<IHostApplicationLifetime>(),
+            TimeSpan.FromSeconds(2)));
+}
+```
+
+> This is the single, authoritative watchdog wiring — there is no fire-and-forget fallback. `IHostApplicationLifetime.StopApplication()` unblocks `app.Run()`, so the hosted service cleanly stops the `WebApplication`. The probe is armed pre-`Build()` (no DI needed — it only reads the parent's start-time).
+
+- [ ] **Step 4: Modify the production block — bind 127.0.0.1, suppress browser, report port POST-bind**
 
 Replace the production-only block (currently starting at `if (!isTest)`) with:
 
 ```csharp
-// Detect sidecar mode (Electron shell launch) before the production block.
-var sidecar = SidecarMode.Detect(Environment.GetEnvironmentVariable);
-
 // Production-only: lockfile + URL binding + browser launch.
 if (!isTest)
 {
@@ -619,75 +655,40 @@ if (!isTest)
     var lockHandle = LockfileManager.Acquire(dataDir, binaryPath, Environment.ProcessId);
     app.Lifetime.ApplicationStopping.Register(() => lockHandle.Dispose());
 
+    var reportHost = sidecar.Enabled ? "127.0.0.1" : "localhost";
+
     // Browser launch only in browser-tab mode. The shell passes --no-browser AND
     // PRISM_SIDECAR=1; we never auto-open a browser when wrapped by Electron.
     var noBrowser = args.Contains("--no-browser", StringComparer.OrdinalIgnoreCase) || sidecar.Enabled;
-    if (!noBrowser)
+
+    // Report the port AFTER the server binds (ApplicationStarted), not before app.Run().
+    // This guarantees the shell only ever parses a port the backend actually bound —
+    // a bind failure exits the process (shell's child-exit handler fails fast) instead
+    // of printing a phantom port the shell would health-poll until timeout.
+    app.Lifetime.ApplicationStarted.Register(() =>
     {
-        app.Lifetime.ApplicationStarted.Register(() =>
+        Console.WriteLine($"PRism listening on http://{reportHost}:{port} (dataDir: {dataDir})");
+        if (!noBrowser)
         {
             var launcher = new BrowserLauncher(new SystemProcessRunner(), BrowserLauncher.CurrentPlatform());
             launcher.Launch($"http://localhost:{port}");
-        });
-    }
-
-    var reportHost = sidecar.Enabled ? "127.0.0.1" : "localhost";
-    Console.WriteLine($"PRism listening on http://{reportHost}:{port} (dataDir: {dataDir})");
-}
-```
-
-- [ ] **Step 4: Modify `Program.cs` — register the watchdog (sidecar mode + parent PID known)**
-
-Immediately after `var app = builder.Build();` and the `sidecar` detection, add:
-
-```csharp
-if (sidecar.Enabled && sidecar.ParentPid is int parentPid)
-{
-    var probe = ParentLivenessProbe.Arm(parentPid, ParentLivenessProbe.StartTimeOfProcess);
-    if (probe is null)
-    {
-        // Parent already gone before we finished starting — exit immediately, don't orphan.
-        return;
-    }
-
-    app.Lifetime.ApplicationStarted.Register(() =>
-    {
-        // Hosted-service registration after Build() isn't available; run the watchdog
-        // as a fire-and-forget loop bound to the app lifetime instead.
-        _ = Task.Run(async () =>
-        {
-            while (!app.Lifetime.ApplicationStopping.IsCancellationRequested)
-            {
-                if (!probe.IsParentAlive()) { app.Lifetime.StopApplication(); return; }
-                try { await Task.Delay(TimeSpan.FromSeconds(2), app.Lifetime.ApplicationStopping); }
-                catch (TaskCanceledException) { return; }
-            }
-        });
+        }
     });
 }
 ```
 
-> Design note: because `Program.cs` registers services *before* `Build()`, the cleanest wiring is to register `ParentLivenessWatchdog` as a hosted service in the service-collection phase when `sidecar.Enabled`, injecting the armed probe. If the probe must be armed post-Build (parent PID read at runtime), the lifetime-bound loop above is the fallback. **Prefer the hosted-service registration** (Task A3's class) in the `builder.Services` block:
-> ```csharp
-> var sidecarEarly = SidecarMode.Detect(Environment.GetEnvironmentVariable);
-> if (sidecarEarly.Enabled && sidecarEarly.ParentPid is int pid)
-> {
->     var probe = ParentLivenessProbe.Arm(pid, ParentLivenessProbe.StartTimeOfProcess);
->     if (probe is not null)
->         builder.Services.AddHostedService(_ =>
->             new ParentLivenessWatchdog(probe, /* IHostApplicationLifetime resolved */ null!, TimeSpan.FromSeconds(2)));
-> }
-> ```
-> Resolve `IHostApplicationLifetime` from the provider inside the factory lambda: `sp => new ParentLivenessWatchdog(probe, sp.GetRequiredService<IHostApplicationLifetime>(), TimeSpan.FromSeconds(2))`. Use this form; delete the fire-and-forget fallback once it compiles.
+> Note: the original code printed the listening line *before* `app.Run()` (which is what binds Kestrel). Moving it into `ApplicationStarted` is the fail-fast fix from review — a port is reported only on a successful bind.
 
-- [ ] **Step 5: Modify `Program.cs` — register the Host-header middleware first in the loopback pipeline**
+- [ ] **Step 5: Register the Host-header middleware (sidecar-gated) first in the loopback pipeline**
 
 Just before `app.UseMiddleware<OriginCheckMiddleware>();` add:
 
 ```csharp
-// DNS-rebinding defense for the loopback sidecar. Enforced outside Development,
-// same gate as SessionTokenMiddleware. Runs before Origin/session checks.
-app.UseMiddleware<HostHeaderCheckMiddleware>(!app.Environment.IsDevelopment());
+// DNS-rebinding defense for the loopback sidecar. The threat (a rebinded page
+// reaching the 127.0.0.1 socket) only exists in sidecar mode, so gate on it — NOT
+// on !IsDevelopment() alone, which would 403 a reverse-proxied Host in browser-tab
+// production. Runs before Origin/session checks (reject rebinding cheapest-first).
+app.UseMiddleware<HostHeaderCheckMiddleware>(sidecar.Enabled && !app.Environment.IsDevelopment());
 ```
 
 - [ ] **Step 6: Build + run the full Web test suite**
@@ -730,7 +731,7 @@ Run the full pre-push checklist (`.ai/docs/development-process.md`): `dotnet bui
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "npm run build && electron .",
-    "test:unit": "node --test dist-test/",
+    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/test/",
     "test:e2e": "playwright test",
     "dist": "npm run build && electron-builder"
   },
@@ -760,6 +761,21 @@ Run the full pre-push checklist (`.ai/docs/development-process.md`): `dotnet bui
     "sourceMap": true
   },
   "include": ["src/**/*.ts"]
+}
+```
+
+- [ ] **Step 2b: Create `desktop/tsconfig.test.json` (compiles src + test for unit tests)**
+
+The main `tsconfig.json` `include` is `src/**/*` only, so it will NOT compile test files. Unit tests need their own config that includes `test/`:
+
+```json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-test",
+    "rootDir": "."
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }
 ```
 
@@ -845,9 +861,10 @@ test("parsePortFromLine handles localhost host form too", () => {
 
 Run:
 ```bash
-cd desktop && npx tsc -p tsconfig.json --outDir dist-test --rootDir . && node --test dist-test/test/
+cd desktop && npm run test:unit
 ```
-Expected: FAIL — `parsePortFromLine` not found.
+(Which runs `tsc -p tsconfig.test.json && node --test dist-test/test/`.)
+Expected: FAIL — `parsePortFromLine` not found (compile error from the test importing a missing export).
 
 - [ ] **Step 3: Implement `desktop/src/ports.ts`**
 
@@ -883,7 +900,7 @@ export async function pollHealth(
 
 Run:
 ```bash
-cd desktop && npx tsc -p tsconfig.json --outDir dist-test --rootDir . && node --test dist-test/test/
+cd desktop && npm run test:unit
 ```
 Expected: PASS (3 tests).
 
@@ -928,8 +945,15 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
     opts.binaryPath,
     ["--no-browser", "--dataDir", opts.dataDir],
     {
+      // Pass a MINIMAL explicit env — do NOT spread process.env. Spreading would
+      // hand the sidecar every ambient variable (incl. any CI secrets like
+      // GITHUB_TOKEN inherited by the Electron process). The sidecar needs only
+      // PATH + a temp dir + the two sidecar signals.
       env: {
-        ...process.env,
+        PATH: process.env.PATH ?? "",
+        ...(process.platform === "win32"
+          ? { SystemRoot: process.env.SystemRoot ?? "", TEMP: process.env.TEMP ?? "", USERPROFILE: process.env.USERPROFILE ?? "" }
+          : { HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? "" }),
         PRISM_SIDECAR: "1",
         PRISM_PARENT_PID: String(opts.parentPid),
       },
@@ -1097,11 +1121,11 @@ Build a sidecar binary once:
 ```bash
 cd .. && dotnet publish PRism.Web/PRism.Web.csproj --runtime win-x64 --self-contained -p:PublishProfile=ci --output desktop/dev-sidecar
 ```
-Run the shell pointed at it:
-```bash
-cd desktop && set PRISM_SIDECAR_BINARY=dev-sidecar/PRism-win-x64.exe && npm run start
+Run the shell pointed at it. For the **dev smoke, point `PRISM_SIDECAR_BINARY` directly at the unrenamed published binary** (`PRism.Web.exe`) — the per-RID rename to `PRism-win-x64.exe` happens only in CI (Task C2), so don't replicate it here:
+```powershell
+cd desktop ; $env:PRISM_SIDECAR_BINARY="$PWD\dev-sidecar\PRism.Web.exe" ; npm run start
 ```
-(macOS/Linux: `PRISM_SIDECAR_BINARY=dev-sidecar/... npm run start`. The publish renames to `PRism-win-x64.exe` in CI; for the dev smoke point at the actual published `PRism.Web.exe` name.)
+(macOS/Linux: `PRISM_SIDECAR_BINARY="$PWD/dev-sidecar/PRism.Web" npm run start`.)
 Expected: the PRism app loads in the Electron window (Inbox / paste-PAT screen). Launch a second `npm run start` → no second window, the first focuses. Close → no orphaned `PRism.Web` process (check Task Manager / `ps`).
 
 - [ ] **Step 3: Commit**
@@ -1214,12 +1238,12 @@ jobs:
         include:
           - os: windows-latest
             rid: win-x64
-            binary: PRism-win-x64.exe
-            published: PRism.Web.exe
+            binary: PRism-win-x64.exe       # final name electron-builder packs
+            dotnet_binary: PRism.Web.exe     # raw `dotnet publish` output (pre-rename)
           - os: macos-latest
             rid: osx-arm64
             binary: PRism-osx-arm64
-            published: PRism.Web
+            dotnet_binary: PRism.Web
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -1233,6 +1257,7 @@ jobs:
 
       - name: Skip macOS unless requested
         if: matrix.os == 'macos-latest' && inputs.include_macos != true
+        shell: bash
         run: echo "SKIP_JOB=1" >> "$GITHUB_ENV"
 
       - name: Frontend install + build
@@ -1250,7 +1275,7 @@ jobs:
       - name: Rename sidecar binary
         if: env.SKIP_JOB != '1'
         shell: bash
-        run: mv "desktop/sidecar/${{ matrix.published }}" "desktop/sidecar/${{ matrix.binary }}"
+        run: mv "desktop/sidecar/${{ matrix.dotnet_binary }}" "desktop/sidecar/${{ matrix.binary }}"
 
       - name: Desktop install + pack
         if: env.SKIP_JOB != '1'
@@ -1263,7 +1288,12 @@ jobs:
         with:
           tag_name: ${{ inputs.tag }}
           draft: true
-          files: desktop/release/*.@(exe|dmg)
+          # Newline-separated explicit globs — the proven idiom in this repo's
+          # publish.yml. Avoid bash extglob (@(exe|dmg)), which action-gh-release
+          # does not reliably evaluate.
+          files: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
 ```
 
 > Action SHAs match the repo's existing pins (`publish.yml`); bump via Dependabot. This fires only on `workflow_dispatch` with a `v0.2.*` tag; the existing `publish.yml` still owns `v0.1.*`, preserving the browser-tab fallback artifact.
@@ -1365,32 +1395,54 @@ test("single-instance: second launch does not open a second window", async () =>
   await first.close();
 });
 
-test("clean quit leaves no orphaned sidecar", async () => {
+test("clean quit leaves no orphaned sidecar process", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prism-e2e-"));
   const app = await launch(dir);
   await app.firstWindow();
   await app.close();
-  // The lockfile is the orphan tell: after a clean quit it must be released.
-  const lock = path.join(dir, "state.json.lock");
+
+  // Assert the actual sidecar PROCESS is gone — not the lockfile. On Windows,
+  // child.kill() maps to TerminateProcess, which does NOT run .NET's graceful
+  // ApplicationStopping, so LockfileHandle.Dispose never deletes state.json.lock.
+  // The lockfile may legitimately persist after an abrupt kill (the next launch's
+  // IsAlive PID+binary takeover handles it); the orphan tell is a live process.
+  const exeName = process.platform === "win32" ? "PRism-win-x64.exe" : "PRism-osx-arm64";
   const deadline = Date.now() + 5000;
-  while (fs.existsSync(lock) && Date.now() < deadline) {
+  while (sidecarProcessRunning(exeName) && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 100));
   }
-  expect(fs.existsSync(lock)).toBe(false);
+  expect(sidecarProcessRunning(exeName)).toBe(false);
 });
+
+function sidecarProcessRunning(exeName: string): boolean {
+  const { execSync } = require("node:child_process") as typeof import("node:child_process");
+  try {
+    if (process.platform === "win32") {
+      const out = execSync(`tasklist /FI "IMAGENAME eq ${exeName}" /NH`, { encoding: "utf8" });
+      return out.includes(exeName);
+    }
+    const out = execSync(`pgrep -f ${exeName} || true`, { encoding: "utf8" });
+    return out.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
 ```
 
-> The orphan assertion uses the released lockfile as a proxy (the sidecar disposes it on `ApplicationStopping`). A surviving lockfile after quit means a surviving sidecar.
+> The orphan assertion checks the live **process**, not the lockfile. A stale lockfile after an abrupt Windows kill is benign (next-launch `IsAlive` takeover handles it); a surviving process is the real orphan. This is the fix for the feasibility finding that `TerminateProcess` skips `.NET` graceful shutdown.
 
-- [ ] **Step 3: Run the e2e suite locally (needs a published sidecar)**
+- [ ] **Step 3: Run the e2e suite locally (needs the PUBLISHED sidecar)**
 
-```bash
-cd .. && dotnet publish PRism.Web/PRism.Web.csproj --runtime win-x64 --self-contained -p:PublishProfile=ci --output desktop/sidecar
-cd desktop && mv sidecar/PRism.Web.exe sidecar/PRism-win-x64.exe
+The e2e MUST run against the **published, self-contained binary** (which defaults to the `Production` environment), NOT a `dotnet run` sidecar. In Development the `SessionTokenMiddleware` and `HostHeaderCheckMiddleware` are bypassed, so the session-handshake and rebinding behaviors would pass for the wrong reason. The published binary has no `ASPNETCORE_ENVIRONMENT` set → Production → enforced.
+
+Run from the `desktop` directory (the env var uses an absolute path so it works regardless of cwd):
+```powershell
+cd .. ; dotnet publish PRism.Web/PRism.Web.csproj --runtime win-x64 --self-contained -p:PublishProfile=ci --output desktop/sidecar
+cd desktop ; Move-Item sidecar/PRism.Web.exe sidecar/PRism-win-x64.exe
 npm run build
-set PRISM_SIDECAR_BINARY=%CD%\sidecar\PRism-win-x64.exe && npx playwright test
+$env:PRISM_SIDECAR_BINARY="$PWD\sidecar\PRism-win-x64.exe" ; npx playwright test
 ```
-(bash: `PRISM_SIDECAR_BINARY="$PWD/sidecar/PRism-win-x64.exe" npx playwright test`.)
+(bash, run from `desktop/`: `PRISM_SIDECAR_BINARY="$(pwd)/sidecar/PRism-win-x64.exe" npx playwright test`.)
 Expected: 4 tests PASS.
 
 - [ ] **Step 4: Commit**
@@ -1472,9 +1524,13 @@ Add this bullet under the `## In progress` section:
 - [`2026-06-02-electron-desktop-shell-design.md`](2026-06-02-electron-desktop-shell-design.md) — v0.2.0 Electron desktop shell: Electron main + .NET sidecar (spawn, stdout-port handshake, `/api/health` gate, sandboxed `BrowserWindow` on `127.0.0.1`), single-instance via `requestSingleInstanceLock` (closes the deferred Phase 1 single-instance data-loss path), recycle-resistant parent-liveness watchdog, Host-header DNS-rebinding defense, unsigned cross-platform installers + `TESTING.md`, `v0.2.*` matrix publish workflow. Deferrals: [`2026-06-02-electron-desktop-shell-deferrals.md`](2026-06-02-electron-desktop-shell-deferrals.md). Plan: [`../plans/2026-06-02-electron-desktop-shell.md`](../plans/2026-06-02-electron-desktop-shell.md). In progress.
 ```
 
-- [ ] **Step 2: Add a roadmap row in `docs/roadmap.md`**
+- [ ] **Step 2: Update the single-instance row in `docs/roadmap.md`**
 
-In the architectural-readiness "Before P0+" single-instance row, append: `Resolved by the v0.2.0 Electron desktop shell ([`specs/2026-06-02-electron-desktop-shell-design.md`](./specs/2026-06-02-electron-desktop-shell-design.md)) — Electron's requestSingleInstanceLock + retained backend lockfile.` Add a new post-v1 section row referencing the desktop-shell spec as the v0.2.0 workstream.
+Find the architectural-readiness table row whose **Item** is "Single-instance enforcement (named mutex / `flock` + IPC focus signal)" and whose status cell currently ends with the v1-deferral note (`… open — design seed in … v1 deferral recorded in …`). Append to that status cell:
+
+> `**Resolved in v0.2.0** by the Electron desktop shell ([`specs/2026-06-02-electron-desktop-shell-design.md`](./specs/2026-06-02-electron-desktop-shell-design.md)) — Electron's requestSingleInstanceLock() prevents the accidental second launch; the retained backend lockfile guards dataDir integrity.`
+
+Do not delete the existing history in the cell — append, preserving the deferral trail. Leave the **Gate** column as-is (`Before P0+`).
 
 - [ ] **Step 3: Commit**
 
