@@ -184,6 +184,9 @@ function PrDetailPageInner({
         headShaDrift={updates.headShaChanged}
         currentHeadSha={data?.pr.headSha}
         prState={data?.pr.isMerged ? 'merged' : data?.pr.isClosed ? 'closed' : 'open'}
+        readOnly={presence.readOnly}
+        registerOpenComposer={draftSession.registerOpenComposer}
+        getPrRootHolder={draftSession.getPrRootHolder}
         onSessionRefetch={() => void draftSession.refetch()}
       />
       <CrossTabPresenceBanner

@@ -7,9 +7,20 @@ import { PreSubmitValidatorCard } from './PreSubmitValidatorCard';
 import { SubmitProgressIndicator } from './SubmitProgressIndicator';
 import { StaleCommitOidBanner } from './StaleCommitOidBanner';
 import { ForeignPendingReviewModal } from '../ForeignPendingReviewModal/ForeignPendingReviewModal';
-import { sendPatch } from '../../../api/draft';
+import { PrRootBodyEditor } from '../Composer/PrRootBodyEditor';
+import { DiscardPendingReviewConfirmationModal } from '../DiscardPendingReviewConfirmationModal';
 import { verdictToSubmitWire } from '../../../api/submit';
 import { submitDisabledReason } from '../SubmitButton';
+import {
+  COMPOSER_CREATE_THRESHOLD,
+  type ComposerSaveBadge,
+} from '../../../hooks/useComposerAutoSave';
+import { useCantEditRootBodyReason } from '../../../hooks/useCantEditRootBodyReason';
+import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
+import type {
+  DiscardOwnPendingReviewError,
+  DiscardOwnPendingReviewResult,
+} from '../../../api/submit';
 import type {
   DraftVerdict,
   PrReference,
@@ -19,12 +30,24 @@ import type {
 } from '../../../api/types';
 import type { SubmitState } from '../../../hooks/useSubmit';
 
-const SUMMARY_DEBOUNCE_MS = 250;
+type AutosaveControl = { flush: () => Promise<void>; badge: ComposerSaveBadge };
+
+// No-op registry/holder defaults so renders that don't wire the draft session
+// (e.g. isolated unit tests of the submit lifecycle) still mount. PrHeader
+// supplies the real session-backed implementations in production.
+const NOOP_REGISTER_OPEN_COMPOSER = (): (() => void) => () => {};
+const NOOP_GET_PR_ROOT_HOLDER = (): ComposerOwnerKey | null => null;
 
 interface Props {
   open: boolean;
   reference: PrReference;
   session: ReviewSessionDto;
+  // The PR's open/closed/merged state — threads into PrRootBodyEditor's
+  // closed-banner + autosave gate.
+  prState?: 'open' | 'closed' | 'merged';
+  // Cross-tab ownership: a peer tab claimed this PR. Disables the Edit toggle
+  // (with the other-tab tooltip) and short-circuits the editor's autosave.
+  readOnly?: boolean;
   // Canned validator results when aiPreview is on; [] otherwise (the header
   // does the gating — mirrors AiSummaryCard).
   validatorResults: ValidatorResult[];
@@ -36,6 +59,22 @@ interface Props {
   // The PR's currently-known head sha — shown (truncated) in the stale-commit-oid
   // banner. May briefly lag the real new head until the user clicks Reload.
   currentHeadSha?: string;
+  // Cross-surface composer registry (shared with the Overview-tab composer) so
+  // only one surface holds the PR-root draft at a time within a tab.
+  registerOpenComposer?: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
+  // Returns the ownerKey holding the PR-root draft (or null). Drives the
+  // Edit-disabled cross-surface lock.
+  getPrRootHolder?: () => ComposerOwnerKey | null;
+  // Discard-pending-review action + its in-flight flag (from useSubmit). The
+  // dialog drives the modal's onDiscard with this; discardInFlight gates the
+  // close + the "Cancelling…" sequencing label.
+  discardOwnPendingReview?: () => Promise<
+    DiscardOwnPendingReviewResult | DiscardOwnPendingReviewError
+  >;
+  discardInFlight?: boolean;
+  // Optimistic success toast after a discard 204 — the host owns the toast
+  // surface (PrHeader's useToast).
+  onDiscardSuccess?: () => void;
   // Cancel / Close — the caller resets useSubmit.
   onClose(): void;
   // Confirm — the caller calls useSubmit.submit(verdict).
@@ -56,10 +95,17 @@ export function SubmitDialog(props: Props) {
     open,
     reference,
     session,
+    prState = 'open',
+    readOnly = false,
     validatorResults,
     submitState,
     headShaDrift = false,
     currentHeadSha = '',
+    registerOpenComposer = NOOP_REGISTER_OPEN_COMPOSER,
+    getPrRootHolder = NOOP_GET_PR_ROOT_HOLDER,
+    discardOwnPendingReview,
+    discardInFlight = false,
+    onDiscardSuccess,
     onClose,
     onSubmit,
     onRetry,
@@ -68,54 +114,76 @@ export function SubmitDialog(props: Props) {
     onDiscardForeignPendingReview,
   } = props;
 
+  // The unified PR-root draft (filePath/lineNumber null) — the SAME draft the
+  // Overview-tab composer edits. Post-V7 this replaced the summary textarea.
+  const prRootDraft =
+    session.draftComments.find((d) => d.filePath === null && d.lineNumber === null) ?? null;
+
   const [verdict, setVerdict] = useState<DraftVerdict | null>(session.draftVerdict);
-  const [summary, setSummary] = useState(session.draftSummaryMarkdown ?? '');
+  const [editing, setEditing] = useState(false);
+  // Controlled draftId for the editor (null→uuid on first autosave-create).
+  const [, setBodyDraftId] = useState<string | null>(prRootDraft?.id ?? null);
+  // Live body surfaced from the editor — drives the submit-disabled override
+  // while editing (replicates the old inline-summary override).
+  const [editingBody, setEditingBody] = useState<string>(prRootDraft?.bodyMarkdown ?? '');
+  const editorControl = useRef<AutosaveControl | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const confirmingRef = useRef(false);
+  const closingRef = useRef(false);
   const [escNotice, setEscNotice] = useState('');
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [discardModalOpen, setDiscardModalOpen] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
 
-  // Re-seed the local picker + summary from the session, but only on the
-  // false→true `open` transition (`openRef` guards it) — a mid-session re-sync
-  // would clobber in-progress typing. The auto-saved summary persists across
-  // Cancel/reopen (spec § 8.2) by living in the session, so re-reading it on
-  // reopen is the right source. `session` is in the deps so the effect closure
-  // sees the current value when `open` flips; the `justOpened` guard makes the
-  // `session`-only re-runs no-ops.
+  // Cross-surface lock: the Overview composer (or another tab) may hold the
+  // draft. Edit is disabled with a reason-specific tooltip when non-null.
+  const prRootHolder = getPrRootHolder();
+  const cantEdit = useCantEditRootBodyReason({ readOnly, ownerKey: 'submit-dialog', prRootHolder });
+
+  // Re-seed the local picker from the session, but only on the false→true `open`
+  // transition (`openRef` guards it) — a mid-session re-sync would clobber an
+  // in-progress verdict pick. Always opens in preview (spec § 4.8).
   const openRef = useRef(open);
   useEffect(() => {
     const justOpened = open && !openRef.current;
     openRef.current = open;
     if (!justOpened) return;
     setVerdict(session.draftVerdict);
-    setSummary(session.draftSummaryMarkdown ?? '');
+    setEditing(false);
     setEscNotice('');
+    setDiscardModalOpen(false);
+    setDiscardError(null);
   }, [open, session]);
 
-  const saveSummary = useCallback(
-    (value: string) => {
-      void sendPatch(reference, { kind: 'draftSummaryMarkdown', payload: value });
-    },
-    [reference],
-  );
+  const handleAutosaveControl = useCallback((control: AutosaveControl) => {
+    editorControl.current = control;
+  }, []);
 
-  const flushSummary = useCallback(async () => {
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current);
-      debounceTimer.current = null;
+  // onDraftLost → return to preview so the dialog isn't stranded in an edit
+  // shell with a deleted draft (spec § 4.8 / 4.11).
+  const handleDraftLost = useCallback(() => {
+    setEditing(false);
+  }, []);
+
+  // Close path: when editing, drain the editor's debounce so an in-flight
+  // 250ms autosave isn't lost on unmount (spec § 4.8). Blocked entirely while a
+  // discard is in flight (mirrors the postInFlight rule, spec § 4.7).
+  const handleClose = useCallback(() => {
+    if (discardInFlight) return;
+    if (closingRef.current) return;
+    if (!editing || !editorControl.current) {
+      onClose();
+      return;
     }
-    await sendPatch(reference, { kind: 'draftSummaryMarkdown', payload: summary });
-  }, [reference, summary]);
-
-  const onSummaryChange = (value: string) => {
-    setSummary(value);
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => {
-      debounceTimer.current = null;
-      saveSummary(value);
-    }, SUMMARY_DEBOUNCE_MS);
-  };
+    closingRef.current = true;
+    void editorControl.current
+      .flush()
+      .catch(() => {})
+      .finally(() => {
+        closingRef.current = false;
+        onClose();
+      });
+  }, [discardInFlight, editing, onClose]);
 
   // Esc focuses Cancel, never dismisses (spec § 8.1) — and announces the
   // focus shift through an aria-live region so SR users aren't surprised. The
@@ -146,13 +214,6 @@ export function SubmitDialog(props: Props) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [open, submitState.kind]);
-
-  useEffect(
-    () => () => {
-      if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    },
-    [],
-  );
 
   const kind = submitState.kind;
   const inFlight = kind === 'in-flight';
@@ -206,7 +267,7 @@ export function SubmitDialog(props: Props) {
 
   const success = kind === 'success';
   const failed = kind === 'failed';
-  // The verdict picker + summary textarea are frozen for the whole submit flow
+  // The verdict picker + body editor are frozen for the whole submit flow
   // — through success, failure, and the stale-commitOID/foreign-prompt branches
   // (the retry paths re-fire with the last-confirmed verdict). Only `idle` is
   // editable. (spec § 8.3)
@@ -221,23 +282,28 @@ export function SubmitDialog(props: Props) {
   // The all-✓ checklist stays visible on success (spec § 8.3).
   const showProgress = inFlight || failed || success;
 
-  // Re-evaluate the § 9 rules against the *local* verdict + the *live* summary
-  // (both are editable in-dialog; clearing the textarea or changing the verdict
+  // Re-evaluate the § 9 rules against the *local* verdict + the *live* PR-root
+  // body (both are editable in-dialog; clearing the body or changing the verdict
   // must reflect immediately, ahead of the PUT /draft round-trip — otherwise
-  // Confirm shows enabled then the server 4xx's). headShaDrift is normally false
-  // here (drift disables the header button before the dialog opens) but can flip
-  // true mid-edit, so it's threaded through.
-  const confirmReason = submitDisabledReason(
-    {
-      ...session,
-      draftVerdict: verdict,
-      // Trimmed-emptiness, matching SubmitButton's isEmptyContent — a
-      // whitespace-only textarea is "no summary" for the § 9 rules.
-      draftSummaryMarkdown: summary.trim().length > 0 ? summary : null,
-    },
-    headShaDrift,
-    validatorResults,
-  );
+  // Confirm shows enabled then the server 4xx's). When editing, splice the live
+  // body into the PR-root draft; when the live body falls below the create
+  // threshold, drop the PR-root draft entirely so isEmptyContent (which keys on
+  // DraftComments.Count) sees "no PR-root draft" and gates Submit (spec § 4.8).
+  // headShaDrift is normally false here (drift disables the header button before
+  // the dialog opens) but can flip true mid-edit, so it's threaded through.
+  const effectiveSession: ReviewSessionDto = (() => {
+    if (!editing) {
+      return { ...session, draftVerdict: verdict };
+    }
+    const isPrRoot = (d: { filePath: string | null; lineNumber: number | null }) =>
+      d.filePath === null && d.lineNumber === null;
+    const bodyHasContent = editingBody.trim().length >= COMPOSER_CREATE_THRESHOLD;
+    const draftComments = bodyHasContent
+      ? session.draftComments.map((d) => (isPrRoot(d) ? { ...d, bodyMarkdown: editingBody } : d))
+      : session.draftComments.filter((d) => !isPrRoot(d));
+    return { ...session, draftVerdict: verdict, draftComments };
+  })();
+  const confirmReason = submitDisabledReason(effectiveSession, headShaDrift, validatorResults);
   const confirmDisabled = confirmReason !== null;
 
   const title = success
@@ -250,25 +316,52 @@ export function SubmitDialog(props: Props) {
 
   const prUrl = `https://github.com/${reference.owner}/${reference.repo}/pull/${reference.number}`;
 
+  const editTooltip =
+    cantEdit === 'editing-in-other-tab'
+      ? 'Another tab is editing this PR.'
+      : cantEdit === 'editing-in-overview-composer'
+        ? 'Close the Overview composer to edit here.'
+        : undefined;
+
   const handleConfirm = async () => {
-    // Guard the flushSummary round-trip — the dialog stays `idle` (Confirm
-    // enabled) until the parent's submit() flips the state, so a rapid
-    // double-click would otherwise fire two onSubmit calls.
+    // Guard the flush round-trip — the dialog stays `idle` (Confirm enabled)
+    // until the parent's submit() flips the state, so a rapid double-click would
+    // otherwise fire two onSubmit calls.
     if (confirmingRef.current) return;
     confirmingRef.current = true;
     try {
-      // Flush the debounced summary save so a keystroke <250ms before Confirm
+      // Flush the debounced body save so a keystroke <250ms before Confirm
       // still lands in the session the pipeline reads (spec § 8.2). Default to
       // Comment when no verdict was picked (spec § 6).
-      await flushSummary();
+      if (editing) await editorControl.current?.flush();
       onSubmit(verdictToSubmitWire(verdict ?? 'comment'));
     } finally {
       confirmingRef.current = false;
     }
   };
 
+  // Discard footer button visibility: a pending review exists OR a submit is
+  // in flight for this PR (spec § 4.8).
+  const showDiscard = session.pendingReviewId !== null || kind === 'in-flight';
+
+  const handleDiscard = async () => {
+    if (!discardOwnPendingReview) return;
+    setDiscardError(null);
+    const r = await discardOwnPendingReview();
+    if (!r.ok) {
+      // The modal renders "Couldn't discard: {message}." and appends its own
+      // period — strip a trailing one so we never show "..".
+      setDiscardError(r.message.endsWith('.') ? r.message.slice(0, -1) : r.message);
+      return;
+    }
+    // 204: close the modal + the dialog + surface the optimistic toast.
+    setDiscardModalOpen(false);
+    onDiscardSuccess?.();
+    onClose();
+  };
+
   return (
-    <Modal open={open} title={title} onClose={onClose} disableEscDismiss>
+    <Modal open={open} title={title} onClose={handleClose} disableEscDismiss>
       <div className="submit-dialog" ref={dialogRef} tabIndex={-1}>
         <div className="submit-dialog__status" role="status" aria-live="polite">
           {escNotice}
@@ -293,27 +386,55 @@ export function SubmitDialog(props: Props) {
             </section>
           )}
 
-          <section data-section="summary" className="submit-dialog__section submit-dialog__summary">
-            <label className="submit-dialog__summary-label" htmlFor="submit-dialog-summary">
-              PR-level summary (optional)
-            </label>
-            <div className="submit-dialog__summary-cols">
-              <textarea
-                id="submit-dialog-summary"
-                className="textarea submit-dialog__summary-input"
-                data-modal-role="primary"
-                value={summary}
-                disabled={frozen}
-                onChange={(e) => onSummaryChange(e.target.value)}
-                placeholder="Write a short summary of this review…"
-              />
-              <div className="submit-dialog__summary-preview" data-section="summary-preview">
-                {summary.trim().length === 0 ? (
-                  <p className="muted">Nothing to preview yet.</p>
-                ) : (
-                  <MarkdownRenderer source={summary} />
-                )}
-              </div>
+          <section data-section="summary" className="submit-dialog__section submit-dialog__pr-root">
+            <header className="submit-dialog__pr-root-header">
+              <span className="submit-dialog__summary-label" id="submit-dialog-pr-root-label">
+                PR-level body
+              </span>
+              {!editing ? (
+                <button
+                  type="button"
+                  className="composer-preview-toggle"
+                  data-testid="pr-root-edit-toggle"
+                  disabled={frozen || cantEdit !== null}
+                  title={editTooltip}
+                  onClick={() => setEditing(true)}
+                >
+                  Edit
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="composer-preview-toggle"
+                  data-testid="pr-root-done-toggle"
+                  onClick={() => setEditing(false)}
+                >
+                  Done
+                </button>
+              )}
+            </header>
+
+            <div className="submit-dialog__pr-root-body" data-section="summary-preview">
+              {editing ? (
+                <PrRootBodyEditor
+                  key={prRootDraft?.id ?? 'new'}
+                  prRef={reference}
+                  prState={prState}
+                  draftId={prRootDraft?.id ?? null}
+                  onDraftIdChange={setBodyDraftId}
+                  registerOpenComposer={registerOpenComposer}
+                  ownerKey="submit-dialog"
+                  initialBody={prRootDraft?.bodyMarkdown ?? ''}
+                  readOnly={readOnly}
+                  onBodyChange={setEditingBody}
+                  onAutosaveControl={handleAutosaveControl}
+                  onDraftLost={handleDraftLost}
+                />
+              ) : prRootDraft && prRootDraft.bodyMarkdown.trim().length > 0 ? (
+                <MarkdownRenderer source={prRootDraft.bodyMarkdown} />
+              ) : (
+                <p className="muted">No PR-level body — click Edit to add one.</p>
+              )}
             </div>
           </section>
 
@@ -326,20 +447,40 @@ export function SubmitDialog(props: Props) {
 
           {showProgress && (
             <section data-section="progress" className="submit-dialog__section">
+              {inFlight && discardInFlight && (
+                <p className="submit-dialog__spinner" role="status" aria-live="polite">
+                  Cancelling…
+                </p>
+              )}
               <SubmitProgressIndicator steps={progressSteps} />
             </section>
           )}
         </div>
 
         <footer className="submit-dialog__footer">
+          {showDiscard && (
+            <button
+              type="button"
+              className="btn btn-secondary submit-dialog__discard"
+              data-testid="dialog-discard"
+              disabled={discardInFlight}
+              onClick={() => {
+                setDiscardError(null);
+                setDiscardModalOpen(true);
+              }}
+            >
+              Discard pending review
+            </button>
+          )}
+
           {!success && (
             <button
               ref={cancelRef}
               type="button"
               className="btn btn-secondary"
               data-modal-role="cancel"
-              disabled={inFlight}
-              onClick={onClose}
+              disabled={inFlight || discardInFlight}
+              onClick={handleClose}
             >
               Cancel
             </button>
@@ -378,6 +519,18 @@ export function SubmitDialog(props: Props) {
           )}
         </footer>
       </div>
+
+      <DiscardPendingReviewConfirmationModal
+        open={discardModalOpen}
+        onCancel={() => {
+          if (discardInFlight) return;
+          setDiscardModalOpen(false);
+          setDiscardError(null);
+        }}
+        onDiscard={() => void handleDiscard()}
+        discardInFlight={discardInFlight}
+        errorMessage={discardError}
+      />
     </Modal>
   );
 }

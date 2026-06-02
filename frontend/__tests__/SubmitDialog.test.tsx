@@ -1,23 +1,54 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SubmitDialog } from '../src/components/PrDetail/SubmitDialog/SubmitDialog';
-import type { PrReference, ReviewSessionDto } from '../src/api/types';
+import type { ComposerOwnerKey } from '../src/hooks/useDraftSession';
+import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../src/api/types';
 
-const sendPatchMock = vi.fn();
-vi.mock('../src/api/draft', async (orig) => {
-  const actual = await orig<typeof import('../src/api/draft')>();
-  return { ...actual, sendPatch: (...a: unknown[]) => sendPatchMock(...a) };
-});
+// Mock the wrapped editor so we can drive its callbacks (onBodyChange,
+// onAutosaveControl, onDraftLost) directly and assert orchestration without
+// re-testing PrRootBodyEditor's own behavior (covered in its own file).
+const editorFlush = vi.fn().mockResolvedValue(undefined);
+let lastEditorProps: Record<string, unknown> | null = null;
+vi.mock('../src/components/PrDetail/Composer/PrRootBodyEditor', () => ({
+  PrRootBodyEditor: (p: Record<string, unknown>) => {
+    lastEditorProps = p;
+    // Surface the autosave control synchronously on mount.
+    const onAutosaveControl = p.onAutosaveControl as
+      | ((c: { flush: () => Promise<void>; badge: string }) => void)
+      | undefined;
+    onAutosaveControl?.({ flush: editorFlush, badge: 'saved' });
+    return (
+      <textarea
+        aria-label="PR-level body"
+        data-testid="mock-editor"
+        defaultValue={(p.initialBody as string) ?? ''}
+        onChange={(e) => (p.onBodyChange as (b: string) => void)?.(e.target.value)}
+      />
+    );
+  },
+}));
 
 const reference: PrReference = { owner: 'o', repo: 'r', number: 1 };
 type DialogProps = ComponentProps<typeof SubmitDialog>;
+
+function prRootDraft(overrides: Partial<DraftCommentDto> = {}): DraftCommentDto {
+  return {
+    id: 'draft-root',
+    filePath: null,
+    lineNumber: null,
+    bodyMarkdown: 'hello **world**',
+    status: 'fresh',
+    isOverriddenStale: false,
+    anchoredSha: null,
+    ...overrides,
+  } as DraftCommentDto;
+}
 
 function session(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -25,7 +56,7 @@ function session(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto {
     pendingReviewCommitOid: null,
     fileViewState: { viewedFiles: {} },
     ...overrides,
-  };
+  } as ReviewSessionDto;
 }
 
 function baseProps(overrides: Partial<DialogProps> = {}): DialogProps {
@@ -46,7 +77,8 @@ function baseProps(overrides: Partial<DialogProps> = {}): DialogProps {
 }
 
 beforeEach(() => {
-  sendPatchMock.mockReset().mockResolvedValue({ ok: true, assignedId: null });
+  lastEditorProps = null;
+  editorFlush.mockClear().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -61,10 +93,6 @@ describe('SubmitDialog', () => {
   });
 
   it('renders inside the Modal shell with the .submit-dialog marker the § 8.5 720px width keys on', () => {
-    // jsdom doesn't load tokens.css, so a getComputedStyle().maxWidth check
-    // wouldn't see the rule; this pins the structural hook the CSS
-    // (`.modal-dialog:has(.submit-dialog) { max-width: 720px }`) targets so
-    // the width contract can't drift unnoticed.
     render(<SubmitDialog {...baseProps()} />);
     expect(document.querySelector('.modal-dialog .submit-dialog')).not.toBeNull();
   });
@@ -79,6 +107,12 @@ describe('SubmitDialog', () => {
     expect(sections.indexOf('summary')).toBeLessThan(sections.indexOf('counts'));
   });
 
+  // NEGATIVE: the old summary textarea is gone post-V7.
+  it('no longer renders the old PR-level summary textarea', () => {
+    render(<SubmitDialog {...baseProps()} />);
+    expect(screen.queryByLabelText(/pr-level summary/i)).toBeNull();
+  });
+
   it('idle state: Cancel + Confirm submit are present and enabled with a ready session', () => {
     render(<SubmitDialog {...baseProps()} />);
     expect(screen.getByRole('button', { name: /^cancel$/i })).toBeEnabled();
@@ -90,18 +124,6 @@ describe('SubmitDialog', () => {
     expect(screen.getByRole('button', { name: /confirm submit/i })).toBeDisabled();
   });
 
-  it('Confirm re-evaluates against the live textarea — clearing the only content disables it', () => {
-    // Session's only "content" is the saved summary; the picker has no verdict.
-    render(
-      <SubmitDialog
-        {...baseProps({ session: session({ draftVerdict: null, draftSummaryMarkdown: 'LGTM' }) })}
-      />,
-    );
-    expect(screen.getByRole('button', { name: /confirm submit/i })).toBeEnabled();
-    fireEvent.change(screen.getByLabelText(/pr-level summary/i), { target: { value: '' } });
-    expect(screen.getByRole('button', { name: /confirm submit/i })).toBeDisabled();
-  });
-
   it('Confirm follows rule (f) when head_sha drift develops while the dialog is open', () => {
     const { rerender } = render(<SubmitDialog {...baseProps()} />);
     expect(screen.getByRole('button', { name: /confirm submit/i })).toBeEnabled();
@@ -109,7 +131,7 @@ describe('SubmitDialog', () => {
     expect(screen.getByRole('button', { name: /confirm submit/i })).toBeDisabled();
   });
 
-  it('clicking Confirm flushes the summary then fires onSubmit with the PascalCase verdict', async () => {
+  it('clicking Confirm fires onSubmit with the PascalCase verdict', async () => {
     const onSubmit = vi.fn();
     render(
       <SubmitDialog
@@ -119,10 +141,6 @@ describe('SubmitDialog', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /confirm submit/i }));
     });
-    expect(sendPatchMock).toHaveBeenCalledWith(
-      reference,
-      expect.objectContaining({ kind: 'draftSummaryMarkdown' }),
-    );
     expect(onSubmit).toHaveBeenCalledWith('RequestChanges');
   });
 
@@ -133,24 +151,12 @@ describe('SubmitDialog', () => {
     expect(onVerdictChange).toHaveBeenCalledWith('comment');
   });
 
-  it('typing in the summary textarea debounce-saves to draftSummaryMarkdown', () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    render(<SubmitDialog {...baseProps()} />);
-    const textarea = screen.getByLabelText(/pr-level summary/i);
-    fireEvent.change(textarea, { target: { value: 'Looks good' } });
-    expect(sendPatchMock).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(250));
-    expect(sendPatchMock).toHaveBeenCalledWith(reference, {
-      kind: 'draftSummaryMarkdown',
-      payload: 'Looks good',
-    });
-  });
-
-  it('renders the summary live preview', () => {
+  // ---- Preview ----------------------------------------------------------
+  it('preview: renders the PR-root draft body via MarkdownRenderer when present', () => {
     render(
       <SubmitDialog
         {...baseProps({
-          session: session({ draftVerdict: 'approve', draftSummaryMarkdown: 'hello **world**' }),
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
         })}
       />,
     );
@@ -160,6 +166,249 @@ describe('SubmitDialog', () => {
     expect(preview!.querySelector('strong')?.textContent).toBe('world');
   });
 
+  it('preview: renders the placeholder when no PR-root body exists', () => {
+    render(<SubmitDialog {...baseProps()} />);
+    expect(screen.getByText(/no pr-level body — click edit to add one/i)).toBeInTheDocument();
+  });
+
+  // ---- Edit toggle ------------------------------------------------------
+  it('clicking Edit mounts PrRootBodyEditor; Done returns to the preview', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('pr-root-edit-toggle'));
+    expect(screen.getByLabelText('PR-level body')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('pr-root-done-toggle'));
+    expect(screen.queryByTestId('mock-editor')).toBeNull();
+  });
+
+  it('Edit mounts the editor with ownerKey=submit-dialog and key derived from the draft id', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('pr-root-edit-toggle'));
+    expect(lastEditorProps?.ownerKey).toBe('submit-dialog');
+    expect(lastEditorProps?.draftId).toBe('draft-root');
+    expect(lastEditorProps?.initialBody).toBe('hello **world**');
+  });
+
+  // ---- Cross-surface + cross-tab lock -----------------------------------
+  it('cross-surface lock: Edit disabled with the overview-composer tooltip when reply-composer holds the draft', () => {
+    const getPrRootHolder = (): ComposerOwnerKey | null => 'reply-composer';
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+          getPrRootHolder,
+        })}
+      />,
+    );
+    const edit = screen.getByTestId('pr-root-edit-toggle');
+    expect(edit).toBeDisabled();
+    expect(edit).toHaveAttribute('title', 'Close the Overview composer to edit here.');
+  });
+
+  it('cross-tab readOnly: Edit disabled with the other-tab tooltip', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+          readOnly: true,
+        })}
+      />,
+    );
+    const edit = screen.getByTestId('pr-root-edit-toggle');
+    expect(edit).toBeDisabled();
+    expect(edit).toHaveAttribute('title', 'Another tab is editing this PR.');
+  });
+
+  // ---- Close-while-editing flush ----------------------------------------
+  it('Close while editing awaits the editor flush before onClose', async () => {
+    const order: string[] = [];
+    const onClose = vi.fn(() => {
+      order.push('close');
+    });
+    editorFlush.mockImplementation(async () => {
+      order.push('flush');
+    });
+    render(
+      <SubmitDialog
+        {...baseProps({
+          onClose,
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('pr-root-edit-toggle'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(order).toEqual(['flush', 'close']);
+  });
+
+  it('Close in preview (not editing) calls onClose without flushing', () => {
+    const onClose = vi.fn();
+    render(<SubmitDialog {...baseProps({ onClose })} />);
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(onClose).toHaveBeenCalled();
+    expect(editorFlush).not.toHaveBeenCalled();
+  });
+
+  // ---- onDraftLost → preview --------------------------------------------
+  it('onDraftLost returns the dialog to preview', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('pr-root-edit-toggle'));
+    expect(screen.getByTestId('mock-editor')).toBeInTheDocument();
+    act(() => {
+      (lastEditorProps?.onDraftLost as () => void)?.();
+    });
+    expect(screen.queryByTestId('mock-editor')).toBeNull();
+  });
+
+  // ---- Discard footer ---------------------------------------------------
+  it('Discard footer button is present when a pending review exists', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({ session: session({ draftVerdict: 'approve', pendingReviewId: 'PRR_1' }) })}
+      />,
+    );
+    expect(screen.getByTestId('dialog-discard')).toBeInTheDocument();
+  });
+
+  it('Discard footer button is present while a submit is in flight', () => {
+    render(<SubmitDialog {...baseProps({ submitState: { kind: 'in-flight', steps: [] } })} />);
+    expect(screen.getByTestId('dialog-discard')).toBeInTheDocument();
+  });
+
+  it('Discard footer button is absent with no pending review and idle submit', () => {
+    render(<SubmitDialog {...baseProps()} />);
+    expect(screen.queryByTestId('dialog-discard')).toBeNull();
+  });
+
+  it('clicking Discard opens the confirmation modal', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({ session: session({ draftVerdict: 'approve', pendingReviewId: 'PRR_1' }) })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('dialog-discard'));
+    expect(screen.getByTestId('discard-pending-review-modal')).toBeInTheDocument();
+  });
+
+  it('confirming Discard calls discardOwnPendingReview; success closes dialog + fires the toast', async () => {
+    const discardOwnPendingReview = vi.fn().mockResolvedValue({ ok: true });
+    const onDiscardSuccess = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', pendingReviewId: 'PRR_1' }),
+          discardOwnPendingReview,
+          onDiscardSuccess,
+          onClose,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('dialog-discard'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('confirm-discard-pending'));
+    });
+    expect(discardOwnPendingReview).toHaveBeenCalled();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onDiscardSuccess).toHaveBeenCalled();
+  });
+
+  it('failed Discard surfaces the modal error and does not close the dialog', async () => {
+    const discardOwnPendingReview = vi
+      .fn()
+      .mockResolvedValue({ ok: false, code: 'github-forbidden', message: 'Forbidden' });
+    const onClose = vi.fn();
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', pendingReviewId: 'PRR_1' }),
+          discardOwnPendingReview,
+          onClose,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('dialog-discard'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('confirm-discard-pending'));
+    });
+    expect(screen.getByTestId('discard-pending-error')).toHaveTextContent(
+      "Couldn't discard: Forbidden.",
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('strips a trailing period from the API message so the modal never shows ".."', async () => {
+    const discardOwnPendingReview = vi
+      .fn()
+      .mockResolvedValue({ ok: false, code: 'github-network-error', message: 'Network failed.' });
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', pendingReviewId: 'PRR_1' }),
+          discardOwnPendingReview,
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('dialog-discard'));
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('confirm-discard-pending'));
+    });
+    const err = screen.getByTestId('discard-pending-error');
+    expect(err).toHaveTextContent("Couldn't discard: Network failed.");
+    expect(err.textContent).not.toContain('..');
+  });
+
+  // ---- Close blocked while discardInFlight ------------------------------
+  it('Cancel is disabled and onClose is blocked while a discard is in flight', () => {
+    const onClose = vi.fn();
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', pendingReviewId: 'PRR_1' }),
+          discardInFlight: true,
+          onClose,
+        })}
+      />,
+    );
+    const cancel = screen.getByRole('button', { name: /^cancel$/i });
+    expect(cancel).toBeDisabled();
+    fireEvent.click(cancel);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('shows the "Cancelling…" sequencing label when a discard runs during an in-flight submit', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          submitState: { kind: 'in-flight', steps: [] },
+          discardInFlight: true,
+        })}
+      />,
+    );
+    expect(screen.getByText(/^cancelling…$/i)).toBeInTheDocument();
+  });
+
+  // ---- Existing lifecycle coverage --------------------------------------
   it('in-flight Phase A: neutral indicator, Cancel disabled, no Confirm, Submitting spinner', () => {
     render(<SubmitDialog {...baseProps({ submitState: { kind: 'in-flight', steps: [] } })} />);
     expect(screen.getByText(/checking pending review state/i)).toBeInTheDocument();
@@ -172,22 +421,6 @@ describe('SubmitDialog', () => {
     render(<SubmitDialog {...baseProps({ submitState: { kind: 'in-flight', steps: [] } })} />);
     const dialog = screen.getByRole('dialog');
     expect(dialog.contains(document.activeElement)).toBe(true);
-  });
-
-  it('in-flight Phase B: the 5-row checklist replaces the neutral indicator', () => {
-    const steps = [
-      {
-        step: 'DetectExistingPendingReview' as const,
-        status: 'Succeeded' as const,
-        done: 1,
-        total: 1,
-      },
-      { step: 'BeginPendingReview' as const, status: 'Succeeded' as const, done: 1, total: 1 },
-    ];
-    render(<SubmitDialog {...baseProps({ submitState: { kind: 'in-flight', steps } })} />);
-    expect(screen.queryByText(/checking pending review state/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/attach threads/i)).toBeInTheDocument();
-    expect(screen.getByText(/finalize/i)).toBeInTheDocument();
   });
 
   it('success state: View on GitHub link + Close button, no Cancel, all-✓ checklist still shown', () => {
@@ -251,8 +484,6 @@ describe('SubmitDialog', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('feedfac');
     expect(screen.getByRole('button', { name: /recreate and resubmit/i })).toBeEnabled();
     expect(screen.getByRole('button', { name: /cancel/i })).toBeEnabled();
-    // The body sections are gone — no verdict picker / summary while in this state.
-    expect(screen.queryByLabelText(/pr-level summary/i)).not.toBeInTheDocument();
   });
 
   it('stale-commit-oid state: Esc dismisses (nothing was submitted; no editable content to protect)', () => {
@@ -266,8 +497,6 @@ describe('SubmitDialog', () => {
         })}
       />,
     );
-    // The SubmitDialog-level window Esc handler is skipped for this kind; the
-    // shared <Modal>'s document-level handler dismisses (disableEscDismiss off).
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
   });
@@ -309,7 +538,6 @@ describe('SubmitDialog', () => {
     );
     expect(screen.getByRole('button', { name: /^resume$/i })).toBeInTheDocument();
     expect(screen.getByText(/2 thread/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/pr-level summary/i)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^resume$/i }));
     expect(onResumeForeignPendingReview).toHaveBeenCalledWith('PRR_a');
   });

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
+import type { ComposerOwnerKey } from '../../hooks/useDraftSession';
 import { sendPatch } from '../../api/draft';
 import {
   SubmitConflictError,
@@ -75,6 +76,15 @@ interface PrHeaderProps {
   // Closed/merged PRs hide the verdict picker + disable Submit and surface the
   // bulk-discard button instead (spec § 13.1). Defaults to 'open' (loading).
   prState?: PrState;
+  // Cross-tab ownership (spec § 5.7a). Threads into the SubmitDialog's PR-root
+  // Edit toggle + editor so a peer-owned PR can't be edited from here.
+  readOnly?: boolean;
+  // Cross-surface composer registry (shared with the Overview-tab composer) so
+  // the SubmitDialog's PR-root edit mode holds the draft mutually-exclusively.
+  registerOpenComposer?: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
+  // Returns the ownerKey holding the PR-root draft (or null) — drives the
+  // SubmitDialog Edit-disabled cross-surface lock.
+  getPrRootHolder?: () => ComposerOwnerKey | null;
   // Called after a verdict patch so the page refetches the session (own-tab
   // SSE events are filtered, so the change wouldn't otherwise round-trip).
   onSessionRefetch?: () => void;
@@ -96,6 +106,9 @@ export function PrHeader({
   headShaDrift = false,
   currentHeadSha = '',
   prState = 'open',
+  readOnly = false,
+  registerOpenComposer,
+  getPrRootHolder,
   onSessionRefetch,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
@@ -351,10 +364,17 @@ export function PrHeader({
           open
           reference={reference}
           session={session}
+          prState={prState}
+          readOnly={readOnly}
           validatorResults={validatorResults}
           submitState={submit.state}
           headShaDrift={headShaDrift}
           currentHeadSha={currentHeadSha}
+          registerOpenComposer={registerOpenComposer}
+          getPrRootHolder={getPrRootHolder}
+          discardOwnPendingReview={submit.discardOwnPendingReview}
+          discardInFlight={submit.discardInFlight}
+          onDiscardSuccess={() => show({ kind: 'info', message: 'Pending review discarded' })}
           onClose={closeDialog}
           onSubmit={(verdict) => {
             void submit.submit(verdict).catch(surfaceSubmitError);

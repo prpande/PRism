@@ -656,6 +656,21 @@ a:hover { text-decoration: underline; }
   overflow-y: auto;
 }
 .submit-dialog__counts { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
+/* PR-root body preview / inline-edit section (spec § 4.8) */
+.submit-dialog__pr-root-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.submit-dialog__pr-root-body {
+  min-height: 80px;
+  padding: var(--s-2) var(--s-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  overflow-y: auto;
+}
 .submit-dialog__footer {
   position: sticky;
   bottom: calc(-1 * var(--s-5));
@@ -668,6 +683,9 @@ a:hover { text-decoration: underline; }
   border-top: 1px solid var(--border-1);
 }
 .submit-dialog__spinner { font-size: var(--text-sm); color: var(--text-2); }
+/* Leftmost footer Discard button (spec § 4.8) — pushed against the left edge
+   while Cancel/Confirm stay right-aligned via the footer's flex-end. */
+.submit-dialog__discard { margin-right: auto; }
 
 /* Submit-progress checklist (spec § 8.3) */
 .submit-progress { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--s-2); }
