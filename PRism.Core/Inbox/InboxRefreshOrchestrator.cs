@@ -106,8 +106,19 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                         .Select(kv => $"{kv.Key}={kv.Value.Count}")));
 #pragma warning restore CA1873
 
+            // Recently-closed history: an extra search-API pass (gated on config) whose raw
+            // items are folded into the shared enrichment pass below so they pick up
+            // MergedAt/ClosedAt, then materialized into a dedicated section AFTER dedup.
+            IReadOnlyList<RawPrInboxItem> closedRaw = Array.Empty<RawPrInboxItem>();
+            if (_config.Current.Inbox.Sections.RecentlyClosed)
+            {
+                closedRaw = await _sections
+                    .QueryClosedHistoryAsync(InboxHistoryConstants.HistoryWindowDays, ct)
+                    .ConfigureAwait(false);
+            }
+
             // Enrich every PR across all sections (one HTTP call per PR, deduplicated by ref)
-            var allRawDistinct = raw.Values.SelectMany(v => v)
+            var allRawDistinct = raw.Values.SelectMany(v => v).Concat(closedRaw)
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
             var enriched = await _enricher.EnrichAsync(allRawDistinct, ct).ConfigureAwait(false);
             var byRef = enriched.ToDictionary(p => p.Reference);
@@ -178,19 +189,37 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
             // Dedupe
             var deduped = _dedupe.Deduplicate(sectionsAsItems, _config.Current.Inbox.Deduplicate);
-            var postDedupeTotal = deduped.Values.Sum(v => v.Count); // also used by SnapshotBuilt below
             if (_log.IsEnabled(LogLevel.Debug))
             {
                 var preDedupeTotal = sectionsAsItems.Values.Sum(v => v.Count);
-                Log.DedupeApplied(_log, _config.Current.Inbox.Deduplicate, preDedupeTotal, postDedupeTotal);
+                var postDedupeOnly = deduped.Values.Sum(v => v.Count);
+                Log.DedupeApplied(_log, _config.Current.Inbox.Deduplicate, preDedupeTotal, postDedupeOnly);
             }
+
+            // Recently-closed section is appended AFTER dedup so it stays DISJOINT from
+            // InboxDeduplicator's pair-collapsing. IInboxDeduplicator returns an
+            // IReadOnlyDictionary (no indexer setter) and its early-return paths hand back
+            // the caller's input instance — so we copy into a fresh mutable dictionary
+            // rather than index-assigning into `deduped` (which would be CS0021 / unsafe).
+            var sectionsFinal = deduped.ToDictionary(kv => kv.Key, kv => kv.Value);
+            if (_config.Current.Inbox.Sections.RecentlyClosed)
+            {
+                var closedItems = (IReadOnlyList<PrInboxItem>)closedRaw
+                    .Select(r => byRef.TryGetValue(r.Reference, out var e) ? e : r)
+                    .Select(r => MaterializePrInboxItem(r, ciByRef, state)) // NO HeadSha filter
+                    .OrderByDescending(i => i.MergedAt ?? i.ClosedAt ?? DateTimeOffset.MinValue)
+                    .Take(InboxHistoryConstants.MaxHistoryRows)
+                    .ToList();
+                sectionsFinal[InboxHistoryConstants.SectionId] = closedItems;
+            }
+            var postDedupeTotal = sectionsFinal.Values.Sum(v => v.Count); // also used by SnapshotBuilt below
 
             // AI enrichment. The enricher returns one InboxItemEnrichment per input item, so
             // we must hand it a list with one entry per unique PR — otherwise PRs that appear
             // in two visible sections (e.g. authored-by-me ∩ awaiting-author, an overlap that
             // InboxDeduplicator does not collapse) would produce duplicate enrichments and
             // ToDictionary would throw, leaving the snapshot uninitialized and the inbox 503.
-            var allItems = deduped.Values.SelectMany(v => v)
+            var allItems = sectionsFinal.Values.SelectMany(v => v)
                 .DistinctBy(i => i.Reference)
                 .ToList();
             var enricher = _aiSelector.Resolve<IInboxItemEnricher>();
@@ -199,14 +228,14 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             Log.AiEnrichmentComplete(_log, enricher.GetType().Name, allItems.Count, enrichments.Count);
 
             // Build snapshot + diff
-            var newSnap = new InboxSnapshot(deduped, enrichmentMap, DateTimeOffset.UtcNow);
+            var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow);
             var diff = ComputeDiff(_current, newSnap);
             Volatile.Write(ref _current, newSnap);
 
             if (!_firstSnapshotTcs.Task.IsCompleted) _firstSnapshotTcs.TrySetResult();
 
             sw.Stop();
-            Log.SnapshotBuilt(_log, postDedupeTotal, deduped.Count, diff.Changed, diff.NewOrUpdatedPrCount, sw.ElapsedMilliseconds);
+            Log.SnapshotBuilt(_log, postDedupeTotal, sectionsFinal.Count, diff.Changed, diff.NewOrUpdatedPrCount, sw.ElapsedMilliseconds);
 
             if (diff.Changed)
             {
@@ -257,7 +286,8 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             r.UpdatedAt, r.PushedAt,
             r.IterationNumberApprox, r.CommentCount,
             r.Additions, r.Deletions, r.HeadSha, ci,
-            lastViewedHeadSha, lastSeenCommentId);
+            lastViewedHeadSha, lastSeenCommentId,
+            r.MergedAt, r.ClosedAt);
     }
 
     // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its
