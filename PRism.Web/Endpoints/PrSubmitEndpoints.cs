@@ -55,6 +55,12 @@ internal static class PrSubmitEndpoints
         LoggerMessage.Define<string, string, string>(LogLevel.Information, new EventId(3, "SubmitRejectedHeadShaDrift"),
             "POST /submit rejected for {SessionKey}: head SHA drifted (last viewed {LastViewed}, current {Current}). The user must Reload before retrying.");
 
+    // Logged at Information — cancellation is an expected user-initiated action (discard), not a
+    // failure. EventId 4 is the next free id in this file (0–3 are taken above).
+    private static readonly Action<ILogger, string, string, Exception?> s_pipelineCancelled =
+        LoggerMessage.Define<string, string>(LogLevel.Information, new EventId(4, "SubmitPipelineCancelled"),
+            "Submit pipeline cancelled for {SessionKey}: {Reason}");
+
     public static IEndpointRouteBuilder MapPrSubmitEndpoints(this IEndpointRouteBuilder app)
     {
         ArgumentNullException.ThrowIfNull(app);
@@ -205,12 +211,22 @@ internal static class PrSubmitEndpoints
                         bus.Publish(new SubmitStaleCommitOidBusEvent(prRef, stale.OrphanCommitOid));
                         bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
                         break;
+                    case SubmitOutcome.Cancelled cancelled:
+                        // Emit a terminal Failed SSE for the last-known step so the SubmitDialog
+                        // progress UI moves out of an orphan "Started" state. The discard endpoint
+                        // owns the user-facing "discarded" signal — we don't publish anything else here.
+                        progress.Report(new SubmitProgressEvent(cancelled.LastStep, SubmitStepStatus.Failed, 0, 0, "cancelled"));
+                        s_pipelineCancelled(loggerFactory.CreateLogger(LoggerCategory), sessionKey, cancelled.Reason, null);
+                        break;
                 }
             }
             catch (OperationCanceledException) when (pipelineCt.IsCancellationRequested)
             {
                 // Host shutting down — per-step persists already wrote; the next session resumes via
-                // the foreign-pending-review flow if a pending review exists on github.com.
+                // the foreign-pending-review flow if a pending review exists on github.com. Note: Task 11
+                // will link a user-discard CTS to pipelineCt so the pipeline catches user-cancellation
+                // first (via the pipeline's own OCE catch → SubmitOutcome.Cancelled) and the host-shutdown
+                // catch here only fires for genuine shutdown races that bypass the pipeline's catch.
             }
 #pragma warning disable CA1031 // a stray exception in a fire-and-forget background task must not crash the host
             catch (Exception ex)
