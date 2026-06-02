@@ -978,8 +978,11 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var ciSummary = "";   // computed by PrDetailLoader (or by an upstream enrichment); placeholder here.
 
         var state = GetStr("state");
-        var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal) ||
-                       (pull.TryGetProperty("mergedAt", out var ma) && ma.ValueKind != JsonValueKind.Null);
+        DateTimeOffset? mergedAt = pull.TryGetProperty("mergedAt", out var mAt) && mAt.ValueKind != JsonValueKind.Null
+            ? mAt.GetDateTimeOffset() : null;
+        DateTimeOffset? closedAt = pull.TryGetProperty("closedAt", out var cAt) && cAt.ValueKind != JsonValueKind.Null
+            ? cAt.GetDateTimeOffset() : null;
+        var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal) || mergedAt.HasValue;
         // IsClosed means "closed without merging" — a separate state from merged.
         // Consumers that want "no longer open" should spell `IsMerged || IsClosed`.
         // Treating MERGED as IsClosed=true forced the inverse spelling on every
@@ -1000,7 +1003,9 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             CiSummary: ciSummary,
             IsMerged: isMerged,
             IsClosed: isClosed,
-            OpenedAt: GetDate("createdAt"));
+            OpenedAt: GetDate("createdAt"),
+            MergedAt: mergedAt,
+            ClosedAt: closedAt);
     }
 
     private static List<IssueCommentDto> ParseRootComments(JsonElement pull)

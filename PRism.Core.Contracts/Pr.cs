@@ -14,4 +14,6 @@ public sealed record Pr(
     string CiSummary,
     bool IsMerged,
     bool IsClosed,
-    DateTimeOffset OpenedAt);
+    DateTimeOffset OpenedAt,
+    DateTimeOffset? MergedAt = null,
+    DateTimeOffset? ClosedAt = null);
