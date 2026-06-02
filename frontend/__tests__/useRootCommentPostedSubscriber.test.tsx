@@ -93,4 +93,23 @@ describe('useRootCommentPostedSubscriber', () => {
     // Old PR is no longer subscribed — still 1 call.
     expect(onPosted).toHaveBeenCalledOnce();
   });
+
+  it('unmount cleanup unregisters the listener — events after unmount do not call onPosted', async () => {
+    const onPosted = vi.fn();
+    const { unmount } = renderHook(() => useRootCommentPostedSubscriber({ prRef: ref, onPosted }), {
+      wrapper,
+    });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    // Confirm the listener is active before unmount.
+    act(() => dispatch({ prRef: 'octocat/hello/42', issueCommentId: 1 }));
+    expect(onPosted).toHaveBeenCalledOnce();
+
+    // Unmount triggers the effect cleanup, which calls the off-fn returned by stream.on().
+    unmount();
+
+    // Emit the same event after unmount — onPosted must NOT be called again.
+    act(() => dispatch({ prRef: 'octocat/hello/42', issueCommentId: 2 }));
+    expect(onPosted).toHaveBeenCalledOnce();
+  });
 });
