@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEventSource } from './useEventSource';
 import {
   discardForeignPendingReview as discardForeignApi,
+  discardOwnPendingReview as discardOwnPendingReviewApi,
   resumeForeignPendingReview as resumeForeignApi,
   submitReview as submitReviewApi,
+  type DiscardOwnPendingReviewError,
+  type DiscardOwnPendingReviewResult,
 } from '../api/submit';
 import {
   prRefKey,
@@ -55,6 +58,13 @@ export interface UseSubmitResult {
   lastResume: ResumeSummary | null;
   clearLastResume(): void;
   reset(): void;
+  submitDialogOpen: boolean;
+  openSubmitDialog: () => void;
+  closeSubmitDialog: () => void;
+  discardOwnPendingReview: () => Promise<
+    DiscardOwnPendingReviewResult | DiscardOwnPendingReviewError
+  >;
+  discardInFlight: boolean;
 }
 
 function upsertStep(steps: SubmitProgressStep[], ev: SubmitProgressEvent): SubmitProgressStep[] {
@@ -73,6 +83,8 @@ function upsertStep(steps: SubmitProgressStep[], ev: SubmitProgressEvent): Submi
 export function useSubmit(reference: PrReference): UseSubmitResult {
   const [state, setState] = useState<SubmitState>({ kind: 'idle' });
   const [lastResume, setLastResume] = useState<ResumeSummary | null>(null);
+  const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
+  const [discardInFlight, setDiscardInFlight] = useState(false);
   const stream = useEventSource();
   const prRef = prRefKey(reference);
 
@@ -243,6 +255,18 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
     setState({ kind: 'idle' });
   }, []);
 
+  const openSubmitDialog = useCallback(() => setSubmitDialogOpen(true), []);
+  const closeSubmitDialog = useCallback(() => setSubmitDialogOpen(false), []);
+
+  const discardOwnPendingReview = useCallback(async () => {
+    setDiscardInFlight(true);
+    try {
+      return await discardOwnPendingReviewApi(reference);
+    } finally {
+      setDiscardInFlight(false);
+    }
+  }, [reference]);
+
   return {
     state,
     submit,
@@ -252,5 +276,10 @@ export function useSubmit(reference: PrReference): UseSubmitResult {
     lastResume,
     clearLastResume,
     reset,
+    submitDialogOpen,
+    openSubmitDialog,
+    closeSubmitDialog,
+    discardOwnPendingReview,
+    discardInFlight,
   };
 }
