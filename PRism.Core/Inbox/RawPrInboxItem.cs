@@ -13,4 +13,6 @@ public sealed record RawPrInboxItem(
     int Additions,
     int Deletions,
     string HeadSha,
-    int IterationNumberApprox);
+    int IterationNumberApprox,
+    DateTimeOffset? MergedAt = null,
+    DateTimeOffset? ClosedAt = null);
