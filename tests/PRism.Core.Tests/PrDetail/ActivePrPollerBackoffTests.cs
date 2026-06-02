@@ -192,6 +192,31 @@ public class ActivePrPollerBackoffTests
     }
 
     [Fact]
+    public async Task Does_not_publish_again_on_steady_state_merged_tick()
+    {
+        // Regression: after the open→merged transition emits its event, a subsequent tick
+        // with the same merged state (same head, same comment count) must NOT emit again.
+        // LastPrState is already "merged" so stateChanged=false and no delta exists → silent.
+        var (poller, review, bus, registry, _) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+
+        // Tick 1: first poll (open) → hydration event.
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "open"));
+        await poller.TickAsync(T0, default);
+        bus.Published.Should().ContainSingle("first poll publishes a hydration event");
+
+        // Tick 2: open→merged transition → one delta event (total 2).
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "merged"));
+        await poller.TickAsync(T0.AddSeconds(30), default);
+        bus.Published.Should().HaveCount(2, "the open→merged transition emits exactly one event");
+
+        // Tick 3: same merged snapshot — no head change, no comment change, no state change.
+        await poller.TickAsync(T0.AddSeconds(60), default);
+        bus.Published.Should().HaveCount(2, "steady-state merged tick must not re-emit");
+    }
+
+    [Fact]
     public async Task Publishes_ActivePrUpdated_with_IsClosed_on_open_to_closed_transition()
     {
         var (poller, review, bus, registry, _) = Build();
