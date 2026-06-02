@@ -154,6 +154,8 @@ export interface PrDetailPr {
   isMerged: boolean;
   isClosed: boolean;
   openedAt: string;
+  mergedAt: string | null;
+  closedAt: string | null;
 }
 
 export type ClusteringQuality = 'ok' | 'low';

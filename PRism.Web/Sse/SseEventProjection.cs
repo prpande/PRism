@@ -29,7 +29,7 @@ namespace PRism.Web.Sse;
 // keeping the payload minimal is the defense — that one foreign-review id is the irreducible minimum.
 internal static class SseEventProjection
 {
-    internal sealed record ActivePrUpdatedWire(string PrRef, string? NewHeadSha, bool HeadShaChanged, int CommentCountDelta);
+    internal sealed record ActivePrUpdatedWire(string PrRef, string? NewHeadSha, bool HeadShaChanged, int CommentCountDelta, bool IsMerged, bool IsClosed);
     internal sealed record StateChangedWire(string PrRef, IReadOnlyList<string> FieldsTouched, string? SourceTabId);
     internal sealed record DraftSavedWire(string PrRef, string DraftId, string? SourceTabId);
     internal sealed record DraftDiscardedWire(string PrRef, string DraftId, string? SourceTabId);
@@ -55,7 +55,7 @@ internal static class SseEventProjection
     public static (string EventName, object Payload) Project(IReviewEvent evt) => evt switch
     {
         ActivePrUpdated e => ("pr-updated", new ActivePrUpdatedWire(
-            e.PrRef.ToString(), e.NewHeadSha, e.HeadShaChanged, e.CommentCountDelta)),
+            e.PrRef.ToString(), e.NewHeadSha, e.HeadShaChanged, e.CommentCountDelta, e.IsMerged, e.IsClosed)),
 
         StateChanged e => ("state-changed", new StateChangedWire(e.PrRef.ToString(), e.FieldsTouched, e.SourceTabId)),
         DraftSaved e => ("draft-saved", new DraftSavedWire(e.PrRef.ToString(), e.DraftId, e.SourceTabId)),

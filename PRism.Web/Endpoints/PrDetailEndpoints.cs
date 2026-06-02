@@ -6,6 +6,7 @@ using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.PrDetail;
 using PRism.Core.State;
+using PRism.GitHub;
 
 namespace PRism.Web.Endpoints;
 
@@ -37,9 +38,21 @@ internal static partial class PrDetailEndpoints
                     return Results.Problem(type: "/sha/invalid", statusCode: 422);
 
                 var prRef = new PrReference(owner, repo, number);
-                var diff = await loader.GetOrFetchDiffAsync(prRef, new DiffRangeRequest(parts[0], parts[1]), ct)
-                    .ConfigureAwait(false);
-                return Results.Ok(diff);
+                try
+                {
+                    var diff = await loader.GetOrFetchDiffAsync(prRef, new DiffRangeRequest(parts[0], parts[1]), ct)
+                        .ConfigureAwait(false);
+                    return Results.Ok(diff);
+                }
+                catch (RangeUnreachableException)
+                {
+                    // The requested (base..head) pair is no longer addressable on GitHub
+                    // (force-push GC'd the commits). Spec § 5.1: render the typed message,
+                    // not a 500. 422 Unprocessable is consistent with the /file endpoint's
+                    // other typed 422s in this file. The frontend branches on this `type`
+                    // to show "this diff is unavailable" instead of the generic error banner.
+                    return Results.Problem(type: "/diff/range-unreachable", statusCode: 422);
+                }
             });
 
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/file",
@@ -64,8 +77,21 @@ internal static partial class PrDetailEndpoints
                     // Determine whether the canonical (base..head) diff was truncated; if it
                     // was, the path may legitimately be in the PR's diff but landed outside
                     // the cached file list. Spec § 8.
+                    // RangeUnreachableException: the canonical base..head range is no longer
+                    // addressable on GitHub (force-push GC'd the commits). Map to the same
+                    // typed 422 the /diff endpoint returns — the frontend branches on this
+                    // `type` to show "this diff is unavailable". Scoped narrowly to this
+                    // one call so other exceptions still propagate.
                     var canonicalRange = new DiffRangeRequest(snapshot.Detail.Pr.BaseSha, snapshot.Detail.Pr.HeadSha);
-                    var canonical = await loader.GetOrFetchDiffAsync(prRef, canonicalRange, ct).ConfigureAwait(false);
+                    DiffDto canonical;
+                    try
+                    {
+                        canonical = await loader.GetOrFetchDiffAsync(prRef, canonicalRange, ct).ConfigureAwait(false);
+                    }
+                    catch (RangeUnreachableException)
+                    {
+                        return Results.Problem(type: "/diff/range-unreachable", statusCode: 422);
+                    }
                     var problemType = canonical.Truncated ? "/file/truncation-window" : "/file/not-in-diff";
                     return Results.Problem(type: problemType, statusCode: 422);
                 }

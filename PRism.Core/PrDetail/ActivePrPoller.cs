@@ -9,7 +9,7 @@ namespace PRism.Core.PrDetail;
 // BackgroundService that polls every PR with at least one active subscriber and publishes
 // ActivePrUpdated when head SHA or comment count changes. Per-PR backoff isolates flaky
 // PRs from healthy ones — see spec § 6.2.
-public sealed class ActivePrPoller : BackgroundService
+public sealed partial class ActivePrPoller : BackgroundService
 {
     private readonly ActivePrSubscriberRegistry _registry;
     private readonly IPrReader _review;
@@ -123,24 +123,40 @@ public sealed class ActivePrPoller : BackgroundService
                 var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
                 var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
                 var commentChanged = state.LastCommentCount is { } prevCount && prevCount != snapshot.CommentCount;
+                // Close-state transition (open → merged/closed). The comparison is
+                // case-insensitive: the real poll path emits lowercase PrState
+                // ("open"/"closed"/"merged"), but fake review services hand-construct
+                // snapshots with uppercase "OPEN" — normalize the COMPARE so a fake's
+                // OPEN → OPEN does not register as a change. A clean merge leaves head-sha
+                // and comment-count unchanged, so without this the merged banner never fires.
+                var stateChanged = state.LastPrState is { } prevState
+                    && !string.Equals(prevState, snapshot.PrState, StringComparison.OrdinalIgnoreCase);
 
-                s_pollSnapshotLog(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, commentChanged, null);
+                LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, commentChanged, stateChanged);
 
-                if (firstPoll || headChanged || commentChanged)
+                if (firstPoll || headChanged || commentChanged || stateChanged)
                 {
                     var commentCountDelta = state.LastCommentCount is { } priorCount
                         ? snapshot.CommentCount - priorCount
                         : 0;
+                    // Mutually exclusive: a merged PR is flagged IsMerged only. The snapshot
+                    // value may be lowercase (real path) or uppercase (fakes) — compare
+                    // case-insensitively.
+                    var isMerged = string.Equals(snapshot.PrState, "merged", StringComparison.OrdinalIgnoreCase);
+                    var isClosed = string.Equals(snapshot.PrState, "closed", StringComparison.OrdinalIgnoreCase);
                     _bus.Publish(new ActivePrUpdated(
                         prRef,
                         HeadShaChanged: headChanged,
                         CommentCountChanged: commentChanged,
                         NewHeadSha: headChanged ? snapshot.HeadSha : null,
-                        CommentCountDelta: commentCountDelta));
+                        CommentCountDelta: commentCountDelta,
+                        IsMerged: isMerged,
+                        IsClosed: isClosed));
                 }
 
                 state.LastHeadSha = snapshot.HeadSha;
                 state.LastCommentCount = snapshot.CommentCount;
+                state.LastPrState = snapshot.PrState;
                 state.ConsecutiveErrors = 0;
                 state.NextRetryAt = null;
 
@@ -179,12 +195,6 @@ public sealed class ActivePrPoller : BackgroundService
         state.NextRetryAt = now.AddSeconds(seconds);
     }
 
-    private static readonly Action<ILogger, PrReference, string, string?, bool, bool, bool, Exception?> s_pollSnapshotLog =
-        LoggerMessage.Define<PrReference, string, string?, bool, bool, bool>(
-            LogLevel.Information,
-            new EventId(3, "ActivePrPollSnapshot"),
-            "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} commentChanged={CommentChanged}");
-
     private static readonly Action<ILogger, PrReference, Exception?> s_pollFailedLog =
         LoggerMessage.Define<PrReference>(LogLevel.Warning,
             new EventId(1, "ActivePrPollFailed"),
@@ -194,4 +204,16 @@ public sealed class ActivePrPoller : BackgroundService
         LoggerMessage.Define(LogLevel.Error,
             new EventId(2, "ActivePrPollerTickFailed"),
             "ActivePrPoller tick failed");
+
+    [LoggerMessage(EventId = 3, EventName = "ActivePrPollSnapshot", Level = LogLevel.Information,
+        Message = "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} commentChanged={CommentChanged} stateChanged={StateChanged}")]
+    private static partial void LogPollSnapshot(
+        ILogger logger,
+        PrReference prRef,
+        string headSha,
+        string? prevHeadSha,
+        bool firstPoll,
+        bool headChanged,
+        bool commentChanged,
+        bool stateChanged);
 }

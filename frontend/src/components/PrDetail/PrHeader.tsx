@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
 import type { ComposerOwnerKey } from '../../hooks/useDraftSession';
+import { formatAge } from '../../utils/relativeTime';
 import { sendPatch } from '../../api/draft';
 import {
   SubmitConflictError,
@@ -88,6 +89,9 @@ interface PrHeaderProps {
   // Called after a verdict patch so the page refetches the session (own-tab
   // SSE events are filtered, so the change wouldn't otherwise round-trip).
   onSessionRefetch?: () => void;
+  // Merged/closed timestamp for the header status label (Task 13).
+  mergedAt?: string | null;
+  closedAt?: string | null;
 }
 
 export function PrHeader({
@@ -110,6 +114,8 @@ export function PrHeader({
   registerOpenComposer,
   getPrRootHolder,
   onSessionRefetch,
+  mergedAt,
+  closedAt,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
@@ -329,6 +335,12 @@ export function PrHeader({
           <h1 className={styles.prTitle} data-testid="pr-title">
             {title}
           </h1>
+          {prState === 'merged' && mergedAt && (
+            <span className={styles.statusMerged}>Merged {formatAge(mergedAt)}</span>
+          )}
+          {prState === 'closed' && closedAt && (
+            <span className={styles.statusClosed}>Closed {formatAge(closedAt)}</span>
+          )}
           <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
             <span className="pr-subtitle-author">{author}</span>
             {branchInfo && (

@@ -54,7 +54,7 @@ internal sealed class FakeReviewBackingStore
     // to drive the closed/merged bulk-discard surface (PR5: DiscardAllDraftsButton mounts only when
     // the PR is no longer open). Surfaced by FakePrReader.GetPrDetailAsync + PollActivePrAsync.
     public string PrState { get; private set; }
-    public bool IsClosed => !string.Equals(PrState, "OPEN", StringComparison.Ordinal);
+    public bool IsClosed => string.Equals(PrState, "CLOSED", StringComparison.Ordinal);
     public bool IsMerged => string.Equals(PrState, "MERGED", StringComparison.Ordinal);
 
     // (path, sha) → file content. Populated for each (path, sha) the reconciliation

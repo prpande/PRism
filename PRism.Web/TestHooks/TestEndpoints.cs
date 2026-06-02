@@ -47,7 +47,9 @@ internal static class TestEndpoints
         bool HeadShaChanged,
         bool CommentCountChanged,
         string? NewHeadSha,
-        int CommentCountDelta);
+        int CommentCountDelta,
+        bool IsMerged = false,
+        bool IsClosed = false);
 
     internal sealed record ClearPrSessionRequest(string Owner, string Repo, int Number);
 
@@ -152,7 +154,9 @@ internal static class TestEndpoints
                 req.HeadShaChanged,
                 req.CommentCountChanged,
                 req.NewHeadSha,
-                req.CommentCountDelta));
+                req.CommentCountDelta,
+                IsMerged: req.IsMerged,
+                IsClosed: req.IsClosed));
             return Results.Ok(new { ok = true });
         });
 

@@ -239,4 +239,78 @@ public class GitHubReviewServicePrDetailTests
         dto!.ClusteringQuality.Should().Be(ClusteringQuality.Low);
         dto.Iterations.Should().BeNull();
     }
+
+    [Fact]
+    public async Task GetPrDetailAsync_surfaces_mergedAt_on_merged_pr()
+    {
+        // Spec § 5.2.1: ParsePr must propagate mergedAt from the GraphQL payload into
+        // Pr.MergedAt so consumers can display the merge timestamp.
+        var body = """
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "title": "x", "body": "", "url": "https://github.com/o/r/pull/7",
+                "state": "MERGED", "isDraft": false,
+                "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "headRefName": "h", "baseRefName": "main",
+                "headRefOid": "h", "baseRefOid": "b",
+                "author": { "login": "a" },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "closedAt": "2026-03-01T12:00:00Z",
+                "mergedAt": "2026-03-01T12:00:00Z",
+                "changedFiles": 0,
+                "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+              }
+            }
+          }
+        }
+        """;
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = body };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 7), CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        dto!.Pr.MergedAt.Should().Be(DateTimeOffset.Parse("2026-03-01T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
+        dto.Pr.ClosedAt.Should().Be(DateTimeOffset.Parse("2026-03-01T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_surfaces_closedAt_and_null_mergedAt_on_closed_unmerged_pr()
+    {
+        // Spec § 5.2.1: For a PR closed without merging, ClosedAt must be non-null
+        // and MergedAt must be null.
+        var body = """
+        {
+          "data": {
+            "repository": {
+              "pullRequest": {
+                "title": "x", "body": "", "url": "https://github.com/o/r/pull/8",
+                "state": "CLOSED", "isDraft": false,
+                "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+                "headRefName": "h", "baseRefName": "main",
+                "headRefOid": "h", "baseRefOid": "b",
+                "author": { "login": "a" },
+                "createdAt": "2026-01-01T00:00:00Z",
+                "closedAt": "2026-04-15T09:30:00Z",
+                "mergedAt": null,
+                "changedFiles": 0,
+                "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+                "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+              }
+            }
+          }
+        }
+        """;
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = body };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 8), CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        dto!.Pr.MergedAt.Should().BeNull();
+        dto.Pr.ClosedAt.Should().Be(DateTimeOffset.Parse("2026-04-15T09:30:00Z", System.Globalization.CultureInfo.InvariantCulture));
+    }
 }
