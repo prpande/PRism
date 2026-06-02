@@ -13,6 +13,14 @@ test("planSpawn anchors cwd to the binary's own directory (ContentRoot/wwwroot r
   assert.equal(plan.cwd, path.dirname(base.binaryPath));
 });
 
+test("planSpawn normalizes a relative binaryPath to absolute (cwd never collapses to '.')", () => {
+  const plan = planSpawn({ binaryPath: path.join("dev-sidecar", "PRism.exe"), parentPid: 1, dataDir: null });
+  assert.ok(path.isAbsolute(plan.binary), "binary should be absolute");
+  assert.ok(path.isAbsolute(plan.cwd), "cwd should be absolute");
+  assert.notEqual(plan.cwd, ".");
+  assert.equal(plan.cwd, path.dirname(path.resolve(path.join("dev-sidecar", "PRism.exe"))));
+});
+
 test("planSpawn passes --no-browser and omits --dataDir when dataDir is null", () => {
   const plan = planSpawn({ ...base, dataDir: null });
   assert.deepEqual(plan.args, ["--no-browser"]);

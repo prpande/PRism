@@ -17,17 +17,26 @@ export interface SidecarOptions {
 }
 
 export interface SpawnPlan {
+  /** Absolute path to the sidecar binary (relative inputs are normalized). */
+  binary: string;
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
 }
 
 /**
- * Build the spawn args/cwd/env for the sidecar. Pure (no process spawn) so the
- * launch contract is unit-testable.
+ * Build the spawn binary/args/cwd/env for the sidecar. Pure (no process spawn) so
+ * the launch contract is unit-testable.
  */
 export function planSpawn(opts: SidecarOptions): SpawnPlan {
+  // Normalize to an absolute path FIRST. A relative binaryPath (e.g. a dev setting
+  // PRISM_SIDECAR_BINARY=./dev-sidecar/PRism.exe) would make path.dirname collapse to
+  // "." — reintroducing the exact cwd bug this function fixes — and Node's spawn
+  // resolves a relative command against process.cwd(), not options.cwd, which is
+  // doubly fragile once we override cwd below. Resolving once removes both hazards.
+  const binary = path.resolve(opts.binaryPath);
   return {
+    binary,
     args: ["--no-browser", ...(opts.dataDir ? ["--dataDir", opts.dataDir] : [])],
     // Anchor the working directory to the binary's OWN directory. ASP.NET derives
     // its ContentRoot from the process cwd, and MapFallbackToFile("index.html")
@@ -35,7 +44,7 @@ export function planSpawn(opts: SidecarOptions): SpawnPlan {
     // NOT the binary's dir, so without this the sidecar can't find wwwroot/index.html
     // and `GET /` 404s (only `/index.html` works, served by the static-assets
     // manifest, which carries absolute paths). Pinning cwd makes the SPA load.
-    cwd: path.dirname(opts.binaryPath),
+    cwd: path.dirname(binary),
     // Pass a MINIMAL explicit env — do NOT spread process.env. Spreading would
     // hand the sidecar every ambient variable (incl. any CI secrets like
     // GITHUB_TOKEN inherited by the Electron process). Retain only what the
@@ -64,7 +73,7 @@ export function planSpawn(opts: SidecarOptions): SpawnPlan {
  */
 export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   const plan = planSpawn(opts);
-  const child: ChildProcess = spawn(opts.binaryPath, plan.args, {
+  const child: ChildProcess = spawn(plan.binary, plan.args, {
     cwd: plan.cwd,
     env: plan.env,
     stdio: ["ignore", "pipe", "pipe"],
