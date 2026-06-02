@@ -176,18 +176,14 @@ test('S-dialog 3 — Edit toggle: type → autosave → Done re-renders preview 
   await dialog.getByTestId('pr-root-done-toggle').click();
   await expect(dialog.getByRole('textbox', { name: /pr-level body/i })).toHaveCount(0);
 
-  // FINDING (product gap vs spec § 10 step 6 "preview re-renders with the new
-  // body"): the SubmitDialog preview is bound to the SESSION's PR-root draft
-  // (`session.draftComments.find(...).bodyMarkdown`), NOT the live edited body.
-  // useComposerAutoSave persists the edit to disk but does NOT refetch the
-  // session, and the own-tab state-changed SSE is filtered — so immediately
-  // after Done the preview still shows the PRE-EDIT body until a session
-  // refetch. The edit IS durable (asserted post-reload below); only the
-  // in-place preview refresh is missing. Asserting the spec's literal claim
-  // here would be testing behaviour the app does not have, so this asserts the
-  // real intermediate state (stale preview) + the durable end state (new body
-  // after reload). Reported, not papered over.
-  await expect(dialog.getByText('Original PR-root body.')).toBeVisible();
+  // The preview re-renders with the NEW body IN THE SAME dialog session (spec
+  // § 10 step 6). The preview is bound to the live `editingBody` the editor
+  // streams through onBodyChange, not the SESSION's PR-root draft — so the edit
+  // shows immediately, without waiting for a session refetch (the own-tab
+  // state-changed SSE is filtered, so no refetch happens here). The pre-edit
+  // body is gone from the preview.
+  await expect(dialog.getByText(updated)).toBeVisible();
+  await expect(dialog.getByText('Original PR-root body.')).toHaveCount(0);
 
   // Close the dialog, then reload (Files tab) so the session refetches the
   // persisted 'Updated' body. The Files tab is used so the Overview composer

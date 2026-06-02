@@ -186,6 +186,52 @@ describe('SubmitDialog', () => {
     expect(screen.queryByTestId('mock-editor')).toBeNull();
   });
 
+  // ---- In-session preview update (live editingBody) ---------------------
+  // After Edit → type → Done, the preview must re-render from the live
+  // editingBody (the typed text), not the stale session-derived draft body.
+  // The own-tab state-changed SSE is filtered, so the session prop isn't
+  // refetched until a navigation/reopen — without this, the preview would show
+  // the pre-edit body and defeat the inline-edit feature.
+  it('preview reflects the live edited body after Edit → type → Done (no reopen)', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+        })}
+      />,
+    );
+    // Sanity: the pre-edit preview shows the seeded draft body.
+    const previewBefore = document.querySelector('[data-section="summary-preview"]');
+    expect(previewBefore!.textContent).toContain('hello');
+
+    fireEvent.click(screen.getByTestId('pr-root-edit-toggle'));
+    // Drive the mocked editor's onBodyChange with new text.
+    fireEvent.change(screen.getByTestId('mock-editor'), {
+      target: { value: 'a brand new **body**' },
+    });
+    fireEvent.click(screen.getByTestId('pr-root-done-toggle'));
+
+    const previewAfter = document.querySelector('[data-section="summary-preview"]');
+    expect(previewAfter!.textContent).toContain('a brand new');
+    expect(previewAfter!.querySelector('strong')?.textContent).toBe('body');
+    // The pre-edit body is gone from the preview.
+    expect(previewAfter!.textContent).not.toContain('hello');
+  });
+
+  it('preview falls back to the placeholder when the body is edited down to empty', () => {
+    render(
+      <SubmitDialog
+        {...baseProps({
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('pr-root-edit-toggle'));
+    fireEvent.change(screen.getByTestId('mock-editor'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByTestId('pr-root-done-toggle'));
+    expect(screen.getByText(/no pr-level body — click edit to add one/i)).toBeInTheDocument();
+  });
+
   it('Edit mounts the editor with ownerKey=submit-dialog and key derived from the draft id', () => {
     render(
       <SubmitDialog

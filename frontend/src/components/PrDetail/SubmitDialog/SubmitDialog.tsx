@@ -430,8 +430,8 @@ export function SubmitDialog(props: Props) {
                   onAutosaveControl={handleAutosaveControl}
                   onDraftLost={handleDraftLost}
                 />
-              ) : prRootDraft && prRootDraft.bodyMarkdown.trim().length > 0 ? (
-                <MarkdownRenderer source={prRootDraft.bodyMarkdown} />
+              ) : editingBody.trim().length > 0 ? (
+                <MarkdownRenderer source={editingBody} />
               ) : (
                 <p className="muted">No PR-level body — click Edit to add one.</p>
               )}
