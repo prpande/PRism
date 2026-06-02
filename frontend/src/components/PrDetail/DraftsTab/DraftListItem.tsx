@@ -116,6 +116,8 @@ export function DraftListItem({
         </div>
       )}
 
+      {/* readOnly: the Delete button (Modal's only trigger) is gated above, so
+          confirmOpen stays false and this Modal is unreachable while readOnly. */}
       <Modal
         open={confirmOpen}
         title="Discard this draft?"
