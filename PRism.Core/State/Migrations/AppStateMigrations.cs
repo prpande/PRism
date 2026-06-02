@@ -149,4 +149,168 @@ internal static class AppStateMigrations
         root["version"] = 6;
         return root;
     }
+
+    public static JsonObject MigrateV6ToV7(JsonObject root)
+    {
+        // PR-root Post + submit-discard slice — lifts the legacy DraftSummaryMarkdown JSON
+        // key into a synthesized PR-root DraftComment row (side == "pr", file-path == null).
+        // After this migration the dedicated field is removed; the only producer of root-body
+        // drafts is the unified DraftComment shape.
+        //
+        // Iterates every account (V5 multi-account shape), not just default.
+        //
+        // Two-pass:
+        //   1. Scan-only partial-rollback discriminator (precedent: V4→V5, V5→V6). If any
+        //      session has BOTH a non-empty draft-summary-markdown AND a PR-root draft
+        //      carrying posted-comment-id, throw — that combination indicates a V7+ file
+        //      rolled back to V6 then re-upgraded, and the lift would silently merge a body
+        //      that was already posted. Quarantine instead of guessing.
+        //   2. Lift pass — collapse duplicate PR-root drafts (deterministic by id sort) and
+        //      either append the summary onto the surviving draft or synthesize a new one.
+        if (root["accounts"] is not JsonObject accounts)
+        {
+            root["version"] = 7;
+            return root;
+        }
+
+        // Pass 1: pre-scan only — no mutations.
+        foreach (var (accountKey, accountNode) in accounts)
+        {
+            var sessions = (accountNode as JsonObject)?["reviews"]?["sessions"] as JsonObject;
+            if (sessions is null) continue;
+            foreach (var (sessionKey, sessionNode) in sessions)
+            {
+                if (sessionNode is not JsonObject session) continue;
+                var summaryNode = session["draft-summary-markdown"];
+                var summary = summaryNode is JsonValue sv ? sv.GetValue<string?>() : null;
+                if (string.IsNullOrEmpty(summary?.Trim())) continue;
+                if (session["draft-comments"] is not JsonArray drafts) continue;
+                foreach (var draftNode in drafts)
+                {
+                    if (draftNode is not JsonObject d) continue;
+                    if (d["side"] is not JsonValue sideVal || sideVal.GetValue<string?>() != "pr") continue;
+                    if (IsNonNullFilePath($"{accountKey}/{sessionKey}", d["file-path"])) continue;
+                    if (d["posted-comment-id"] is JsonValue pcv && pcv.GetValue<long?>() is not null)
+                        throw new System.Text.Json.JsonException(
+                            $"state.json session {accountKey}/{sessionKey} has draft-summary-markdown set " +
+                            "AND a PR-root draft carrying posted-comment-id. Looks like a V7→V6 partial rollback; quarantining.");
+                }
+            }
+        }
+
+        // Pass 2: lift.
+        foreach (var (_, accountNode) in accounts)
+        {
+            var sessions = (accountNode as JsonObject)?["reviews"]?["sessions"] as JsonObject;
+            if (sessions is null) continue;
+            foreach (var (sessionKey, sessionNode) in sessions)
+            {
+                if (sessionNode is not JsonObject session) continue;
+                LiftSummaryIntoPrRootDraft(sessionKey, session);
+            }
+        }
+
+        root["version"] = 7;
+        return root;
+    }
+
+    // PR-root discriminator helper for the V6→V7 file-path check (shared by pass 1 + pass 2).
+    //
+    //   - file-path missing OR JSON null  → returns false (treated as PR-root; intended behavior,
+    //     consistent across both passes).
+    //   - file-path is a non-null STRING  → returns true (a file-anchored draft; skip — not PR-root).
+    //   - file-path is a non-null, NON-STRING JSON value (e.g. a number from a future/hand-edited
+    //     state) → throw JsonException to quarantine, rather than letting GetValue<string?>() throw
+    //     the less-actionable InvalidOperationException. Matches the line-~226 draft-comments
+    //     shape-check quarantine convention.
+    private static bool IsNonNullFilePath(string contextTag, JsonNode? filePathNode)
+    {
+        if (filePathNode is null) return false; // missing property OR JSON null → PR-root
+        if (filePathNode is JsonValue fpv && fpv.GetValueKind() == System.Text.Json.JsonValueKind.String)
+            return true;
+        throw new System.Text.Json.JsonException(
+            $"state.json reviews.sessions['{contextTag}'] PR-root-candidate draft has a non-string file-path (V6→V7); quarantining.");
+    }
+
+    private static void LiftSummaryIntoPrRootDraft(string sessionKey, JsonObject session)
+    {
+        var summaryNode = session["draft-summary-markdown"];
+        var summary = summaryNode is JsonValue sv ? sv.GetValue<string?>() : null;
+        var trimmed = summary?.Trim() ?? "";
+
+        // Defensive shape check (precedent: PrSessionsMigrations.AddV3DraftCollections:41-43).
+        if (session["draft-comments"] is { } draftsNode && draftsNode is not JsonArray)
+            throw new System.Text.Json.JsonException(
+                $"state.json reviews.sessions['{sessionKey}'].draft-comments must be a JSON array (V6→V7)");
+
+        var drafts = (session["draft-comments"] as JsonArray) ?? new JsonArray();
+
+        // Collect PR-root drafts (side == "pr" AND file-path == null).
+        var prRoots = new List<JsonObject>();
+        foreach (var n in drafts)
+        {
+            if (n is not JsonObject d) continue;
+            if (d["side"] is not JsonValue sideVal || sideVal.GetValue<string?>() != "pr") continue;
+            if (IsNonNullFilePath(sessionKey, d["file-path"])) continue;
+            prRoots.Add(d);
+        }
+
+        // Collapse multiples (defensive — composer hydration shadows duplicates today, but a
+        // test endpoint or hand-edit could produce them). Deterministic order by id (ordinal).
+        // Survivor is the LAST entry in the sorted list; earlier entries get merged into its
+        // body with a visible marker so an investigator can trace what was folded.
+        if (prRoots.Count > 1)
+        {
+            prRoots = prRoots.OrderBy(d => d["id"]!.GetValue<string>(), StringComparer.Ordinal).ToList();
+            var survivor = prRoots[^1];
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < prRoots.Count - 1; i++)
+            {
+                var ns = prRoots[i];
+                sb.Append("<!-- migrated from previously-shadowed draft ");
+                sb.Append(ns["id"]!.GetValue<string>());
+                sb.Append(" -->\n\n");
+                sb.Append(ns["body-markdown"]?.GetValue<string>() ?? "");
+                sb.Append("\n\n");
+                drafts.Remove(ns);
+            }
+            sb.Append(survivor["body-markdown"]?.GetValue<string>() ?? "");
+            survivor["body-markdown"] = sb.ToString();
+            prRoots = new List<JsonObject> { survivor };
+        }
+
+        // Lift summary (if any).
+        if (trimmed.Length > 0)
+        {
+            if (prRoots.Count == 1)
+            {
+                var existing = prRoots[0]["body-markdown"]?.GetValue<string>() ?? "";
+                prRoots[0]["body-markdown"] = existing.Length > 0
+                    ? existing + "\n\n" + summary
+                    : summary;
+            }
+            else
+            {
+                var synthesized = new JsonObject
+                {
+                    ["id"] = Guid.NewGuid().ToString(),
+                    ["file-path"] = null,
+                    ["line-number"] = null,
+                    ["side"] = "pr",
+                    ["anchored-sha"] = null,
+                    ["anchored-line-content"] = null,
+                    ["body-markdown"] = summary,
+                    ["status"] = "Draft",
+                    ["is-overridden-stale"] = false,
+                    ["thread-id"] = null,
+                    ["posted-comment-id"] = null,
+                    ["posted-body-snapshot"] = null,
+                };
+                drafts.Add(synthesized);
+                session["draft-comments"] = drafts;
+            }
+        }
+
+        session.Remove("draft-summary-markdown");
+    }
 }

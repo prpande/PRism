@@ -23,7 +23,7 @@ public class DraftRaceTests : IClassFixture<PRismWebApplicationFactory>
         // (whichever wrote last under the gate).
         var setup = MakeClient("tab-setup");
         var newPatch = new ReviewSessionPatch(
-            null, null,
+            null,
             new NewDraftCommentPayload("src/Foo.cs", 42, "right",
                 new string('a', 40), "line content", "initial body"),
             null, null, null, null, null, null, null, null, null);
@@ -35,11 +35,11 @@ public class DraftRaceTests : IClassFixture<PRismWebApplicationFactory>
         var clientA = MakeClient("tab-A");
         var clientB = MakeClient("tab-B");
         var taskA = clientA.PutAsJsonAsync("/api/pr/acme/api/2001/draft",
-            new ReviewSessionPatch(null, null, null, null,
+            new ReviewSessionPatch(null, null, null,
                 new UpdateDraftCommentPayload(draftId, "body from A"),
                 null, null, null, null, null, null, null));
         var taskB = clientB.PutAsJsonAsync("/api/pr/acme/api/2001/draft",
-            new ReviewSessionPatch(null, null, null, null,
+            new ReviewSessionPatch(null, null, null,
                 new UpdateDraftCommentPayload(draftId, "body from B"),
                 null, null, null, null, null, null, null));
 

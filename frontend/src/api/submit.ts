@@ -139,6 +139,65 @@ export async function discardForeignPendingReview(
   }
 }
 
+// Error codes that POST /api/pr/{ref}/submit/discard (DiscardOwnPendingReviewAsync) can emit.
+// Reconciled against PrSubmitEndpoints.cs (Task 11):
+//   - unauthorized              : 401, not subscribed
+//   - pipeline-cancellation-timeout : 504, pipeline held lock beyond 30-second window
+//   - github-forbidden          : 502 via MapGithubError (403 from GitHub)
+//   - github-unauthorized       : 502 via MapGithubError (401 from GitHub)
+//   - github-validation-error   : 502 via MapGithubError (422 from GitHub)
+//   - github-network-error      : 502 via MapGithubError fallback + catch-all Exception
+//                                 (also used as the client-side fallback for non-ApiError throws)
+export type DiscardOwnPendingReviewErrorCode =
+  | 'unauthorized'
+  | 'pipeline-cancellation-timeout'
+  | 'github-forbidden'
+  | 'github-unauthorized'
+  | 'github-validation-error'
+  | 'github-network-error';
+
+export interface DiscardOwnPendingReviewResult {
+  ok: true;
+}
+
+export interface DiscardOwnPendingReviewError {
+  ok: false;
+  code: DiscardOwnPendingReviewErrorCode;
+  message: string;
+}
+
+// POST /api/pr/{owner}/{repo}/{number}/submit/discard
+//
+// Signals cancellation to any in-flight submit pipeline for this PR, waits for
+// the lock to be released (up to 30 s), then deletes the own pending review on
+// GitHub and clears local pending-review stamps. Returns { ok: true } on 204
+// (success). Returns a discriminated error object for all known error cases
+// rather than throwing, so callers can switch on .code without try/catch.
+export async function discardOwnPendingReview(
+  prRef: PrReference,
+): Promise<DiscardOwnPendingReviewResult | DiscardOwnPendingReviewError> {
+  try {
+    await apiClient.post<unknown>(`${prPath(prRef)}/submit/discard`, undefined);
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof ApiError) {
+      const body = e.body as { code?: unknown; message?: unknown };
+      const code = (typeof body?.code === 'string' ? body.code : null) ?? 'github-network-error';
+      const message = (typeof body?.message === 'string' ? body.message : null) ?? e.message;
+      return {
+        ok: false,
+        code: code as DiscardOwnPendingReviewErrorCode,
+        message,
+      };
+    }
+    return {
+      ok: false,
+      code: 'github-network-error',
+      message: String(e),
+    };
+  }
+}
+
 export async function discardAllDrafts(prRef: PrReference): Promise<void> {
   try {
     await apiClient.post<unknown>(`${prPath(prRef)}/drafts/discard-all`, undefined, tabIdHeaders());

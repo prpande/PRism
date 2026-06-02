@@ -43,3 +43,10 @@ public sealed record SubmitOrphanCleanupFailedBusEvent(
 public sealed record SubmitDuplicateMarkerDetectedBusEvent(
     PrReference PrRef,
     string DraftId) : IReviewEvent;
+
+// Published by POST /api/pr/{ref}/root-comment/post when the PR-root draft is successfully
+// posted as a GitHub issue comment. Task 14 will wire the SSE projection and the frontend
+// refetch; the record lives here now so T10's endpoint compiles.
+public sealed record RootCommentPostedBusEvent(
+    PrReference PrRef,
+    long IssueCommentId) : IReviewEvent;

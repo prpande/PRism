@@ -31,7 +31,6 @@ public class ClearPrSessionEndpointTests
                 ViewedFiles: new Dictionary<string, string>(),
                 DraftComments: new List<DraftComment>(),
                 DraftReplies: new List<DraftReply>(),
-                DraftSummaryMarkdown: null,
                 DraftVerdict: null,
                 DraftVerdictStatus: DraftVerdictStatus.Draft);
             var sessions = new Dictionary<string, ReviewSessionState> { ["acme/api/123"] = session };

@@ -18,7 +18,7 @@ namespace PRism.Web.Endpoints;
 // (spec § 13.3).
 internal static class PrDraftsDiscardAllEndpoint
 {
-    private static readonly string[] DiscardedFields = { "draft-comments", "draft-replies", "draft-summary", "draft-verdict", "draft-verdict-status", "pending-review" };
+    private static readonly string[] DiscardedFields = { "draft-comments", "draft-replies", "draft-verdict", "draft-verdict-status", "pending-review" };
 
     private static readonly Action<ILogger, string, object?, string, Exception?> s_courtesyDeleteFailed =
         LoggerMessage.Define<string, object?, string>(LogLevel.Warning, new EventId(0, "BulkDiscardCourtesyDeleteFailed"),
@@ -55,7 +55,6 @@ internal static class PrDraftsDiscardAllEndpoint
             {
                 DraftComments = Array.Empty<DraftComment>(),
                 DraftReplies = Array.Empty<DraftReply>(),
-                DraftSummaryMarkdown = null,
                 DraftVerdict = null,
                 DraftVerdictStatus = DraftVerdictStatus.Draft,
                 PendingReviewId = null,

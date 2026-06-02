@@ -4,7 +4,7 @@ using PRism.Core.Submit;
 namespace PRism.Core.Tests.Submit;
 
 // Pins the shape of the IReviewSubmitter contract: the record fields the GraphQL adapter and the
-// SubmitPipeline both depend on, the SubmitEvent value set, and the seven method names. A future
+// SubmitPipeline both depend on, the SubmitEvent value set, and the eight method names. A future
 // rename or dropped method fails CI here rather than surfacing as a downstream compile break with
 // no explanation.
 public class ContractShapeTests
@@ -39,14 +39,14 @@ public class ContractShapeTests
     }
 
     [Fact]
-    public void IReviewSubmitter_HasSevenMethods()
+    public void IReviewSubmitter_HasEightMethods()
     {
         var methods = typeof(IReviewSubmitter).GetMethods()
             .Where(m => !m.IsSpecialName)
             .Select(m => m.Name)
             .ToHashSet();
 
-        Assert.Equal(7, methods.Count);
+        Assert.Equal(8, methods.Count);
         Assert.Contains("BeginPendingReviewAsync", methods);
         Assert.Contains("AttachThreadAsync", methods);
         Assert.Contains("AttachReplyAsync", methods);
@@ -54,5 +54,6 @@ public class ContractShapeTests
         Assert.Contains("DeletePendingReviewAsync", methods);
         Assert.Contains("DeletePendingReviewThreadAsync", methods);  // multi-marker-match cleanup (Task 16 / Task 29)
         Assert.Contains("FindOwnPendingReviewAsync", methods);
+        Assert.Contains("CreateIssueCommentAsync", methods);  // PR-root Post (standalone issue comment)
     }
 }

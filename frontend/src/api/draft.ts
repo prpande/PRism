@@ -39,8 +39,6 @@ export function serializePatch(patch: ReviewSessionPatch): Record<string, unknow
   switch (patch.kind) {
     case 'draftVerdict':
       return { draftVerdict: verdictPatchValue(patch.payload) };
-    case 'draftSummaryMarkdown':
-      return { draftSummaryMarkdown: patch.payload };
     case 'newDraftComment':
       return { newDraftComment: patch.payload };
     case 'newPrRootDraftComment':

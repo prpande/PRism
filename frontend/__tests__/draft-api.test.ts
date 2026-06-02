@@ -118,12 +118,6 @@ describe('serializePatch — wire shape per patch kind', () => {
     expect(wire).toEqual({ draftVerdict: null });
   });
 
-  it('draftSummaryMarkdown', () => {
-    const wire = serializePatch({ kind: 'draftSummaryMarkdown', payload: 'Looks good overall.' });
-    expectExactlyOneField(wire, 'draftSummaryMarkdown');
-    expect(wire).toEqual({ draftSummaryMarkdown: 'Looks good overall.' });
-  });
-
   it('newDraftComment carries the line-anchored payload', () => {
     const wire = serializePatch({ kind: 'newDraftComment', payload: SAMPLE_NEW_COMMENT });
     expectExactlyOneField(wire, 'newDraftComment');
@@ -193,7 +187,6 @@ describe('getDraft', () => {
     const sample: ReviewSessionDto = {
       draftVerdict: null,
       draftVerdictStatus: 'draft',
-      draftSummaryMarkdown: null,
       draftComments: [],
       draftReplies: [],
       iterationOverrides: [],

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   discardAllDrafts,
   discardForeignPendingReview,
+  discardOwnPendingReview,
   resumeForeignPendingReview,
   submitReview,
   SubmitConflictError,
@@ -138,5 +139,69 @@ describe('discardAllDrafts', () => {
     expect(url).toBe(`${PR_PATH}/drafts/discard-all`);
     expect(init.method).toBe('POST');
     expect(init.body).toBeUndefined();
+  });
+});
+
+describe('discardOwnPendingReview', () => {
+  it('returns { ok: true } on 204', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const result = await discardOwnPendingReview(ref);
+    expect(result).toEqual({ ok: true });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${PR_PATH}/submit/discard`);
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeUndefined();
+  });
+
+  it('maps 401 to { ok: false, code: unauthorized }', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(401, {
+        code: 'unauthorized',
+        message: 'Subscribe to this PR before discarding.',
+      }),
+    );
+    const result = await discardOwnPendingReview(ref);
+    expect(result).toEqual({
+      ok: false,
+      code: 'unauthorized',
+      message: 'Subscribe to this PR before discarding.',
+    });
+  });
+
+  it('maps 502 github-forbidden to { ok: false, code: github-forbidden }', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(502, { code: 'github-forbidden', message: 'GitHub returned 403.' }),
+    );
+    const result = await discardOwnPendingReview(ref);
+    expect(result).toEqual({
+      ok: false,
+      code: 'github-forbidden',
+      message: 'GitHub returned 403.',
+    });
+  });
+
+  it('maps 504 pipeline-cancellation-timeout to that code', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(504, {
+        code: 'pipeline-cancellation-timeout',
+        message: 'The in-flight submit pipeline did not release within the allowed window.',
+      }),
+    );
+    const result = await discardOwnPendingReview(ref);
+    expect(result).toEqual({
+      ok: false,
+      code: 'pipeline-cancellation-timeout',
+      message: 'The in-flight submit pipeline did not release within the allowed window.',
+    });
+  });
+
+  it('maps a thrown network error (non-ApiError) to github-network-error', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const result = await discardOwnPendingReview(ref);
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'github-network-error',
+    });
+    expect(typeof (result as { message: string }).message).toBe('string');
   });
 });

@@ -8,7 +8,6 @@ namespace PRism.Web.Endpoints;
 internal sealed record ReviewSessionDto(
     DraftVerdict? DraftVerdict,
     DraftVerdictStatus DraftVerdictStatus,
-    string? DraftSummaryMarkdown,
     IReadOnlyList<DraftCommentDto> DraftComments,
     IReadOnlyList<DraftReplyDto> DraftReplies,
     IReadOnlyList<IterationOverrideDto> IterationOverrides,
@@ -25,7 +24,10 @@ internal sealed record DraftCommentDto(
     string? AnchoredLineContent,
     string BodyMarkdown,
     DraftStatus Status,
-    bool IsOverriddenStale);
+    bool IsOverriddenStale,
+    // Spec § 8: the posted-comment id is the only DraftComment server-side field that crosses the
+    // wire (PostedBodySnapshot stays server-side-only). null until the draft has been submitted.
+    long? PostedCommentId);
 
 internal sealed record DraftReplyDto(
     string Id,
@@ -45,7 +47,6 @@ internal sealed record FileViewStateDto(IReadOnlyDictionary<string, string> View
 // response when count != 1.
 internal sealed record ReviewSessionPatch(
     string? DraftVerdict,
-    string? DraftSummaryMarkdown,
     NewDraftCommentPayload? NewDraftComment,
     NewPrRootDraftCommentPayload? NewPrRootDraftComment,
     UpdateDraftCommentPayload? UpdateDraftComment,

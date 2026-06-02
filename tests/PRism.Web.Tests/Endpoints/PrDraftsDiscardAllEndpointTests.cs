@@ -36,7 +36,6 @@ public class PrDraftsDiscardAllEndpointTests
         var session = await ctx.LoadSessionAsync("o", "r", 1);
         session!.DraftComments.Should().BeEmpty();
         session.DraftReplies.Should().BeEmpty();
-        session.DraftSummaryMarkdown.Should().BeNull();
         session.DraftVerdict.Should().BeNull();
         session.PendingReviewId.Should().BeNull();
         session.PendingReviewCommitOid.Should().BeNull();

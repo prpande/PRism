@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import styles from './PrRootReplyComposer.module.css';
-import { useComposerAutoSave, COMPOSER_CREATE_THRESHOLD } from '../../../hooks/useComposerAutoSave';
+import {
+  COMPOSER_CREATE_THRESHOLD,
+  type ComposerSaveBadge,
+} from '../../../hooks/useComposerAutoSave';
 import { sendPatch } from '../../../api/draft';
+import { postRootComment, type PostRootCommentError } from '../../../api/rootComment';
 import { Modal } from '../../Modal/Modal';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
+import { PrRootBodyEditor } from './PrRootBodyEditor';
 import type { PrReference } from '../../../api/types';
+import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
+
+type AutosaveControl = { flush: () => Promise<void>; badge: ComposerSaveBadge };
 
 export interface PrRootReplyComposerProps {
   prRef: PrReference;
@@ -16,11 +24,11 @@ export interface PrRootReplyComposerProps {
   // anchoredSha all null per spec § 5.6).
   draftId: string | null;
   onDraftIdChange: (id: string | null) => void;
-  registerOpenComposer: (draftId: string) => () => void;
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   onClose: () => void;
   // Spec § 5.7a. Set when a peer tab claimed cross-tab ownership of this
-  // PR. Disables the textarea and the action buttons; auto-save short-
-  // circuits via useComposerAutoSave's `disabled` gate.
+  // PR. Disables the action buttons; the wrapped editor short-circuits
+  // autosave via its own `readOnly` gate.
   readOnly?: boolean;
 }
 
@@ -34,67 +42,51 @@ export function PrRootReplyComposer({
   onClose,
   readOnly = false,
 }: PrRootReplyComposerProps) {
+  // Live body tracked from the wrapped editor (spec § 4.7 — drives Post gating
+  // and Preview). The editor owns the textarea + autosave; the composer keeps
+  // only the action affordances.
   const [body, setBody] = useState(initialBody);
+  const [badge, setBadge] = useState<ComposerSaveBadge>('saved');
   const [previewMode, setPreviewMode] = useState(false);
   const [discardModalOpen, setDiscardModalOpen] = useState(false);
-  const [recoveryModalOpen, setRecoveryModalOpen] = useState(false);
-  const recoveryModalOpenRef = useRef(false);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [postInFlight, setPostInFlight] = useState(false);
+  const [discardInFlight, setDiscardInFlight] = useState(false);
+  const [postError, setPostError] = useState<PostRootCommentError | null>(null);
 
-  const composerAnchor = { kind: 'pr-root' as const };
+  // Captured from PrRootBodyEditor.onAutosaveControl so handlePost can flush the
+  // debounce before shipping.
+  const autosaveControl = useRef<AutosaveControl | null>(null);
 
-  const handleAssignedId = useCallback(
-    (id: string) => {
-      onDraftIdChange(id);
-    },
-    [onDraftIdChange],
-  );
-
-  const handleDraftDeletedByServer = useCallback(() => {
-    onDraftIdChange(null);
-    recoveryModalOpenRef.current = true;
-    setRecoveryModalOpen(true);
-  }, [onDraftIdChange]);
-
-  const handleLocalDelete = useCallback(() => {
-    onDraftIdChange(null);
-    onClose();
-  }, [onClose, onDraftIdChange]);
-
-  const { badge, flush } = useComposerAutoSave({
-    prRef,
-    prState,
-    body,
-    draftId,
-    anchor: composerAnchor,
-    onAssignedId: handleAssignedId,
-    onDraftDeletedByServer: handleDraftDeletedByServer,
-    onLocalDelete: handleLocalDelete,
-    disabled: readOnly,
-  });
-
-  useEffect(() => {
-    if (draftId === null) return;
-    return registerOpenComposer(draftId);
-  }, [draftId, registerOpenComposer]);
-
-  useEffect(() => {
-    textareaRef.current?.focus();
+  const handleAutosaveControl = useCallback((control: AutosaveControl) => {
+    autosaveControl.current = control;
+    setBadge(control.badge);
   }, []);
+
+  const handleBodyChange = useCallback((next: string) => {
+    setBody(next);
+    // Spec § 4.7: any keystroke clears the post error.
+    setPostError(null);
+  }, []);
+
+  const handleDraftLost = useCallback(() => {
+    onClose();
+  }, [onClose]);
 
   const trimmedLength = body.trim().length;
   const bodyEmpty = trimmedLength === 0;
   const belowCreateThreshold = draftId === null && trimmedLength < COMPOSER_CREATE_THRESHOLD;
-  const saveDisabled = bodyEmpty || belowCreateThreshold || readOnly;
-  const saveTooltip = readOnly
+  const inFlight = postInFlight || discardInFlight;
+  const postDisabled = bodyEmpty || belowCreateThreshold || readOnly || inFlight;
+  const postTooltip = readOnly
     ? 'Another tab is editing this PR.'
     : bodyEmpty
-      ? 'Type something to save.'
+      ? 'Type something to post.'
       : belowCreateThreshold
-        ? `Type at least ${COMPOSER_CREATE_THRESHOLD} characters to save.`
+        ? `Type at least ${COMPOSER_CREATE_THRESHOLD} characters to post.`
         : undefined;
 
   const handleDiscardClick = () => {
+    if (postInFlight) return; // Closing mid-post would orphan the response handler.
     if (draftId === null) {
       onClose();
       return;
@@ -103,36 +95,47 @@ export function PrRootReplyComposer({
   };
 
   const handleDiscardConfirm = async () => {
-    if (draftId !== null) {
+    if (draftId === null) {
+      setDiscardModalOpen(false);
+      onClose();
+      return;
+    }
+    setDiscardInFlight(true);
+    try {
       const result = await sendPatch(prRef, {
         kind: 'deleteDraftComment',
         payload: { id: draftId },
       });
       if (!result.ok) return;
       onDraftIdChange(null);
+      setDiscardModalOpen(false);
+      onClose();
+    } finally {
+      setDiscardInFlight(false);
     }
-    setDiscardModalOpen(false);
-    onClose();
   };
 
-  const handleSaveClick = async () => {
-    if (saveDisabled) return;
-    await flush();
+  const handlePost = async () => {
+    if (postDisabled || !autosaveControl.current) return;
+    setPostError(null);
+    setPostInFlight(true);
+    try {
+      // Drain the debounce so the server has the latest body before posting.
+      await autosaveControl.current.flush();
+      const result = await postRootComment(prRef);
+      if (!result.ok) {
+        setPostError(result);
+        return;
+      }
+      // Success: the SSE refetch (Task 14) reflects the posted comment + draft
+      // removal.
+      onClose();
+    } finally {
+      setPostInFlight(false);
+    }
   };
 
-  const handleRecoveryRecreate = async () => {
-    recoveryModalOpenRef.current = false;
-    setRecoveryModalOpen(false);
-    await flush();
-  };
-
-  const handleRecoveryDiscard = () => {
-    recoveryModalOpenRef.current = false;
-    setRecoveryModalOpen(false);
-    onClose();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
       e.preventDefault();
       setPreviewMode((p) => !p);
@@ -140,11 +143,7 @@ export function PrRootReplyComposer({
     }
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
-      void (async () => {
-        await flush();
-        if (recoveryModalOpenRef.current) return;
-        onClose();
-      })();
+      if (!postDisabled) void handlePost();
       return;
     }
     if (e.key === 'Escape') {
@@ -154,35 +153,60 @@ export function PrRootReplyComposer({
     }
   };
 
-  const closedBanner = prState !== 'open';
-
   return (
     <div
       role="form"
       aria-label="Reply to this PR"
       data-composer="true"
       className={styles.prRootReplyComposer}
+      onKeyDown={handleKeyDown}
     >
-      {closedBanner && (
-        <div className="composer-closed-banner muted" role="status">
-          PR {prState === 'closed' ? 'closed' : 'merged'} — text not saved
-        </div>
-      )}
-
-      {previewMode ? (
-        <ComposerMarkdownPreview body={body} />
-      ) : (
-        <textarea
-          ref={textareaRef}
-          className="composer-textarea"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onKeyDown={handleKeyDown}
-          aria-label="PR reply body"
-          rows={4}
-          readOnly={readOnly}
-          aria-readonly={readOnly || undefined}
+      {/* Keep the editor mounted across Preview toggles so autosave continuity
+          and the mount-once initialBody contract hold. Hide (not unmount) it
+          while previewing. */}
+      <div hidden={previewMode}>
+        {/* No `key={draftId}`: within one open session draftId transitions
+            null→uuid on the first autosave-create, and keying on it would
+            remount the editor and reset its body to initialBody (the editor's
+            mount-once contract), discarding the user's in-progress text. The
+            composer mounts fresh each time the parent opens it, so the editor's
+            initialBody is correct on every open without a key. */}
+        <PrRootBodyEditor
+          prRef={prRef}
+          prState={prState}
+          initialBody={initialBody}
+          draftId={draftId}
+          onDraftIdChange={onDraftIdChange}
+          registerOpenComposer={registerOpenComposer}
+          ownerKey="reply-composer"
+          readOnly={readOnly || postInFlight}
+          onBodyChange={handleBodyChange}
+          onAutosaveControl={handleAutosaveControl}
+          onDraftLost={handleDraftLost}
         />
+      </div>
+
+      {previewMode && <ComposerMarkdownPreview body={body} />}
+
+      {postError && (
+        <div role="alert" data-testid="post-error" className={styles.postError}>
+          {postError.code === 'already-posted-body-mismatch' ? (
+            <span data-testid="post-error-already-posted">
+              This comment was already posted. Your edits since then haven't been shipped.
+              {postError.postedCommentId != null && (
+                <> (comment #{postError.postedCommentId})</>
+              )}{' '}
+              Discard your local edits and reload to continue.
+            </span>
+          ) : (
+            <>
+              Couldn't post to GitHub: {postError.message}.{' '}
+              <button type="button" onClick={handlePost} disabled={postDisabled}>
+                Retry
+              </button>
+            </>
+          )}
+        </div>
       )}
 
       <div className="composer-actions">
@@ -209,21 +233,21 @@ export function PrRootReplyComposer({
           type="button"
           className="composer-discard"
           onClick={handleDiscardClick}
-          disabled={readOnly}
-          aria-disabled={readOnly || undefined}
+          disabled={readOnly || inFlight}
+          aria-disabled={readOnly || inFlight || undefined}
         >
           Discard
         </button>
 
         <button
           type="button"
-          className="composer-save"
-          aria-disabled={saveDisabled}
-          title={saveTooltip}
-          onClick={handleSaveClick}
-          disabled={readOnly}
+          className="composer-post"
+          aria-disabled={postDisabled}
+          title={postTooltip}
+          onClick={handlePost}
+          disabled={postDisabled}
         >
-          Save
+          {postInFlight ? 'Posting…' : 'Post'}
         </button>
       </div>
 
@@ -239,25 +263,6 @@ export function PrRootReplyComposer({
         </button>
         <button type="button" data-modal-role="primary" onClick={handleDiscardConfirm}>
           Discard
-        </button>
-      </Modal>
-
-      <Modal
-        open={recoveryModalOpen}
-        title="PR reply draft deleted elsewhere"
-        defaultFocus="primary"
-        disableEscDismiss
-        onClose={() => setRecoveryModalOpen(false)}
-      >
-        <p>
-          This draft was deleted from another window or by reload. Re-create it with the current
-          text, or discard?
-        </p>
-        <button type="button" data-modal-role="cancel" onClick={handleRecoveryDiscard}>
-          Discard
-        </button>
-        <button type="button" data-modal-role="primary" onClick={handleRecoveryRecreate}>
-          Re-create
         </button>
       </Modal>
     </div>

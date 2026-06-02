@@ -32,3 +32,28 @@
   gap: var(--s-3);
   flex: none;
 }
+
+/* Closed-dialog discard surface (spec § 4.9). Mirrors SubmitInProgressBadge's
+   visual treatment: the global `.chip` + `.chip-warning` pill idiom, made
+   clickable (button reset + hover). Inlined here rather than reusing the global
+   classes so the pill stays a CSS-module-scoped element like the rest of
+   PrHeader. Warning color tokens match `.chip-warning` in tokens.css. */
+.pendingReviewPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  background: var(--warning-soft);
+  color: var(--warning-fg);
+  border: none;
+  cursor: pointer;
+}
+
+.pendingReviewPill:hover {
+  filter: brightness(0.96);
+}

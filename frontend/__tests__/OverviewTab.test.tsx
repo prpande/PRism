@@ -10,7 +10,6 @@ function emptySession(): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -27,6 +26,7 @@ function fakeDraftSession(overrides: Partial<UseDraftSessionResult> = {}): UseDr
     error: null,
     refetch: () => Promise.resolve(),
     registerOpenComposer: () => () => undefined,
+    getPrRootHolder: () => null,
     outOfBandToast: null,
     clearOutOfBandToast: () => undefined,
     ...overrides,

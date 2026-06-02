@@ -31,7 +31,7 @@ public class AppStateStoreMigrationTests
         var state = await store.LoadAsync(CancellationToken.None);
 
         // v1 → v2 (adds empty viewed-files) → v3 (rename + draft collections) → v4 (ThreadId field) → v5 (accounts container) → v6 (per-tab TabStamps) chained.
-        state.Version.Should().Be(6);
+        state.Version.Should().Be(7);
         state.Reviews.Sessions.Should().ContainKey("owner/repo/123");
         state.Reviews.Sessions["owner/repo/123"].ViewedFiles.Should().BeEmpty();
         // V5→V6 migration drops the session-flat last-viewed-head-sha; new V6 sessions start with an empty TabStamps map.
@@ -63,7 +63,7 @@ public class AppStateStoreMigrationTests
         var state = await store.LoadAsync(CancellationToken.None);
 
         // v2 → v3 runs the rename + draft-collections migration, then v3 → v4 adds the ThreadId field, then v4 → v5 moves under accounts; v1→v2 step is skipped.
-        state.Version.Should().Be(6);
+        state.Version.Should().Be(7);
         var session = state.Reviews.Sessions["owner/repo/123"];
         session.ViewedFiles.Should().ContainKey("src/Foo.cs");
         // Draft-collection backfill — symmetry with MigrationStepTests.MigrateV2ToV3_BackfillsDraftFieldsPerSession.
@@ -71,7 +71,6 @@ public class AppStateStoreMigrationTests
         // would only fail in the per-step unit test, not in this end-to-end Load test.
         session.DraftComments.Should().BeEmpty();
         session.DraftReplies.Should().BeEmpty();
-        session.DraftSummaryMarkdown.Should().BeNull();
         session.DraftVerdict.Should().BeNull();
         session.DraftVerdictStatus.Should().Be(DraftVerdictStatus.Draft);
         store.IsReadOnlyMode.Should().BeFalse();
@@ -151,7 +150,6 @@ public class AppStateStoreMigrationTests
                     PendingReviewCommitOid: null,
                     DraftComments: new List<DraftComment>(),
                     DraftReplies: new List<DraftReply>(),
-                    DraftSummaryMarkdown: null,
                     DraftVerdict: null,
                     DraftVerdictStatus: DraftVerdictStatus.Draft,
                     ViewedFiles: new Dictionary<string, string>
@@ -335,7 +333,7 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(6);
+        state.Version.Should().Be(7);
         state.UiPreferences.DiffMode.Should().Be(DiffMode.SideBySide);
     }
 
@@ -429,7 +427,6 @@ public class AppStateStoreMigrationTests
                     ViewedFiles: new Dictionary<string, string>(),
                     DraftComments: new List<DraftComment>(),
                     DraftReplies: new List<DraftReply>(),
-                    DraftSummaryMarkdown: null,
                     DraftVerdict: null,
                     DraftVerdictStatus: DraftVerdictStatus.Draft)
             };
@@ -550,7 +547,7 @@ public class AppStateStoreMigrationTests
         using var store = new AppStateStore(dir.Path);
         var state = await store.LoadAsync(CancellationToken.None);
 
-        state.Version.Should().Be(6);
+        state.Version.Should().Be(7);
         state.Reviews.Sessions.Should().ContainKey("owner/repo/7");
         state.Reviews.Sessions["owner/repo/7"].ViewedFiles.Should().ContainKey("src/Foo.cs");
         state.LastConfiguredGithubHost.Should().Be("https://github.com");
@@ -560,24 +557,24 @@ public class AppStateStoreMigrationTests
     }
 
     [Fact]
-    public async Task LoadAsync_future_version_V7_file_enters_read_only_mode_and_EnsureCurrentShape_backfills_safely()
+    public async Task LoadAsync_future_version_V8_file_enters_read_only_mode_and_EnsureCurrentShape_backfills_safely()
     {
-        // Future-version coverage (ce-doc-review adversarial F6): a V7 file with extra keys + missing
+        // Future-version coverage (ce-doc-review adversarial F6): a V8 file with extra keys + missing
         // optional sub-fields under accounts.default must NOT trip EnsureCurrentShape's backfill into
-        // a deserialization NRE, AND must enter read-only mode so SaveAsync is blocked. V6 became
-        // the current version when the cross-tab-stamp slice landed; V7 takes over the "next future"
-        // slot here.
+        // a deserialization NRE, AND must enter read-only mode so SaveAsync is blocked. V7 became
+        // the current version when the PR-root Post + submit-discard slice landed; V8 takes over the
+        // "next future" slot here.
         using var dir = new TempDataDir();
         await File.WriteAllTextAsync(Path.Combine(dir.Path, "state.json"), """
         {
-          "version": 7,
+          "version": 8,
           "ui-preferences": { "diff-mode": "side-by-side" },
           "accounts": {
             "default": {
-              "v7-future-account-metadata": { "extra": "ignored-by-deserializer" }
+              "v8-future-account-metadata": { "extra": "ignored-by-deserializer" }
             }
           },
-          "v7-future-root-key": "ignored-by-deserializer"
+          "v8-future-root-key": "ignored-by-deserializer"
         }
         """);
 
@@ -585,7 +582,7 @@ public class AppStateStoreMigrationTests
         var state = await store.LoadAsync(CancellationToken.None);
 
         store.IsReadOnlyMode.Should().BeTrue();
-        state.Version.Should().Be(7);                  // version preserved for the surfacing message
+        state.Version.Should().Be(8);                  // version preserved for the surfacing message
         state.Reviews.Sessions.Should().BeEmpty();     // backfilled by EnsureCurrentShape
         state.AiState.RepoCloneMap.Should().BeEmpty(); // backfilled by EnsureCurrentShape
         state.LastConfiguredGithubHost.Should().BeNull(); // nullable; missing key deserializes to null safely

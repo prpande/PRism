@@ -53,11 +53,20 @@ public sealed class SubmitPipeline
 
         var sessionKey = reference.ToString();  // "<owner>/<repo>/<number>" — the ReviewSessionState key
 
+        // Track the last-emitted Started step so the Cancelled outcome can carry it. A simple
+        // delegating wrapper captures every progress.Report call across all helper methods without
+        // requiring each helper to thread a ref parameter or return the updated step.
+        var lastStartedStep = SubmitStep.DetectExistingPendingReview;
+        var trackingProgress = new TrackingProgress(progress, (step, status) =>
+        {
+            if (status == SubmitStepStatus.Started) lastStartedStep = step;
+        });
+
         try
         {
             // ---- Step 1 — Detect existing pending review (spec § 5.2 step 1) ----
-            progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Started, 0, 0));
-            var existing = await InvokeAsync(SubmitStep.DetectExistingPendingReview, 0, 0, session, progress,
+            trackingProgress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Started, 0, 0));
+            var existing = await InvokeAsync(SubmitStep.DetectExistingPendingReview, 0, 0, session, trackingProgress,
                 () => _submitter.FindOwnPendingReviewAsync(reference, ct)).ConfigureAwait(false);
 
             string pendingReviewId;
@@ -66,8 +75,8 @@ public sealed class SubmitPipeline
             if (existing is null)
             {
                 // No pending review → Step 2 (Begin).
-                progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
-                pendingReviewId = await StepBeginAsync(reference, sessionKey, session, currentHeadSha, progress, ct).ConfigureAwait(false);
+                trackingProgress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
+                pendingReviewId = await StepBeginAsync(reference, sessionKey, session, currentHeadSha, trackingProgress, ct).ConfigureAwait(false);
                 workingSession = workingSession with { PendingReviewId = pendingReviewId, PendingReviewCommitOid = currentHeadSha };
             }
             else if (string.Equals(session.PendingReviewId, existing.PullRequestReviewId, StringComparison.Ordinal))
@@ -83,23 +92,23 @@ public sealed class SubmitPipeline
                     // Then delete the orphan, clear the session's pending state + every stamp, emit the
                     // terminal Succeeded, and hand the StaleCommitOidRecreating outcome back; the endpoint
                     // persists nothing more (the clear already happened here) and the user re-confirms / re-runs.
-                    progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Started, 0, 0));
-                    await InvokeAsync(SubmitStep.DetectExistingPendingReview, 0, 0, session, progress,
+                    trackingProgress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Started, 0, 0));
+                    await InvokeAsync(SubmitStep.DetectExistingPendingReview, 0, 0, session, trackingProgress,
                         () => _submitter.DeletePendingReviewAsync(reference, existing.PullRequestReviewId, ct)).ConfigureAwait(false);
-                    await PersistOrFailAsync(SubmitStep.DetectExistingPendingReview, session, progress,
-                        state => ClearPendingReviewStamps(state, sessionKey), ct).ConfigureAwait(false);
-                    progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
+                    await PersistOrFailAsync(SubmitStep.DetectExistingPendingReview, session, trackingProgress,
+                        state => SessionOverlays.ClearPendingReviewStamps(state, sessionKey), ct).ConfigureAwait(false);
+                    trackingProgress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
                     return new SubmitOutcome.StaleCommitOidRecreating(existing.PullRequestReviewId, existing.CommitOid);
                 }
 
-                progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
+                trackingProgress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
                 pendingReviewId = existing.PullRequestReviewId;
             }
             else
             {
                 // A pending review exists that isn't ours → prompt (endpoint surfaces the modal;
                 // TOCTOU defense is endpoint-side, not here).
-                progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
+                trackingProgress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
                 return new SubmitOutcome.ForeignPendingReviewPromptRequired(existing);
             }
 
@@ -107,12 +116,12 @@ public sealed class SubmitPipeline
             // Skipped (no progress events) when DraftComments is empty. `existing` doubles as the
             // detection snapshot for the stamped-thread verify branch and the lost-response marker
             // adoption scan.
-            workingSession = await StepAttachThreadsAsync(reference, sessionKey, pendingReviewId, workingSession, existing, progress, ct).ConfigureAwait(false);
+            workingSession = await StepAttachThreadsAsync(reference, sessionKey, pendingReviewId, workingSession, existing, trackingProgress, ct).ConfigureAwait(false);
 
             // ---- Step 4 — attach replies (spec § 5.2 step 4) ----
             // Skipped (no progress events) when DraftReplies is empty. Re-fetches the snapshot —
             // Step 3 just created new threads, so the Step 1 snapshot is stale.
-            workingSession = await StepAttachRepliesAsync(reference, sessionKey, pendingReviewId, workingSession, progress, ct).ConfigureAwait(false);
+            workingSession = await StepAttachRepliesAsync(reference, sessionKey, pendingReviewId, workingSession, trackingProgress, ct).ConfigureAwait(false);
 
             // ---- Pre-Finalize head_sha re-poll (revision R11) ----
             // Catch a push that landed mid-pipeline. The endpoint passes a callback that re-runs a
@@ -120,20 +129,20 @@ public sealed class SubmitPipeline
             // so the user Reloads + reconciles before re-submitting.
             if (_getCurrentHeadShaAsync is not null)
             {
-                var fresh = await InvokeAsync(SubmitStep.Finalize, 0, 1, workingSession, progress,
+                var fresh = await InvokeAsync(SubmitStep.Finalize, 0, 1, workingSession, trackingProgress,
                     () => _getCurrentHeadShaAsync(ct)).ConfigureAwait(false);
                 if (!string.Equals(fresh, currentHeadSha, StringComparison.Ordinal))
                 {
-                    progress.Report(new SubmitProgressEvent(SubmitStep.Finalize, SubmitStepStatus.Failed, 0, 1, "head_sha drift"));
+                    trackingProgress.Report(new SubmitProgressEvent(SubmitStep.Finalize, SubmitStepStatus.Failed, 0, 1, "head_sha drift"));
                     return new SubmitOutcome.Failed(SubmitStep.Finalize, "head_sha drifted before Finalize; Reload and re-submit", workingSession);
                 }
             }
 
             // ---- Step 5 — Finalize (spec § 5.2 step 5) ----
-            await StepFinalizeAsync(reference, pendingReviewId, verdict, workingSession, progress, ct).ConfigureAwait(false);
+            await StepFinalizeAsync(reference, pendingReviewId, verdict, workingSession, trackingProgress, ct).ConfigureAwait(false);
 
             // On success — clear PendingReviewId / PendingReviewCommitOid / every draft / every reply
-            // / DraftSummaryMarkdown / DraftVerdict / DraftVerdictStatus. The endpoint publishes
+            // / DraftVerdict / DraftVerdictStatus. The endpoint publishes
             // DraftSubmitted + StateChanged OUTSIDE _gate after this returns (spec § 5.2 step 5).
             // The review is already submitted server-side at this point, so a store/disk failure on
             // the cleanup write is swallowed rather than turned into Failed — returning Failed would
@@ -157,6 +166,16 @@ public sealed class SubmitPipeline
 
             return new SubmitOutcome.Success(pendingReviewId);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Caller cancelled the token (e.g., user triggered /submit/discard via Task 11's CTS
+            // registration). Return Cancelled — the endpoint emits a terminal Failed SSE for the
+            // last-started step so the SubmitDialog progress UI leaves its orphan "Started" state.
+            // The discard endpoint owns the user-facing "discarded" signal; we do nothing else here.
+            // NOTE: Task 11 will link the endpoint-scoped CTS to pipelineCt (host ApplicationStopping)
+            // so the outer endpoint-level catch handles host shutdown independently from user-discard.
+            return new SubmitOutcome.Cancelled(lastStartedStep, "Pipeline canceled by caller (discard).");
+        }
         catch (SubmitFailedException sfe)
         {
             return new SubmitOutcome.Failed(sfe.Step, sfe.Message, sfe.SessionAtFailure ?? session);
@@ -170,7 +189,7 @@ public sealed class SubmitPipeline
     {
         progress.Report(new SubmitProgressEvent(SubmitStep.BeginPendingReview, SubmitStepStatus.Started, 0, 1));
         var result = await InvokeAsync(SubmitStep.BeginPendingReview, 0, 1, session, progress,
-            () => _submitter.BeginPendingReviewAsync(reference, currentHeadSha, session.DraftSummaryMarkdown ?? "", ct)).ConfigureAwait(false);
+            () => _submitter.BeginPendingReviewAsync(reference, currentHeadSha, ExtractPrRootBody(session), ct)).ConfigureAwait(false);
 
         // Stamp the new pending-review id immediately (caller persisted the session under sessionKey);
         // if this fails, the at-failure session carries the stamp so the endpoint persists it on retry
@@ -209,7 +228,10 @@ public sealed class SubmitPipeline
         PrReference reference, string sessionKey, string pendingReviewId, ReviewSessionState session,
         OwnPendingReviewSnapshot? detectionSnapshot, IProgress<SubmitProgressEvent> progress, CancellationToken ct)
     {
-        var drafts = session.DraftComments.Where(d => d.Status != DraftStatus.Stale).ToList();
+        var drafts = session.DraftComments
+            .Where(d => d.Status != DraftStatus.Stale)
+            .Where(d => d.FilePath is not null && d.LineNumber is not null)
+            .ToList();
         if (drafts.Count == 0) return session;
 
         var total = drafts.Count;
@@ -281,22 +303,13 @@ public sealed class SubmitPipeline
                 // Falls through to create.
             }
 
-            if (draft.FilePath is null || draft.LineNumber is null)
-            {
-                // PR-root drafts (no diff anchor) can't be attached as inline threads on a pending
-                // review — GitHub's addPullRequestReviewThread requires a path + line. Fail loud so
-                // the user discards/rewrites rather than silently dropping their comment. (Folding
-                // PR-root drafts into the review summary is deferred — see the deferrals sidecar.)
-                var msg = $"draft {draft.Id} has no diff anchor; PR-root comments aren't submittable as part of a pending review";
-                progress.Report(new SubmitProgressEvent(SubmitStep.AttachThreads, SubmitStepStatus.Failed, done, total, msg));
-                throw new SubmitFailedException(SubmitStep.AttachThreads, msg, current);
-            }
-
+            // FilePath and LineNumber are both non-null here: the Where filter at the top of this
+            // method already excluded PR-root drafts (FilePath is null || LineNumber is null).
             var request = new DraftThreadRequest(
                 DraftId: draft.Id,
                 BodyMarkdown: PipelineMarker.Inject(draft.BodyMarkdown, draft.Id),
-                FilePath: draft.FilePath,
-                LineNumber: draft.LineNumber.Value,
+                FilePath: draft.FilePath!,
+                LineNumber: draft.LineNumber!.Value,
                 Side: (draft.Side ?? "right").ToUpperInvariant());
 
             var result = await InvokeAsync(SubmitStep.AttachThreads, done, total, current, progress,
@@ -600,19 +613,6 @@ public sealed class SubmitPipeline
         return WithSession(state, sessionKey, cur with { DraftReplies = replies });
     }
 
-    private static AppState ClearPendingReviewStamps(AppState state, string sessionKey)
-    {
-        if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var cur)) return state;
-        var cleared = cur with
-        {
-            PendingReviewId = null,
-            PendingReviewCommitOid = null,
-            DraftComments = cur.DraftComments.Select(d => d.ThreadId is null ? d : d with { ThreadId = null }).ToList(),
-            DraftReplies = cur.DraftReplies.Select(r => r.ReplyCommentId is null ? r : r with { ReplyCommentId = null }).ToList(),
-        };
-        return WithSession(state, sessionKey, cleared);
-    }
-
     private static AppState ClearSubmittedSession(AppState state, string sessionKey)
     {
         if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var cur)) return state;
@@ -620,14 +620,27 @@ public sealed class SubmitPipeline
         {
             PendingReviewId = null,
             PendingReviewCommitOid = null,
-            DraftComments = new List<DraftComment>(),
+            // Keep stale-but-not-overridden drafts (existing semantics) AND Posted PR-root drafts
+            // (their lifecycle belongs to the issue-comment path; PostedCommentId is the discriminator).
+            // Unposted PR-root drafts are consumed by the submit (shipped as review.body) — drop them.
+            DraftComments = cur.DraftComments
+                .Where(d => (d.Status == DraftStatus.Stale && !d.IsOverriddenStale)
+                         || d.PostedCommentId is not null)
+                .ToList(),
             DraftReplies = new List<DraftReply>(),
-            DraftSummaryMarkdown = null,
             DraftVerdict = null,
             DraftVerdictStatus = DraftVerdictStatus.Draft,
         };
         return WithSession(state, sessionKey, cleared);
     }
+
+    // The PR-root draft is the single DraftComment with no FilePath and no LineNumber. V7
+    // unification — `DraftSummaryMarkdown` no longer exists; the SubmitDialog summary textarea
+    // edits this row. Returns empty string when no PR-root draft is present so the wire-shape
+    // matches the historic `session.DraftSummaryMarkdown ?? ""` semantics.
+    private static string ExtractPrRootBody(ReviewSessionState session)
+        => session.DraftComments
+            .FirstOrDefault(d => d.FilePath is null && d.LineNumber is null)?.BodyMarkdown ?? "";
 
     private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
     {
@@ -662,4 +675,18 @@ public sealed class SubmitPipeline
                 .Select(r => string.Equals(r.Id, replyId, StringComparison.Ordinal) ? r with { Status = DraftStatus.Stale } : r)
                 .ToList(),
         };
+
+    // Delegating IProgress<SubmitProgressEvent> that invokes a side-effect callback for each
+    // report — used by SubmitAsync to track the last-emitted Started step for Cancelled outcomes
+    // without requiring every helper method to thread a ref parameter.
+    private sealed class TrackingProgress(
+        IProgress<SubmitProgressEvent> inner,
+        Action<SubmitStep, SubmitStepStatus> onReport) : IProgress<SubmitProgressEvent>
+    {
+        public void Report(SubmitProgressEvent value)
+        {
+            onReport(value.Step, value.Status);
+            inner.Report(value);
+        }
+    }
 }

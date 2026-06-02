@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getPrDetail } from '../api/prDetail';
 import { postMarkViewed } from '../api/markViewed';
 import type { PrDetailDto, PrReference } from '../api/types';
@@ -90,6 +90,6 @@ export function usePrDetail(prRef: PrReference): UsePrDetailResult {
   }, [prRef.owner, prRef.repo, prRef.number, reloadCounter]);
 
   const showSkeleton = useDelayedLoading(isLoading);
-  const reload = () => setReloadCounter((c) => c + 1);
+  const reload = useCallback(() => setReloadCounter((c) => c + 1), []);
   return { data, isLoading, showSkeleton, error, reload };
 }

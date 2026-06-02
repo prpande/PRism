@@ -6,6 +6,7 @@ import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import styles from './InlineCommentComposer.module.css';
 import type { DraftSide, PrReference } from '../../../api/types';
+import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 
 export interface InlineAnchor {
   filePath: string;
@@ -24,9 +25,9 @@ export interface InlineCommentComposerProps {
   // whether to surface the A2 transition modal on a click-to-another-line.
   draftId: string | null;
   onDraftIdChange: (id: string | null) => void;
-  // Provided by useDraftSession; refcount registry keeps the diff-and-prefer
+  // Provided by useDraftSession; set-based registry keeps the diff-and-prefer
   // merge from clobbering this composer's local body.
-  registerOpenComposer: (draftId: string) => () => void;
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   // Dismissed by the parent (FilesTab) — used after Cmd+Enter, after a
   // successful empty-body delete, after the 404-recovery "Discard" choice,
   // and after the discard-modal "Discard" confirmation.
@@ -108,7 +109,7 @@ export function InlineCommentComposer({
   // composers (Files + Drafts tabs) open the same draft id simultaneously.
   useEffect(() => {
     if (draftId === null) return;
-    return registerOpenComposer(draftId);
+    return registerOpenComposer(draftId, 'files-tab');
   }, [draftId, registerOpenComposer]);
 
   // Auto-focus the textarea on mount so the user can start typing

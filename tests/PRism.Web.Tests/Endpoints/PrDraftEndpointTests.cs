@@ -53,13 +53,12 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         string filePath = "src/Foo.cs", int line = 42, string side = "right",
         string? sha = null, string content = "line content", string body = "this is a draft comment")
         => new(
-            null, null,
+            null,
             NewDraftComment: new NewDraftCommentPayload(filePath, line, side, sha ?? new string('a', 40), content, body),
             null, null, null, null, null, null, null, null, null);
 
     private static ReviewSessionPatch SinglePatch(
         string? draftVerdict = null,
-        string? summary = null,
         NewPrRootDraftCommentPayload? newRoot = null,
         UpdateDraftCommentPayload? updateComment = null,
         DeleteDraftPayload? deleteComment = null,
@@ -69,7 +68,7 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         bool? confirmVerdict = null,
         bool? markAllRead = null,
         OverrideStalePayload? overrideStale = null)
-        => new(draftVerdict, summary, null, newRoot, updateComment, deleteComment, newReply, updateReply, deleteReply, confirmVerdict, markAllRead, overrideStale);
+        => new(draftVerdict, null, newRoot, updateComment, deleteComment, newReply, updateReply, deleteReply, confirmVerdict, markAllRead, overrideStale);
 
     [Fact]
     public async Task NewDraftComment_success_returns_assigned_id_and_persists()
@@ -90,7 +89,7 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         client.DefaultRequestHeaders.Add("X-PRism-Tab-Id", "tab-1");
         client.DefaultRequestHeaders.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
 
-        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", SinglePatch(summary: "x"));
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", SinglePatch(draftVerdict: "approve"));
 
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -99,9 +98,13 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
     public async Task Multi_field_patch_returns_400_invalid_patch_shape()
     {
         var client = ClientWithTab();
+        // V7 unification removed draftSummaryMarkdown; this test now pairs a scalar (draftVerdict)
+        // with an object op (newPrRootDraftComment) so two real ops still reach the dispatcher.
         var patch = new ReviewSessionPatch(
-            DraftVerdict: "approve", DraftSummaryMarkdown: "summary",
-            null, null, null, null, null, null, null, null, null, null);
+            DraftVerdict: "approve",
+            NewDraftComment: null,
+            NewPrRootDraftComment: new NewPrRootDraftCommentPayload(BodyMarkdown: "summary"),
+            null, null, null, null, null, null, null, null);
 
         var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", patch);
 
@@ -176,16 +179,13 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         // First set a verdict so a session exists.
         await client.PutAsJsonAsync("/api/pr/acme/api/321/draft", SinglePatch(draftVerdict: "approve"));
 
-        // All-null patch — 12 nulls means 0 set fields per EnumerateSetFields. The
-        // single-field constraint in PutDraft rejects this with 400. Note: we can't
-        // legitimately clear a verdict via JSON null without distinguishing "field
-        // absent" from "field null" on the wire — see deferrals "PR3 wire-shape gap:
-        // explicit verdict-clear has no sentinel". This test pins the dispatch
-        // boundary, not a clear semantic.
-        var allNull = new ReviewSessionPatch(
-            DraftVerdict: null, DraftSummaryMarkdown: null,
-            null, null, null, null, null, null, null, null, null, null);
-        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/321/draft", allNull);
+        // Empty-object patch — 0 set fields per the dispatcher. The single-field constraint in
+        // PutDraft rejects this with 400. (Pre-V7 a typed-record DTO with all nulls was the
+        // canonical way to reach this state; under V7 `{"draftVerdict":null}` is a legitimate
+        // clear op so the typed-record DTO no longer serializes to "0 fields set" — we send a
+        // raw empty object instead.)
+        using var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        var resp = await client.PutAsync(new Uri("/api/pr/acme/api/321/draft", UriKind.Relative), content);
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
@@ -326,6 +326,161 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         var patch = SinglePatch(updateReply: new UpdateDraftPayload(Id: "some-id", BodyMarkdown: "   "));
         var resp = await client.PutAsJsonAsync("/api/pr/acme/api/906/draft", patch);
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task NewPrRootDraftComment_when_existing_present_updates_in_place()
+    {
+        var client = ClientWithTab();
+        var first = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft",
+            SinglePatch(newRoot: new NewPrRootDraftCommentPayload("first body")));
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Capture the AssignedId from the first PUT — the upsert must return the SAME id on
+        // the second PUT, proving update-in-place (not delete+recreate).
+        var firstBody = await ReadApiJsonAsync<AssignedIdResponse>(first);
+        firstBody.Should().NotBeNull();
+        var firstAssignedId = firstBody!.AssignedId;
+        firstAssignedId.Should().NotBeNullOrEmpty();
+
+        var second = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft",
+            SinglePatch(newRoot: new NewPrRootDraftCommentPayload("second body")));
+        second.StatusCode.Should().Be(HttpStatusCode.OK);
+        var getResp = await client.GetAsync(new Uri("/api/pr/acme/api/123/draft", UriKind.Relative));
+        var session = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
+        session!.DraftComments.Should().ContainSingle(d => d.FilePath == null);
+        var root = session.DraftComments.Single(d => d.FilePath == null);
+        root.BodyMarkdown.Should().Be("second body");
+        // Id-stability: the surviving draft must carry the SAME id that was assigned on
+        // creation. If the update path deleted-and-recreated the row, a fresh Guid would
+        // appear here and this assertion would fail — the Id-stability proxy for field
+        // preservation (PostedCommentId / PostedBodySnapshot survive across an edit).
+        root.Id.Should().Be(firstAssignedId);
+    }
+
+    [Fact]
+    public async Task NewPrRootDraftComment_edit_preserves_posted_comment_id()
+    {
+        // Seed a session whose PR-root DraftComment already has PostedCommentId / PostedBodySnapshot
+        // set (simulating a previously-posted root comment — the state Task 10 creates). This
+        // asserts the `existing with { BodyMarkdown = ... }` upsert path leaves those fields intact,
+        // which is the contract Task 10 (Post-then-edit) depends on.
+        const string prOwner = "acme";
+        const string prRepo = "api";
+        const int prNumber = 7001;
+        const string refKey = "acme/api/7001";
+        const long seededPostedCommentId = 99L;
+        const string seededPostedBodySnapshot = "posted body";
+        const string seededDraftId = "seeded-root-draft-id";
+
+        // Access the real AppStateStore from the factory's DI container to pre-seed the session.
+        using var scope = _factory.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IAppStateStore>();
+        await store.UpdateAsync(state =>
+        {
+            var seededDraft = new DraftComment(
+                Id: seededDraftId,
+                FilePath: null, LineNumber: null, Side: "pr",
+                AnchoredSha: null, AnchoredLineContent: null,
+                BodyMarkdown: "original body",
+                Status: DraftStatus.Draft, IsOverriddenStale: false,
+                PostedCommentId: seededPostedCommentId,
+                PostedBodySnapshot: seededPostedBodySnapshot);
+            var session = PrDraftEndpoints.NewEmptySession() with
+            {
+                DraftComments = new List<DraftComment> { seededDraft },
+            };
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions, StringComparer.Ordinal)
+            {
+                [refKey] = session,
+            };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
+
+        // PUT a new body via newPrRootDraftComment — should update in place.
+        var client = ClientWithTab();
+        var putResp = await client.PutAsJsonAsync($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft",
+            SinglePatch(newRoot: new NewPrRootDraftCommentPayload("edited body")));
+        putResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // The response AssignedId must be the seeded draft's id (update-in-place, not new row).
+        var putBody = await ReadApiJsonAsync<AssignedIdResponse>(putResp);
+        putBody!.AssignedId.Should().Be(seededDraftId);
+
+        // GET the session and assert preservation of the posted fields.
+        var getResp = await client.GetAsync(new Uri($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft", UriKind.Relative));
+        var session2 = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
+        session2!.DraftComments.Should().ContainSingle(d => d.FilePath == null);
+        var root = session2.DraftComments.Single(d => d.FilePath == null);
+        root.BodyMarkdown.Should().Be("edited body");
+        root.Id.Should().Be(seededDraftId);
+        // PostedCommentId now crosses the wire (spec § 8); the edit must preserve it.
+        // PostedBodySnapshot stays server-side-only and is asserted via the store below.
+        root.PostedCommentId.Should().Be(seededPostedCommentId);
+        var storedState = await store.LoadAsync(CancellationToken.None);
+        storedState.Reviews.Sessions.TryGetValue(refKey, out var storedSession).Should().BeTrue();
+        var storedRoot = storedSession!.DraftComments.Single(d => d.FilePath == null);
+        storedRoot.PostedCommentId.Should().Be(seededPostedCommentId);
+        storedRoot.PostedBodySnapshot.Should().Be(seededPostedBodySnapshot);
+    }
+
+    [Fact]
+    public async Task GetDraft_emits_postedCommentId_on_the_wire_and_keeps_postedBodySnapshot_server_side()
+    {
+        // Spec § 8: DraftCommentDto.postedCommentId crosses the wire; PostedBodySnapshot does not.
+        // Seed a PR-root draft that has been posted (PostedCommentId=99) plus a file-anchored draft
+        // that has NOT been posted (PostedCommentId defaults to null), then GET and assert both the
+        // typed shape and the raw JSON key surface.
+        const string prOwner = "acme";
+        const string prRepo = "api";
+        const int prNumber = 7002;
+        const string refKey = "acme/api/7002";
+        const long seededPostedCommentId = 99L;
+
+        using var scope = _factory.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IAppStateStore>();
+        await store.UpdateAsync(state =>
+        {
+            var postedRoot = new DraftComment(
+                Id: "posted-root",
+                FilePath: null, LineNumber: null, Side: "pr",
+                AnchoredSha: null, AnchoredLineContent: null,
+                BodyMarkdown: "posted root body",
+                Status: DraftStatus.Draft, IsOverriddenStale: false,
+                PostedCommentId: seededPostedCommentId,
+                PostedBodySnapshot: "server-side snapshot");
+            var unpostedFile = new DraftComment(
+                Id: "unposted-file",
+                FilePath: "src/Foo.cs", LineNumber: 42, Side: "right",
+                AnchoredSha: new string('a', 40), AnchoredLineContent: "line content",
+                BodyMarkdown: "file draft body",
+                Status: DraftStatus.Draft, IsOverriddenStale: false);
+            var session = PrDraftEndpoints.NewEmptySession() with
+            {
+                DraftComments = new List<DraftComment> { postedRoot, unpostedFile },
+            };
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions, StringComparer.Ordinal)
+            {
+                [refKey] = session,
+            };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
+
+        var client = ClientWithTab();
+        var getResp = await client.GetAsync(new Uri($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft", UriKind.Relative));
+        getResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var dto = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
+        var postedRootDto = dto!.DraftComments.Single(d => d.Id == "posted-root");
+        postedRootDto.PostedCommentId.Should().Be(seededPostedCommentId);
+        var unpostedFileDto = dto.DraftComments.Single(d => d.Id == "unposted-file");
+        unpostedFileDto.PostedCommentId.Should().BeNull();
+
+        // Raw-JSON surface: the camelCase key is present, and the server-side-only field is not.
+        // Re-fetch so the content stream is fresh (the first response was already consumed above).
+        var rawResp = await client.GetAsync(new Uri($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft", UriKind.Relative));
+        var raw = await rawResp.Content.ReadAsStringAsync();
+        raw.Should().Contain("\"postedCommentId\"");
+        raw.Should().NotContain("postedBodySnapshot");
     }
 
     private sealed class FakeCache : IActivePrCache
