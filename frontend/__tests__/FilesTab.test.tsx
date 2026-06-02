@@ -323,11 +323,9 @@ describe('FilesTab', () => {
     // Backend maps RangeUnreachableException → ProblemDetails { type: "/diff/range-unreachable" }
     // at HTTP 422 (PrDetailEndpoints /diff, spec § 5.1). FilesTab must render the distinct,
     // human-readable message — NOT the generic "Failed to load diff — HTTP 422" banner.
-    globalThis.fetch = vi
-      .fn()
-      .mockImplementation(() =>
-        Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 422)),
-      ) as typeof fetch;
+    globalThis.fetch = diffOrDraft(() =>
+      Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 422)),
+    ) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
       expect(screen.getByTestId('diff-unavailable')).toBeInTheDocument();
@@ -341,11 +339,9 @@ describe('FilesTab', () => {
   it('shows the generic banner for a non-range-unreachable diff error (regression)', async () => {
     // Any other failure (here a 500) must still fall through to the generic banner so we
     // don't swallow unexpected errors behind the range-unreachable copy.
-    globalThis.fetch = vi
-      .fn()
-      .mockImplementation(() =>
-        Promise.resolve(jsonResponse({ type: '/oops' }, 500)),
-      ) as typeof fetch;
+    globalThis.fetch = diffOrDraft(() =>
+      Promise.resolve(jsonResponse({ type: '/oops' }, 500)),
+    ) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();

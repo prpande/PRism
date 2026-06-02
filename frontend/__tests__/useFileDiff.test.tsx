@@ -57,7 +57,7 @@ describe('useFileDiff', () => {
     globalThis.fetch = vi
       .fn()
       .mockImplementation(() =>
-        Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 404)),
+        Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 422)),
       ) as typeof fetch;
     const { result } = renderHook(() => useFileDiff(ref, 'abc..def'));
     await waitFor(() => expect(result.current.error).not.toBeNull());

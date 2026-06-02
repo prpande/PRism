@@ -629,7 +629,10 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var url = $"repos/{reference.Owner}/{reference.Repo}/compare/{Uri.EscapeDataString(range.BaseSha)}...{Uri.EscapeDataString(range.HeadSha)}";
         using var http = _httpFactory.CreateClient("github");
         using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
-        if (resp.StatusCode == HttpStatusCode.NotFound)
+        // Symmetric with PaginatePullsFilesAsync: a pruned head ref / commits after a
+        // closed PR yields 404 OR 410 Gone. Map both to the typed RangeUnreachableException
+        // so the cross-iteration 3-dot compare path surfaces the same "diff unavailable".
+        if (resp.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
             throw new RangeUnreachableException(range.BaseSha, range.HeadSha);
         resp.EnsureSuccessStatusCode();
 

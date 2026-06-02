@@ -49,7 +49,7 @@ describe('useUnionDiff', () => {
     globalThis.fetch = vi
       .fn()
       .mockImplementation(() =>
-        Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 404)),
+        Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 422)),
       ) as typeof fetch;
     const { result } = renderHook(() => useUnionDiff(ref, ['sha1']));
     await waitFor(() => expect(result.current.error).not.toBeNull());
