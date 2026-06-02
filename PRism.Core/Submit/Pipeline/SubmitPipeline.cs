@@ -87,7 +87,7 @@ public sealed class SubmitPipeline
                     await InvokeAsync(SubmitStep.DetectExistingPendingReview, 0, 0, session, progress,
                         () => _submitter.DeletePendingReviewAsync(reference, existing.PullRequestReviewId, ct)).ConfigureAwait(false);
                     await PersistOrFailAsync(SubmitStep.DetectExistingPendingReview, session, progress,
-                        state => ClearPendingReviewStamps(state, sessionKey), ct).ConfigureAwait(false);
+                        state => SessionOverlays.ClearPendingReviewStamps(state, sessionKey), ct).ConfigureAwait(false);
                     progress.Report(new SubmitProgressEvent(SubmitStep.DetectExistingPendingReview, SubmitStepStatus.Succeeded, 1, 1));
                     return new SubmitOutcome.StaleCommitOidRecreating(existing.PullRequestReviewId, existing.CommitOid);
                 }
@@ -598,19 +598,6 @@ public sealed class SubmitPipeline
         if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var cur)) return state;
         var replies = cur.DraftReplies.Select(r => string.Equals(r.Id, replyId, StringComparison.Ordinal) ? r with { Status = DraftStatus.Stale } : r).ToList();
         return WithSession(state, sessionKey, cur with { DraftReplies = replies });
-    }
-
-    private static AppState ClearPendingReviewStamps(AppState state, string sessionKey)
-    {
-        if (!state.Reviews.Sessions.TryGetValue(sessionKey, out var cur)) return state;
-        var cleared = cur with
-        {
-            PendingReviewId = null,
-            PendingReviewCommitOid = null,
-            DraftComments = cur.DraftComments.Select(d => d.ThreadId is null ? d : d with { ThreadId = null }).ToList(),
-            DraftReplies = cur.DraftReplies.Select(r => r.ReplyCommentId is null ? r : r with { ReplyCommentId = null }).ToList(),
-        };
-        return WithSession(state, sessionKey, cleared);
     }
 
     private static AppState ClearSubmittedSession(AppState state, string sessionKey)
