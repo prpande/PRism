@@ -1,5 +1,5 @@
 import { render as rtlRender, screen, fireEvent, within } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PrHeader } from '../src/components/PrDetail/PrHeader';
 import { ToastProvider } from '../src/components/Toast/useToast';
 import { ToastContainer } from '../src/components/Toast/ToastContainer';
@@ -382,14 +382,30 @@ describe('PrHeader — closed/merged PR (PR5 § 13)', () => {
 });
 
 describe('PrHeader — merged/closed status label (Task 13)', () => {
-  it('shows a Merged <when> label on a merged PR', () => {
-    render(<PrHeader {...baseProps} prState="merged" mergedAt="2024-01-01T00:00:00Z" />);
-    expect(screen.getByText(/Merged/)).toBeInTheDocument();
+  // Fixed "now": 2024-02-01T00:00:00Z
+  // mergedAt:    2024-01-01T00:00:00Z  → 31 days before now → "Merged 31d ago"
+  // closedAt:    2024-01-15T00:00:00Z  → 17 days before now → "Closed 17d ago"
+  const FIXED_NOW = new Date('2024-02-01T00:00:00Z');
+  const MERGED_AT = '2024-01-01T00:00:00Z';
+  const CLOSED_AT = '2024-01-15T00:00:00Z';
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
   });
 
-  it('shows a Closed <when> label on a closed-unmerged PR', () => {
-    render(<PrHeader {...baseProps} prState="closed" closedAt="2024-01-01T00:00:00Z" />);
-    expect(screen.getByText(/Closed/)).toBeInTheDocument();
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the full "Merged Nd ago" label including the age fragment on a merged PR', () => {
+    render(<PrHeader {...baseProps} prState="merged" mergedAt={MERGED_AT} />);
+    expect(screen.getByText('Merged 31d ago')).toBeInTheDocument();
+  });
+
+  it('shows the full "Closed Nd ago" label including the age fragment on a closed-unmerged PR', () => {
+    render(<PrHeader {...baseProps} prState="closed" closedAt={CLOSED_AT} />);
+    expect(screen.getByText('Closed 17d ago')).toBeInTheDocument();
   });
 
   it('does not show a Merged label when mergedAt is absent', () => {
@@ -403,14 +419,7 @@ describe('PrHeader — merged/closed status label (Task 13)', () => {
   });
 
   it('does not show a status label on an open PR', () => {
-    render(
-      <PrHeader
-        {...baseProps}
-        prState="open"
-        mergedAt="2024-01-01T00:00:00Z"
-        closedAt="2024-01-01T00:00:00Z"
-      />,
-    );
+    render(<PrHeader {...baseProps} prState="open" mergedAt={MERGED_AT} closedAt={CLOSED_AT} />);
     expect(screen.queryByText(/Merged/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Closed/)).not.toBeInTheDocument();
   });

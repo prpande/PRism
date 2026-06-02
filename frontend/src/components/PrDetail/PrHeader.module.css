@@ -60,18 +60,18 @@
 
 /* Merged/closed status label — mirrors the inbox badge colour tokens for
    cross-surface consistency (spec Task 13). Text-only, no background. */
-.statusMerged {
-  display: inline-block;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--merged-fg);
-}
-
+.statusMerged,
 .statusClosed {
   display: inline-block;
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+.statusMerged {
+  color: var(--merged-fg);
+}
+
+.statusClosed {
   color: var(--danger-fg);
 }
