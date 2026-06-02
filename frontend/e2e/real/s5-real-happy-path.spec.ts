@@ -58,10 +58,22 @@ test('S5 real flow — happy path drives mark-viewed → submit → finalize thr
   await expect(submitBtn).toBeEnabled({ timeout: 10_000 });
   await submitBtn.click();
 
-  // 4. Fill summary; verdict=Comment; click Confirm Submit.
+  // 4. Fill the PR-level body; verdict=Comment; click Confirm Submit.
+  // Post-V7 (T22) the legacy summary textarea is gone — the dialog shows a
+  // preview + an Edit toggle. Drive the body through the inline-edit flow so it
+  // lands as the submitted review's `body` (asserted GitHub-side in step 6).
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await dialog.getByLabel(/pr-level summary/i).fill('Real-flow happy-path summary.');
+  await dialog.getByTestId('pr-root-edit-toggle').click();
+  const bodyEditor = dialog.getByRole('textbox', { name: /pr-level body/i });
+  await expect(bodyEditor).toBeVisible();
+  const bodySave = page.waitForResponse(
+    (r) => r.url().includes('/draft') && r.request().method() === 'PUT' && r.status() === 200,
+    { timeout: 10_000 },
+  );
+  await bodyEditor.fill('Real-flow happy-path summary.');
+  await bodySave;
+  await dialog.getByTestId('pr-root-done-toggle').click();
   await dialog.getByRole('button', { name: /^confirm submit$/i }).click();
 
   // 5. Expect "Review submitted" heading and Finalize step in done state.

@@ -65,7 +65,6 @@ function emptySession(): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -94,6 +93,7 @@ function sessionWithDraftAt(
         bodyMarkdown: body,
         status: 'draft',
         isOverriddenStale: false,
+        postedCommentId: null,
       },
     ],
   };

@@ -8,7 +8,6 @@ import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../src
 const emptyReviewSession: ReviewSessionDto = {
   draftVerdict: null,
   draftVerdictStatus: 'draft',
-  draftSummaryMarkdown: null,
   draftComments: [],
   draftReplies: [],
   iterationOverrides: [],

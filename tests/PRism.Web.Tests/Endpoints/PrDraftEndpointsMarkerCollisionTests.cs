@@ -57,9 +57,14 @@ public class PrDraftEndpointsMarkerCollisionTests : IClassFixture<PRismWebApplic
     }
 
     [Fact]
-    public async Task PutDraft_summary_with_marker_prefix_returns_400()
+    public async Task PutDraft_pr_root_with_marker_prefix_returns_400()
     {
-        var resp = await Client().PutAsJsonAsync("/api/pr/o/r/3/draft", new { draftSummaryMarkdown = "see <!-- prism:client-id:x --> for details" });
+        // V7 unification — the legacy summary scalar kind is gone; the PR-level body now flows
+        // through newPrRootDraftComment, so the marker-prefix gate fires on that operand instead.
+        var resp = await Client().PutAsJsonAsync("/api/pr/o/r/3/draft", new
+        {
+            newPrRootDraftComment = new { bodyMarkdown = "see <!-- prism:client-id:x --> for details" },
+        });
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("code").GetString().Should().Be("marker-prefix-collision");

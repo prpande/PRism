@@ -23,7 +23,6 @@ public class AppStateRoundTripTests
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(),
             DraftReplies: new List<DraftReply>(),
-            DraftSummaryMarkdown: null,
             DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 
@@ -54,7 +53,6 @@ public class AppStateRoundTripTests
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(),
             DraftReplies: new List<DraftReply>(),
-            DraftSummaryMarkdown: null,
             DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 
@@ -85,5 +83,29 @@ public class AppStateRoundTripTests
 
         Assert.Contains("\"reviews\":", json, StringComparison.Ordinal);
         Assert.DoesNotContain("\"review-sessions\":", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DraftComment_PostedFieldsRoundTrip()
+    {
+        var draft = new DraftComment(
+            Id: "d1",
+            FilePath: null,
+            LineNumber: null,
+            Side: "pr",
+            AnchoredSha: null,
+            AnchoredLineContent: null,
+            BodyMarkdown: "hello",
+            Status: DraftStatus.Draft,
+            IsOverriddenStale: false,
+            ThreadId: null,
+            PostedCommentId: 12345L,
+            PostedBodySnapshot: "hello");
+
+        var json = JsonSerializer.Serialize(draft, JsonSerializerOptionsFactory.Storage);
+        var roundTripped = JsonSerializer.Deserialize<DraftComment>(json, JsonSerializerOptionsFactory.Storage);
+
+        Assert.NotNull(roundTripped);
+        Assert.Equal(draft, roundTripped);
     }
 }

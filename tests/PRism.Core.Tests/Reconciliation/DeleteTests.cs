@@ -36,7 +36,6 @@ public class DeleteTests
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new[] { draft },
             DraftReplies: new List<DraftReply>(),
-            DraftSummaryMarkdown: null,
             DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 

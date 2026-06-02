@@ -30,10 +30,14 @@ internal static class SessionFactory
         ViewedFiles: new Dictionary<string, string>(),
         DraftComments: new List<DraftComment>(),
         DraftReplies: new List<DraftReply>(),
-        DraftSummaryMarkdown: null,
         DraftVerdict: null,
         DraftVerdictStatus: DraftVerdictStatus.Draft);
 
+    // V7 unification — the historic `summary` parameter materialises as a PR-root DraftComment
+    // (FilePath / LineNumber both null). NOTE: this means the pipeline's AttachThreads step still
+    // throws on PR-root drafts until Task 7 partitions; SubmitPipeline tests that pass a non-null
+    // summary will surface that throw as `SubmitOutcome.Failed(AttachThreads, …)`. That breakage
+    // is expected and is partitioned away in Task 7.
     public static ReviewSessionState With(
         string headSha = "head1",
         string? pendingReviewId = null,
@@ -41,17 +45,29 @@ internal static class SessionFactory
         IEnumerable<DraftComment>? drafts = null,
         IEnumerable<DraftReply>? replies = null,
         string? summary = null,
-        DraftVerdict? verdict = null) => new(
+        DraftVerdict? verdict = null)
+    {
+        var draftList = (drafts ?? Enumerable.Empty<DraftComment>()).ToList();
+        if (!string.IsNullOrEmpty(summary))
+        {
+            draftList.Insert(0, new DraftComment(
+                Id: "pr-root-seed",
+                FilePath: null, LineNumber: null, Side: "pr",
+                AnchoredSha: null, AnchoredLineContent: null,
+                BodyMarkdown: summary,
+                Status: DraftStatus.Draft, IsOverriddenStale: false));
+        }
+        return new(
             TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(headSha, DateTime.UtcNow.AddMinutes(-1)) },
             LastSeenCommentId: null,
             PendingReviewId: pendingReviewId,
             PendingReviewCommitOid: pendingReviewCommitOid ?? (pendingReviewId is not null ? headSha : null),
             ViewedFiles: new Dictionary<string, string>(),
-            DraftComments: (drafts ?? Enumerable.Empty<DraftComment>()).ToList(),
+            DraftComments: draftList,
             DraftReplies: (replies ?? Enumerable.Empty<DraftReply>()).ToList(),
-            DraftSummaryMarkdown: summary,
             DraftVerdict: verdict,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
+    }
 
     public static DraftComment Draft(string id, string? threadId = null, string filePath = "src/Foo.cs", int? lineNumber = 42, string side = "RIGHT", string body = "body")
         => new(id, filePath, lineNumber, side, AnchoredSha: "anchorsha", AnchoredLineContent: "line", BodyMarkdown: body, Status: DraftStatus.Draft, IsOverriddenStale: false, ThreadId: threadId);

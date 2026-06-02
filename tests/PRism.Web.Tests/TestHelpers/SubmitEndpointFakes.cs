@@ -102,6 +102,9 @@ internal sealed class TestReviewSubmitter : IReviewSubmitter
         return Task.FromResult<OwnPendingReviewSnapshot?>(new OwnPendingReviewSnapshot(
             _activePendingReviewId, _activePendingCommitOid ?? "", DateTimeOffset.UtcNow, Array.Empty<PendingReviewThreadSnapshot>()));
     }
+
+    public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
+        => throw new NotImplementedException("CreateIssueCommentAsync is not exercised by this fake.");
 }
 
 // Minimal IPrReader for endpoint tests. PollActivePrAsync returns a configurable head sha; the

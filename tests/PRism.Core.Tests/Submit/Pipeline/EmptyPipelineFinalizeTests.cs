@@ -42,9 +42,9 @@ public class EmptyPipelineFinalizeTests
 
         // Summary was passed through to the pending review (now finalized, so no longer pending).
         Assert.Null(fake.GetPending(Ref));
-        // Success cleared the session's summary + verdict.
+        // Success cleared the session's drafts (incl. the V7 PR-root summary row) + verdict.
         var persisted = store.Session(SessionKey)!;
-        Assert.Null(persisted.DraftSummaryMarkdown);
+        Assert.Empty(persisted.DraftComments);
         Assert.Null(persisted.DraftVerdict);
     }
 }

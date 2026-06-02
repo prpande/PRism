@@ -40,10 +40,11 @@ export function SubmitButton({
 }
 
 function isEmptyContent(s: ReviewSessionDto): boolean {
+  // The PR-root review summary is now the PR-root DraftComment (filePath/lineNumber
+  // both null), so it's already counted in draftComments — no separate summary term.
   const noDrafts = s.draftComments.length === 0;
   const noReplies = s.draftReplies.length === 0;
-  const noSummary = !s.draftSummaryMarkdown || s.draftSummaryMarkdown.trim() === '';
-  return noDrafts && noReplies && noSummary;
+  return noDrafts && noReplies;
 }
 
 // Exported so the Submit dialog's Confirm button re-evaluates the same rules

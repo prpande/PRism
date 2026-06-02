@@ -29,11 +29,13 @@ vi.mock('../src/hooks/useEventSource', () => ({
 const submitReviewMock = vi.fn();
 const resumeForeignMock = vi.fn();
 const discardForeignMock = vi.fn();
+const discardOwnMock = vi.fn();
 
 vi.mock('../src/api/submit', () => ({
   submitReview: (...a: unknown[]) => submitReviewMock(...a),
   resumeForeignPendingReview: (...a: unknown[]) => resumeForeignMock(...a),
   discardForeignPendingReview: (...a: unknown[]) => discardForeignMock(...a),
+  discardOwnPendingReview: (...a: unknown[]) => discardOwnMock(...a),
   SubmitConflictError: class SubmitConflictError extends Error {
     code = 'submit-in-progress';
   },
@@ -47,6 +49,7 @@ beforeEach(() => {
   submitReviewMock.mockReset().mockResolvedValue({ outcome: 'started' });
   resumeForeignMock.mockReset().mockResolvedValue(undefined);
   discardForeignMock.mockReset().mockResolvedValue(undefined);
+  discardOwnMock.mockReset().mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
@@ -433,5 +436,59 @@ describe('useSubmit', () => {
     await waitFor(() => expect(listeners.get('submit-progress')?.size).toBe(1));
     unmount();
     expect(listeners.get('submit-progress')?.size ?? 0).toBe(0);
+  });
+
+  // --- Task 18: discardOwnPendingReview ---
+
+  it('discardOwnPendingReview calls the API wrapper with the reference and returns its result', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    const mockResult = { ok: true as const };
+    discardOwnMock.mockResolvedValueOnce(mockResult);
+    let ret: unknown;
+    await act(async () => {
+      ret = await result.current.discardOwnPendingReview();
+    });
+    expect(discardOwnMock).toHaveBeenCalledWith(ref);
+    expect(ret).toEqual(mockResult);
+  });
+
+  it('discardInFlight starts false', () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    expect(result.current.discardInFlight).toBe(false);
+  });
+
+  it('discardInFlight is false after discardOwnPendingReview resolves', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    await act(async () => {
+      await result.current.discardOwnPendingReview();
+    });
+    expect(result.current.discardInFlight).toBe(false);
+    expect(discardOwnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('discardInFlight is false after discardOwnPendingReview rejects (finally guard)', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    discardOwnMock.mockRejectedValueOnce(new Error('network'));
+    await act(async () => {
+      await expect(result.current.discardOwnPendingReview()).rejects.toThrow('network');
+    });
+    expect(result.current.discardInFlight).toBe(false);
+  });
+
+  it('discardInFlight toggles true during the call and false after (deferred resolution)', async () => {
+    const { result } = renderHook(() => useSubmit(ref));
+    let resolve!: (v: { ok: true }) => void;
+    discardOwnMock.mockReturnValueOnce(new Promise<{ ok: true }>((res) => (resolve = res)));
+    let discardPromise!: Promise<unknown>;
+    act(() => {
+      discardPromise = result.current.discardOwnPendingReview();
+    });
+    // In-flight: discardInFlight should be true before resolution
+    expect(result.current.discardInFlight).toBe(true);
+    await act(async () => {
+      resolve({ ok: true });
+      await discardPromise;
+    });
+    expect(result.current.discardInFlight).toBe(false);
   });
 });

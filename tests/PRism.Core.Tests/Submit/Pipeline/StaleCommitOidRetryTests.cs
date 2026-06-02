@@ -45,10 +45,14 @@ public class StaleCommitOidRetryTests
         Assert.Null(persisted.PendingReviewCommitOid);
         Assert.All(persisted.DraftComments, d => Assert.Null(d.ThreadId));
         Assert.All(persisted.DraftReplies, r => Assert.Null(r.ReplyCommentId));
-        // Drafts / replies / summary themselves survive — only the server-issued stamps are cleared.
-        Assert.Single(persisted.DraftComments);
+        // Drafts / replies themselves survive — only the server-issued stamps are cleared.
+        // V7 unification: the historic "summary" assertion lifted into a PR-root DraftComment row
+        // is now subsumed by the DraftComments survival check (the With(summary: "summary") seed
+        // materialises an extra PR-root draft alongside the line-anchored draft, so there are now
+        // 2 — line-anchored + PR-root).
+        Assert.Equal(2, persisted.DraftComments.Count);
         Assert.Single(persisted.DraftReplies);
-        Assert.Equal("summary", persisted.DraftSummaryMarkdown);
+        Assert.Contains(persisted.DraftComments, d => d.FilePath is null && d.LineNumber is null && d.BodyMarkdown == "summary");
     }
 
     [Fact]

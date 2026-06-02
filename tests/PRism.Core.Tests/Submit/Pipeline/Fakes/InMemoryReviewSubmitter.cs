@@ -116,6 +116,9 @@ internal sealed class InMemoryReviewSubmitter : IReviewSubmitter
             pending.Id, pending.CommitOid, pending.CreatedAt, threads));
     }
 
+    public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
+        => throw new NotImplementedException("CreateIssueCommentAsync is not exercised by this fake.");
+
     private InMemoryPendingReview RequirePending(PrReference reference)
         => _pendingByRef.TryGetValue(Key(reference), out var p)
             ? p

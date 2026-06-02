@@ -42,10 +42,15 @@ public class PrReloadEndpointTests : IClassFixture<PRismWebApplicationFactory>
     private static async Task<T?> ReadApiJsonAsync<T>(HttpResponseMessage resp)
         => await resp.Content.ReadFromJsonAsync<T>(JsonSerializerOptionsFactory.Api).ConfigureAwait(false);
 
-    // PUT a summary to ensure a session exists before /reload runs.
-    private static async Task SeedSessionAsync(HttpClient client, string ownerRepoNumber, string summary = "seed")
+    // PUT a verdict to ensure a session exists before /reload runs. V7 unification — the legacy
+    // `draftSummaryMarkdown: "seed"` is gone; a `draftVerdict: "approve"` patch materialises an
+    // otherwise-empty session, preserving the existing Reload_happy_path assertion that
+    // DraftComments is empty (a `newPrRootDraftComment` would have added a row instead).
+    private static async Task SeedSessionAsync(HttpClient client, string ownerRepoNumber)
     {
-        var patch = new ReviewSessionPatch(null, summary, null, null, null, null, null, null, null, null, null, null);
+        var patch = new ReviewSessionPatch(
+            DraftVerdict: "approve",
+            null, null, null, null, null, null, null, null, null, null);
         var resp = await client.PutAsJsonAsync($"/api/pr/{ownerRepoNumber}/draft", patch);
         resp.IsSuccessStatusCode.Should().BeTrue($"seed PUT failed with {resp.StatusCode}");
     }

@@ -58,4 +58,13 @@ public interface IReviewSubmitter
     Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(
         PrReference reference,
         CancellationToken ct);
+
+    // Post a standalone issue comment to the PR conversation (REST POST /repos/{o}/{r}/issues/{n}/comments).
+    // Unlike the pending-review pipeline methods, this publishes immediately and is visible to all
+    // participants the moment it returns. Used by POST /api/pr/.../root-comment/post (Task 10) to
+    // "Post" a PR-root draft without going through the GraphQL pending-review flow.
+    Task<CreatedIssueCommentResult> CreateIssueCommentAsync(
+        PrReference reference,
+        string bodyMarkdown,
+        CancellationToken ct);
 }

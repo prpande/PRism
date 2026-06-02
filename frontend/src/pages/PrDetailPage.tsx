@@ -8,6 +8,7 @@ import { usePrDetail } from '../hooks/usePrDetail';
 import { useActivePrUpdates } from '../hooks/useActivePrUpdates';
 import { useDraftSession, type UseDraftSessionResult } from '../hooks/useDraftSession';
 import { useStateChangedSubscriber } from '../hooks/useStateChangedSubscriber';
+import { useRootCommentPostedSubscriber } from '../hooks/useRootCommentPostedSubscriber';
 import { useCrossTabPrPresence } from '../hooks/useCrossTabPrPresence';
 import { useReconcile } from '../hooks/useReconcile';
 import type { PrDetailDto, PrReference } from '../api/types';
@@ -82,6 +83,9 @@ function PrDetailPageInner({
   // Refetch draft session when other tabs / the reload pipeline mutate
   // drafts. Own-tab events are filtered by the subscriber per spec § 5.7.
   useStateChangedSubscriber({ prRef: ref, onSessionChange: draftSession.refetch });
+  // Task 14: reload PR detail when the root-comment draft is posted so the
+  // posted comment appears in the conversation and the local draft clears.
+  useRootCommentPostedSubscriber({ prRef: ref, onPosted: reload });
   const presence = useCrossTabPrPresence(ref);
 
   // Wraps POST /api/pr/{ref}/reload with the spec's 409-stale-head auto-retry.
@@ -180,6 +184,9 @@ function PrDetailPageInner({
         headShaDrift={updates.headShaChanged}
         currentHeadSha={data?.pr.headSha}
         prState={data?.pr.isMerged ? 'merged' : data?.pr.isClosed ? 'closed' : 'open'}
+        readOnly={presence.readOnly}
+        registerOpenComposer={draftSession.registerOpenComposer}
+        getPrRootHolder={draftSession.getPrRootHolder}
         onSessionRefetch={() => void draftSession.refetch()}
       />
       <CrossTabPresenceBanner

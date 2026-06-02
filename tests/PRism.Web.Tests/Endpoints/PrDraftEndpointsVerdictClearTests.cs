@@ -13,8 +13,9 @@ using PRism.Web.Tests.TestHelpers;
 namespace PRism.Web.Tests.Endpoints;
 
 // Spec § 10 — the JsonElement patch wire-shape makes present-null distinguishable from absent, so
-// `{"draftVerdict":null}` clears the verdict (it 400'd under the historic typed-record binding)
-// and the same distinction generalises to draftSummaryMarkdown.
+// `{"draftVerdict":null}` clears the verdict (it 400'd under the historic typed-record binding).
+// V7 unification dropped draftSummaryMarkdown, so the summary-clear / two-clear-candidates cases
+// the historic test file pinned are gone — only draftVerdict remains as a present-null clear kind.
 public class PrDraftEndpointsVerdictClearTests : IClassFixture<PRismWebApplicationFactory>
 {
     private readonly PRismWebApplicationFactory _factory;
@@ -57,38 +58,18 @@ public class PrDraftEndpointsVerdictClearTests : IClassFixture<PRismWebApplicati
         const string url = "/api/pr/o/r/2/draft";
         (await c.PutAsJsonAsync(url, new { draftVerdict = "approve" })).StatusCode.Should().Be(HttpStatusCode.OK);
 
-        // Patch a different field — draftVerdict is absent from the body.
-        (await c.PutAsJsonAsync(url, new { draftSummaryMarkdown = "new summary" })).StatusCode.Should().Be(HttpStatusCode.OK);
+        // Patch a different field — draftVerdict is absent from the body. confirmVerdict is a
+        // safe stand-in for the dropped draftSummaryMarkdown scalar kind: it's an unrelated op
+        // (NoOp here because DraftVerdictStatus is already Draft) that won't touch the verdict.
+        (await c.PutAsJsonAsync(url, new { confirmVerdict = true })).StatusCode.Should().Be(HttpStatusCode.OK);
 
         (await GetDraftAsync(c, url))!.DraftVerdict.Should().Be(DraftVerdict.Approve);
-    }
-
-    [Fact]
-    public async Task PutDraft_summary_present_null_clears_the_summary()
-    {
-        var c = Client();
-        const string url = "/api/pr/o/r/3/draft";
-        (await c.PutAsJsonAsync(url, new { draftSummaryMarkdown = "draft text" })).StatusCode.Should().Be(HttpStatusCode.OK);
-        (await GetDraftAsync(c, url))!.DraftSummaryMarkdown.Should().Be("draft text");
-
-        var resp = await PutRawAsync(c, url, """{"draftSummaryMarkdown":null}""");
-
-        resp.StatusCode.Should().Be(HttpStatusCode.OK);
-        (await GetDraftAsync(c, url))!.DraftSummaryMarkdown.Should().BeNull();
     }
 
     [Fact]
     public async Task PutDraft_unknown_verdict_value_returns_400()
     {
         var resp = await PutRawAsync(Client(), "/api/pr/o/r/4/draft", """{"draftVerdict":"request-changes"}""");
-        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
-    }
-
-    [Fact]
-    public async Task PutDraft_two_clear_candidates_returns_400()
-    {
-        // Both scalar kinds present-null and nothing else → ambiguous, rejected.
-        var resp = await PutRawAsync(Client(), "/api/pr/o/r/5/draft", """{"draftVerdict":null,"draftSummaryMarkdown":null}""");
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 }

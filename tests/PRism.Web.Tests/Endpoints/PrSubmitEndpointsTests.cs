@@ -59,7 +59,6 @@ public class PrSubmitEndpointsTests
         var session = await ctx.LoadSessionAsync("o", "r", 1);
         session!.DraftComments.Should().BeEmpty();
         session.PendingReviewId.Should().BeNull();
-        session.DraftSummaryMarkdown.Should().BeNull();
         session.DraftVerdict.Should().BeNull();
     }
 

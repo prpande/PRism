@@ -2,6 +2,7 @@ import type {
   DraftDiscardedEvent,
   DraftSavedEvent,
   InboxUpdatedEvent,
+  RootCommentPostedEvent,
   StateChangedEvent,
   SubmitDuplicateMarkerDetectedEvent,
   SubmitForeignPendingReviewEvent,
@@ -20,6 +21,7 @@ export type {
   SubmitStaleCommitOidEvent,
   SubmitOrphanCleanupFailedEvent,
   SubmitDuplicateMarkerDetectedEvent,
+  RootCommentPostedEvent,
 };
 
 export type PrUpdatedEvent = {
@@ -46,6 +48,7 @@ export type EventPayloadByType = {
   'submit-orphan-cleanup-failed': SubmitOrphanCleanupFailedEvent;
   'submit-duplicate-marker-detected': SubmitDuplicateMarkerDetectedEvent;
   'identity-changed': IdentityChangedEvent;
+  'root-comment-posted': RootCommentPostedEvent;
 };
 
 // SSE event names the EventSource must register listeners for. EventSource only dispatches
@@ -63,6 +66,7 @@ const EVENT_TYPES = [
   'submit-orphan-cleanup-failed',
   'submit-duplicate-marker-detected',
   'identity-changed',
+  'root-comment-posted',
 ] as const satisfies readonly (keyof EventPayloadByType)[];
 
 // Cross-provider bridges (spec § 3.2.1 reconnect-replay defense + § 3.1 in-flight

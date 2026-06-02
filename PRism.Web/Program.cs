@@ -164,12 +164,14 @@ app.UseMiddleware<SessionTokenMiddleware>();
 // reviewer ADV-PR5-003.
 // Predicate covers the mutating endpoints with body caps: POST /api/events/subscriptions
 // (S3 PR5), PUT /api/pr/{ref}/draft (S4 PR3 Task 25), POST /api/pr/{ref}/reload (S4 PR3
-// Task 29), and S5 PR3's POST /api/pr/{ref}/submit + /submit/foreign-pending-review/{resume,
-// discard} + /drafts/discard-all (spec § 7.1 / § 13.2). The submit-family bodies are one-field
-// discriminators / empty, so they inherit the existing 16 KiB cap rather than getting a separate
-// primitive — the unified branch keeps the cap defense single-sited. These are all leaf segments
-// under /api/pr/{owner}/{repo}/{number}/, so suffix matching is the cheapest correct check —
-// none of owner / repo / number can produce a path ending in one of these.
+// Task 29), S5 PR3's POST /api/pr/{ref}/submit + /submit/foreign-pending-review/{resume,
+// discard} + /drafts/discard-all (spec § 7.1 / § 13.2), and the new T10/T11 endpoints
+// POST /api/pr/{ref}/root-comment/post + /submit/discard. The submit-family bodies are
+// one-field discriminators / empty, so they inherit the existing 16 KiB cap rather than
+// getting a separate primitive — the unified branch keeps the cap defense single-sited.
+// These are all leaf segments under /api/pr/{owner}/{repo}/{number}/, so suffix matching
+// is the cheapest correct check — none of owner / repo / number can produce a path ending
+// in one of these.
 app.UseWhen(
     static ctx =>
     {
@@ -191,7 +193,9 @@ app.UseWhen(
             || value.EndsWith("/submit", StringComparison.Ordinal)
             || value.EndsWith("/submit/foreign-pending-review/resume", StringComparison.Ordinal)
             || value.EndsWith("/submit/foreign-pending-review/discard", StringComparison.Ordinal)
-            || value.EndsWith("/drafts/discard-all", StringComparison.Ordinal);
+            || value.EndsWith("/drafts/discard-all", StringComparison.Ordinal)
+            || value.EndsWith("/submit/discard", StringComparison.Ordinal)
+            || value.EndsWith("/root-comment/post", StringComparison.Ordinal);
     },
     branch => branch.Use(async (ctx, next) =>
     {
@@ -244,6 +248,7 @@ app.MapPrDetail();
 app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
 app.MapPrSubmitEndpoints();
+app.MapPrRootCommentEndpoints();
 app.MapSubmitInFlight();
 app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();

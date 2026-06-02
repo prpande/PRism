@@ -144,7 +144,6 @@ public class AuthReplaceEndpointTests
             {
                 new("r1", "PRRT_thread_existing", replyCommentId, replyBody, DraftStatus.Draft, false),
             },
-            DraftSummaryMarkdown: "summary",
             DraftVerdict: DraftVerdict.Comment,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 

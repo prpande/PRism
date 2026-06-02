@@ -8,7 +8,7 @@ namespace PRism.Core.State;
 
 public sealed class AppStateStore : IAppStateStore, IDisposable
 {
-    private const int CurrentVersion = 6;
+    private const int CurrentVersion = 7;
 
     // Per-step migrations applied in ascending ToVersion order. Each step takes a JsonObject
     // at version N-1 and returns the same root mutated to version N. Adding a step here is
@@ -26,6 +26,7 @@ public sealed class AppStateStore : IAppStateStore, IDisposable
             (4, AppStateMigrations.MigrateV3ToV4),  // S5 PR2 — adds DraftComment.ThreadId
             (5, AppStateMigrations.MigrateV4ToV5),  // S6 PR0 — moves reviews/ai-state/last-host under accounts.default
             (6, AppStateMigrations.MigrateV5ToV6),  // cross-tab-stamp slice — per-tab TabStamps map replaces session-flat last-viewed-head-sha
+            (7, AppStateMigrations.MigrateV6ToV7),  // PR-root Post + submit-discard slice — lifts DraftSummaryMarkdown into a PR-root DraftComment row
         }.OrderBy(s => s.ToVersion).ToArray();
     private readonly string _path;
     private readonly SemaphoreSlim _gate = new(1, 1);

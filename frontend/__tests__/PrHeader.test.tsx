@@ -1,4 +1,4 @@
-import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PrHeader } from '../src/components/PrDetail/PrHeader';
 import { ToastProvider } from '../src/components/Toast/useToast';
@@ -73,7 +73,6 @@ function session(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -370,8 +369,14 @@ describe('PrHeader — closed/merged PR (PR5 § 13)', () => {
       <PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_x' })} prState="merged" />,
     );
     fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
-    expect(screen.getByText(/on this merged PR/i)).toBeInTheDocument();
-    expect(screen.getByText(/pending review on github/i)).toBeInTheDocument();
-    expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+    // Scope to the confirmation dialog: the T24 pending-review pill also renders
+    // "Pending review on GitHub · Discard" in the header on this merged PR (it's
+    // gated only on pendingReviewId + !dialogOpen), so a document-wide
+    // getByText(/pending review on github/i) is ambiguous. The modal's bullet is
+    // the assertion target here.
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText(/on this merged PR/i)).toBeInTheDocument();
+    expect(dialog.getByText(/pending review on github/i)).toBeInTheDocument();
+    expect(dialog.getByText(/cannot be undone/i)).toBeInTheDocument();
   });
 });
