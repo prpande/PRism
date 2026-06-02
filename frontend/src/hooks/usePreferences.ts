@@ -17,7 +17,8 @@ export type PreferenceKey =
       | 'awaiting-author'
       | 'authored-by-me'
       | 'mentioned'
-      | 'ci-failing'}`;
+      | 'ci-failing'
+      | 'recently-closed'}`;
 
 type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'aiPreview' | 'density'>;
 

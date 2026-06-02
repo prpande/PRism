@@ -22,6 +22,7 @@ export interface InboxSectionsPreferences {
   'authored-by-me': boolean;
   mentioned: boolean;
   'ci-failing': boolean;
+  'recently-closed': boolean;
 }
 
 export interface InboxPreferences {
@@ -102,6 +103,8 @@ export interface PrInboxItem {
   ci: CiStatus;
   lastViewedHeadSha: string | null;
   lastSeenCommentId: number | null;
+  mergedAt: string | null;
+  closedAt: string | null;
 }
 
 export interface InboxSection {

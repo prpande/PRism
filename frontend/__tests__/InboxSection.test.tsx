@@ -21,6 +21,8 @@ const examplePr: PrInboxItem = {
   ci: 'none',
   lastViewedHeadSha: null,
   lastSeenCommentId: null,
+  mergedAt: null,
+  closedAt: null,
 };
 
 const emptySection: InboxSectionDto = {
@@ -34,11 +36,17 @@ const populatedSection: InboxSectionDto = {
   items: [examplePr],
 };
 
-function renderSection(section: InboxSectionDto) {
+function renderSection(section: InboxSectionDto, opts: { defaultOpen?: boolean } = {}) {
   return render(
     <MemoryRouter>
       <OpenTabsProvider>
-        <InboxSection section={section} enrichments={{}} showCategoryChip={false} maxDiff={10} />
+        <InboxSection
+          section={section}
+          enrichments={{}}
+          showCategoryChip={false}
+          maxDiff={10}
+          defaultOpen={opts.defaultOpen}
+        />
       </OpenTabsProvider>
     </MemoryRouter>,
   );
@@ -72,5 +80,73 @@ describe('InboxSection', () => {
   it('renders rows when items exist', () => {
     renderSection(populatedSection);
     expect(screen.getByText('Refactor auth flow')).toBeInTheDocument();
+  });
+
+  it('is collapsed when defaultOpen is false', () => {
+    const closedSection: InboxSectionDto = {
+      id: 'recently-closed',
+      label: 'Recently closed',
+      items: [examplePr],
+    };
+    renderSection(closedSection, { defaultOpen: false });
+    expect(screen.queryByText('Refactor auth flow')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /recently closed/i })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('is expanded by default when defaultOpen is omitted', () => {
+    renderSection(populatedSection);
+    expect(screen.getByText('Refactor auth flow')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /review requested/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('shows the truncation hint when a recently-closed section has 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 30 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Closed PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'recently-closed',
+      label: 'Recently closed',
+      items,
+    };
+    renderSection(section);
+    expect(screen.getByText(/Showing the 30 most recent/)).toBeInTheDocument();
+  });
+
+  it('does not show the truncation hint when a recently-closed section has fewer than 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 29 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Closed PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'recently-closed',
+      label: 'Recently closed',
+      items,
+    };
+    renderSection(section);
+    expect(screen.queryByText(/most recent/)).toBeNull();
+  });
+
+  it('does not show the truncation hint for a non-recently-closed section with 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 30 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Open PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'review-requested',
+      label: 'Review requested',
+      items,
+    };
+    renderSection(section);
+    expect(screen.queryByText(/most recent/)).toBeNull();
   });
 });

@@ -16,6 +16,7 @@ vi.mock('../../src/hooks/usePreferences', () => ({
           'authored-by-me': true,
           mentioned: true,
           'ci-failing': true,
+          'recently-closed': true,
         },
       },
       github: {
@@ -33,10 +34,10 @@ vi.mock('../../src/hooks/usePreferences', () => ({
 describe('InboxSectionsSection', () => {
   beforeEach(() => setMock.mockClear());
 
-  it('renders five toggles each describedby the shared helper span', () => {
+  it('renders six toggles each describedby the shared helper span', () => {
     render(<InboxSectionsSection />);
     const toggles = screen.getAllByRole('switch');
-    expect(toggles).toHaveLength(5);
+    expect(toggles).toHaveLength(6);
     toggles.forEach((toggle) =>
       expect(toggle).toHaveAttribute('aria-describedby', 'inbox-section-help'),
     );
@@ -58,5 +59,13 @@ describe('InboxSectionsSection', () => {
     const ciToggle = screen.getByRole('switch', { name: /CI failing on my PRs/i });
     await user.click(ciToggle);
     expect(setMock).toHaveBeenCalledWith('inbox.sections.ci-failing', false);
+  });
+
+  it('clicking the Recently closed toggle posts the matching dotted-path key', async () => {
+    const user = userEvent.setup();
+    render(<InboxSectionsSection />);
+    const recentlyClosedToggle = screen.getByRole('switch', { name: /recently closed/i });
+    await user.click(recentlyClosedToggle);
+    expect(setMock).toHaveBeenCalledWith('inbox.sections.recently-closed', false);
   });
 });

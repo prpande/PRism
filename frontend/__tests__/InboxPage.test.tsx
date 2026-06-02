@@ -75,6 +75,7 @@ function setHooks(
           'authored-by-me': true,
           mentioned: true,
           'ci-failing': true,
+          'recently-closed': true,
         },
       },
       github: {
@@ -118,6 +119,8 @@ const sampleData: InboxResponse = {
           ci: 'none' as const,
           lastViewedHeadSha: null,
           lastSeenCommentId: null,
+          mergedAt: null,
+          closedAt: null,
         },
       ],
     },
