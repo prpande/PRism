@@ -24,8 +24,8 @@ public class ActivePrPollerBackoffTests
         return (poller, review, bus, registry, cache);
     }
 
-    private static ActivePrPollSnapshot Snapshot(string headSha = "h1", int commentCount = 0) =>
-        new(headSha, "MERGEABLE", "OPEN", commentCount, 0);
+    private static ActivePrPollSnapshot Snapshot(string headSha = "h1", int commentCount = 0, string prState = "OPEN") =>
+        new(headSha, "MERGEABLE", prState, commentCount, 0);
 
     [Fact]
     public async Task Healthy_pr_continues_to_poll_while_other_pr_is_in_backoff()
@@ -162,6 +162,53 @@ public class ActivePrPollerBackoffTests
         deltaEvt.HeadShaChanged.Should().BeFalse();
         deltaEvt.CommentCountChanged.Should().BeTrue();
         deltaEvt.CommentCountDelta.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task Publishes_ActivePrUpdated_with_IsMerged_on_open_to_merged_transition_even_when_head_and_comments_unchanged()
+    {
+        // Spec § 5.2.3: a clean merge leaves head-sha and comment-count unchanged (merge
+        // commit lands on base; head ref deleted; no new comment). The poller must still
+        // emit on the open→merged state transition so the frontend can show the merged banner.
+        var (poller, review, bus, registry, _) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "open"));
+        await poller.TickAsync(T0, default);
+        bus.Published.Should().ContainSingle("first poll publishes a hydration event");
+
+        // Same head, same comment count — only the state flips open → merged.
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "merged"));
+        await poller.TickAsync(T0.AddSeconds(30), default);
+
+        bus.Published.Should().HaveCount(2, "the open→merged transition is a change even with identical head/comments");
+        var evt = (ActivePrUpdated)bus.Published[1];
+        evt.PrRef.Should().Be(pr);
+        evt.HeadShaChanged.Should().BeFalse();
+        evt.CommentCountChanged.Should().BeFalse();
+        evt.IsMerged.Should().BeTrue();
+        evt.IsClosed.Should().BeFalse("merged and closed are mutually exclusive on the wire");
+    }
+
+    [Fact]
+    public async Task Publishes_ActivePrUpdated_with_IsClosed_on_open_to_closed_transition()
+    {
+        var (poller, review, bus, registry, _) = Build();
+        var pr = new PrReference("o", "r", 1);
+        registry.Add("sub1", pr);
+
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "open"));
+        await poller.TickAsync(T0, default);
+        bus.Published.Should().ContainSingle();
+
+        review.SetSnapshot(pr, Snapshot(headSha: "h1", commentCount: 5, prState: "closed"));
+        await poller.TickAsync(T0.AddSeconds(30), default);
+
+        bus.Published.Should().HaveCount(2);
+        var evt = (ActivePrUpdated)bus.Published[1];
+        evt.IsClosed.Should().BeTrue();
+        evt.IsMerged.Should().BeFalse();
     }
 
     [Fact]

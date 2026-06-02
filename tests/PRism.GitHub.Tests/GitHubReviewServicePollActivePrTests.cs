@@ -22,6 +22,24 @@ public class GitHubReviewServicePollActivePrTests
         "\"mergeable_state\":\"clean\"" +
         "}";
 
+    // A merged PR reports REST state "closed" plus a non-null merged_at timestamp.
+    private const string MergedPullJson = "{" +
+        "\"head\":{\"sha\":\"head-1\"}," +
+        "\"base\":{\"sha\":\"base-1\"}," +
+        "\"state\":\"closed\"," +
+        "\"merged_at\":\"2026-05-20T10:00:00Z\"," +
+        "\"mergeable_state\":\"clean\"" +
+        "}";
+
+    // A closed-but-unmerged PR reports REST state "closed" with merged_at: null.
+    private const string ClosedUnmergedPullJson = "{" +
+        "\"head\":{\"sha\":\"head-1\"}," +
+        "\"base\":{\"sha\":\"base-1\"}," +
+        "\"state\":\"closed\"," +
+        "\"merged_at\":null," +
+        "\"mergeable_state\":\"unknown\"" +
+        "}";
+
     /// <summary>
     /// Builds a fake handler that responds to pulls/{n}, pulls/{n}/comments, and
     /// pulls/{n}/reviews, with a Link rel="last" header on the comments/reviews paths
@@ -75,6 +93,29 @@ public class GitHubReviewServicePollActivePrTests
         snap.Mergeability.Should().Be("clean");
         snap.CommentCount.Should().Be(17);
         snap.ReviewCount.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task PollActivePrAsync_normalizes_merged_pr_state_to_merged()
+    {
+        // REST `state` is "closed" for a merged PR; `merged_at` non-null distinguishes
+        // merge from a plain close. PollActivePrAsync normalizes PrState to "merged".
+        var sut = NewService(new PollHandler { Comments = 0, Reviews = 0, PullBody = MergedPullJson });
+
+        var snap = await sut.PollActivePrAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        snap.PrState.Should().Be("merged");
+    }
+
+    [Fact]
+    public async Task PollActivePrAsync_keeps_closed_unmerged_pr_state_as_closed()
+    {
+        // REST `state` is "closed" with `merged_at` null → a plain close, not a merge.
+        var sut = NewService(new PollHandler { Comments = 0, Reviews = 0, PullBody = ClosedUnmergedPullJson });
+
+        var snap = await sut.PollActivePrAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        snap.PrState.Should().Be("closed");
     }
 
     [Fact]

@@ -123,24 +123,40 @@ public sealed class ActivePrPoller : BackgroundService
                 var firstPoll = state.LastHeadSha is null && state.LastCommentCount is null;
                 var headChanged = state.LastHeadSha is { } prev && prev != snapshot.HeadSha;
                 var commentChanged = state.LastCommentCount is { } prevCount && prevCount != snapshot.CommentCount;
+                // Close-state transition (open → merged/closed). The comparison is
+                // case-insensitive: the real poll path emits lowercase PrState
+                // ("open"/"closed"/"merged"), but fake review services hand-construct
+                // snapshots with uppercase "OPEN" — normalize the COMPARE so a fake's
+                // OPEN → OPEN does not register as a change. A clean merge leaves head-sha
+                // and comment-count unchanged, so without this the merged banner never fires.
+                var stateChanged = state.LastPrState is { } prevState
+                    && !string.Equals(prevState, snapshot.PrState, StringComparison.OrdinalIgnoreCase);
 
                 s_pollSnapshotLog(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, commentChanged, null);
 
-                if (firstPoll || headChanged || commentChanged)
+                if (firstPoll || headChanged || commentChanged || stateChanged)
                 {
                     var commentCountDelta = state.LastCommentCount is { } priorCount
                         ? snapshot.CommentCount - priorCount
                         : 0;
+                    // Mutually exclusive: a merged PR is flagged IsMerged only. The snapshot
+                    // value may be lowercase (real path) or uppercase (fakes) — compare
+                    // case-insensitively.
+                    var isMerged = string.Equals(snapshot.PrState, "merged", StringComparison.OrdinalIgnoreCase);
+                    var isClosed = string.Equals(snapshot.PrState, "closed", StringComparison.OrdinalIgnoreCase);
                     _bus.Publish(new ActivePrUpdated(
                         prRef,
                         HeadShaChanged: headChanged,
                         CommentCountChanged: commentChanged,
                         NewHeadSha: headChanged ? snapshot.HeadSha : null,
-                        CommentCountDelta: commentCountDelta));
+                        CommentCountDelta: commentCountDelta,
+                        IsMerged: isMerged,
+                        IsClosed: isClosed));
                 }
 
                 state.LastHeadSha = snapshot.HeadSha;
                 state.LastCommentCount = snapshot.CommentCount;
+                state.LastPrState = snapshot.PrState;
                 state.ConsecutiveErrors = 0;
                 state.NextRetryAt = null;
 

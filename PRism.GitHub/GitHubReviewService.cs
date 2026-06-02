@@ -469,10 +469,14 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var commentCount = await commentsTask.ConfigureAwait(false);
         var reviewCount = await reviewsTask.ConfigureAwait(false);
 
+        // Normalize PrState to a lowercase 3-value state. REST `state` is already lowercase
+        // ("open"/"closed"); a merged PR reports "closed", so we promote it to "merged" when
+        // merged_at was present. PrState ∈ {"open","closed","merged"} — the poller diffs this
+        // to emit pr-updated on an open→done transition even when head-sha is unchanged.
         return new ActivePrPollSnapshot(
             HeadSha: pull.HeadSha,
             Mergeability: pull.Mergeability,
-            PrState: pull.State,
+            PrState: pull.Merged ? "merged" : pull.State,
             CommentCount: commentCount,
             ReviewCount: reviewCount);
     }
@@ -490,7 +494,11 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             ? hs.GetString() ?? "" : "";
         var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "" : "";
         var mergeable = root.TryGetProperty("mergeable_state", out var ms) ? ms.GetString() ?? "" : "";
-        return new PollPullMeta(head, state, mergeable);
+        // merged_at is a root-level ISO-8601 string on a merged PR, JSON null otherwise.
+        // REST `state` is only "open"/"closed" (a merged PR reports "closed"), so merged_at
+        // is the sole signal that distinguishes a merge from a plain close.
+        var merged = root.TryGetProperty("merged_at", out var ma) && ma.ValueKind == JsonValueKind.String;
+        return new PollPullMeta(head, state, mergeable, merged);
     }
 
     private async Task<int> FetchPagedCountAsync(string url, CancellationToken ct)
@@ -555,7 +563,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return false;
     }
 
-    private sealed record PollPullMeta(string HeadSha, string State, string Mergeability);
+    private sealed record PollPullMeta(string HeadSha, string State, string Mergeability, bool Merged);
 
     // IReviewSubmitter is an empty seam in PR0a; the seven pending-review pipeline methods
     // land in PR1 on GitHubReviewService.Submit.cs.
