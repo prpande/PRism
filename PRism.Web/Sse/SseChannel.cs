@@ -40,6 +40,9 @@ internal sealed class SseChannel : IDisposable
     private readonly IDisposable _busSubmitStaleCommitOid;
     private readonly IDisposable _busSubmitOrphanCleanupFailed;
     private readonly IDisposable _busSubmitDuplicateMarkerDetected;
+    // Task 14 — root-comment-posted: PR-root draft was posted as a GitHub issue comment.
+    // Fans out per-PR so every subscriber for the PR can refetch the conversation.
+    private readonly IDisposable _busRootCommentPosted;
     // S6 PR2 — global identity-change broadcast. Not per-PR; fans out to every connected
     // subscriber so every tab can re-validate against the new viewer login.
     private readonly IDisposable _busIdentityChanged;
@@ -68,6 +71,7 @@ internal sealed class SseChannel : IDisposable
         _busSubmitStaleCommitOid = bus.Subscribe<SubmitStaleCommitOidBusEvent>(OnSubmitStaleCommitOid);
         _busSubmitOrphanCleanupFailed = bus.Subscribe<SubmitOrphanCleanupFailedBusEvent>(OnSubmitOrphanCleanupFailed);
         _busSubmitDuplicateMarkerDetected = bus.Subscribe<SubmitDuplicateMarkerDetectedBusEvent>(OnSubmitDuplicateMarkerDetected);
+        _busRootCommentPosted = bus.Subscribe<RootCommentPostedBusEvent>(OnRootCommentPosted);
         _busIdentityChanged = bus.Subscribe<IdentityChanged>(OnIdentityChanged);
     }
 
@@ -295,6 +299,7 @@ internal sealed class SseChannel : IDisposable
     private void OnSubmitStaleCommitOid(SubmitStaleCommitOidBusEvent evt) => FanoutProjected(evt, evt.PrRef);
     private void OnSubmitOrphanCleanupFailed(SubmitOrphanCleanupFailedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
     private void OnSubmitDuplicateMarkerDetected(SubmitDuplicateMarkerDetectedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
+    private void OnRootCommentPosted(RootCommentPostedBusEvent evt) => FanoutProjected(evt, evt.PrRef);
 
     // Per-PR fanout for events that carry a PrReference and use the projection wire shape
     // (prRef as "owner/repo/number" string per spec § 4.5). Mirrors OnActivePrUpdated's
@@ -372,6 +377,7 @@ internal sealed class SseChannel : IDisposable
         _busSubmitStaleCommitOid.Dispose();
         _busSubmitOrphanCleanupFailed.Dispose();
         _busSubmitDuplicateMarkerDetected.Dispose();
+        _busRootCommentPosted.Dispose();
         _busIdentityChanged.Dispose();
     }
 

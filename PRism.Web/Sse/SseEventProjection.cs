@@ -43,6 +43,10 @@ internal static class SseEventProjection
     internal sealed record SubmitOrphanCleanupFailedWire(string PrRef);
     internal sealed record SubmitDuplicateMarkerDetectedWire(string PrRef, string DraftId);
 
+    // Task 14 — root-comment-posted: carries the issueCommentId the frontend
+    // could use to deep-link, but the primary consumer only triggers a refetch.
+    internal sealed record RootCommentPostedWire(string PrRef, long IssueCommentId);
+
     // S6 PR2 — global identity-change event. Minimal payload per spec § 3.2.1: login
     // strings stay server-side (forensic-log surface only); the wire carries just the
     // discriminator so the frontend can route to the right banner / re-validation flow.
@@ -67,6 +71,9 @@ internal static class SseEventProjection
             e.PrRef.ToString())),
         SubmitDuplicateMarkerDetectedBusEvent e => ("submit-duplicate-marker-detected", new SubmitDuplicateMarkerDetectedWire(
             e.PrRef.ToString(), e.DraftId)),
+
+        RootCommentPostedBusEvent e => ("root-comment-posted", new RootCommentPostedWire(
+            e.PrRef.ToString(), e.IssueCommentId)),
 
         IdentityChanged _ => ("identity-changed", new IdentityChangedWire("identity-change")),
 

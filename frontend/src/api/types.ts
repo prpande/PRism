@@ -459,6 +459,13 @@ export interface SubmitDuplicateMarkerDetectedEvent {
   draftId: string;
 }
 
+// Task 14 — root-comment-posted: PR-root draft posted as a GitHub issue comment.
+// Frontend only triggers a refetch; issueCommentId is carried for completeness.
+export interface RootCommentPostedEvent {
+  prRef: string;
+  issueCommentId: number;
+}
+
 // S5 PR4 — submit-pipeline frontend types.
 
 // POST /api/pr/{ref}/submit body verdict is PascalCase (the C# Verdict enum
