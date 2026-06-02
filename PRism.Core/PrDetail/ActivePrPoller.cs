@@ -9,7 +9,7 @@ namespace PRism.Core.PrDetail;
 // BackgroundService that polls every PR with at least one active subscriber and publishes
 // ActivePrUpdated when head SHA or comment count changes. Per-PR backoff isolates flaky
 // PRs from healthy ones — see spec § 6.2.
-public sealed class ActivePrPoller : BackgroundService
+public sealed partial class ActivePrPoller : BackgroundService
 {
     private readonly ActivePrSubscriberRegistry _registry;
     private readonly IPrReader _review;
@@ -132,7 +132,7 @@ public sealed class ActivePrPoller : BackgroundService
                 var stateChanged = state.LastPrState is { } prevState
                     && !string.Equals(prevState, snapshot.PrState, StringComparison.OrdinalIgnoreCase);
 
-                s_pollSnapshotLog(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, commentChanged, null);
+                LogPollSnapshot(_logger, prRef, snapshot.HeadSha, state.LastHeadSha, firstPoll, headChanged, commentChanged, stateChanged);
 
                 if (firstPoll || headChanged || commentChanged || stateChanged)
                 {
@@ -195,12 +195,6 @@ public sealed class ActivePrPoller : BackgroundService
         state.NextRetryAt = now.AddSeconds(seconds);
     }
 
-    private static readonly Action<ILogger, PrReference, string, string?, bool, bool, bool, Exception?> s_pollSnapshotLog =
-        LoggerMessage.Define<PrReference, string, string?, bool, bool, bool>(
-            LogLevel.Information,
-            new EventId(3, "ActivePrPollSnapshot"),
-            "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} commentChanged={CommentChanged}");
-
     private static readonly Action<ILogger, PrReference, Exception?> s_pollFailedLog =
         LoggerMessage.Define<PrReference>(LogLevel.Warning,
             new EventId(1, "ActivePrPollFailed"),
@@ -210,4 +204,16 @@ public sealed class ActivePrPoller : BackgroundService
         LoggerMessage.Define(LogLevel.Error,
             new EventId(2, "ActivePrPollerTickFailed"),
             "ActivePrPoller tick failed");
+
+    [LoggerMessage(EventId = 3, EventName = "ActivePrPollSnapshot", Level = LogLevel.Information,
+        Message = "Active-PR poll snapshot {PrRef}: head={HeadSha} prevHead={PrevHeadSha} firstPoll={FirstPoll} headChanged={HeadChanged} commentChanged={CommentChanged} stateChanged={StateChanged}")]
+    private static partial void LogPollSnapshot(
+        ILogger logger,
+        PrReference prRef,
+        string headSha,
+        string? prevHeadSha,
+        bool firstPoll,
+        bool headChanged,
+        bool commentChanged,
+        bool stateChanged);
 }
