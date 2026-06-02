@@ -118,4 +118,9 @@ describe('InboxRow', () => {
     renderRow({ ...basePr, lastViewedHeadSha: null, mergedAt: new Date().toISOString() });
     expect(screen.queryByText('New')).not.toBeInTheDocument();
   });
+
+  it('does not show the CI-failing dot on a done row', () => {
+    renderRow({ ...basePr, ci: 'failing', mergedAt: new Date().toISOString() });
+    expect(screen.queryByTitle('CI failing')).not.toBeInTheDocument();
+  });
 });

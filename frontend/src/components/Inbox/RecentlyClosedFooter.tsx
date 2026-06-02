@@ -1,4 +1,4 @@
-import styles from './InboxSection.module.css';
+import styles from './RecentlyClosedFooter.module.css';
 
 export function RecentlyClosedFooter({ count }: { count: number }) {
   return (
