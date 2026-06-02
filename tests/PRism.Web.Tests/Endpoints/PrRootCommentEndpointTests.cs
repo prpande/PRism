@@ -175,13 +175,20 @@ public class PrRootCommentEndpointTests
     {
         using var ctx = RootCommentTestContext.Create();
         await ctx.SeedSessionAsync("o", "r", 24, SessionWithRootDraft());
-        ctx.Submitter.InjectFailure(new HttpRequestException("simulated GitHub failure"));
+        // Forbidden carrying a raw GitHub error body — the response must sanitize it to the static
+        // per-code string and NOT leak the raw body (GitHubReviewService embeds up to 512 bytes of it).
+        ctx.Submitter.InjectFailure(new HttpRequestException(
+            "GitHub issue comment POST HTTP 403 Forbidden: {\"message\":\"RAW_GITHUB_SECRET_BODY\"}",
+            null, System.Net.HttpStatusCode.Forbidden));
 
         var resp = await ctx.Post(24);
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
-        body.GetProperty("code").GetString().Should().NotBeNullOrEmpty();
+        body.GetProperty("code").GetString().Should().Be("github-forbidden");
+        var message = body.GetProperty("message").GetString();
+        message.Should().Be("GitHub rejected the request (forbidden). Check your token's permissions.");
+        message.Should().NotContain("RAW_GITHUB_SECRET_BODY", "the raw GitHub error body must not leak to the client");
 
         // State-preservation: the endpoint returns 502 BEFORE the stamp/delete overlays run.
         // The PR-root draft must still exist, PostedCommentId must still be null (not stamped),

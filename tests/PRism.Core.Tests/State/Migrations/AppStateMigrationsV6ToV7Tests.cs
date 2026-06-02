@@ -289,6 +289,49 @@ public class AppStateMigrationsV6ToV7Tests
     }
 
     [Fact]
+    public void Throws_JsonException_on_non_string_file_path_rather_than_invalid_operation()
+    {
+        // A future/hand-edited V6 state wrote a PR-root-candidate draft's file-path as a NUMBER.
+        // The migration must quarantine via JsonException (the corrupted-shape convention), NOT let
+        // GetValue<string?>() throw the less-actionable InvalidOperationException.
+        var root = JsonNode.Parse("""
+        {
+          "version": 6,
+          "accounts": {
+            "default": {
+              "reviews": {
+                "sessions": {
+                  "owner/repo/1": {
+                    "draft-comments": [
+                      {
+                        "id": "draft-1",
+                        "file-path": 42,
+                        "line-number": null,
+                        "side": "pr",
+                        "anchored-sha": null,
+                        "anchored-line-content": null,
+                        "body-markdown": "body",
+                        "status": "Draft",
+                        "is-overridden-stale": false,
+                        "thread-id": null,
+                        "posted-comment-id": null,
+                        "posted-body-snapshot": null
+                      }
+                    ],
+                    "draft-summary-markdown": "summary"
+                  }
+                }
+              }
+            }
+          }
+        }
+        """)!.AsObject();
+
+        var ex = Assert.Throws<JsonException>(() => AppStateMigrations.MigrateV6ToV7(root));
+        ex.Message.Should().Contain("non-string file-path");
+    }
+
+    [Fact]
     public void Preserves_thread_id_on_existing_pr_root_draft()
     {
         var root = JsonNode.Parse("""

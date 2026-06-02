@@ -106,14 +106,21 @@ public class PrSubmitDiscardEndpointTests
         ctx.Submitter.OwnPendingReview = new OwnPendingReviewSnapshot(
             "PRR_existing", "sha1", DateTimeOffset.UtcNow,
             Array.Empty<PendingReviewThreadSnapshot>());
+        // Forbidden carrying a raw GitHub error body in the exception message — the response must
+        // sanitize it to the static per-code string and NOT leak the raw body to the client.
         ctx.Submitter.DeletePendingReviewException =
-            new HttpRequestException("Internal Server Error", null, System.Net.HttpStatusCode.InternalServerError);
+            new HttpRequestException(
+                "GitHub pending-review DELETE HTTP 403 Forbidden: {\"message\":\"RAW_GITHUB_SECRET_BODY\"}",
+                null, System.Net.HttpStatusCode.Forbidden);
 
         var resp = await ctx.Discard(103);
 
         resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
-        body.GetProperty("code").GetString().Should().NotBeNullOrEmpty();
+        body.GetProperty("code").GetString().Should().Be("github-forbidden");
+        var message = body.GetProperty("message").GetString();
+        message.Should().Be("GitHub rejected the request (forbidden). Check your token's permissions.");
+        message.Should().NotContain("RAW_GITHUB_SECRET_BODY", "the raw GitHub error body must not leak to the client");
 
         var loaded = await ctx.LoadSessionAsync("o", "r", 103);
         loaded!.PendingReviewId.Should().Be("PRR_existing", "stamps must NOT be cleared on GitHub error");

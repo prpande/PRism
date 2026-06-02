@@ -63,9 +63,11 @@ internal static class PrRootCommentEndpoints
                 statusCode: StatusCodes.Status401Unauthorized);
 
         // --- Per-PR lock (TimeSpan.Zero → non-blocking; 409 on contention) ---
-        // The lock is acquired synchronously; PostRootCommentAsync itself is the sole owner
-        // (unlike /submit which transfers ownership to a fire-and-forget Task.Run). We use
-        // `await using` here because Post is fully synchronous from lock to release.
+        // NOT `await using` — TryAcquireAsync returns null on lock contention (→ 409 below), and
+        // binding a null result with `await using var` would NullReferenceException on the implicit
+        // DisposeAsync call. The handle is disposed explicitly in the finally block, which only
+        // executes on the non-null (successful-acquire) path. (Same pattern as the discard handler
+        // in PrSubmitEndpoints.DiscardOwnPendingReviewAsync.)
 #pragma warning disable CA2000  // SubmitLockHandle is always disposed in the finally below
         var handle = await lockRegistry.TryAcquireAsync(prRef, TimeSpan.Zero, ct).ConfigureAwait(false);
 #pragma warning restore CA2000
@@ -199,16 +201,24 @@ internal static class PrRootCommentEndpoints
         return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
     }
 
+    // Maps an HttpRequestException to a SubmitErrorDto. The DTO MESSAGE is a STATIC, sanitized
+    // per-code string — NOT hre.Message. hre.Message can embed up to 512 bytes of GitHub's raw
+    // error RESPONSE BODY (see GitHubReviewService.IssueComments), so forwarding it to the browser
+    // would leak raw upstream error detail. The detailed hre is logged server-side via
+    // s_rootCommentFailed at the catch site before this maps the sanitized client response.
     private static SubmitErrorDto MapGithubError(HttpRequestException hre)
     {
         var status = hre.StatusCode;
-        var code = status switch
+        var (code, message) = status switch
         {
-            System.Net.HttpStatusCode.Forbidden => "github-forbidden",
-            System.Net.HttpStatusCode.Unauthorized => "github-unauthorized",
-            System.Net.HttpStatusCode.UnprocessableEntity => "github-validation-error",
-            _ => "github-network-error",
+            System.Net.HttpStatusCode.Forbidden =>
+                ("github-forbidden", "GitHub rejected the request (forbidden). Check your token's permissions."),
+            System.Net.HttpStatusCode.Unauthorized =>
+                ("github-unauthorized", "GitHub authentication failed. Reconnect your account."),
+            System.Net.HttpStatusCode.UnprocessableEntity =>
+                ("github-validation-error", "GitHub rejected the request as invalid."),
+            _ => ("github-network-error", "Couldn't reach GitHub. Try again."),
         };
-        return new SubmitErrorDto(code, hre.Message);
+        return new SubmitErrorDto(code, message);
     }
 }

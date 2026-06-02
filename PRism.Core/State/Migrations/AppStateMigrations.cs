@@ -189,7 +189,7 @@ internal static class AppStateMigrations
                 {
                     if (draftNode is not JsonObject d) continue;
                     if (d["side"] is not JsonValue sideVal || sideVal.GetValue<string?>() != "pr") continue;
-                    if (d["file-path"] is JsonValue fpv && fpv.GetValue<string?>() is not null) continue;
+                    if (IsNonNullFilePath($"{accountKey}/{sessionKey}", d["file-path"])) continue;
                     if (d["posted-comment-id"] is JsonValue pcv && pcv.GetValue<long?>() is not null)
                         throw new System.Text.Json.JsonException(
                             $"state.json session {accountKey}/{sessionKey} has draft-summary-markdown set " +
@@ -214,6 +214,24 @@ internal static class AppStateMigrations
         return root;
     }
 
+    // PR-root discriminator helper for the V6→V7 file-path check (shared by pass 1 + pass 2).
+    //
+    //   - file-path missing OR JSON null  → returns false (treated as PR-root; intended behavior,
+    //     consistent across both passes).
+    //   - file-path is a non-null STRING  → returns true (a file-anchored draft; skip — not PR-root).
+    //   - file-path is a non-null, NON-STRING JSON value (e.g. a number from a future/hand-edited
+    //     state) → throw JsonException to quarantine, rather than letting GetValue<string?>() throw
+    //     the less-actionable InvalidOperationException. Matches the line-~226 draft-comments
+    //     shape-check quarantine convention.
+    private static bool IsNonNullFilePath(string contextTag, JsonNode? filePathNode)
+    {
+        if (filePathNode is null) return false; // missing property OR JSON null → PR-root
+        if (filePathNode is JsonValue fpv && fpv.GetValueKind() == System.Text.Json.JsonValueKind.String)
+            return true;
+        throw new System.Text.Json.JsonException(
+            $"state.json reviews.sessions['{contextTag}'] PR-root-candidate draft has a non-string file-path (V6→V7); quarantining.");
+    }
+
     private static void LiftSummaryIntoPrRootDraft(string sessionKey, JsonObject session)
     {
         var summaryNode = session["draft-summary-markdown"];
@@ -233,7 +251,7 @@ internal static class AppStateMigrations
         {
             if (n is not JsonObject d) continue;
             if (d["side"] is not JsonValue sideVal || sideVal.GetValue<string?>() != "pr") continue;
-            if (d["file-path"] is JsonValue fpv && fpv.GetValue<string?>() is not null) continue;
+            if (IsNonNullFilePath(sessionKey, d["file-path"])) continue;
             prRoots.Add(d);
         }
 
