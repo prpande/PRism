@@ -126,4 +126,44 @@ public class GitHubReviewServiceDiffTests
                 CancellationToken.None))
             .Should().ThrowAsync<RangeUnreachableException>();
     }
+
+    [Fact]
+    public async Task GetDiff_PrimaryFilesPath_404_SurfacesTypedUnavailable_NotRawHttpException()
+    {
+        // Task 16a: on a merged/closed PR the canonical base..head diff
+        // (pulls/{n}/files) can 404 (e.g. the head ref / commits were pruned after
+        // close). It must degrade to the SAME typed "diff unavailable" signal the
+        // cross-iteration path already raises (RangeUnreachableException), NOT a raw
+        // HttpRequestException → 500. Spec § 5.1 / § 9.
+        var handler = new PaginatedFakeHandler()
+            .RouteStatus("/repos/o/r/pulls/1/files", System.Net.HttpStatusCode.NotFound)
+            .RouteJson("/repos/o/r/pulls/1", PullJson("base", "head", 1));
+
+        var sut = NewService(handler);
+
+        await sut.Invoking(s => s.GetDiffAsync(
+                new PrReference("o", "r", 1),
+                // canonical range == pull.base..pull.head → routes through PaginatePullsFilesAsync
+                new DiffRangeRequest("base", "head"),
+                CancellationToken.None))
+            .Should().ThrowAsync<RangeUnreachableException>();
+    }
+
+    [Fact]
+    public async Task GetDiff_PrimaryFilesPath_410_SurfacesTypedUnavailable_NotRawHttpException()
+    {
+        // 410 Gone variant — GitHub returns 410 for some pruned-resource cases.
+        // Same graceful mapping as 404.
+        var handler = new PaginatedFakeHandler()
+            .RouteStatus("/repos/o/r/pulls/1/files", System.Net.HttpStatusCode.Gone)
+            .RouteJson("/repos/o/r/pulls/1", PullJson("base", "head", 1));
+
+        var sut = NewService(handler);
+
+        await sut.Invoking(s => s.GetDiffAsync(
+                new PrReference("o", "r", 1),
+                new DiffRangeRequest("base", "head"),
+                CancellationToken.None))
+            .Should().ThrowAsync<RangeUnreachableException>();
+    }
 }

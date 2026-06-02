@@ -304,7 +304,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             // Canonical PR diff: paginate pulls/{n}/files. Truncation is derived from
             // pull.changed_files > assembled-count, which catches both 30-page-cap and
             // server-side soft truncation. Spec § 6.1.
-            files = await PaginatePullsFilesAsync(reference, ct).ConfigureAwait(false);
+            files = await PaginatePullsFilesAsync(reference, range, ct).ConfigureAwait(false);
             truncated = pull.ChangedFiles > files.Count;
         }
         else
@@ -583,7 +583,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return new PullMeta(baseSha, headSha, changedFiles);
     }
 
-    private async Task<IReadOnlyList<FileChange>> PaginatePullsFilesAsync(PrReference reference, CancellationToken ct)
+    private async Task<IReadOnlyList<FileChange>> PaginatePullsFilesAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct)
     {
         const int MaxPages = 30;   // GitHub's documented cap; pulls/{n}/files truncates beyond this.
         var collected = new List<FileChange>();
@@ -597,6 +597,15 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         while (url is not null && pageCount < MaxPages)
         {
             using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+            // On a done (merged/closed) PR the canonical base..head diff can become
+            // unaddressable — GitHub returns 404 (or 410 Gone) when the head ref / commits
+            // were pruned after the PR closed. Surface this as the SAME typed
+            // RangeUnreachableException the cross-iteration (3-dot compare) path already
+            // raises so it flows through one user-visible "diff unavailable" path rather
+            // than throwing HttpRequestException → 500. Spec § 5.1 / § 9. Other non-2xx
+            // (auth, rate-limit, 5xx) keep EnsureSuccessStatusCode's behavior.
+            if (resp.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+                throw new RangeUnreachableException(range.BaseSha, range.HeadSha);
             resp.EnsureSuccessStatusCode();
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(body);
