@@ -147,6 +147,41 @@ public class AttachThreadsTests
         Assert.Equal("This is the PR-level comment.", fake.GetPending(Ref)!.SummaryBody);
     }
 
+    // Task 7 — ClearSubmittedSession clause 1: a Stale-and-not-overridden inline draft must survive
+    // the submit. The normal (Draft-status) inline draft is consumed and removed; only the stale one
+    // remains. Deleting clause 1 from the Where predicate would drop the stale draft → assertion fails.
+    [Fact]
+    public async Task SuccessfulSubmit_keeps_stale_not_overridden_inline_draft()
+    {
+        var fake = new InMemoryReviewSubmitter();
+        // A normal inline draft: gets attached + consumed by submit (AttachThreads does not filter it).
+        var normalDraft = SessionFactory.Draft("d-normal");
+        // A stale-not-overridden inline draft: AttachThreads filters it (Status != Draft), so it is
+        // never attached. ClearSubmittedSession clause 1 must keep it post-success.
+        var staleDraft = new DraftComment(
+            Id: "d-stale",
+            FilePath: "src/Foo.cs", LineNumber: 10, Side: "RIGHT",
+            AnchoredSha: "anchorsha", AnchoredLineContent: "line",
+            BodyMarkdown: "stale comment",
+            Status: DraftStatus.Stale, IsOverriddenStale: false,
+            PostedCommentId: null);
+
+        var session = SessionFactory.With(headSha: "head1", drafts: new[] { normalDraft, staleDraft });
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, session);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        var outcome = await pipeline.SubmitAsync(Ref, session, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        Assert.IsType<SubmitOutcome.Success>(outcome);
+
+        var persisted = store.Session(SessionKey)!;
+        // Clause 1 keeps the stale-not-overridden draft; the normal draft is consumed → removed.
+        var surviving = Assert.Single(persisted.DraftComments);
+        Assert.Equal("d-stale", surviving.Id);
+        Assert.DoesNotContain(persisted.DraftComments, d => d.Id == "d-normal");
+    }
+
     // Task 7 — on success, ClearSubmittedSession must keep Posted PR-root drafts (their lifecycle
     // belongs to the issue-comment path, not the review path) and drop unposted PR-root drafts
     // (their body was consumed as review.body by the submit).
