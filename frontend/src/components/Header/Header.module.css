@@ -62,16 +62,17 @@
   z-index: 100;
   /* Make the whole navbar the OS drag handle so the window moves by dragging it. */
   -webkit-app-region: drag;
-  /* Prominence: a slightly elevated surface + drop shadow so the navbar reads as
-     the app's top bar rather than blending into the cards directly below it. */
-  background: var(--surface-2);
+  /* Prominence: a faint wash of the user's accent over the elevated surface, plus
+     a soft drop shadow, so the navbar reads as the app's top bar (and subtly
+     picks up the chosen accent — indigo/amber/teal) rather than blending in. */
+  background: color-mix(in oklch, var(--accent) 12%, var(--surface-2));
   box-shadow: var(--shadow-2);
-  /* Spacious AND density-independent: fixed height/padding/gap (not the
+  /* Roomy-but-not-airy AND density-independent: fixed height/padding/gap (not the
      --header-h / --s-3 / --s-4 tokens the comfortable⇄compact toggle retunes), so
      changing the layout density never shrinks or tightens the navbar. */
-  height: 64px;
-  padding: 0 28px;
-  gap: 20px;
+  height: 58px;
+  padding: 0 22px;
+  gap: 16px;
 }
 
 /* Roomier, density-independent tab + search spacing (base uses --s-3, which
