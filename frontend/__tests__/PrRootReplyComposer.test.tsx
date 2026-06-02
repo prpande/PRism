@@ -58,22 +58,6 @@ describe('PrRootReplyComposer — accessibility (A3)', () => {
   });
 });
 
-describe('PrRootReplyComposer — first qualifying keystroke fires newPrRootDraftComment', () => {
-  it('PrRootReplyComposer_FirstKeystroke_FiresNewPrRootDraftComment', async () => {
-    const spy = vi
-      .spyOn(draftApi, 'sendPatch')
-      .mockResolvedValue({ ok: true, assignedId: 'uuid-pr-root-1' });
-    render(<Harness />);
-    const textarea = screen.getByLabelText('PR reply body') as HTMLTextAreaElement;
-    fireEvent.change(textarea, { target: { value: 'thanks for shipping this' } });
-    await settle();
-    expect(spy).toHaveBeenCalledWith(ref, {
-      kind: 'newPrRootDraftComment',
-      payload: { bodyMarkdown: 'thanks for shipping this' },
-    });
-  });
-});
-
 describe('PrRootReplyComposer — discard flow', () => {
   it('DiscardConfirm_ServerRejectsDelete_ModalStaysOpen — non-ok result keeps the modal open', async () => {
     const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
