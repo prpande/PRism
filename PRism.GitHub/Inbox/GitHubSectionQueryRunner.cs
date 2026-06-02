@@ -26,15 +26,18 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
+    private readonly Func<DateTimeOffset> _clock;
     private readonly ILogger<GitHubSectionQueryRunner> _log;
 
     public GitHubSectionQueryRunner(
         IHttpClientFactory httpFactory,
         Func<Task<string?>> readToken,
+        Func<DateTimeOffset> clock,
         ILogger<GitHubSectionQueryRunner>? log = null)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
+        _clock = clock;
         _log = log ?? NullLogger<GitHubSectionQueryRunner>.Instance;
     }
 
@@ -70,6 +73,37 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
             .ToList();
         var done = await Task.WhenAll(tasks).ConfigureAwait(false);
         return done.ToDictionary(t => t.Key, t => t.Item2);
+    }
+
+    public async Task<IReadOnlyList<RawPrInboxItem>> QueryClosedHistoryAsync(
+        int windowDays, CancellationToken ct)
+    {
+        var cutoff = _clock().UtcDateTime.Date.AddDays(-windowDays)
+            .ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        var token = await _readToken().ConfigureAwait(false);
+
+        var queries = new[]
+        {
+            $"is:pr is:closed involves:@me closed:>={cutoff} archived:false",
+            $"is:pr is:closed reviewed-by:@me closed:>={cutoff} archived:false",
+        };
+
+        var lists = await Task.WhenAll(queries.Select(async q =>
+        {
+            try { return (IReadOnlyList<RawPrInboxItem>)await SearchAsync(q, token, ct).ConfigureAwait(false); }
+#pragma warning disable CA1031 // generic catch — per-sub-query failure isolates, consistent with QueryAllAsync. Cancellation and rate-limit propagate.
+            catch (Exception ex) when (ex is not OperationCanceledException && ex is not RateLimitExceededException)
+#pragma warning restore CA1031
+            {
+                Log.SectionQueryFailed(_log, ex, "recently-closed");
+                return Array.Empty<RawPrInboxItem>();
+            }
+        })).ConfigureAwait(false);
+
+        return lists.SelectMany(l => l)
+            .GroupBy(r => r.Reference)
+            .Select(g => g.First())
+            .ToList();
     }
 
     private async Task<List<RawPrInboxItem>> SearchAsync(string q, string? token, CancellationToken ct)

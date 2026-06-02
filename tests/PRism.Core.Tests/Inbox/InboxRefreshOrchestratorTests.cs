@@ -52,6 +52,9 @@ public sealed class InboxRefreshOrchestratorTests
         public Task<IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> QueryAllAsync(
             IReadOnlySet<string> visibleSectionIds, CancellationToken ct)
             => Task.FromResult(_factory(visibleSectionIds));
+        public Task<IReadOnlyList<RawPrInboxItem>> QueryClosedHistoryAsync(
+            int windowDays, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<RawPrInboxItem>>(Array.Empty<RawPrInboxItem>());
     }
 
     // PR enricher: identity (returns the same items unchanged)

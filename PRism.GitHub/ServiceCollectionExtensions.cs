@@ -60,6 +60,7 @@ public static class ServiceCollectionExtensions
             return new GitHubSectionQueryRunner(
                 factory,
                 () => tokens.ReadAsync(CancellationToken.None),
+                () => DateTimeOffset.UtcNow,
                 sp.GetRequiredService<ILogger<GitHubSectionQueryRunner>>());
         });
 
