@@ -64,7 +64,7 @@ export function InboxSection({
                   maxDiff={maxDiff}
                 />
               ))}
-              {showTruncationHint && <RecentlyClosedFooter count={MaxHistoryRows} />}
+              {showTruncationHint && <RecentlyClosedFooter count={section.items.length} />}
             </>
           )}
         </div>
