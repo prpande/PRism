@@ -17,10 +17,11 @@ public class FakeReviewSubmitterIssueCommentTests
 
         var result = await fake.CreateIssueCommentAsync(Ref, "Hello PR root", CancellationToken.None);
 
+        var snapshot = fake.SnapshotIssueComments();
         Assert.True(result.Id > 0);
-        Assert.Single(fake.IssueCommentsCreated);
-        Assert.Equal(Ref, fake.IssueCommentsCreated[0].Pr);
-        Assert.Equal("Hello PR root", fake.IssueCommentsCreated[0].Body);
+        Assert.Single(snapshot);
+        Assert.Equal(Ref, snapshot[0].Pr);
+        Assert.Equal("Hello PR root", snapshot[0].Body);
     }
 
     [Fact]
@@ -34,7 +35,7 @@ public class FakeReviewSubmitterIssueCommentTests
             () => fake.CreateIssueCommentAsync(Ref, "body", CancellationToken.None));
 
         // pre-effect failure: comment must NOT have been recorded
-        Assert.Empty(fake.IssueCommentsCreated);
+        Assert.Empty(fake.SnapshotIssueComments());
     }
 
     [Fact]
@@ -48,7 +49,7 @@ public class FakeReviewSubmitterIssueCommentTests
             () => fake.CreateIssueCommentAsync(Ref, "body", CancellationToken.None));
 
         // after-effect: comment IS recorded even though exception was thrown (lost-response window)
-        Assert.Single(fake.IssueCommentsCreated);
+        Assert.Single(fake.SnapshotIssueComments());
     }
 
     [Fact]
@@ -59,7 +60,7 @@ public class FakeReviewSubmitterIssueCommentTests
 
         fake.Reset();
 
-        Assert.Empty(fake.IssueCommentsCreated);
+        Assert.Empty(fake.SnapshotIssueComments());
     }
 
     [Fact]
@@ -71,6 +72,6 @@ public class FakeReviewSubmitterIssueCommentTests
         var r2 = await fake.CreateIssueCommentAsync(Ref, "second", CancellationToken.None);
 
         Assert.NotEqual(r1.Id, r2.Id);
-        Assert.Equal(2, fake.IssueCommentsCreated.Count);
+        Assert.Equal(2, fake.SnapshotIssueComments().Count);
     }
 }

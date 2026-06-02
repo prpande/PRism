@@ -11,13 +11,15 @@ namespace PRism.GitHub;
 // This is a standalone issue-comment POST, distinct from the GraphQL pending-review pipeline in
 // GitHubReviewService.Submit.cs. Used by the root-comment/post endpoint (Task 10).
 //
-// Auth/HttpClient/JSON seams: same as the other REST methods in GitHubReviewService.cs —
-// _httpFactory.CreateClient("github") with the bearer token via SendGitHubAsync (which reads
-// _readToken, attaches Authorization, UserAgent, Accept). The "github" named client's BaseAddress
-// is `https://api.github.com/` (or the GHES equivalent); relative URLs resolve against it.
+// Auth/HttpClient/JSON seams: routes through the shared SendGitHubAsync helper (main partial),
+// which reads _readToken and attaches Authorization Bearer, UserAgent, Accept vnd.github+json,
+// and X-GitHub-Api-Version. The JSON body is passed as the `content` argument introduced in this
+// slice. The "github" named client's BaseAddress is `https://api.github.com/` (or the GHES
+// equivalent); relative URLs resolve against it.
 //
-// Non-2xx: throws HttpRequestException with the StatusCode populated (the default from
-// resp.EnsureSuccessStatusCode). Task 10 maps specific codes (403, 404, 422…) to typed error results.
+// Non-2xx: throws HttpRequestException with the StatusCode populated (matches PostGraphQLAsync's
+// pattern of reading the response body first so the message is actionable). Task 10 maps specific
+// codes (403, 404, 422…) to typed error results.
 public sealed partial class GitHubReviewService
 {
     public async Task<CreatedIssueCommentResult> CreateIssueCommentAsync(
@@ -31,23 +33,15 @@ public sealed partial class GitHubReviewService
         var url = $"repos/{reference.Owner}/{reference.Repo}/issues/{reference.Number}/comments";
         var payload = JsonSerializer.Serialize(new { body = bodyMarkdown });
 
-        var token = await _readToken().ConfigureAwait(false);
         using var http = _httpFactory.CreateClient("github");
-        using var req = new HttpRequestMessage(HttpMethod.Post, url)
-        {
-            Content = new StringContent(payload, Encoding.UTF8, "application/json"),
-        };
-        if (!string.IsNullOrEmpty(token))
-            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-        req.Headers.UserAgent.ParseAdd("PRism/0.1");
-        req.Headers.Accept.ParseAdd("application/vnd.github+json");
-        req.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
+        using var resp = await SendGitHubAsync(
+            http, HttpMethod.Post, url, ct,
+            content: new StringContent(payload, Encoding.UTF8, "application/json")).ConfigureAwait(false);
 
-        using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
         if (!resp.IsSuccessStatusCode)
         {
-            // Read the body before calling EnsureSuccessStatusCode so the exception's Message
-            // carries the actionable reason (same pattern as PostGraphQLAsync in the main partial).
+            // Read the body before throwing so the exception's Message carries the actionable reason
+            // (same pattern as PostGraphQLAsync in the main partial).
             string errorBody = string.Empty;
             try
             {
@@ -81,7 +75,8 @@ public sealed partial class GitHubReviewService
 
         var createdAt = root.TryGetProperty("created_at", out var caEl) && caEl.ValueKind == JsonValueKind.String
             ? caEl.GetDateTimeOffset()
-            : DateTimeOffset.UtcNow;
+            : throw new HttpRequestException("GitHub issue comment response missing 'created_at'.",
+                inner: null, statusCode: HttpStatusCode.OK);
 
         return new CreatedIssueCommentResult(id, createdAt);
     }

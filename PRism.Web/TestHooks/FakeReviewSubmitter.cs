@@ -27,6 +27,7 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
     private readonly object _gate = new();
     private readonly Dictionary<string, FakePendingReview> _pendingByRef = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (Exception Ex, bool AfterEffect)> _failureByMethod = new(StringComparer.Ordinal);
+    private readonly List<(PrReference Pr, string Body)> _issueCommentsCreated = new();
     private int _nextId = 1;
     private int _beginDelayMs;
     private int _findOwnReturnsNullFromCall = int.MaxValue;
@@ -50,7 +51,7 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
             _attachThreadCallCount = 0;
             _attachReplyCallCount = 0;
             _deleteThreadCallCount = 0;
-            IssueCommentsCreated.Clear();
+            _issueCommentsCreated.Clear();
         }
     }
 
@@ -202,18 +203,25 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
     public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(reference);
+        ArgumentNullException.ThrowIfNull(bodyMarkdown);
         ct.ThrowIfCancellationRequested();
         lock (_gate)
         {
             if (TryTakeFailure(nameof(CreateIssueCommentAsync), afterEffectWanted: false, out var pre)) throw pre;
             var id = (long)_nextId++;
-            IssueCommentsCreated.Add((reference, bodyMarkdown ?? ""));
+            _issueCommentsCreated.Add((reference, bodyMarkdown));
             if (TryTakeFailure(nameof(CreateIssueCommentAsync), afterEffectWanted: true, out var post)) throw post;
             return Task.FromResult(new CreatedIssueCommentResult(id, DateTimeOffset.UtcNow));
         }
     }
 
-    public List<(PrReference Pr, string Body)> IssueCommentsCreated { get; } = new();
+    // Returns a locked snapshot of all issue comments created since the last Reset().
+    // Thread-safe: callers (including /test/ introspection endpoints racing an in-flight submit)
+    // get a point-in-time copy rather than a live reference to the backing list.
+    public IReadOnlyList<(PrReference Pr, string Body)> SnapshotIssueComments()
+    {
+        lock (_gate) return _issueCommentsCreated.ToList();
+    }
 
     public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct)
     {

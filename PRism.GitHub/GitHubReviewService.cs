@@ -702,7 +702,11 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
     // repos. Mirrors the pattern used by GitHubSectionQueryRunner and GitHubPrEnricher
     // (the named "github" HttpClient does not carry a default Authorization header,
     // so every caller is responsible for attaching one per request).
-    private async Task<HttpResponseMessage> SendGitHubAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct)
+    //
+    // `content` is optional: POST/PATCH callers pass a pre-built StringContent; GET callers
+    // omit it. The header set is the same regardless — Authorization Bearer, UserAgent,
+    // Accept vnd.github+json, and X-GitHub-Api-Version (recommended by GitHub for all REST calls).
+    private async Task<HttpResponseMessage> SendGitHubAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct, HttpContent? content = null)
     {
         var token = await _readToken().ConfigureAwait(false);
         using var req = new HttpRequestMessage(method, url);
@@ -710,6 +714,9 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
+        req.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
+        if (content is not null)
+            req.Content = content;
         return await http.SendAsync(req, ct).ConfigureAwait(false);
     }
 
