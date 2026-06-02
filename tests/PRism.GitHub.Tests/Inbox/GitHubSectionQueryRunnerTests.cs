@@ -11,8 +11,13 @@ namespace PRism.GitHub.Tests.Inbox;
 public sealed class GitHubSectionQueryRunnerTests
 {
     private static GitHubSectionQueryRunner BuildSut(FakeHttpMessageHandler handler) =>
+        BuildSut(handler, () => DateTimeOffset.UtcNow);
+
+    private static GitHubSectionQueryRunner BuildSut(
+        FakeHttpMessageHandler handler, Func<DateTimeOffset> clock) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
-            () => Task.FromResult<string?>("t"));
+            () => Task.FromResult<string?>("t"),
+            clock);
     private const string SearchResponseOnePr = """
     {
       "items": [
@@ -204,6 +209,80 @@ public sealed class GitHubSectionQueryRunnerTests
         var items = result["review-requested"];
         items.Should().HaveCount(1, "the malformed-URL item must be silently skipped");
         items[0].Reference.Number.Should().Be(42);
+    }
+
+    [Fact]
+    public async Task QueryClosedHistory_FiresBothSubQueries_WithCutoff_AndDedupesByRef()
+    {
+        // clock = 2026-06-02; windowDays 14 => cutoff 2026-05-19.
+        // involves query returns PRs [1, 2]; reviewed-by query returns [1, 3].
+        // Shared PR #1 must be deduped; result == {1, 2, 3}.
+        var clock = () => new DateTimeOffset(2026, 6, 2, 12, 0, 0, TimeSpan.Zero);
+
+        var calls = new List<string>();
+        var handler = new FakeHttpMessageHandler((req) =>
+        {
+            var query = req.RequestUri!.Query;
+            calls.Add(query);
+            var decoded = Uri.UnescapeDataString(query);
+            // The involves sub-query gets [1, 2]; the reviewed-by sub-query gets [1, 3].
+            var body = decoded.Contains("involves:@me", StringComparison.Ordinal)
+                ? SearchResponseWithNumbers(1, 2)
+                : SearchResponseWithNumbers(1, 3);
+            return Respond(HttpStatusCode.OK, body);
+        });
+        var sut = BuildSut(handler, clock);
+
+        var result = await sut.QueryClosedHistoryAsync(14, default);
+
+        calls.Should().HaveCount(2);
+        var decodedCalls = calls.Select(Uri.UnescapeDataString).ToList();
+        decodedCalls.Should().ContainSingle(q => q.Contains("involves:@me", StringComparison.Ordinal));
+        decodedCalls.Should().ContainSingle(q => q.Contains("reviewed-by:@me", StringComparison.Ordinal));
+        decodedCalls.Should().OnlyContain(q => q.Contains("closed:>=2026-05-19", StringComparison.Ordinal));
+        decodedCalls.Should().OnlyContain(q => q.Contains("is:closed", StringComparison.Ordinal));
+
+        result.Select(r => r.Reference.Number).Should().BeEquivalentTo(new[] { 1, 2, 3 });
+    }
+
+    [Fact]
+    public async Task QueryClosedHistory_OneSubQueryFails_ReturnsOtherSubQuerysResults()
+    {
+        // Per-sub-query failure isolation (mirrors QueryAllAsync's Section_failure test):
+        // the involves:@me sub-query returns HTTP 500 (a non-RateLimit/non-Cancellation
+        // error → caught and yields empty), while reviewed-by:@me succeeds with PR #5.
+        // QueryClosedHistoryAsync must NOT throw; the result contains ONLY PR #5.
+        var clock = () => new DateTimeOffset(2026, 6, 2, 12, 0, 0, TimeSpan.Zero);
+
+        var handler = new FakeHttpMessageHandler((req) =>
+        {
+            var decoded = Uri.UnescapeDataString(req.RequestUri!.Query);
+            return decoded.Contains("involves:@me", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.InternalServerError, "{}")
+                : Respond(HttpStatusCode.OK, SearchResponseWithNumbers(5));
+        });
+        var sut = BuildSut(handler, clock);
+
+        var result = await sut.QueryClosedHistoryAsync(14, default);
+
+        result.Select(r => r.Reference.Number).Should().BeEquivalentTo(new[] { 5 },
+            "the failed involves:@me sub-query must yield empty without throwing, leaving only the reviewed-by:@me result");
+    }
+
+    private static string SearchResponseWithNumbers(params int[] numbers)
+    {
+        var items = numbers.Select(n => $$"""
+            {
+              "number": {{n}},
+              "title": "PR {{n}}",
+              "user": { "login": "amelia" },
+              "repository_url": "https://api.github.com/repos/acme/api",
+              "updated_at": "2026-05-06T10:00:00Z",
+              "comments": 0,
+              "pull_request": { "html_url": "https://github.com/acme/api/pull/{{n}}" }
+            }
+            """);
+        return $$"""{ "items": [ {{string.Join(",", items)}} ] }""";
     }
 
     private static HttpResponseMessage Respond(HttpStatusCode code, string body) => new(code)

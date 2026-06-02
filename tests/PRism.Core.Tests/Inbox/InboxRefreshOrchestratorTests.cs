@@ -24,6 +24,11 @@ public sealed class InboxRefreshOrchestratorTests
         => new(Ref(n, owner, repo), $"PR #{n}", "author", $"{owner}/{repo}",
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, headSha, 1);
 
+    private static RawPrInboxItem RawClosed(int n, DateTimeOffset? merged, DateTimeOffset? closed, string headSha = "")
+        => new(Ref(n), $"PR #{n}", "author", "acme/api",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, headSha, 1,
+            MergedAt: merged, ClosedAt: closed);
+
     // A bus that captures every published event for assertion
     private sealed class RecordingEventBus : IReviewEventBus
     {
@@ -42,16 +47,22 @@ public sealed class InboxRefreshOrchestratorTests
         public T Resolve<T>() where T : class => (_enricher as T)!;
     }
 
-    // Section runner: returns a fixed dictionary of sections → items
+    // Section runner: returns a fixed dictionary of sections → items, plus a configurable
+    // closed-history list and a callback that fires when QueryClosedHistoryAsync is invoked.
     private sealed class FakeSectionQueryRunner : ISectionQueryRunner
     {
         private readonly Func<IReadOnlySet<string>, IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> _factory;
+        private readonly IReadOnlyList<RawPrInboxItem> _closed;
+        private readonly Action? _onClosedQueried;
         public FakeSectionQueryRunner(
-            Func<IReadOnlySet<string>, IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> factory)
-            => _factory = factory;
+            Func<IReadOnlySet<string>, IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> factory,
+            IReadOnlyList<RawPrInboxItem>? closed = null,
+            Action? onClosedQueried = null)
+            { _factory = factory; _closed = closed ?? Array.Empty<RawPrInboxItem>(); _onClosedQueried = onClosedQueried; }
         public Task<IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> QueryAllAsync(
-            IReadOnlySet<string> visibleSectionIds, CancellationToken ct)
-            => Task.FromResult(_factory(visibleSectionIds));
+            IReadOnlySet<string> v, CancellationToken ct) => Task.FromResult(_factory(v));
+        public Task<IReadOnlyList<RawPrInboxItem>> QueryClosedHistoryAsync(int windowDays, CancellationToken ct)
+            { _onClosedQueried?.Invoke(); return Task.FromResult(_closed); }
     }
 
     // PR enricher: identity (returns the same items unchanged)
@@ -86,13 +97,14 @@ public sealed class InboxRefreshOrchestratorTests
         bool awaitingAuthor = true,
         bool authoredByMe = true,
         bool mentioned = true,
-        bool ciFailing = true)
+        bool ciFailing = true,
+        bool recentlyClosed = false)
         => AppConfig.Default with
         {
             Inbox = new InboxConfig(
                 Deduplicate: false,
                 Sections: new InboxSectionsConfig(
-                    reviewRequested, awaitingAuthor, authoredByMe, mentioned, ciFailing),
+                    reviewRequested, awaitingAuthor, authoredByMe, mentioned, ciFailing, recentlyClosed),
                 ShowHiddenScopeFooter: true)
         };
 
@@ -522,5 +534,85 @@ public sealed class InboxRefreshOrchestratorTests
         var pr1 = items.Single(p => p.Reference.Number == 1);
         pr1.LastViewedHeadSha.Should().Be("abc");
         pr1.LastSeenCommentId.Should().Be(12345L);
+    }
+
+    // ── Recently-closed section ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RecentlyClosed_Enabled_AppendsSection_SortedByCloseDesc()
+    {
+        var older = DateTimeOffset.Parse("2026-05-10T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var newer = DateTimeOffset.Parse("2026-05-20T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
+            closed: new[] { RawClosed(1, older, older), RawClosed(2, newer, newer) });
+
+        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true));
+        using var sut = Build(config: configMock.Object, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var sec = sut.Current!.Sections[InboxHistoryConstants.SectionId];
+        sec.Select(i => i.Reference.Number).Should().Equal(2, 1); // newest first
+        sec[0].MergedAt.Should().Be(newer);
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_KeepsMergedPrWithEmptyHeadSha()
+    {
+        var when = DateTimeOffset.Parse("2026-05-20T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
+            closed: new[] { RawClosed(7, when, when, headSha: "") });
+
+        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true));
+        using var sut = Build(config: configMock.Object, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var sec = sut.Current!.Sections[InboxHistoryConstants.SectionId];
+        sec.Select(i => i.Reference.Number).Should().Contain(7);
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_CapsAtMaxRows_KeepingNewest()
+    {
+        var baseTime = DateTimeOffset.Parse("2026-05-01T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var count = InboxHistoryConstants.MaxHistoryRows + 5;
+        // Ascending merged times: higher index → newer.
+        var closed = Enumerable.Range(1, count)
+            .Select(i => RawClosed(i, baseTime.AddMinutes(i), baseTime.AddMinutes(i)))
+            .ToArray();
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
+            closed: closed);
+
+        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true));
+        using var sut = Build(config: configMock.Object, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var sec = sut.Current!.Sections[InboxHistoryConstants.SectionId];
+        sec.Should().HaveCount(InboxHistoryConstants.MaxHistoryRows);
+        sec[0].Reference.Number.Should().Be(count); // the newest (highest index) survives
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_Disabled_NoSection_AndNoQuery()
+    {
+        var queried = false;
+        var when = DateTimeOffset.Parse("2026-05-20T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
+            closed: new[] { RawClosed(9, when, when) },
+            onClosedQueried: () => queried = true);
+
+        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: false));
+        using var sut = Build(config: configMock.Object, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        sut.Current!.Sections.Should().NotContainKey(InboxHistoryConstants.SectionId);
+        queried.Should().BeFalse("QueryClosedHistoryAsync must not be called when the section is disabled");
     }
 }

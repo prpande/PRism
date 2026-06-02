@@ -49,6 +49,23 @@ public class PreferencesEndpointsTests
         github.GetProperty("logsPath").GetString().Should().Be(Path.Combine(factory.DataDir, "logs"));
     }
 
+    // Task 6b: the GET response hand-projects InboxSectionsDto, so a config-level
+    // addition (RecentlyClosed) is silently omitted until the DTO + projection are
+    // widened. Default config has RecentlyClosed = true (AppConfig.cs).
+    [Fact]
+    public async Task GetPreferences_IncludesRecentlyClosed_DefaultTrue()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/api/preferences", UriKind.Relative));
+        resp.IsSuccessStatusCode.Should().BeTrue();
+        var json = await resp.Content.ReadFromJsonAsync<JsonElement>();
+
+        json.GetProperty("inbox").GetProperty("sections")
+            .GetProperty("recently-closed").GetBoolean().Should().BeTrue();
+    }
+
     [Fact]
     public async Task POST_single_field_updates_and_returns_new_nested_shape()
     {
