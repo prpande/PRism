@@ -11,6 +11,7 @@ const ROWS: readonly { id: InboxSectionId; label: string }[] = [
   { id: 'authored-by-me', label: 'Authored by me' },
   { id: 'mentioned', label: 'Mentioned' },
   { id: 'ci-failing', label: 'CI failing on my PRs' },
+  { id: 'recently-closed', label: 'Recently closed' },
 ];
 
 const HELP_ID = 'inbox-section-help';
