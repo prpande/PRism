@@ -51,17 +51,21 @@
    shipped CSS in the web build.
    -------------------------------------------------------------------------- */
 
-/* The navbar IS the title bar, so it must stay pinned: the OS draws the caption
-   buttons at a fixed top-right position, and if the navbar scrolls away the
-   buttons end up floating over page content. Sticky keeps the navbar (and its
-   drag region) under the controls at all times. Gated to desktop so the browser
-   scroll behavior is unchanged. */
+/* The navbar IS the title bar. It's pinned at the top of [data-app-shell],
+   outside the scroll region, so it never scrolls away; sticky is a harmless
+   fallback if the shell layout ever doesn't apply, and also establishes the
+   stacking context for the elevation shadow. Gated to desktop so the browser
+   navbar is unchanged. */
 :global([data-shell='desktop']) .header {
   position: sticky;
   top: 0;
   z-index: 100;
   /* Make the whole navbar the OS drag handle so the window moves by dragging it. */
   -webkit-app-region: drag;
+  /* Prominence: a slightly elevated surface + drop shadow so the navbar reads as
+     the app's top bar rather than blending into the cards directly below it. */
+  background: var(--surface-2);
+  box-shadow: var(--shadow-2);
 }
 
 /* Interactive children must stay clickable — a drag region swallows clicks.

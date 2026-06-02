@@ -221,6 +221,23 @@
   --s-4: 14px;
 }
 
+/* Desktop shell layout (Electron only — data-shell set by the preload/main).
+   The navbar (+ open-PR tab strip) is pinned outside the scroll container, and
+   page content scrolls in [data-app-scroll]. This makes the window scrollbar
+   start BELOW the navbar instead of running the full height beside it. In the
+   browser these attributes carry no styling, so the document scrolls as before. */
+[data-shell="desktop"] [data-app-shell] {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+[data-shell="desktop"] [data-app-scroll] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* ======================================================================
    Base
    ====================================================================== */
