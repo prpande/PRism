@@ -366,25 +366,28 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
 
   // ─── STEP 2: Toggle ON ────────────────────────────────────────────────────
 
-  await page.goto(`/pr/${OWNER}/${REPO}/${PR_NUMBER}`);
-  await page.locator('[data-testid="pr-header"]').waitFor({ timeout: 30_000 });
-
-  // The toggle button: AiPreviewToggle renders aria-label="AI preview off|on".
-  const aiToggle = page.getByRole('button', { name: /AI preview/i });
+  // The navbar quick-toggle was removed; AI preview now lives only on the
+  // Settings page (AppearanceSection's `<input role="switch">`). Flip it there,
+  // then re-navigate to the PR detail. A fresh navigation remounts the page so
+  // useCapabilities/usePreferences refetch the now-updated mock state — which
+  // replaces the old window.dispatchEvent(new Event('focus')) trick.
+  await page.goto('/settings');
+  const aiToggle = page.getByRole('switch', { name: /AI preview/i });
+  await aiToggle.waitFor({ timeout: 30_000 });
   const toggleResponse = page.waitForResponse(
     (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );
   await aiToggle.click();
   await toggleResponse;
 
-  // useCapabilities subscribes to 'focus' — dispatch it so the capabilities
-  // hook re-fetches and sees allOnCapabilities (now that aiPreview=true in the
-  // mock closure). Without this, useAiGate(key) = caps[key] && aiPreview stays
-  // false even though aiPreview flipped because caps[key] is still the stale
-  // all-off value from the initial mount fetch.
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-
   // ─── STEP 3: ON state ─────────────────────────────────────────────────────
+
+  // Fresh navigation remounts the PR detail so useCapabilities/usePreferences
+  // refetch and see allOnCapabilities + aiPreview=true (mutated in the mock
+  // closure by the toggle POST above). useAiGate(key) = caps[key] && aiPreview
+  // is now true for every surface.
+  await page.goto(`/pr/${OWNER}/${REPO}/${PR_NUMBER}`);
+  await page.locator('[data-testid="pr-header"]').waitFor({ timeout: 30_000 });
 
   // (a) AiSummaryCard on Overview tab.
   await expect(page.getByTestId('ai-summary-card')).toBeVisible({ timeout: 10_000 });
@@ -417,30 +420,32 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
   await expect(page.getByText('AI suggestion')).toBeVisible();
   await expect(page.getByText('Worth a comment here?')).toBeVisible();
 
-  // (e) Inbox activity rail — usePreferences + useCapabilities both subscribe
-  // to the 'focus' event. Dispatch it so InboxPage re-fetches and sees aiPreview=true
-  // and inboxRanking=true from the now-mutated mock state.
+  // (e) Inbox activity rail — a fresh navigation to "/" remounts InboxPage so
+  // usePreferences + useCapabilities refetch and see aiPreview=true and
+  // inboxRanking=true from the now-mutated mock state.
   await page.goto('/');
   await expect(page.getByText('Refactor Calc utilities')).toBeVisible({ timeout: 15_000 });
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByRole('complementary', { name: /activity/i })).toBeVisible({
     timeout: 10_000,
   });
 
   // ─── STEP 4: Toggle OFF ───────────────────────────────────────────────────
 
-  await page.goto(`/pr/${OWNER}/${REPO}/${PR_NUMBER}`);
-  await page.locator('[data-testid="pr-header"]').waitFor({ timeout: 30_000 });
-
+  // Flip AI preview back off via the Settings page switch.
+  await page.goto('/settings');
+  const offToggle = page.getByRole('switch', { name: /AI preview/i });
+  await offToggle.waitFor({ timeout: 30_000 });
   const offResponse = page.waitForResponse(
     (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );
-  await page.getByRole('button', { name: /AI preview/i }).click();
+  await offToggle.click();
   await offResponse;
 
-  // Dispatch focus so useCapabilities refetches allOffCapabilities (aiPreview is
-  // now false in the mock closure → allOffCapabilities returned → gate collapses).
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  // Fresh navigation remounts the PR detail so useCapabilities refetches
+  // allOffCapabilities (aiPreview is now false in the mock closure → all-off
+  // returned → gate collapses).
+  await page.goto(`/pr/${OWNER}/${REPO}/${PR_NUMBER}`);
+  await page.locator('[data-testid="pr-header"]').waitFor({ timeout: 30_000 });
 
   // AiSummaryCard must disappear.
   await expect(page.getByTestId('ai-summary-card')).not.toBeVisible({ timeout: 10_000 });
