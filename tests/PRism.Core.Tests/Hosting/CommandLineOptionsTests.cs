@@ -107,4 +107,24 @@ public class CommandLineOptionsTests
 
         CommandLineOptions.GetValue(args, "--dataDir").Should().Be(@"C:\first");
     }
+
+    [Fact]
+    public void GetValue_skips_null_elements_without_throwing()
+    {
+        // The IReadOnlyList<string> signature permits null elements even though
+        // Main(string[]) never produces one; a null must not NRE the scan.
+        var args = new string[] { "--no-browser", null!, "--dataDir", @"C:\tmp\prism" };
+
+        CommandLineOptions.GetValue(args, "--dataDir").Should().Be(@"C:\tmp\prism");
+    }
+
+    [Fact]
+    public void GetValue_keeps_subsequent_equals_signs_in_the_equals_form_value()
+    {
+        // Value contains '=' (e.g. a path with a "key=val" segment): only the first
+        // '=' delimits name from value; the rest is part of the value.
+        var args = new[] { @"--dataDir=C:\path\key=val" };
+
+        CommandLineOptions.GetValue(args, "--dataDir").Should().Be(@"C:\path\key=val");
+    }
 }

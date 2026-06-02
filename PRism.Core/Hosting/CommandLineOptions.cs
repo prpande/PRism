@@ -22,6 +22,13 @@ public static class CommandLineOptions
     /// </summary>
     /// <param name="args">The raw command-line arguments.</param>
     /// <param name="optionName">The option to read, including its leading dashes (e.g. <c>--dataDir</c>).</param>
+    /// <remarks>
+    /// For the space-separated form, a following token that begins with <c>-</c> is treated
+    /// as the next flag rather than this option's value, so the option reads as having no
+    /// value (returns <c>null</c>). This is safe for paths, which never begin with <c>-</c>.
+    /// Null elements in <paramref name="args"/> are skipped (the <c>IReadOnlyList&lt;string&gt;</c>
+    /// signature permits them even though <c>Main(string[])</c> never produces one).
+    /// </remarks>
     public static string? GetValue(IReadOnlyList<string> args, string optionName)
     {
         ArgumentNullException.ThrowIfNull(args);
@@ -31,7 +38,12 @@ public static class CommandLineOptions
 
         for (var i = 0; i < args.Count; i++)
         {
-            var arg = args[i];
+            // Skip null elements rather than NRE on StartsWith/Equals below. Main(string[])
+            // never yields one, but the general IReadOnlyList<string> signature allows it.
+            if (args[i] is not { } arg)
+            {
+                continue;
+            }
 
             // --name=value
             if (arg.StartsWith(equalsPrefix, StringComparison.OrdinalIgnoreCase))
@@ -50,9 +62,10 @@ public static class CommandLineOptions
             // treating a '-'-prefixed next token as a flag is safe here.)
             if (string.Equals(arg, optionName, StringComparison.OrdinalIgnoreCase))
             {
-                if (i + 1 < args.Count && args[i + 1].Length > 0 && !args[i + 1].StartsWith('-'))
+                var next = i + 1 < args.Count ? args[i + 1] : null;
+                if (next is { Length: > 0 } && !next.StartsWith('-'))
                 {
-                    return args[i + 1];
+                    return next;
                 }
 
                 return null;
