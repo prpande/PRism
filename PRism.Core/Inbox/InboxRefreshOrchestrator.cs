@@ -116,6 +116,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 closedRaw = await _sections
                     .QueryClosedHistoryAsync(InboxHistoryConstants.HistoryWindowDays, ct)
                     .ConfigureAwait(false);
+                Log.ClosedHistoryFetched(_log, closedRaw.Count);
             }
 
             // Enrich every PR across all sections (one HTTP call per PR, deduplicated by ref)
@@ -361,6 +362,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Section queries complete: {SectionCount} sections, {TotalItems} items total ({Breakdown})")]
         internal static partial void SectionQueriesComplete(ILogger logger, int sectionCount, int totalItems, string breakdown);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Closed-history fetch: {Count} raw items")]
+        internal static partial void ClosedHistoryFetched(ILogger logger, int count);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "PR enrichment complete: {Input} input PRs → {Output} enriched")]
         internal static partial void PrEnrichmentComplete(ILogger logger, int input, int output);

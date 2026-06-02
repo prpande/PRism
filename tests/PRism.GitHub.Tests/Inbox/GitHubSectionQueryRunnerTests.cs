@@ -245,6 +245,30 @@ public sealed class GitHubSectionQueryRunnerTests
         result.Select(r => r.Reference.Number).Should().BeEquivalentTo(new[] { 1, 2, 3 });
     }
 
+    [Fact]
+    public async Task QueryClosedHistory_OneSubQueryFails_ReturnsOtherSubQuerysResults()
+    {
+        // Per-sub-query failure isolation (mirrors QueryAllAsync's Section_failure test):
+        // the involves:@me sub-query returns HTTP 500 (a non-RateLimit/non-Cancellation
+        // error → caught and yields empty), while reviewed-by:@me succeeds with PR #5.
+        // QueryClosedHistoryAsync must NOT throw; the result contains ONLY PR #5.
+        var clock = () => new DateTimeOffset(2026, 6, 2, 12, 0, 0, TimeSpan.Zero);
+
+        var handler = new FakeHttpMessageHandler((req) =>
+        {
+            var decoded = Uri.UnescapeDataString(req.RequestUri!.Query);
+            return decoded.Contains("involves:@me", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.InternalServerError, "{}")
+                : Respond(HttpStatusCode.OK, SearchResponseWithNumbers(5));
+        });
+        var sut = BuildSut(handler, clock);
+
+        var result = await sut.QueryClosedHistoryAsync(14, default);
+
+        result.Select(r => r.Reference.Number).Should().BeEquivalentTo(new[] { 5 },
+            "the failed involves:@me sub-query must yield empty without throwing, leaving only the reviewed-by:@me result");
+    }
+
     private static string SearchResponseWithNumbers(params int[] numbers)
     {
         var items = numbers.Select(n => $$"""

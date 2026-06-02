@@ -128,6 +128,8 @@ public class ConfigStorePatchAsyncDottedPathTests
         { "inbox.sections.mentioned", null },
         { "inbox.sections.ci-failing", null },
         { "inbox.sections.ci-failing", 42 },
+        { "inbox.sections.recently-closed", null },
+        { "inbox.sections.recently-closed", 42 },
     };
 
     [Theory]
