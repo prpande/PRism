@@ -71,7 +71,7 @@ internal static class PrSubmitEndpoints
             "POST /submit rejected for {SessionKey}: head SHA drifted (last viewed {LastViewed}, current {Current}). The user must Reload before retrying.");
 
     // Logged at Information — cancellation is an expected user-initiated action (discard), not a
-    // failure. EventId 4 is the next free id in this file (0–3 are taken above).
+    // failure. EventId 4 (0–3 taken above; 5 used by s_ownDiscardGitHubFailed).
     private static readonly Action<ILogger, string, string, Exception?> s_pipelineCancelled =
         LoggerMessage.Define<string, string>(LogLevel.Information, new EventId(4, "SubmitPipelineCancelled"),
             "Submit pipeline cancelled for {SessionKey}: {Reason}");
@@ -260,10 +260,11 @@ internal static class PrSubmitEndpoints
             catch (OperationCanceledException) when (pipelineCt.IsCancellationRequested)
             {
                 // Host shutting down — per-step persists already wrote; the next session resumes via
-                // the foreign-pending-review flow if a pending review exists on github.com. Note: Task 11
-                // will link a user-discard CTS to pipelineCt so the pipeline catches user-cancellation
-                // first (via the pipeline's own OCE catch → SubmitOutcome.Cancelled) and the host-shutdown
-                // catch here only fires for genuine shutdown races that bypass the pipeline's catch.
+                // the foreign-pending-review flow if a pending review exists on github.com. A
+                // user-discard CTS is linked into pipelineCt (see DiscardOwnPendingReviewAsync), so
+                // user-cancellation is caught first by the pipeline's own OCE catch →
+                // SubmitOutcome.Cancelled; this host-shutdown catch only fires for genuine shutdown
+                // races that bypass the pipeline's catch.
             }
 #pragma warning disable CA1031 // a stray exception in a fire-and-forget background task must not crash the host
             catch (Exception ex)
@@ -315,9 +316,10 @@ internal static class PrSubmitEndpoints
 
         // Wait for the pipeline (if any) to release the submit lock. We use a 30-second timeout
         // because a stuck pipeline could hold the lock beyond the typical OCE propagation time.
-        // Released via try/finally below (CA2007 forbids `await using var` here because the
-        // compiler-generated DisposeAsync() call would also need .ConfigureAwait(false) which
-        // the `await using` sugar does not support; manual finally is the idiomatic workaround).
+        // NOT `await using var` — TryAcquireAsync can return null on timeout (→ 504 below), and
+        // binding a null result with `await using var` would NullReferenceException on the implicit
+        // DisposeAsync call. The handle is disposed explicitly in the finally block, which only
+        // executes on the non-null (successful-acquire) path.
         var discardHandle = await lockRegistry.TryAcquireAsync(prRef, DiscardTimeouts.LockAcquireTimeout, ct).ConfigureAwait(false);
         if (discardHandle is null)
             return Results.Json(new SubmitErrorDto("pipeline-cancellation-timeout",
