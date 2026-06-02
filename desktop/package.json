@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "npm run build && electron .",
-    "test:unit": "tsc -p tsconfig.test.json && node --test dist-test/test/",
+    "test:unit": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
     "test:e2e": "playwright test",
     "dist": "npm run build && electron-builder"
   },
