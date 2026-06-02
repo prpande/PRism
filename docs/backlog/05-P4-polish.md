@@ -140,6 +140,7 @@ Priority sub-ranks here are less prescriptive than in higher tiers. Treat this a
 
 ### P4-D2: Closed/merged PR history
 - **Effort**: M
+- **Status**: COMPLETE — Shipped 2026-06-02. PR1 (#103 — backend `recently-closed` inbox section + `/api/preferences` key), PR2 (#105 — frontend section polish + Settings toggle), PR3 (read-only detail gaps: `mergedAt`/`closedAt` header label, read-only Drafts tab, live transition banner with cross-tier close-state wiring, diff-unavailable 422 mapping, audit e2e). Spec: `docs/specs/2026-06-02-merged-pr-history-design.md`. Plan: `docs/plans/2026-06-02-merged-pr-history.md`. Deferrals: `docs/specs/2026-06-02-merged-pr-history-deferrals.md`.
 - **Description.** Toggle to show closed/merged PRs in the inbox, retrospective review.
 
 ### P4-D3: Saved filters / custom inbox sections
