@@ -180,6 +180,34 @@ describe('PrDetailPage — live merge/close transition banner', () => {
     expect(screen.queryByLabelText(/dismiss banner/i)).not.toBeInTheDocument();
   });
 
+  it('does NOT show the transition banner while detail is still loading (SSE done-event arrives before GET resolves)', async () => {
+    // Guard: `data && !detailIsDone && updates.isMerged` — without the `data &&` prefix,
+    // detailIsDone is false while data is null, causing the banner to flash on an
+    // already-done PR mid-load. The fetch below never resolves (simulates a slow GET).
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path === '/api/pr/octocat/hello/42') return new Promise<Response>(() => {});
+      return Promise.resolve(jsonResponse({}, 204));
+    });
+    render(mountAt('/pr/octocat/hello/42', fetchMock as typeof fetch));
+    // Wait for EventSource to be created (fetch is pending → data is still null).
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+
+    // Fire a done-event while detail is still loading.
+    act(() =>
+      FakeEventSource.instance.dispatch('pr-updated', {
+        prRef: 'octocat/hello/42',
+        headShaChanged: false,
+        commentCountDelta: 0,
+        isMerged: true,
+        isClosed: false,
+      }),
+    );
+
+    // No transition banner should appear — data is null so the guard suppresses it.
+    expect(screen.queryByText(/just merged/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/just closed/i)).not.toBeInTheDocument();
+  });
+
   it('does NOT show the transition banner when the loaded detail is already done (no live transition)', async () => {
     // Simulate a PR that was already merged before the page loaded. The detail
     // data says isMerged=true. Even if an SSE event fires isMerged=true, there

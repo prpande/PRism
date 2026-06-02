@@ -242,6 +242,32 @@ public class PrDetailEndpointsTests
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/sha/invalid");
     }
 
+    [Fact]
+    public async Task Get_file_returns_422_range_unreachable_when_canonical_diff_fetch_throws()
+    {
+        // Task 16a made GetOrFetchDiffAsync throw RangeUnreachableException when the
+        // canonical base..head range is no longer addressable on GitHub. The /file
+        // endpoint's truncation-check branch calls GetOrFetchDiffAsync for paths not in
+        // any cached diff; without the catch it propagates as an unhandled 500.
+        // This test drives the fake's diff path to throw, ensures the path is NOT in any
+        // cached diff (no prior /diff call), and asserts the typed 422 rather than a 500.
+        var (factory, review) = MakeFactory();
+        using var _f = factory;
+        review.DiffFactory = (_, _) => throw new RangeUnreachableException("dead-base", "dead-head");
+        var client = factory.CreateClient();
+        // Prime snapshot so the endpoint reaches the truncation-check branch (not /file/snapshot-evicted).
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+        // No diff cache primed — path will not be in any cached diff, triggering the
+        // canonical GetOrFetchDiffAsync call that throws RangeUnreachableException.
+        var validHead = new string('b', 40);
+
+        var resp = await client.GetAsync(
+            new Uri($"/api/pr/octo/repo/1/file?path=src/NotInAnyDiff.cs&sha={validHead}", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/diff/range-unreachable");
+    }
+
     // ---------- GET /api/pr/{ref}/file?path=&sha= ----------
 
     [Fact]

@@ -162,11 +162,14 @@ function PrDetailPageInner({
   // That gap IS the "transitioned while viewing" signal. After Reload, data.pr flips
   // done and this self-clears (read-only view takes over). A PR opened already-done,
   // or a comment event on an already-closed PR, won't fire (data.pr is already done).
+  // The `data &&` guard prevents a banner flash when an SSE done-event arrives before
+  // the initial detail GET resolves — without it, detailIsDone is false while data is
+  // null, so the banner fires briefly on an already-done PR mid-load.
   const detailIsDone = data?.pr.isMerged === true || data?.pr.isClosed === true;
   const transitionState: 'merged' | 'closed' | null =
-    !detailIsDone && updates.isMerged
+    data && !detailIsDone && updates.isMerged
       ? 'merged'
-      : !detailIsDone && updates.isClosed
+      : data && !detailIsDone && updates.isClosed
         ? 'closed'
         : null;
 
