@@ -255,6 +255,25 @@ describe('SubmitDialog', () => {
     expect(order).toEqual(['flush', 'close']);
   });
 
+  it('Close while editing still calls onClose when the editor flush rejects (autosave failure does not trap the user)', async () => {
+    const onClose = vi.fn();
+    editorFlush.mockRejectedValue(new Error('save failed'));
+    render(
+      <SubmitDialog
+        {...baseProps({
+          onClose,
+          session: session({ draftVerdict: 'approve', draftComments: [prRootDraft()] }),
+        })}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('pr-root-edit-toggle'));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(editorFlush).toHaveBeenCalled();
+  });
+
   it('Close in preview (not editing) calls onClose without flushing', () => {
     const onClose = vi.fn();
     render(<SubmitDialog {...baseProps({ onClose })} />);

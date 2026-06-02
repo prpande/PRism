@@ -642,19 +642,6 @@ a:hover { text-decoration: underline; }
 .submit-dialog__body { display: flex; flex-direction: column; gap: var(--s-4); }
 .submit-dialog__section { display: flex; flex-direction: column; gap: var(--s-2); }
 .submit-dialog__summary-label { font-size: var(--text-sm); font-weight: 500; color: var(--text-2); }
-.submit-dialog__summary-cols { display: grid; grid-template-columns: 1fr; gap: var(--s-3); }
-@media (min-width: 900px) {
-  .submit-dialog__summary-cols { grid-template-columns: 1fr 1fr; }
-}
-.submit-dialog__summary-input { max-height: 400px; }
-.submit-dialog__summary-preview {
-  min-height: 80px;
-  padding: var(--s-2) var(--s-3);
-  background: var(--surface-2);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-2);
-  overflow-y: auto;
-}
 .submit-dialog__counts { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
 /* PR-root body preview / inline-edit section (spec § 4.8) */
 .submit-dialog__pr-root-header {
