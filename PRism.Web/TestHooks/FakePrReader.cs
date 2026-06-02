@@ -25,6 +25,14 @@ internal sealed class FakePrReader : IPrReader
         if (reference != FakeReviewBackingStore.Scenario) return Task.FromResult<PrDetailDto?>(null);
         lock (_store.Gate)
         {
+            // Mirror real GitHub close-state timestamps so the read-only detail audit
+            // (merged/closed history slice, Task 13 header label) sees a non-null
+            // mergedAt/closedAt: a merged PR has BOTH timestamps set (a merge is a close);
+            // a closed-unmerged PR has only ClosedAt. SetPrState flips IsMerged/IsClosed
+            // but carries no timestamp, so derive one here from the deterministic clock.
+            var doneAt = _store.Now;
+            DateTimeOffset? mergedAt = _store.IsMerged ? doneAt : null;
+            DateTimeOffset? closedAt = _store.IsMerged || _store.IsClosed ? doneAt : null;
             var pr = new Pr(
                 Reference: FakeReviewBackingStore.Scenario,
                 Title: "Calc utilities",
@@ -39,7 +47,9 @@ internal sealed class FakePrReader : IPrReader
                 CiSummary: "none",
                 IsMerged: _store.IsMerged,
                 IsClosed: _store.IsClosed,
-                OpenedAt: _store.Now.AddHours(-1));
+                OpenedAt: _store.Now.AddHours(-1),
+                MergedAt: mergedAt,
+                ClosedAt: closedAt);
             var detail = new PrDetailDto(
                 Pr: pr,
                 ClusteringQuality: ClusteringQuality.Ok,
