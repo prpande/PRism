@@ -30,6 +30,9 @@ internal sealed class FakePrReader : IPrReader
             // mergedAt/closedAt: a merged PR has BOTH timestamps set (a merge is a close);
             // a closed-unmerged PR has only ClosedAt. SetPrState flips IsMerged/IsClosed
             // but carries no timestamp, so derive one here from the deterministic clock.
+            // NOTE: _store.Now is the reset-time clock (set in Reset()), NOT the wall-clock
+            // moment of the state flip — fine for the audit (only label presence is asserted),
+            // but don't rely on these timestamps for ordering against real time.
             var doneAt = _store.Now;
             DateTimeOffset? mergedAt = _store.IsMerged ? doneAt : null;
             DateTimeOffset? closedAt = _store.IsMerged || _store.IsClosed ? doneAt : null;
