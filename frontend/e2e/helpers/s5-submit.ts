@@ -33,6 +33,7 @@ export const SubmitMethod = {
   DeletePendingReview: 'DeletePendingReviewAsync',
   DeletePendingReviewThread: 'DeletePendingReviewThreadAsync',
   FindOwn: 'FindOwnPendingReviewAsync',
+  CreateIssueComment: 'CreateIssueCommentAsync',
 } as const;
 
 // One-shot failure on the next call to `method`. afterEffect=true → the side effect lands first,
