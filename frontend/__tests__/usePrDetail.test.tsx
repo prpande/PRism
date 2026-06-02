@@ -21,6 +21,8 @@ const minimalDto: PrDetailDto = {
     isMerged: false,
     isClosed: false,
     openedAt: '2026-05-01T00:00:00Z',
+    mergedAt: null,
+    closedAt: null,
   },
   clusteringQuality: 'ok',
   iterations: [],

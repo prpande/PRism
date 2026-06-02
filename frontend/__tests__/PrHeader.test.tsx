@@ -380,3 +380,38 @@ describe('PrHeader — closed/merged PR (PR5 § 13)', () => {
     expect(dialog.getByText(/cannot be undone/i)).toBeInTheDocument();
   });
 });
+
+describe('PrHeader — merged/closed status label (Task 13)', () => {
+  it('shows a Merged <when> label on a merged PR', () => {
+    render(<PrHeader {...baseProps} prState="merged" mergedAt="2024-01-01T00:00:00Z" />);
+    expect(screen.getByText(/Merged/)).toBeInTheDocument();
+  });
+
+  it('shows a Closed <when> label on a closed-unmerged PR', () => {
+    render(<PrHeader {...baseProps} prState="closed" closedAt="2024-01-01T00:00:00Z" />);
+    expect(screen.getByText(/Closed/)).toBeInTheDocument();
+  });
+
+  it('does not show a Merged label when mergedAt is absent', () => {
+    render(<PrHeader {...baseProps} prState="merged" />);
+    expect(screen.queryByText(/Merged/)).not.toBeInTheDocument();
+  });
+
+  it('does not show a Closed label when closedAt is absent', () => {
+    render(<PrHeader {...baseProps} prState="closed" />);
+    expect(screen.queryByText(/Closed/)).not.toBeInTheDocument();
+  });
+
+  it('does not show a status label on an open PR', () => {
+    render(
+      <PrHeader
+        {...baseProps}
+        prState="open"
+        mergedAt="2024-01-01T00:00:00Z"
+        closedAt="2024-01-01T00:00:00Z"
+      />,
+    );
+    expect(screen.queryByText(/Merged/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Closed/)).not.toBeInTheDocument();
+  });
+});
