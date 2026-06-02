@@ -113,13 +113,12 @@ async function bootstrap(): Promise<void> {
     mainWindow = null;
   });
 
-  // Backstop: the preload sets data-shell so the navbar's gated CSS (sticky +
-  // drag region + caption inset) activates. A sandboxed preload CAN silently
-  // fail to apply a DOM write under some Electron builds, which would leave the
-  // navbar non-sticky and undraggable. Re-assert the attribute from main on
-  // dom-ready (runs in the page's main world; the SPA never touches data-shell,
-  // so this is idempotent with the preload). Theme-sync + window.prism stay in
-  // the preload — only this one load-bearing attribute is double-set.
+  // data-shell drives the navbar's gated CSS (sticky + drag region). It's set
+  // here, NOT in the preload: the preload runs at document-start when <html> can
+  // still be null, so a DOM write there is unreliable (and would risk aborting
+  // the preload before it exposes window.prism). dom-ready runs once <html>
+  // exists, in the page's main world; the SPA never touches data-shell, so this
+  // is the single, reliable owner. window.prism is owned by the preload.
   mainWindow.webContents.on("dom-ready", () => {
     const platform = JSON.stringify(process.platform);
     mainWindow?.webContents
