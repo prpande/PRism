@@ -931,7 +931,9 @@ export interface Sidecar {
 
 export interface SidecarOptions {
   binaryPath: string;
-  dataDir: string;
+  /** Explicit dataDir override (tests). When null, --dataDir is omitted and the
+   *  sidecar self-resolves its default (shared with the browser-tab build). */
+  dataDir: string | null;
   parentPid: number;
   startTimeoutMs?: number;
 }
@@ -943,16 +945,23 @@ export interface SidecarOptions {
 export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
   const child: ChildProcess = spawn(
     opts.binaryPath,
-    ["--no-browser", "--dataDir", opts.dataDir],
+    ["--no-browser", ...(opts.dataDir ? ["--dataDir", opts.dataDir] : [])],
     {
       // Pass a MINIMAL explicit env — do NOT spread process.env. Spreading would
       // hand the sidecar every ambient variable (incl. any CI secrets like
-      // GITHUB_TOKEN inherited by the Electron process). The sidecar needs only
-      // PATH + a temp dir + the two sidecar signals.
+      // GITHUB_TOKEN inherited by the Electron process). Retain only what the
+      // backend needs: PATH, a temp dir, and the vars DataDirectoryResolver reads
+      // to compute LocalApplicationData when --dataDir is omitted (LOCALAPPDATA/
+      // USERPROFILE on Windows; HOME on Unix), plus the two sidecar signals.
       env: {
         PATH: process.env.PATH ?? "",
         ...(process.platform === "win32"
-          ? { SystemRoot: process.env.SystemRoot ?? "", TEMP: process.env.TEMP ?? "", USERPROFILE: process.env.USERPROFILE ?? "" }
+          ? {
+              SystemRoot: process.env.SystemRoot ?? "",
+              TEMP: process.env.TEMP ?? "",
+              USERPROFILE: process.env.USERPROFILE ?? "",
+              LOCALAPPDATA: process.env.LOCALAPPDATA ?? "",
+            }
           : { HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? "" }),
         PRISM_SIDECAR: "1",
         PRISM_PARENT_PID: String(opts.parentPid),
@@ -1039,7 +1048,6 @@ git commit -m "feat(desktop): add sidecar spawn + port handshake + graceful tear
 ```typescript
 import { app, BrowserWindow, dialog } from "electron";
 import * as path from "node:path";
-import * as os from "node:os";
 import { startSidecar, Sidecar } from "./sidecar";
 
 let sidecar: Sidecar | null = null;
@@ -1079,9 +1087,13 @@ function resolveBinaryPath(): string {
   return path.join(process.resourcesPath, "sidecar", exe);
 }
 
-function resolveDataDir(): string {
-  // Mirror the backend's default user-profile location; overridable for dev.
-  return process.env.PRISM_DATA_DIR ?? path.join(os.homedir(), ".prism");
+function resolveDataDir(): string | null {
+  // Only override when a test/dev value is set (PRISM_DATA_DIR, used by the e2e to
+  // isolate to a temp dir). Otherwise return null and DON'T pass --dataDir, so the
+  // sidecar self-resolves the SAME LocalApplicationData/PRism path the browser-tab
+  // build uses — a tester's PAT + drafts carry across both builds instead of the
+  // desktop build silently starting from an empty, different directory.
+  return process.env.PRISM_DATA_DIR ?? null;
 }
 
 async function bootstrap(): Promise<void> {
@@ -1497,8 +1509,15 @@ build instead.
 
 ## Where is my data?
 
-PRism stores state and logs under your home directory (`~/.prism` by default). Logs are in
-`~/.prism/logs/`. To recover a lost draft, see the identity-change events there.
+PRism stores state and logs in your OS application-data folder — the **same location the
+browser-tab build uses**, so your PAT and drafts carry across both:
+
+- **Windows:** `%LOCALAPPDATA%\PRism` (e.g. `C:\Users\<you>\AppData\Local\PRism`)
+- **macOS / Linux:** `~/.local/share/PRism`
+
+Logs are in the `logs/` subfolder. The exact path is also shown inside the app under
+**Settings → Connection → Copy logs path**. To recover a lost draft, see the
+identity-change events in the logs.
 ```
 
 - [ ] **Step 2: Commit**
