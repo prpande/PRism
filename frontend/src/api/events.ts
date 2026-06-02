@@ -29,6 +29,8 @@ export type PrUpdatedEvent = {
   newHeadSha?: string;
   headShaChanged: boolean;
   commentCountDelta: number;
+  isMerged: boolean;
+  isClosed: boolean;
 };
 
 // Backend payload shape: SseEventProjection.IdentityChangedWire (Type: "identity-change").

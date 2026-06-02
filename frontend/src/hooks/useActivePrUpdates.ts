@@ -7,10 +7,18 @@ export interface ActivePrUpdates {
   hasUpdate: boolean;
   headShaChanged: boolean;
   commentCountDelta: number;
+  isMerged: boolean;
+  isClosed: boolean;
   clear(): void;
 }
 
-const initial = { hasUpdate: false, headShaChanged: false, commentCountDelta: 0 };
+const initial = {
+  hasUpdate: false,
+  headShaChanged: false,
+  commentCountDelta: 0,
+  isMerged: false,
+  isClosed: false,
+};
 
 export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
   const stream = useEventSource();
@@ -32,6 +40,9 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
         hasUpdate: true,
         headShaChanged: s.headShaChanged || event.headShaChanged,
         commentCountDelta: s.commentCountDelta + event.commentCountDelta,
+        // Latch: once true, stay true — a PR doesn't un-merge.
+        isMerged: s.isMerged || event.isMerged,
+        isClosed: s.isClosed || event.isClosed,
       }));
     });
 

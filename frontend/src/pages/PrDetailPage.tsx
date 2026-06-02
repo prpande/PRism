@@ -1,6 +1,7 @@
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PrHeader } from '../components/PrDetail/PrHeader';
 import { BannerRefresh } from '../components/PrDetail/BannerRefresh';
+import { BannerTransition } from '../components/PrDetail/BannerTransition';
 import { CrossTabPresenceBanner } from '../components/PrDetail/CrossTabPresenceBanner';
 import { UnresolvedPanel } from '../components/PrDetail/Reconciliation/UnresolvedPanel';
 import type { PrTabId } from '../components/PrDetail/PrSubTabStrip';
@@ -156,6 +157,19 @@ function PrDetailPageInner({
     (draftSession.session?.draftComments.length ?? 0) +
     (draftSession.session?.draftReplies.length ?? 0);
 
+  // Live merge/close transition (spec § 5.2.3): the SSE event reports the PR is
+  // now done, but the loaded detail still shows it open (the user hasn't reloaded).
+  // That gap IS the "transitioned while viewing" signal. After Reload, data.pr flips
+  // done and this self-clears (read-only view takes over). A PR opened already-done,
+  // or a comment event on an already-closed PR, won't fire (data.pr is already done).
+  const detailIsDone = data?.pr.isMerged === true || data?.pr.isClosed === true;
+  const transitionState: 'merged' | 'closed' | null =
+    !detailIsDone && updates.isMerged
+      ? 'merged'
+      : !detailIsDone && updates.isClosed
+        ? 'closed'
+        : null;
+
   // Mount the banner at the top of the layout, above UnresolvedPanel per
   // spec § 5.7a. The read-only mode is a page-level class for future
   // visual dimming; per-leaf `disabled` / `aria-readonly` on the
@@ -206,14 +220,18 @@ function PrDetailPageInner({
           </button>
         </div>
       )}
-      <BannerRefresh
-        hasUpdate={updates.hasUpdate}
-        headShaChanged={updates.headShaChanged}
-        commentCountDelta={updates.commentCountDelta}
-        currentIterationNumber={currentIter}
-        onReload={handleReload}
-        onDismiss={updates.clear}
-      />
+      {transitionState ? (
+        <BannerTransition state={transitionState} onReload={handleReload} />
+      ) : (
+        <BannerRefresh
+          hasUpdate={updates.hasUpdate}
+          headShaChanged={updates.headShaChanged}
+          commentCountDelta={updates.commentCountDelta}
+          currentIterationNumber={currentIter}
+          onReload={handleReload}
+          onDismiss={updates.clear}
+        />
+      )}
       <UnresolvedPanel
         prRef={ref}
         session={draftSession.session}
