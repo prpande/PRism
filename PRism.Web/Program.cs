@@ -37,8 +37,14 @@ if (Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1"
       "injection only makes sense against the real GitHub backend.");
 }
 
-// Resolve dataDir from configuration (test sets it via UseSetting; production uses SpecialFolder).
-var dataDir = builder.Configuration["DataDir"] ?? DataDirectoryResolver.Resolve();
+// Resolve dataDir. Parse --dataDir directly from argv FIRST so the override survives
+// regardless of flag order: the .NET command-line configuration provider treats the
+// sidecar's bare "--no-browser" as a key that swallows the following "--dataDir" token,
+// leaving Configuration["DataDir"] null (see CommandLineOptions). Fall back to
+// configuration (tests set DataDir via UseSetting) then the OS-resolved default.
+var dataDir = CommandLineOptions.GetValue(args, "--dataDir")
+    ?? builder.Configuration["DataDir"]
+    ?? DataDirectoryResolver.Resolve();
 
 // Register LogsPathInfo BEFORE AddPRismFileLogger so the dual derivation lives in one
 // place (Program.cs) and the GET /api/preferences handler can read it without taking
