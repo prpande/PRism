@@ -6,7 +6,6 @@ import type { DraftCommentDto, ReviewSessionDto } from '../src/api/types';
 const emptySession: ReviewSessionDto = {
   draftVerdict: null,
   draftVerdictStatus: 'draft',
-  draftSummaryMarkdown: null,
   draftComments: [],
   draftReplies: [],
   iterationOverrides: [],
@@ -26,6 +25,7 @@ function comment(overrides: Partial<DraftCommentDto>): DraftCommentDto {
     bodyMarkdown: 'b',
     status: 'draft',
     isOverriddenStale: false,
+    postedCommentId: null,
     ...overrides,
   };
 }
@@ -137,11 +137,13 @@ describe('SubmitButton enable rules (spec § 9)', () => {
     expect(btn()).toBeDisabled();
   });
 
-  it('(e) verdict Comment + a summary → enabled', () => {
+  it('(e) verdict Comment + a PR-root summary draft → enabled', () => {
     const session: ReviewSessionDto = {
       ...emptySession,
       draftVerdict: 'comment',
-      draftSummaryMarkdown: 'LGTM',
+      // The review summary is now the PR-root DraftComment (filePath/lineNumber null);
+      // its presence in draftComments satisfies the Comment-verdict content rule.
+      draftComments: [comment({ id: 'root', filePath: null, lineNumber: null, bodyMarkdown: 'LGTM' })],
     };
     render(
       <SubmitButton

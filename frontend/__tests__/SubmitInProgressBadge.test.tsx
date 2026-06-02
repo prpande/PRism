@@ -6,7 +6,6 @@ import type { ReviewSessionDto } from '../src/api/types';
 const baseSession: ReviewSessionDto = {
   draftVerdict: null,
   draftVerdictStatus: 'draft',
-  draftSummaryMarkdown: null,
   draftComments: [],
   draftReplies: [],
   iterationOverrides: [],

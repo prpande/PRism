@@ -73,7 +73,6 @@ function session(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],

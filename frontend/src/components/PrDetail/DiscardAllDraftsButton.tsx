@@ -16,13 +16,17 @@ interface Props {
   onDiscard(): void;
 }
 
-function hasDiscardableContent(s: ReviewSessionDto): boolean {
+// The PR-root review summary is now the PR-root DraftComment (filePath/lineNumber
+// both null); its body lives in draftComments. Surfaced separately so the
+// confirmation modal can name "summary" distinctly from inline threads.
+function prRootSummaryBody(s: ReviewSessionDto): string {
   return (
-    s.draftComments.length > 0 ||
-    s.draftReplies.length > 0 ||
-    (!!s.draftSummaryMarkdown && s.draftSummaryMarkdown.trim() !== '') ||
-    !!s.pendingReviewId
-  );
+    s.draftComments.find((d) => d.filePath === null && d.lineNumber === null)?.bodyMarkdown ?? ''
+  ).trim();
+}
+
+function hasDiscardableContent(s: ReviewSessionDto): boolean {
+  return s.draftComments.length > 0 || s.draftReplies.length > 0 || !!s.pendingReviewId;
 }
 
 export function DiscardAllDraftsButton({ prState, session, onDiscard }: Props) {
@@ -39,9 +43,15 @@ export function DiscardAllDraftsButton({ prState, session, onDiscard }: Props) {
       <DiscardAllConfirmationModal
         open={confirmOpen}
         prState={prState}
-        threadCount={session.draftComments.length}
+        // Inline threads only — the PR-root draft (filePath/lineNumber null) is the
+        // review summary and is named separately via hasSummary, so exclude it here
+        // to avoid double-counting it as a "draft comment".
+        threadCount={
+          session.draftComments.filter((d) => !(d.filePath === null && d.lineNumber === null))
+            .length
+        }
         replyCount={session.draftReplies.length}
-        hasSummary={!!session.draftSummaryMarkdown && session.draftSummaryMarkdown.trim() !== ''}
+        hasSummary={prRootSummaryBody(session).length > 0}
         hasPendingReview={!!session.pendingReviewId}
         onConfirm={() => {
           setConfirmOpen(false);

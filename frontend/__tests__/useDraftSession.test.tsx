@@ -15,7 +15,6 @@ function emptySession(): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -36,6 +35,7 @@ function comment(id: string, body: string, opts: Partial<DraftCommentDto> = {}):
     bodyMarkdown: body,
     status: 'draft',
     isOverriddenStale: false,
+    postedCommentId: null,
     ...opts,
   };
 }

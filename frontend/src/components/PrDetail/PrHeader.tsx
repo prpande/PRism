@@ -45,7 +45,6 @@ export const CANNED_PRESUBMIT_VALIDATOR_RESULTS: ValidatorResult[] = [
 const EMPTY_SESSION: ReviewSessionDto = {
   draftVerdict: null,
   draftVerdictStatus: 'draft',
-  draftSummaryMarkdown: null,
   draftComments: [],
   draftReplies: [],
   iterationOverrides: [],
