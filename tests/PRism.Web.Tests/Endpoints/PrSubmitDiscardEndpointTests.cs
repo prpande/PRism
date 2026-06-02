@@ -24,6 +24,7 @@ namespace PRism.Web.Tests.Endpoints;
 // T11 — POST /api/pr/{owner}/{repo}/{number}/submit/discard
 // Cancels an in-flight submit pipeline (if any) and clears the user's own pending-review
 // stamps so they can start fresh.
+[Collection("SubmitDiscardSerial")]
 public class PrSubmitDiscardEndpointTests
 {
     private static readonly JsonSerializerOptions CamelCase = new(JsonSerializerDefaults.Web);
@@ -140,6 +141,32 @@ public class PrSubmitDiscardEndpointTests
 
         var loaded = await ctx.LoadSessionAsync("o", "r", 104);
         loaded!.PendingReviewId.Should().Be("PRR_existing", "stamps must NOT be cleared on GitHub find error");
+    }
+
+    // ── non-HttpRequestException from FindOwn → 502 "github-network-error", stamps preserved ──
+
+    [Fact]
+    public async Task Discard_non_http_exception_on_find_own_returns_502_github_network_error_and_leaves_stamps()
+    {
+        using var ctx = DiscardTestContext.Create();
+        var session = SubmitEndpointsTestContext.ValidSession() with
+        {
+            PendingReviewId = "PRR_existing",
+            PendingReviewCommitOid = "sha1",
+        };
+        await ctx.SeedSessionAsync("o", "r", 105, session);
+
+        // Inject a non-HTTP exception (e.g. JSON deserialization failure in the GitHub SDK).
+        ctx.Submitter.FindOwnException = new InvalidOperationException("Simulated non-HTTP GitHub SDK failure");
+
+        var resp = await ctx.Discard(105);
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadGateway);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("github-network-error");
+
+        var loaded = await ctx.LoadSessionAsync("o", "r", 105);
+        loaded!.PendingReviewId.Should().Be("PRR_existing", "stamps must NOT be cleared on non-HTTP GitHub exception");
     }
 
     // ── unauthorized → 401 ───────────────────────────────────────────────────

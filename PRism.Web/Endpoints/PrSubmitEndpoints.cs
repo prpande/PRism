@@ -14,6 +14,8 @@ namespace PRism.Web.Endpoints;
 
 // Exposed as internal so integration tests can inject a shorter timeout to make the 504 path
 // testable without a real 30-second wait.
+// NOTE: This is a test-only timing seam. PrSubmitDiscardEndpointTests mutates LockAcquireTimeout
+// and is placed in [Collection("SubmitDiscardSerial")] to ensure no other test class races the mutation.
 internal static class DiscardTimeouts
 {
     // Discard waits up to this long for the cancelled pipeline to release the submit lock.
@@ -47,6 +49,10 @@ internal static class PrSubmitEndpoints
     private static readonly Action<ILogger, string, Exception?> s_foreignDiscardDeleteFailed =
         LoggerMessage.Define<string>(LogLevel.Warning, new EventId(1, "ForeignPendingReviewDiscardDeleteFailed"),
             "deletePullRequestReview failed for the foreign-pending-review discard on {SessionKey} (returning 502); the pending review remains and will be re-detected on the next submit");
+
+    private static readonly Action<ILogger, string, Exception?> s_ownDiscardGitHubFailed =
+        LoggerMessage.Define<string>(LogLevel.Warning, new EventId(5, "OwnPendingReviewDiscardGitHubFailed"),
+            "POST /submit/discard failed with a GitHub network error for {SessionKey}");
 
     // Logged at Warning because TabStamps[callerTabId] missing is a server-detectable FE wire-up
     // gap — the caller's tab never sent /mark-viewed after loading PR detail. Without this log,
@@ -292,6 +298,7 @@ internal static class PrSubmitEndpoints
         IReviewEventBus bus,
         SubmitLockRegistry lockRegistry,
         SubmitCancellationRegistry cancellationRegistry,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
         var prRef = new PrReference(owner, repo, number);
@@ -334,6 +341,13 @@ internal static class PrSubmitEndpoints
             {
                 return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
             }
+#pragma warning disable CA1031  // catch-all so a rare GitHub SDK exception (non-HTTP) still surfaces a 502 instead of a bare 500
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                s_ownDiscardGitHubFailed(loggerFactory.CreateLogger(LoggerCategory), sessionKey, ex);
+                return Results.Json(new SubmitErrorDto("github-network-error", "Network failure contacting GitHub."), statusCode: StatusCodes.Status502BadGateway);
+            }
+#pragma warning restore CA1031
 
             // If a pending review exists, delete it. 404 means it's already gone — treat as success.
             if (snapshot is not null)
@@ -356,6 +370,13 @@ internal static class PrSubmitEndpoints
                     // review still exists on GitHub, so a re-detect on the next submit would catch it.
                     return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
                 }
+#pragma warning disable CA1031  // catch-all so a rare GitHub SDK exception (non-HTTP) still surfaces a 502 instead of a bare 500
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    s_ownDiscardGitHubFailed(loggerFactory.CreateLogger(LoggerCategory), sessionKey, ex);
+                    return Results.Json(new SubmitErrorDto("github-network-error", "Network failure contacting GitHub."), statusCode: StatusCodes.Status502BadGateway);
+                }
+#pragma warning restore CA1031
             }
 
             // Clear the session's pending-review stamps (PendingReviewId / ThreadId / ReplyCommentId).
