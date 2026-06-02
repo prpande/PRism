@@ -561,7 +561,9 @@ git commit -m "feat(security): add Host-header loopback check (DNS-rebinding def
 - Modify: `PRism.Web/Program.cs` (production-only block, lines ~117–142, and middleware registration ~150)
 - Test: `tests/PRism.Web.Tests/Hosting/SidecarLaunchContractTests.cs`
 
-- [ ] **Step 1: Write the failing test (pin the `--dataDir` → `DataDir` config contract + health auth-exemption)**
+- [ ] **Step 1: Write the failing test (pin the `/api/health` auth-exemption + port-report contract)**
+
+> Scope note: this test pins the **health-liveness contract the shell's launch gate depends on** (auth-exempt + carries the bound port). The `--dataDir` → `DataDir` config binding is exercised separately by the D1 e2e, which sets `PRISM_DATA_DIR` (→ `DataDir`) to a temp dir and asserts the sidecar's artifacts land there — so no dedicated unit test for the dataDir binding is needed here (see § 4.1).
 
 ```csharp
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -611,6 +613,7 @@ var sidecar = SidecarMode.Detect(Environment.GetEnvironmentVariable);
 if (sidecar.Enabled && sidecar.ParentPid is null)
 {
     Console.Error.WriteLine("PRISM_SIDECAR=1 requires a valid PRISM_PARENT_PID. Refusing to start.");
+    Environment.Exit(1); // non-zero: signal misconfiguration explicitly, not a clean exit
     return;
 }
 
@@ -987,23 +990,33 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
 
 function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<number> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Timed out waiting for backend port.")), timeoutMs);
     let buf = "";
-    child.stdout?.on("data", (chunk: Buffer) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.stdout?.off("data", onData);
+      child.off("exit", onExit);
+    };
+    const onData = (chunk: Buffer) => {
       buf += chunk.toString("utf8");
       for (const line of buf.split(/\r?\n/)) {
         const port = parsePortFromLine(line);
         if (port !== null) {
-          clearTimeout(timer);
+          cleanup();
           resolve(port);
           return;
         }
       }
-    });
-    child.on("exit", (code) => {
-      clearTimeout(timer);
+    };
+    const onExit = (code: number | null) => {
+      cleanup();
       reject(new Error(`Backend exited before reporting a port (code ${code}).`));
-    });
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for backend port."));
+    }, timeoutMs);
+    child.stdout?.on("data", onData);
+    child.on("exit", onExit);
   });
 }
 
@@ -1309,6 +1322,8 @@ jobs:
 ```
 
 > Action SHAs match the repo's existing pins (`publish.yml`); bump via Dependabot. This fires only on `workflow_dispatch` with a `v0.2.*` tag; the existing `publish.yml` still owns `v0.1.*`, preserving the browser-tab fallback artifact.
+>
+> Note: this workflow **packages only** — it does not run the D1 Electron e2e (which is local/manual per this plan). If a future revision adds `npx playwright test` to CI, it must first run `npx playwright install chromium` (electron-builder does not install Playwright's browsers), and the runner must publish a sidecar binary into `desktop/sidecar/` and set `PRISM_SIDECAR_BINARY` for the e2e — same prerequisites as the local D1 run.
 
 - [ ] **Step 2: Validate workflow YAML**
 
@@ -1418,7 +1433,9 @@ test("clean quit leaves no orphaned sidecar process", async () => {
   // ApplicationStopping, so LockfileHandle.Dispose never deletes state.json.lock.
   // The lockfile may legitimately persist after an abrupt kill (the next launch's
   // IsAlive PID+binary takeover handles it); the orphan tell is a live process.
-  const exeName = process.platform === "win32" ? "PRism-win-x64.exe" : "PRism-osx-arm64";
+  // Derive the process name from the actual launched binary (not a hardcoded name),
+  // so a future rename / Linux artifact doesn't make this pass vacuously.
+  const exeName = path.basename(SIDECAR);
   const deadline = Date.now() + 5000;
   while (sidecarProcessRunning(exeName) && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 100));
@@ -1494,6 +1511,8 @@ blocked, your IT policy is blocking unsigned apps — ask the maintainer for the
 build instead.
 
 ## macOS (Apple Silicon)
+
+> Intel (x86) Macs are **not supported** in this preview build — it's an Apple Silicon (arm64) binary only. On an Intel Mac, ask the maintainer for the browser-tab build instead.
 
 1. Download `PRism-<version>-arm64.dmg`, open it, drag PRism to Applications.
 2. First launch: macOS says *"Apple could not verify 'PRism' is free of malware."*
