@@ -21,6 +21,8 @@ const basePr: PrInboxItem = {
   ci: 'none',
   lastViewedHeadSha: null,
   lastSeenCommentId: null,
+  mergedAt: null,
+  closedAt: null,
 };
 
 function renderRow(

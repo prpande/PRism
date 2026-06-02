@@ -118,6 +118,8 @@ const sampleData: InboxResponse = {
           ci: 'none' as const,
           lastViewedHeadSha: null,
           lastSeenCommentId: null,
+          mergedAt: null,
+          closedAt: null,
         },
       ],
     },

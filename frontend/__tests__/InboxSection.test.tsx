@@ -21,6 +21,8 @@ const examplePr: PrInboxItem = {
   ci: 'none',
   lastViewedHeadSha: null,
   lastSeenCommentId: null,
+  mergedAt: null,
+  closedAt: null,
 };
 
 const emptySection: InboxSectionDto = {

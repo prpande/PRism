@@ -25,6 +25,7 @@ function mockPrefs(density: 'comfortable' | 'compact' = 'comfortable'): Preferen
         'authored-by-me': true,
         mentioned: true,
         'ci-failing': true,
+        'recently-closed': true,
       },
     },
     github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
