@@ -262,6 +262,19 @@ internal static class PrDraftEndpoints
             case "newPrRootDraftComment":
                 {
                     if (payload is not NewPrRootDraftCommentPayload n) return new PatchOutcome.PatchShapeInvalid();
+                    var existing = session.DraftComments.FirstOrDefault(d => d.FilePath is null && d.LineNumber is null);
+                    if (existing is not null)
+                    {
+                        // Upsert: update body in place, preserving Id, Status, PostedCommentId,
+                        // PostedBodySnapshot, ThreadId, and all other fields.
+                        var updated = existing with { BodyMarkdown = n.BodyMarkdown };
+                        var upsertList = session.DraftComments.Select(d => d.Id == existing.Id ? updated : d).ToList();
+                        return new PatchOutcome.Applied(
+                            session with { DraftComments = upsertList },
+                            AssignedId: existing.Id, EventDraftId: existing.Id,
+                            PublishSaved: true, PublishDiscarded: false,
+                            FieldsTouched: FieldsTouchedDraftComments);
+                    }
                     var id = Guid.NewGuid().ToString();
                     var draft = new DraftComment(
                         Id: id,
@@ -272,7 +285,9 @@ internal static class PrDraftEndpoints
                     var list = new List<DraftComment>(session.DraftComments) { draft };
                     return new PatchOutcome.Applied(
                         session with { DraftComments = list },
-                        id, id, true, false, FieldsTouchedDraftComments);
+                        AssignedId: id, EventDraftId: id,
+                        PublishSaved: true, PublishDiscarded: false,
+                        FieldsTouched: FieldsTouchedDraftComments);
                 }
 
             case "updateDraftComment":

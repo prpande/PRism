@@ -328,6 +328,22 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    [Fact]
+    public async Task NewPrRootDraftComment_when_existing_present_updates_in_place()
+    {
+        var client = ClientWithTab();
+        var first = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft",
+            SinglePatch(newRoot: new NewPrRootDraftCommentPayload("first body")));
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        var second = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft",
+            SinglePatch(newRoot: new NewPrRootDraftCommentPayload("second body")));
+        second.StatusCode.Should().Be(HttpStatusCode.OK);
+        var getResp = await client.GetAsync(new Uri("/api/pr/acme/api/123/draft", UriKind.Relative));
+        var session = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
+        session!.DraftComments.Should().ContainSingle(d => d.FilePath == null);
+        session.DraftComments.Single(d => d.FilePath == null).BodyMarkdown.Should().Be("second body");
+    }
+
     private sealed class FakeCache : IActivePrCache
     {
         private readonly bool _isSubscribed;
