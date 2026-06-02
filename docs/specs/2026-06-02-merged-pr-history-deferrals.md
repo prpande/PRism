@@ -67,6 +67,14 @@ The three PRs in this slice: **PR1** (#103 — backend `recently-closed` inbox s
 
 ---
 
+### [Defer] Transition latch cleared permanently on a failed Reload
+
+- **Source:** claude[bot] PR #109 review, Finding 3.
+- **Reason:** `handleReload` (`PrDetailPage.tsx`) calls `updates.clear()` (which resets the latched `isMerged`/`isClosed`) and then `reload()`. If the user clicks `BannerTransition`'s "Reload to read-only view" but the reload fails (e.g. network error), the latch is already cleared and the loaded detail still shows the PR as open (`data.pr.isMerged = false`), so the banner never returns — the user is left on a stale "open" view with no transition indicator. Low risk: reload failure is uncommon, the `useReconcile` error banner surfaces for a failed reconcile leg, and this is consistent with the deferred real-flow mid-view-merge e2e (which is where the recovery path would be exercised end-to-end). A fix would defer the `clear()` until reload resolves, or re-show the banner on reload failure — but that couples to the shared `handleReload` used by `BannerRefresh` too.
+- **Revisit when:** the real-flow mid-view-merge e2e is implemented, OR dogfooding shows a failed post-transition reload stranding users on a stale open view.
+
+---
+
 ## Implementation-time decisions (PR3 deviations from the plan)
 
 ### [Decision] Task 15 expanded from FE-only to cross-tier (user-approved, "full fidelity")
