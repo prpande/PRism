@@ -50,6 +50,7 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
             _attachThreadCallCount = 0;
             _attachReplyCallCount = 0;
             _deleteThreadCallCount = 0;
+            IssueCommentsCreated.Clear();
         }
     }
 
@@ -197,6 +198,22 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
             return Task.CompletedTask;
         }
     }
+
+    public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (TryTakeFailure(nameof(CreateIssueCommentAsync), afterEffectWanted: false, out var pre)) throw pre;
+            var id = (long)_nextId++;
+            IssueCommentsCreated.Add((reference, bodyMarkdown ?? ""));
+            if (TryTakeFailure(nameof(CreateIssueCommentAsync), afterEffectWanted: true, out var post)) throw post;
+            return Task.FromResult(new CreatedIssueCommentResult(id, DateTimeOffset.UtcNow));
+        }
+    }
+
+    public List<(PrReference Pr, string Body)> IssueCommentsCreated { get; } = new();
 
     public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct)
     {

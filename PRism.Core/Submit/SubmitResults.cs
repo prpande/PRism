@@ -41,3 +41,7 @@ public sealed record PendingReviewThreadSnapshot(
 public sealed record PendingReviewCommentSnapshot(
     string CommentId,
     string BodyMarkdown);
+
+// Returned by CreateIssueCommentAsync — the REST database ID of the freshly created issue comment
+// (distinct from a GraphQL node ID) and the server-assigned creation timestamp.
+public sealed record CreatedIssueCommentResult(long Id, DateTimeOffset CreatedAt);

@@ -82,4 +82,6 @@ public sealed class PrDetailFakeReviewService : IReviewAuth, IPrDiscovery, IPrRe
     public Task DeletePendingReviewAsync(PrReference reference, string pendingReviewId, CancellationToken ct) => throw new NotImplementedException();
     public Task DeletePendingReviewThreadAsync(PrReference reference, string pullRequestReviewThreadId, CancellationToken ct) => throw new NotImplementedException();
     public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct) => throw new NotImplementedException();
+    public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
+        => throw new NotImplementedException("CreateIssueCommentAsync is not exercised by this fake.");
 }
