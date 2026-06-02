@@ -32,7 +32,8 @@ internal sealed record InboxSectionsDto(
     // `Mentioned` serializes as `mentioned` natively under the camelCase policy — no
     // [JsonPropertyName] needed (claude[bot] review on PR #69 caught the redundancy).
     bool Mentioned,
-    [property: JsonPropertyName("ci-failing")]       bool CiFailing);
+    [property: JsonPropertyName("ci-failing")]       bool CiFailing,
+    [property: JsonPropertyName("recently-closed")]  bool RecentlyClosed);
 
 internal sealed record GithubPreferencesDto(string Host, string ConfigPath, string LogsPath);
 
