@@ -40,6 +40,26 @@ public class ConfigStorePatchAsyncDottedPathTests
     }
 
     [Fact]
+    public async Task PatchAsync_RecentlyClosed_TogglesSection()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.sections.recently-closed"] = false },
+            CancellationToken.None);
+
+        store.Current.Inbox.Sections.RecentlyClosed.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Default_RecentlyClosed_IsTrue()
+    {
+        AppConfig.Default.Inbox.Sections.RecentlyClosed.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task PatchAsync_InboxSectionsKey_PersistsAcrossReload()
     {
         using var dir = new TempDataDir();
