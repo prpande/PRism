@@ -81,4 +81,30 @@ public class CommandLineOptionsTests
     {
         CommandLineOptions.GetValue(System.Array.Empty<string>(), "--dataDir").Should().BeNull();
     }
+
+    [Fact]
+    public void GetValue_returns_null_for_the_equals_form_with_an_empty_value()
+    {
+        // "--dataDir=" must fall through to the caller's fallback chain, not yield ""
+        // which would poison Path.Combine into relative paths.
+        var args = new[] { "--dataDir=" };
+
+        CommandLineOptions.GetValue(args, "--dataDir").Should().BeNull();
+    }
+
+    [Fact]
+    public void GetValue_returns_null_for_the_space_form_with_an_empty_value()
+    {
+        var args = new[] { "--dataDir", "" };
+
+        CommandLineOptions.GetValue(args, "--dataDir").Should().BeNull();
+    }
+
+    [Fact]
+    public void GetValue_returns_the_first_value_when_the_option_appears_twice()
+    {
+        var args = new[] { "--dataDir", @"C:\first", "--dataDir", @"C:\second" };
+
+        CommandLineOptions.GetValue(args, "--dataDir").Should().Be(@"C:\first");
+    }
 }

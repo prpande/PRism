@@ -36,15 +36,21 @@ public static class CommandLineOptions
             // --name=value
             if (arg.StartsWith(equalsPrefix, StringComparison.OrdinalIgnoreCase))
             {
-                return arg[equalsPrefix.Length..];
+                var inlineValue = arg[equalsPrefix.Length..];
+                // "--name=" with nothing after the '=' is a missing value, not "" —
+                // return null so the caller's fallback chain (config, then OS resolver)
+                // runs instead of poisoning downstream Path.Combine calls with "".
+                return inlineValue.Length == 0 ? null : inlineValue;
             }
 
-            // --name value — but only when the following token is an actual value,
-            // not another flag. A trailing "--name" (no token after) or "--name --flag"
-            // is a missing value and yields null so the caller's fallback chain runs.
+            // --name value — but only when a real value token follows, not another
+            // flag. A trailing "--name" (no token after), "--name --flag", or an empty
+            // value token is a missing value and yields null so the caller's fallback
+            // chain runs. (A data directory never legitimately starts with '-', so
+            // treating a '-'-prefixed next token as a flag is safe here.)
             if (string.Equals(arg, optionName, StringComparison.OrdinalIgnoreCase))
             {
-                if (i + 1 < args.Count && !args[i + 1].StartsWith('-'))
+                if (i + 1 < args.Count && args[i + 1].Length > 0 && !args[i + 1].StartsWith('-'))
                 {
                     return args[i + 1];
                 }
