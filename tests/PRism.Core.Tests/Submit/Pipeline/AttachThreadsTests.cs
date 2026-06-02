@@ -1,4 +1,5 @@
 using PRism.Core.Contracts;
+using PRism.Core.State;
 using PRism.Core.Submit;
 using PRism.Core.Submit.Pipeline;
 using PRism.Core.Tests.Submit.Pipeline.Fakes;
@@ -109,5 +110,80 @@ public class AttachThreadsTests
         var retry = await pipeline.SubmitAsync(Ref, failed.NewSession, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
         Assert.IsType<SubmitOutcome.Success>(retry);
         Assert.Equal(1, fake.AttachThreadCallCount);  // exactly one AttachThreadAsync across both attempts.
+    }
+
+    // Task 7 — PR-root drafts (FilePath/LineNumber both null) must be silently filtered out of the
+    // inline-thread attach loop. The PR-root body already ships as review.body via ExtractPrRootBody
+    // (called in BeginPendingReviewAsync). The attach loop must not throw on the PR-root draft.
+    // Finalize is injected to fail so the pending review (and its SummaryBody) survive for inspection.
+    [Fact]
+    public async Task AttachThreads_filters_pr_root_drafts_silently()
+    {
+        var fake = new InMemoryReviewSubmitter();
+        fake.InjectFailure(nameof(IReviewSubmitter.FinalizePendingReviewAsync), new HttpRequestException("simulated"));
+        var inlineDraft = SessionFactory.Draft("d-inline");
+        var prRootDraft = new DraftComment(
+            Id: "d-root",
+            FilePath: null, LineNumber: null, Side: "pr",
+            AnchoredSha: null, AnchoredLineContent: null,
+            BodyMarkdown: "This is the PR-level comment.",
+            Status: DraftStatus.Draft, IsOverriddenStale: false);
+
+        var session = SessionFactory.With(headSha: "head1", drafts: new[] { inlineDraft, prRootDraft });
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, session);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        var outcome = await pipeline.SubmitAsync(Ref, session, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        // Finalize failed — outcome is Failed at Finalize, NOT at AttachThreads. The PR-root draft
+        // was silently skipped (not thrown on), so the pipeline reached Finalize.
+        var failed = Assert.IsType<SubmitOutcome.Failed>(outcome);
+        Assert.Equal(SubmitStep.Finalize, failed.FailedStep);
+        // Only the inline draft was attached as a thread — the PR-root draft was filtered out.
+        Assert.Equal(1, fake.AttachThreadCallCount);
+        // The PR-root body was forwarded as review.body via BeginPendingReviewAsync / ExtractPrRootBody.
+        // The pending review is still present because Finalize failed before removing it.
+        Assert.Equal("This is the PR-level comment.", fake.GetPending(Ref)!.SummaryBody);
+    }
+
+    // Task 7 — on success, ClearSubmittedSession must keep Posted PR-root drafts (their lifecycle
+    // belongs to the issue-comment path, not the review path) and drop unposted PR-root drafts
+    // (their body was consumed as review.body by the submit).
+    [Fact]
+    public async Task SuccessfulSubmit_removes_unposted_pr_root_draft_keeps_posted_one()
+    {
+        var fake = new InMemoryReviewSubmitter();
+        var inlineDraft = SessionFactory.Draft("d-inline");
+        var unpostedRoot = new DraftComment(
+            Id: "d-root-unposted",
+            FilePath: null, LineNumber: null, Side: "pr",
+            AnchoredSha: null, AnchoredLineContent: null,
+            BodyMarkdown: "Unposted PR comment.",
+            Status: DraftStatus.Draft, IsOverriddenStale: false,
+            PostedCommentId: null);
+        var postedRoot = new DraftComment(
+            Id: "d-root-posted",
+            FilePath: null, LineNumber: null, Side: "pr",
+            AnchoredSha: null, AnchoredLineContent: null,
+            BodyMarkdown: "Already posted PR comment.",
+            Status: DraftStatus.Draft, IsOverriddenStale: false,
+            PostedCommentId: 99L);
+
+        var session = SessionFactory.With(headSha: "head1", drafts: new[] { inlineDraft, unpostedRoot, postedRoot });
+        var store = new InMemoryAppStateStore();
+        store.SeedSession(SessionKey, session);
+        var pipeline = new SubmitPipeline(fake, store);
+
+        var outcome = await pipeline.SubmitAsync(Ref, session, SubmitEvent.Comment, "head1", NoopProgress.Instance, CancellationToken.None);
+
+        Assert.IsType<SubmitOutcome.Success>(outcome);
+
+        var persisted = store.Session(SessionKey)!;
+        // The inline draft and the unposted PR-root draft were consumed by submit → both removed.
+        // The posted PR-root draft survives because its lifecycle is independent of the review.
+        var surviving = Assert.Single(persisted.DraftComments);
+        Assert.Equal("d-root-posted", surviving.Id);
+        Assert.Equal(99L, surviving.PostedCommentId);
     }
 }

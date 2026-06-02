@@ -228,7 +228,10 @@ public sealed class SubmitPipeline
         PrReference reference, string sessionKey, string pendingReviewId, ReviewSessionState session,
         OwnPendingReviewSnapshot? detectionSnapshot, IProgress<SubmitProgressEvent> progress, CancellationToken ct)
     {
-        var drafts = session.DraftComments.Where(d => d.Status != DraftStatus.Stale).ToList();
+        var drafts = session.DraftComments
+            .Where(d => d.Status != DraftStatus.Stale)
+            .Where(d => d.FilePath is not null && d.LineNumber is not null)
+            .ToList();
         if (drafts.Count == 0) return session;
 
         var total = drafts.Count;
@@ -300,22 +303,13 @@ public sealed class SubmitPipeline
                 // Falls through to create.
             }
 
-            if (draft.FilePath is null || draft.LineNumber is null)
-            {
-                // PR-root drafts (no diff anchor) can't be attached as inline threads on a pending
-                // review — GitHub's addPullRequestReviewThread requires a path + line. Fail loud so
-                // the user discards/rewrites rather than silently dropping their comment. (Folding
-                // PR-root drafts into the review summary is deferred — see the deferrals sidecar.)
-                var msg = $"draft {draft.Id} has no diff anchor; PR-root comments aren't submittable as part of a pending review";
-                progress.Report(new SubmitProgressEvent(SubmitStep.AttachThreads, SubmitStepStatus.Failed, done, total, msg));
-                throw new SubmitFailedException(SubmitStep.AttachThreads, msg, current);
-            }
-
+            // FilePath and LineNumber are both non-null here: the Where filter at the top of this
+            // method already excluded PR-root drafts (FilePath is null || LineNumber is null).
             var request = new DraftThreadRequest(
                 DraftId: draft.Id,
                 BodyMarkdown: PipelineMarker.Inject(draft.BodyMarkdown, draft.Id),
-                FilePath: draft.FilePath,
-                LineNumber: draft.LineNumber.Value,
+                FilePath: draft.FilePath!,
+                LineNumber: draft.LineNumber!.Value,
                 Side: (draft.Side ?? "right").ToUpperInvariant());
 
             var result = await InvokeAsync(SubmitStep.AttachThreads, done, total, current, progress,
@@ -626,7 +620,13 @@ public sealed class SubmitPipeline
         {
             PendingReviewId = null,
             PendingReviewCommitOid = null,
-            DraftComments = new List<DraftComment>(),
+            // Keep stale-but-not-overridden drafts (existing semantics) AND Posted PR-root drafts
+            // (their lifecycle belongs to the issue-comment path; PostedCommentId is the discriminator).
+            // Unposted PR-root drafts are consumed by the submit (shipped as review.body) — drop them.
+            DraftComments = cur.DraftComments
+                .Where(d => (d.Status == DraftStatus.Stale && !d.IsOverriddenStale)
+                         || d.PostedCommentId is not null)
+                .ToList(),
             DraftReplies = new List<DraftReply>(),
             DraftVerdict = null,
             DraftVerdictStatus = DraftVerdictStatus.Draft,
