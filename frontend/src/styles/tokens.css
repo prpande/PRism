@@ -221,6 +221,30 @@
   --s-4: 14px;
 }
 
+/* Desktop shell layout (Electron only — data-shell set by the preload/main).
+   The navbar (+ open-PR tab strip) is pinned outside the scroll container, and
+   page content scrolls in [data-app-scroll]. This makes the window scrollbar
+   start BELOW the navbar instead of running the full height beside it. In the
+   browser these attributes carry no styling, so the document scrolls as before. */
+[data-shell="desktop"] [data-app-shell] {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* Navbar + PR tab strip are rigid — never shrink. Without this, once the inbox
+   content's flex-basis balloons, the column distributes the overflow across ALL
+   children and squeezes the navbar a few px (it looked right only on the empty
+   loading screen). The scroll region below re-enables shrink and absorbs it. */
+[data-shell="desktop"] [data-app-shell] > * {
+  flex-shrink: 0;
+}
+[data-shell="desktop"] [data-app-scroll] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* ======================================================================
    Base
    ====================================================================== */

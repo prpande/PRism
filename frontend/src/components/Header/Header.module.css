@@ -40,3 +40,60 @@
   opacity: 0.7;
   cursor: not-allowed;
 }
+
+/* ----------------------------------------------------------------------------
+   Desktop shell (Electron) only — frameless custom title bar.
+
+   Every rule below is gated on :global([data-shell='desktop']), an attribute set
+   ONLY by the Electron main process (desktop/src/main.ts, injected on dom-ready —
+   not the preload, which avoids DOM writes at document-start). A plain browser
+   tab is not Electron, so the attribute is never present and none of this applies
+   — the browser navbar renders exactly as it did before. These rules are inert
+   shipped CSS in the web build.
+   -------------------------------------------------------------------------- */
+
+/* The navbar IS the title bar. It's pinned at the top of [data-app-shell],
+   outside the scroll region, so it never scrolls away; sticky is a harmless
+   fallback if the shell layout ever doesn't apply, and also establishes the
+   stacking context for the elevation shadow. Gated to desktop so the browser
+   navbar is unchanged. */
+:global([data-shell='desktop']) .header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  /* Make the whole navbar the OS drag handle so the window moves by dragging it. */
+  -webkit-app-region: drag;
+  /* Prominence: a faint wash of the user's accent over the elevated surface, plus
+     a soft drop shadow, so the navbar reads as the app's top bar (and subtly
+     picks up the chosen accent — indigo/amber/teal) rather than blending in. */
+  background: color-mix(in oklch, var(--accent) 12%, var(--surface-2));
+  box-shadow: var(--shadow-2);
+  /* Roomy-but-not-airy AND density-independent: fixed height/padding/gap (not the
+     --header-h / --s-3 / --s-4 tokens the comfortable⇄compact toggle retunes), so
+     changing the layout density never shrinks or tightens the navbar. */
+  height: 58px;
+  padding: 0 22px;
+  gap: 16px;
+}
+
+/* Roomier, density-independent tab + search spacing (base uses --s-3, which
+   compact shrinks). .tab also covers the active tab (it composes .tab). */
+:global([data-shell='desktop']) .tabs {
+  gap: 8px;
+}
+:global([data-shell='desktop']) .tab {
+  padding: 8px 14px;
+}
+:global([data-shell='desktop']) .search {
+  height: 36px;
+}
+
+/* Interactive children must stay clickable — a drag region swallows clicks.
+   Element selectors (not classes) so this reaches children rendered by sibling
+   CSS-module files (HeaderControls' buttons, etc.) without importing their
+   hashed names. */
+:global([data-shell='desktop'])
+  .header
+  :where(a, button, input, select, textarea, [role='button'], [tabindex]) {
+  -webkit-app-region: no-drag;
+}

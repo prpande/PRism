@@ -330,6 +330,16 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
       body: JSON.stringify(sampleInbox),
     }),
   );
+  // SettingsPage > AuthSection consumes GET /api/submit/in-flight (via
+  // useSubmitInFlight). Mock it so /settings renders without falling through to
+  // the dev server.
+  await page.route('**/api/submit/in-flight', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ inFlight: false, prRef: null }),
+    }),
+  );
 
   await page.goto('/');
   await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
@@ -338,17 +348,23 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
   // (InboxPage renders {showActivityRail && <ActivityRail />}).
   await expect(page.getByRole('complementary', { name: /activity/i })).not.toBeAttached();
 
-  // AiPreviewToggle aria-label is "AI preview off" when off, "AI preview on" when on.
-  const aiToggle = page.getByRole('button', { name: /ai preview/i });
+  // The navbar quick-toggle was removed; AI preview now lives only on the
+  // Settings page (AppearanceSection's `<input role="switch">`). Flip it there,
+  // then re-navigate to "/". A fresh navigation remounts InboxPage so
+  // usePreferences + useCapabilities refetch and see aiPreview=true AND
+  // inboxRanking=true from the now-mutated mock state — this replaces the old
+  // window.dispatchEvent(new Event('focus')) trick.
+  await page.goto('/settings');
+  const aiToggle = page.getByRole('switch', { name: /ai preview/i });
+  await aiToggle.waitFor({ timeout: 30_000 });
+  const toggleResponse = page.waitForResponse(
+    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
+  );
   await aiToggle.click();
+  await toggleResponse;
 
-  // Each usePreferences() call in the component tree is an independent hook instance.
-  // HeaderControls' instance updates immediately from the POST response; InboxPage's
-  // instance only updates on the next window 'focus' event (see usePreferences.ts).
-  // useCapabilities also subscribes to focus — dispatch triggers both refetches so
-  // InboxPage sees aiPreview: true AND inboxRanking: true simultaneously.
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-
+  await page.goto('/');
+  await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('complementary', { name: /activity/i })).toBeVisible({
     timeout: 10_000,
   });
