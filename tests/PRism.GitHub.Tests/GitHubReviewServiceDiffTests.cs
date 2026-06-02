@@ -112,8 +112,11 @@ public class GitHubReviewServiceDiffTests
     [Fact]
     public async Task GetDiffAsync_returns_range_unreachable_on_garbage_collected_sha()
     {
-        // GC'd SHA → compare endpoint 404 → throws RangeUnreachableException.
-        // Endpoint layer maps to ProblemDetails type "/diff/range-unreachable". Spec § 6.1 + § 8.
+        // GC'd SHA → compare endpoint 404 → the SERVICE throws RangeUnreachableException
+        // (service-layer truth — this test pins exactly that). The /diff ENDPOINT, not the
+        // service, is what maps that exception to ProblemDetails type "/diff/range-unreachable"
+        // (422); see PrDetailEndpointsTests.Get_diff_returns_422_range_unreachable_...
+        // for the endpoint-level mapping assertion. Spec § 5.1 + § 6.1 + § 8.
         var handler = new PaginatedFakeHandler()
             .RouteStatus("/repos/o/r/compare/dead-sha...head", System.Net.HttpStatusCode.NotFound)
             .RouteJson("/repos/o/r/pulls/1", PullJson("base", "head", 0));

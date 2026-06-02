@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import type { PrReference } from '../../../api/types';
+import { ApiError } from '../../../api/client';
 import { postFileViewed } from '../../../api/fileViewed';
 import { sendPatch } from '../../../api/draft';
 import { useFileDiff } from '../../../hooks/useFileDiff';
@@ -20,6 +21,24 @@ import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { Modal } from '../../Modal/Modal';
 import type { PrDetailOutletContext } from '../../../pages/PrDetailPage';
 import styles from './FilesTab.module.css';
+
+// True when the diff fetch failed specifically because the requested commit
+// range is no longer reachable on GitHub (force-push GC'd the commits). The
+// backend maps this to a typed 422 ProblemDetails { type: "/diff/range-unreachable" }
+// (PrDetailEndpoints /diff, spec § 5.1). We render a distinct, human-readable
+// message for it instead of the generic "Failed to load diff — {message}" banner.
+// One message covers both the primary (base..head) and cross-iteration ranges —
+// distinguishing "older iteration" wording is a possible future nicety, not built.
+function isRangeUnreachable(error: Error | null): boolean {
+  if (!(error instanceof ApiError)) return false;
+  if (error.status !== 422) return false;
+  const body = error.body;
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    (body as { type?: unknown }).type === '/diff/range-unreachable'
+  );
+}
 
 function useViewportWidth() {
   const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
@@ -449,11 +468,21 @@ export function FilesTab() {
         </button>
       </div>
 
-      {diff.error && (
-        <div role="alert" className={`files-tab-error ${styles.filesTabError}`}>
-          Failed to load diff — {diff.error.message}
-        </div>
-      )}
+      {diff.error &&
+        (isRangeUnreachable(diff.error) ? (
+          <div
+            role="alert"
+            className={`files-tab-error ${styles.filesTabError}`}
+            data-testid="diff-unavailable"
+          >
+            This diff is unavailable — the commit range is no longer reachable on GitHub (the branch
+            or commits may have been deleted).
+          </div>
+        ) : (
+          <div role="alert" className={`files-tab-error ${styles.filesTabError}`}>
+            Failed to load diff — {diff.error.message}
+          </div>
+        ))}
 
       <div className={`files-tab-content ${styles.filesTabContent}`}>
         <div className={`files-tab-tree ${styles.filesTabTree}`} data-testid="files-tab-tree">

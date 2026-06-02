@@ -5,6 +5,7 @@ using FluentAssertions;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
 using PRism.Core.State;
+using PRism.GitHub;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -203,6 +204,26 @@ public class PrDetailEndpointsTests
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/sha/invalid");
+    }
+
+    [Fact]
+    public async Task Get_diff_returns_422_range_unreachable_when_fetch_throws_RangeUnreachableException()
+    {
+        // Spec § 5.1: a GC'd / force-pushed range (compare endpoint 404 → service throws
+        // RangeUnreachableException) must surface as a TYPED 422 ProblemDetails, NOT an
+        // unhandled 500. Drives the fake's diff path to throw the exact exception the real
+        // GitHubReviewService.GetDiffAsync throws; the /diff endpoint's catch maps it.
+        var (factory, review) = MakeFactory();
+        using var _f = factory;
+        review.DiffFactory = (_, _) => throw new RangeUnreachableException("dead-sha", "head");
+
+        var validBase = new string('a', 40);
+        var validHead = new string('b', 40);
+        var resp = await factory.CreateClient().GetAsync(
+            new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/diff/range-unreachable");
     }
 
     [Fact]
