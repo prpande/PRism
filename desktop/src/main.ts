@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import * as path from "node:path";
+import * as fs from "node:fs";
 import { startSidecar, Sidecar } from "./sidecar";
 
 let sidecar: Sidecar | null = null;
@@ -21,6 +22,14 @@ if (!gotLock) {
   // default Electron application menu (File/Edit/View/Window/Help) is redundant
   // chrome — remove it app-wide so the navbar is the topmost UI.
   Menu.setApplicationMenu(null);
+
+  // Windows groups taskbar buttons by AppUserModelID and reads the icon from it.
+  // Without an explicit ID, an unpackaged dev run groups under electron.exe and
+  // shows Electron's icon. Set our own ID so the window's icon (below) is what
+  // the taskbar displays.
+  if (process.platform === "win32") {
+    app.setAppUserModelId("com.prpande.prism.desktop");
+  }
 
   // Custom window controls: the SPA renders its own minimize/maximize/close
   // (traffic-light) buttons in the navbar and drives them through these channels.
@@ -47,6 +56,18 @@ if (!gotLock) {
       app.quit();
     }
   });
+}
+
+function resolveIconPath(): string | undefined {
+  // Dev: desktop/assets/icon.ico relative to dist/. Packaged: electron-builder
+  // bakes the exe/app icon, and may place assets under the app root. Return the
+  // first path that exists so the window (and thus the Windows taskbar) shows
+  // PRism's icon; undefined falls back to Electron's default without erroring.
+  const candidates = [
+    path.join(__dirname, "..", "assets", "icon.ico"),
+    path.join(process.resourcesPath, "assets", "icon.ico"),
+  ];
+  return candidates.find((p) => fs.existsSync(p));
 }
 
 function resolveBinaryPath(): string {
@@ -79,9 +100,11 @@ async function bootstrap(): Promise<void> {
     return;
   }
 
+  const iconPath = resolveIconPath();
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
+    ...(iconPath ? { icon: iconPath } : {}),
     // Custom title bar: the SPA navbar becomes the title bar, with our own
     // traffic-light window controls. "hidden" drops the native title bar while
     // keeping the OS resize borders + shadow. NO titleBarOverlay — we draw the
