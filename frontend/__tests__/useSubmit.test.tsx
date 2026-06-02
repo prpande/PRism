@@ -438,26 +438,7 @@ describe('useSubmit', () => {
     expect(listeners.get('submit-progress')?.size ?? 0).toBe(0);
   });
 
-  // --- Task 18: submitDialogOpen + discardOwnPendingReview ---
-
-  it('submitDialogOpen starts false', () => {
-    const { result } = renderHook(() => useSubmit(ref));
-    expect(result.current.submitDialogOpen).toBe(false);
-  });
-
-  it('openSubmitDialog sets submitDialogOpen true', () => {
-    const { result } = renderHook(() => useSubmit(ref));
-    act(() => result.current.openSubmitDialog());
-    expect(result.current.submitDialogOpen).toBe(true);
-  });
-
-  it('closeSubmitDialog sets submitDialogOpen false after opening', () => {
-    const { result } = renderHook(() => useSubmit(ref));
-    act(() => result.current.openSubmitDialog());
-    expect(result.current.submitDialogOpen).toBe(true);
-    act(() => result.current.closeSubmitDialog());
-    expect(result.current.submitDialogOpen).toBe(false);
-  });
+  // --- Task 18: discardOwnPendingReview ---
 
   it('discardOwnPendingReview calls the API wrapper with the reference and returns its result', async () => {
     const { result } = renderHook(() => useSubmit(ref));

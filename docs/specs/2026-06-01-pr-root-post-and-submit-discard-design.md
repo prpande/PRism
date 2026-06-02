@@ -477,9 +477,9 @@ The submit-disabled rule (e) at `PrSubmitEndpoints.cs:117-122` is unchanged — 
 
 ### 4.9 PrHeader pill
 
-**Visibility mechanism.** The "is the SubmitDialog open?" predicate is sourced from a new field on the existing `useSubmit` hook (`submitDialogOpen: boolean`). The hook already manages submit-dialog lifecycle adjacent state. `PrHeader` consumes this via the same hook subscription it already uses for `submitInFlight`. No new context, no new global atom.
+**Visibility mechanism.** The "is the SubmitDialog open?" predicate is `PrHeader`'s own local `dialogOpen` state — the same state that conditionally mounts `<SubmitDialog>`. Because that state is what actually opens and closes the dialog, it is the faithful signal; no new hook field, context, or global atom is introduced. The pill is gated on `session.pendingReviewId !== null && !dialogOpen`, so it hides whenever the SubmitDialog is open.
 
-When `session.PendingReviewId !== null` AND `!submitDialogOpen`, render a pill next to the existing Submit button:
+When `session.pendingReviewId !== null` AND `!dialogOpen`, render a pill next to the existing Submit button:
 
 ```tsx
 <button
