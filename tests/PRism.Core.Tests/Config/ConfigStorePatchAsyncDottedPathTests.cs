@@ -40,6 +40,26 @@ public class ConfigStorePatchAsyncDottedPathTests
     }
 
     [Fact]
+    public async Task PatchAsync_RecentlyClosed_TogglesSection()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.sections.recently-closed"] = false },
+            CancellationToken.None);
+
+        store.Current.Inbox.Sections.RecentlyClosed.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Default_RecentlyClosed_IsTrue()
+    {
+        AppConfig.Default.Inbox.Sections.RecentlyClosed.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task PatchAsync_InboxSectionsKey_PersistsAcrossReload()
     {
         using var dir = new TempDataDir();
@@ -108,6 +128,8 @@ public class ConfigStorePatchAsyncDottedPathTests
         { "inbox.sections.mentioned", null },
         { "inbox.sections.ci-failing", null },
         { "inbox.sections.ci-failing", 42 },
+        { "inbox.sections.recently-closed", null },
+        { "inbox.sections.recently-closed", 42 },
     };
 
     [Theory]
@@ -216,6 +238,40 @@ public class ConfigStorePatchAsyncDottedPathTests
 
         await act.Should().ThrowAsync<ConfigPatchException>();
         // After rejection, the on-disk value MUST remain at its default (true).
+        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
+    }
+
+    // S6 PR1: RecentlyClosed is a boolean field added to InboxSectionsConfig with
+    // default value true. An existing config.json written before the field was added
+    // must load with the default (true). Mirrors InitAsync_LegacyConfigWithoutDensity_DefaultsToComfortable.
+    [Fact]
+    public async Task InitAsync_LegacyConfigWithoutRecentlyClosed_DefaultsToTrue()
+    {
+        using var dir = new TempDataDir();
+        var path = Path.Combine(dir.Path, "config.json");
+        // Legacy config.json with only the five old inbox.sections keys (kebab-case).
+        await File.WriteAllTextAsync(path, """
+            {
+              "inbox": {
+                "sections": {
+                  "review-requested": true,
+                  "awaiting-author": true,
+                  "authored-by-me": true,
+                  "mentioned": true,
+                  "ci-failing": true
+                }
+              }
+            }
+            """);
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Inbox.Sections.RecentlyClosed.Should().BeTrue();
+        // Verify the five existing fields round-tripped correctly.
+        store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
+        store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
+        store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
+        store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
         store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
     }
 }

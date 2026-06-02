@@ -14,4 +14,6 @@ public sealed record PrInboxItem(
     string HeadSha,
     CiStatus Ci,
     string? LastViewedHeadSha,
-    long? LastSeenCommentId);
+    long? LastSeenCommentId,
+    DateTimeOffset? MergedAt = null,
+    DateTimeOffset? ClosedAt = null);

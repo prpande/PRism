@@ -84,10 +84,21 @@ public sealed class GitHubPrEnricher : IPrEnricher
             pushedAt = pushedAtProp.GetDateTimeOffset();
         }
 
+        DateTimeOffset? mergedAt = null;
+        if (doc.RootElement.TryGetProperty("merged_at", out var mAt) &&
+            mAt.ValueKind == JsonValueKind.String)
+            mergedAt = mAt.GetDateTimeOffset();
+
+        DateTimeOffset? closedAt = null;
+        if (doc.RootElement.TryGetProperty("closed_at", out var cAt) &&
+            cAt.ValueKind == JsonValueKind.String)
+            closedAt = cAt.GetDateTimeOffset();
+
         return raw with
         {
             HeadSha = head, Additions = additions, Deletions = deletions,
             IterationNumberApprox = commits, PushedAt = pushedAt,
+            MergedAt = mergedAt, ClosedAt = closedAt,
         };
     }
 }

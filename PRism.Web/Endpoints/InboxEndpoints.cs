@@ -8,11 +8,12 @@ internal static class InboxEndpoints
 {
     private static readonly Dictionary<string, string> Labels = new()
     {
-        ["review-requested"] = "Review requested",
-        ["awaiting-author"]  = "Awaiting author",
-        ["authored-by-me"]   = "Authored by me",
-        ["mentioned"]        = "Mentioned",
-        ["ci-failing"]       = "CI failing on my PRs",
+        ["review-requested"]  = "Review requested",
+        ["awaiting-author"]   = "Awaiting author",
+        ["authored-by-me"]    = "Authored by me",
+        ["mentioned"]         = "Mentioned",
+        ["ci-failing"]        = "CI failing on my PRs",
+        ["recently-closed"]   = "Recently closed",
     };
 
     public static IEndpointRouteBuilder MapInbox(this IEndpointRouteBuilder app)
