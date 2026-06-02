@@ -43,8 +43,24 @@ test('S5 happy path — draft → Submit dialog → Confirm → pipeline runs �
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('heading', { name: /^submit review$/i })).toBeVisible();
 
-  // Optional PR-level summary (debounced auto-save; handleConfirm flushes it before submitting).
-  await dialog.getByLabel(/pr-level summary/i).fill('Overall: small naming nits, otherwise good.');
+  // Optional PR-level body. Post-V7 (T22) the legacy summary textarea is gone:
+  // the dialog shows a preview + an Edit toggle. Drive the body through the new
+  // inline-edit flow — Edit → type → wait for the 250ms autosave PUT → Done.
+  // handleConfirm flushes the debounced save before submitting, so the body the
+  // pipeline reads matches what we typed.
+  await dialog.getByTestId('pr-root-edit-toggle').click();
+  const bodyEditor = dialog.getByRole('textbox', { name: /pr-level body/i });
+  await expect(bodyEditor).toBeVisible();
+  const savePromise = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/pr/acme/api/123/draft') &&
+      r.request().method() === 'PUT' &&
+      r.status() === 200,
+    { timeout: 10_000 },
+  );
+  await bodyEditor.fill('Overall: small naming nits, otherwise good.');
+  await savePromise;
+  await dialog.getByTestId('pr-root-done-toggle').click();
 
   await dialog.getByRole('button', { name: /^confirm submit$/i }).click();
 
