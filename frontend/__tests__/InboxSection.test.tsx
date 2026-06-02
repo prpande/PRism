@@ -104,4 +104,49 @@ describe('InboxSection', () => {
       'true',
     );
   });
+
+  it('shows the truncation hint when a recently-closed section has 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 30 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Closed PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'recently-closed',
+      label: 'Recently closed',
+      items,
+    };
+    renderSection(section);
+    expect(screen.getByText(/Showing the 30 most recent/)).toBeInTheDocument();
+  });
+
+  it('does not show the truncation hint when a recently-closed section has fewer than 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 29 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Closed PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'recently-closed',
+      label: 'Recently closed',
+      items,
+    };
+    renderSection(section);
+    expect(screen.queryByText(/most recent/)).toBeNull();
+  });
+
+  it('does not show the truncation hint for a non-recently-closed section with 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 30 }, (_, i) => ({
+      ...examplePr,
+      reference: { owner: 'acme', repo: 'api', number: 100 + i },
+      title: `Open PR ${i}`,
+    }));
+    const section: InboxSectionDto = {
+      id: 'review-requested',
+      label: 'Review requested',
+      items,
+    };
+    renderSection(section);
+    expect(screen.queryByText(/most recent/)).toBeNull();
+  });
 });
