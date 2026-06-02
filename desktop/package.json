@@ -2,6 +2,7 @@
   "name": "prism-desktop",
   "version": "0.2.0",
   "description": "PRism Electron desktop shell",
+  "author": "Pratyush Pande",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json",
