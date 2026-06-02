@@ -267,8 +267,9 @@ internal static class PrDraftEndpoints
                     {
                         // Upsert: update body in place, preserving Id, Status, PostedCommentId,
                         // PostedBodySnapshot, ThreadId, and all other fields.
-                        var updated = existing with { BodyMarkdown = n.BodyMarkdown };
-                        var upsertList = session.DraftComments.Select(d => d.Id == existing.Id ? updated : d).ToList();
+                        var upsertList = session.DraftComments.ToList();
+                        var upsertIdx = upsertList.FindIndex(d => d.Id == existing.Id);
+                        upsertList[upsertIdx] = upsertList[upsertIdx] with { BodyMarkdown = n.BodyMarkdown };
                         return new PatchOutcome.Applied(
                             session with { DraftComments = upsertList },
                             AssignedId: existing.Id, EventDraftId: existing.Id,

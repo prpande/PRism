@@ -335,13 +335,91 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         var first = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft",
             SinglePatch(newRoot: new NewPrRootDraftCommentPayload("first body")));
         first.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Capture the AssignedId from the first PUT — the upsert must return the SAME id on
+        // the second PUT, proving update-in-place (not delete+recreate).
+        var firstBody = await ReadApiJsonAsync<AssignedIdResponse>(first);
+        firstBody.Should().NotBeNull();
+        var firstAssignedId = firstBody!.AssignedId;
+        firstAssignedId.Should().NotBeNullOrEmpty();
+
         var second = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft",
             SinglePatch(newRoot: new NewPrRootDraftCommentPayload("second body")));
         second.StatusCode.Should().Be(HttpStatusCode.OK);
         var getResp = await client.GetAsync(new Uri("/api/pr/acme/api/123/draft", UriKind.Relative));
         var session = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
         session!.DraftComments.Should().ContainSingle(d => d.FilePath == null);
-        session.DraftComments.Single(d => d.FilePath == null).BodyMarkdown.Should().Be("second body");
+        var root = session.DraftComments.Single(d => d.FilePath == null);
+        root.BodyMarkdown.Should().Be("second body");
+        // Id-stability: the surviving draft must carry the SAME id that was assigned on
+        // creation. If the update path deleted-and-recreated the row, a fresh Guid would
+        // appear here and this assertion would fail — the Id-stability proxy for field
+        // preservation (PostedCommentId / PostedBodySnapshot survive across an edit).
+        root.Id.Should().Be(firstAssignedId);
+    }
+
+    [Fact]
+    public async Task NewPrRootDraftComment_edit_preserves_posted_comment_id()
+    {
+        // Seed a session whose PR-root DraftComment already has PostedCommentId / PostedBodySnapshot
+        // set (simulating a previously-posted root comment — the state Task 10 creates). This
+        // asserts the `existing with { BodyMarkdown = ... }` upsert path leaves those fields intact,
+        // which is the contract Task 10 (Post-then-edit) depends on.
+        const string prOwner = "acme";
+        const string prRepo = "api";
+        const int prNumber = 7001;
+        const string refKey = "acme/api/7001";
+        const long seededPostedCommentId = 99L;
+        const string seededPostedBodySnapshot = "posted body";
+        const string seededDraftId = "seeded-root-draft-id";
+
+        // Access the real AppStateStore from the factory's DI container to pre-seed the session.
+        using var scope = _factory.Services.CreateScope();
+        var store = scope.ServiceProvider.GetRequiredService<IAppStateStore>();
+        await store.UpdateAsync(state =>
+        {
+            var seededDraft = new DraftComment(
+                Id: seededDraftId,
+                FilePath: null, LineNumber: null, Side: "pr",
+                AnchoredSha: null, AnchoredLineContent: null,
+                BodyMarkdown: "original body",
+                Status: DraftStatus.Draft, IsOverriddenStale: false,
+                PostedCommentId: seededPostedCommentId,
+                PostedBodySnapshot: seededPostedBodySnapshot);
+            var session = PrDraftEndpoints.NewEmptySession() with
+            {
+                DraftComments = new List<DraftComment> { seededDraft },
+            };
+            var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions, StringComparer.Ordinal)
+            {
+                [refKey] = session,
+            };
+            return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+        }, CancellationToken.None);
+
+        // PUT a new body via newPrRootDraftComment — should update in place.
+        var client = ClientWithTab();
+        var putResp = await client.PutAsJsonAsync($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft",
+            SinglePatch(newRoot: new NewPrRootDraftCommentPayload("edited body")));
+        putResp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        // The response AssignedId must be the seeded draft's id (update-in-place, not new row).
+        var putBody = await ReadApiJsonAsync<AssignedIdResponse>(putResp);
+        putBody!.AssignedId.Should().Be(seededDraftId);
+
+        // GET the session and assert preservation of the posted fields.
+        var getResp = await client.GetAsync(new Uri($"/api/pr/{prOwner}/{prRepo}/{prNumber}/draft", UriKind.Relative));
+        var session2 = await ReadApiJsonAsync<ReviewSessionDto>(getResp);
+        session2!.DraftComments.Should().ContainSingle(d => d.FilePath == null);
+        var root = session2.DraftComments.Single(d => d.FilePath == null);
+        root.BodyMarkdown.Should().Be("edited body");
+        root.Id.Should().Be(seededDraftId);
+        // PostedCommentId and PostedBodySnapshot are NOT surfaced in DraftCommentDto — they are
+        // server-side bookkeeping fields (spec § T10). Assert preservation via the store directly.
+        var storedState = await store.LoadAsync(CancellationToken.None);
+        storedState.Reviews.Sessions.TryGetValue(refKey, out var storedSession).Should().BeTrue();
+        var storedRoot = storedSession!.DraftComments.Single(d => d.FilePath == null);
+        storedRoot.PostedCommentId.Should().Be(seededPostedCommentId);
+        storedRoot.PostedBodySnapshot.Should().Be(seededPostedBodySnapshot);
     }
 
     private sealed class FakeCache : IActivePrCache
