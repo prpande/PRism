@@ -92,4 +92,4 @@ The three PRs in this slice: **PR1** (#103 — backend `recently-closed` inbox s
 ### [Decision] Test-hook corrections (Tasks 15a / 16b)
 
 - **Source:** Tasks 15a and 16b implementation.
-- **Reason:** Two test-helper bugs surfaced: `FakeReviewBackingStore.IsClosed` was `!= "OPEN"` (returned `true` for MERGED — now `== "CLOSED"`); `FakePrReader.SetPrState` now derives `mergedAt`/`closedAt` timestamps so the header label renders correctly in e2e (merged → both timestamps, closed-unmerged → `ClosedAt` only).
+- **Reason:** Two test-helper bugs surfaced: `FakeReviewBackingStore.IsClosed` was `!= "OPEN"` (returned `true` for MERGED — now `== "CLOSED"`); and `FakePrReader.GetPrDetailAsync` now derives `mergedAt`/`closedAt` timestamps from `_store.IsMerged`/`_store.IsClosed` (flipped by `FakeReviewBackingStore.SetPrState`) so the header label renders correctly in e2e (merged → both timestamps, closed-unmerged → `ClosedAt` only).
