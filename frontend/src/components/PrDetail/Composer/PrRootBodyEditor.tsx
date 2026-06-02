@@ -9,6 +9,10 @@ import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 export interface PrRootBodyEditorProps {
   prRef: PrReference;
   prState: 'open' | 'closed' | 'merged';
+  // Consumed only on first mount. If the draft identity can change while this
+  // editor stays mounted, the consumer MUST supply a `key` prop (e.g.
+  // key={draftId ?? 'new'}) to force a clean remount; otherwise the body will
+  // be stale.
   initialBody: string;
   // Controlled draftId (owned by the consumer — composer or SubmitDialog).
   draftId: string | null;
@@ -21,9 +25,13 @@ export interface PrRootBodyEditorProps {
   // save short-circuits via useComposerAutoSave's `disabled` gate.
   readOnly?: boolean;
   // Surfaces the live body to the consumer so it can drive Post / preview.
+  // Read from a ref and invoked on `body` changes only, NOT on callback-identity
+  // change — consumers may pass inline callbacks safely.
   onBodyChange?: (body: string) => void;
   // Surfaces the autosave controls so the consumer can flush before Post and
   // mirror the badge into its own action bar.
+  // Read from a ref and invoked on flush/badge changes only, NOT on
+  // callback-identity change — consumers may pass inline callbacks safely.
   onAutosaveControl?: (control: { flush: () => Promise<void>; badge: ComposerSaveBadge }) => void;
   // Fired when the user discards from the 404-recovery modal. The consumer
   // decides what to do (composer closes; SubmitDialog clears its editor).
@@ -46,6 +54,18 @@ export function PrRootBodyEditor({
   const [body, setBody] = useState(initialBody);
   const [recoveryModalOpen, setRecoveryModalOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Read the surfaced callbacks from refs so an unstable (inline) consumer
+  // callback identity does NOT churn the surfacing effects below. The effects
+  // fire on flush/badge/body changes only — never on callback-identity change.
+  const onAutosaveControlRef = useRef(onAutosaveControl);
+  useEffect(() => {
+    onAutosaveControlRef.current = onAutosaveControl;
+  });
+  const onBodyChangeRef = useRef(onBodyChange);
+  useEffect(() => {
+    onBodyChangeRef.current = onBodyChange;
+  });
 
   const composerAnchor = { kind: 'pr-root' as const };
 
@@ -79,13 +99,13 @@ export function PrRootBodyEditor({
 
   // Surface autosave controls (flush + badge) to the consumer.
   useEffect(() => {
-    onAutosaveControl?.({ flush, badge });
-  }, [onAutosaveControl, flush, badge]);
+    onAutosaveControlRef.current?.({ flush, badge });
+  }, [flush, badge]);
 
   // Surface the live body to the consumer.
   useEffect(() => {
-    onBodyChange?.(body);
-  }, [onBodyChange, body]);
+    onBodyChangeRef.current?.(body);
+  }, [body]);
 
   // Cross-tab ownership registration (Task 19 2-arg signature).
   useEffect(() => {

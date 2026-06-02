@@ -160,13 +160,22 @@ describe('PrRootBodyEditor — draft-deleted-elsewhere recovery', () => {
 });
 
 describe('PrRootBodyEditor — surfaced callbacks', () => {
-  it('onAutosaveControl receives { flush, badge }', () => {
+  it('onAutosaveControl receives { flush, badge } exactly once and does not churn on rerender', () => {
+    // Bare inline vi.fn() → its identity is irrelevant: the effect deps are
+    // [flush, badge], not the callback. A no-op rerender keeps flush/badge
+    // stable, so the surfacing effect must NOT re-fire.
     const onAutosaveControl = vi.fn();
-    render(<Harness onAutosaveControl={onAutosaveControl} />);
-    expect(onAutosaveControl).toHaveBeenCalled();
-    const arg = onAutosaveControl.mock.calls[onAutosaveControl.mock.calls.length - 1][0];
+    const { rerender } = render(<Harness onAutosaveControl={onAutosaveControl} />);
+    expect(onAutosaveControl).toHaveBeenCalledTimes(1);
+    const arg = onAutosaveControl.mock.calls[0][0];
     expect(typeof arg.flush).toBe('function');
     expect(typeof arg.badge).toBe('string');
+
+    // Re-render with no state change: a fresh inline callback identity each
+    // time. Because the callback is read from a ref and the effect deps are
+    // [flush, badge] (both stable here), the call count must not increase.
+    rerender(<Harness onAutosaveControl={onAutosaveControl} />);
+    expect(onAutosaveControl).toHaveBeenCalledTimes(1);
   });
 
   it('onBodyChange fires on typing', async () => {
