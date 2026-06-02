@@ -12,12 +12,12 @@
 
 ---
 
-## Open questions for human review (not resolved in this spec)
+## Resolved decisions (from human review, 2026-06-02)
 
-Two strategic calls surfaced by review that are the author's to make, not the spec's. Flagged here so they are decided before planning:
+Two strategic calls surfaced by review, now decided:
 
-1. **Is the unsigned shell the N=3 validation-trial vehicle, or is the browser-tab v0.1.0?** Shipping an app whose first interaction is an OS malware warning to a scarce 3-person gating cohort adds a confound to the wedge signal (one warned tester = 33% of the sample). The conservative split: run the N=3 trial on the warning-free browser tab; use the shell for post-trial dogfooding. This spec is written so the shell *can* be either, but the choice changes how much the unsigned posture matters. See § 8.
-2. **Should the single-instance data-loss fix (Goal B) be severed onto `main` now for browser-tab users, rather than waiting for the shell?** The backend lockfile already prevents a *second backend* from corrupting `state.json` (§ 3.2); what the shell uniquely adds is the *focus-existing-window* UX, which is genuinely hard without a shell. If the data-loss path is the priority, the lockfile half can ship independently. See § 3.2 and the deferrals companion.
+1. **The unsigned shell IS the trial vehicle for the first colleague-testing round.** Accepted that the OS first-run warning is walkable for a hand-held technical cohort; the § 8.1 real-Mac smoke and § 8.0 Mac-tester gate still apply, and `TESTING.md` (§ 7) sets the expectation so the warning reads as expected. If a later, wider round needs a clean first impression, the $99 macOS signing spend (§ 8.3) is the lever — not a re-architecture.
+2. **The single-instance fix ships *with* the shell, not severed onto `main`.** Goal B stays bundled in v0.2.0; no separate browser-tab lockfile/focus PR. The backend lockfile remains the dataDir-integrity guard (§ 3.2) and Electron's lock adds the focus-existing-window UX — both land together in the shell.
 
 ---
 
@@ -28,7 +28,7 @@ Two strategic calls surfaced by review that are the author's to make, not the sp
 Wrap the existing PRism web app in an Electron desktop shell so it installs and launches like a regular Windows / macOS application instead of opening a browser tab against `localhost`. The shell delivers:
 
 - **A — Own-window identity.** Its own window, app icon, taskbar/dock presence, Alt-Tab/⌘-Tab membership, no browser address bar or tab chrome. *Honest scope:* this buys "a credible native window with dock presence," **not** the full "Slack/Claude feel" — that identity includes a signed, notarized, auto-updating trust layer that is explicitly out of this cut (§ 1.3). The most native-feeling polish (frameless/custom title bar) is also deferred. What ships is the window, not the trust layer.
-- **B — Single-instance enforcement.** A real process identity that closes the two-PRism-windows data-loss path deferred since S3 and again at v1 (roadmap § Amendments). Second launch focuses the existing window instead of spawning a second backend. Note the severability question in Open Questions #2.
+- **B — Single-instance enforcement.** A real process identity that closes the two-PRism-windows data-loss path deferred since S3 and again at v1 (roadmap § Amendments). Second launch focuses the existing window instead of spawning a second backend. Decided (Resolved decisions #2): ships *with* the shell, not severed onto `main`.
 - **D — Renderer consistency.** Electron bundles Chromium, so the app renders identically on Windows and macOS. *Honest scope:* this is a **tiebreaker, not a headline** — on Windows, WebView2 already supplies Chromium, and the macOS render risk it would eliminate is separately covered by the mandatory real-Mac smoke (§ 8.1). D is load-bearing only against a *system-webview* alternative (WebView2-on-Windows + WKWebView-on-macOS); against the alternatives actually weighed (§ 1.5) it is roughly a wash. It is not "free" — it costs ~150 MB of bundled Chromium.
 
 **Opportunity-cost note.** This is a multi-week effort undertaken *before* the N=3 wedge signal lands. The justification is not "highest-leverage work available" but "low-regret work that survives any product pivot (packaging is orthogonal to product direction) and finally gives the long-deferred single-instance fix a home." If something higher-leverage is queued, it should outrank this; the parallel-branch model (§ 9) exists precisely so this does not block the v0.1.0 ship or the trial.
@@ -137,7 +137,7 @@ The current React app, served by the sidecar from `wwwroot`, loaded over loopbac
 
 The backend `LockfileManager` is the **data-integrity** enforcement and **stays active** (it is *complementary*, not redundant): it prevents *any* second backend — however launched, including a direct binary invocation outside Electron — from sharing one `dataDir` and racing `state.json`. Its existing stale-lock takeover (`IsAlive` PID + binary-path match) handles crash recovery. **Seam work is limited to verification, not removal** (§ 4.2). Together: Electron's lock stops the accidental second *window*; the lockfile stops a second *backend* from corrupting state.
 
-(Severability — Open Question #2 — concerns whether the lockfile half ships on `main` ahead of the shell.)
+(Severability resolved — Resolved decisions #2: the fix ships with the shell, not on `main` ahead of it.)
 
 ### 3.3 Quit and orphan prevention
 
