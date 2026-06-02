@@ -62,8 +62,11 @@ jobs:
             frontend/package-lock.json
             desktop/package-lock.json
 
+      # Gate on matrix.rid, NOT the runner label — the label is a packaging detail
+      # that can change (it was macos-latest, now macos-14); rid is the stable
+      # identity of "the mac leg" and won't silently un-skip if the label moves.
       - name: Skip macOS unless requested
-        if: matrix.os == 'macos-latest' && inputs.include_macos != true
+        if: matrix.rid == 'osx-arm64' && inputs.include_macos != true
         shell: bash
         run: echo "SKIP_JOB=1" >> "$GITHUB_ENV"
 
