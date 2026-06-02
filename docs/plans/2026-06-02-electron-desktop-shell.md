@@ -4,7 +4,7 @@
 
 **Goal:** Wrap the existing PRism localhost web app in an Electron desktop shell (own window, single-instance, app icon, clean quit) shipped as unsigned cross-platform installers, without forking the app's runtime.
 
-**Architecture:** Electron main process (Node/TypeScript, new `desktop/` directory) spawns the existing self-contained `PRism.Web` binary as a managed sidecar, learns its bound port from stdout, health-gates on `GET /api/health`, and points a sandboxed `BrowserWindow` at `http://127.0.0.1:<port>`. The .NET app is unchanged except for four small, sidecar-gated seams that land on `main` first. Single-instance is Electron's `requestSingleInstanceLock()`; the backend lockfile stays as the dataDir-integrity guard.
+**Architecture:** Electron main process (Node/TypeScript, new `desktop/` directory) spawns the existing self-contained `PRism.Web` binary as a managed sidecar, learns its bound port from stdout, health-gates on `GET /api/health`, and points a sandboxed `BrowserWindow` at `http://127.0.0.1:<port>`. The .NET app is unchanged except for four small, sidecar-gated seams that land on the `desktop` branch with the rest of the shell. Single-instance is Electron's `requestSingleInstanceLock()`; the backend lockfile stays as the dataDir-integrity guard.
 
 **Tech Stack:** .NET 10 / ASP.NET Core (sidecar), Electron + electron-builder + TypeScript (shell), Playwright `_electron` (shell e2e), GitHub Actions matrix (`windows-latest` + `macos-latest`).
 
@@ -14,8 +14,10 @@
 
 ## Branch & PR strategy
 
-- **Phase A (backend seams)** lands on **`main`** as small standalone PRs — each is harmless to browser-tab mode and independently valid. This keeps the `desktop` branch purely additive.
-- **Phases B–D (`desktop/` shell, packaging, e2e, docs)** land on the long-lived **`desktop`** branch (developed in a git worktree), merging `main` → `desktop` frequently, and merge back to `main` as **v0.2.0**.
+- **All phases (A–D) land on a single long-lived **`desktop`** branch**, developed in a git worktree. There are **no per-phase feature branches off `main` and no incremental PRs into `main`** — the entire shell effort stays quarantined so it never clashes with in-flight fixes/development on `main`.
+- The backend seams (Phase A) are sidecar-gated and inert when `PRISM_SIDECAR` is unset, so they are harmless to browser-tab mode — but they still live on `desktop`, not `main`, to keep `main` free of experimental packaging code until the effort is proven.
+- Keep `desktop` synced by merging **`main` → `desktop`** periodically (one-directional; never touches `main`) so the eventual integration is incremental, not big-bang.
+- The branch merges back to `main` **exactly once**, as **v0.2.0**, when the whole shell is ready.
 
 Sidecar mode is signalled by the environment variable **`PRISM_SIDECAR=1`** (never a CLI flag — not inspectable via `ps`/`wmic`, not trivially spoofable). The parent (Electron) PID is passed as **`PRISM_PARENT_PID`**.
 
@@ -23,7 +25,7 @@ Sidecar mode is signalled by the environment variable **`PRISM_SIDECAR=1`** (nev
 
 ## File structure
 
-**Phase A — backend (`main`):**
+**Phase A — backend (`desktop`):**
 - Modify: `PRism.Web/Program.cs` — sidecar-mode detection; bind `127.0.0.1` + report it in sidecar mode; register the watchdog hosted service; register Host-header middleware.
 - Create: `PRism.Core/Hosting/SidecarMode.cs` — reads `PRISM_SIDECAR` / `PRISM_PARENT_PID`.
 - Create: `PRism.Core/Hosting/ParentLivenessProbe.cs` — recycle-resistant parent-alive check (pure, unit-tested).
@@ -31,7 +33,7 @@ Sidecar mode is signalled by the environment variable **`PRISM_SIDECAR=1`** (nev
 - Create: `PRism.Web/Middleware/HostHeaderCheckMiddleware.cs` — DNS-rebinding defense (loopback Host allowlist).
 - Test: `tests/PRism.Core.Tests/Hosting/ParentLivenessProbeTests.cs`, `tests/PRism.Core.Tests/Hosting/SidecarModeTests.cs`, `tests/PRism.Web.Tests/Middleware/HostHeaderCheckMiddlewareTests.cs`, `tests/PRism.Web.Tests/Hosting/SidecarLaunchContractTests.cs`.
 
-**Phases B–D — shell (`desktop`):**
+**Phases B–D — shell (`desktop`, same branch):**
 - Create: `desktop/package.json`, `desktop/tsconfig.json`, `desktop/.gitignore`.
 - Create: `desktop/src/main.ts` — app entry (single-instance, spawn, window, quit).
 - Create: `desktop/src/sidecar.ts` — spawn + stdout-port-parse + health-poll + teardown.
@@ -46,7 +48,7 @@ Sidecar mode is signalled by the environment variable **`PRISM_SIDECAR=1`** (nev
 
 ---
 
-## PHASE A — Backend seams (land on `main`)
+## PHASE A — Backend seams (on `desktop`)
 
 ### Task A1: Sidecar-mode detection helper
 
@@ -708,11 +710,11 @@ git add PRism.Web/Program.cs tests/PRism.Web.Tests/Hosting/SidecarLaunchContract
 git commit -m "feat(hosting): wire sidecar mode — 127.0.0.1 bind, watchdog, Host-header check"
 ```
 
-- [ ] **Step 8: Pre-push checklist + open the Phase-A PR(s) to `main`**
+- [ ] **Step 8: Pre-push checklist + push Phase A to `desktop`**
 
-Run the full pre-push checklist (`.ai/docs/development-process.md`): `dotnet build --configuration Release`, `dotnet test`, frontend `npm run lint` + `npm run build` (no frontend change here, but the checklist is non-optional). Then publish via `pr-autopilot` targeting `main`.
+Run the full pre-push checklist (`.ai/docs/development-process.md`): `dotnet build --configuration Release`, `dotnet test`, frontend `npm run lint` + `npm run build` (no frontend change here, but the checklist is non-optional). Then push the Phase-A commits to the `desktop` branch.
 
-> Phase-A tasks A1–A5 may ship as one PR ("backend sidecar seams") or split A4 (security) out; implementer's call. They must merge to `main` before Phase D's e2e can run against a real sidecar.
+> Phase A stays on `desktop` with the rest of the shell — it does **not** open a PR into `main`. The single `desktop` → `main` PR happens once at v0.2.0 (Phase D Step 4). Phase A must be committed on `desktop` before Phase D's e2e can run against a real sidecar.
 
 ---
 
