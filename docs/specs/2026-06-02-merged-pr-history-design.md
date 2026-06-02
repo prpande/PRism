@@ -1,7 +1,7 @@
 # Merged / closed PR history: Design
 
 **Date**: 2026-06-02.
-**Status**: Not started. Spec only.
+**Status**: Not started. Spec only. **Scope decided 2026-06-02: full slice** (read-only audit/gaps **+** the standing "Recently closed" inbox section) — the lean alternative in § 10 was considered and declined.
 **Branch**: `merged-pr-history-spec` (worktree at `D:\src\PRism-worktrees\merged-pr-history`).
 **Backlog origin**: Brings forward [`docs/backlog/05-P4-polish.md`](../backlog/05-P4-polish.md) **P4-D2 — Closed/merged PR history**. P4 work nominally gates on the post-v1 validation trial; this slice is a **pre-gate pull-forward** and is justified only if author dogfooding has surfaced revisiting-done-PRs as real daily friction. If no such signal exists, the sequencing call (this vs. finishing v1's tag/publish path) is the roadmap owner's to make — see § 10.
 **Source authorities**: [`docs/spec/03-poc-features.md`](../spec/03-poc-features.md) § 2 (Inbox) is the contract this extends; [`docs/specs/2026-05-06-inbox-read-design.md`](2026-05-06-inbox-read-design.md) is the inbox pipeline this section plugs into. This document does not restate them; it commits to a subset and adds decisions.
@@ -226,3 +226,5 @@ The invariant collision — *"text is sacred"* (never delete drafts) vs *"truthf
 ## 10. Sequencing note (for the roadmap owner)
 
 This slice pulls a P4 item ahead of v1's remaining critical path (the `v0.1.0` tag + first real `publish.yml` dispatch) and ahead of the validation trial that P4 nominally gates on. That is a legitimate move **if** dogfooding has surfaced revisiting-done-PRs as real friction; it is premature **if** it hasn't. The product-lens review also raised a sharper structural question: because (b-with-link) is fully served by the escape hatch and older-than-window (a) rides the deferred search path, the standing section's distinct value is narrowed to (c)-after-the-fact + within-window (a). A leaner alternative is to ship **only § 5 (read-only audit + gap closures)** — which is cheap and closes real coverage — and **defer the standing section** until a dogfood signal or the v1 trial confirms demand for a recently-done feed. Both the pull-forward and the section-vs-no-section call are the roadmap owner's; this spec documents the full section so the decision is made against a concrete artifact rather than in the abstract.
+
+**Decision (2026-06-02): full slice.** The standing section ships alongside the read-only audit/gaps; the lean alternative is recorded above as considered-and-declined. The sequencing flag stands as a documented acknowledgement, not a blocker.
