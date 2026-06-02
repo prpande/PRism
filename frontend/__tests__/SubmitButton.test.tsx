@@ -143,7 +143,9 @@ describe('SubmitButton enable rules (spec § 9)', () => {
       draftVerdict: 'comment',
       // The review summary is now the PR-root DraftComment (filePath/lineNumber null);
       // its presence in draftComments satisfies the Comment-verdict content rule.
-      draftComments: [comment({ id: 'root', filePath: null, lineNumber: null, bodyMarkdown: 'LGTM' })],
+      draftComments: [
+        comment({ id: 'root', filePath: null, lineNumber: null, bodyMarkdown: 'LGTM' }),
+      ],
     };
     render(
       <SubmitButton
