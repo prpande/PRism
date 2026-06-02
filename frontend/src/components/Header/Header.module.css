@@ -66,6 +66,24 @@
      the app's top bar rather than blending into the cards directly below it. */
   background: var(--surface-2);
   box-shadow: var(--shadow-2);
+  /* Spacious AND density-independent: fixed height/padding/gap (not the
+     --header-h / --s-3 / --s-4 tokens the comfortable⇄compact toggle retunes), so
+     changing the layout density never shrinks or tightens the navbar. */
+  height: 64px;
+  padding: 0 28px;
+  gap: 20px;
+}
+
+/* Roomier, density-independent tab + search spacing (base uses --s-3, which
+   compact shrinks). .tab also covers the active tab (it composes .tab). */
+:global([data-shell='desktop']) .tabs {
+  gap: 8px;
+}
+:global([data-shell='desktop']) .tab {
+  padding: 8px 14px;
+}
+:global([data-shell='desktop']) .search {
+  height: 36px;
 }
 
 /* Interactive children must stay clickable — a drag region swallows clicks.
