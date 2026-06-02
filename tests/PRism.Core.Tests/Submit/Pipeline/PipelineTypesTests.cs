@@ -24,7 +24,7 @@ public class PipelineTypesTests
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(),
             DraftReplies: new List<DraftReply>(),
-            DraftSummaryMarkdown: null, DraftVerdict: null,
+            DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
         var snapshot = new OwnPendingReviewSnapshot("PRR_x", "head", DateTimeOffset.UtcNow, new List<PendingReviewThreadSnapshot>());
 

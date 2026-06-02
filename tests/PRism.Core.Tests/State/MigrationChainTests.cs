@@ -35,7 +35,6 @@ public class MigrationChainTests
             var session = loaded.Reviews.Sessions["acme/api/123"];
             Assert.Empty(session.DraftComments);
             Assert.Empty(session.DraftReplies);
-            Assert.Null(session.DraftSummaryMarkdown);
             Assert.Equal(DraftVerdictStatus.Draft, session.DraftVerdictStatus);
             // V5→V6: the chain drops the legacy last-viewed-head-sha and seeds an empty TabStamps
             // map. The "last-seen-comment-id": "100" carries through unchanged.

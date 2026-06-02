@@ -53,13 +53,12 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         string filePath = "src/Foo.cs", int line = 42, string side = "right",
         string? sha = null, string content = "line content", string body = "this is a draft comment")
         => new(
-            null, null,
+            null,
             NewDraftComment: new NewDraftCommentPayload(filePath, line, side, sha ?? new string('a', 40), content, body),
             null, null, null, null, null, null, null, null, null);
 
     private static ReviewSessionPatch SinglePatch(
         string? draftVerdict = null,
-        string? summary = null,
         NewPrRootDraftCommentPayload? newRoot = null,
         UpdateDraftCommentPayload? updateComment = null,
         DeleteDraftPayload? deleteComment = null,
@@ -69,7 +68,7 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         bool? confirmVerdict = null,
         bool? markAllRead = null,
         OverrideStalePayload? overrideStale = null)
-        => new(draftVerdict, summary, null, newRoot, updateComment, deleteComment, newReply, updateReply, deleteReply, confirmVerdict, markAllRead, overrideStale);
+        => new(draftVerdict, null, newRoot, updateComment, deleteComment, newReply, updateReply, deleteReply, confirmVerdict, markAllRead, overrideStale);
 
     [Fact]
     public async Task NewDraftComment_success_returns_assigned_id_and_persists()
@@ -90,7 +89,7 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         client.DefaultRequestHeaders.Add("X-PRism-Tab-Id", "tab-1");
         client.DefaultRequestHeaders.Add("Origin", client.BaseAddress!.GetLeftPart(UriPartial.Authority));
 
-        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", SinglePatch(summary: "x"));
+        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", SinglePatch(draftVerdict: "approve"));
 
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
@@ -99,9 +98,13 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
     public async Task Multi_field_patch_returns_400_invalid_patch_shape()
     {
         var client = ClientWithTab();
+        // V7 unification removed draftSummaryMarkdown; this test now pairs a scalar (draftVerdict)
+        // with an object op (newPrRootDraftComment) so two real ops still reach the dispatcher.
         var patch = new ReviewSessionPatch(
-            DraftVerdict: "approve", DraftSummaryMarkdown: "summary",
-            null, null, null, null, null, null, null, null, null, null);
+            DraftVerdict: "approve",
+            NewDraftComment: null,
+            NewPrRootDraftComment: new NewPrRootDraftCommentPayload(BodyMarkdown: "summary"),
+            null, null, null, null, null, null, null, null);
 
         var resp = await client.PutAsJsonAsync("/api/pr/acme/api/123/draft", patch);
 
@@ -176,16 +179,13 @@ public class PrDraftEndpointTests : IClassFixture<PRismWebApplicationFactory>
         // First set a verdict so a session exists.
         await client.PutAsJsonAsync("/api/pr/acme/api/321/draft", SinglePatch(draftVerdict: "approve"));
 
-        // All-null patch — 12 nulls means 0 set fields per EnumerateSetFields. The
-        // single-field constraint in PutDraft rejects this with 400. Note: we can't
-        // legitimately clear a verdict via JSON null without distinguishing "field
-        // absent" from "field null" on the wire — see deferrals "PR3 wire-shape gap:
-        // explicit verdict-clear has no sentinel". This test pins the dispatch
-        // boundary, not a clear semantic.
-        var allNull = new ReviewSessionPatch(
-            DraftVerdict: null, DraftSummaryMarkdown: null,
-            null, null, null, null, null, null, null, null, null, null);
-        var resp = await client.PutAsJsonAsync("/api/pr/acme/api/321/draft", allNull);
+        // Empty-object patch — 0 set fields per the dispatcher. The single-field constraint in
+        // PutDraft rejects this with 400. (Pre-V7 a typed-record DTO with all nulls was the
+        // canonical way to reach this state; under V7 `{"draftVerdict":null}` is a legitimate
+        // clear op so the typed-record DTO no longer serializes to "0 fields set" — we send a
+        // raw empty object instead.)
+        using var content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        var resp = await client.PutAsync(new Uri("/api/pr/acme/api/321/draft", UriKind.Relative), content);
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 

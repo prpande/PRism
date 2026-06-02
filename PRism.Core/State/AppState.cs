@@ -52,7 +52,6 @@ public sealed record ReviewSessionState(
     IReadOnlyDictionary<string, string> ViewedFiles,
     IReadOnlyList<DraftComment> DraftComments,
     IReadOnlyList<DraftReply> DraftReplies,
-    string? DraftSummaryMarkdown,
     DraftVerdict? DraftVerdict,
     DraftVerdictStatus DraftVerdictStatus);
 

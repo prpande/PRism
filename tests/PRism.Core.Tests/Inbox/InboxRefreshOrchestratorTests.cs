@@ -500,7 +500,6 @@ public sealed class InboxRefreshOrchestratorTests
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(),
             DraftReplies: new List<DraftReply>(),
-            DraftSummaryMarkdown: null,
             DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
         var appState = AppState.Default.WithDefaultReviews(new PrSessionsState(new Dictionary<string, ReviewSessionState>

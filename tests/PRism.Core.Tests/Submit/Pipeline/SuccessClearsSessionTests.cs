@@ -7,9 +7,9 @@ using PRism.Core.Tests.Submit.Pipeline.Fakes;
 namespace PRism.Core.Tests.Submit.Pipeline;
 
 // Spec § 5.2 step 5 — on Success the pipeline clears PendingReviewId / PendingReviewCommitOid /
-// every draft / every reply / DraftSummaryMarkdown / DraftVerdict / DraftVerdictStatus from the
-// persisted session (overlay UpdateAsync). The endpoint (PR3) then publishes DraftSubmitted +
-// StateChanged OUTSIDE _gate after this returns.
+// every draft / every reply / DraftVerdict / DraftVerdictStatus from the persisted session
+// (overlay UpdateAsync). The endpoint (PR3) then publishes DraftSubmitted + StateChanged OUTSIDE
+// _gate after this returns.
 public class SuccessClearsSessionTests
 {
     private static PrReference Ref => new("owner", "repo", 1);
@@ -44,7 +44,6 @@ public class SuccessClearsSessionTests
         var persisted = store.Session(SessionKey)!;
         Assert.Empty(persisted.DraftComments);
         Assert.Empty(persisted.DraftReplies);
-        Assert.Null(persisted.DraftSummaryMarkdown);
         Assert.Null(persisted.DraftVerdict);
         Assert.Equal(DraftVerdictStatus.Draft, persisted.DraftVerdictStatus);
         Assert.Null(persisted.PendingReviewId);

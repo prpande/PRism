@@ -40,7 +40,7 @@ public class AppStateStoreUpdateAsyncTests
         // Seed an initial session so transforms have somewhere to accumulate.
         await store.UpdateAsync(s => s.WithDefaultReviews(new PrSessionsState(new Dictionary<string, ReviewSessionState>
         {
-            ["o/r/1"] = new ReviewSessionState(new Dictionary<string, TabStamp>(), null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
+            ["o/r/1"] = new ReviewSessionState(new Dictionary<string, TabStamp>(), null, null, null, new Dictionary<string, string>(), new List<DraftComment>(), new List<DraftReply>(), null, DraftVerdictStatus.Draft)
         })), CancellationToken.None);
 
         var tasks = Enumerable.Range(0, 50)

@@ -71,7 +71,6 @@ public class AppStateStoreMigrationTests
         // would only fail in the per-step unit test, not in this end-to-end Load test.
         session.DraftComments.Should().BeEmpty();
         session.DraftReplies.Should().BeEmpty();
-        session.DraftSummaryMarkdown.Should().BeNull();
         session.DraftVerdict.Should().BeNull();
         session.DraftVerdictStatus.Should().Be(DraftVerdictStatus.Draft);
         store.IsReadOnlyMode.Should().BeFalse();
@@ -151,7 +150,6 @@ public class AppStateStoreMigrationTests
                     PendingReviewCommitOid: null,
                     DraftComments: new List<DraftComment>(),
                     DraftReplies: new List<DraftReply>(),
-                    DraftSummaryMarkdown: null,
                     DraftVerdict: null,
                     DraftVerdictStatus: DraftVerdictStatus.Draft,
                     ViewedFiles: new Dictionary<string, string>
@@ -429,7 +427,6 @@ public class AppStateStoreMigrationTests
                     ViewedFiles: new Dictionary<string, string>(),
                     DraftComments: new List<DraftComment>(),
                     DraftReplies: new List<DraftReply>(),
-                    DraftSummaryMarkdown: null,
                     DraftVerdict: null,
                     DraftVerdictStatus: DraftVerdictStatus.Draft)
             };

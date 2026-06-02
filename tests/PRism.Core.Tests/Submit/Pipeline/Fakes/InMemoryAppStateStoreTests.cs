@@ -23,7 +23,7 @@ public class InMemoryAppStateStoreTests
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(),
             DraftReplies: new List<DraftReply>(),
-            DraftSummaryMarkdown: null, DraftVerdict: null,
+            DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 
         store.SeedSession("owner/repo/1", session);

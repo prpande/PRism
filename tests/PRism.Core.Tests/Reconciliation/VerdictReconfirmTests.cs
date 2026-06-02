@@ -71,7 +71,6 @@ public class VerdictReconfirmTests
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: new List<DraftComment>(),
             DraftReplies: new List<DraftReply>(),
-            DraftSummaryMarkdown: null,
             DraftVerdict: verdict,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 }

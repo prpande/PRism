@@ -21,7 +21,6 @@ internal static class PrDraftEndpoints
 
     // Pre-allocated FieldsTouched arrays per spec § 4.3 — one per touchable field name.
     private static readonly string[] FieldsTouchedDraftVerdict = { "draft-verdict" };
-    private static readonly string[] FieldsTouchedDraftSummary = { "draft-summary" };
     private static readonly string[] FieldsTouchedDraftComments = { "draft-comments" };
     private static readonly string[] FieldsTouchedDraftReplies = { "draft-replies" };
     private static readonly string[] FieldsTouchedDraftVerdictStatus = { "draft-verdict-status" };
@@ -39,7 +38,7 @@ internal static class PrDraftEndpoints
     // String-or-null kinds — present-with-string sets the value, present-with-null clears it,
     // absent leaves it unchanged. This is the JsonElement wire-shape's whole point (spec § 10):
     // the historic typed-record binding couldn't distinguish present-null from absent.
-    private static readonly string[] ScalarKinds = { "draftVerdict", "draftSummaryMarkdown" };
+    private static readonly string[] ScalarKinds = { "draftVerdict" };
 
     public static IEndpointRouteBuilder MapPrDraftEndpoints(this IEndpointRouteBuilder app)
     {
@@ -63,10 +62,10 @@ internal static class PrDraftEndpoints
     // PUT /api/pr/{ref}/draft — JsonElement-based parsing so present-null distinguishes from absent
     // (spec § 10 / S4 deferral 5 option (b)). Wire contract: exactly one operation per request; the
     // property whose name matches a known patch kind is the operation, its value (including explicit
-    // null on draftVerdict / draftSummaryMarkdown) is the operand. A property whose value is null on
-    // a non-clearable kind, or `false` on a bool kind, is treated as "not set" — so a typed-record
-    // serialization that emits every field (`{"draftVerdict":null, "newDraftComment":{...}, …}`)
-    // still resolves to the single non-null operation, exactly as the historic binding did.
+    // null on draftVerdict) is the operand. A property whose value is null on a non-clearable kind,
+    // or `false` on a bool kind, is treated as "not set" — so a typed-record serialization that
+    // emits every field (`{"draftVerdict":null, "newDraftComment":{...}, …}`) still resolves to the
+    // single non-null operation, exactly as the historic binding did.
     private static async Task<IResult> PutDraft(
         string owner, string repo, int number,
         HttpContext httpContext,
@@ -211,9 +210,9 @@ internal static class PrDraftEndpoints
     }
 
     // `payload` is the typed operand ValidateAndParseOperand already deserialised for object kinds
-    // (NewDraftCommentPayload / DeleteDraftPayload / …); it is null for the scalar kinds
-    // (draftVerdict / draftSummaryMarkdown — those read `value` directly for the null-vs-string
-    // distinction) and the bool kinds (confirmVerdict / markAllRead).
+    // (NewDraftCommentPayload / DeleteDraftPayload / …); it is null for the scalar kind
+    // (draftVerdict — reads `value` directly for the null-vs-string distinction) and the bool kinds
+    // (confirmVerdict / markAllRead).
     private static PatchOutcome ApplyPatch(
         string kind,
         JsonElement value,
@@ -240,14 +239,6 @@ internal static class PrDraftEndpoints
                         AssignedId: null, EventDraftId: null,
                         PublishSaved: false, PublishDiscarded: false,
                         FieldsTouched: FieldsTouchedDraftVerdict);
-                }
-
-            case "draftSummaryMarkdown":
-                {
-                    var summary = value.ValueKind == JsonValueKind.Null ? null : value.GetString();
-                    return new PatchOutcome.Applied(
-                        session with { DraftSummaryMarkdown = summary },
-                        null, null, false, false, FieldsTouchedDraftSummary);
                 }
 
             case "newDraftComment":
@@ -418,8 +409,6 @@ internal static class PrDraftEndpoints
     {
         switch (kind)
         {
-            case "draftSummaryMarkdown":
-                return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             case "newDraftComment":
             case "newPrRootDraftComment":
             case "updateDraftComment":
@@ -435,10 +424,10 @@ internal static class PrDraftEndpoints
     }
 
     // Deserialises an object-kind operand exactly once (so ApplyPatch doesn't re-parse inside the
-    // store transaction), validates it, and yields the typed record via `payload`. Scalar kinds
-    // (draftVerdict / draftSummaryMarkdown) and bool kinds set `payload = null` — ApplyPatch reads
-    // the JsonElement directly for those. Required strings are null-checked BEFORE any .Length /
-    // regex call so a malformed payload returns 4xx instead of throwing NullReferenceException → 500.
+    // store transaction), validates it, and yields the typed record via `payload`. Scalar kind
+    // (draftVerdict) and bool kinds set `payload = null` — ApplyPatch reads the JsonElement directly
+    // for those. Required strings are null-checked BEFORE any .Length / regex call so a malformed
+    // payload returns 4xx instead of throwing NullReferenceException → 500.
     private static IResult? ValidateAndParseOperand(string kind, JsonElement value, out object? payload)
     {
         payload = null;
@@ -520,15 +509,6 @@ internal static class PrDraftEndpoints
                     return Results.BadRequest(new { error = "patch-shape-invalid" });
                 payload = os;
                 return null;
-            case "draftSummaryMarkdown":
-                {
-                    if (value.ValueKind == JsonValueKind.Null) return null;  // explicit clear is valid
-                    if (value.ValueKind != JsonValueKind.String) return Results.BadRequest(new { error = "patch-shape-invalid" });
-                    var summary = value.GetString();
-                    if (summary is not null && summary.Length > BodyMarkdownMaxChars)
-                        return Results.UnprocessableEntity(new { error = "body-too-large" });
-                    return null;
-                }
             case "draftVerdict":
                 {
                     if (value.ValueKind == JsonValueKind.Null) return null;  // explicit clear is valid
@@ -581,14 +561,13 @@ internal static class PrDraftEndpoints
         ViewedFiles: new Dictionary<string, string>(),
         DraftComments: Array.Empty<DraftComment>(),
         DraftReplies: Array.Empty<DraftReply>(),
-        DraftSummaryMarkdown: null, DraftVerdict: null,
+        DraftVerdict: null,
         DraftVerdictStatus: DraftVerdictStatus.Draft);
 
     // Shared with PrReloadEndpoints — keep `internal` visibility.
     internal static ReviewSessionDto MapToDto(ReviewSessionState s) => new(
         DraftVerdict: s.DraftVerdict,
         DraftVerdictStatus: s.DraftVerdictStatus,
-        DraftSummaryMarkdown: s.DraftSummaryMarkdown,
         DraftComments: s.DraftComments.Select(MapDraft).ToList(),
         DraftReplies: s.DraftReplies.Select(MapReply).ToList(),
         IterationOverrides: Array.Empty<IterationOverrideDto>(),
@@ -605,7 +584,7 @@ internal static class PrDraftEndpoints
         r.Status, r.IsOverriddenStale);
 
     private static ReviewSessionDto EmptyReviewSessionDto() => new(
-        null, DraftVerdictStatus.Draft, null,
+        null, DraftVerdictStatus.Draft,
         Array.Empty<DraftCommentDto>(), Array.Empty<DraftReplyDto>(),
         Array.Empty<IterationOverrideDto>(),
         null, null,

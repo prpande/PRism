@@ -8,7 +8,6 @@ namespace PRism.Web.Endpoints;
 internal sealed record ReviewSessionDto(
     DraftVerdict? DraftVerdict,
     DraftVerdictStatus DraftVerdictStatus,
-    string? DraftSummaryMarkdown,
     IReadOnlyList<DraftCommentDto> DraftComments,
     IReadOnlyList<DraftReplyDto> DraftReplies,
     IReadOnlyList<IterationOverrideDto> IterationOverrides,
@@ -45,7 +44,6 @@ internal sealed record FileViewStateDto(IReadOnlyDictionary<string, string> View
 // response when count != 1.
 internal sealed record ReviewSessionPatch(
     string? DraftVerdict,
-    string? DraftSummaryMarkdown,
     NewDraftCommentPayload? NewDraftComment,
     NewPrRootDraftCommentPayload? NewPrRootDraftComment,
     UpdateDraftCommentPayload? UpdateDraftComment,

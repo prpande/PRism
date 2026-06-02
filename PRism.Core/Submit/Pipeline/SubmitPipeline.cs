@@ -133,7 +133,7 @@ public sealed class SubmitPipeline
             await StepFinalizeAsync(reference, pendingReviewId, verdict, workingSession, progress, ct).ConfigureAwait(false);
 
             // On success — clear PendingReviewId / PendingReviewCommitOid / every draft / every reply
-            // / DraftSummaryMarkdown / DraftVerdict / DraftVerdictStatus. The endpoint publishes
+            // / DraftVerdict / DraftVerdictStatus. The endpoint publishes
             // DraftSubmitted + StateChanged OUTSIDE _gate after this returns (spec § 5.2 step 5).
             // The review is already submitted server-side at this point, so a store/disk failure on
             // the cleanup write is swallowed rather than turned into Failed — returning Failed would
@@ -170,7 +170,7 @@ public sealed class SubmitPipeline
     {
         progress.Report(new SubmitProgressEvent(SubmitStep.BeginPendingReview, SubmitStepStatus.Started, 0, 1));
         var result = await InvokeAsync(SubmitStep.BeginPendingReview, 0, 1, session, progress,
-            () => _submitter.BeginPendingReviewAsync(reference, currentHeadSha, session.DraftSummaryMarkdown ?? "", ct)).ConfigureAwait(false);
+            () => _submitter.BeginPendingReviewAsync(reference, currentHeadSha, ExtractPrRootBody(session), ct)).ConfigureAwait(false);
 
         // Stamp the new pending-review id immediately (caller persisted the session under sessionKey);
         // if this fails, the at-failure session carries the stamp so the endpoint persists it on retry
@@ -622,12 +622,19 @@ public sealed class SubmitPipeline
             PendingReviewCommitOid = null,
             DraftComments = new List<DraftComment>(),
             DraftReplies = new List<DraftReply>(),
-            DraftSummaryMarkdown = null,
             DraftVerdict = null,
             DraftVerdictStatus = DraftVerdictStatus.Draft,
         };
         return WithSession(state, sessionKey, cleared);
     }
+
+    // The PR-root draft is the single DraftComment with no FilePath and no LineNumber. V7
+    // unification — `DraftSummaryMarkdown` no longer exists; the SubmitDialog summary textarea
+    // edits this row. Returns empty string when no PR-root draft is present so the wire-shape
+    // matches the historic `session.DraftSummaryMarkdown ?? ""` semantics.
+    private static string ExtractPrRootBody(ReviewSessionState session)
+        => session.DraftComments
+            .FirstOrDefault(d => d.FilePath is null && d.LineNumber is null)?.BodyMarkdown ?? "";
 
     private static AppState WithSession(AppState state, string sessionKey, ReviewSessionState session)
     {

@@ -28,7 +28,7 @@ internal static class PrSubmitEndpoints
 
     // FieldsTouched lists for the StateChanged events this endpoint publishes. The frontend
     // re-fetches the whole session on state-changed regardless; these are informational.
-    private static readonly string[] SubmittedFields = { "draft-comments", "draft-replies", "draft-summary", "draft-verdict", "draft-verdict-status", "pending-review" };
+    private static readonly string[] SubmittedFields = { "draft-comments", "draft-replies", "draft-verdict", "draft-verdict-status", "pending-review" };
     private static readonly string[] PendingReviewFields = { "pending-review", "draft-comments", "draft-replies" };
 
     private static readonly Action<ILogger, string, Exception?> s_pipelineThrew =
@@ -114,11 +114,12 @@ internal static class PrSubmitEndpoints
         if (session.DraftVerdictStatus == DraftVerdictStatus.NeedsReconfirm)
             return Results.Json(new SubmitErrorDto("verdict-needs-reconfirm", "Verdict requires re-confirmation."), statusCode: StatusCodes.Status400BadRequest);
 
-        // Rule (e): a Comment-verdict review needs at least one draft / reply / non-empty summary.
+        // Rule (e): a Comment-verdict review needs at least one draft or reply. Under V7 a non-empty
+        // PR-root summary is materialised as a DraftComment (no FilePath / no LineNumber), so the
+        // legacy `&& DraftSummaryMarkdown empty` clause is now subsumed by `DraftComments.Count == 0`.
         if (verdict == SubmitEvent.Comment
             && session.DraftComments.Count == 0
-            && session.DraftReplies.Count == 0
-            && string.IsNullOrWhiteSpace(session.DraftSummaryMarkdown))
+            && session.DraftReplies.Count == 0)
             return Results.Json(new SubmitErrorDto("no-content", "A Comment-verdict review needs at least one draft, reply, or summary."), statusCode: StatusCodes.Status400BadRequest);
 
         // Rule (f): head_sha drift. Two distinct sub-cases — kept separate so the frontend's

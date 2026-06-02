@@ -101,7 +101,6 @@ public class BoundaryPermutationTests
             ViewedFiles: new Dictionary<string, string>(),
             DraftComments: drafts,
             DraftReplies: new List<DraftReply>(),
-            DraftSummaryMarkdown: null,
             DraftVerdict: null,
             DraftVerdictStatus: DraftVerdictStatus.Draft);
 }

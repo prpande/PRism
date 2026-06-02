@@ -20,7 +20,6 @@ public class AppStateWithDefaultHelpersTests
                 ViewedFiles: new Dictionary<string, string>(),
                 DraftComments: System.Array.Empty<DraftComment>(),
                 DraftReplies: System.Array.Empty<DraftReply>(),
-                DraftSummaryMarkdown: null,
                 DraftVerdict: null,
                 DraftVerdictStatus: DraftVerdictStatus.Draft)
         });
