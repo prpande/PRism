@@ -7,7 +7,7 @@
 - [`docs/specs/2026-05-28-v1-completion-roadmap-design.md`](2026-05-28-v1-completion-roadmap-design.md) § Amendments — the native-app-shell scope shift that deferred Phase 1 single-instance enforcement pending a framework decision. This spec *is* that framework decision.
 - [`docs/specs/2026-05-06-architectural-readiness-design.md`](2026-05-06-architectural-readiness-design.md) § ADR-P0-4 — single-instance enforcement seed sketch (named mutex / IPC focus). Superseded here by Electron's first-class single-instance primitive.
 - [`docs/specs/2026-05-28-manual-validation-test-plan-design.md`](2026-05-28-manual-validation-test-plan-design.md) — the validation suite whose **D1 blocker** ("standalone-SPA shell decision") this spec resolves toward "Architecture A: shell-agnostic launch layer."
-- `PRism.Web/Program.cs`, `PRism.Web/Endpoints/HealthEndpoints.cs`, `PRism.Web/Middleware/SessionTokenMiddleware.cs`, `PRism.Web/Middleware/OriginCheckMiddleware.cs`, `PRism.Web/Infrastructure/LockfileManager.cs` — the current production launch path, health/auth/origin contracts, and lockfile the shell reuses.
+- `PRism.Web/Program.cs`, `PRism.Web/Endpoints/HealthEndpoints.cs`, `PRism.Web/Middleware/SessionTokenMiddleware.cs`, `PRism.Web/Middleware/OriginCheckMiddleware.cs`, `PRism.Core/Hosting/LockfileManager.cs` — the current production launch path, health/auth/origin contracts, and lockfile the shell reuses.
 - [`.ai/docs/documentation-maintenance.md`](../../.ai/docs/documentation-maintenance.md) — which docs to update per change type.
 
 ---
