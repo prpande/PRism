@@ -11,7 +11,7 @@
 **Source spec:** [`docs/specs/2026-06-02-merged-pr-history-design.md`](../specs/2026-06-02-merged-pr-history-design.md). Read it before starting.
 
 **Suggested PR cut** (each phase is independently shippable + green):
-- **PR1 — backend close-state plumbing + closed-history section** (Tasks 1–8): pipeline produces a `recently-closed` section; covered by unit tests; no frontend yet (section returned by `/api/inbox` but the FE just renders it generically).
+- **PR1 — backend close-state plumbing + closed-history section** (Tasks 1–8, incl. 6b): pipeline produces a `recently-closed` section + surfaces the toggle in `/api/preferences`; covered by unit tests; no frontend yet (section returned by `/api/inbox` but the FE just renders it generically). **Task 6b (preferences DTO) must be in PR1** so PR2's Settings toggle has a backend key to bind to.
 - **PR2 — frontend section polish** (Tasks 9–12): collapsed-by-default, badge, suppressed urgency cues, truncation hint, settings toggle.
 - **PR3 — read-only detail gaps** (Tasks 13–17): header label, read-only Drafts tab, transition banner, diff-renders audit.
 
@@ -36,9 +36,12 @@
 - `Inbox/GitHubPrEnricher.cs` — parse `merged_at`/`closed_at` (modify)
 - `GitHubReviewService.cs` — surface `closedAt`/`mergedAt` in `ParsePr` (modify, PR3)
 
+**Backend (PRism.GitHub):**
+- `ServiceCollectionExtensions.cs` — pass clock seam to `GitHubSectionQueryRunner` (modify)
+
 **Backend (PRism.Web):**
 - `Endpoints/InboxEndpoints.cs` — `recently-closed` label (modify)
-- `Program.cs` — pass clock seam to `GitHubSectionQueryRunner` (modify)
+- `Endpoints/PreferencesDtos.cs` + `Endpoints/PreferencesEndpoints.cs` — surface `RecentlyClosed` in `/api/preferences` (modify)
 
 **Frontend:**
 - `api/types.ts` — `PrInboxItem.mergedAt/closedAt`, `InboxSectionsPreferences.recentlyClosed`, `Pr` close timestamps (modify)
@@ -393,7 +396,7 @@ public interface ISectionQueryRunner
 
 - [ ] **Step 4: Implement in `GitHubSectionQueryRunner`**
 
-`PRism.GitHub/Inbox/GitHubSectionQueryRunner.cs` — add a clock field + constructor param (the existing ctor takes `(IHttpClientFactory, Func<Task<string?>>, ILogger?)`; insert the clock before the logger so existing positional calls in `Program.cs` get updated in Task 7's wiring step). New ctor:
+`PRism.GitHub/Inbox/GitHubSectionQueryRunner.cs` — add a clock field + constructor param (the existing ctor takes `(IHttpClientFactory, Func<Task<string?>>, ILogger?)`; insert the clock before the logger — the one production call site in `ServiceCollectionExtensions.cs` is updated in Task 7, and the test `BuildSut` in Step 5). New ctor:
 
 ```csharp
     private readonly Func<DateTimeOffset> _clock;
@@ -482,8 +485,8 @@ namespace PRism.Core.Inbox;
 /// </summary>
 public static class InboxHistoryConstants
 {
-    public const int WindowDays = 14;
-    public const int MaxRows = 30;
+    public const int HistoryWindowDays = 14;
+    public const int MaxHistoryRows = 30;
     public const string SectionId = "recently-closed";
 }
 ```
@@ -503,7 +506,7 @@ git commit -m "feat(inbox): recently-closed window/cap constants"
 - Modify: `PRism.Core/Inbox/InboxRefreshOrchestrator.cs`
 - Test: `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs` (extend)
 
-The branch: when `recently-closed` is enabled, call `QueryClosedHistoryAsync`, fold the items into the shared enrichment pass (so they get `MergedAt`/`ClosedAt`), then build the section — sorted by `MergedAt ?? ClosedAt` desc, capped at `MaxRows`, materialized **without** the empty-`HeadSha` filter — and append it last.
+The branch: when `recently-closed` is enabled, call `QueryClosedHistoryAsync`, fold the items into the shared enrichment pass (so they get `MergedAt`/`ClosedAt`), then build the section — sorted by `MergedAt ?? ClosedAt` desc, capped at `MaxHistoryRows`, materialized **without** the empty-`HeadSha` filter — and append it last.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -568,7 +571,7 @@ public async Task RecentlyClosed_KeepsMergedPrWithEmptyHeadSha()
 [Fact]
 public async Task RecentlyClosed_CapsAtMaxRows_KeepingNewest()
 {
-    var rows = Enumerable.Range(1, InboxHistoryConstants.MaxRows + 5)
+    var rows = Enumerable.Range(1, InboxHistoryConstants.MaxHistoryRows + 5)
         .Select(i => RawClosed(i,
             merged: DateTimeOffset.Parse("2026-05-01T00:00:00Z").AddMinutes(i),
             closed: DateTimeOffset.Parse("2026-05-01T00:00:00Z").AddMinutes(i)))
@@ -580,8 +583,8 @@ public async Task RecentlyClosed_CapsAtMaxRows_KeepingNewest()
     await orch.RefreshAsync(default);
 
     var sec = orch.Current!.Sections[InboxHistoryConstants.SectionId];
-    sec.Should().HaveCount(InboxHistoryConstants.MaxRows);
-    sec[0].Reference.Number.Should().Be(InboxHistoryConstants.MaxRows + 5); // newest kept
+    sec.Should().HaveCount(InboxHistoryConstants.MaxHistoryRows);
+    sec[0].Reference.Number.Should().Be(InboxHistoryConstants.MaxHistoryRows + 5); // newest kept
 }
 
 [Fact]
@@ -619,7 +622,7 @@ In `RefreshAsync`, after the existing open-section pipeline builds `rawWithEnric
             if (_config.Current.Inbox.Sections.RecentlyClosed)
             {
                 closedRaw = await _sections
-                    .QueryClosedHistoryAsync(InboxHistoryConstants.WindowDays, ct)
+                    .QueryClosedHistoryAsync(InboxHistoryConstants.HistoryWindowDays, ct)
                     .ConfigureAwait(false);
             }
 ```
@@ -631,24 +634,33 @@ In `RefreshAsync`, after the existing open-section pipeline builds `rawWithEnric
                 .GroupBy(p => p.Reference).Select(g => g.First()).ToList();
 ```
 
-3. After `var deduped = _dedupe.Deduplicate(...)` and before building the snapshot, append the closed section (enriched, sorted, capped, no HeadSha filter):
+3. After `var deduped = _dedupe.Deduplicate(...)` (line 180), build a **new mutable dictionary** with the closed section appended, then thread it through the rest of the method.
+
+> **Why a new dict (feasibility F1):** `IInboxDeduplicator.Deduplicate` returns `IReadOnlyDictionary<string, IReadOnlyList<PrInboxItem>>` (`IInboxDeduplicator.cs`), which has no indexer setter — `deduped["recently-closed"] = ...` is a compile error (CS0021). Its `deduplicate == false` / empty paths also return the caller's *input* instance, so casting-and-mutating is unsafe. Copy into a fresh dictionary.
 
 ```csharp
+            // Append the closed-history section. Disjoint from the open sections, so it
+            // bypasses InboxDeduplicator entirely (spec § 3.4) — added AFTER dedup. Copy
+            // into a mutable dict because Deduplicate returns IReadOnlyDictionary.
+            var sectionsFinal = deduped.ToDictionary(kv => kv.Key, kv => kv.Value);
             if (_config.Current.Inbox.Sections.RecentlyClosed)
             {
-                var closedItems = closedRaw
+                var closedItems = (IReadOnlyList<PrInboxItem>)closedRaw
                     .Select(r => byRef.TryGetValue(r.Reference, out var e) ? e : r)
                     .Select(r => MaterializePrInboxItem(r, ciByRef, state))   // NO HeadSha filter
                     .OrderByDescending(i => i.MergedAt ?? i.ClosedAt ?? DateTimeOffset.MinValue)
-                    .Take(InboxHistoryConstants.MaxRows)
+                    .Take(InboxHistoryConstants.MaxHistoryRows)
                     .ToList();
-                deduped[InboxHistoryConstants.SectionId] = closedItems;   // appended last
+                sectionsFinal[InboxHistoryConstants.SectionId] = closedItems;   // appended last
             }
 ```
 
-> `deduped` is the dictionary the snapshot is built from. Appending after the open sections keeps `recently-closed` last in enumeration order (the same insertion-order contract documented at `InboxRefreshOrchestrator.cs:157`). `MaterializePrInboxItem` (Task 7) must carry `MergedAt`/`ClosedAt` through. The closed section is **not** passed through `InboxDeduplicator` (disjoint sets, spec § 3.4) — it's added after dedup runs.
+4. **Rewire the three downstream consumers** from `deduped` to `sectionsFinal`:
+- `var postDedupeTotal = sectionsFinal.Values.Sum(v => v.Count);` (was line 181)
+- the AI-enrichment `var allItems = sectionsFinal.Values.SelectMany(v => v).DistinctBy(i => i.Reference).ToList();` (was line 193)
+- `var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow);` (was line 202)
 
-4. Ensure `closedRaw` items are excluded from the AI-enrichment `allItems` list only if they'd collide — they won't (the `DistinctBy(i => i.Reference)` already guards). Leave that block unchanged.
+> Appending after the open sections keeps `recently-closed` last in enumeration order (the insertion-order contract at `InboxRefreshOrchestrator.cs:157`). `MaterializePrInboxItem` (Task 7) carries `MergedAt`/`ClosedAt` through. The `DistinctBy(i => i.Reference)` in the AI-enrichment block already guards against any closed∩open collision, so no extra dedup is needed.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -712,7 +724,7 @@ public sealed record InboxSectionsConfig(
     bool RecentlyClosed = true);
 ```
 
-In `AppConfig.Default`, the `InboxSectionsConfig(true, true, true, true, true)` call now gets `RecentlyClosed` from the default — leave it (or pass `true` explicitly):
+In `AppConfig.Default` (`AppConfig.cs:20`), pass the sixth arg **explicitly** (don't rely on the param default — that couples `Default`'s correctness to the `= true` default and silently breaks if someone later makes the param required):
 
 ```csharp
 new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true, true), true),
@@ -747,11 +759,79 @@ git commit -m "feat(config): inbox.sections.recently-closed toggle (default true
 
 ---
 
-### Task 7: Carry close-state through `MaterializePrInboxItem` + wire the clock seam in `Program.cs`
+### Task 6b: Surface `RecentlyClosed` in the `/api/preferences` DTO (read path)
+
+**Files:**
+- Modify: `PRism.Web/Endpoints/PreferencesDtos.cs`
+- Modify: `PRism.Web/Endpoints/PreferencesEndpoints.cs`
+- Test: `tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs` (extend)
+
+> **Feasibility F3 (blocker):** `/api/preferences` does **not** auto-serialize `InboxSectionsConfig` — it hand-projects into `InboxSectionsDto`, which enumerates exactly five keys with explicit kebab `[JsonPropertyName]`. Without this task, the config field exists but the GET response omits it, and Task 11's Settings toggle reads `undefined` (renders off regardless of the real default, never reflects persisted state). This must land **before** Task 11.
+
+- [ ] **Step 1: Write the failing test**
+
+Extend `PreferencesEndpointsTests` (mirror its existing inbox-sections shape assertion):
+
+```csharp
+[Fact]
+public async Task GetPreferences_IncludesRecentlyClosed_DefaultTrue()
+{
+    // GET /api/preferences against a default-config factory
+    // assert the JSON has inbox.sections["recently-closed"] == true
+    var json = await GetPreferencesJson(); // use the file's existing helper
+    json.GetProperty("inbox").GetProperty("sections")
+        .GetProperty("recently-closed").GetBoolean().Should().BeTrue();
+}
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `dotnet test --filter "FullyQualifiedName~PreferencesEndpointsTests.GetPreferences_IncludesRecentlyClosed"`
+Expected: FAIL — key absent (KeyNotFound / property missing).
+
+- [ ] **Step 3: Add the field to the DTO + projection**
+
+`PRism.Web/Endpoints/PreferencesDtos.cs` — add to `InboxSectionsDto` (kebab is **not** the default policy, so the explicit attribute is required):
+
+```csharp
+internal sealed record InboxSectionsDto(
+    [property: JsonPropertyName("review-requested")] bool ReviewRequested,
+    [property: JsonPropertyName("awaiting-author")]  bool AwaitingAuthor,
+    [property: JsonPropertyName("authored-by-me")]   bool AuthoredByMe,
+    bool Mentioned,
+    [property: JsonPropertyName("ci-failing")]       bool CiFailing,
+    [property: JsonPropertyName("recently-closed")]  bool RecentlyClosed);
+```
+
+`PRism.Web/Endpoints/PreferencesEndpoints.cs` — `BuildResponse` projection (~line 64):
+
+```csharp
+            Inbox: new InboxPreferencesDto(new InboxSectionsDto(
+                ReviewRequested: sections.ReviewRequested,
+                AwaitingAuthor:  sections.AwaitingAuthor,
+                AuthoredByMe:    sections.AuthoredByMe,
+                Mentioned:       sections.Mentioned,
+                CiFailing:       sections.CiFailing,
+                RecentlyClosed:  sections.RecentlyClosed)),
+```
+
+- [ ] **Step 4: Run to verify it passes + commit**
+
+Run: `dotnet test --filter "FullyQualifiedName~PreferencesEndpointsTests"`
+Expected: PASS.
+
+```bash
+git add PRism.Web/Endpoints/PreferencesDtos.cs PRism.Web/Endpoints/PreferencesEndpoints.cs tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs
+git commit -m "feat(prefs): surface recently-closed in the /api/preferences DTO"
+```
+
+---
+
+### Task 7: Carry close-state through `MaterializePrInboxItem` + wire the clock seam
 
 **Files:**
 - Modify: `PRism.Core/Inbox/InboxRefreshOrchestrator.cs` (`MaterializePrInboxItem`)
-- Modify: `PRism.Web/Program.cs` (clock seam DI)
+- Modify: `PRism.GitHub/ServiceCollectionExtensions.cs` (clock seam DI — **not** `Program.cs`)
 - Test: covered by Task 5's `sec[0].MergedAt.Should().Be(newer)` assertion.
 
 - [ ] **Step 1: Extend `MaterializePrInboxItem`**
@@ -770,17 +850,22 @@ git commit -m "feat(config): inbox.sections.recently-closed toggle (default true
 
 - [ ] **Step 2: Wire the clock into `GitHubSectionQueryRunner` registration**
 
-`PRism.Web/Program.cs` — find the `GitHubSectionQueryRunner` (or `ISectionQueryRunner`) registration and add the clock arg. Grep: `grep -n "SectionQueryRunner" PRism.Web/Program.cs`. The registration becomes:
+The `ISectionQueryRunner` registration lives in `PRism.GitHub/ServiceCollectionExtensions.cs:56-64` (**not** `Program.cs` — `grep -n "SectionQueryRunner" PRism.Web/Program.cs` returns nothing). Insert the clock as the third arg, before the logger, matching the new ctor order (Task 3):
 
 ```csharp
-builder.Services.AddSingleton<ISectionQueryRunner>(sp => new GitHubSectionQueryRunner(
-    sp.GetRequiredService<IHttpClientFactory>(),
-    /* existing readToken delegate */,
-    () => DateTimeOffset.UtcNow,
-    sp.GetService<ILogger<GitHubSectionQueryRunner>>()));
+        services.AddSingleton<ISectionQueryRunner>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new GitHubSectionQueryRunner(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                () => DateTimeOffset.UtcNow,
+                sp.GetRequiredService<ILogger<GitHubSectionQueryRunner>>());
+        });
 ```
 
-> Match the existing `readToken` delegate exactly (copy from the current registration). The clock is `() => DateTimeOffset.UtcNow` in production; tests inject a fixed clock.
+> The real `readToken` delegate is `() => tokens.ReadAsync(CancellationToken.None)` — copy it verbatim. The clock is `() => DateTimeOffset.UtcNow` in production; tests inject a fixed clock.
 
 - [ ] **Step 3: Run the full backend suite**
 
@@ -790,7 +875,7 @@ Expected: PASS (all). This is the Task-5 assertions going green end-to-end + no 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add PRism.Core/Inbox/InboxRefreshOrchestrator.cs PRism.Web/Program.cs
+git add PRism.Core/Inbox/InboxRefreshOrchestrator.cs PRism.GitHub/ServiceCollectionExtensions.cs
 git commit -m "feat(inbox): thread close-state through materialize + wire clock seam"
 ```
 
@@ -1042,7 +1127,7 @@ export function RecentlyClosedFooter() {
 }
 ```
 
-> The cap is 30 (`InboxHistoryConstants.MaxRows`); `>= 30` is the truncation signal (the backend never returns more than 30, so `=== 30` means "cap likely hit"). This is an approximation — the backend could legitimately return exactly 30 — accepted per spec § 3.2 (the hint is advisory, not a guarantee).
+> The cap is 30 (`InboxHistoryConstants.MaxHistoryRows`); `>= 30` is the truncation signal (the backend never returns more than 30, so `=== 30` means "cap likely hit"). This is an approximation — the backend could legitimately return exactly 30 — accepted per spec § 3.2 (the hint is advisory, not a guarantee).
 
 - [ ] **Step 5: Pass `defaultOpen={false}` for `recently-closed` in `InboxPage`**
 
@@ -1075,6 +1160,8 @@ git commit -m "feat(inbox): recently-closed section UI — collapsed, merged/clo
 ---
 
 ### Task 11: Settings toggle for `recently-closed`
+
+> **Depends on Task 6b** (the backend `/api/preferences` must emit `recently-closed`, else this toggle binds to `undefined`). 6b ships in PR1; this is PR2.
 
 **Files:**
 - Modify: the Settings inbox-sections component (grep `inbox.sections` under `frontend/src/components/Settings`)
@@ -1434,7 +1521,7 @@ git commit -m "docs: merged-pr-history deferrals sidecar + index/backlog updates
 - § 5.2.2 read-only Drafts tab, local-only (remote cleanup deferred) → Task 14 + Task 17 deferral. ✓
 - § 5.2.3 transition banner supersedes BannerRefresh → Task 15. ✓
 - § 8 tests → woven per task; frozen-PR reuse → Task 16. ✓
-- Config (bool toggle, constants not int config) → Tasks 4, 6. ✓
+- Config (bool toggle, constants not int config) → Tasks 4, 6; `/api/preferences` read path → Task 6b (feasibility F3). ✓
 
 **Placeholder scan:** no "TBD"/"handle errors"/"similar to" — each step carries code or an exact command. The few "grep to find X" steps are deliberate (locating an existing call site whose exact line drifts), each with the search command + what to change.
 
