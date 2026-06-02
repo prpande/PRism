@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from "node:child_process";
+import * as path from "node:path";
 import { parsePortFromLine, pollHealth } from "./ports";
 
 export interface Sidecar {
@@ -15,37 +16,59 @@ export interface SidecarOptions {
   startTimeoutMs?: number;
 }
 
+export interface SpawnPlan {
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}
+
+/**
+ * Build the spawn args/cwd/env for the sidecar. Pure (no process spawn) so the
+ * launch contract is unit-testable.
+ */
+export function planSpawn(opts: SidecarOptions): SpawnPlan {
+  return {
+    args: ["--no-browser", ...(opts.dataDir ? ["--dataDir", opts.dataDir] : [])],
+    // Anchor the working directory to the binary's OWN directory. ASP.NET derives
+    // its ContentRoot from the process cwd, and MapFallbackToFile("index.html")
+    // resolves the SPA shell under {ContentRoot}/wwwroot. Electron's launch cwd is
+    // NOT the binary's dir, so without this the sidecar can't find wwwroot/index.html
+    // and `GET /` 404s (only `/index.html` works, served by the static-assets
+    // manifest, which carries absolute paths). Pinning cwd makes the SPA load.
+    cwd: path.dirname(opts.binaryPath),
+    // Pass a MINIMAL explicit env — do NOT spread process.env. Spreading would
+    // hand the sidecar every ambient variable (incl. any CI secrets like
+    // GITHUB_TOKEN inherited by the Electron process). Retain only what the
+    // backend needs: PATH, a temp dir, and the vars DataDirectoryResolver reads
+    // to compute LocalApplicationData when --dataDir is omitted (LOCALAPPDATA/
+    // USERPROFILE on Windows; HOME on Unix), plus the two sidecar signals.
+    env: {
+      PATH: process.env.PATH ?? "",
+      ...(process.platform === "win32"
+        ? {
+            SystemRoot: process.env.SystemRoot ?? "",
+            TEMP: process.env.TEMP ?? "",
+            USERPROFILE: process.env.USERPROFILE ?? "",
+            LOCALAPPDATA: process.env.LOCALAPPDATA ?? "",
+          }
+        : { HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? "" }),
+      PRISM_SIDECAR: "1",
+      PRISM_PARENT_PID: String(opts.parentPid),
+    },
+  };
+}
+
 /**
  * Spawn the PRism.Web sidecar, learn its port from stdout, health-gate, and return
  * a handle. The backend picks its own free port (no shell-side TOCTOU); we read it.
  */
 export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
-  const child: ChildProcess = spawn(
-    opts.binaryPath,
-    ["--no-browser", ...(opts.dataDir ? ["--dataDir", opts.dataDir] : [])],
-    {
-      // Pass a MINIMAL explicit env — do NOT spread process.env. Spreading would
-      // hand the sidecar every ambient variable (incl. any CI secrets like
-      // GITHUB_TOKEN inherited by the Electron process). Retain only what the
-      // backend needs: PATH, a temp dir, and the vars DataDirectoryResolver reads
-      // to compute LocalApplicationData when --dataDir is omitted (LOCALAPPDATA/
-      // USERPROFILE on Windows; HOME on Unix), plus the two sidecar signals.
-      env: {
-        PATH: process.env.PATH ?? "",
-        ...(process.platform === "win32"
-          ? {
-              SystemRoot: process.env.SystemRoot ?? "",
-              TEMP: process.env.TEMP ?? "",
-              USERPROFILE: process.env.USERPROFILE ?? "",
-              LOCALAPPDATA: process.env.LOCALAPPDATA ?? "",
-            }
-          : { HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? "" }),
-        PRISM_SIDECAR: "1",
-        PRISM_PARENT_PID: String(opts.parentPid),
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+  const plan = planSpawn(opts);
+  const child: ChildProcess = spawn(opts.binaryPath, plan.args, {
+    cwd: plan.cwd,
+    env: plan.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 
   const port = await readPortFromStdout(child, opts.startTimeoutMs ?? 15000);
   const baseUrl = `http://127.0.0.1:${port}`;
