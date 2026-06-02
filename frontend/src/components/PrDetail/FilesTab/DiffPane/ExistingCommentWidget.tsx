@@ -3,12 +3,13 @@ import type { DraftReplyDto, PrReference, ReviewThreadDto } from '../../../../ap
 import { MarkdownRenderer } from '../../../Markdown/MarkdownRenderer';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
 import styles from './ExistingCommentWidget.module.css';
+import type { ComposerOwnerKey } from '../../../../hooks/useDraftSession';
 
 export interface ExistingCommentWidgetReplyContext {
   prRef: PrReference;
   prState: 'open' | 'closed' | 'merged';
   draftReplies: DraftReplyDto[];
-  registerOpenComposer: (draftId: string) => () => void;
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   // Called after the reply composer closes so the parent can refetch the
   // session (mirrors the on-close path the inline composer uses for the
   // own-tab refresh-after-write case).

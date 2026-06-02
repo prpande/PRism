@@ -4,6 +4,11 @@ import type { DraftCommentDto, DraftReplyDto, PrReference, ReviewSessionDto } fr
 
 export type DraftSessionStatus = 'loading' | 'ready' | 'error';
 
+// Identifies which composer surface holds an open draft. 'reply-composer' and
+// 'submit-dialog' are the PR-root–owning surfaces; 'files-tab' and
+// 'drafts-tab' are the inline-comment surfaces.
+export type ComposerOwnerKey = 'reply-composer' | 'submit-dialog' | 'files-tab' | 'drafts-tab';
+
 // Surfaced when a remote tab (or the reload pipeline) edits a draft body the
 // local tab is NOT actively composing. The toast is the user's signal that
 // the Drafts tab content shifted under them; clearing it is the "ack" action.
@@ -17,10 +22,14 @@ export interface UseDraftSessionResult {
   status: DraftSessionStatus;
   error: Error | null;
   refetch: () => Promise<void>;
-  // Refcount-based registration. Multiple composers can open the same draft
-  // id (Files tab + Drafts tab); the predicate stays truthy until the last
-  // one unmounts. Returns a cleanup that decrements.
-  registerOpenComposer: (draftId: string) => () => void;
+  // Set-based registration. Multiple composers can open the same draft id
+  // (Files tab + Drafts tab); the predicate stays truthy until the last one
+  // unmounts. ownerKey identifies which surface holds the composer.
+  // Returns a cleanup that removes the ownerKey from the set.
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
+  // Returns the ownerKey of the first composer that holds the PR-root draft
+  // (filePath===null && lineNumber===null), or null if no composer is open.
+  getPrRootHolder: () => ComposerOwnerKey | null;
   outOfBandToast: OutOfBandUpdate | null;
   clearOutOfBandToast: () => void;
 }
@@ -31,22 +40,42 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
   const [error, setError] = useState<Error | null>(null);
   const [outOfBandToast, setOutOfBandToast] = useState<OutOfBandUpdate | null>(null);
 
-  const openComposers = useRef(new Map<string, number>());
-  const isOpen = useCallback((id: string) => (openComposers.current.get(id) ?? 0) > 0, []);
+  const openComposers = useRef(new Map<string, Set<ComposerOwnerKey>>());
+  const isOpen = useCallback((id: string) => (openComposers.current.get(id)?.size ?? 0) > 0, []);
 
-  const registerOpenComposer = useCallback((draftId: string): (() => void) => {
-    const m = openComposers.current;
-    m.set(draftId, (m.get(draftId) ?? 0) + 1);
-    return () => {
-      const next = (m.get(draftId) ?? 0) - 1;
-      if (next <= 0) m.delete(draftId);
-      else m.set(draftId, next);
-    };
-  }, []);
+  const registerOpenComposer = useCallback(
+    (draftId: string, ownerKey: ComposerOwnerKey): (() => void) => {
+      const m = openComposers.current;
+      let set = m.get(draftId);
+      if (!set) {
+        set = new Set<ComposerOwnerKey>();
+        m.set(draftId, set);
+      }
+      set.add(ownerKey);
+      return () => {
+        const s = m.get(draftId);
+        if (!s) return;
+        s.delete(ownerKey);
+        if (s.size === 0) m.delete(draftId);
+      };
+    },
+    [],
+  );
 
   // Sessionref so async refetch reads the freshest local state on merge.
   const sessionRef = useRef<ReviewSessionDto | null>(null);
   sessionRef.current = session;
+
+  const getPrRootHolder = useCallback((): ComposerOwnerKey | null => {
+    const prRootDraft = session?.draftComments.find(
+      (d) => d.filePath === null && d.lineNumber === null,
+    );
+    if (!prRootDraft) return null;
+    const set = openComposers.current.get(prRootDraft.id);
+    if (!set || set.size === 0) return null;
+    // Return the first ownerKey in insertion order.
+    return set.values().next().value ?? null;
+  }, [session]);
 
   const refetch = useCallback(async () => {
     try {
@@ -98,6 +127,7 @@ export function useDraftSession(prRef: PrReference): UseDraftSessionResult {
     error,
     refetch,
     registerOpenComposer,
+    getPrRootHolder,
     outOfBandToast,
     clearOutOfBandToast,
   };

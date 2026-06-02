@@ -87,7 +87,7 @@ describe('useDraftSession — diff-and-prefer merge', () => {
     // Simulate a composer being open for c1.
     let cleanup: () => void = () => undefined;
     act(() => {
-      cleanup = result.current.registerOpenComposer('c1');
+      cleanup = result.current.registerOpenComposer('c1', 'files-tab');
     });
 
     await act(async () => {
@@ -217,8 +217,8 @@ describe('useDraftSession — registerOpenComposer refcount', () => {
     let cleanupA: () => void = () => undefined;
     let cleanupB: () => void = () => undefined;
     act(() => {
-      cleanupA = result.current.registerOpenComposer('c1');
-      cleanupB = result.current.registerOpenComposer('c1');
+      cleanupA = result.current.registerOpenComposer('c1', 'files-tab');
+      cleanupB = result.current.registerOpenComposer('c1', 'drafts-tab');
     });
 
     // First refetch: both refs active → keep local body.
@@ -251,7 +251,7 @@ describe('useDraftSession — replies merge mirrors comments', () => {
 
     let cleanup: () => void = () => undefined;
     act(() => {
-      cleanup = result.current.registerOpenComposer('r1');
+      cleanup = result.current.registerOpenComposer('r1', 'files-tab');
     });
 
     await act(async () => {
@@ -288,5 +288,166 @@ describe('useDraftSession — error state', () => {
     const { result } = renderHook(() => useDraftSession(ref));
     await waitFor(() => expect(result.current.status).toBe('error'));
     expect(result.current.error?.message).toBe('network');
+  });
+});
+
+describe('useDraftSession — registerOpenComposer ownerKey set semantics', () => {
+  it('two distinct owners on the same draft: both must release before the draft is considered closed', async () => {
+    const v1 = { ...emptySession(), draftComments: [comment('c1', 'local-body')] };
+    const v2 = { ...emptySession(), draftComments: [comment('c1', 'remote-body')] };
+    vi.spyOn(draftApi, 'getDraft')
+      .mockResolvedValueOnce(v1)
+      .mockResolvedValueOnce(v2)
+      .mockResolvedValueOnce(v2)
+      .mockResolvedValueOnce(v2);
+
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    let cleanupFilesTab: () => void = () => undefined;
+    let cleanupDraftsTab: () => void = () => undefined;
+    act(() => {
+      cleanupFilesTab = result.current.registerOpenComposer('c1', 'files-tab');
+      cleanupDraftsTab = result.current.registerOpenComposer('c1', 'drafts-tab');
+    });
+
+    // Both open → predicate truthy → keeps local body.
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.session?.draftComments[0].bodyMarkdown).toBe('local-body');
+
+    // Release files-tab → drafts-tab still holds → predicate still truthy.
+    act(() => {
+      cleanupFilesTab();
+    });
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.session?.draftComments[0].bodyMarkdown).toBe('local-body');
+
+    // Release drafts-tab → no holder → predicate falsy → server wins.
+    act(() => {
+      cleanupDraftsTab();
+    });
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.session?.draftComments[0].bodyMarkdown).toBe('remote-body');
+  });
+
+  it('adding the same ownerKey twice is idempotent — single release closes the draft', async () => {
+    const v1 = { ...emptySession(), draftComments: [comment('c1', 'local-body')] };
+    const v2 = { ...emptySession(), draftComments: [comment('c1', 'remote-body')] };
+    vi.spyOn(draftApi, 'getDraft').mockResolvedValueOnce(v1).mockResolvedValueOnce(v2);
+
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    let cleanupA: () => void = () => undefined;
+    let cleanupB: () => void = () => undefined;
+    act(() => {
+      // Same ownerKey added twice — Set deduplicates.
+      cleanupA = result.current.registerOpenComposer('c1', 'files-tab');
+      cleanupB = result.current.registerOpenComposer('c1', 'files-tab');
+    });
+
+    // Call both cleanups — Set already removed the key on the first delete,
+    // second is a no-op, draft treated as closed.
+    act(() => {
+      cleanupA();
+      cleanupB();
+    });
+    await act(async () => {
+      await result.current.refetch();
+    });
+    // Server wins since the draft is now considered closed.
+    expect(result.current.session?.draftComments[0].bodyMarkdown).toBe('remote-body');
+  });
+});
+
+describe('useDraftSession — getPrRootHolder', () => {
+  function prRootComment(id: string, body: string): DraftCommentDto {
+    return comment(id, body, {
+      filePath: null,
+      lineNumber: null,
+      side: null,
+      anchoredSha: null,
+      anchoredLineContent: null,
+    });
+  }
+
+  it('returns null when no PR-root draft exists in session', async () => {
+    const v1 = { ...emptySession(), draftComments: [comment('c1', 'body')] };
+    vi.spyOn(draftApi, 'getDraft').mockResolvedValue(v1);
+
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    expect(result.current.getPrRootHolder()).toBeNull();
+  });
+
+  it('returns null when a PR-root draft exists but no composer holds it', async () => {
+    const v1 = { ...emptySession(), draftComments: [prRootComment('pr-root', 'body')] };
+    vi.spyOn(draftApi, 'getDraft').mockResolvedValue(v1);
+
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    expect(result.current.getPrRootHolder()).toBeNull();
+  });
+
+  it('returns the ownerKey when a composer holds the PR-root draft', async () => {
+    const v1 = { ...emptySession(), draftComments: [prRootComment('pr-root', 'body')] };
+    vi.spyOn(draftApi, 'getDraft').mockResolvedValue(v1);
+
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    let cleanup: () => void = () => undefined;
+    act(() => {
+      cleanup = result.current.registerOpenComposer('pr-root', 'reply-composer');
+    });
+
+    expect(result.current.getPrRootHolder()).toBe('reply-composer');
+    cleanup();
+  });
+
+  it('returns null after the composer releases the PR-root draft', async () => {
+    const v1 = { ...emptySession(), draftComments: [prRootComment('pr-root', 'body')] };
+    vi.spyOn(draftApi, 'getDraft').mockResolvedValue(v1);
+
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    let cleanup: () => void = () => undefined;
+    act(() => {
+      cleanup = result.current.registerOpenComposer('pr-root', 'reply-composer');
+    });
+    act(() => {
+      cleanup();
+    });
+
+    expect(result.current.getPrRootHolder()).toBeNull();
+  });
+
+  it('returns insertion-order-first ownerKey when multiple holders exist', async () => {
+    const v1 = { ...emptySession(), draftComments: [prRootComment('pr-root', 'body')] };
+    vi.spyOn(draftApi, 'getDraft').mockResolvedValue(v1);
+
+    const { result } = renderHook(() => useDraftSession(ref));
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    let cleanupA: () => void = () => undefined;
+    let cleanupB: () => void = () => undefined;
+    act(() => {
+      cleanupA = result.current.registerOpenComposer('pr-root', 'reply-composer');
+      cleanupB = result.current.registerOpenComposer('pr-root', 'submit-dialog');
+    });
+
+    // First inserted wins.
+    expect(result.current.getPrRootHolder()).toBe('reply-composer');
+    cleanupA();
+    cleanupB();
   });
 });

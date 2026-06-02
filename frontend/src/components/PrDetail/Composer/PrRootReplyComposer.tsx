@@ -6,6 +6,7 @@ import { Modal } from '../../Modal/Modal';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import type { PrReference } from '../../../api/types';
+import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 
 export interface PrRootReplyComposerProps {
   prRef: PrReference;
@@ -16,7 +17,7 @@ export interface PrRootReplyComposerProps {
   // anchoredSha all null per spec § 5.6).
   draftId: string | null;
   onDraftIdChange: (id: string | null) => void;
-  registerOpenComposer: (draftId: string) => () => void;
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   onClose: () => void;
   // Spec § 5.7a. Set when a peer tab claimed cross-tab ownership of this
   // PR. Disables the textarea and the action buttons; auto-save short-
@@ -75,7 +76,7 @@ export function PrRootReplyComposer({
 
   useEffect(() => {
     if (draftId === null) return;
-    return registerOpenComposer(draftId);
+    return registerOpenComposer(draftId, 'reply-composer');
   }, [draftId, registerOpenComposer]);
 
   useEffect(() => {

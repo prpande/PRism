@@ -4,6 +4,7 @@ import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
 import styles from './PrRootConversation.module.css';
+import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 
 export interface PrRootConversationReplyContext {
   prRef: PrReference;
@@ -12,7 +13,7 @@ export interface PrRootConversationReplyContext {
   // spec § 5.6) hydrates the composer with its body when the user opens the
   // reply panel. Mirrors the inline-composer hydration path.
   existingPrRootDraft: DraftCommentDto | null;
-  registerOpenComposer: (draftId: string) => () => void;
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   onComposerClose: () => void;
   // Spec § 5.7a. Forwarded to PrRootReplyComposer.
   readOnly?: boolean;
