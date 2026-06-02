@@ -12,6 +12,15 @@ using PRism.Web.Submit;
 
 namespace PRism.Web.Endpoints;
 
+// Exposed as internal so integration tests can inject a shorter timeout to make the 504 path
+// testable without a real 30-second wait.
+internal static class DiscardTimeouts
+{
+    // Discard waits up to this long for the cancelled pipeline to release the submit lock.
+    // 30 s in production; tests override to a much shorter value via the internal setter.
+    internal static TimeSpan LockAcquireTimeout { get; set; } = TimeSpan.FromSeconds(30);
+}
+
 // S5 PR3 — the submit pipeline behind HTTP (spec § 7):
 //  - POST /api/pr/{ref}/submit                                  → drive SubmitPipeline; 409 on lock contention
 //  - POST /api/pr/{ref}/submit/foreign-pending-review/resume    → TOCTOU re-fetch + import the foreign review as drafts
@@ -65,6 +74,7 @@ internal static class PrSubmitEndpoints
     {
         ArgumentNullException.ThrowIfNull(app);
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/submit", SubmitAsync);
+        app.MapPost("/api/pr/{owner}/{repo}/{number:int}/submit/discard", DiscardOwnPendingReviewAsync);
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/submit/foreign-pending-review/resume", ResumeForeignPendingReviewAsync);
         app.MapPost("/api/pr/{owner}/{repo}/{number:int}/submit/foreign-pending-review/discard", DiscardForeignPendingReviewAsync);
         return app;
@@ -82,6 +92,7 @@ internal static class PrSubmitEndpoints
         IPrReader prReader,
         IReviewEventBus bus,
         SubmitLockRegistry lockRegistry,
+        SubmitCancellationRegistry cancellationRegistry,
         IHostApplicationLifetime appLifetime,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
@@ -171,11 +182,31 @@ internal static class PrSubmitEndpoints
                 return snap.HeadSha;
             });
 
-        // Fire-and-forget. CRITICAL: pass CancellationToken.None to Task.Run and the host's
-        // ApplicationStopping (NOT the request `ct`) into the pipeline — the request `ct` is bound
-        // to HttpContext.RequestAborted, which fires the moment the 200 response completes (or the
+        // Register a linked CTS so the discard endpoint can cancel this pipeline via
+        // cancellationRegistry.RequestCancel(prRef). Also links ApplicationStopping so host
+        // shutdown still cancels. NOT `await using` — ownership transfers to Task.Run's finally.
+        // CA2000 is suppressed deliberately (same cross-task transfer pattern as handle above).
+#pragma warning disable CA2000
+        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.ApplicationStopping);
+        IDisposable registration;
+        try
+        {
+            registration = cancellationRegistry.Register(prRef, linkedCts);
+        }
+        catch (InvalidOperationException)
+        {
+            linkedCts.Dispose();
+            await handle.DisposeAsync().ConfigureAwait(false);
+            return Results.Json(new SubmitErrorDto("submit-in-progress", "A prior submit's cleanup is still pending."), statusCode: StatusCodes.Status409Conflict);
+        }
+#pragma warning restore CA2000
+        // pipelineCt is the linked token: cancelled by host shutdown OR by discard.
+        var pipelineCt = linkedCts.Token;
+
+        // Fire-and-forget. CRITICAL: pass CancellationToken.None to Task.Run and pipelineCt
+        // (NOT the request `ct`) into the pipeline — the request `ct` is bound to
+        // HttpContext.RequestAborted, which fires the moment the 200 response completes (or the
         // tab closes), which would silently kill the pipeline mid-run.
-        var pipelineCt = appLifetime.ApplicationStopping;
         _ = Task.Run(async () =>
         {
             try
@@ -239,11 +270,106 @@ internal static class PrSubmitEndpoints
 #pragma warning restore CA1031
             finally
             {
+                // Unregister first so a fast resubmit can Register without collision.
+                registration.Dispose();
+                // Then dispose the CTS itself (frees the ApplicationStopping callback).
+                linkedCts.Dispose();
+                // Last: release the per-PR submit lock.
                 await handle.DisposeAsync().ConfigureAwait(false);
             }
         }, CancellationToken.None);
 
         return Results.Json(new SubmitResponseDto("started"));
+    }
+
+    // ------------------------------------------------------------------ POST /submit/discard
+
+    private static async Task<IResult> DiscardOwnPendingReviewAsync(
+        string owner, string repo, int number,
+        IAppStateStore stateStore,
+        IActivePrCache activePrCache,
+        IReviewSubmitter submitter,
+        IReviewEventBus bus,
+        SubmitLockRegistry lockRegistry,
+        SubmitCancellationRegistry cancellationRegistry,
+        CancellationToken ct)
+    {
+        var prRef = new PrReference(owner, repo, number);
+        var sessionKey = prRef.ToString();
+
+        if (!activePrCache.IsSubscribed(prRef))
+            return Results.Json(new SubmitErrorDto("unauthorized", "Subscribe to this PR before discarding."), statusCode: StatusCodes.Status401Unauthorized);
+
+        // Signal cancellation to any in-flight pipeline for this PR. Idempotent — no-op if nothing
+        // is registered (either idle or already past registration). When a pipeline IS running,
+        // its linked CTS fires, the pipeline's OCE catch returns SubmitOutcome.Cancelled, and
+        // the Task.Run finally disposes registration + linkedCts before releasing the submit lock.
+        cancellationRegistry.RequestCancel(prRef);
+
+        // Wait for the pipeline (if any) to release the submit lock. We use a 30-second timeout
+        // because a stuck pipeline could hold the lock beyond the typical OCE propagation time.
+        // Released via try/finally below (CA2007 forbids `await using var` here because the
+        // compiler-generated DisposeAsync() call would also need .ConfigureAwait(false) which
+        // the `await using` sugar does not support; manual finally is the idiomatic workaround).
+        var discardHandle = await lockRegistry.TryAcquireAsync(prRef, DiscardTimeouts.LockAcquireTimeout, ct).ConfigureAwait(false);
+        if (discardHandle is null)
+            return Results.Json(new SubmitErrorDto("pipeline-cancellation-timeout",
+                "The in-flight submit pipeline did not release within the allowed window. Try again."),
+                statusCode: StatusCodes.Status504GatewayTimeout);
+
+        try
+        {
+            // Re-fetch own pending review from GitHub (best-effort: if there is none, the stamps
+            // clear is still correct). On network failure, surface a 502 so the user can retry.
+            OwnPendingReviewSnapshot? snapshot;
+            try
+            {
+                snapshot = await submitter.FindOwnPendingReviewAsync(prRef, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (HttpRequestException hre)
+            {
+                return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
+            }
+
+            // If a pending review exists, delete it. 404 means it's already gone — treat as success.
+            if (snapshot is not null)
+            {
+                try
+                {
+                    await submitter.DeletePendingReviewAsync(prRef, snapshot.PullRequestReviewId, ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (HttpRequestException hre) when (hre.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    // Already gone — proceed to clear local stamps.
+                }
+                catch (HttpRequestException hre)
+                {
+                    // Non-404 GitHub error: surface as 502. Do NOT clear local stamps — the pending
+                    // review still exists on GitHub, so a re-detect on the next submit would catch it.
+                    return Results.Json(MapGithubError(hre), statusCode: StatusCodes.Status502BadGateway);
+                }
+            }
+
+            // Clear the session's pending-review stamps (PendingReviewId / ThreadId / ReplyCommentId).
+            await stateStore.UpdateAsync(
+                s => SessionOverlays.ClearPendingReviewStamps(s, sessionKey), ct).ConfigureAwait(false);
+
+            bus.Publish(new StateChanged(prRef, PendingReviewFields, SourceTabId: null));
+
+            return Results.NoContent();
+        }
+        finally
+        {
+            await discardHandle.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     // ----------------------------------------- POST /submit/foreign-pending-review/resume
@@ -449,6 +575,22 @@ internal static class PrSubmitEndpoints
     {
         var sessions = new Dictionary<string, ReviewSessionState>(state.Reviews.Sessions) { [sessionKey] = session };
         return state.WithDefaultReviews(state.Reviews with { Sessions = sessions });
+    }
+
+    // Maps an HttpRequestException to a SubmitErrorDto using the same code vocabulary as
+    // PrRootCommentEndpoints.MapGithubError. Private copy to avoid cross-class coupling (each file
+    // is internal static; refactoring to a shared helper is a future cleanup if a third consumer
+    // appears). Codes must stay in sync when either file adds a new status mapping.
+    private static SubmitErrorDto MapGithubError(HttpRequestException hre)
+    {
+        var code = hre.StatusCode switch
+        {
+            System.Net.HttpStatusCode.Forbidden => "github-forbidden",
+            System.Net.HttpStatusCode.Unauthorized => "github-unauthorized",
+            System.Net.HttpStatusCode.UnprocessableEntity => "github-validation-error",
+            _ => "github-network-error",
+        };
+        return new SubmitErrorDto(code, hre.Message);
     }
 
     // The pipeline's onDuplicateMarker notices look like "draft <id>: …" or "reply <id>: …". Pull
