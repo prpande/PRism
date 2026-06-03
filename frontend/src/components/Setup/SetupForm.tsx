@@ -65,8 +65,8 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
           <em> All repositories</em> or <em>Select repositories</em>.
         </p>
         <p className={styles.footnote}>
-          Already have a classic PAT? It needs the <code>repo</code>, <code>read:user</code>, and{' '}
-          <code>read:org</code> scopes.
+          Already have a classic PAT? It needs the <code>repo</code> and <code>read:org</code>{' '}
+          scopes.
         </p>
       </section>
       <FirstRunDisclosure />

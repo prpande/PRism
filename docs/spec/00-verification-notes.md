@@ -455,7 +455,7 @@ Outstanding empirical gates (these are not spec-text updates; they are tripwires
 ## PAT type detection
 
 **Implementation pattern (informational).** PRism's Setup-time validator branches on the token prefix:
-- `ghp_…` → classic PAT; `X-OAuth-Scopes` is parsed and diffed against `["repo", "read:user", "read:org"]`.
+- `ghp_…` → classic PAT; `X-OAuth-Scopes` is parsed and checked against the required capabilities `repo` and `read:org`. Each capability is satisfied by its own scope or any parent that supersets it (`read:org` ← `write:org` / `admin:org`), because GitHub reports only the literally-granted scope, not its implied children. `read:user` is not required.
 - Anything else (`github_pat_…`, `gho_…`, etc.) → fine-grained / OAuth-style; `X-OAuth-Scopes` is empty for these tokens, so the header check is skipped.
 
 For fine-grained tokens, a follow-up Search probe (`GET /search/issues?q=is:pr+author:@me`/`review-requested:@me`) detects the no-repos-selected failure mode. If both return `total_count: 0`, the connect endpoint returns `warning: "no-repos-selected"` without committing the token; the frontend gates the commit behind a confirmation modal.

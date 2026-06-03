@@ -27,7 +27,7 @@ Every user-facing feature shipping in the PoC, fully specified.
 
     Metadata: Read is auto-included by GitHub. For Repository access, the user picks "All repositories" or "Select repositories" (the public-only mode does not expose private repos PRism needs).
 
-    A muted footnote covers users with an existing classic PAT: *"Already have a classic PAT? It needs the `repo`, `read:user`, and `read:org` scopes."* (Matches `RequiredScopes` in `GitHubReviewService`; mismatching the validator surfaces as `InsufficientScopes`.)
+    A muted footnote covers users with an existing classic PAT: *"Already have a classic PAT? It needs the `repo` and `read:org` scopes."* (Matches `RequiredScopes` in `GitHubReviewService`; mismatching the validator surfaces as `InsufficientScopes`.) `read:org`'s parents (`write:org`, `admin:org`) are also accepted, since GitHub reports only the literally-granted scope in `X-OAuth-Scopes`. `read:user` is *not* required — no PRism call needs it (commenter avatars and public profiles return without any user scope).
   - A textarea to paste the token.
   - **A small "About local data" disclosure block** below the form: *"PRism stores your drafts, view state, and a forensic recovery log of mutations under `<dataDir>/`. The recovery log (`state-events.jsonl`, default on, ~300 MB ceiling) is what lets us recover a draft if `state.json` is corrupted. Disable it later in `config.json` (`logging.stateEvents: false`) if you prefer a smaller footprint — the trade is that 'my draft disappeared' is unrecoverable."* The disclosure is a one-time onboarding signal so a privacy-conscious user knows the log exists and how to opt out, without making them choose at the moment they're trying to paste a token.
   - A "Continue" button.

@@ -11,7 +11,21 @@ namespace PRism.GitHub;
 
 public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPrReader, IReviewSubmitter
 {
-    private static readonly string[] RequiredScopes = ["repo", "read:user", "read:org"];
+    // Classic-PAT scope requirements, expressed as (capability, scopes that satisfy it).
+    // GitHub reports only the literally-granted scope in X-OAuth-Scopes — a parent scope is
+    // NOT expanded into its children — so any parent that supersets a requirement must be
+    // listed explicitly as an accepting scope:
+    //   • `repo` has no parent; only the full `repo` scope reads private PRs. Its children
+    //     (`public_repo`, `repo:status`, …) are narrower and must NOT satisfy it.
+    //   • `read:org` is satisfied by itself or either parent, `write:org` / `admin:org`.
+    // `read:user` is intentionally absent: no PRism API call needs it (commenter avatars and
+    // public profiles are returned without any user scope, and /user returns the token-holder's
+    // login regardless of scope). Requiring it rejected tokens that granted the `user` parent.
+    private static readonly (string Capability, string[] AcceptedBy)[] RequiredScopes =
+    [
+        ("repo", ["repo"]),
+        ("read:org", ["read:org", "write:org", "admin:org"]),
+    ];
 
     // Single source of truth for the PR-detail GraphQL query shape. Lifted out of
     // GetPrDetailAsync so the integration test 7g (Frozen_pr_graphql_shape_unchanged) can
@@ -147,7 +161,14 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
 
         if (tokenType == TokenType.Classic)
         {
-            var missing = RequiredScopes.Except(scopes).ToArray();
+            var granted = scopes.ToHashSet(StringComparer.Ordinal);
+            // A capability is satisfied when the token grants any scope that accepts it
+            // (the scope itself or one of its parents). Report the capability name — not the
+            // accepting set — so the user sees what to add, e.g. "missing scopes: read:org".
+            var missing = RequiredScopes
+                .Where(r => !r.AcceptedBy.Any(granted.Contains))
+                .Select(r => r.Capability)
+                .ToArray();
             if (missing.Length > 0)
                 return new AuthValidationResult(false, null, scopes, AuthValidationError.InsufficientScopes,
                     $"missing scopes: {string.Join(", ", missing)}");

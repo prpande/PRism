@@ -40,15 +40,76 @@ public class GitHubReviewService_ValidateCredentialsAsyncTests
     }
 
     [Fact]
-    public async Task Returns_insufficient_scopes_on_403_when_required_scope_missing()
+    public async Task Returns_insufficient_scopes_when_read_org_missing()
     {
+        // Only `repo` granted — `read:org` is absent and has no parent in the set, so it is
+        // genuinely missing. `read:user` is NOT required (no PRism call needs it), so it must
+        // not appear in the missing list.
         var headers = new Dictionary<string, string> { ["X-OAuth-Scopes"] = "repo" };
         var handler = FakeHttpMessageHandler.Returns(HttpStatusCode.OK, "{\"login\":\"octocat\"}", headers);
         var sut = BuildSut(handler);
         var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
         result.Ok.Should().BeFalse();
         result.Error.Should().Be(AuthValidationError.InsufficientScopes);
-        result.ErrorDetail.Should().Contain("read:user").And.Contain("read:org");
+        result.ErrorDetail.Should().Contain("read:org");
+        result.ErrorDetail.Should().NotContain("read:user");
+    }
+
+    [Fact]
+    public async Task Returns_insufficient_scopes_when_repo_missing()
+    {
+        // `public_repo` is a CHILD of `repo`, not a parent — it cannot read private PRs, so it
+        // must not satisfy the `repo` requirement.
+        var headers = new Dictionary<string, string> { ["X-OAuth-Scopes"] = "public_repo, read:org" };
+        var handler = FakeHttpMessageHandler.Returns(HttpStatusCode.OK, "{\"login\":\"octocat\"}", headers);
+        var sut = BuildSut(handler);
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeFalse();
+        result.Error.Should().Be(AuthValidationError.InsufficientScopes);
+        result.ErrorDetail.Should().Contain("repo");
+    }
+
+    [Fact]
+    public async Task Accepts_classic_pat_without_read_user_scope()
+    {
+        // `read:user` is not required: commenter avatars/profiles are public, and /user returns
+        // the token-holder's login with any scope. A `repo` + `read:org` token must validate.
+        var headers = new Dictionary<string, string> { ["X-OAuth-Scopes"] = "repo, read:org" };
+        var handler = FakeHttpMessageHandler.Returns(HttpStatusCode.OK, "{\"login\":\"octocat\"}", headers);
+        var sut = BuildSut(handler);
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue($"validation failed with: {result.ErrorDetail}");
+        result.Login.Should().Be("octocat");
+    }
+
+    [Fact]
+    public async Task Accepts_classic_pat_with_original_repro_header()
+    {
+        // Regression guard for the original repro: token 2's exact header was
+        // `read:org, repo, user`. `read:user` is no longer a required capability, so the
+        // `user` scope is inert to validation — the point is that this header (which the old
+        // literal `read:user` check rejected) now validates on the strength of `repo` + `read:org`.
+        var headers = new Dictionary<string, string> { ["X-OAuth-Scopes"] = "read:org, repo, user" };
+        var handler = FakeHttpMessageHandler.Returns(HttpStatusCode.OK, "{\"login\":\"octocat\"}", headers);
+        var sut = BuildSut(handler);
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue($"validation failed with: {result.ErrorDetail}");
+        result.Login.Should().Be("octocat");
+    }
+
+    [Theory]
+    [InlineData("repo, write:org")]
+    [InlineData("repo, admin:org")]
+    public async Task Accepts_org_parent_scope_in_place_of_read_org(string scopesHeader)
+    {
+        // `read:org` is satisfied by either of its parents, `write:org` or `admin:org`. GitHub
+        // reports only the literally-granted scope, so the parents must be accepted explicitly.
+        var headers = new Dictionary<string, string> { ["X-OAuth-Scopes"] = scopesHeader };
+        var handler = FakeHttpMessageHandler.Returns(HttpStatusCode.OK, "{\"login\":\"octocat\"}", headers);
+        var sut = BuildSut(handler);
+        var result = await sut.ValidateCredentialsAsync(CancellationToken.None);
+        result.Ok.Should().BeTrue($"validation failed with: {result.ErrorDetail}");
+        result.Login.Should().Be("octocat");
     }
 
     [Fact]
