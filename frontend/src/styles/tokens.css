@@ -267,6 +267,23 @@ code, pre, .mono { font-family: var(--font-mono); font-feature-settings: "calt" 
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* MarkdownRenderer output. `.markdown-body` is a global class applied in
+   MarkdownRenderer.tsx; every rendered comment / description / draft shares it.
+   Goal: prevent the page-level horizontal scrollbar that long inline tokens or
+   wide code blocks used to force on markdown surfaces (PR Overview description +
+   root comments, inline diff comments, drafts) — #117/#149. Long inline tokens
+   (URLs, paths) break anywhere; `<pre>` switches to `white-space: pre-wrap` so
+   long code lines wrap at the container width while keeping their indentation,
+   instead of scrolling within the block. (Note: this addresses text/code
+   overflow; intrinsically-wide GFM content like tables or images can still
+   overflow and would need their own `overflow-x` wrapper.) */
+.markdown-body { overflow-wrap: anywhere; }
+.markdown-body pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 ::selection { background: var(--accent-soft); color: var(--text-1); }
 
 /* focus ring */

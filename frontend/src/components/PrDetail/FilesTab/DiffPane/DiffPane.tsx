@@ -19,6 +19,7 @@ import { AiHunkAnnotation } from './AiHunkAnnotation';
 import { useAiGate } from '../../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
+import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
 import { WholeFileFailureBanner } from './WholeFileFailureBanner';
 import styles from './DiffPane.module.css';
 
@@ -55,6 +56,13 @@ export interface DiffPaneProps {
   onWholeFileFailed?: (reason: string) => void;
   headSha?: string;
   baseSha?: string;
+
+  // #115 — when true, long diff lines soft-wrap within their pane instead of
+  // scrolling. Default (false) = scroll: a single synthetic scrollbar
+  // (`diffHScroll`) shifts all split-mode content cells in lockstep via
+  // useLockedPaneScroll, so a too-wide line scrolls without the two panes
+  // drifting out of column-alignment. Owned by FilesTab's toolbar toggle.
+  lineWrap?: boolean;
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
@@ -86,6 +94,7 @@ export function DiffPane({
   onWholeFileFailed,
   headSha = '',
   baseSha = '',
+  lineWrap = false,
 }: DiffPaneProps) {
   const annotationsEnabled = useAiGate('hunkAnnotations');
   const allAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
@@ -199,6 +208,19 @@ export function DiffPane({
     if (diffBodyRef.current) diffBodyRef.current.scrollTop = 0;
   }, [wholeFileEnabled, selectedPath]);
 
+  // #115 — locked side-by-side horizontal scroll. Active only in split
+  // scroll-mode (not wrap, not unified): a single synthetic scrollbar drives
+  // both content panes' scrollLeft in lockstep so old/new of the same line stay
+  // column-aligned. Re-measures when the rendered diff content changes.
+  const hScrollRef = useRef<HTMLDivElement>(null);
+  const hScrollSpacerRef = useRef<HTMLDivElement>(null);
+  const lockedScrollEnabled = isSplit && !lineWrap;
+  useLockedPaneScroll(diffBodyRef, hScrollRef, hScrollSpacerRef, lockedScrollEnabled, [
+    selectedPath,
+    wholeFileEnabled,
+    allLines.length,
+  ]);
+
   // ---- Early-return guards (all hooks must be above here) ----
 
   if (!selectedPath) {
@@ -255,6 +277,7 @@ export function DiffPane({
 
   const colSpan = isSplit ? 4 : 3;
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
+  const wrapClass = lineWrap ? ' diff-pane--wrap' : '';
 
   function renderDiffRows(): React.ReactNode[] {
     if (isSplit) return renderSplitRows();
@@ -486,7 +509,10 @@ export function DiffPane({
   }
 
   return (
-    <div className={`diff-pane ${modeClass} ${styles.diffPane}`} data-testid="diff-pane">
+    <div
+      className={`diff-pane ${modeClass}${wrapClass} ${styles.diffPane}`}
+      data-testid="diff-pane"
+    >
       <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
         {isLoading && (
@@ -525,6 +551,19 @@ export function DiffPane({
           <tbody>{renderDiffRows()}</tbody>
         </table>
       </div>
+      {/* Outside the vertically-scrolling body, as a flex sibling — so the
+          horizontal scrollbar is always pinned at the bottom of the diff pane
+          and the user never has to scroll to the end of the file to reach it. */}
+      {lockedScrollEnabled && (
+        <div
+          ref={hScrollRef}
+          className={styles.diffHScroll}
+          data-testid="diff-hscroll"
+          aria-hidden="true"
+        >
+          <div ref={hScrollSpacerRef} className={styles.diffHScrollSpacer} />
+        </div>
+      )}
       {truncated && <DiffTruncationBanner prUrl={prUrl} />}
     </div>
   );
