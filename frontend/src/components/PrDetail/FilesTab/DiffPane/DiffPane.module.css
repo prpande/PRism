@@ -83,10 +83,10 @@
    Scroll mode (default): the split table stays `table-layout: fixed` (50/50
    panes, below). Each content cell CLIPS its overflow (`overflow: hidden`), so
    a too-wide line shows no per-cell scrollbar. A single synthetic scrollbar
-   (`.diffHScroll`, rendered by DiffPane) drives a uniform text-indent shift of
-   every cell in lockstep via useLockedPaneScroll, so old and new of the SAME
-   line always show the same columns — the user tracks a change without the two
-   halves drifting apart. These split-scroll rules (`overflow: hidden`,
+   (`.diffHScroll`, rendered by DiffPane) drives a uniform `transform: translateX`
+   shift of every content cell in lockstep via useLockedPaneScroll, so old and
+   new of the SAME line always show the same columns — the user tracks a change
+   without the two halves drifting apart. These split-scroll rules (`overflow: hidden`,
    `table-layout: fixed`) don't apply to unified mode, which keeps its
    single-column body scroll. (The wrap-mode rule below, however, DOES apply to
    unified `.diffContent` cells when the toggle is on.)
@@ -115,7 +115,8 @@
 /* Single synthetic horizontal scrollbar for split scroll-mode (one control for
    both panes). useLockedPaneScroll sizes the inner spacer to the content
    overflow and drives `--diff-hscroll` from this bar's scrollLeft, which every
-   content cell reads via text-indent — so dragging it shifts old + new together. */
+   content cell reads via `transform: translateX` — so dragging it shifts old +
+   new together. */
 .diffHScroll {
   /* A flex sibling of the (flex: 1) scrolling body, so it sits permanently at
      the bottom of the diff pane — always reachable without scrolling to the end
