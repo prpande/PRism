@@ -69,7 +69,9 @@ test.describe('diff horizontal scroll regression (#115 / #149 / #155)', () => {
 
     const diff = page.locator('[data-testid="files-tab-diff"]');
     // All injected lines render as solo-insert rows (pure-insert vs empty base).
-    // The last one settling signals the diff data is fully laid out.
+    // The last one settling signals the diff data is fully laid out. (Assumes
+    // the diff renders rows eagerly, not virtualized — true today; if row
+    // virtualization is ever added, this wait would need a scroll-into-view.)
     await diff
       .locator('tr.diff-line--insert')
       .nth(LINE_COUNT - 1)
@@ -120,10 +122,11 @@ test.describe('diff horizontal scroll regression (#115 / #149 / #155)', () => {
             .locator('td[data-side="new"] > span')
             .first()
             .evaluate((el) => {
-              const m = getComputedStyle(el).transform.match(
-                /matrix\(1, 0, 0, 1, (-?\d+(?:\.\d+)?), 0\)/,
-              );
-              return m ? Math.round(parseFloat(m[1])) : 0;
+              // DOMMatrixReadOnly.m41 is the translateX component — robust to
+              // matrix() serialization spacing/format (Copilot #156). 'none'
+              // (no transform applied) reads as 0.
+              const t = getComputedStyle(el).transform;
+              return t === 'none' ? 0 : Math.round(new DOMMatrixReadOnly(t).m41);
             }),
         { timeout: 15000 }, // generous ceiling — contended Windows CI runners
       )
@@ -135,8 +138,11 @@ test.describe('diff horizontal scroll regression (#115 / #149 / #155)', () => {
         .filter((el): el is HTMLElement => !!el && (el.textContent ?? '').length > 0)
         .map((el) => {
           const cs = getComputedStyle(el);
-          const m = cs.transform.match(/matrix\(1, 0, 0, 1, (-?\d+(?:\.\d+)?), 0\)/);
-          return { tx: m ? Math.round(parseFloat(m[1])) : null, textIndent: cs.textIndent };
+          // m41 = translateX; 'none' (text-indent revert / no transform) -> null
+          // so the A2 not-null check below goes RED, same as the regex did.
+          const tx =
+            cs.transform === 'none' ? null : Math.round(new DOMMatrixReadOnly(cs.transform).m41);
+          return { tx, textIndent: cs.textIndent };
         }),
     );
 
