@@ -32,20 +32,22 @@ wait for the human to read the spec/plan before implementing. Everything else
 two-axis classification machinery below is justified only insofar as removing
 that one gate — safely — is worth the maintenance it carries.
 
-### The enforcement boundary is the human merge (decided)
+### This is guidance, and the enforcement boundary is the human merge (decided)
 
-The chosen enforcement model (OPEN DECISION 2, resolved): **the safety boundary
-is the human merge.** The CI risk check this design adds is an **advisory routing
-signal** — it labels and red-X's a PR to *surface* risk to the human at merge
-time. It is deliberately *not* a hard merge-blocker: on the repo's current
-configuration `main` has no branch protection requiring it, zero approvals are
-required to merge, and the executor agent has write access and can apply its own
-labels. Rather than build the infrastructure to make it a hard gate, the design
-leans on the human merge that already exists — the human already merges every PR,
-so "gated" means **surfaced to the human**, not mechanically blocked. The
-hard-gate infrastructure was considered and **deferred** (see the deferrals
-sidecar); the design must not claim mechanical agent-independence it does not
-have.
+**This workflow is a guidance document, not enforcement tooling.** The deliverable
+is a single markdown runbook the agent follows; there is no CI check, no `.yml`,
+and no mechanical gate. The agent classifies its own change against the guidance
+below, records the classification in its triage comment, and — for gated changes
+— pauses and notifies the human. **The safety boundary is the human merge**, which
+already exists (the human merges every PR). "Gated" therefore means **surfaced to
+the human**, not mechanically blocked.
+
+This is deliberate (OPEN DECISION 2, resolved). Building mechanical enforcement
+(a required CI check, branch protection, a separate approver identity) was
+considered and **rejected/deferred** (see the deferrals sidecar): for a
+single-maintainer PoC where the human already reviews and merges every PR, the
+guidance + the human merge is sufficient, and the design must not claim mechanical
+agent-independence it does not have.
 
 ### Terms
 
@@ -137,57 +139,37 @@ spacing, color, typography, motion, copy, component composition). CI cannot
 assert "looks right," so a human must.
 
 **B2 — Risk-surface.** The change touches one of the following surfaces, each
-anchored to `architectural-invariants.md`. **Two detection classes** — the
-distinction matters because not every surface reduces to a changed-path glob:
+anchored to `architectural-invariants.md`. The *signals* column gives the agent
+concrete things to look for when self-classifying — changed paths, symbol names,
+and labels. They are **heuristics for the agent's judgment**, not mechanical
+rules; some surfaces (behavioral invariants) have no reliable path/symbol
+footprint at all, so when in doubt the agent gates.
 
-- *Path-localizable* surfaces (a glob over changed file paths is reliable).
-- *Behavioral / symbol-scoped* surfaces (no stable path footprint — a path glob
-  both over- and under-fires). These cannot be path-gated; they rely on a
-  content-grep heuristic where one exists, plus the label gate and the human
-  merge. The design does **not** claim mechanical coverage for them.
+| Risk surface | Signals the agent looks for |
+|--------------|------------------------------|
+| Auth / PAT scopes / token storage | Token-storage paths; PAT-scope *validation logic* (lives in generically-named files, e.g. submit/reconciliation pipelines); symbols like `RequiredScope`/`PatScope`/`TokenStore`/MSAL cache; `area:auth` label. |
+| Reviewer-atomic submit pipeline | The pending-review GraphQL pipeline (`addPullRequestReview` → thread/reply → `submitPullRequestReview`); `pendingReviewId`/`threadId`/`replyCommentId`/`prism:client-id`. |
+| Data migrations / persisted schema | `state.json` read/write and migration logic (spread across multiple files); schema/migration symbols. |
+| Cross-tab stamp / poisoning protocol | The `TabStamp` type and stamp/poisoning-guard logic. |
+| Desktop sidecar seams | `SidecarMode`, `ParentLivenessProbe`/`Watchdog`, `HostHeaderCheckMiddleware`, the `127.0.0.1` bind; `area:desktop` label. |
+| Architectural invariants | Any change touching a decision in `architectural-invariants.md`, including behavioral ones (`Banner, not mutation`; `Truthful by default`; Octokit source-hygiene; kebab-case enums; opaque Node IDs) that have no stable path footprint — when unsure, gate. |
+| Security surface | Host-header check, bind address, secret/credential handling; `behavioral-guidelines.md` §6. |
 
-| Risk surface | Detection class & signal |
-|--------------|--------------------------|
-| Auth / PAT scopes / token storage | **Mixed.** Token-storage paths are path-localizable; PAT-scope *validation logic* lives in generically-named files (e.g. submit/reconciliation pipelines) and needs a content-grep + `area:auth` label. Path glob alone has known false-negatives. |
-| Reviewer-atomic submit pipeline | **Path-localizable** to the pending-review GraphQL pipeline files (`addPullRequestReview` → thread/reply → `submitPullRequestReview`), plus a content-grep for `pendingReviewId`/`threadId`/`replyCommentId`/`prism:client-id`. |
-| Data migrations / persisted schema | **Mixed.** `state.json` read/write and migration logic is spread across multiple files, not under one path — content-grep on the schema/migration symbols, not a `state.json` path glob. |
-| Cross-tab stamp / poisoning protocol | **Content-grep** on stamp/poisoning-guard symbols. |
-| Desktop sidecar seams | **Path-localizable** (`SidecarMode`, `ParentLivenessProbe`/`Watchdog`, `HostHeaderCheckMiddleware`, the `127.0.0.1` bind) + `area:desktop` label. |
-| Architectural invariants | **Mixed.** Path-localizable invariants (sidecar, token storage, submit pipeline) are globbed; behavioral invariants (`Banner, not mutation`; `Truthful by default`; Octokit source-hygiene; kebab-case enums; opaque Node IDs) are **not path-gateable** — content-grep where possible, otherwise label + human. |
-| Security surface | Host-header check, bind address, secret/credential handling; secrets enforced by the secrets-scan check (below) + `behavioral-guidelines.md` §6. |
-| **CI-gate integrity** | **Path-localizable.** Any change to `.github/workflows/risk-classification.yml` or any workflow registered as a required status check. Prevents the gate from being narrowed or disabled without gating. |
-
-**Enforcement (what the CI check actually does — and does not).** A CI check
-(`risk-classification.yml`, a Deliverable) maps the PR's changed paths/labels and
-runs content-greps against the signals above, then **labels the PR and posts a
-fail status** when a risk signal fires without the corresponding gated label.
-Honest scope:
-
-- It is **advisory** (the decided model). A failing Actions check does not block
-  merge — it labels the PR and posts a fail status to *surface* risk. (It is not
-  registered in `main`'s ruleset `required_status_checks`; only `build-and-test`
-  is required, and registering it was deferred — deferrals sidecar.)
-- It is **not agent-independent**: the executor has write access and can apply
-  the gated label itself. The design accepts this and relies on the human merge,
-  rather than building the separate approver identity that would close it.
-- It has a **false-negative budget** for behavioral surfaces (above). Those are
-  not mechanically covered.
-- **It does not force draft as a lock.** Draft is reversible and, worse,
-  suppresses the Copilot reviewer (`review_draft_pull_requests: false`) on the
-  highest-risk PRs. The check therefore signals via **label + fail-status**, and
-  draft is used only as an optional human-facing flag, never as the safeguard.
-
-What makes the gate *safe* is the **human merge** (enforcement boundary, above):
-the check's job is to make a risk-surface change impossible to *miss* at merge,
-not to mechanically prevent it.
+**How the agent applies this (no tooling).** The agent reads the change against
+the table, decides hands-off vs gated, and **records the decision and its reason
+in the triage comment** (Stage 0). There is no CI check that re-computes or
+enforces this — the classification is the agent's, surfaced for the human, and
+the human merge is the boundary. The Axis-B "when in doubt, gate" rule is what
+protects against the inevitable gaps in the agent's judgment (especially on
+behavioral surfaces with no obvious signal); the human merge is the backstop.
 
 If a change touches a risk surface **but the issue was not labeled** for it, the
 agent applies the label and treats it as gated. **Re-classification is
 mandatory mid-flight:** if an agent discovers partway through that its change has
-grown into a risk surface, it stops, re-classifies as gated, and routes to the
-human gate. The CI check is the *fallback* that surfaces the case where the agent
-fails to notice — it is a second layer, explicitly not a substitute for the
-agent's own re-check.
+grown into a risk surface, it stops, re-classifies as gated, updates its triage
+comment, and routes to the human gate. The only backstop for a missed
+re-classification is the human merge — there is no CI check behind it, which is
+exactly why the "when in doubt, gate" rule and the human merge matter.
 
 ### How the axes compose
 
@@ -274,11 +256,11 @@ brainstorming → spec (docs/specs/)
 ```
 
 **Pre-PR-open re-check (all tiers).** Immediately before opening the PR, the
-agent re-runs the B2 path/label/content-grep check against the actual committed
-diff and compares it to the intake classification. A discrepancy (a risk signal
-that was not gated at intake) forces the issue to gated and routes to the human
-gate. This is the agent-side first layer; the CI check is the fallback for the
-case where the agent fails to notice. UI (B1) changes are re-checked here too.
+agent re-reads the actual committed diff against the Axis-B table and compares it
+to the intake classification. A discrepancy (a risk surface touched that was not
+gated at intake) forces the issue to gated and routes to the human gate. UI (B1)
+changes are re-checked here too. This is an agent self-check; the human merge is
+the only backstop behind it.
 
 ## Gate substitution (the core hands-off mechanism)
 
@@ -326,9 +308,9 @@ with the following, as applicable:
    passing on the PR head. **Capture mechanic:** run the regression test against
    a clean checkout of `origin/main` on a CI-matching toolchain (this repo:
    `windows-latest`, .NET 10, Node 24) and paste **commit-pinned local output**
-   in the `## Proof` section (the `build-and-test` lane builds head only and a
-   dedicated red-baseline CI job was deferred — deferrals sidecar — so there is
-   no CI run to link). For statistical/concurrency bugs,
+   in the `## Proof` section. (There is no dedicated red-baseline CI job — this is
+   self-captured, consistent with the guidance-only model.) For
+   statistical/concurrency bugs,
    red-on-main means the test reds reliably under the defined retry/stress
    budget, not on a single run. This is the anti-tautology guard: without
    verifiable red-on-main, the test does not prove the bug existed, and the fix
@@ -336,13 +318,11 @@ with the following, as applicable:
 2. **Acceptance-criteria checklist** — the issue's acceptance criteria restated
    as `- [x]` items, each pointing at the test, commit, or screenshot that
    satisfies it.
-3. **Secrets scan clean** — the agent runs a secrets scan over the diff per
-   `behavioral-guidelines.md` §6 and records the result. Because gate
-   substitution removes the human pass that would otherwise catch a leaked
-   credential, this item is **required on every PR**. Per OPEN DECISION 2
-   (advisory + human-merge), this is **self-attested + human-merge-backed** today
-   — a mechanically-enforced CI secrets-scan was deferred (deferrals sidecar) and
-   remains the obvious first hardening item if autonomy ever increases.
+3. **Secrets scan clean** — the agent scans the diff for hardcoded secrets per
+   `behavioral-guidelines.md` §6 and records the result. Because gate substitution
+   removes the human pass that would otherwise catch a leaked credential, this item
+   is **required on every PR**. It is self-attested and human-merge-backed
+   (guidance-only model — no CI secrets-scan).
 4. **Visual proof** *(UI issues only)* — before/after screenshots or a short
    recording, attached for the human visual-assert gate.
 5. **Green CI** — enforced as a **process invariant** by `pr-autopilot`'s
@@ -403,49 +383,51 @@ The agent stops and asks the human when any of these occur:
   cannot make; or `ce-doc-review` is unavailable (treat the stage as gated).
 - CI stays red after **3** `pr-autopilot` iterations on a cause the agent cannot
   fix.
-- The change is discovered (by the agent's re-check or the CI risk check) to
-  touch a risk surface → re-classify as gated and route to the human gate.
+- The change is discovered (by the agent's pre-PR re-check) to touch a risk
+  surface → re-classify as gated and route to the human gate.
 
 ## Deliverables
 
-### Core (the workflow itself)
+The deliverable is documentation only — a guidance runbook plus the index wiring
+the repo's doc-maintenance contract requires. **No `.yml`, no scripts, no CI
+checks.**
 
 | Artifact | Action |
 |----------|--------|
-| `.ai/docs/issue-resolution-workflow.md` | New runbook — agent-facing operational version. States each stage as agent-neutral intent with the Claude skill as reference implementation; owns the concrete risk-surface globs + content-grep patterns, the notification/staleness policy, and the quiescence/iteration definitions. |
-| `.github/workflows/risk-classification.yml` | New CI check — labels + fail-status when a risk signal fires without the gated label. Advisory until registered as a required check (see Hardening). Its **initial glob/grep set must be human-authored or human-reviewed** before activation (it is the single point of failure). |
-| `CLAUDE.md` | Add the runbook to the shared-rules link table **and** record the gate-substitution authorization (the override is not in force until this lands). |
+| `.ai/docs/issue-resolution-workflow.md` | New runbook — agent-facing operational version of this design: the two-axis decision tree, the risk-surface table, the triage-comment / `## Proof` / notification templates, the per-tier pipelines, the abort/escalation list, and the quiescence/iteration definitions. |
+| `CLAUDE.md` | Add the runbook to the shared-rules link table **and** record the gate-substitution authorization (the hands-off override is in force once this lands). |
 | `.ai/README.md` | Add the runbook to the doc index table. |
 | `.cursor/rules/` | Wire the runbook so Cursor consumes the same content. |
-| `.ai/docs/documentation-maintenance.md` | Add a row: runbook kept in lockstep with the workflow. **Add a second row:** any change to `architectural-invariants.md` **or to the risk-surface code directories** triggers a mandatory review of the risk-surface table + `risk-classification.yml` globs. Plus a scheduled (e.g. monthly) re-audit, since code can drift a surface into a new directory without touching the invariants file. |
+| `.ai/docs/documentation-maintenance.md` | Add a row: runbook kept in lockstep with the workflow. **Add a second row:** any change to `architectural-invariants.md` (or to the risk-surface code directories) triggers a mandatory review of the risk-surface table in the runbook, plus a scheduled (e.g. monthly) re-audit — code can drift a surface into a new directory without touching the invariants file. |
+| `docs/specs/README.md` | Index this spec + its deferrals sidecar. |
 
-### Deferred (not pursued) — enforcement hardening
+### Deferred / rejected (not pursued)
 
-OPEN DECISION 2 chose advisory + human-merge, so the following hard-gate
-infrastructure is **deferred** (recorded in the deferrals sidecar; revisit only
-if autonomy increases or more agents are assigned): registering
-`risk-classification` / secrets-scan in `required_status_checks`;
-`required_approving_review_count ≥ 1` + `CODEOWNERS`; a separate approver identity
-that the executor token cannot impersonate; a `secrets-scan.yml` workflow; and a
-red-baseline CI job. None are built in this iteration.
+Mechanical enforcement was considered and **not built** (recorded in the deferrals
+sidecar; revisit only if autonomy increases beyond "human merges every PR" or more
+agents are assigned): an advisory or required CI risk-classification check, a
+`secrets-scan.yml` workflow, branch protection / `required_status_checks`
+registration, `required_approving_review_count ≥ 1` + `CODEOWNERS`, a separate
+approver identity, and a red-baseline CI job. This iteration ships guidance only.
 
 ## Resolved & open questions
 
 - **RESOLVED — OPEN DECISION 1 (hands-off T3):** hands-off extends to net-new T3
   behavior; `ce-doc-review` substitutes for the human spec/plan gate, bounded by
   the human merge. The body reflects this.
-- **RESOLVED — OPEN DECISION 2 (enforcement model):** advisory risk check backed
-  by the human merge; no new enforcement infrastructure (see Deferred, above).
-- **The risk-surface globs are the single point of failure**, and they are
-  partial by construction (behavioral surfaces are not path-gateable). Mitigations
-  now in the design: human-authored initial glob set, the Axis-B "when in doubt,
-  gate" default, the code-directory + scheduled re-audit doc-maintenance triggers,
-  the agent-side pre-PR re-check, and — ultimately — the human merge. Note the
-  `/code-review` bot is **not** an independent backstop: it is the same Claude
-  model that performed the fix, so its blind spots correlate with the fixer's.
+- **RESOLVED — OPEN DECISION 2 (enforcement model):** guidance + human-merge; no
+  CI check, no enforcement tooling (see Deferred/rejected, above).
+- **The risk-surface table is the single point of failure**, and it is partial by
+  construction (behavioral surfaces have no obvious signal). Mitigations: the
+  Axis-B "when in doubt, gate" default, the scheduled re-audit doc-maintenance
+  trigger, the agent's pre-PR re-check, and — ultimately — the human merge that
+  sees every PR. There is no automated backstop, by design. Note the
+  `/code-review` bot is **not** an independent backstop either: it is the same
+  Claude model that performed the fix, so its blind spots correlate with the
+  fixer's.
 - **Tier boundaries are fuzzy.** Mitigated by the escalate-up tie-break rule.
 - **Minimum agent capability.** Self-classification reliability varies across
   agent implementations; the runbook should state a minimum-capability
-  expectation for any agent assigned hands-off work, since (absent Enforcement
-  hardening) the safety property leans on the agent's classification plus the
-  human merge.
+  expectation for any agent assigned hands-off work, since (with no CI enforcement)
+  the safety property leans entirely on the agent's classification plus the human
+  merge.
