@@ -6,6 +6,7 @@ import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
 import styles from './ReplyComposer.module.css';
 import type { PrReference } from '../../../api/types';
+import type { ComposerOwnerKey } from '../../../hooks/useDraftSession';
 
 export interface ReplyComposerProps {
   prRef: PrReference;
@@ -17,9 +18,9 @@ export interface ReplyComposerProps {
   // whether to mount a fresh composer or rehydrate an in-progress reply.
   draftId: string | null;
   onDraftIdChange: (id: string | null) => void;
-  // Provided by useDraftSession; refcount registry keeps the diff-and-prefer
+  // Provided by useDraftSession; set-based registry keeps the diff-and-prefer
   // merge from clobbering this composer's local body.
-  registerOpenComposer: (draftId: string) => () => void;
+  registerOpenComposer: (draftId: string, ownerKey: ComposerOwnerKey) => () => void;
   // Dismissed by the parent — used after Cmd+Enter, after a successful empty-
   // body delete, after the 404-recovery "Discard" choice, and after the
   // discard-modal "Discard" confirmation.
@@ -93,7 +94,7 @@ export function ReplyComposer({
 
   useEffect(() => {
     if (draftId === null) return;
-    return registerOpenComposer(draftId);
+    return registerOpenComposer(draftId, 'files-tab');
   }, [draftId, registerOpenComposer]);
 
   useEffect(() => {

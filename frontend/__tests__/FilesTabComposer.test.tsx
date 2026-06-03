@@ -44,6 +44,8 @@ const minimalPrDetail: PrDetailDto = {
     isMerged: false,
     isClosed: false,
     openedAt: '2026-05-01T00:00:00Z',
+    mergedAt: null,
+    closedAt: null,
   },
   clusteringQuality: 'ok',
   iterations: [
@@ -65,7 +67,6 @@ function emptySession(): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -94,6 +95,7 @@ function sessionWithDraftAt(
         bodyMarkdown: body,
         status: 'draft',
         isOverriddenStale: false,
+        postedCommentId: null,
       },
     ],
   };

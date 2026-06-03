@@ -304,7 +304,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             // Canonical PR diff: paginate pulls/{n}/files. Truncation is derived from
             // pull.changed_files > assembled-count, which catches both 30-page-cap and
             // server-side soft truncation. Spec § 6.1.
-            files = await PaginatePullsFilesAsync(reference, ct).ConfigureAwait(false);
+            files = await PaginatePullsFilesAsync(reference, range, ct).ConfigureAwait(false);
             truncated = pull.ChangedFiles > files.Count;
         }
         else
@@ -469,10 +469,14 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var commentCount = await commentsTask.ConfigureAwait(false);
         var reviewCount = await reviewsTask.ConfigureAwait(false);
 
+        // Normalize PrState to a lowercase 3-value state. REST `state` is already lowercase
+        // ("open"/"closed"); a merged PR reports "closed", so we promote it to "merged" when
+        // merged_at was present. PrState ∈ {"open","closed","merged"} — the poller diffs this
+        // to emit pr-updated on an open→done transition even when head-sha is unchanged.
         return new ActivePrPollSnapshot(
             HeadSha: pull.HeadSha,
             Mergeability: pull.Mergeability,
-            PrState: pull.State,
+            PrState: pull.Merged ? "merged" : pull.State,
             CommentCount: commentCount,
             ReviewCount: reviewCount);
     }
@@ -490,7 +494,11 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             ? hs.GetString() ?? "" : "";
         var state = root.TryGetProperty("state", out var s) ? s.GetString() ?? "" : "";
         var mergeable = root.TryGetProperty("mergeable_state", out var ms) ? ms.GetString() ?? "" : "";
-        return new PollPullMeta(head, state, mergeable);
+        // merged_at is a root-level ISO-8601 string on a merged PR, JSON null otherwise.
+        // REST `state` is only "open"/"closed" (a merged PR reports "closed"), so merged_at
+        // is the sole signal that distinguishes a merge from a plain close.
+        var merged = root.TryGetProperty("merged_at", out var ma) && ma.ValueKind == JsonValueKind.String;
+        return new PollPullMeta(head, state, mergeable, merged);
     }
 
     private async Task<int> FetchPagedCountAsync(string url, CancellationToken ct)
@@ -555,7 +563,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return false;
     }
 
-    private sealed record PollPullMeta(string HeadSha, string State, string Mergeability);
+    private sealed record PollPullMeta(string HeadSha, string State, string Mergeability, bool Merged);
 
     // IReviewSubmitter is an empty seam in PR0a; the seven pending-review pipeline methods
     // land in PR1 on GitHubReviewService.Submit.cs.
@@ -575,7 +583,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return new PullMeta(baseSha, headSha, changedFiles);
     }
 
-    private async Task<IReadOnlyList<FileChange>> PaginatePullsFilesAsync(PrReference reference, CancellationToken ct)
+    private async Task<IReadOnlyList<FileChange>> PaginatePullsFilesAsync(PrReference reference, DiffRangeRequest range, CancellationToken ct)
     {
         const int MaxPages = 30;   // GitHub's documented cap; pulls/{n}/files truncates beyond this.
         var collected = new List<FileChange>();
@@ -589,6 +597,15 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         while (url is not null && pageCount < MaxPages)
         {
             using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
+            // On a done (merged/closed) PR the canonical base..head diff can become
+            // unaddressable — GitHub returns 404 (or 410 Gone) when the head ref / commits
+            // were pruned after the PR closed. Surface this as the SAME typed
+            // RangeUnreachableException the cross-iteration (3-dot compare) path already
+            // raises so it flows through one user-visible "diff unavailable" path rather
+            // than throwing HttpRequestException → 500. Spec § 5.1 / § 9. Other non-2xx
+            // (auth, rate-limit, 5xx) keep EnsureSuccessStatusCode's behavior.
+            if (resp.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+                throw new RangeUnreachableException(range.BaseSha, range.HeadSha);
             resp.EnsureSuccessStatusCode();
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(body);
@@ -612,7 +629,10 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var url = $"repos/{reference.Owner}/{reference.Repo}/compare/{Uri.EscapeDataString(range.BaseSha)}...{Uri.EscapeDataString(range.HeadSha)}";
         using var http = _httpFactory.CreateClient("github");
         using var resp = await SendGitHubAsync(http, HttpMethod.Get, url, ct).ConfigureAwait(false);
-        if (resp.StatusCode == HttpStatusCode.NotFound)
+        // Symmetric with PaginatePullsFilesAsync: a pruned head ref / commits after a
+        // closed PR yields 404 OR 410 Gone. Map both to the typed RangeUnreachableException
+        // so the cross-iteration 3-dot compare path surfaces the same "diff unavailable".
+        if (resp.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
             throw new RangeUnreachableException(range.BaseSha, range.HeadSha);
         resp.EnsureSuccessStatusCode();
 
@@ -702,7 +722,11 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
     // repos. Mirrors the pattern used by GitHubSectionQueryRunner and GitHubPrEnricher
     // (the named "github" HttpClient does not carry a default Authorization header,
     // so every caller is responsible for attaching one per request).
-    private async Task<HttpResponseMessage> SendGitHubAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct)
+    //
+    // `content` is optional: POST/PATCH callers pass a pre-built StringContent; GET callers
+    // omit it. The header set is the same regardless — Authorization Bearer, UserAgent,
+    // Accept vnd.github+json, and X-GitHub-Api-Version (recommended by GitHub for all REST calls).
+    private async Task<HttpResponseMessage> SendGitHubAsync(HttpClient http, HttpMethod method, string url, CancellationToken ct, HttpContent? content = null)
     {
         var token = await _readToken().ConfigureAwait(false);
         using var req = new HttpRequestMessage(method, url);
@@ -710,6 +734,9 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
+        req.Headers.TryAddWithoutValidation("X-GitHub-Api-Version", "2022-11-28");
+        if (content is not null)
+            req.Content = content;
         return await http.SendAsync(req, ct).ConfigureAwait(false);
     }
 
@@ -971,8 +998,12 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         var ciSummary = "";   // computed by PrDetailLoader (or by an upstream enrichment); placeholder here.
 
         var state = GetStr("state");
-        var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal) ||
-                       (pull.TryGetProperty("mergedAt", out var ma) && ma.ValueKind != JsonValueKind.Null);
+        // DateTimeOffset? (nullable) — unlike GetDate, which returns default for absent/null.
+        DateTimeOffset? mergedAt = pull.TryGetProperty("mergedAt", out var mAt) && mAt.ValueKind != JsonValueKind.Null
+            ? mAt.GetDateTimeOffset() : null;
+        DateTimeOffset? closedAt = pull.TryGetProperty("closedAt", out var cAt) && cAt.ValueKind != JsonValueKind.Null
+            ? cAt.GetDateTimeOffset() : null;
+        var isMerged = string.Equals(state, "MERGED", StringComparison.Ordinal) || mergedAt.HasValue;
         // IsClosed means "closed without merging" — a separate state from merged.
         // Consumers that want "no longer open" should spell `IsMerged || IsClosed`.
         // Treating MERGED as IsClosed=true forced the inverse spelling on every
@@ -993,7 +1024,9 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             CiSummary: ciSummary,
             IsMerged: isMerged,
             IsClosed: isClosed,
-            OpenedAt: GetDate("createdAt"));
+            OpenedAt: GetDate("createdAt"),
+            MergedAt: mergedAt,
+            ClosedAt: closedAt);
     }
 
     private static List<IssueCommentDto> ParseRootComments(JsonElement pull)

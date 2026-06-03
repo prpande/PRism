@@ -15,6 +15,7 @@ interface DraftListItemProps {
   // owning DraftsTab passes its draftSession.refetch down so this
   // component can refresh the list itself.
   onMutated: () => void;
+  readOnly?: boolean;
 }
 
 const PREVIEW_CHARS = 80;
@@ -36,7 +37,13 @@ function previewBody(body: string): string {
   return body.slice(0, PREVIEW_CHARS).trimEnd() + '…';
 }
 
-export function DraftListItem({ prRef, draft, onEdit, onMutated }: DraftListItemProps) {
+export function DraftListItem({
+  prRef,
+  draft,
+  onEdit,
+  onMutated,
+  readOnly = false,
+}: DraftListItemProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const status = statusLabel(draft);
@@ -88,25 +95,29 @@ export function DraftListItem({ prRef, draft, onEdit, onMutated }: DraftListItem
       <div className={`draft-list-item-preview ${styles.draftListItemPreview}`}>
         <MarkdownRenderer source={previewBody(body)} />
       </div>
-      <div className={`draft-list-item-actions row gap-2 ${styles.draftListItemActions}`}>
-        <button
-          type="button"
-          className="btn btn-secondary btn-sm"
-          onClick={() => onEdit(draft)}
-          disabled={deleting}
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          className="btn btn-danger btn-sm"
-          onClick={requestDelete}
-          disabled={deleting}
-        >
-          Delete
-        </button>
-      </div>
+      {!readOnly && (
+        <div className={`draft-list-item-actions row gap-2 ${styles.draftListItemActions}`}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => onEdit(draft)}
+            disabled={deleting}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger btn-sm"
+            onClick={requestDelete}
+            disabled={deleting}
+          >
+            Delete
+          </button>
+        </div>
+      )}
 
+      {/* readOnly: the Delete button (Modal's only trigger) is gated above, so
+          confirmOpen stays false and this Modal is unreachable while readOnly. */}
       <Modal
         open={confirmOpen}
         title="Discard this draft?"

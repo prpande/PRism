@@ -112,8 +112,11 @@ public class GitHubReviewServiceDiffTests
     [Fact]
     public async Task GetDiffAsync_returns_range_unreachable_on_garbage_collected_sha()
     {
-        // GC'd SHA → compare endpoint 404 → throws RangeUnreachableException.
-        // Endpoint layer maps to ProblemDetails type "/diff/range-unreachable". Spec § 6.1 + § 8.
+        // GC'd SHA → compare endpoint 404 → the SERVICE throws RangeUnreachableException
+        // (service-layer truth — this test pins exactly that). The /diff ENDPOINT, not the
+        // service, is what maps that exception to ProblemDetails type "/diff/range-unreachable"
+        // (422); see PrDetailEndpointsTests.Get_diff_returns_422_range_unreachable_...
+        // for the endpoint-level mapping assertion. Spec § 5.1 + § 6.1 + § 8.
         var handler = new PaginatedFakeHandler()
             .RouteStatus("/repos/o/r/compare/dead-sha...head", System.Net.HttpStatusCode.NotFound)
             .RouteJson("/repos/o/r/pulls/1", PullJson("base", "head", 0));
@@ -123,6 +126,66 @@ public class GitHubReviewServiceDiffTests
         await sut.Invoking(s => s.GetDiffAsync(
                 new PrReference("o", "r", 1),
                 new DiffRangeRequest("dead-sha", "head"),
+                CancellationToken.None))
+            .Should().ThrowAsync<RangeUnreachableException>();
+    }
+
+    [Fact]
+    public async Task GetDiffAsync_returns_range_unreachable_on_gone_compare_endpoint()
+    {
+        // 410 Gone sibling of the GC'd-SHA 404 case above. The cross-iteration 3-dot
+        // compare path (FetchCompareFilesAsync) maps both 404 AND 410 to the typed
+        // RangeUnreachableException — symmetric with the primary PaginatePullsFilesAsync
+        // path. Spec § 5.1 + § 6.1 + § 8.
+        var handler = new PaginatedFakeHandler()
+            .RouteStatus("/repos/o/r/compare/dead-sha...head", System.Net.HttpStatusCode.Gone)
+            .RouteJson("/repos/o/r/pulls/1", PullJson("base", "head", 0));
+
+        var sut = NewService(handler);
+
+        await sut.Invoking(s => s.GetDiffAsync(
+                new PrReference("o", "r", 1),
+                new DiffRangeRequest("dead-sha", "head"),
+                CancellationToken.None))
+            .Should().ThrowAsync<RangeUnreachableException>();
+    }
+
+    [Fact]
+    public async Task GetDiff_PrimaryFilesPath_404_SurfacesTypedUnavailable_NotRawHttpException()
+    {
+        // Task 16a: on a merged/closed PR the canonical base..head diff
+        // (pulls/{n}/files) can 404 (e.g. the head ref / commits were pruned after
+        // close). It must degrade to the SAME typed "diff unavailable" signal the
+        // cross-iteration path already raises (RangeUnreachableException), NOT a raw
+        // HttpRequestException → 500. Spec § 5.1 / § 9.
+        var handler = new PaginatedFakeHandler()
+            .RouteStatus("/repos/o/r/pulls/1/files", System.Net.HttpStatusCode.NotFound)
+            .RouteJson("/repos/o/r/pulls/1", PullJson("base", "head", 1));
+
+        var sut = NewService(handler);
+
+        await sut.Invoking(s => s.GetDiffAsync(
+                new PrReference("o", "r", 1),
+                // canonical range == pull.base..pull.head → routes through PaginatePullsFilesAsync
+                new DiffRangeRequest("base", "head"),
+                CancellationToken.None))
+            .Should().ThrowAsync<RangeUnreachableException>();
+    }
+
+    [Fact]
+    public async Task GetDiff_PrimaryFilesPath_410_SurfacesTypedUnavailable_NotRawHttpException()
+    {
+        // 410 Gone variant — GitHub returns 410 for some pruned-resource cases.
+        // Same graceful mapping as 404.
+        var handler = new PaginatedFakeHandler()
+            .RouteStatus("/repos/o/r/pulls/1/files", System.Net.HttpStatusCode.Gone)
+            .RouteJson("/repos/o/r/pulls/1", PullJson("base", "head", 1));
+
+        var sut = NewService(handler);
+
+        await sut.Invoking(s => s.GetDiffAsync(
+                new PrReference("o", "r", 1),
+                new DiffRangeRequest("base", "head"),
                 CancellationToken.None))
             .Should().ThrowAsync<RangeUnreachableException>();
     }

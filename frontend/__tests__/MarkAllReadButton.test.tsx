@@ -70,6 +70,8 @@ describe('MarkAllReadButton', () => {
         prRef: 'octocat/hello/42',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
 
@@ -94,6 +96,8 @@ describe('MarkAllReadButton', () => {
         prRef: 'octocat/hello/42',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
 
@@ -125,6 +129,8 @@ describe('MarkAllReadButton', () => {
         prRef: 'octocat/hello/42',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
 

@@ -87,8 +87,11 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
         return state.Reviews.Sessions.TryGetValue($"{owner}/{repo}/{number}", out var s) ? s : null;
     }
 
-    // A valid in-flight session: one line-anchored draft, a summary, a Comment verdict, head sha
-    // matching TestPrReader.HeadSha so rule (f) passes when ActivePrCache.Current is set.
+    // A valid in-flight session: one line-anchored draft, a Comment verdict, head sha matching
+    // TestPrReader.HeadSha so rule (f) passes when ActivePrCache.Current is set. V7 unification —
+    // the legacy `DraftSummaryMarkdown: "summary"` is gone; rule (e) is satisfied by the line-
+    // anchored draft alone, so dropping the summary preserves intent for the broad sweep of tests
+    // that don't read the PR-level body.
     public static ReviewSessionState ValidSession(string headSha = "head1") => new(
         TabStamps: new Dictionary<string, TabStamp> { ["tab-test"] = new TabStamp(headSha, DateTime.UtcNow.AddMinutes(-1)) }, LastSeenCommentId: null,
         PendingReviewId: null, PendingReviewCommitOid: null,
@@ -98,7 +101,6 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
             new("d1", "src/Foo.cs", 42, "RIGHT", new string('a', 40), "the line", "body", DraftStatus.Draft, false),
         },
         DraftReplies: Array.Empty<DraftReply>(),
-        DraftSummaryMarkdown: "summary",
         DraftVerdict: DraftVerdict.Comment,
         DraftVerdictStatus: DraftVerdictStatus.Draft);
 
@@ -108,7 +110,7 @@ internal sealed class SubmitEndpointsTestContext : IDisposable
         ViewedFiles: new Dictionary<string, string>(),
         DraftComments: Array.Empty<DraftComment>(),
         DraftReplies: Array.Empty<DraftReply>(),
-        DraftSummaryMarkdown: null, DraftVerdict: null,
+        DraftVerdict: null,
         DraftVerdictStatus: DraftVerdictStatus.Draft);
 
     public void Dispose()

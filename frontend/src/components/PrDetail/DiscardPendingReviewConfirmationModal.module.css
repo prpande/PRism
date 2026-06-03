@@ -1,0 +1,51 @@
+/* Spec § 4.10. Reuses the global btn / btn-danger / btn-secondary classes from
+   tokens.css; this module adds only the bullet list, error row, footer layout,
+   and the in-flight spinner the shared Modal shell doesn't provide. */
+
+.discardPendingReviewModal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+.bullets {
+  margin: 0;
+  padding-left: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  color: var(--text-1);
+}
+
+.error {
+  color: var(--danger-fg);
+  background: var(--danger-soft);
+  border-radius: var(--radius-2);
+  padding: var(--s-2) var(--s-3);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+.spinner {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-right: var(--s-2);
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: discard-pending-spin 0.6s linear infinite;
+}
+
+@keyframes discard-pending-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

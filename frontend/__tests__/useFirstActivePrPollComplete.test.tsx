@@ -63,6 +63,8 @@ describe('useFirstActivePrPollComplete', () => {
         prRef: 'octocat/hello/42',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
 
@@ -81,6 +83,8 @@ describe('useFirstActivePrPollComplete', () => {
         prRef: 'octocat/hello/42',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
     expect(result.current).toBe(true);
@@ -94,6 +98,8 @@ describe('useFirstActivePrPollComplete', () => {
         prRef: 'octocat/hello/42',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
     expect(result.current).toBe(false);
@@ -104,6 +110,8 @@ describe('useFirstActivePrPollComplete', () => {
         prRef: 'octocat/hello/99',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
     expect(result.current).toBe(true);
@@ -118,6 +126,8 @@ describe('useFirstActivePrPollComplete', () => {
         prRef: 'octocat/hello/99',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
     expect(result.current).toBe(false);
@@ -132,6 +142,8 @@ describe('useFirstActivePrPollComplete', () => {
         prRef: 'octocat/hello/42',
         headShaChanged: false,
         commentCountDelta: 0,
+        isMerged: false,
+        isClosed: false,
       }),
     );
     expect(result.current).toBe(false);

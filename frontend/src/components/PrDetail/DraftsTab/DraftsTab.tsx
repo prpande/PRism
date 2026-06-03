@@ -20,6 +20,7 @@ interface DraftsTabProps {
   session: ReviewSessionDto | null;
   status: DraftSessionStatus;
   refetch: () => Promise<void>;
+  readOnly?: boolean;
 }
 
 interface CountSummary {
@@ -82,7 +83,7 @@ function groupByFile(session: ReviewSessionDto): FileGroup[] {
   return out;
 }
 
-export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
+export function DraftsTab({ prRef, session, status, refetch, readOnly = false }: DraftsTabProps) {
   const navigate = useNavigate();
 
   // Hooks must run unconditionally — branch on `session` *after* memoizing.
@@ -146,7 +147,7 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
         {summary.staleCount > 0 && (
           <span className="chip chip-status-stale">{summary.staleCount} stale</span>
         )}
-        {(staleComments.length > 0 || staleReplies.length > 0) && (
+        {!readOnly && (staleComments.length > 0 || staleReplies.length > 0) && (
           <DiscardAllStaleButton
             prRef={prRef}
             staleComments={staleComments}
@@ -163,6 +164,7 @@ export function DraftsTab({ prRef, session, status, refetch }: DraftsTabProps) {
             prRef={prRef}
             onEdit={handleEdit}
             onMutated={handleMutated}
+            readOnly={readOnly}
           />
         ))}
       </div>
@@ -175,11 +177,13 @@ function FileGroupSection({
   prRef,
   onEdit,
   onMutated,
+  readOnly,
 }: {
   group: FileGroup;
   prRef: PrReference;
   onEdit: (draft: DraftLike) => void;
   onMutated: () => void;
+  readOnly?: boolean;
 }) {
   // The null-key bucket holds both PR-root draft comments AND all
   // (file-anchored) replies. "PR conversation drafts" covers both shapes
@@ -195,6 +199,7 @@ function FileGroupSection({
           draft={{ kind: 'comment', data: c }}
           onEdit={onEdit}
           onMutated={onMutated}
+          readOnly={readOnly}
         />
       ))}
       {group.replies.map((r) => (
@@ -204,6 +209,7 @@ function FileGroupSection({
           draft={{ kind: 'reply', data: r }}
           onEdit={onEdit}
           onMutated={onMutated}
+          readOnly={readOnly}
         />
       ))}
     </section>

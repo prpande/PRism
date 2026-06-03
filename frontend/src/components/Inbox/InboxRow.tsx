@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
+import { formatAge } from '../../utils/relativeTime';
 import { DiffBar } from './DiffBar';
 import styles from './InboxRow.module.css';
 
@@ -18,18 +19,14 @@ function freshness(updatedAt: string): 'fresh' | 'today' | 'older' {
   return 'older';
 }
 
-function formatAge(updatedAt: string): string {
-  const ms = Date.now() - new Date(updatedAt).getTime();
-  if (ms < 60_000) return 'just now';
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
-  return `${Math.floor(ms / 86_400_000)}d ago`;
-}
-
 export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
   const navigate = useNavigate();
   const { addTab } = useOpenTabs();
-  const fr = freshness(pr.updatedAt);
+  const doneState: 'merged' | 'closed' | null =
+    pr.mergedAt != null ? 'merged' : pr.closedAt != null ? 'closed' : null;
+  const isDone = doneState != null;
+  // Done PRs are not urgent — neutralise freshness highlighting.
+  const fr = isDone ? 'older' : freshness(pr.updatedAt);
   const isFirstVisit = pr.lastViewedHeadSha == null;
   const onClick = () => {
     addTab(pr.reference, pr.title);
@@ -39,16 +36,16 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
   const frClass =
     fr === 'fresh' ? styles.rowFresh : fr === 'today' ? styles.rowToday : styles.rowOlder;
 
+  const ariaLabel = isDone
+    ? `${pr.title} · ${pr.repo} · ${doneState}`
+    : `${pr.title} · ${pr.repo} · iteration ${pr.iterationNumber}`;
+
   return (
-    <button
-      className={`${styles.row} ${frClass}`}
-      onClick={onClick}
-      aria-label={`${pr.title} · ${pr.repo} · iteration ${pr.iterationNumber}`}
-    >
+    <button className={`${styles.row} ${frClass}`} onClick={onClick} aria-label={ariaLabel}>
       <span className={styles.status}>
-        {pr.ci === 'failing' ? (
+        {!isDone && pr.ci === 'failing' ? (
           <span className={`${styles.dot} ${styles.dotDanger}`} title="CI failing" />
-        ) : isFirstVisit ? (
+        ) : !isDone && isFirstVisit ? (
           <span className={styles.newChip}>New</span>
         ) : (
           <span className={styles.dot} style={{ opacity: 0 }} aria-hidden="true" />
@@ -67,6 +64,12 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
         </span>
       </span>
       <span className={styles.tail}>
+        {doneState === 'merged' && (
+          <span className={`${styles.stateBadge} ${styles.badgeMerged}`}>Merged</span>
+        )}
+        {doneState === 'closed' && (
+          <span className={`${styles.stateBadge} ${styles.badgeClosed}`}>Closed</span>
+        )}
         {showCategoryChip && enrichment?.categoryChip && (
           <span className={styles.chip}>{enrichment.categoryChip}</span>
         )}

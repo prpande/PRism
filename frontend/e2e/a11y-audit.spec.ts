@@ -129,7 +129,6 @@ const samplePrDetail = {
 const emptyDraftSession = {
   draftVerdict: null,
   draftVerdictStatus: 'draft',
-  draftSummaryMarkdown: null,
   draftComments: [],
   draftReplies: [],
   iterationOverrides: [],

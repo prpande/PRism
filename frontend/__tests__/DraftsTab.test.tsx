@@ -31,6 +31,7 @@ function mkComment(overrides: Partial<DraftCommentDto> = {}): DraftCommentDto {
     bodyMarkdown: 'needs work',
     status: 'draft',
     isOverriddenStale: false,
+    postedCommentId: null,
     ...overrides,
   };
 }
@@ -51,7 +52,6 @@ function mkSession(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto 
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -67,6 +67,7 @@ interface RenderOptions {
   status: DraftSessionStatus;
   refetch?: () => Promise<void>;
   initialPath?: string;
+  readOnly?: boolean;
 }
 
 function renderDraftsTab(opts: RenderOptions) {
@@ -77,7 +78,13 @@ function renderDraftsTab(opts: RenderOptions) {
         <Route
           path="/pr/:owner/:repo/:number/drafts"
           element={
-            <DraftsTab prRef={ref} session={opts.session} status={opts.status} refetch={refetch} />
+            <DraftsTab
+              prRef={ref}
+              session={opts.session}
+              status={opts.status}
+              refetch={refetch}
+              readOnly={opts.readOnly}
+            />
           }
         />
         <Route path="/pr/:owner/:repo/:number/files/*" element={<div>FILES_TAB_STUB</div>} />
@@ -489,5 +496,35 @@ describe('DraftsTab', () => {
       kind: 'deleteDraftComment',
       payload: { id: 'a' },
     });
+  });
+
+  it('suppresses Edit/Delete and renders selectable body when readOnly', () => {
+    const session = mkSession({
+      draftComments: [mkComment({ id: 'a', bodyMarkdown: 'needs work' })],
+    });
+    renderDraftsTab({ session, status: 'ready', readOnly: true });
+    // Action buttons must not be present
+    expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument();
+    // Body text is still rendered (selectable)
+    expect(screen.getByText(/needs work/i)).toBeInTheDocument();
+  });
+
+  it('suppresses DiscardAllStale button when readOnly', () => {
+    const session = mkSession({
+      draftComments: [mkComment({ id: 'a', status: 'stale' })],
+    });
+    renderDraftsTab({ session, status: 'ready', readOnly: true });
+    expect(screen.queryByRole('button', { name: /discard all stale/i })).not.toBeInTheDocument();
+  });
+
+  it('renders Edit/Delete when not readOnly (regression)', () => {
+    const session = mkSession({
+      draftComments: [mkComment({ id: 'a', bodyMarkdown: 'needs work' })],
+    });
+    // readOnly omitted → defaults to false → buttons present
+    renderDraftsTab({ session, status: 'ready' });
+    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^delete$/i })).toBeInTheDocument();
   });
 });

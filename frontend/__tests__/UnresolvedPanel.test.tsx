@@ -26,6 +26,7 @@ function mkComment(overrides: Partial<DraftCommentDto> = {}): DraftCommentDto {
     bodyMarkdown: 'needs work',
     status: 'draft',
     isOverriddenStale: false,
+    postedCommentId: null,
     ...overrides,
   };
 }
@@ -34,7 +35,6 @@ function mkSession(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto 
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],

@@ -7,7 +7,6 @@ function session(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -73,11 +72,16 @@ describe('DiscardAllDraftsButton', () => {
     expect(screen.getByRole('button', { name: /discard all drafts/i })).toBeInTheDocument();
   });
 
-  it('renders on a closed PR with only a non-empty summary', () => {
+  it('renders on a closed PR with only a non-empty PR-root summary draft', () => {
     render(
       <DiscardAllDraftsButton
         prState="closed"
-        session={session({ draftSummaryMarkdown: 'LGTM' })}
+        session={session({
+          // PR-root review summary = the PR-root DraftComment (filePath/lineNumber null).
+          draftComments: [
+            { id: 'root', filePath: null, lineNumber: null, bodyMarkdown: 'LGTM' } as never,
+          ],
+        })}
         onDiscard={vi.fn()}
       />,
     );

@@ -21,6 +21,8 @@ const basePr: PrInboxItem = {
   ci: 'none',
   lastViewedHeadSha: null,
   lastSeenCommentId: null,
+  mergedAt: null,
+  closedAt: null,
 };
 
 function renderRow(
@@ -100,5 +102,25 @@ describe('InboxRow', () => {
   it('renders friendly age text for very recent PRs', () => {
     renderRow({ ...basePr, updatedAt: new Date().toISOString() });
     expect(screen.getByText(/just now/i)).toBeInTheDocument();
+  });
+
+  it('shows a Merged badge for a merged row', () => {
+    renderRow({ ...basePr, mergedAt: new Date().toISOString() });
+    expect(screen.getByText('Merged')).toBeInTheDocument();
+  });
+
+  it('shows a Closed badge for a closed-unmerged row', () => {
+    renderRow({ ...basePr, mergedAt: null, closedAt: new Date().toISOString() });
+    expect(screen.getByText('Closed')).toBeInTheDocument();
+  });
+
+  it('does not show the New chip on a done row even when lastViewedHeadSha is null', () => {
+    renderRow({ ...basePr, lastViewedHeadSha: null, mergedAt: new Date().toISOString() });
+    expect(screen.queryByText('New')).not.toBeInTheDocument();
+  });
+
+  it('does not show the CI-failing dot on a done row', () => {
+    renderRow({ ...basePr, ci: 'failing', mergedAt: new Date().toISOString() });
+    expect(screen.queryByTitle('CI failing')).not.toBeInTheDocument();
   });
 });

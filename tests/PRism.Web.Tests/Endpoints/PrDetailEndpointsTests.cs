@@ -5,6 +5,7 @@ using FluentAssertions;
 using PRism.Core.Contracts;
 using PRism.Core.Iterations;
 using PRism.Core.State;
+using PRism.GitHub;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -206,6 +207,26 @@ public class PrDetailEndpointsTests
     }
 
     [Fact]
+    public async Task Get_diff_returns_422_range_unreachable_when_fetch_throws_RangeUnreachableException()
+    {
+        // Spec § 5.1: a GC'd / force-pushed range (compare endpoint 404 → service throws
+        // RangeUnreachableException) must surface as a TYPED 422 ProblemDetails, NOT an
+        // unhandled 500. Drives the fake's diff path to throw the exact exception the real
+        // GitHubReviewService.GetDiffAsync throws; the /diff endpoint's catch maps it.
+        var (factory, review) = MakeFactory();
+        using var _f = factory;
+        review.DiffFactory = (_, _) => throw new RangeUnreachableException("dead-sha", "head");
+
+        var validBase = new string('a', 40);
+        var validHead = new string('b', 40);
+        var resp = await factory.CreateClient().GetAsync(
+            new Uri($"/api/pr/octo/repo/1/diff?range={validBase}..{validHead}", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/diff/range-unreachable");
+    }
+
+    [Fact]
     public async Task Get_file_returns_422_sha_invalid_when_sha_is_not_a_git_oid()
     {
         // /file?sha= must be validated consistently with /diff?range=. The endpoint short-
@@ -219,6 +240,32 @@ public class PrDetailEndpointsTests
 
         resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
         (await resp.Content.ReadAsStringAsync()).Should().Contain("/sha/invalid");
+    }
+
+    [Fact]
+    public async Task Get_file_returns_422_range_unreachable_when_canonical_diff_fetch_throws()
+    {
+        // Task 16a made GetOrFetchDiffAsync throw RangeUnreachableException when the
+        // canonical base..head range is no longer addressable on GitHub. The /file
+        // endpoint's truncation-check branch calls GetOrFetchDiffAsync for paths not in
+        // any cached diff; without the catch it propagates as an unhandled 500.
+        // This test drives the fake's diff path to throw, ensures the path is NOT in any
+        // cached diff (no prior /diff call), and asserts the typed 422 rather than a 500.
+        var (factory, review) = MakeFactory();
+        using var _f = factory;
+        review.DiffFactory = (_, _) => throw new RangeUnreachableException("dead-base", "dead-head");
+        var client = factory.CreateClient();
+        // Prime snapshot so the endpoint reaches the truncation-check branch (not /file/snapshot-evicted).
+        await client.GetAsync(new Uri("/api/pr/octo/repo/1", UriKind.Relative));
+        // No diff cache primed — path will not be in any cached diff, triggering the
+        // canonical GetOrFetchDiffAsync call that throws RangeUnreachableException.
+        var validHead = new string('b', 40);
+
+        var resp = await client.GetAsync(
+            new Uri($"/api/pr/octo/repo/1/file?path=src/NotInAnyDiff.cs&sha={validHead}", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.UnprocessableEntity);
+        (await resp.Content.ReadAsStringAsync()).Should().Contain("/diff/range-unreachable");
     }
 
     // ---------- GET /api/pr/{ref}/file?path=&sha= ----------
@@ -581,7 +628,7 @@ public class PrDetailEndpointsTests
                 .ToDictionary(i => $"seed/file-{i:D5}.cs", _ => "head1");
             var sessions = new Dictionary<string, ReviewSessionState>
             {
-                ["octo/repo/1"] = new ReviewSessionState(new Dictionary<string, TabStamp>(), null, null, null, viewedFiles, new List<DraftComment>(), new List<DraftReply>(), null, null, DraftVerdictStatus.Draft)
+                ["octo/repo/1"] = new ReviewSessionState(new Dictionary<string, TabStamp>(), null, null, null, viewedFiles, new List<DraftComment>(), new List<DraftReply>(), null, DraftVerdictStatus.Draft)
             };
             await seedStore.SaveAsync(initial.WithDefaultReviews(initial.Reviews with { Sessions = sessions }), CancellationToken.None);
         }

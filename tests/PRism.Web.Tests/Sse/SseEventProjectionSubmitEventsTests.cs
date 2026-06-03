@@ -112,4 +112,17 @@ public class SseEventProjectionSubmitEventsTests
         json.Should().Contain("\"draftId\":\"d1\"");
         json.Should().NotContain("threadId");
     }
+
+    // Task 14 — root-comment-posted SSE projection (spec § 14).
+    [Fact]
+    public void RootCommentPosted_projects_to_root_comment_posted_with_issue_comment_id()
+    {
+        var evt = new RootCommentPostedBusEvent(Pr, IssueCommentId: 987654321L);
+
+        var (name, json) = Project(evt);
+
+        name.Should().Be("root-comment-posted");
+        json.Should().Contain("\"prRef\":\"o/r/1\"");
+        json.Should().Contain("\"issueCommentId\":987654321");
+    }
 }

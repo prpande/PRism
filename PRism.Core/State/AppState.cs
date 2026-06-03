@@ -38,7 +38,7 @@ public sealed record AppState(
             Accounts[AccountKeys.Default] with { LastConfiguredGithubHost = newHost }) };
 
     public static AppState Default { get; } = new(
-        Version: 6,
+        Version: 7,
         UiPreferences: UiPreferences.Default,
         Accounts: ImmutableDictionary<string, AccountState>.Empty
             .Add(AccountKeys.Default, AccountState.Default));
@@ -52,7 +52,6 @@ public sealed record ReviewSessionState(
     IReadOnlyDictionary<string, string> ViewedFiles,
     IReadOnlyList<DraftComment> DraftComments,
     IReadOnlyList<DraftReply> DraftReplies,
-    string? DraftSummaryMarkdown,
     DraftVerdict? DraftVerdict,
     DraftVerdictStatus DraftVerdictStatus);
 
@@ -70,9 +69,11 @@ public sealed record DraftComment(
     string BodyMarkdown,
     DraftStatus Status,
     bool IsOverriddenStale,
-    string? ThreadId = null);  // S5 v4 — stamped by SubmitPipeline.AttachThreads (trailing default
+    string? ThreadId = null,   // S5 v4 — stamped by SubmitPipeline.AttachThreads (trailing default
                                // matches DraftThreadRequest's reserved-field pattern; pre-v4 entries
                                // and every non-pipeline call site leave it null)
+    long? PostedCommentId = null,
+    string? PostedBodySnapshot = null);  // V7
 
 public sealed record DraftReply(
     string Id,

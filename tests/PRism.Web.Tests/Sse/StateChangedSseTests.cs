@@ -111,6 +111,45 @@ public class StateChangedSseTests
     }
 
     [Fact]
+    public void ActivePrUpdated_projects_close_state_bools_default_false()
+    {
+        // An open-PR event (no merge/close) carries both flags false on the wire so the
+        // frontend's merged/closed banner stays dormant. Pins the camelCase property names
+        // the SPA reads (isMerged / isClosed).
+        var evt = new ActivePrUpdated(SamplePr, HeadShaChanged: true, CommentCountChanged: false,
+            NewHeadSha: "abc123", CommentCountDelta: 0);
+
+        var (_, json) = Project(evt);
+
+        json.Should().Contain("\"isMerged\":false");
+        json.Should().Contain("\"isClosed\":false");
+    }
+
+    [Fact]
+    public void ActivePrUpdated_projects_isMerged_true_on_merge()
+    {
+        var evt = new ActivePrUpdated(SamplePr, HeadShaChanged: false, CommentCountChanged: false,
+            NewHeadSha: null, CommentCountDelta: 0, IsMerged: true, IsClosed: false);
+
+        var (_, json) = Project(evt);
+
+        json.Should().Contain("\"isMerged\":true");
+        json.Should().Contain("\"isClosed\":false");
+    }
+
+    [Fact]
+    public void ActivePrUpdated_projects_isClosed_true_on_close()
+    {
+        var evt = new ActivePrUpdated(SamplePr, HeadShaChanged: false, CommentCountChanged: false,
+            NewHeadSha: null, CommentCountDelta: 0, IsMerged: false, IsClosed: true);
+
+        var (_, json) = Project(evt);
+
+        json.Should().Contain("\"isClosed\":true");
+        json.Should().Contain("\"isMerged\":false");
+    }
+
+    [Fact]
     public void Unhandled_event_type_throws()
     {
         // DraftSubmitted is intentionally NOT in the projection switch — SseChannel does

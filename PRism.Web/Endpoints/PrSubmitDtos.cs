@@ -22,3 +22,8 @@ internal sealed record SubmitErrorDto(string Code, string Message);
 // pending review the modal was showing (TOCTOU defense re-fetches Snapshot B and rejects if it
 // no longer matches).
 internal sealed record ForeignPendingReviewActionDto(string? PullRequestReviewId);
+
+// 409 shape for POST /root-comment/post when the draft body was edited after the first post.
+// Carries the already-posted comment id so the frontend can surface "Edit github.com comment ↗"
+// and "Discard local draft" actions instead of a generic conflict message.
+internal sealed record PostMismatchErrorDto(string Code, string Message, long PostedCommentId);

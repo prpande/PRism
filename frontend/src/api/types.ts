@@ -22,6 +22,7 @@ export interface InboxSectionsPreferences {
   'authored-by-me': boolean;
   mentioned: boolean;
   'ci-failing': boolean;
+  'recently-closed': boolean;
 }
 
 export interface InboxPreferences {
@@ -102,6 +103,8 @@ export interface PrInboxItem {
   ci: CiStatus;
   lastViewedHeadSha: string | null;
   lastSeenCommentId: number | null;
+  mergedAt: string | null;
+  closedAt: string | null;
 }
 
 export interface InboxSection {
@@ -151,6 +154,8 @@ export interface PrDetailPr {
   isMerged: boolean;
   isClosed: boolean;
   openedAt: string;
+  mergedAt: string | null;
+  closedAt: string | null;
 }
 
 export type ClusteringQuality = 'ok' | 'low';
@@ -295,6 +300,7 @@ export interface DraftCommentDto {
   bodyMarkdown: string;
   status: DraftStatus;
   isOverriddenStale: boolean;
+  postedCommentId: number | null;
 }
 
 export interface DraftReplyDto {
@@ -317,7 +323,6 @@ export interface FileViewStateDto {
 export interface ReviewSessionDto {
   draftVerdict: DraftVerdict | null;
   draftVerdictStatus: DraftVerdictStatus;
-  draftSummaryMarkdown: string | null;
   draftComments: DraftCommentDto[];
   draftReplies: DraftReplyDto[];
   iterationOverrides: IterationOverrideDto[];
@@ -369,15 +374,15 @@ export interface OverrideStalePayload {
 // shape (spec § 4.2). The exhaustiveness check in the serializer guarantees
 // every kind is handled at compile time.
 //
-// Note on clear-verdict / clear-summary: S5 PR3 switched PUT /draft to
-// JsonElement parsing, so the backend now accepts `{"draftVerdict": null}`
-// (and `{"draftSummaryMarkdown": null}`) as an explicit clear (spec § 10).
-// PR4's verdict picker (spec § 10 / § 8.3) wires the clear semantics: the
-// `{ kind: 'draftVerdict'; payload: null }` variant below maps to a
-// `{ draftVerdict: null }` body in serializePatch.
+// Note on clear-verdict: S5 PR3 switched PUT /draft to JsonElement parsing,
+// so the backend now accepts `{"draftVerdict": null}` as an explicit clear
+// (spec § 10). PR4's verdict picker (spec § 10 / § 8.3) wires the clear
+// semantics: the `{ kind: 'draftVerdict'; payload: null }` variant below
+// maps to a `{ draftVerdict: null }` body in serializePatch.
+// draftSummaryMarkdown was removed in Task 15; the PR-root review summary
+// is now a PR-root DraftComment (filePath/lineNumber null).
 export type ReviewSessionPatch =
   | { kind: 'draftVerdict'; payload: DraftVerdict | null }
-  | { kind: 'draftSummaryMarkdown'; payload: string }
   | { kind: 'newDraftComment'; payload: NewDraftCommentPayload }
   | { kind: 'newPrRootDraftComment'; payload: NewPrRootDraftCommentPayload }
   | { kind: 'updateDraftComment'; payload: UpdateDraftCommentPayload }
@@ -457,6 +462,13 @@ export interface SubmitOrphanCleanupFailedEvent {
 export interface SubmitDuplicateMarkerDetectedEvent {
   prRef: string;
   draftId: string;
+}
+
+// Task 14 — root-comment-posted: PR-root draft posted as a GitHub issue comment.
+// Frontend only triggers a refetch; issueCommentId is carried for completeness.
+export interface RootCommentPostedEvent {
+  prRef: string;
+  issueCommentId: number;
 }
 
 // S5 PR4 — submit-pipeline frontend types.

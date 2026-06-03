@@ -1,5 +1,5 @@
-import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render as rtlRender, screen, fireEvent, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PrHeader } from '../src/components/PrDetail/PrHeader';
 import { ToastProvider } from '../src/components/Toast/useToast';
 import { ToastContainer } from '../src/components/Toast/ToastContainer';
@@ -73,7 +73,6 @@ function session(overrides: Partial<ReviewSessionDto> = {}): ReviewSessionDto {
   return {
     draftVerdict: null,
     draftVerdictStatus: 'draft',
-    draftSummaryMarkdown: null,
     draftComments: [],
     draftReplies: [],
     iterationOverrides: [],
@@ -197,6 +196,7 @@ describe('PrHeader', () => {
           'authored-by-me': true,
           mentioned: true,
           'ci-failing': true,
+          'recently-closed': true,
         },
       },
       github: {
@@ -369,8 +369,58 @@ describe('PrHeader — closed/merged PR (PR5 § 13)', () => {
       <PrHeader {...baseProps} session={session({ pendingReviewId: 'PRR_x' })} prState="merged" />,
     );
     fireEvent.click(screen.getByRole('button', { name: /discard all drafts/i }));
-    expect(screen.getByText(/on this merged PR/i)).toBeInTheDocument();
-    expect(screen.getByText(/pending review on github/i)).toBeInTheDocument();
-    expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+    // Scope to the confirmation dialog: the T24 pending-review pill also renders
+    // "Pending review on GitHub · Discard" in the header on this merged PR (it's
+    // gated only on pendingReviewId + !dialogOpen), so a document-wide
+    // getByText(/pending review on github/i) is ambiguous. The modal's bullet is
+    // the assertion target here.
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText(/on this merged PR/i)).toBeInTheDocument();
+    expect(dialog.getByText(/pending review on github/i)).toBeInTheDocument();
+    expect(dialog.getByText(/cannot be undone/i)).toBeInTheDocument();
+  });
+});
+
+describe('PrHeader — merged/closed status label (Task 13)', () => {
+  // Fixed "now": 2024-02-01T00:00:00Z
+  // mergedAt:    2024-01-01T00:00:00Z  → 31 days before now → "Merged 31d ago"
+  // closedAt:    2024-01-15T00:00:00Z  → 17 days before now → "Closed 17d ago"
+  const FIXED_NOW = new Date('2024-02-01T00:00:00Z');
+  const MERGED_AT = '2024-01-01T00:00:00Z';
+  const CLOSED_AT = '2024-01-15T00:00:00Z';
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the full "Merged Nd ago" label including the age fragment on a merged PR', () => {
+    render(<PrHeader {...baseProps} prState="merged" mergedAt={MERGED_AT} />);
+    expect(screen.getByText('Merged 31d ago')).toBeInTheDocument();
+  });
+
+  it('shows the full "Closed Nd ago" label including the age fragment on a closed-unmerged PR', () => {
+    render(<PrHeader {...baseProps} prState="closed" closedAt={CLOSED_AT} />);
+    expect(screen.getByText('Closed 17d ago')).toBeInTheDocument();
+  });
+
+  it('does not show a Merged label when mergedAt is absent', () => {
+    render(<PrHeader {...baseProps} prState="merged" />);
+    expect(screen.queryByText(/Merged/)).not.toBeInTheDocument();
+  });
+
+  it('does not show a Closed label when closedAt is absent', () => {
+    render(<PrHeader {...baseProps} prState="closed" />);
+    expect(screen.queryByText(/Closed/)).not.toBeInTheDocument();
+  });
+
+  it('does not show a status label on an open PR', () => {
+    render(<PrHeader {...baseProps} prState="open" mergedAt={MERGED_AT} closedAt={CLOSED_AT} />);
+    expect(screen.queryByText(/Merged/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Closed/)).not.toBeInTheDocument();
   });
 });

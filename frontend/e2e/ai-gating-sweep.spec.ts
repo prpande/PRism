@@ -83,7 +83,6 @@ const samplePrDetail = {
 const staleDraftSession = {
   draftVerdict: null,
   draftVerdictStatus: 'draft',
-  draftSummaryMarkdown: null,
   draftComments: [
     {
       id: 'draft-1',
@@ -95,6 +94,7 @@ const staleDraftSession = {
       bodyMarkdown: 'is this intentional?',
       status: 'stale',
       isOverriddenStale: false,
+      postedCommentId: null,
     },
   ],
   draftReplies: [],

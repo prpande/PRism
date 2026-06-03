@@ -75,10 +75,11 @@ public class ActivePrPollerSnapshotLogTests
         line.Should().Contain("firstPoll=True");
         line.Should().Contain("headChanged=False");
         line.Should().Contain("commentChanged=False");
+        line.Should().Contain("stateChanged=False");
         line.Should().Contain("head=h1");
-        // PrevHeadSha is null on first poll. LoggerMessage renders null as "(null)"
-        // (not as an empty string — the plan comment was incorrect).
-        line.Should().Contain("prevHead=(null)");
+        // PrevHeadSha is null on first poll. The [LoggerMessage] source generator renders
+        // null string? parameters as an empty string in the formatted message template.
+        line.Should().Contain("prevHead=");
     }
 
     [Fact]

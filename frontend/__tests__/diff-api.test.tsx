@@ -47,9 +47,9 @@ describe('getDiff', () => {
     globalThis.fetch = vi
       .fn()
       .mockImplementation(() =>
-        Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 404)),
+        Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 422)),
       ) as typeof fetch;
-    await expect(getDiff(ref, 'abc..def')).rejects.toThrow('HTTP 404');
+    await expect(getDiff(ref, 'abc..def')).rejects.toThrow('HTTP 422');
   });
 });
 

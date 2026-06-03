@@ -6,9 +6,15 @@ namespace PRism.Core.Events;
 // change. SseChannel subscribes and fans out to per-PR subscribers as `event: pr-updated`.
 // CommentCountDelta is the signed change since the previous poll (0 on first poll) — the
 // frontend BannerRefresh accumulates it; see SseEventProjection.ActivePrUpdatedWire.
+// IsMerged / IsClosed carry the PR close-state on an open→done transition so the frontend can
+// render a live "This PR was just merged/closed" banner. They are mutually exclusive: a merged
+// PR is flagged IsMerged only (not also IsClosed). Trailing-with-defaults so construction sites
+// that predate the close-state thread still compile. Spec § 5.2.3.
 public sealed record ActivePrUpdated(
     PrReference PrRef,
     bool HeadShaChanged,
     bool CommentCountChanged,
     string? NewHeadSha,
-    int CommentCountDelta) : IReviewEvent;
+    int CommentCountDelta,
+    bool IsMerged = false,
+    bool IsClosed = false) : IReviewEvent;

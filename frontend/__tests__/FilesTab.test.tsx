@@ -8,7 +8,6 @@ import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../src
 const emptyReviewSession: ReviewSessionDto = {
   draftVerdict: null,
   draftVerdictStatus: 'draft',
-  draftSummaryMarkdown: null,
   draftComments: [],
   draftReplies: [],
   iterationOverrides: [],
@@ -51,6 +50,8 @@ const minimalPrDetail: PrDetailDto = {
     isMerged: false,
     isClosed: false,
     openedAt: '2026-05-01T00:00:00Z',
+    mergedAt: null,
+    closedAt: null,
   },
   clusteringQuality: 'ok',
   iterations: [
@@ -318,16 +319,35 @@ describe('FilesTab', () => {
     }
   });
 
-  it('shows error when diff fetch fails', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockImplementation(() =>
-        Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 404)),
-      ) as typeof fetch;
+  it('shows the typed "diff unavailable" message for a 422 range-unreachable error', async () => {
+    // Backend maps RangeUnreachableException → ProblemDetails { type: "/diff/range-unreachable" }
+    // at HTTP 422 (PrDetailEndpoints /diff, spec § 5.1). FilesTab must render the distinct,
+    // human-readable message — NOT the generic "Failed to load diff — HTTP 422" banner.
+    globalThis.fetch = diffOrDraft(() =>
+      Promise.resolve(jsonResponse({ type: '/diff/range-unreachable' }, 422)),
+    ) as typeof fetch;
+    renderFilesTab();
+    await waitFor(() => {
+      expect(screen.getByTestId('diff-unavailable')).toBeInTheDocument();
+    });
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/no longer reachable on GitHub/i);
+    // The generic fallback wording must NOT be present for the typed case.
+    expect(alert.textContent).not.toMatch(/Failed to load diff/i);
+  });
+
+  it('shows the generic banner for a non-range-unreachable diff error (regression)', async () => {
+    // Any other failure (here a 500) must still fall through to the generic banner so we
+    // don't swallow unexpected errors behind the range-unreachable copy.
+    globalThis.fetch = diffOrDraft(() =>
+      Promise.resolve(jsonResponse({ type: '/oops' }, 500)),
+    ) as typeof fetch;
     renderFilesTab();
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
     });
+    expect(screen.getByRole('alert').textContent).toMatch(/Failed to load diff/i);
+    expect(screen.queryByTestId('diff-unavailable')).not.toBeInTheDocument();
   });
 
   it('renders a diff-mode toggle button in the toolbar with stateful label and aria-pressed', async () => {
