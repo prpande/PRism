@@ -82,15 +82,17 @@
 
    Scroll mode (default): the split table stays `table-layout: fixed` (50/50
    panes, below). Each content cell CLIPS its overflow (`overflow: hidden`), so
-   a too-wide line shows no per-cell scrollbar and the user can't scroll one
-   cell out of sync. A single synthetic scrollbar (`.diffHScroll`, rendered by
-   DiffPane) drives every cell's scrollLeft in lockstep via useLockedPaneScroll,
-   so old and new of the SAME line always show the same columns — the user
-   tracks a change without the two halves drifting apart. Unified mode is a
-   single content column and keeps its body scroll, unaffected.
+   a too-wide line shows no per-cell scrollbar. A single synthetic scrollbar
+   (`.diffHScroll`, rendered by DiffPane) drives a uniform text-indent shift of
+   every cell in lockstep via useLockedPaneScroll, so old and new of the SAME
+   line always show the same columns — the user tracks a change without the two
+   halves drifting apart. These split-scroll rules (`overflow: hidden`,
+   `table-layout: fixed`) don't apply to unified mode, which keeps its
+   single-column body scroll. (The wrap-mode rule below, however, DOES apply to
+   unified `.diffContent` cells when the toggle is on.)
 
    Wrap mode (FilesTab toolbar toggle, root carries `diff-pane--wrap`): long
-   lines soft-wrap within their 50/50 pane instead of scrolling. */
+   lines soft-wrap within their pane instead of scrolling — in split AND unified. */
 :global(.diff-pane--split:not(.diff-pane--wrap)) .diffContent {
   overflow: hidden;
   /* Horizontal scroll = a uniform shift of every line, driven by

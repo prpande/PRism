@@ -80,7 +80,8 @@ export function FilesTab() {
   const [diffMode, setDiffMode] = useState<DiffMode>('side-by-side');
   const [wholeFilePaths, setWholeFilePaths] = useState<Set<string>>(new Set());
   // #115 — line-wrap is a view-wide preference (like diffMode, not per-file):
-  // false = scroll-within (each pane scrolls a too-wide line), true = soft-wrap.
+  // false = a single synthetic scrollbar shifts both split panes in lockstep
+  // (useLockedPaneScroll); true = long lines soft-wrap within their pane.
   const [lineWrap, setLineWrap] = useState(false);
 
   const iterationGatePermits = activeRange === 'all' && selectedCommits === null;
@@ -481,7 +482,10 @@ export function FilesTab() {
           data-testid="line-wrap-toggle"
           title={lineWrap ? 'Switch to scrolling long lines' : 'Switch to wrapping long lines'}
         >
-          {lineWrap ? 'Scroll long lines' : 'Wrap long lines'}
+          {/* Stable label + aria-pressed carries on/off — a label that flipped
+              with state would contradict aria-pressed for assistive tech
+              (Copilot PR #149 review). */}
+          Wrap long lines
         </button>
       </div>
 

@@ -58,9 +58,10 @@ export interface DiffPaneProps {
   baseSha?: string;
 
   // #115 — when true, long diff lines soft-wrap within their pane instead of
-  // scrolling. Default (false) = scroll-within: each split-mode content cell
-  // gets its own horizontal scrollbar so a too-wide line is contained rather
-  // than bleeding into the adjacent column. Owned by FilesTab's toolbar toggle.
+  // scrolling. Default (false) = scroll: a single synthetic scrollbar
+  // (`diffHScroll`) shifts all split-mode content cells in lockstep via
+  // useLockedPaneScroll, so a too-wide line scrolls without the two panes
+  // drifting out of column-alignment. Owned by FilesTab's toolbar toggle.
   lineWrap?: boolean;
 }
 

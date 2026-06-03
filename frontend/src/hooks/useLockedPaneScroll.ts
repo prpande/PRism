@@ -95,6 +95,10 @@ export function useLockedPaneScroll(
       body.removeEventListener('wheel', onWheel);
       ro?.disconnect();
       if (raf) cancelAnimationFrame(raf);
+      // Clear the offset so a stale non-zero value can't briefly shift content
+      // when locked scroll is re-enabled (e.g. toggling wrap off) before the
+      // next measure() resets it (Copilot PR #149 review).
+      body.style.removeProperty('--diff-hscroll');
     };
     // `deps` lets the caller re-measure when the rendered diff content changes.
   }, [enabled, bodyRef, scrollbarRef, spacerRef, ...deps]);
