@@ -32,19 +32,20 @@ wait for the human to read the spec/plan before implementing. Everything else
 two-axis classification machinery below is justified only insofar as removing
 that one gate — safely — is worth the maintenance it carries.
 
-### The enforcement boundary is the human merge
+### The enforcement boundary is the human merge (decided)
 
-A design honesty point that shapes everything below: **the genuine, mechanically
-guaranteed safety boundary in this repo today is the human merge.** The CI risk
-check this design adds is an **advisory routing signal** — it labels, drafts, and
-red-X's a PR to *surface* risk to the human at merge time. It is not, on the
-repo's current configuration, a hard merge-blocker, because (a) `main` has no
-branch protection requiring it, (b) zero approvals are required to merge, and
-(c) the executor agent has write access and can apply its own labels. Turning the
-advisory signal into a hard mechanical gate is possible but requires real
-infrastructure (see **Enforcement hardening** — a decision, not a given). Until
-and unless that is built, the design must not claim mechanical agent-independence
-it does not have; the human-at-merge is what catches a misclassified change.
+The chosen enforcement model (OPEN DECISION 2, resolved): **the safety boundary
+is the human merge.** The CI risk check this design adds is an **advisory routing
+signal** — it labels and red-X's a PR to *surface* risk to the human at merge
+time. It is deliberately *not* a hard merge-blocker: on the repo's current
+configuration `main` has no branch protection requiring it, zero approvals are
+required to merge, and the executor agent has write access and can apply its own
+labels. Rather than build the infrastructure to make it a hard gate, the design
+leans on the human merge that already exists — the human already merges every PR,
+so "gated" means **surfaced to the human**, not mechanically blocked. The
+hard-gate infrastructure was considered and **deferred** (see the deferrals
+sidecar); the design must not claim mechanical agent-independence it does not
+have.
 
 ### Terms
 
@@ -162,14 +163,13 @@ runs content-greps against the signals above, then **labels the PR and posts a
 fail status** when a risk signal fires without the corresponding gated label.
 Honest scope:
 
-- It is **advisory by default.** A failing Actions check does not block merge
-  unless its context is registered in `main`'s ruleset `required_status_checks`
-  (only `build-and-test` is required today). Registering it is an **Enforcement
-  hardening** deliverable, not automatic.
-- It is **not agent-independent** as currently scoped: the executor has write
-  access and can apply the gated label itself. Separating the gating actor from
-  the clearing actor requires a distinct approver identity / label protection /
-  CODEOWNERS approval — also Enforcement hardening.
+- It is **advisory** (the decided model). A failing Actions check does not block
+  merge — it labels the PR and posts a fail status to *surface* risk. (It is not
+  registered in `main`'s ruleset `required_status_checks`; only `build-and-test`
+  is required, and registering it was deferred — deferrals sidecar.)
+- It is **not agent-independent**: the executor has write access and can apply
+  the gated label itself. The design accepts this and relies on the human merge,
+  rather than building the separate approver identity that would close it.
 - It has a **false-negative budget** for behavioral surfaces (above). Those are
   not mechanically covered.
 - **It does not force draft as a lock.** Draft is reversible and, worse,
@@ -177,10 +177,9 @@ Honest scope:
   highest-risk PRs. The check therefore signals via **label + fail-status**, and
   draft is used only as an optional human-facing flag, never as the safeguard.
 
-What makes the gate *safe* despite all this is the **human merge** (enforcement
-boundary, above): the check's job is to make a risk-surface change impossible to
-*miss* at merge, not to mechanically prevent it — unless Enforcement hardening is
-built.
+What makes the gate *safe* is the **human merge** (enforcement boundary, above):
+the check's job is to make a risk-surface change impossible to *miss* at merge,
+not to mechanically prevent it.
 
 If a change touches a risk surface **but the issue was not labeled** for it, the
 agent applies the label and treats it as gated. **Re-classification is
@@ -194,12 +193,11 @@ agent's own re-check.
 
 - **Tier sets the paperwork. Risk sets the human gate.** They are decided
   independently and both always apply.
-- A **T3 large feature that does not touch the risk surface runs hands-off *if*
-  hands-off T3 is ratified** (see OPEN DECISION 1): the machine `ce-doc-review`
-  passes substitute for the human spec/plan review gates that `brainstorming` and
-  `writing-plans` bake in (see **Gate substitution** and its residual risk). If
-  hands-off T3 is *not* ratified, every T3 routes to the human spec/plan gate
-  regardless of risk.
+- A **T3 large feature that does not touch the risk surface runs hands-off**
+  (OPEN DECISION 1, resolved: hands-off T3 is in scope): the machine
+  `ce-doc-review` passes substitute for the human spec/plan review gates that
+  `brainstorming` and `writing-plans` bake in (see **Gate substitution** and its
+  accepted residual risk).
 - A **T1 one-liner that touches auth is gated**: tiny paperwork, but it pauses
   for the human because the *approach* needs judgment.
 
@@ -266,10 +264,10 @@ reproduce
 ```
 brainstorming → spec (docs/specs/)
 → 2× ce-doc-review → apply surviving findings
-→ [spec gate — GATED (B1/B2): human reviews spec | HANDS-OFF: proceed *if OPEN DECISION 1 ratifies hands-off T3, else human reviews spec*]
+→ [spec gate — GATED (B1/B2): human reviews spec | HANDS-OFF: proceed]
 → writing-plans → plan (docs/plans/)
 → 2× ce-doc-review → apply surviving findings
-→ [plan gate — GATED (B1/B2): human reviews plan | HANDS-OFF: proceed *same condition*]
+→ [plan gate — GATED (B1/B2): human reviews plan | HANDS-OFF: proceed]
 → executing-plans (TDD)
 → local pre-push checklist
 → pr-autopilot
@@ -310,8 +308,8 @@ pass for the human gate on **net-new T3 behavior** means no independent party
 evaluates the *approach* before the PR is merge-ready. The accepted bound is that
 the human still performs the merge, so the worst case is "a human merges a PR
 whose approach they would have steered differently" → rework, not a silent
-production change. Whether that residual is acceptable for net-new T3 is **OPEN
-DECISION 1** below.
+production change. **This residual is accepted** (OPEN DECISION 1, resolved):
+hands-off T3 is in scope, bounded by the human merge.
 
 **Fallback when `ce-doc-review` is unavailable.** If `ce-doc-review` cannot run
 (not installed in the session), the substitute sign-off does not exist — the
@@ -327,10 +325,10 @@ with the following, as applicable:
    output captured against `main` *before* the fix, alongside the same test
    passing on the PR head. **Capture mechanic:** run the regression test against
    a clean checkout of `origin/main` on a CI-matching toolchain (this repo:
-   `windows-latest`, .NET 10, Node 24) and either link a dedicated red-baseline
-   CI job (an Enforcement-hardening deliverable — the current `build-and-test`
-   lane builds head only, so there is nothing to link to until that job exists)
-   or paste commit-pinned local output. For statistical/concurrency bugs,
+   `windows-latest`, .NET 10, Node 24) and paste **commit-pinned local output**
+   in the `## Proof` section (the `build-and-test` lane builds head only and a
+   dedicated red-baseline CI job was deferred — deferrals sidecar — so there is
+   no CI run to link). For statistical/concurrency bugs,
    red-on-main means the test reds reliably under the defined retry/stress
    budget, not on a single run. This is the anti-tautology guard: without
    verifiable red-on-main, the test does not prove the bug existed, and the fix
@@ -338,12 +336,13 @@ with the following, as applicable:
 2. **Acceptance-criteria checklist** — the issue's acceptance criteria restated
    as `- [x]` items, each pointing at the test, commit, or screenshot that
    satisfies it.
-3. **Secrets scan clean** — backed by a CI secrets-scan step (a Deliverable —
-   none exists today) so it is enforced mechanically rather than self-attested.
-   Because gate substitution removes the human pass that would otherwise catch a
-   leaked credential, this item is **required on every PR**. For it to be a true
-   gate it must also be registered as a required status check (Enforcement
-   hardening); until then it is advisory + human-merge.
+3. **Secrets scan clean** — the agent runs a secrets scan over the diff per
+   `behavioral-guidelines.md` §6 and records the result. Because gate
+   substitution removes the human pass that would otherwise catch a leaked
+   credential, this item is **required on every PR**. Per OPEN DECISION 2
+   (advisory + human-merge), this is **self-attested + human-merge-backed** today
+   — a mechanically-enforced CI secrets-scan was deferred (deferrals sidecar) and
+   remains the obvious first hardening item if autonomy ever increases.
 4. **Visual proof** *(UI issues only)* — before/after screenshots or a short
    recording, attached for the human visual-assert gate.
 5. **Green CI** — enforced as a **process invariant** by `pr-autopilot`'s
@@ -375,8 +374,7 @@ The agent pauses at the **first human-judgment point** and notifies the human:
   or before opening the PR (T1) — because the judgment needed is on the
   *approach*, not just the result. The agent flags the PR (label + a "do not
   merge — awaiting gate" marker) and notifies the human; merge is held by the
-  human-merge boundary (and by the required-check, if Enforcement hardening is
-  built).
+  human-merge boundary.
 
 ### Notification (minimum bar)
 
@@ -421,34 +419,23 @@ The agent stops and asks the human when any of these occur:
 | `.cursor/rules/` | Wire the runbook so Cursor consumes the same content. |
 | `.ai/docs/documentation-maintenance.md` | Add a row: runbook kept in lockstep with the workflow. **Add a second row:** any change to `architectural-invariants.md` **or to the risk-surface code directories** triggers a mandatory review of the risk-surface table + `risk-classification.yml` globs. Plus a scheduled (e.g. monthly) re-audit, since code can drift a surface into a new directory without touching the invariants file. |
 
-### Enforcement hardening (OPEN DECISION 2 — build or not)
+### Deferred (not pursued) — enforcement hardening
 
-These convert the advisory risk check into a hard mechanical gate. Each is real
-infrastructure with maintenance cost; for a single-maintainer PoC where the human
-already merges every PR, they may be unnecessary. Decide as a set:
+OPEN DECISION 2 chose advisory + human-merge, so the following hard-gate
+infrastructure is **deferred** (recorded in the deferrals sidecar; revisit only
+if autonomy increases or more agents are assigned): registering
+`risk-classification` / secrets-scan in `required_status_checks`;
+`required_approving_review_count ≥ 1` + `CODEOWNERS`; a separate approver identity
+that the executor token cannot impersonate; a `secrets-scan.yml` workflow; and a
+red-baseline CI job. None are built in this iteration.
 
-| Artifact | Effect |
-|----------|--------|
-| Ruleset edit: register `risk-classification` (and secrets-scan) in `main` `required_status_checks` | Makes a failing check actually block merge. Requires the check to report once before it can be marked required. |
-| Ruleset edit: `required_approving_review_count ≥ 1` + `CODEOWNERS` | Creates the "human approval" the gate references; enables dismiss-stale-on-push. |
-| Separate label/approver identity (GitHub App or environment with required reviewers) scoped so the **executor token cannot apply the gated label or approve** | Closes the self-clearing hole — the gating actor ≠ the clearing actor. |
-| `.github/workflows/secrets-scan.yml` (gitleaks/trufflehog) | Backs proof item 3 mechanically. |
-| Red-baseline CI job (checkout `origin/main`, run the new test) | Gives proof item 1 a CI run to link. |
+## Resolved & open questions
 
-## Open questions / decisions
-
-- **OPEN DECISION 1 — hands-off T3.** Should hands-off extend to net-new T3
-  behavior, or be restricted to T1/T2 (keeping a human approach checkpoint for
-  all T3)? The body is written *conditionally* on this; the Gate-substitution
-  residual risk is the input. **Resolve before the runbook is written** — it
-  defines the gate decision for the repo's most common, highest-blast-radius
-  tier.
-- **OPEN DECISION 2 — enforcement model.** Ship the risk check as an **advisory
-  signal backed by the human merge** (zero new infra; matches the
-  human-merges-everything reality), or **invest in Enforcement hardening** (above)
-  to make it a hard mechanical gate? This determines whether "gated" means
-  "mechanically blocked" or "surfaced to the human." The design works either way;
-  the honest default is advisory + human-merge unless the buildout is justified.
+- **RESOLVED — OPEN DECISION 1 (hands-off T3):** hands-off extends to net-new T3
+  behavior; `ce-doc-review` substitutes for the human spec/plan gate, bounded by
+  the human merge. The body reflects this.
+- **RESOLVED — OPEN DECISION 2 (enforcement model):** advisory risk check backed
+  by the human merge; no new enforcement infrastructure (see Deferred, above).
 - **The risk-surface globs are the single point of failure**, and they are
   partial by construction (behavioral surfaces are not path-gateable). Mitigations
   now in the design: human-authored initial glob set, the Axis-B "when in doubt,
