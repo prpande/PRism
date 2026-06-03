@@ -19,6 +19,7 @@ import { AiHunkAnnotation } from './AiHunkAnnotation';
 import { useAiGate } from '../../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
+import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
 import { WholeFileFailureBanner } from './WholeFileFailureBanner';
 import styles from './DiffPane.module.css';
 
@@ -205,6 +206,19 @@ export function DiffPane({
   useEffect(() => {
     if (diffBodyRef.current) diffBodyRef.current.scrollTop = 0;
   }, [wholeFileEnabled, selectedPath]);
+
+  // #115 — locked side-by-side horizontal scroll. Active only in split
+  // scroll-mode (not wrap, not unified): a single synthetic scrollbar drives
+  // both content panes' scrollLeft in lockstep so old/new of the same line stay
+  // column-aligned. Re-measures when the rendered diff content changes.
+  const hScrollRef = useRef<HTMLDivElement>(null);
+  const hScrollSpacerRef = useRef<HTMLDivElement>(null);
+  const lockedScrollEnabled = isSplit && !lineWrap;
+  useLockedPaneScroll(diffBodyRef, hScrollRef, hScrollSpacerRef, lockedScrollEnabled, [
+    selectedPath,
+    wholeFileEnabled,
+    allLines.length,
+  ]);
 
   // ---- Early-return guards (all hooks must be above here) ----
 
@@ -535,6 +549,16 @@ export function DiffPane({
           )}
           <tbody>{renderDiffRows()}</tbody>
         </table>
+        {lockedScrollEnabled && (
+          <div
+            ref={hScrollRef}
+            className={styles.diffHScroll}
+            data-testid="diff-hscroll"
+            aria-hidden="true"
+          >
+            <div ref={hScrollSpacerRef} className={styles.diffHScrollSpacer} />
+          </div>
+        )}
       </div>
       {truncated && <DiffTruncationBanner prUrl={prUrl} />}
     </div>

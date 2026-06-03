@@ -78,24 +78,43 @@
   overflow: visible;
 }
 
-/* #115 — contain long lines within the diff pane without per-line scrollbars.
+/* #115 — locked side-by-side horizontal scroll (no per-line scrollbars).
 
-   Scroll mode (default): the diff body owns a SINGLE horizontal scrollbar for
-   the whole pane. The split table uses `table-layout: auto` (set below), so a
-   too-wide line widens the table — each cell sizes to its own content, so
-   nothing bleeds across the pane separator — and `.diffPaneBody
-   { overflow: auto }` scrolls the entire grid as one unit. (The first cut put
-   `overflow-x: auto` on each content cell, which produced a separate scrollbar
-   under every long line — PR #149 validation.) Unified mode is a single
-   content column and keeps its prior body scroll, unaffected.
+   Scroll mode (default): the split table stays `table-layout: fixed` (50/50
+   panes, below). Each content cell CLIPS its overflow (`overflow: hidden`), so
+   a too-wide line shows no per-cell scrollbar and the user can't scroll one
+   cell out of sync. A single synthetic scrollbar (`.diffHScroll`, rendered by
+   DiffPane) drives every cell's scrollLeft in lockstep via useLockedPaneScroll,
+   so old and new of the SAME line always show the same columns — the user
+   tracks a change without the two halves drifting apart. Unified mode is a
+   single content column and keeps its body scroll, unaffected.
 
    Wrap mode (FilesTab toolbar toggle, root carries `diff-pane--wrap`): long
-   lines soft-wrap within their pane instead of scrolling; the split table
-   switches to `table-layout: fixed` (below) so each side keeps a definite
-   50/50 width to wrap within. */
+   lines soft-wrap within their 50/50 pane instead of scrolling. */
+:global(.diff-pane--split:not(.diff-pane--wrap)) .diffContent {
+  overflow: hidden;
+}
 :global(.diff-pane--wrap) .diffContent {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Single synthetic horizontal scrollbar for split scroll-mode (one control for
+   both panes). Sticky at the bottom of the diff body; useLockedPaneScroll sizes
+   the inner spacer to the content overflow and mirrors this bar's scrollLeft
+   onto every content cell, so dragging it scrolls old + new together. */
+.diffHScroll {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  height: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-1);
+}
+.diffHScrollSpacer {
+  height: 1px;
 }
 
 /* Diff-line add/remove tinting lives in tokens.css as GLOBAL rules on the literal
@@ -148,14 +167,10 @@
    matches the existing codebase convention and keeps specificity at
    one class selector per global-class, two with the descendant. */
 
-/* Scroll mode (default): auto layout lets the table grow past the body width,
-   so the body's single scrollbar — not a scrollbar per cell — absorbs overflow,
-   and content-sized cells can't bleed into the neighbour. Wrap mode: fixed
-   50/50 columns so long lines wrap within each pane (#115, PR #149). */
-:global(.diff-pane--split:not(.diff-pane--wrap)) .diffTable {
-  table-layout: auto;
-}
-:global(.diff-pane--split.diff-pane--wrap) .diffTable {
+/* Both split modes use fixed 50/50 columns: scroll mode clips each pane and a
+   synthetic scrollbar drives both in lockstep (see #115 block above); wrap mode
+   wraps within the fixed panes. */
+:global(.diff-pane--split) .diffTable {
   table-layout: fixed;
 }
 
