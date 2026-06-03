@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { startSidecar, Sidecar } from "./sidecar";
+import { sidecarBinaryName } from "./platform";
 
 let sidecar: Sidecar | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -90,10 +91,15 @@ function resolveIconPath(): string | undefined {
 }
 
 function resolveBinaryPath(): string {
-  const exe = process.platform === "win32" ? "PRism-win-x64.exe" : "PRism-osx-arm64";
-  // Packaged: extraResources under process.resourcesPath. Dev: env override.
+  // Dev/e2e override comes FIRST so a non-target host (e.g. Linux CI running the
+  // Playwright _electron suite with PRISM_SIDECAR_BINARY pointing at a locally
+  // built sidecar) is never rejected by the platform check below.
   const fromEnv = process.env.PRISM_SIDECAR_BINARY;
   if (fromEnv) return fromEnv;
+  // Packaged: the per-RID binary lives in extraResources under resourcesPath.
+  // sidecarBinaryName throws for any non-publish-target platform/arch instead of
+  // falling through to the macOS name and failing opaquely at spawn time.
+  const exe = sidecarBinaryName(process.platform, process.arch);
   return path.join(process.resourcesPath, "sidecar", exe);
 }
 

@@ -1,0 +1,123 @@
+name: Publish Desktop
+
+# Packages the Electron desktop shell (v0.2.*) and attaches the unsigned
+# installers to a draft GitHub Release. The existing publish.yml still owns the
+# v0.1.* browser-tab binary, so that fallback artifact is preserved.
+#
+# Packaging only — this does NOT run the Playwright _electron e2e (that suite is
+# local/manual per the desktop-shell plan). Fires on manual dispatch only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v0.2.0)'
+        required: true
+        type: string
+      include_macos:
+        description: 'Build + attach the macOS .dmg (only if a Mac tester is confirmed).'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write  # required to create/update the draft Release
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      # Serialize the legs: both call action-gh-release against the SAME draft
+      # tag. With include_macos=true, parallel legs would race to *create* the
+      # release and one would 422. max-parallel:1 makes the first leg create the
+      # draft and the second update it.
+      max-parallel: 1
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            binary: PRism-win-x64.exe       # final name resolveBinaryPath() expects
+            dotnet_binary: PRism.Web.exe     # raw `dotnet publish` output (pre-rename)
+          # macos-14 (not macos-latest) guarantees an arm64 runner so the dmg is
+          # built natively for the osx-arm64 sidecar target.
+          - os: macos-14
+            rid: osx-arm64
+            binary: PRism-osx-arm64
+            dotnet_binary: PRism.Web
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      # Third-party actions pinned to SHAs (mutable tags can be force-pushed).
+      # SHAs match the repo's existing publish.yml; bump via Dependabot.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # actions/checkout v6.0.2
+      - uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7  # actions/setup-dotnet v5.2.0
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # actions/setup-node v6.4.0
+        with:
+          node-version: '24'
+          cache: 'npm'
+          # Both lockfiles are restored — frontend (build) and desktop (pack).
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+
+      # Gate on matrix.rid, NOT the runner label — the label is a packaging detail
+      # that can change (it was macos-latest, now macos-14); rid is the stable
+      # identity of "the mac leg" and won't silently un-skip if the label moves.
+      - name: Skip macOS unless requested
+        if: matrix.rid == 'osx-arm64' && inputs.include_macos != true
+        shell: bash
+        run: echo "SKIP_JOB=1" >> "$GITHUB_ENV"
+
+      # Vite writes directly into PRism.Web/wwwroot (vite.config.ts build.outDir),
+      # so this MUST run before `dotnet publish` bundles wwwroot into the binary.
+      - name: Frontend install + build
+        if: env.SKIP_JOB != '1'
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      # -p:PublishProfile=ci activates the gated single-file PropertyGroup in
+      # PRism.Web.csproj. --self-contained stays explicit as a belt-and-suspenders
+      # guard (same rationale as publish.yml).
+      - name: Publish sidecar
+        if: env.SKIP_JOB != '1'
+        run: >
+          dotnet publish PRism.Web/PRism.Web.csproj
+          --runtime ${{ matrix.rid }} --self-contained --configuration Release
+          -p:PublishProfile=ci --output desktop/sidecar
+
+      - name: Rename sidecar binary
+        if: env.SKIP_JOB != '1'
+        shell: bash
+        run: mv "desktop/sidecar/${{ matrix.dotnet_binary }}" "desktop/sidecar/${{ matrix.binary }}"
+
+      # electron-builder names artifacts from package.json version, NOT the
+      # dispatch tag. Sync them so a v0.2.1 release attaches 0.2.1-named binaries
+      # instead of the committed 0.2.0. Invalid-semver tags fail loudly here.
+      - name: Sync desktop version to release tag
+        if: env.SKIP_JOB != '1'
+        working-directory: desktop
+        shell: bash
+        run: |
+          VERSION="${{ inputs.tag }}"
+          npm version "${VERSION#v}" --no-git-tag-version --allow-same-version
+
+      - name: Desktop install + pack
+        if: env.SKIP_JOB != '1'
+        working-directory: desktop
+        run: npm ci && npm run dist
+
+      - name: Upload to draft Release
+        if: env.SKIP_JOB != '1'
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # softprops/action-gh-release v3.0.0
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: PRism Desktop ${{ inputs.tag }}
+          draft: true
+          generate_release_notes: true
+          # Newline-separated explicit globs — the proven idiom in publish.yml.
+          # Blank-line entries are no-ops, so a job that produces no .dmg is fine.
+          files: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
