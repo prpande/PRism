@@ -662,8 +662,29 @@ a:hover { text-decoration: underline; }
 }
 .verdict-picker__segment:last-child { border-right: none; }
 .verdict-picker__segment:hover:not(:disabled) { background: var(--surface-3); color: var(--text-1); }
+/* Issue #123: each verb's selected state carries a GitHub-style semantic color.
+   --accent-text is theme-aware (near-white in light, near-black in dark) and the
+   semantic colors track the same lightness curve as --accent (≈0.55 light →
+   ≈0.72 dark), so it stays the correct on-color foreground for all three. */
+/* The :hover variants carry :not(:disabled) so they out-specify the generic
+   .verdict-picker__segment:hover:not(:disabled) rule above — otherwise a
+   hovered selected segment (the common post-click state) would inherit the
+   neutral hover background/text by source-order tie rather than its semantic
+   color. */
 .verdict-picker__segment--selected,
-.verdict-picker__segment--selected:hover { background: var(--accent); color: var(--accent-text); }
+.verdict-picker__segment--selected:hover:not(:disabled) {
+  /* --accent is the fallback fill: the per-verb rules below override it for the
+     three known verdicts, but a future verb added to SEGMENTS without a matching
+     rule degrades to the prior accent style rather than rendering no fill. */
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.verdict-picker__segment--selected[data-verdict='approve'],
+.verdict-picker__segment--selected[data-verdict='approve']:hover:not(:disabled) { background: var(--success); }
+.verdict-picker__segment--selected[data-verdict='request-changes'],
+.verdict-picker__segment--selected[data-verdict='request-changes']:hover:not(:disabled) { background: var(--danger); }
+.verdict-picker__segment--selected[data-verdict='comment'],
+.verdict-picker__segment--selected[data-verdict='comment']:hover:not(:disabled) { background: var(--info); }
 .verdict-picker__segment:disabled { opacity: 0.5; cursor: not-allowed; }
 .verdict-picker__status { white-space: nowrap; }
 

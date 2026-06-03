@@ -29,6 +29,10 @@ export function VerdictPicker({ value, verdictStatus, disabled, onChange }: Prop
             <button
               key={seg.value}
               type="button"
+              // Issue #123: the per-verb hook the CSS targets to paint the
+              // selected state with semantic colors (approve→success,
+              // request-changes→danger, comment→info).
+              data-verdict={seg.value}
               className={`verdict-picker__segment${selected ? ' verdict-picker__segment--selected' : ''}`}
               aria-pressed={selected}
               disabled={disabled}
