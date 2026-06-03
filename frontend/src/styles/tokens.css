@@ -247,6 +247,40 @@
   overflow-y: auto;
 }
 
+/* PR-detail Files view: bind the shell to the viewport so the diff scrolls in
+   an internal container and its horizontal scrollbar sits at the BOTTOM OF THE
+   SCREEN — not below a tall, page-scrolled file (#191). Scoped via
+   :has(.files-tab) so it activates ONLY on the Files tab; Inbox, Settings, and
+   the Overview/Drafts tabs keep their normal document scroll untouched. Works
+   in the browser and composes with the desktop-shell rules above. */
+[data-app-shell]:has(.files-tab) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+[data-app-shell]:has(.files-tab) > * {
+  flex-shrink: 0;
+}
+[data-app-shell]:has(.files-tab) [data-app-scroll] {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.pr-detail-page:has(.files-tab) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pr-detail-page:has(.files-tab) > * {
+  flex-shrink: 0;
+}
+.pr-detail-page:has(.files-tab) > .files-tab {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 /* ======================================================================
    Base
    ====================================================================== */

@@ -95,12 +95,17 @@
    lines soft-wrap within their pane instead of scrolling — in split AND unified. */
 :global(.diff-pane--split:not(.diff-pane--wrap)) .diffContent {
   overflow: hidden;
-  /* Horizontal scroll = a uniform shift of every line, driven by
-     useLockedPaneScroll through --diff-hscroll. text-indent shifts the cell's
-     (single, pre-formatted) line left by the scroll offset, so short lines move
-     with long ones and the whole pane scrolls as a unit (not just the
-     overflowing rows — PR #149 validation). */
-  text-indent: calc(var(--diff-hscroll, 0px) * -1);
+}
+/* Horizontal scroll = a uniform geometric shift of every line, driven by
+   useLockedPaneScroll through --diff-hscroll. transform: translateX moves the
+   whole rendered line box by exactly the offset, so short and long lines shift
+   in lockstep and old/new of the same line stay column-aligned. (Was text-indent,
+   which only offsets the *first line's start* and rendered raggedly across
+   variable-width lines — #191 validation.) */
+:global(.diff-pane--split:not(.diff-pane--wrap)) .diffContent > * {
+  display: inline-block;
+  white-space: pre;
+  transform: translateX(calc(var(--diff-hscroll, 0px) * -1));
 }
 :global(.diff-pane--wrap) .diffContent {
   white-space: pre-wrap;
