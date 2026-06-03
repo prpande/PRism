@@ -16,6 +16,7 @@ This directory is the **single source of truth** for repository-wide guidance co
     behavioral-guidelines.md
     frontend-conventions.md
     operating-context.md
+    issue-resolution-workflow.md
 
 CLAUDE.md            ← Claude Code entry point + Claude-only workflows (links here)
 .cursor/rules/*.mdc ← Cursor: frontmatter + mdc: links into .ai/docs/
@@ -33,6 +34,7 @@ CLAUDE.md            ← Claude Code entry point + Claude-only workflows (links 
 | `behavioral-guidelines.md` | Collaboration defaults (thinking, scope, secrets) |
 | `frontend-conventions.md` | React + Vite + TS + cross-ref to handoff |
 | `operating-context.md` | Current repo cadence, spec/plan paths |
+| `issue-resolution-workflow.md` | Agent workflow for assigned issues — tiered, risk-gated, proof-carrying |
 
 ## Integrating a new AI tool
 
