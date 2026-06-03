@@ -83,11 +83,12 @@ public class GitHubReviewService_ValidateCredentialsAsyncTests
     }
 
     [Fact]
-    public async Task Accepts_classic_pat_with_user_parent_scope()
+    public async Task Accepts_classic_pat_with_original_repro_header()
     {
-        // The token-2 case: the user ticked the top-level `user` box (parent of `read:user`)
-        // instead of the `read:user` sub-box. GitHub reports the literal `user` in
-        // X-OAuth-Scopes; the validator must not reject a token that has strictly more access.
+        // Regression guard for the original repro: token 2's exact header was
+        // `read:org, repo, user`. `read:user` is no longer a required capability, so the
+        // `user` scope is inert to validation — the point is that this header (which the old
+        // literal `read:user` check rejected) now validates on the strength of `repo` + `read:org`.
         var headers = new Dictionary<string, string> { ["X-OAuth-Scopes"] = "read:org, repo, user" };
         var handler = FakeHttpMessageHandler.Returns(HttpStatusCode.OK, "{\"login\":\"octocat\"}", headers);
         var sut = BuildSut(handler);
