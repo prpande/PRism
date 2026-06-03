@@ -152,7 +152,11 @@ cd desktop && npm run test:unit
 # Full-stack _electron smoke (Playwright) — needs a PUBLISHED, renamed sidecar
 # (Production env → session + Host-header middleware enforced) and Chromium installed.
 npx playwright install chromium
-Move-Item dev-sidecar/PRism.Web.exe sidecar/PRism-win-x64.exe   # per-RID name the e2e expects
+# `sidecar/` is gitignored and absent on a clean checkout — create it, then copy +
+# rename the published binary to the per-RID name the e2e expects (copy, not move, so
+# the dev-launch binary above still works).
+New-Item -ItemType Directory -Force sidecar | Out-Null
+Copy-Item dev-sidecar/PRism.Web.exe sidecar/PRism-win-x64.exe
 $env:PRISM_SIDECAR_BINARY="$PWD\sidecar\PRism-win-x64.exe"; npm run test:e2e
 ```
 
