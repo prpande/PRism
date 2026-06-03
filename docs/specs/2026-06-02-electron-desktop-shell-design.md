@@ -38,7 +38,7 @@ Wrap the existing PRism web app in an Electron desktop shell so it installs and 
 1. An Electron main process (`desktop/`) that acquires a single-instance lock, spawns the existing `PRism.Web` binary as a managed sidecar, learns the bound port from the sidecar, waits for health, and opens a `BrowserWindow` on the loopback URL.
 2. Single-instance + second-launch focus (the **B** fix).
 3. App icon, standard OS window frame, clean quit with **no orphaned sidecar process**.
-4. A small set of additive backend changes (§ 4) that land on `main` first.
+4. A small set of additive, sidecar-gated backend changes (§ 4) that land on the `desktop` branch with the rest of the shell.
 5. A cross-platform build/packaging pipeline producing **unsigned** Windows (`.exe`, NSIS or portable) and macOS (`.dmg`, ad-hoc-signed, arm64) artifacts via a CI matrix (`windows-latest` + `macos-latest`).
 6. `TESTING.md` with exact per-platform install + bypass instructions.
 7. An Electron e2e smoke suite (`_electron.launch()`).
@@ -156,9 +156,9 @@ The backend `LockfileManager` is the **data-integrity** enforcement and **stays 
 
 ---
 
-## 4. Backend changes — land on `main` first (standalone PRs)
+## 4. Backend changes — on the `desktop` branch
 
-These keep the `desktop` branch purely additive (only new `desktop/` files), so `main` ↔ `desktop` merges touch disjoint files. Each is harmless to browser-tab mode and independently valid:
+These are sidecar-gated and inert when `PRISM_SIDECAR` is unset, so they are harmless to browser-tab mode. They live on the `desktop` branch with the rest of the shell — **not** on `main` — so the experimental packaging effort never clashes with in-flight `main` work. Each is independently valid:
 
 1. **Verify + pin the launch contract (mostly verification, not new code).** Confirm `--no-browser` is parsed, the port is reported to stdout in a stable parseable form, and `--dataDir` binds via the config provider's `DataDir` key (it is *not* a bespoke flag). The `--dataDir` → `DataDir` binding is pinned by the **D1 e2e** (which sets `PRISM_DATA_DIR` → `DataDir` to a temp dir and asserts the sidecar's artifacts land there); add a focused config-binding unit test if a faster guard against an SDK default-config change is wanted. The health endpoint already exists — `GET /api/health`, auth-exempt — so **no `/healthz` is added** (the earlier "add if needed" option is moot).
 2. **Verify the lockfile coexists with the shell lock (verification, not removal).** `LockfileManager` stays active as the `dataDir`-integrity guard (§ 3.2). Confirm stale-lock takeover works for a sidecar relaunch after a crash (it already does). Do **not** skip `LockfileManager.Acquire()` in sidecar mode — that guard is what stops a rogue/second backend from corrupting `state.json`.
@@ -253,9 +253,9 @@ Highest-value future spend is the **$99/yr Apple Developer Program** — macOS i
 ## 9. Repo structure and branching
 
 - New top-level **`desktop/`**: `package.json` (electron, electron-builder, `@playwright/test`), `src/main.ts`, `electron-builder.yml`, `assets/icons/`.
-- `desktop/` lives on a long-lived **`desktop` branch**, developed in a git worktree per the project's worktree convention. `main` keeps shipping the browser-tab tool (v0.1.0 and ongoing fixes).
-- The § 4 backend changes land on **`main` first** as small standalone PRs, so `main` ↔ `desktop` touch disjoint files. **Merge `main` → `desktop` frequently.**
-- The shell merges back to `main` as **v0.2.0** when ready.
+- The **entire effort** — `desktop/` plus the § 4 backend seams — lives on a single long-lived **`desktop` branch**, developed in a git worktree per the project's worktree convention. `main` keeps shipping the browser-tab tool (v0.1.0 and ongoing fixes) untouched by shell work.
+- There are **no per-phase feature branches off `main` and no incremental PRs into `main`**. Keep `desktop` current by merging **`main` → `desktop`** periodically (one-directional; never touches `main`) so the final integration stays incremental.
+- The shell merges back to `main` **exactly once**, as **v0.2.0**, when ready.
 - **Architecture A (shell-agnostic launch layer):** the app can start either as a bare Kestrel process (browser/Playwright) or via Electron. Building the validation suite's launch abstraction this way (when those phases are planned) lets it span both modes and resolves the validation spec's D1 blocker. See § 13 and the deferrals companion for the ordering dependency.
 
 ---

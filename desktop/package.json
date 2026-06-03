@@ -1,0 +1,21 @@
+{
+  "name": "prism-desktop",
+  "version": "0.2.0",
+  "description": "PRism Electron desktop shell",
+  "author": "Pratyush Pande",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "npm run build && electron .",
+    "test:unit": "tsc -p tsconfig.test.json && node --test \"dist-test/test/**/*.test.js\"",
+    "test:e2e": "playwright test",
+    "dist": "npm run build && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "typescript": "^5.6.0",
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.0.0"
+  }
+}

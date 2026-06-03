@@ -1,0 +1,44 @@
+# Unsigned packaging config for the PRism desktop shell.
+# - Windows: portable .exe + NSIS installer. SmartScreen will warn (no code-signing cert).
+# - macOS: arm64 .dmg with an ad-hoc signature (identity: null) — NOT notarized.
+#
+# appId MUST match the runtime AppUserModelID set in src/main.ts
+# (app.setAppUserModelId("com.prpande.prism.desktop")). If they diverge, a pinned
+# taskbar shortcut (installer AUMID) and the running window (runtime AUMID) are
+# treated as different apps → duplicate taskbar entries / wrong icon.
+appId: com.prpande.prism.desktop
+productName: PRism
+directories:
+  output: release
+# Restrictive allowlist: the shell has no runtime npm dependencies (electron is
+# the runtime; everything else is a devDependency), so only the compiled output,
+# the manifest, and the Windows window icon need to ship inside the app.
+files:
+  - dist/**/*
+  - package.json
+  - assets/icon.ico
+# The per-RID sidecar binary is published into desktop/sidecar/ by the CI job
+# (or the local pack smoke) before electron-builder runs, and copied verbatim to
+# resources/sidecar/. resolveBinaryPath() in main.ts reads it from there.
+extraResources:
+  - from: sidecar
+    to: sidecar
+win:
+  target:
+    - portable
+    - nsis
+  icon: assets/icon.ico
+mac:
+  # arch belongs inside the target entry (electron-builder has no top-level
+  # mac.arch property — it fails config validation).
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  icon: assets/icon.icns
+  # No signing identity → electron-builder applies an ad-hoc signature. No notarization.
+  identity: null
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

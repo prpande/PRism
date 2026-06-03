@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Header } from './components/Header/Header';
+import { AppearanceSync } from './components/AppearanceSync';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider, ToastContainer } from './components/Toast';
 import { CheatsheetProvider, Cheatsheet } from './components/Cheatsheet';
@@ -68,28 +69,37 @@ export function App() {
 
   const tree: ReactNode = (
     <>
-      <Header hasToken={authState.hasToken} />
-      <PrTabStrip />
+      <AppearanceSync />
+      {/* data-app-shell + data-app-scroll let the desktop shell scroll page
+          content in a region BELOW the navbar (so the scrollbar starts under the
+          navbar, not beside it). In the browser these are unstyled passthrough
+          divs and the document scrolls as before. */}
+      <div data-app-shell>
+        <Header hasToken={authState.hasToken} />
+        <PrTabStrip />
+        <div data-app-scroll>
+          <Routes>
+            <Route path="/setup" element={<SetupPage />} />
+            <Route
+              path="/settings"
+              element={isAuthed ? <SettingsPage /> : <Navigate to="/setup" replace />}
+            />
+            <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
+            <Route
+              path="/pr/:owner/:repo/:number"
+              element={isAuthed ? <PrDetailPage /> : <Navigate to="/setup" replace />}
+            >
+              <Route index element={<OverviewTab />} />
+              <Route path="files/*" element={<FilesTab />} />
+              <Route path="drafts" element={<DraftsTabRoute />} />
+            </Route>
+            <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
+          </Routes>
+        </div>
+      </div>
       <AskAiDrawer />
       <DrawerEffects />
       <TabSignals />
-      <Routes>
-        <Route path="/setup" element={<SetupPage />} />
-        <Route
-          path="/settings"
-          element={isAuthed ? <SettingsPage /> : <Navigate to="/setup" replace />}
-        />
-        <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
-        <Route
-          path="/pr/:owner/:repo/:number"
-          element={isAuthed ? <PrDetailPage /> : <Navigate to="/setup" replace />}
-        >
-          <Route index element={<OverviewTab />} />
-          <Route path="files/*" element={<FilesTab />} />
-          <Route path="drafts" element={<DraftsTabRoute />} />
-        </Route>
-        <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
-      </Routes>
       <ToastContainer />
       <Cheatsheet />
     </>

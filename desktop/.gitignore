@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-test/
+release/
+dev-sidecar/
+# Per-RID sidecar binary published here by CI / the local pack smoke before
+# electron-builder runs. Self-contained (~80 MB+) — never commit it.
+sidecar/
+# Playwright _electron e2e output (traces, screenshots) — regenerated each run.
+test-results/

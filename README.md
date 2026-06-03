@@ -11,6 +11,8 @@ Local-first PR review tool that runs on the reviewer's own machine. See [`docs/s
 
 Until the first dispatch, the links above return 404. See [`docs/roadmap.md`](docs/roadmap.md) for slice history and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
 
+**v0.2.0 adds an Electron desktop build.** Alongside the browser-tab binaries above, PRism now ships an optional desktop shell — its own window, single-instance, bundled Chromium — that wraps the same backend as a managed sidecar. It is an **unsigned preview**; tester install + first-run trust steps live in [`TESTING.md`](TESTING.md). See [Desktop preview build](#desktop-preview-build-v020) below.
+
 ## Download and first run
 
 Download the binary for your platform from the [Releases page](https://github.com/prpande/PRism/releases/latest) (live once the first `publish.yml` dispatch completes):
@@ -44,6 +46,18 @@ PRism authenticates with a fine-grained Personal Access Token you generate at <h
 - **Commit statuses** — Read
 
 Paste the PAT into the Setup screen on first launch.
+
+## Desktop preview build (v0.2.0)
+
+The desktop build is an [Electron](https://www.electronjs.org/) shell that gives PRism its own window — no browser tab, single-instance, bundled Chromium. It does **not** reimplement the app: it spawns the same self-contained `PRism.Web` binary as a managed sidecar on a loopback port and loads it in a sandboxed window. Quitting the window cleanly stops the sidecar; a recycle-resistant watchdog stops it even if the shell is killed.
+
+It shares the **same data folder** as the browser-tab build, so your PAT and drafts carry across both — see [`TESTING.md`](TESTING.md) for the exact paths.
+
+- **Unsigned preview.** Both platforms surface a one-time trust prompt on first launch (Windows SmartScreen / macOS Gatekeeper). The full bypass walkthrough is in [`TESTING.md`](TESTING.md).
+- **No auto-update.** To update, download the newer build and reinstall.
+- **Builds:** Windows `win-x64` (portable `.exe` + NSIS installer); macOS `osx-arm64` `.dmg` is opt-in and built only when a Mac tester is confirmed. Both are produced by the [`publish-desktop.yml`](.github/workflows/publish-desktop.yml) `workflow_dispatch` on a `v0.2.*` tag.
+
+Architecture and rationale: [`docs/specs/2026-06-02-electron-desktop-shell-design.md`](docs/specs/2026-06-02-electron-desktop-shell-design.md). Building/running the shell locally: [Development workflow → Desktop shell](#desktop-shell).
 
 ## Troubleshooting
 
@@ -114,6 +128,39 @@ dotnet tool install -g dotnet-reportgenerator-globaltool
 dotnet test --collect:"XPlat Code Coverage"
 reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
 ```
+
+### Desktop shell
+
+The Electron shell lives in [`desktop/`](desktop/) and wraps the published `PRism.Web` binary as a sidecar (it never runs `dotnet`). To run it against a locally-built backend:
+
+```
+# 1. Build the SPA into the backend's wwwroot, then publish a self-contained sidecar.
+cd frontend && npm ci && npm run build
+cd .. && dotnet publish PRism.Web/PRism.Web.csproj --runtime win-x64 --self-contained -p:PublishProfile=ci --output desktop/dev-sidecar
+
+# 2. Point the shell at that binary and launch (PowerShell; bash uses $PWD/...).
+cd desktop && npm ci
+$env:PRISM_SIDECAR_BINARY="$PWD\dev-sidecar\PRism.Web.exe"; npm run start
+```
+
+Tests:
+
+```
+# Pure helpers (node:test) — fast, no Electron.
+cd desktop && npm run test:unit
+
+# Full-stack _electron smoke (Playwright) — needs a PUBLISHED, renamed sidecar
+# (Production env → session + Host-header middleware enforced) and Chromium installed.
+npx playwright install chromium
+# `sidecar/` is gitignored and absent on a clean checkout — create it, then copy +
+# rename the published binary to the per-RID name the e2e expects (copy, not move, so
+# the dev-launch binary above still works).
+New-Item -ItemType Directory -Force sidecar | Out-Null
+Copy-Item dev-sidecar/PRism.Web.exe sidecar/PRism-win-x64.exe
+$env:PRISM_SIDECAR_BINARY="$PWD\sidecar\PRism-win-x64.exe"; npm run test:e2e
+```
+
+The `_electron` e2e is **local/manual** — `publish-desktop.yml` packages only, it does not run the suite. Packaging an unsigned installer locally: `npm run dist` (output in `desktop/release/`). Full task-by-task detail: [`docs/plans/2026-06-02-electron-desktop-shell.md`](docs/plans/2026-06-02-electron-desktop-shell.md).
 
 ### Integration tests (live GitHub)
 
