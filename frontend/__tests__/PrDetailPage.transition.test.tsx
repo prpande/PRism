@@ -244,4 +244,53 @@ describe('PrDetailPage — live merge/close transition banner', () => {
     // Neither transition banner nor BannerRefresh (no headSha/comment delta)
     expect(screen.queryByText(/just merged/i)).not.toBeInTheDocument();
   });
+
+  it('auto-reloads to read-only on a background merge without a manual Reload click (#116)', async () => {
+    // The loaded detail says open; the SSE event reports merged with the head SHA
+    // unchanged (a clean auto-merge). PrDetailPage must reload() on its own so the
+    // refetched detail (served merged on the 2nd GET) flips the view read-only —
+    // the transition banner self-clears and the "Merged" status appears, with no
+    // user interaction.
+    const mergedDto: PrDetailDto = {
+      ...openPrDto,
+      pr: {
+        ...openPrDto.pr,
+        state: 'merged',
+        isMerged: true,
+        mergedAt: '2026-06-03T12:00:00Z',
+      },
+    };
+    let detailCalls = 0;
+    const fetchMock = vi.fn().mockImplementation((path: string) => {
+      if (path === '/api/pr/octocat/hello/42') {
+        detailCalls += 1;
+        // 1st GET: open. The auto-reload's 2nd GET returns merged.
+        return Promise.resolve(jsonResponse(detailCalls === 1 ? openPrDto : mergedDto));
+      }
+      return Promise.resolve(jsonResponse({}, 204));
+    });
+    render(mountAt('/pr/octocat/hello/42', fetchMock as typeof fetch));
+    await screen.findByText('Refactor the renewal worker');
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    expect(detailCalls).toBe(1);
+
+    act(() =>
+      FakeEventSource.instance.dispatch('pr-updated', {
+        prRef: 'octocat/hello/42',
+        headShaChanged: false,
+        commentCountDelta: 0,
+        isMerged: true,
+        isClosed: false,
+      }),
+    );
+
+    // A second detail GET fires with no user click — that IS the auto-reload.
+    await waitFor(() => expect(detailCalls).toBe(2));
+    // Once the merged detail lands, the transition banner self-clears and the
+    // read-only "Merged …" status shows.
+    await waitFor(() => expect(screen.queryByText(/just merged/i)).not.toBeInTheDocument());
+    expect(await screen.findByText(/^Merged/)).toBeInTheDocument();
+    // The ref guard prevents a reload loop: detail is not re-fetched past the flip.
+    expect(detailCalls).toBe(2);
+  });
 });

@@ -14,7 +14,7 @@ import { useCrossTabPrPresence } from '../hooks/useCrossTabPrPresence';
 import { useReconcile } from '../hooks/useReconcile';
 import type { PrDetailDto, PrReference } from '../api/types';
 import { prRefKey } from '../api/types';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useOpenTabs } from '../contexts/OpenTabsContext';
 
 // Single source of truth for the per-PR draft session is the PrDetailPage.
@@ -172,6 +172,24 @@ function PrDetailPageInner({
       : data && !detailIsDone && updates.isClosed
         ? 'closed'
         : null;
+
+  // #116 — auto-transition to read-only on a background merge/close, without a
+  // manual Reload click. `transitionState !== null` is exactly "the loaded detail
+  // still shows the PR open while the live SSE signal says it's done". Reload once
+  // to refetch fresh detail — the backend evicts its stale per-PR snapshot on the
+  // same poller event, so the GET returns isMerged/isClosed and the action buttons
+  // + badge flip read-only on their own. Keyed by refKey so it fires at most once
+  // per PR (and re-arms on PR navigation): without the guard, a refetch that
+  // momentarily still reads open (rare GitHub read-your-writes lag) would re-enter
+  // the effect in a loop. The merge/close banner stays as a visible backstop until
+  // data.pr actually flips, then self-clears (detailIsDone ⇒ transitionState null).
+  const autoReloadedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (transitionState !== null && autoReloadedForRef.current !== refKey) {
+      autoReloadedForRef.current = refKey;
+      reload();
+    }
+  }, [transitionState, refKey, reload]);
 
   // Mount the banner at the top of the layout, above UnresolvedPanel per
   // spec § 5.7a. The read-only mode is a page-level class for future
