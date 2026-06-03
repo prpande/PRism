@@ -97,3 +97,8 @@
   composes: toolbarToggleButton;
   margin-left: var(--s-2);
 }
+
+.lineWrapToggle {
+  composes: toolbarToggleButton;
+  margin-left: var(--s-2);
+}

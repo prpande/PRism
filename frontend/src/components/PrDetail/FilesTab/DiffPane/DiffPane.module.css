@@ -78,6 +78,31 @@
   overflow: visible;
 }
 
+/* #115 — contain long lines within their pane.
+
+   Default (scroll-within): in split mode each content cell scrolls a
+   too-wide line horizontally instead of overflowing into the adjacent
+   column. `table-layout: fixed` (set below) gives each content column a
+   definite width, so `overflow-x: auto` on the cell clips + scrolls the
+   line rather than letting `white-space: pre` bleed across the pane
+   separator (the old `.diffContent { overflow: visible }` behavior).
+   Chromium (the Electron runtime) honors overflow on fixed-layout table
+   cells. Unified mode keeps the prior single-column body scroll (its lone
+   content column can't bleed into a neighbour), so it is left untouched. */
+:global(.diff-pane--split) .diffContent {
+  overflow-x: auto;
+}
+
+/* Wrap mode (FilesTab toolbar toggle): long lines soft-wrap within the
+   pane instead of scrolling. Applies to both modes — the root carries
+   `diff-pane--wrap`. In unified this also avoids the diff-body horizontal
+   scroll for very long lines. */
+:global(.diff-pane--wrap) .diffContent {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: visible;
+}
+
 /* Diff-line add/remove tinting lives in tokens.css as GLOBAL rules on the literal
    class strings production already emits (`diff-line diff-line--insert` /
    `diff-line diff-line--delete`, see DiffPane.tsx:193). See Step 10.4. The module

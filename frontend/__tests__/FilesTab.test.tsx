@@ -391,6 +391,31 @@ describe('FilesTab', () => {
   });
 });
 
+describe('FilesTab line-wrap toggle (#115)', () => {
+  it('renders a line-wrap toggle defaulting to scroll-within (aria-pressed=false)', async () => {
+    globalThis.fetch = diffOrDraft(() =>
+      Promise.resolve(jsonResponse(sampleModifiedDiff)),
+    ) as typeof fetch;
+    renderFilesTab();
+    const button = await screen.findByTestId('line-wrap-toggle');
+    expect(button).toHaveAttribute('aria-pressed', 'false');
+    expect(button).toHaveTextContent(/wrap/i);
+  });
+
+  it('toggling line-wrap applies diff-pane--wrap to the diff pane and flips aria-pressed', async () => {
+    globalThis.fetch = diffOrDraft(() =>
+      Promise.resolve(jsonResponse(sampleModifiedDiff)),
+    ) as typeof fetch;
+    renderFilesTab();
+    const button = await screen.findByTestId('line-wrap-toggle');
+    const diffPane = await screen.findByTestId('diff-pane');
+    expect(diffPane).not.toHaveClass('diff-pane--wrap');
+    fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-pressed', 'true');
+    await waitFor(() => expect(diffPane).toHaveClass('diff-pane--wrap'));
+  });
+});
+
 describe('FilesTab whole-file toggle', () => {
   it('clicking "Show full file" on a modified file flips the button label and sets aria-pressed', async () => {
     globalThis.fetch = mockWholeFileFetch({
@@ -413,11 +438,18 @@ describe('FilesTab whole-file toggle', () => {
       diffResponse: () => Promise.resolve(jsonResponse(sampleAddedDiff)),
     });
     renderFilesTab();
-    // Wait for the diff to load and auto-select to settle (selectedFile is set).
-    await waitFor(() => expect(screen.getByText('new.ts')).toBeInTheDocument());
-    const button = screen.getByTestId('whole-file-toggle');
-    expect(button).toBeDisabled();
-    expect(button.getAttribute('title')).toMatch(/modified files only/i);
+    // The disabled state + title derive from `selectedFile`, which is set by
+    // the auto-select effect a tick AFTER the file tree renders 'new.ts'.
+    // Assert inside waitFor so the check survives that settle delay rather
+    // than racing it (mirrors the iteration-gate test below). A bare
+    // getByText('new.ts') await only proves the tree rendered, not that
+    // auto-select has run — reading `title` synchronously then can see the
+    // empty fall-through branch (selectedFile still null).
+    await waitFor(() => {
+      const button = screen.getByTestId('whole-file-toggle');
+      expect(button).toBeDisabled();
+      expect(button.getAttribute('title')).toMatch(/modified files only/i);
+    });
   });
 
   it('toggle disabled when activeRange !== "all" (DSx11 gate)', async () => {

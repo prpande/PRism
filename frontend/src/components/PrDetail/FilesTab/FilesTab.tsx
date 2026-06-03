@@ -79,6 +79,9 @@ export function FilesTab() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [diffMode, setDiffMode] = useState<DiffMode>('side-by-side');
   const [wholeFilePaths, setWholeFilePaths] = useState<Set<string>>(new Set());
+  // #115 — line-wrap is a view-wide preference (like diffMode, not per-file):
+  // false = scroll-within (each pane scrolls a too-wide line), true = soft-wrap.
+  const [lineWrap, setLineWrap] = useState(false);
 
   const iterationGatePermits = activeRange === 'all' && selectedCommits === null;
   // wholeFileEnabled is fully derived below, after `selectedFile` is computed,
@@ -206,6 +209,10 @@ export function FilesTab() {
     if (viewportWidth < 900) return;
     setDiffMode((prev) => (prev === 'side-by-side' ? 'unified' : 'side-by-side'));
   }, [viewportWidth]);
+
+  const handleToggleLineWrap = useCallback(() => {
+    setLineWrap((prev) => !prev);
+  }, []);
 
   const handleToggleWholeFile = useCallback(() => {
     if (!selectedPath) return;
@@ -466,6 +473,18 @@ export function FilesTab() {
         >
           {wholeFileEnabled ? 'Hunks only' : 'Show full file'}
         </button>
+        <button
+          type="button"
+          className={styles.lineWrapToggle}
+          aria-pressed={lineWrap}
+          onClick={handleToggleLineWrap}
+          data-testid="line-wrap-toggle"
+          title={
+            lineWrap ? 'Long lines wrap within each pane' : 'Long lines scroll within each pane'
+          }
+        >
+          {lineWrap ? 'Scroll long lines' : 'Wrap long lines'}
+        </button>
       </div>
 
       {diff.error &&
@@ -526,6 +545,7 @@ export function FilesTab() {
             onWholeFileFailed={handleWholeFileFailed}
             headSha={prDetail.pr.headSha}
             baseSha={prDetail.pr.baseSha}
+            lineWrap={lineWrap}
           />
         </div>
       </div>

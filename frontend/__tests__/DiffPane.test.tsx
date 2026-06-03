@@ -214,6 +214,37 @@ describe('DiffPane', () => {
     expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--unified');
   });
 
+  it('omits the diff-pane--wrap class by default (scroll-within is the default)', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    expect(screen.getByTestId('diff-pane')).not.toHaveClass('diff-pane--wrap');
+  });
+
+  it('applies the diff-pane--wrap class when lineWrap is true', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        lineWrap
+      />,
+    );
+    expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--wrap');
+  });
+
   it('uses colSpan=4 for full-width rows in split mode', () => {
     render(
       <DiffPane

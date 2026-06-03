@@ -55,6 +55,12 @@ export interface DiffPaneProps {
   onWholeFileFailed?: (reason: string) => void;
   headSha?: string;
   baseSha?: string;
+
+  // #115 — when true, long diff lines soft-wrap within their pane instead of
+  // scrolling. Default (false) = scroll-within: each split-mode content cell
+  // gets its own horizontal scrollbar so a too-wide line is contained rather
+  // than bleeding into the adjacent column. Owned by FilesTab's toolbar toggle.
+  lineWrap?: boolean;
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
@@ -86,6 +92,7 @@ export function DiffPane({
   onWholeFileFailed,
   headSha = '',
   baseSha = '',
+  lineWrap = false,
 }: DiffPaneProps) {
   const annotationsEnabled = useAiGate('hunkAnnotations');
   const allAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
@@ -255,6 +262,7 @@ export function DiffPane({
 
   const colSpan = isSplit ? 4 : 3;
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
+  const wrapClass = lineWrap ? ' diff-pane--wrap' : '';
 
   function renderDiffRows(): React.ReactNode[] {
     if (isSplit) return renderSplitRows();
@@ -486,7 +494,10 @@ export function DiffPane({
   }
 
   return (
-    <div className={`diff-pane ${modeClass} ${styles.diffPane}`} data-testid="diff-pane">
+    <div
+      className={`diff-pane ${modeClass}${wrapClass} ${styles.diffPane}`}
+      data-testid="diff-pane"
+    >
       <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
         {isLoading && (
