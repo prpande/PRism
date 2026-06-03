@@ -14,6 +14,7 @@ This file is the **Claude Code** entry point for this repository. Shared guidanc
 | [`behavioral-guidelines.md`](.ai/docs/behavioral-guidelines.md) | Collaboration and coding discipline |
 | [`frontend-conventions.md`](.ai/docs/frontend-conventions.md) | React + Vite + TS notes |
 | [`operating-context.md`](.ai/docs/operating-context.md) | Current cadence, spec/plan paths |
+| [`issue-resolution-workflow.md`](.ai/docs/issue-resolution-workflow.md) | Workflow any agent follows for an assigned GitHub issue |
 
 Index and wiring instructions: [`.ai/README.md`](.ai/README.md). Cursor loads the same docs via [`.cursor/rules/`](.cursor/rules/).
 
@@ -35,3 +36,7 @@ The skill is `compound-engineering:ce-doc-review`. If it is not installed in a f
 **Visible rejections.** When handing the cleaned-up doc to the user for the human-review pass, surface every finding `ce-doc-review` raised along with the action taken (Applied / Deferred / Skipped) and a one-line reason for non-applies.
 
 **How "automatic" this is:** Claude is the executor. The trigger is the PR diff: when drafting commits that change anything covered by [`.ai/docs/documentation-maintenance.md`](.ai/docs/documentation-maintenance.md), scan the matching doc *before* opening the PR and include the doc edit in the same PR.
+
+## Claude-only: hands-off issue work authorizes skipping the human spec/plan gate
+
+For issues classified **hands-off** (non-gated) by [`.ai/docs/issue-resolution-workflow.md`](.ai/docs/issue-resolution-workflow.md), an agent MAY proceed past the human spec/plan review gates that `superpowers:brainstorming` and `superpowers:writing-plans` bake in, using the machine `ce-doc-review` pass (2× for T3, 1× for T2) as the substitute sign-off and recording every finding's disposition in the PR's `## Proof` section. This authorization applies ONLY to hands-off issues; gated (UI-visual or risk-surface) issues retain the human gates. If `ce-doc-review` is unavailable, treat the stage as gated.
