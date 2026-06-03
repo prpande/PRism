@@ -290,7 +290,7 @@ const SetupScreen = ({ onContinue }) => {
           <div className="setup-scopes">
             <span className="setup-scopes-label">Required scopes</span>
             <div className="setup-scope-list">
-              {["repo", "read:user", "read:org"].map((s) => (
+              {["repo", "read:org"].map((s) => (
                 <span key={s} className="setup-scope mono">
                   {s}
                   <button className="btn-icon btn-icon-sm" aria-label={`Copy ${s}`}>

@@ -30,7 +30,7 @@ function replaceErrorMessage(code: string | undefined): string {
     case 'validation-failed':
       return 'GitHub rejected this token. Check the scopes and try again.';
     case 'insufficientscopes':
-      return "Your token doesn't have the required scopes. Regenerate with repo / read:user / read:org and try again.";
+      return "Your token doesn't have the required scopes. Regenerate with repo / read:org and try again.";
     case 'networkerror':
     case 'dnserror':
       return 'Network error reaching GitHub. Check your connection, then try again.';

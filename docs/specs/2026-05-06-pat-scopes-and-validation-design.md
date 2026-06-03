@@ -4,6 +4,14 @@
 **Slice:** patch on top of S0+S1 foundations-and-setup
 **Status:** implemented in PR #5; plan at `docs/plans/2026-05-06-pat-scopes-and-validation.md`
 
+> **Superseded (2026-06-03):** The classic required-scope set below (`repo`, `read:user`, `read:org`)
+> was narrowed to `repo` + `read:org`, and the check is now hierarchy-aware (a parent scope satisfies
+> its child — e.g. `user` satisfies `read:user`, `admin:org`/`write:org` satisfy `read:org`). `read:user`
+> was dropped: no PRism call needs it (commenter avatars/public profiles return without any user scope).
+> The literal set-difference rejected tokens that granted the `user` *parent* instead of the `read:user`
+> child. Current behavior lives in `GitHubReviewService.RequiredScopes`; this doc is kept as the
+> point-in-time record of the PR #5 decision.
+
 ## Context
 
 The Setup screen tells users to generate a fine-grained PAT (link points at `/settings/personal-access-tokens/new`) but lists the classic scope strings `repo`, `read:user`, `read:org` as required. The fine-grained PAT creation page has no field for those names — it has a permissions matrix. Worse, `GitHubReviewService.ValidateCredentialsAsync` validates by parsing the `X-OAuth-Scopes` response header, which is empty for fine-grained PATs, so a correctly-configured fine-grained PAT is rejected with `InsufficientScopes`.
