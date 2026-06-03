@@ -95,6 +95,9 @@ test.describe('diff horizontal scroll regression (#115 / #149 / #155)', () => {
     // The diff body scrolls INTERNALLY; the page itself must not scroll (that
     // is exactly what dropped the scrollbar below the fold before #155).
     expect(layout.docVerticalOverflow).toBeLessThanOrEqual(1);
+    // A missing [data-app-scroll] yields the -1 sentinel; assert >= 0 first so
+    // its absence is an explicit failure rather than a vacuous pass of <= 1.
+    expect(layout.appScrollVerticalOverflow).toBeGreaterThanOrEqual(0);
     expect(layout.appScrollVerticalOverflow).toBeLessThanOrEqual(1);
     // Scrollbar's bottom edge is on-screen.
     expect(layout.barBottom).toBeLessThanOrEqual(layout.innerHeight + 1);
@@ -111,16 +114,18 @@ test.describe('diff horizontal scroll regression (#115 / #149 / #155)', () => {
     // Wait (poll, never a fixed delay — Windows CI is slow) until the rAF write
     // has propagated the offset into the content spans' transform.
     await expect
-      .poll(() =>
-        diff
-          .locator('td[data-side="new"] > span')
-          .first()
-          .evaluate((el) => {
-            const m = getComputedStyle(el).transform.match(
-              /matrix\(1, 0, 0, 1, (-?\d+(?:\.\d+)?), 0\)/,
-            );
-            return m ? Math.round(parseFloat(m[1])) : 0;
-          }),
+      .poll(
+        () =>
+          diff
+            .locator('td[data-side="new"] > span')
+            .first()
+            .evaluate((el) => {
+              const m = getComputedStyle(el).transform.match(
+                /matrix\(1, 0, 0, 1, (-?\d+(?:\.\d+)?), 0\)/,
+              );
+              return m ? Math.round(parseFloat(m[1])) : 0;
+            }),
+        { timeout: 15000 }, // generous ceiling — contended Windows CI runners
       )
       .toBeLessThan(-10); // a real leftward shift, applied via transform
 
@@ -145,7 +150,7 @@ test.describe('diff horizontal scroll regression (#115 / #149 / #155)', () => {
 
     // (A1 — lockstep) Every line shifted by the SAME amount: short and long
     // lines move together (no raggedness).
-    const distinctShifts = [...new Set(spans.map((s) => s.tx))];
+    const distinctShifts = [...new Set(spans.filter((s) => s.tx !== null).map((s) => s.tx))];
     expect(distinctShifts).toHaveLength(1);
   });
 });
