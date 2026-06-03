@@ -6,12 +6,15 @@ import type { RefObject } from 'react';
 // scrollbar drives a UNIFORM shift of every content cell, so the old and new
 // halves of the same line always show the same columns (line tracking).
 //
-// Why a CSS variable + `text-indent`, not per-cell `scrollLeft`:
+// Why a CSS variable + `transform: translateX`, not per-cell `scrollLeft`:
 //   per-cell `scrollLeft` clamps to each cell's own overflow, so SHORT lines
 //   (no overflow) stay put while only long lines move — a ragged, non-scroll
 //   feel (PR #149 validation). Setting one `--diff-hscroll` var on the body and
-//   keying every cell's `text-indent` off it shifts ALL lines by the same
-//   amount, so the whole pane scrolls as a unit. One style write per frame, and
+//   keying every cell's `transform: translateX` off it shifts ALL lines by the
+//   same amount, so the whole pane scrolls as a unit. (Was `text-indent`, which
+//   only offsets a line's first-line start and rendered raggedly across
+//   variable-width `white-space: pre` lines in a real browser — #155.) One
+//   style write per frame, and
 //   the clip (`overflow: hidden`, not `auto`) means no per-cell scrollbar and no
 //   trackpad-over-one-cell desync. A `wheel` handler lets a trackpad /
 //   shift-wheel over the diff drive the bar.
@@ -31,14 +34,16 @@ export function useLockedPaneScroll(
     const contentCells = (): HTMLElement[] =>
       Array.from(body.querySelectorAll<HTMLElement>('td[data-side="old"], td[data-side="new"]'));
 
-    // One write per frame: every content cell reads this var via `text-indent`.
+    // One write per frame: every content cell reads this var via `transform: translateX`.
     const apply = (x: number): void => {
       body.style.setProperty('--diff-hscroll', `${x}px`);
     };
 
     const measure = (): void => {
-      // Measure at zero offset — a non-zero text-indent skews scrollWidth, so
-      // reset the shift before reading each cell's true content width.
+      // Reset the shift to zero before reading each cell's content width.
+      // `transform: translateX` doesn't affect scrollWidth (paint-time only),
+      // so this is now defensive rather than load-bearing — but it keeps the
+      // measured baseline unambiguous and costs nothing.
       apply(0);
       let maxScroll = 0;
       let viewport = 0;
