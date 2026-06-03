@@ -666,11 +666,11 @@ a:hover { text-decoration: underline; }
    --accent-text is theme-aware (near-white in light, near-black in dark) and the
    semantic colors track the same lightness curve as --accent (≈0.55 light →
    ≈0.72 dark), so it stays the correct on-color foreground for all three. */
-/* The :hover variants carry :not(:disabled) so they out-specify the generic
-   .verdict-picker__segment:hover:not(:disabled) rule above — otherwise a
-   hovered selected segment (the common post-click state) would inherit the
-   neutral hover background/text by source-order tie rather than its semantic
-   color. */
+/* The :hover variants carry :not(:disabled): the per-verb background rules then
+   out-specify the generic .verdict-picker__segment:hover:not(:disabled) rule
+   (0,4,0 vs 0,3,0), and the base color rule ties it and wins on source order —
+   so a hovered selected segment (the common post-click state) keeps its semantic
+   color instead of the neutral hover style. */
 .verdict-picker__segment--selected,
 .verdict-picker__segment--selected:hover:not(:disabled) {
   /* --accent is the fallback fill: the per-verb rules below override it for the

@@ -28,12 +28,12 @@ describe('VerdictPicker per-verb semantic hooks', () => {
   it('marks only the active verb selected so the per-verb color targets it alone', () => {
     render(<VerdictPicker value="request-changes" onChange={() => {}} />);
     const requestChanges = screen.getByRole('button', { name: 'Request changes' });
-    expect(requestChanges.className).toContain('verdict-picker__segment--selected');
+    expect(requestChanges).toHaveClass('verdict-picker__segment--selected');
     expect(requestChanges).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('button', { name: 'Approve' }).className).not.toContain(
+    expect(screen.getByRole('button', { name: 'Approve' })).not.toHaveClass(
       'verdict-picker__segment--selected',
     );
-    expect(screen.getByRole('button', { name: 'Comment' }).className).not.toContain(
+    expect(screen.getByRole('button', { name: 'Comment' })).not.toHaveClass(
       'verdict-picker__segment--selected',
     );
   });
