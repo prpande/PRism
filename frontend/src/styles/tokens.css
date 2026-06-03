@@ -267,6 +267,18 @@ code, pre, .mono { font-family: var(--font-mono); font-feature-settings: "calt" 
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* MarkdownRenderer output. `.markdown-body` is a global class applied in
+   MarkdownRenderer.tsx; every rendered comment / description / draft shares
+   it. Fenced code blocks render as <pre><code>. Without containment a single
+   long unbroken line (or a wide code block) widens its container and pushes a
+   horizontal scrollbar onto the nearest scroll ancestor — in the PR Overview
+   that surfaced as a page-level scrollbar (#117). Fix at the source: long
+   inline tokens (URLs, paths) wrap, and code blocks scroll WITHIN the block
+   while preserving their `white-space: pre` formatting. Mirrors the
+   `.markdownRaw { overflow-x: auto }` precedent in MarkdownFileView. */
+.markdown-body { overflow-wrap: anywhere; }
+.markdown-body pre { max-width: 100%; overflow-x: auto; }
+
 ::selection { background: var(--accent-soft); color: var(--text-1); }
 
 /* focus ring */
