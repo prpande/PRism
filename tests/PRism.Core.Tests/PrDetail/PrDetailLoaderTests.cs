@@ -159,6 +159,41 @@ public class PrDetailLoaderTests
     }
 
     [Fact]
+    public async Task LoadAsync_does_not_evict_snapshot_on_no_op_ActivePrUpdated_event()
+    {
+        // #116 / PR #150 review: the poller's first poll on a quiet PR publishes an
+        // ActivePrUpdated with no head/comment delta and no done-state. That must NOT
+        // evict the freshly cached snapshot — otherwise /file and /viewed (which read
+        // TryGetCachedSnapshot synchronously) would return 422 snapshot-evicted ~30s
+        // after the page opens, recurring on every quiet poll.
+        var review = new FakePrDetailReviewService();
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var bus = new ReviewEventBus();
+        var loader = MakeLoader(review, bus: bus);
+
+        await loader.LoadAsync(Pr1, CancellationToken.None);
+        review.GetPrDetailCallCount.Should().Be(1);
+
+        // Quiet hydration event: no deltas, still open (matches the cached state).
+        bus.Publish(new ActivePrUpdated(
+            Pr1,
+            HeadShaChanged: false,
+            CommentCountChanged: false,
+            NewHeadSha: null,
+            CommentCountDelta: 0,
+            IsMerged: false,
+            IsClosed: false));
+
+        loader.TryGetCachedSnapshot(Pr1).Should()
+            .NotBeNull("a no-op hydration event must not evict the cached snapshot");
+        await loader.LoadAsync(Pr1, CancellationToken.None);
+        review.GetPrDetailCallCount.Should()
+            .Be(1, because: "the cached snapshot survived the no-op event, so the second load hit the cache");
+    }
+
+    [Fact]
     public async Task LoadAsync_returns_existing_realKey_snapshot_when_pollKey_lags_real_head()
     {
         // Establishes a snapshot under realKey="head-fresh" via accurate initial poll, then
