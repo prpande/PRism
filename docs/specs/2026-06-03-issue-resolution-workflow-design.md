@@ -360,10 +360,10 @@ The agent pauses at the **first human-judgment point** and notifies the human:
 
 ### Notification (minimum bar)
 
-The agent MUST, at minimum, **post a comment on the issue tagging the assignee**
-at green-and-ready and at each gate — a fire-and-forget comment on a quiet issue
-is not sufficient on its own. The runbook may strengthen this (review-request,
-assignment, external ping). **Staleness:** PRs parked at a gate are not silently
+The agent MUST **post a comment that @-mentions the assignee** at green-and-ready
+and at each gate. The @-mention is the required minimum — it generates a
+notification; a comment without it can sit unseen on a quiet issue. The runbook
+may strengthen this (review-request, assignment, external ping) on top. **Staleness:** PRs parked at a gate are not silently
 abandoned — the runbook defines a re-ping/escalation policy and a tracking
 surface listing all PRs awaiting human action, so the hands-off promise does not
 degrade into "work piles up where no one is looking."

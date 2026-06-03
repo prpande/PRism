@@ -247,9 +247,9 @@ git commit -m "docs(workflow): add doc-maintenance rows for runbook + risk-surfa
 ### Task 5: Index the spec + deferrals in `docs/specs/README.md`
 
 **Files:**
-- Modify: `docs/specs/README.md` (Implemented group)
+- Modify: `docs/specs/README.md` (In progress group; promote to Implemented on merge)
 
-- [ ] **Step 1: Add the spec entry** under `## Implemented` (matching the existing format):
+- [ ] **Step 1: Add the spec entry** under `## In progress` (matching the existing format). Per the spec-index convention, in-flight specs live under In progress until their PR merges, then get promoted to `## Implemented` with the PR number:
 ```markdown
 - [`2026-06-03-issue-resolution-workflow-design.md`](2026-06-03-issue-resolution-workflow-design.md) — agent-driven, proof-carrying, risk-gated issue workflow (guidance runbook); plan: [`../plans/2026-06-03-issue-resolution-workflow.md`](../plans/2026-06-03-issue-resolution-workflow.md); deferrals: [`2026-06-03-issue-resolution-workflow-design-deferrals.md`](2026-06-03-issue-resolution-workflow-design-deferrals.md).
 ```

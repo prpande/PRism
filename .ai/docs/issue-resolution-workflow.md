@@ -230,9 +230,11 @@ The human does the one-click merge. No pause in between.
 
 ## Notification (minimum bar)
 
-At green-and-ready and at each gate, you MUST at minimum **post a comment on the
-issue/PR tagging the assignee** — a fire-and-forget comment on a quiet issue is
-not enough on its own.
+At green-and-ready and at each gate, you MUST **post a comment that @-mentions the
+assignee**. The @-mention is the required minimum — it is what generates a
+notification; a comment without it can sit unseen on a quiet issue. Stronger
+signals (a review-request, an assignment, an external ping) are encouraged on top,
+but the @-mention is the floor.
 
 ```markdown
 @<assignee> — <PR #> is <green-and-ready | awaiting your gate (B<n>)>.
