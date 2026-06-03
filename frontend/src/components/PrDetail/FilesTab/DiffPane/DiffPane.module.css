@@ -88,8 +88,14 @@
    separator (the old `.diffContent { overflow: visible }` behavior).
    Chromium (the Electron runtime) honors overflow on fixed-layout table
    cells. Unified mode keeps the prior single-column body scroll (its lone
-   content column can't bleed into a neighbour), so it is left untouched. */
-:global(.diff-pane--split) .diffContent {
+   content column can't bleed into a neighbour), so it is left untouched.
+
+   Scoped `:not(.diff-pane--wrap)` so the scroll/wrap choice is driven by
+   specificity, not source order: in split + wrap mode both root classes are
+   present, and without the exclusion this rule and the wrap rule below sit at
+   equal specificity — wrap would win only by being declared later, silently
+   reverting to scroll if the blocks are ever reordered (PR #149 review). */
+:global(.diff-pane--split:not(.diff-pane--wrap)) .diffContent {
   overflow-x: auto;
 }
 

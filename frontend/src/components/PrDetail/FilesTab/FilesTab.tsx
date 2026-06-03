@@ -479,9 +479,7 @@ export function FilesTab() {
           aria-pressed={lineWrap}
           onClick={handleToggleLineWrap}
           data-testid="line-wrap-toggle"
-          title={
-            lineWrap ? 'Long lines wrap within each pane' : 'Long lines scroll within each pane'
-          }
+          title={lineWrap ? 'Switch to scrolling long lines' : 'Switch to wrapping long lines'}
         >
           {lineWrap ? 'Scroll long lines' : 'Wrap long lines'}
         </button>
