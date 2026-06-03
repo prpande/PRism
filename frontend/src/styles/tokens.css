@@ -268,20 +268,19 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* MarkdownRenderer output. `.markdown-body` is a global class applied in
-   MarkdownRenderer.tsx; every rendered comment / description / draft shares
-   it. Fenced code blocks render as <pre><code>. Without containment a single
-   long unbroken line (or a wide code block) widens its container and pushes a
-   horizontal scrollbar onto the nearest scroll ancestor — in the PR Overview
-   that surfaced as a page-level scrollbar (#117). Fix at the source: long
-   inline tokens (URLs, paths) wrap, and code blocks scroll WITHIN the block
-   while preserving their `white-space: pre` formatting. Mirrors the
-   `.markdownRaw { overflow-x: auto }` precedent in MarkdownFileView. */
+   MarkdownRenderer.tsx; every rendered comment / description / draft shares it.
+   Everything wraps — including fenced code blocks — so markdown surfaces (PR
+   Overview description + root comments, inline diff comments, drafts) never
+   produce a horizontal scrollbar (#117/#149). Long inline tokens (URLs, paths)
+   break anywhere; `<pre>` switches to `white-space: pre-wrap` so long code
+   lines wrap at the container width while keeping their indentation, instead of
+   scrolling within the block. */
 .markdown-body { overflow-wrap: anywhere; }
-/* `overflow-wrap: normal` resets the inherited `anywhere` above: it's inert
-   under the browser-default `white-space: pre` (which disables soft-wrapping),
-   but the explicit reset keeps code-block lines from breaking mid-token if a
-   future rule ever sets `pre-wrap` on these blocks (PR #149 review). */
-.markdown-body pre { max-width: 100%; overflow-x: auto; overflow-wrap: normal; }
+.markdown-body pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 ::selection { background: var(--accent-soft); color: var(--text-1); }
 
