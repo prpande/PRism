@@ -29,6 +29,14 @@ The publish targets are an architectural commitment, not just a command:
 
 `osx-x64` (Intel Mac) is **explicitly out of scope** for the PoC — do not add it as a publish target without a documented test path.
 
+### Desktop shell (`desktop/`, v0.2.0)
+
+The Electron shell wraps those *same* self-contained binaries as a managed sidecar — it does not introduce a second runtime. Its commands live in `desktop/package.json`; the architectural commitments:
+
+- **Sidecar, not a fork.** The shell publishes the unchanged `PRism.Web` binary into `desktop/sidecar/` (per-RID rename to `PRism-win-x64.exe` / `PRism-osx-arm64`) and spawns it. No app-domain code lives under `desktop/`. The four backend seams that make this possible (`SidecarMode`, `ParentLivenessProbe`/`Watchdog`, `HostHeaderCheckMiddleware`, the `127.0.0.1` bind) are sidecar-gated and inert in browser-tab mode.
+- **Two test tiers.** Pure helpers run as `node:test` units (`cd desktop && npm run test:unit`); the full-stack smoke is a Playwright `_electron` suite (`npm run test:e2e`) that launches the real shell against a **published** sidecar. The e2e is **local/manual**, not wired into CI — it needs a published binary at `PRISM_SIDECAR_BINARY` and `npx playwright install chromium`. See `TESTING.md` and `docs/plans/2026-06-02-electron-desktop-shell.md` § Task D1.
+- **Packaging is `v0.2.*`-gated.** `publish-desktop.yml` (electron-builder, unsigned) owns `v0.2.*` tags; `publish.yml` still owns `v0.1.*`, so the browser-tab artifact stays available. macOS is opt-in (`include_macos`) and must pass the real-hardware smoke before a cohort hand-out.
+
 ## Pre-push checklist
 
 Run steps 1–4 locally before every `git push`. They mirror `.github/workflows/ci.yml` so anything CI catches, you catch first. Step 5 (Playwright) is conditional — see comments in [`README.md`](../../README.md) § Pre-push checklist.
