@@ -6,6 +6,7 @@ using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.Iterations;
 using PRism.Core.PrDetail;
 using PRism.GitHub;
@@ -68,6 +69,9 @@ public sealed class LiveGitHubFixture : IDisposable
         services.AddSingleton<IIterationClusteringStrategy>(sp =>
             new WeightedDistanceClusteringStrategy(sp.GetServices<IDistanceMultiplier>()));
         services.AddSingleton(new IterationClusteringCoefficients());
+        // PrDetailLoader subscribes to ActivePrUpdated for per-PR cache eviction (#116),
+        // so the bus must be registered before the loader resolves.
+        services.AddSingleton<IReviewEventBus, ReviewEventBus>();
         services.AddSingleton<PrDetailLoader>();
 
         services.AddPrismGitHub();

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using PRism.Core.Config;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.Iterations;
 
 namespace PRism.Core.PrDetail;
@@ -20,12 +21,16 @@ namespace PRism.Core.PrDetail;
 /// <see cref="DiffDto"/>s by <c>(prRef, headSha, range)</c> so the <c>/file</c> endpoint
 /// can authz against any diff visited in the page session without re-fetching.
 /// </summary>
-public sealed class PrDetailLoader
+public sealed class PrDetailLoader : IDisposable
 {
     private readonly IPrReader _review;
     private readonly IIterationClusteringStrategy _clusterer;
     private readonly IterationClusteringCoefficients _coefficients;
     private readonly IConfigStore _configStore;
+
+    // Kept alive for the loader's (singleton) lifetime; never disposed, mirroring the
+    // un-torn-down _configStore.Changed subscription below.
+    private readonly IDisposable _activePrSubscription;
 
     // Snapshot cache. PoC: unbounded ConcurrentDictionary; if dogfooding shows growth
     // (rare — user opens many distinct PRs in one process lifetime), introduce a bounded
@@ -44,12 +49,14 @@ public sealed class PrDetailLoader
         IPrReader review,
         IIterationClusteringStrategy clusterer,
         IterationClusteringCoefficients coefficients,
-        IConfigStore configStore)
+        IConfigStore configStore,
+        IReviewEventBus eventBus)
     {
         ArgumentNullException.ThrowIfNull(review);
         ArgumentNullException.ThrowIfNull(clusterer);
         ArgumentNullException.ThrowIfNull(coefficients);
         ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(eventBus);
 
         _review = review;
         _clusterer = clusterer;
@@ -59,6 +66,32 @@ public sealed class PrDetailLoader
         // P2.29: any config change invalidates the cache so coefficient hot-reloads
         // re-cluster on the next access.
         _configStore.Changed += OnConfigChanged;
+
+        // #116: the snapshot cache is keyed by (prRef, headSha, generation). A
+        // background merge or close — and a new comment — does NOT change the head
+        // SHA, so a stale "open" snapshot would survive every reload until the head
+        // advances. The ActivePrPoller already detects these transitions and
+        // publishes ActivePrUpdated; evict the affected PR's snapshot so the next
+        // GET /api/pr re-fetches fresh detail. Gated to REAL changes (see
+        // OnActivePrUpdated): evicting on the poller's quiet first-poll hydration
+        // event would drop a freshly loaded snapshot and make the /file & /viewed
+        // endpoints (which read TryGetCachedSnapshot) return 422 snapshot-evicted
+        // even though nothing changed (Copilot PR #150 review).
+        _activePrSubscription = eventBus.Subscribe<ActivePrUpdated>(OnActivePrUpdated);
+    }
+
+    // Evicts the PR's snapshot only on a real change: a head-SHA or comment-count
+    // delta, or a done-state flip (open ↔ merged/closed) detected by comparing the
+    // event to the cached snapshot. The poller's first poll on a quiet PR emits an
+    // event with no deltas and no done-state — that must NOT evict the just-loaded
+    // snapshot, or /file and /viewed would 422 snapshot-evicted (Copilot PR #150).
+    private void OnActivePrUpdated(ActivePrUpdated evt)
+    {
+        var doneNow = evt.IsMerged || evt.IsClosed;
+        var cached = TryGetCachedSnapshot(evt.PrRef);
+        var doneCached = cached is not null && (cached.Detail.Pr.IsMerged || cached.Detail.Pr.IsClosed);
+        if (evt.HeadShaChanged || evt.CommentCountChanged || doneNow != doneCached)
+            Invalidate(evt.PrRef);
     }
 
     /// <summary>
@@ -187,6 +220,34 @@ public sealed class PrDetailLoader
         _snapshots.Clear();
         _snapshotKeyByPrRef.Clear();
         _diffs.Clear();
+    }
+
+    /// <summary>
+    /// Evicts the cached snapshot for a single <paramref name="prRef"/> so the next
+    /// <see cref="LoadAsync"/> re-fetches fresh detail. Used by the ActivePrUpdated
+    /// subscription (#116) to drop a snapshot whose merge/close/comment state changed
+    /// without a head-SHA advance — which the (prRef, headSha, generation) cache key
+    /// alone cannot distinguish. Diffs are content-addressed by SHA (a given base..head
+    /// always yields the same diff), so they're never stale and are left in place.
+    /// </summary>
+    public void Invalidate(PrReference prRef)
+    {
+        ArgumentNullException.ThrowIfNull(prRef);
+        if (_snapshotKeyByPrRef.TryRemove(prRef, out var key))
+            _snapshots.TryRemove(key, out _);
+    }
+
+    /// <summary>
+    /// Tears down the two subscriptions wired in the constructor. The loader is a
+    /// DI singleton, so this runs only on container/app shutdown; it exists so the
+    /// <see cref="IReviewEventBus.Subscribe"/> IDisposable is released rather than
+    /// held for the process lifetime (Claude PR #150 review — the raw
+    /// <c>_configStore.Changed</c> event has no IDisposable, but Subscribe returns one).
+    /// </summary>
+    public void Dispose()
+    {
+        _configStore.Changed -= OnConfigChanged;
+        _activePrSubscription.Dispose();
     }
 
     private (ClusteringQuality Quality, IReadOnlyList<IterationDto>? Iterations) DetermineQuality(
