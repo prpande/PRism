@@ -67,28 +67,23 @@ test("window opens and loads the app from the sidecar", async () => {
   expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
 });
 
-test("session handshake: prism-session cookie present and echoed", async () => {
+test("session handshake: prism-session cookie is set on the document response", async () => {
   const app = await launch(tmp("prism-e2e-"), tmp("prism-ud-"));
   const win = await app.firstWindow();
   await win.waitForLoadState("domcontentloaded");
 
-  // Poll for the cookie rather than reading once. prism-session is stamped on the
-  // text/html document response, but the SPA immediately opens a long-lived SSE
-  // connection to /api/events, so waitForLoadState("networkidle") never reliably
-  // settles (the stream never idles) and a single cookie read races the store.
-  // Poll the observable condition with a generous ceiling (project anti-flake rule).
-  let hasSession = false;
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const cookies = await win.context().cookies();
-    if (cookies.some((c) => c.name === "prism-session")) {
-      hasSession = true;
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-
-  expect(hasSession).toBe(true);
+  // prism-session is stamped on the text/html document response, but the SPA
+  // immediately opens a long-lived SSE connection to /api/events, so
+  // waitForLoadState("networkidle") never reliably settles (the stream never idles)
+  // and a single cookie read races the store. expect.poll retries against the test's
+  // remaining timeout budget — a hardcoded ceiling could be too tight on a cold start.
+  // (Renamed from "...present and echoed": this asserts the cookie is SET; the echo
+  // back as X-PRism-Session on later fetches is exercised implicitly by the SPA load.)
+  await expect
+    .poll(async () => (await win.context().cookies()).some((c) => c.name === "prism-session"), {
+      timeout: 30_000,
+    })
+    .toBe(true);
 });
 
 test("single-instance: second launch does not open a second window", async () => {

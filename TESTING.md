@@ -39,7 +39,7 @@ PRism stores state and logs in your OS application-data folder — the **same lo
 browser-tab build uses**, so your PAT and drafts carry across both:
 
 - **Windows:** `%LOCALAPPDATA%\PRism` (e.g. `C:\Users\<you>\AppData\Local\PRism`)
-- **macOS / Linux:** `~/.local/share/PRism`
+- **macOS:** `~/.local/share/PRism` (.NET's `LocalApplicationData` resolves to the XDG path on macOS, not `~/Library/Application Support`)
 
 Logs are in the `logs/` subfolder. The exact path is also shown inside the app under
 **Settings → Connection → Copy logs path**. To recover a lost draft, see the
