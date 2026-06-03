@@ -27,6 +27,8 @@ The three views are not redundant — they cover different audiences (casual rea
 | New/changed behavioral guideline | `.ai/docs/behavioral-guidelines.md` |
 | New AI agent integration (new tool config directory) | Wire the tool to `.ai/docs/*.md`; update `.ai/README.md` index table |
 | New or renamed `.ai/docs/` topic file | `.ai/README.md` doc index + [`CLAUDE.md`](../../CLAUDE.md) link table |
+| Change to the issue-resolution workflow (tiers, gates, proof contract, pipelines) | `.ai/docs/issue-resolution-workflow.md` kept in lockstep + `docs/specs/2026-06-03-issue-resolution-workflow-design.md` if rationale changes |
+| New/changed architectural invariant, OR a change moving risk-surface code into a new directory | Mandatory review of the risk-surface table in `.ai/docs/issue-resolution-workflow.md`. Plus a scheduled (monthly) re-audit — code can drift a surface into a new path without touching `architectural-invariants.md`. |
 
 **Out of scope for this rule:**
 
