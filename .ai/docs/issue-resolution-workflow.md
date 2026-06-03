@@ -122,8 +122,10 @@ change alters rendered output whose correctness a human must eyeball (layout,
 spacing, color, typography, motion, copy, component composition). CI cannot assert
 "looks right," so a human must.
 
-**B2 — Risk-surface.** The change touches one of the following surfaces, each
-anchored to [`architectural-invariants.md`](architectural-invariants.md). The
+**B2 — Risk-surface.** The change touches one of the following surfaces. Most are
+anchored to [`architectural-invariants.md`](architectural-invariants.md); the
+cross-tab stamp and the standalone security surface anchor to their own design
+specs and `behavioral-guidelines.md` §6. The
 *signals* column gives you concrete things to look for — they are **heuristics for
 your judgment**, not mechanical rules. Some surfaces (behavioral invariants) have
 no reliable path/symbol footprint, so when in doubt, gate.
