@@ -247,6 +247,51 @@
   overflow-y: auto;
 }
 
+/* PR-detail Files view: bind the shell to the viewport so the diff scrolls in
+   an internal container and its horizontal scrollbar sits at the BOTTOM OF THE
+   SCREEN — not below a tall, page-scrolled file (#191). Scoped via
+   :has(.files-tab) so it activates ONLY on the Files tab; Inbox, Settings, and
+   the Overview/Drafts tabs keep their normal document scroll untouched. Works
+   in the browser and composes with the desktop-shell rules above. */
+[data-app-shell]:has(.files-tab) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+[data-app-shell]:has(.files-tab) > * {
+  flex-shrink: 0;
+}
+[data-app-shell]:has(.files-tab) [data-app-scroll] {
+  flex: 1;
+  min-height: 0;
+  /* overflow-y: auto (not hidden) is the escape hatch: if the rigid header
+     stack (PrHeader + banners + a tall UnresolvedPanel) exceeds the viewport,
+     the page scrolls vertically to reach it instead of clipping into a
+     dead-end (Copilot #155). In the common case the page fits exactly and this
+     never engages, so the diff keeps its internal scroll + bottom scrollbar. */
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.pr-detail-page:has(.files-tab) {
+  /* min-height (not height) so the page can grow past the viewport when the
+     header stack is tall, letting [data-app-scroll] scroll to it. */
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.pr-detail-page:has(.files-tab) > * {
+  flex-shrink: 0;
+}
+.pr-detail-page:has(.files-tab) > .files-tab {
+  /* flex-basis 0 (not auto) so the diff's own content height never inflates the
+     page — it fills the remaining viewport and scrolls INTERNALLY. The min-height
+     floor keeps it usable (never collapses to 0) when a tall header forces the
+     page to scroll instead. */
+  flex: 1 1 0;
+  min-height: 360px;
+}
+
 /* ======================================================================
    Base
    ====================================================================== */
