@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { VerdictPicker } from './VerdictPicker';
 
 // Issue #123: the three verbs must carry semantic colors when selected
-// (Approve→green, Request changes→red, Comment→neutral). The color is applied
+// (Approve→green, Request changes→amber, Comment→neutral). The color is applied
 // purely in CSS via a per-verb selector, so the seam under test is the
 // `data-verdict` hook on each segment plus the `--selected` class landing only
 // on the active verb. (The actual hue is asserted visually — Playwright — since

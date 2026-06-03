@@ -681,8 +681,15 @@ a:hover { text-decoration: underline; }
 }
 .verdict-picker__segment--selected[data-verdict='approve'],
 .verdict-picker__segment--selected[data-verdict='approve']:hover:not(:disabled) { background: var(--success); }
+/* Request-changes uses --warning (amber), not --danger. --warning is light in
+   BOTH themes (≈0.62 / ≈0.78), so the theme-flipping --accent-text (white in
+   light) would fail contrast — this verb needs dark ink in both themes, mirroring
+   how btn-danger hardcodes its on-color text. */
 .verdict-picker__segment--selected[data-verdict='request-changes'],
-.verdict-picker__segment--selected[data-verdict='request-changes']:hover:not(:disabled) { background: var(--danger); }
+.verdict-picker__segment--selected[data-verdict='request-changes']:hover:not(:disabled) {
+  background: var(--warning);
+  color: oklch(0.18 0 0);
+}
 .verdict-picker__segment--selected[data-verdict='comment'],
 .verdict-picker__segment--selected[data-verdict='comment']:hover:not(:disabled) { background: var(--info); }
 .verdict-picker__segment:disabled { opacity: 0.5; cursor: not-allowed; }
