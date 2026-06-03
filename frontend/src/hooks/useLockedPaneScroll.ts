@@ -3,16 +3,18 @@ import type { RefObject } from 'react';
 
 // #115 — locked side-by-side horizontal scroll. In split scroll-mode the two
 // content panes are clipped (`overflow: hidden`) and a single synthetic
-// scrollbar drives EVERY content cell's `scrollLeft` in lockstep, so the old
-// and new halves of the same line always show the same columns (line tracking).
+// scrollbar drives a UNIFORM shift of every content cell, so the old and new
+// halves of the same line always show the same columns (line tracking).
 //
-// Why this shape:
-// - `overflow: hidden` (not `auto`) on cells: programmatic `scrollLeft` still
-//   works, but the browser shows no per-cell scrollbar and the user can't
-//   scroll an individual cell out of sync (no trackpad-over-one-cell desync).
-// - One synthetic scrollbar (`bar`) is the single horizontal control; its
-//   `scrollLeft` is mirrored onto every content cell on each scroll frame.
-// - A `wheel` handler lets a trackpad / shift-wheel over the diff drive the bar.
+// Why a CSS variable + `text-indent`, not per-cell `scrollLeft`:
+//   per-cell `scrollLeft` clamps to each cell's own overflow, so SHORT lines
+//   (no overflow) stay put while only long lines move — a ragged, non-scroll
+//   feel (PR #149 validation). Setting one `--diff-hscroll` var on the body and
+//   keying every cell's `text-indent` off it shifts ALL lines by the same
+//   amount, so the whole pane scrolls as a unit. One style write per frame, and
+//   the clip (`overflow: hidden`, not `auto`) means no per-cell scrollbar and no
+//   trackpad-over-one-cell desync. A `wheel` handler lets a trackpad /
+//   shift-wheel over the diff drive the bar.
 export function useLockedPaneScroll(
   bodyRef: RefObject<HTMLElement | null>,
   scrollbarRef: RefObject<HTMLElement | null>,
@@ -29,11 +31,15 @@ export function useLockedPaneScroll(
     const contentCells = (): HTMLElement[] =>
       Array.from(body.querySelectorAll<HTMLElement>('td[data-side="old"], td[data-side="new"]'));
 
+    // One write per frame: every content cell reads this var via `text-indent`.
     const apply = (x: number): void => {
-      for (const cell of contentCells()) cell.scrollLeft = x;
+      body.style.setProperty('--diff-hscroll', `${x}px`);
     };
 
     const measure = (): void => {
+      // Measure at zero offset — a non-zero text-indent skews scrollWidth, so
+      // reset the shift before reading each cell's true content width.
+      apply(0);
       let maxScroll = 0;
       let viewport = 0;
       for (const cell of contentCells()) {
@@ -44,8 +50,12 @@ export function useLockedPaneScroll(
       // The bar's own width is the viewport; sizing the spacer to
       // `overflow + bar.clientWidth` makes the bar's max scrollLeft === overflow,
       // so dragging it fully reveals the longest line's end inside each pane.
+      // Make the bar measurable first (it may be display:none from a prior
+      // no-overflow measure), then show it ONLY when scrolling is needed so a
+      // file that fits shows no empty bottom strip.
+      bar.style.display = 'block';
       spacer.style.width = `${overflow + bar.clientWidth}px`;
-      bar.style.visibility = overflow > 0 ? 'visible' : 'hidden';
+      bar.style.display = overflow > 0 ? 'block' : 'none';
       // Re-clamp the current offset after a re-measure (file switch / resize).
       if (bar.scrollLeft > overflow) bar.scrollLeft = overflow;
       apply(bar.scrollLeft);

@@ -93,6 +93,12 @@
    lines soft-wrap within their 50/50 pane instead of scrolling. */
 :global(.diff-pane--split:not(.diff-pane--wrap)) .diffContent {
   overflow: hidden;
+  /* Horizontal scroll = a uniform shift of every line, driven by
+     useLockedPaneScroll through --diff-hscroll. text-indent shifts the cell's
+     (single, pre-formatted) line left by the scroll offset, so short lines move
+     with long ones and the whole pane scrolls as a unit (not just the
+     overflowing rows — PR #149 validation). */
+  text-indent: calc(var(--diff-hscroll, 0px) * -1);
 }
 :global(.diff-pane--wrap) .diffContent {
   white-space: pre-wrap;
@@ -100,13 +106,15 @@
 }
 
 /* Single synthetic horizontal scrollbar for split scroll-mode (one control for
-   both panes). Sticky at the bottom of the diff body; useLockedPaneScroll sizes
-   the inner spacer to the content overflow and mirrors this bar's scrollLeft
-   onto every content cell, so dragging it scrolls old + new together. */
+   both panes). useLockedPaneScroll sizes the inner spacer to the content
+   overflow and drives `--diff-hscroll` from this bar's scrollLeft, which every
+   content cell reads via text-indent — so dragging it shifts old + new together. */
 .diffHScroll {
-  position: sticky;
-  bottom: 0;
-  z-index: 1;
+  /* A flex sibling of the (flex: 1) scrolling body, so it sits permanently at
+     the bottom of the diff pane — always reachable without scrolling to the end
+     of the file. flex-shrink: 0 keeps the body from squeezing it away. The hook
+     toggles `display` so it only appears when a file actually overflows. */
+  flex-shrink: 0;
   height: 14px;
   overflow-x: auto;
   overflow-y: hidden;

@@ -549,17 +549,20 @@ export function DiffPane({
           )}
           <tbody>{renderDiffRows()}</tbody>
         </table>
-        {lockedScrollEnabled && (
-          <div
-            ref={hScrollRef}
-            className={styles.diffHScroll}
-            data-testid="diff-hscroll"
-            aria-hidden="true"
-          >
-            <div ref={hScrollSpacerRef} className={styles.diffHScrollSpacer} />
-          </div>
-        )}
       </div>
+      {/* Outside the vertically-scrolling body, as a flex sibling — so the
+          horizontal scrollbar is always pinned at the bottom of the diff pane
+          and the user never has to scroll to the end of the file to reach it. */}
+      {lockedScrollEnabled && (
+        <div
+          ref={hScrollRef}
+          className={styles.diffHScroll}
+          data-testid="diff-hscroll"
+          aria-hidden="true"
+        >
+          <div ref={hScrollSpacerRef} className={styles.diffHScrollSpacer} />
+        </div>
+      )}
       {truncated && <DiffTruncationBanner prUrl={prUrl} />}
     </div>
   );
