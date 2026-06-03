@@ -1,6 +1,7 @@
 using FluentAssertions;
 using PRism.Core.Config;
 using PRism.Core.Contracts;
+using PRism.Core.Events;
 using PRism.Core.Iterations;
 using PRism.Core.PrDetail;
 using Xunit;
@@ -14,23 +15,24 @@ public class PrDetailLoaderTests
 {
     private static readonly PrReference Pr1 = new("owner", "repo", 1);
 
-    private static PrDetailDto MakeDetail(string headSha = "head1", string baseSha = "base1") =>
+    private static PrDetailDto MakeDetail(string headSha = "head1", string baseSha = "base1", bool isMerged = false) =>
         new(
             Pr: new Pr(
                 Reference: Pr1,
                 Title: "Test PR",
                 Body: "body",
                 Author: "alice",
-                State: "OPEN",
+                State: isMerged ? "MERGED" : "OPEN",
                 HeadSha: headSha,
                 BaseSha: baseSha,
                 HeadBranch: "feat/x",
                 BaseBranch: "main",
                 Mergeability: "MERGEABLE",
                 CiSummary: "passing",
-                IsMerged: false,
+                IsMerged: isMerged,
                 IsClosed: false,
-                OpenedAt: DateTimeOffset.UtcNow),
+                OpenedAt: DateTimeOffset.UtcNow,
+                MergedAt: isMerged ? DateTimeOffset.UtcNow : null),
             ClusteringQuality: ClusteringQuality.Ok,                  // overwritten by loader
             Iterations: null,                                          // overwritten by loader
             Commits: Array.Empty<CommitDto>(),                         // overwritten by loader
@@ -56,12 +58,14 @@ public class PrDetailLoaderTests
     private static PrDetailLoader MakeLoader(
         FakePrDetailReviewService review,
         IIterationClusteringStrategy? clusterer = null,
-        FakeConfigStore? configStore = null) =>
+        FakeConfigStore? configStore = null,
+        IReviewEventBus? bus = null) =>
         new(
             review,
             clusterer ?? new RecordingClusterer(new List<string>()),
             new IterationClusteringCoefficients(),
-            configStore ?? new FakeConfigStore());
+            configStore ?? new FakeConfigStore(),
+            bus ?? new ReviewEventBus());
 
     [Fact]
     public async Task LoadAsync_calls_PollActivePr_then_GetPrDetail_then_GetTimeline_then_clusters_in_order()
@@ -116,6 +120,42 @@ public class PrDetailLoaderTests
         await loader.LoadAsync(Pr1, CancellationToken.None);
 
         review.GetPrDetailCallCount.Should().Be(2, because: "head SHA changed; cached snapshot is stale");
+    }
+
+    [Fact]
+    public async Task LoadAsync_re_fetches_after_ActivePrUpdated_when_head_sha_unchanged()
+    {
+        // #116: a background auto-merge (or close) does NOT change the head SHA, so the
+        // (prRef, headSha, generation) cache key alone would re-serve the stale "open"
+        // snapshot on every reload. The loader subscribes to ActivePrUpdated and evicts
+        // the PR's snapshot on the poller's signal, so the next LoadAsync re-fetches and
+        // surfaces IsMerged — even though the head SHA never moved.
+        var review = new FakePrDetailReviewService();
+        review.DefaultPollResponse = new ActivePrPollSnapshot("head1", "MERGEABLE", "OPEN", 0, 0);
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1");
+        review.DefaultTimelineResponse = MakeTimeline(5);
+        var bus = new ReviewEventBus();
+        var loader = MakeLoader(review, bus: bus);
+
+        var open = await loader.LoadAsync(Pr1, CancellationToken.None);
+        open!.Detail.Pr.IsMerged.Should().BeFalse();
+        review.GetPrDetailCallCount.Should().Be(1);
+
+        // PR merges in the background — head SHA unchanged. The poller observes the
+        // transition and publishes; the detail now reports merged.
+        review.DefaultDetailResponse = MakeDetail(headSha: "head1", isMerged: true);
+        bus.Publish(new ActivePrUpdated(
+            Pr1,
+            HeadShaChanged: false,
+            CommentCountChanged: false,
+            NewHeadSha: null,
+            CommentCountDelta: 0,
+            IsMerged: true,
+            IsClosed: false));
+
+        var merged = await loader.LoadAsync(Pr1, CancellationToken.None);
+        merged!.Detail.Pr.IsMerged.Should().BeTrue("the merge event evicted the stale open snapshot");
+        review.GetPrDetailCallCount.Should().Be(2, because: "eviction forced a fresh fetch despite the unchanged head SHA");
     }
 
     [Fact]
