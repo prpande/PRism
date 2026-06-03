@@ -2,7 +2,7 @@
 
 PRism's desktop builds are **unsigned** preview binaries for hands-on testing. Your OS
 will warn you the first time you run them — that's expected for an unsigned app, not a
-sign anything is wrong. Steps below get you past it.
+sign that anything is wrong. Steps below get you past it.
 
 There is **no auto-update**. To update, download the latest build and reinstall.
 

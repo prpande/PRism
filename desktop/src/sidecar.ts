@@ -79,6 +79,16 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  // Drain stderr to prevent a pipe-full deadlock: stderr is piped but stdout is the
+  // only stream we actively read, so on Linux (~64 KB pipe buffer) a verbose .NET
+  // startup failure could fill the buffer, block the child's write, and stall stdout —
+  // turning a real backend error into an opaque 15 s port-read timeout. Capture a
+  // bounded tail so the failure surfaces the actual output instead of just a timeout.
+  let stderrTail = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString("utf8")).slice(-8192);
+  });
+
   try {
     const port = await readPortFromStdout(child, opts.startTimeoutMs ?? 15000);
     const baseUrl = `http://127.0.0.1:${port}`;
@@ -97,6 +107,10 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
     // leak the child. main.ts's before-quit cleanup only runs once `sidecar` is
     // assigned — which never happens if we throw here — so kill the child ourselves.
     child.kill();
+    const detail = stderrTail.trim();
+    if (detail.length > 0 && err instanceof Error) {
+      err.message = `${err.message}\nBackend stderr (tail):\n${detail}`;
+    }
     throw err;
   }
 }

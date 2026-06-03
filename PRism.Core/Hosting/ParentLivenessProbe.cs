@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 
 namespace PRism.Core.Hosting;
@@ -44,6 +45,8 @@ public sealed class ParentLivenessProbe : IParentLivenessProbe
         }
         catch (ArgumentException) { return null; }        // no such process
         catch (InvalidOperationException) { return null; } // exited between lookup and read
+        catch (Win32Exception) { return null; }            // access denied / restricted process visibility (e.g. AppLocker/WDAC-managed Windows)
+        catch (NotSupportedException) { return null; }     // start-time unavailable on this platform/process
     }
 
     public bool IsParentAlive()

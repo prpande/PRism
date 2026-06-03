@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using Microsoft.AspNetCore.Http;
 
@@ -8,6 +9,8 @@ namespace PRism.Web.Middleware;
 /// is a loopback literal are served. A rebinded page reaches the socket but carries
 /// the attacker's domain in Host, so it is rejected here before auth/origin run.
 /// </summary>
+// Instantiated by ASP.NET pipeline via UseMiddleware<T>(); reflection-based activation hides this from CA1812.
+[SuppressMessage("Performance", "CA1812:Avoid uninstantiated internal classes", Justification = "Activated by UseMiddleware<T>() via reflection.")]
 internal sealed class HostHeaderCheckMiddleware
 {
     private readonly RequestDelegate _next;

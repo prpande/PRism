@@ -32,4 +32,11 @@ public class HostHeaderCheckMiddlewareTests
     [Fact]
     public async Task WhenNotEnforced_AllHostsPass()
         => Assert.Equal(200, await Run("evil.example.com", enforced: false));
+
+    // A request with no Host header is rejected when enforced. HTTP/1.1 requires Host and
+    // Electron always sends one, so this is the correct security default — pinned here so a
+    // future change can't silently start passing empty/missing hosts through.
+    [Fact]
+    public async Task EmptyHost_Rejected403WhenEnforced()
+        => Assert.Equal(403, await Run("", enforced: true));
 }
