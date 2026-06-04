@@ -127,12 +127,12 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   // per-platform snapshot directory (configured via expect.toHaveScreenshot
   // pathTemplate in playwright.config.ts) keeps cross-OS font-rendering
   // differences from poisoning the diff. We only carry a win32 baseline (CI
-  // runs windows-latest exclusively per .github/workflows/ci.yml); on other
-  // platforms the supplementary diff would fail on the missing baseline
-  // without giving any cross-OS coverage that CI can enforce. The load-bearing
-  // assertion is the getBoundingClientRect loop above — it runs on every
-  // platform.
-  if (process.platform === 'win32') {
+  // runs windows-latest exclusively per .github/workflows/ci.yml). It is gated
+  // to CI: the baseline is generated on the runner, so a local win32 machine
+  // renders subpixels differently and can never match it (screenshots are a
+  // CI-only gate). The load-bearing assertion is the getBoundingClientRect loop
+  // above — it runs on EVERY platform, local and CI.
+  if (process.platform === 'win32' && process.env.CI) {
     await expect(page).toHaveScreenshot('pr-detail-with-banner-masked.png', {
       mask: [page.locator('[data-testid="reload-banner"]')],
       maxDiffPixelRatio: 0.01,

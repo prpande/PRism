@@ -70,6 +70,12 @@ const KILL_ANIMATIONS_CSS =
   '*, *::before, *::after { animation: none !important; transition: none !important; }';
 
 test.beforeEach(async () => {
+  // Pixel parity baselines are a CI-ONLY gate: the win32 baselines are generated
+  // on the windows-latest runner, and local machines render fonts/subpixels
+  // differently, so they can never match locally (screenshots are a CI
+  // regression gate, not a local one). The non-visual suite covers behaviour
+  // locally; these run on CI against the canonical baselines.
+  test.skip(!process.env.CI, 'pixel baselines are CI-only (machine-specific rendering)');
   const ctx = await request.newContext();
   await resetBackendState(ctx);
   await ctx.dispose();
