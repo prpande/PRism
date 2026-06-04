@@ -98,8 +98,11 @@ The async singleton highlighter stays. Add:
   **not** a string. Token offsets are **per-line** (Shiki tokenizes line-by-line; the
   merge in §3 relies on this). `lang === null` → one plaintext token per line (no
   color). As a defensive measure, `tokenizeLines` validates each emitted color value
-  against a CSS-color pattern before placing it in the style object (Shiki output is
-  trusted, but this closes a grammar-supply-chain edge).
+  against a **strict hex allowlist** (`/^#[0-9a-fA-F]{3,8}$/` — the format the github
+  themes actually emit) before placing it in the style object; a value that fails is
+  dropped (that token renders with no color override). Functional notations, `url(...)`,
+  and named keywords are rejected. Shiki output is trusted, but this closes a
+  grammar-supply-chain edge cheaply.
 
 ### 2. Tokenization hook — `frontend/src/hooks/useSyntaxTokens.ts` (new)
 
@@ -146,10 +149,16 @@ rendering) until the async highlighter resolves, then re-renders with tokens.
 literal, multi-line/here-string — mis-colors its leading lines until the construct
 closes, because the hunk body is tokenized as a standalone fragment without the lines
 above it. This is specific to *multi-line lexical* constructs; ordinary
-brace/paren/bracket imbalance does **not** mis-color (TextMate grammars don't carry
-bracket nesting as multi-line tokenizer state). It is self-correcting and cosmetic.
-Whole-file mode has no such case. This is the explicit, bounded cost of decision 2,
-and is exercised by a named visual test (§ Testing).
+brace/paren/bracket imbalance does **not** mis-color for the common grammars (TextMate
+grammars are stack/regex-based and mostly don't carry bracket nesting as multi-line
+state; a few — e.g. Python bracket-continuation — carry limited extra state, still
+uncommon and cosmetic). It is self-correcting and cosmetic. **Split** whole-file mode
+has no such case (both sides have real whole-file context). The one exception is
+**unified** whole-file mode's **delete (old-side)** lines: because `useWholeFileContent`
+fetches no `baseContent` when `!isSplit`, those lines are tokenized via the hunk-block
+path and therefore inherit the same bounded mis-color. This is the explicit, bounded
+cost of decision 2, and is exercised by named visual tests (§Testing), including a
+unified-whole-file delete line at a construct boundary.
 
 ### 3. Line rendering — `HighlightedLine` (new) + token-aware diff content
 
@@ -166,36 +175,55 @@ Replace the raw content spans in `DiffPane.tsx`:
     `transform: translateX(…)` to `.diffContent > *` (every *direct* child of the
     content cell). Today each line is one span, so the shift moves the line as a unit.
     Multiple bare token spans as direct children would each shift independently and
-    desync the columns. The single `.codeLine` wrapper keeps exactly one direct child;
-    it is `display: inline` (or `contents`) and carries no styling that disturbs inline
-    layout. Token spans must not break the `white-space: pre` inheritance from
-    `.diffContent` (leading tabs / runs of spaces must survive in both render and
-    clipboard copy).
+    desync the columns. The single `.codeLine` wrapper keeps exactly one direct child.
+    **It must NOT be `display: contents`** — that dissolves the wrapper out of the box
+    tree (no box → `translateX` no-ops *and* the token spans re-become the effective
+    direct children, reintroducing the desync). In split scroll-mode the existing
+    `.diffContent > *` rule already forces `display: inline-block` + `white-space: pre`
+    + the transform onto whatever the single direct child is, so the wrapper inherits
+    the unit-shift automatically; the new CSS must not override `display` on `.codeLine`.
+    The inner `.codeToken` spans are *not* direct children of `.diffContent`, so they do
+    not get that rule — they must inherit `white-space: pre` from the wrapper/cell and
+    must not set `white-space` themselves (leading tabs / runs of spaces must survive in
+    both render and clipboard copy).
 
 - **Context / solo-insert / solo-delete lines** → `<HighlightedLine>` directly.
 
 - **Paired lines → the merge (decision 3).** This is the one place syntax and
   word-diff collide, and there are two collisions to resolve:
-  1. **Same-string alignment.** `diffWords(oldText, newText)` returns segments that
-     **interleave both sides** (removed-only, added-only, unchanged) — its character
-     indices do **not** align to one side-string. The merge therefore runs **per
-     side over the filtered subset**: for the delete side, `removed + unchanged`
-     segments; for the insert side, `added + unchanged` segments — exactly the
-     filtering `WordDiffOverlay` already does today (its `change.removed`/`change.added`
-     branches). That filtered subset reconstructs the side-string, which is the *same*
-     string `tokenizeLines` tokenized for that side. `mergeWordDiffWithTokens(sideText:
+  1. **Same-string alignment.** The merge must walk a *single authoritative
+     index space*: `sideText` — the exact raw line string `tokenizeLines` tokenized for
+     that side (old line content for the delete side, new for the insert side). Two
+     hazards make the naïve approach wrong:
+     - `diffWords(oldText, newText)` returns segments that **interleave both sides**
+       (removed-only, added-only, unchanged), so its indices do not map to one side.
+     - Worse, the `diff` package's `diffWords` **ignores/normalizes whitespace** — the
+       concatenation of a side's `removed+unchanged` (or `added+unchanged`) segment
+       *values* is **not byte-identical** to the raw line (a leading tab may render as
+       spaces, internal runs collapse, trailing spaces drop), so reconstructing the
+       side-string from `diffWords` output desyncs against the token offsets.
+
+     Therefore the merged path uses **`diffWordsWithSpace(oldText, newText)`** (whitespace
+     significant), for which the per-side `removed+unchanged` / `added+unchanged`
+     concatenation **equals `sideText` exactly**. `mergeWordDiffWithTokens(sideText:
      string, tokens: LineToken[], wordDiffParts: Change[], side: 'old' | 'new'):
-     MergedSpan[]` walks character indices over that single side-string, splitting at
-     the union of token and word-diff boundaries, emitting `MergedSpan = { text,
-     style, change?: 'insert' | 'delete' }`.
+     MergedSpan[]` walks character indices over `sideText`, deriving each word-diff
+     change range from the positional length of the side-relevant parts, splitting at
+     the union of token and change boundaries, emitting `MergedSpan = { text, style,
+     change?: 'insert' | 'delete' }`. (Consequence: whitespace-only reindents now
+     register as word-diff changes on the highlighted path — acceptable, arguably more
+     honest for code. The unhighlighted `WordDiffOverlay` fallback keeps `diffWords`
+     unchanged.)
   2. **Foreground ownership.** `WordDiffOverlay.module.css`'s `.wordDiffInsert` /
      `.wordDiffDelete` set **both** a background **and** a foreground color
      (`--success-fg` / `--danger-fg`). On the merged path the **token color owns the
      foreground** (that is the whole point of syntax highlighting), so the merge uses
      **background-only** change classes — new `.wordDiffInsertBg` / `.wordDiffDeleteBg`
-     carrying only `background` + `border-radius`, plus `text-decoration: line-through`
-     on the delete variant. The original full classes are retained unchanged for the
-     **non-highlighted fallback path** (`WordDiffOverlay` when no tokens). So a changed
+     (added to `WordDiffOverlay.module.css` alongside the existing classes and imported
+     by the merged renderer) carrying only `background` + `border-radius`, plus
+     `text-decoration: line-through` on the delete variant. The original full classes
+     are retained unchanged for the **non-highlighted fallback path** (`WordDiffOverlay`
+     when no tokens). So a changed
      keyword keeps its syntax color *and* gets the change background; the delete still
      reads as struck-through.
 
@@ -237,11 +265,22 @@ The `code` component's fenced-block branch (currently emits bare
 `<code class="language-x">`) resolves the fence info string through the **same static
 whitelist** as `pathToLang` (§1), then renders via `tokenizeLines` + `HighlightedLine`
 — **the same token render path as the diff**, not Shiki's `codeToHtml`, so there is
-exactly one sanitization-safe rendering path to reason about. Async highlighter →
-plain text first, upgrade on ready. `mermaid` fences keep their existing
-`MermaidBlock` branch. Note the markdown change touches every `MarkdownRenderer`
-consumer (`ComposerMarkdownPreview`, `MarkdownFileView`, conversation/description), not
-only the Overview tab — the plan enumerates them for the visual pass.
+exactly one sanitization-safe rendering path to reason about. Before the highlighter
+resolves, the `code` component returns the **existing bare `<code class="language-x">`
+node unchanged** (current production behavior); on resolve it re-renders via
+`HighlightedLine`. This preserves the current DOM during the async window with no
+loading flash and keeps the security test's pre-resolve shape stable. `mermaid` fences
+keep their existing `MermaidBlock` branch.
+
+White-space is supplied by each container, not by `HighlightedLine`: the diff cell uses
+`white-space: pre` (h-scroll), `.markdown-body pre` uses `pre-wrap` (wrap) — **both
+preserve** tabs and space-runs, so the shared `HighlightedLine` renders correctly in
+both as long as `.codeToken` never sets `white-space`. No reset is needed.
+
+The markdown change touches **every** `MarkdownRenderer` consumer
+(`ComposerMarkdownPreview`, `MarkdownFileView`, conversation/description), not only the
+Overview tab. **All consumers receive highlighting; there is no per-consumer opt-out**
+(none is anticipated). The plan enumerates them so the visual pass covers each surface.
 
 ### Guards
 
@@ -249,13 +288,23 @@ only the Overview tab — the plan enumerates them for the visual pass.
   constants, not "approximately" — these gate PR2's shippable visual state and must
   not drift between PRs). Above either, skip tokenization and render plain. The guard
   lives in `useSyntaxTokens` (it owns the source string). When tripped, the DiffPane
-  header shows a muted "Syntax highlighting off (large file)" indicator (mirroring the
-  existing `.diffPaneLoading` affordance) so plain rendering reads as intentional, not
-  broken.
+  header shows a muted "Syntax highlighting off (large file)" indicator in the **single
+  right-aligned status slot** the header already uses for `.diffPaneLoading` (the two
+  are mutually exclusive — one `margin-left:auto` status element, conditional text — so
+  they never fight for layout) so plain rendering reads as intentional, not broken.
 - **Per-line length cap**: any single line over **2,000 characters** is emitted as
   one plaintext token rather than tokenized, bounding worst-case grammar backtracking
   on pathological attacker-controlled lines (the file-level cap alone does not catch a
-  within-limits file made of a few very long lines).
+  within-limits file made of a few very long lines). A capped line that is also a
+  *paired* line still passes through `mergeWordDiffWithTokens` for its word-diff
+  background — it simply carries one plaintext token instead of colored ones.
+- **Tokenization time**: the input-size caps above (200 KB / 2,000 lines / 2,000
+  chars-per-line) are the **sole** bound on tokenization cost. No wall-clock budget is
+  added: `codeToTokens` is synchronous and cannot be interrupted without moving Shiki
+  to a Web Worker, which is out of scope for the PoC. This is an explicit, accepted
+  decision — the single-user threat model (reviewing one's own fetched PRs) makes the
+  size caps adequate; a Worker-based time budget is the documented escalation if real
+  hangs appear.
 - **Unknown / unsupported language** → plaintext fallback (no error, no color).
 - **Highlighter not yet loaded** → plain fallback, then upgrade on resolve. The
   plain→highlighted upgrade flash is **accepted**: Shiki is already a dependency and
@@ -288,11 +337,14 @@ Markdown:  fence(info) ─► whitelist lang resolution ─► tokenizeLines ─
     unified (old-side via hunk reconstruction), and hunk-only modes; hunk-offset
     mapping; CRLF normalization; SHA-keyed cache invalidation; empty maps before
     highlighter resolves; large-file guard returns fallback at the fixed thresholds.
-  - **`mergeWordDiffWithTokens` (critical)**: per-side filtering (removed+unchanged
-    vs added+unchanged); token and word-diff boundaries that are adjacent,
-    overlapping, coincident, disjoint; a changed word spanning two tokens; a token
-    spanning two change ranges; full-line change; no change; a line with leading tabs
-    + runs of spaces preserved.
+  - **`mergeWordDiffWithTokens` (critical)**: `sideText` is the index authority via
+    `diffWordsWithSpace`; per-side derivation (removed+unchanged vs added+unchanged);
+    token and word-diff boundaries that are adjacent, overlapping, coincident, disjoint;
+    a changed word spanning two tokens; a token spanning two change ranges; full-line
+    change; no change; **old/new sides differing in whitespace** (leading tab vs spaces,
+    collapsed internal runs, trailing spaces) with token offsets asserted still aligned
+    — the case the round-1 reconstruction approach silently broke; a capped paired line
+    (one plaintext token) still gets word-diff background.
 - **Component**
   - DiffPane renders highlighted token spans wrapped in a single `.codeLine` child
     for context/solo lines (asserts the single-child invariant the locked scroll
@@ -312,8 +364,10 @@ Markdown:  fence(info) ─► whitelist lang resolution ─► tokenizeLines ─
   expose its text cleanly to AT).
 - **Visual (Playwright, real app — BFF repo PR per the real-data convention)**:
   dark + light; a paired changed line (syntax + background-only word-diff layered); a
-  multi-line construct crossing a hunk edge (documents the decision-2 edge case); an
-  unknown-extension file (clean fallback); a large file (guard indicator visible).
+  multi-line construct crossing a hunk edge (documents the decision-2 edge case); a
+  **unified whole-file delete line at a construct boundary** (documents the old-side
+  exception); an unknown-extension file (clean fallback); a large file (guard indicator
+  visible).
   Screenshots embedded in the PR per the B1 visual-verification convention.
 
 ## PR decomposition
@@ -343,5 +397,10 @@ line types; the merge function is unit-tested independently before its integrati
 ## Open questions for the plan
 
 - Measured Shiki bundle delta from the four added grammars vs budget (decides whether
-  all four stay eager).
-- Exact `sourceHash` function (cheap stable hash of the per-side source string).
+  all four stay eager). If over budget, drop order is `xml` → `toml` → `sql` →
+  `dockerfile` (least-to-most likely in this repo's reviews).
+- Exact `sourceHash` function — must be **synchronous** (so `useSyntaxTokens` stays
+  synchronous; rules out `SubtleCrypto`) and a cheap non-cryptographic stable hash
+  (e.g. FNV-1a / djb2 over the source string). Collision resistance is a non-issue: the
+  key also carries `path` + `headSha` + `baseSha`, which already content-address the
+  source.
