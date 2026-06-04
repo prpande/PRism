@@ -1309,4 +1309,12 @@ git commit -m "test(highlight): real-app visual verification spec"
 
 **Type consistency:** `LineToken {text, style}`, `MergedSpan extends LineToken {change?}`, `SyntaxTokenMaps {oldLineTokens,newLineTokens}`, `tokensFor(...)`, `normalizeEol(...)`, `mergeWordDiffWithTokens(sideText, tokens, parts, side)`, `pathToLang`, `tokenizeLines(code, lang)`, `ShikiLang` union — names match across Tasks 1, 3, 6, 7, 8, 9. ✓
 
-**Known follow-ups (not blockers):** measured Shiki bundle delta vs budget (drop order `xml→toml→sql→dockerfile`); exact `sourceHash` left realized as memo deps over the source strings.
+**Known follow-ups (not blockers):** measured Shiki bundle delta vs budget (drop order `xml→toml→sql→dockerfile`); exact `sourceHash` left realized as memo deps over the source strings; memoize `diffWordsWithSpace` inside `MergedPairedContent` if a perf pass shows paired-line re-render jank (deferred — short-string word-diff is cheap, no measured problem).
+
+## Implementation deviations (PR2, recorded at execution time)
+
+Captured here per the "document plan deviations visibly" rule; each is also in its commit message.
+
+- **Task 7 — test case 2 reworked.** The plan's `'ab'→'aXb'` case asserted char-level isolation (`'X'`) that word-level `diffWordsWithSpace` cannot produce. Replaced with a whitespace-delimited `'xx yy'→'xx zz'` case that exercises the same token/change-boundary union correctly (changed text `'zz'`, token boundary inside the changed word). Sub-word/char precision stays out of scope by design.
+- **Task 8 — unified trailing branch is side-aware.** The plan used `tokensFor(syntax, 'new', line.newLineNum)` for all non-paired lines, which left unified **solo-delete** lines (no `newLineNum`) unhighlighted. Implemented as `side = line.type === 'delete' ? 'old' : 'new'` with the matching line number, so unified deletions highlight from `oldLineTokens`.
+- **Task 9 — honest large-file indicator + paired-merge drift guard.** (1) `SyntaxTokenMaps` gained a `ready: boolean`; the indicator now gates on `syntax.ready && both maps empty` instead of the `newLineTokens.size === 0` proxy, which fired falsely during highlighter warm-up and on pure-deletion files. (2) `MergedPairedContent` compares `sideText` (token concatenation) to the side's normalized content and falls back to `WordDiffOverlay` on mismatch — defense against silent mis-highlighting if a whole-file token's line number ever disagreed with the hunk content.
