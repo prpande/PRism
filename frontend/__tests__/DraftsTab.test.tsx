@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { DraftsTab } from '../src/components/PrDetail/DraftsTab/DraftsTab';
+import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
+import type { PrDetailContextValue } from '../src/components/PrDetail/prDetailContext';
 import draftsTabStyles from '../src/components/PrDetail/DraftsTab/DraftsTab.module.css';
 import itemStyles from '../src/components/PrDetail/DraftsTab/DraftListItem.module.css';
 import emptyStyles from '../src/components/PrDetail/DraftsTab/DraftListEmpty.module.css';
@@ -70,21 +72,42 @@ interface RenderOptions {
   readOnly?: boolean;
 }
 
+// DraftsTab now reads onSelectSubTab from the PrDetail context rather than
+// calling useNavigate. Wrap it in a provider with a spy so Edit-action tests
+// assert the spy was called with the target sub-tab id. The stub routes for
+// FILES/OVERVIEW remain harmless (no longer navigated to) and the MemoryRouter
+// stays because nested DraftsTab children (composers/modals) may use router
+// hooks.
+function makeValue(
+  onSelectSubTab: (tab: 'overview' | 'files' | 'drafts') => void,
+): PrDetailContextValue {
+  return {
+    prRef: ref,
+    prDetail: {} as PrDetailContextValue['prDetail'],
+    draftSession: {} as PrDetailContextValue['draftSession'],
+    readOnly: false,
+    onSelectSubTab,
+  };
+}
+
 function renderDraftsTab(opts: RenderOptions) {
   const refetch = opts.refetch ?? (() => Promise.resolve());
-  return render(
+  const onSelectSubTab = vi.fn();
+  const result = render(
     <MemoryRouter initialEntries={[opts.initialPath ?? '/pr/octocat/hello/42/drafts']}>
       <Routes>
         <Route
           path="/pr/:owner/:repo/:number/drafts"
           element={
-            <DraftsTab
-              prRef={ref}
-              session={opts.session}
-              status={opts.status}
-              refetch={refetch}
-              readOnly={opts.readOnly}
-            />
+            <PrDetailContextProvider value={makeValue(onSelectSubTab)}>
+              <DraftsTab
+                prRef={ref}
+                session={opts.session}
+                status={opts.status}
+                refetch={refetch}
+                readOnly={opts.readOnly}
+              />
+            </PrDetailContextProvider>
           }
         />
         <Route path="/pr/:owner/:repo/:number/files/*" element={<div>FILES_TAB_STUB</div>} />
@@ -92,6 +115,7 @@ function renderDraftsTab(opts: RenderOptions) {
       </Routes>
     </MemoryRouter>,
   );
+  return { ...result, onSelectSubTab };
 }
 
 afterEach(() => {
@@ -125,7 +149,7 @@ describe('DraftsTab', () => {
     const empty = screen.getByText(/No drafts on this PR yet/i);
     expect(empty).toBeInTheDocument();
     expect(empty).toHaveClass(emptyStyles.draftsTabEmpty);
-    expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
+    expect(screen.getByTestId('drafts-tab-root')).toBeInTheDocument();
   });
 
   it('AppliesBothLiteralAndModuleClasses_OnDraftsTabRoot', () => {
@@ -133,7 +157,7 @@ describe('DraftsTab', () => {
       session: mkSession({ draftComments: [mkComment()] }),
       status: 'ready',
     });
-    const root = screen.getByTestId('drafts-tab');
+    const root = screen.getByTestId('drafts-tab-root');
     expect(root).toHaveClass('drafts-tab');
     expect(root).toHaveClass(draftsTabStyles.draftsTab);
   });
@@ -160,7 +184,7 @@ describe('DraftsTab', () => {
     // Two file group headers
     expect(screen.getByText('src/Foo.cs')).toBeInTheDocument();
     expect(screen.getByText('src/Bar.cs')).toBeInTheDocument();
-    expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
+    expect(screen.getByTestId('drafts-tab-root')).toBeInTheDocument();
   });
 
   it('RendersHeader_CountsDraftsAndFiles', () => {
@@ -237,12 +261,14 @@ describe('DraftsTab', () => {
           <Route
             path="/pr/:owner/:repo/:number/drafts"
             element={
-              <DraftsTab
-                prRef={ref}
-                session={oneStale}
-                status="ready"
-                refetch={() => Promise.resolve()}
-              />
+              <PrDetailContextProvider value={makeValue(vi.fn())}>
+                <DraftsTab
+                  prRef={ref}
+                  session={oneStale}
+                  status="ready"
+                  refetch={() => Promise.resolve()}
+                />
+              </PrDetailContextProvider>
             }
           />
         </Routes>
@@ -376,18 +402,18 @@ describe('DraftsTab', () => {
     });
   });
 
-  it('EditAction_NavigatesToFilesTabAndOpensComposer', async () => {
+  it('EditAction_OnFileDraft_SelectsFilesSubTab', async () => {
     const session = mkSession({
       draftComments: [mkComment({ id: 'a', filePath: 'src/Foo.cs', lineNumber: 42 })],
     });
-    renderDraftsTab({ session, status: 'ready' });
+    const { onSelectSubTab } = renderDraftsTab({ session, status: 'ready' });
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     await waitFor(() => {
-      expect(screen.getByText('FILES_TAB_STUB')).toBeInTheDocument();
+      expect(onSelectSubTab).toHaveBeenCalledWith('files');
     });
   });
 
-  it('EditAction_OnPrRootDraft_NavigatesToOverview', async () => {
+  it('EditAction_OnPrRootDraft_SelectsOverviewSubTab', async () => {
     const session = mkSession({
       draftComments: [
         mkComment({
@@ -400,10 +426,10 @@ describe('DraftsTab', () => {
         }),
       ],
     });
-    renderDraftsTab({ session, status: 'ready' });
+    const { onSelectSubTab } = renderDraftsTab({ session, status: 'ready' });
     await userEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     await waitFor(() => {
-      expect(screen.getByText('OVERVIEW_TAB_STUB')).toBeInTheDocument();
+      expect(onSelectSubTab).toHaveBeenCalledWith('overview');
     });
   });
 

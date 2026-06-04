@@ -1,12 +1,43 @@
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import type { ReactNode } from 'react';
-import { PrDetailPage } from '../src/pages/PrDetailPage';
-import { EventStreamProvider } from '../src/hooks/useEventSource';
-import { OpenTabsProvider } from '../src/contexts/OpenTabsContext';
-import { AskAiDrawerProvider } from '../src/contexts/AskAiDrawerContext';
-import type { PrDetailDto } from '../src/api/types';
+import { MemoryRouter } from 'react-router-dom';
+import { PrDetailView } from './PrDetailView';
+import { EventStreamProvider } from '../../hooks/useEventSource';
+import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
+import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
+import { ToastProvider } from '../Toast/useToast';
+import type { PrDetailDto } from '../../api/types';
+
+// ---------------------------------------------------------------------------
+// Live merge/close transition coverage, migrated from the deleted
+// __tests__/PrDetailPage.transition.test.tsx (Task 5 routing swap). The
+// transition-banner + auto-reload (#116) + "data &&" load-guard logic moved
+// verbatim from PrDetailPageInner into PrDetailView, so it now mounts the view
+// directly with a real EventStreamProvider + fetch mock instead of the old
+// nested-route PrDetailPage shell.
+// ---------------------------------------------------------------------------
+
+// Leaf-tab data hooks the default Overview sub-tab pulls in. The transition
+// tests exercise only the banners (driven by the REAL usePrDetail +
+// useActivePrUpdates over the EventStreamProvider/fetch, left un-mocked), so the
+// Overview leaf's own data hooks are stubbed to benign empty results to keep it
+// from crashing on absent-backend fetches. (The old PrDetailPage.transition test
+// used a stub <div> Overview route; PrDetailView renders the real OverviewTab.)
+vi.mock('../../hooks/useFileDiff', () => ({
+  useFileDiff: () => ({ data: null, isLoading: false, showSkeleton: false, error: null }),
+}));
+vi.mock('../../hooks/useUnionDiff', () => ({
+  useUnionDiff: () => ({ data: null, isLoading: false, showSkeleton: false, error: null }),
+}));
+vi.mock('../../hooks/usePreferences', () => ({
+  usePreferences: () => ({ preferences: null, error: null, refetch: vi.fn(), set: vi.fn() }),
+}));
+vi.mock('../../hooks/useCapabilities', () => ({
+  useCapabilities: () => ({ capabilities: null, error: null, refetch: vi.fn() }),
+}));
+vi.mock('../../hooks/useAiSummary', () => ({ useAiSummary: () => null }));
+vi.mock('../../hooks/useAiFileFocus', () => ({ useAiFileFocus: () => null }));
+vi.mock('../../hooks/useAiDraftSuggestions', () => ({ useAiDraftSuggestions: () => null }));
 
 class FakeEventSource {
   static instances: FakeEventSource[] = [];
@@ -31,8 +62,6 @@ class FakeEventSource {
   }
 }
 
-// Open PR — the detail data says isMerged=false, isClosed=false.
-// The SSE event will carry isMerged/isClosed to simulate the live transition.
 const openPrDto: PrDetailDto = {
   pr: {
     reference: { owner: 'octocat', repo: 'hello', number: 42 },
@@ -71,24 +100,20 @@ function jsonResponse(data: unknown, status = 200): Response {
   });
 }
 
-function mountAt(path: string, fetchImpl?: typeof fetch): ReactNode {
+function mountView(fetchImpl?: typeof fetch) {
   if (fetchImpl) globalThis.fetch = fetchImpl;
-  return (
-    <MemoryRouter initialEntries={[path]}>
+  return render(
+    <MemoryRouter>
       <EventStreamProvider>
         <OpenTabsProvider>
           <AskAiDrawerProvider>
-            <Routes>
-              <Route path="/pr/:owner/:repo/:number" element={<PrDetailPage />}>
-                <Route index element={<div data-testid="overview-content">OVERVIEW</div>} />
-                <Route path="files/*" element={<div data-testid="files-content">FILES</div>} />
-                <Route path="drafts" element={<div data-testid="drafts-content">DRAFTS</div>} />
-              </Route>
-            </Routes>
+            <ToastProvider>
+              <PrDetailView prRef={{ owner: 'octocat', repo: 'hello', number: 42 }} active={true} />
+            </ToastProvider>
           </AskAiDrawerProvider>
         </OpenTabsProvider>
       </EventStreamProvider>
-    </MemoryRouter>
+    </MemoryRouter>,
   );
 }
 
@@ -102,18 +127,16 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('PrDetailPage — live merge/close transition banner', () => {
+describe('PrDetailView — live merge/close transition banner', () => {
   it('shows the transition banner and hides BannerRefresh when the PR becomes merged', async () => {
     const fetchMock = vi.fn().mockImplementation((path: string) => {
       if (path === '/api/pr/octocat/hello/42') return Promise.resolve(jsonResponse(openPrDto));
       return Promise.resolve(jsonResponse({}, 204));
     });
-    render(mountAt('/pr/octocat/hello/42', fetchMock as typeof fetch));
-    // Wait for PR detail to load
-    await screen.findByText('Refactor the renewal worker');
+    mountView(fetchMock as typeof fetch);
+    await screen.findAllByText('Refactor the renewal worker');
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
 
-    // Fire a pr-updated event with isMerged=true (live transition while viewing)
     act(() =>
       FakeEventSource.instance.dispatch('pr-updated', {
         prRef: 'octocat/hello/42',
@@ -124,11 +147,8 @@ describe('PrDetailPage — live merge/close transition banner', () => {
       }),
     );
 
-    // Transition banner must appear with the correct copy
     expect(await screen.findByText(/just merged/i)).toBeInTheDocument();
     expect(screen.getByText(/Reload to read-only view/i)).toBeInTheDocument();
-
-    // BannerRefresh must NOT be present (superseded)
     expect(screen.queryByTestId('reload-banner')).not.toBeInTheDocument();
   });
 
@@ -137,8 +157,8 @@ describe('PrDetailPage — live merge/close transition banner', () => {
       if (path === '/api/pr/octocat/hello/42') return Promise.resolve(jsonResponse(openPrDto));
       return Promise.resolve(jsonResponse({}, 204));
     });
-    render(mountAt('/pr/octocat/hello/42', fetchMock as typeof fetch));
-    await screen.findByText('Refactor the renewal worker');
+    mountView(fetchMock as typeof fetch);
+    await screen.findAllByText('Refactor the renewal worker');
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
 
     act(() =>
@@ -160,8 +180,8 @@ describe('PrDetailPage — live merge/close transition banner', () => {
       if (path === '/api/pr/octocat/hello/42') return Promise.resolve(jsonResponse(openPrDto));
       return Promise.resolve(jsonResponse({}, 204));
     });
-    render(mountAt('/pr/octocat/hello/42', fetchMock as typeof fetch));
-    await screen.findByText('Refactor the renewal worker');
+    mountView(fetchMock as typeof fetch);
+    await screen.findAllByText('Refactor the renewal worker');
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
 
     act(() =>
@@ -175,24 +195,20 @@ describe('PrDetailPage — live merge/close transition banner', () => {
     );
 
     await screen.findByText(/just merged/i);
-
-    // BannerRefresh has aria-label="Dismiss banner"; transition banner must not
     expect(screen.queryByLabelText(/dismiss banner/i)).not.toBeInTheDocument();
   });
 
   it('does NOT show the transition banner while detail is still loading (SSE done-event arrives before GET resolves)', async () => {
-    // Guard: `data && !detailIsDone && updates.isMerged` — without the `data &&` prefix,
-    // detailIsDone is false while data is null, causing the banner to flash on an
-    // already-done PR mid-load. The fetch below never resolves (simulates a slow GET).
+    // Guard: `data && !detailIsDone && updates.isMerged` — without the `data &&`
+    // prefix, detailIsDone is false while data is null, causing the banner to
+    // flash on an already-done PR mid-load. The fetch below never resolves.
     const fetchMock = vi.fn().mockImplementation((path: string) => {
       if (path === '/api/pr/octocat/hello/42') return new Promise<Response>(() => {});
       return Promise.resolve(jsonResponse({}, 204));
     });
-    render(mountAt('/pr/octocat/hello/42', fetchMock as typeof fetch));
-    // Wait for EventSource to be created (fetch is pending → data is still null).
+    mountView(fetchMock as typeof fetch);
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
 
-    // Fire a done-event while detail is still loading.
     act(() =>
       FakeEventSource.instance.dispatch('pr-updated', {
         prRef: 'octocat/hello/42',
@@ -203,15 +219,11 @@ describe('PrDetailPage — live merge/close transition banner', () => {
       }),
     );
 
-    // No transition banner should appear — data is null so the guard suppresses it.
     expect(screen.queryByText(/just merged/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/just closed/i)).not.toBeInTheDocument();
   });
 
   it('does NOT show the transition banner when the loaded detail is already done (no live transition)', async () => {
-    // Simulate a PR that was already merged before the page loaded. The detail
-    // data says isMerged=true. Even if an SSE event fires isMerged=true, there
-    // is no "transitioned while viewing" gap — detailIsDone is true.
     const alreadyMergedDto: PrDetailDto = {
       ...openPrDto,
       pr: {
@@ -227,8 +239,8 @@ describe('PrDetailPage — live merge/close transition banner', () => {
         return Promise.resolve(jsonResponse(alreadyMergedDto));
       return Promise.resolve(jsonResponse({}, 204));
     });
-    render(mountAt('/pr/octocat/hello/42', fetchMock as typeof fetch));
-    await screen.findByText('Refactor the renewal worker');
+    mountView(fetchMock as typeof fetch);
+    await screen.findAllByText('Refactor the renewal worker');
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
 
     act(() =>
@@ -241,16 +253,10 @@ describe('PrDetailPage — live merge/close transition banner', () => {
       }),
     );
 
-    // Neither transition banner nor BannerRefresh (no headSha/comment delta)
     expect(screen.queryByText(/just merged/i)).not.toBeInTheDocument();
   });
 
   it('auto-reloads to read-only on a background merge without a manual Reload click (#116)', async () => {
-    // The loaded detail says open; the SSE event reports merged with the head SHA
-    // unchanged (a clean auto-merge). PrDetailPage must reload() on its own so the
-    // refetched detail (served merged on the 2nd GET) flips the view read-only —
-    // the transition banner self-clears and the "Merged" status appears, with no
-    // user interaction.
     const mergedDto: PrDetailDto = {
       ...openPrDto,
       pr: {
@@ -264,13 +270,12 @@ describe('PrDetailPage — live merge/close transition banner', () => {
     const fetchMock = vi.fn().mockImplementation((path: string) => {
       if (path === '/api/pr/octocat/hello/42') {
         detailCalls += 1;
-        // 1st GET: open. The auto-reload's 2nd GET returns merged.
         return Promise.resolve(jsonResponse(detailCalls === 1 ? openPrDto : mergedDto));
       }
       return Promise.resolve(jsonResponse({}, 204));
     });
-    render(mountAt('/pr/octocat/hello/42', fetchMock as typeof fetch));
-    await screen.findByText('Refactor the renewal worker');
+    mountView(fetchMock as typeof fetch);
+    await screen.findAllByText('Refactor the renewal worker');
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     expect(detailCalls).toBe(1);
 
@@ -284,13 +289,9 @@ describe('PrDetailPage — live merge/close transition banner', () => {
       }),
     );
 
-    // A second detail GET fires with no user click — that IS the auto-reload.
     await waitFor(() => expect(detailCalls).toBe(2));
-    // Once the merged detail lands, the transition banner self-clears and the
-    // read-only "Merged …" status shows.
     await waitFor(() => expect(screen.queryByText(/just merged/i)).not.toBeInTheDocument());
     expect(await screen.findByText(/^Merged/)).toBeInTheDocument();
-    // The ref guard prevents a reload loop: detail is not re-fetched past the flip.
     expect(detailCalls).toBe(2);
   });
 });

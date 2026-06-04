@@ -9,11 +9,8 @@ import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
-import { PrDetailPage } from './pages/PrDetailPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { OverviewTab } from './components/PrDetail/OverviewTab/OverviewTab';
-import { FilesTab } from './components/PrDetail/FilesTab/FilesTab';
-import { DraftsTabRoute } from './components/PrDetail/DraftsTab/DraftsTabRoute';
+import { PrTabHost } from './components/PrDetail/PrTabHost';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
@@ -85,16 +82,18 @@ export function App() {
               element={isAuthed ? <SettingsPage /> : <Navigate to="/setup" replace />}
             />
             <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
+            {/* PR-detail views no longer live in the route table. The /pr route
+                renders null; the persistent PrTabHost below renders one
+                keep-alive PrDetailView per open tab and shows the one matching
+                the current /pr path. This is what lets a PR view survive
+                navigating away and back with its sub-tab + scroll state intact. */}
             <Route
-              path="/pr/:owner/:repo/:number"
-              element={isAuthed ? <PrDetailPage /> : <Navigate to="/setup" replace />}
-            >
-              <Route index element={<OverviewTab />} />
-              <Route path="files/*" element={<FilesTab />} />
-              <Route path="drafts" element={<DraftsTabRoute />} />
-            </Route>
+              path="/pr/:owner/:repo/:number/*"
+              element={isAuthed ? null : <Navigate to="/setup" replace />}
+            />
             <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
           </Routes>
+          {isAuthed && <PrTabHost />}
         </div>
       </div>
       <AskAiDrawer />

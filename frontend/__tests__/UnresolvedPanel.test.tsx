@@ -50,19 +50,34 @@ interface RenderOpts {
   initialPath?: string;
 }
 
+// UnresolvedPanel → StaleDraftRow is always-visible chrome that renders during
+// the pre-load window, BEFORE PrDetailPage builds its data-gated context
+// provider. So onSelectSubTab is threaded as an explicit prop (not read from
+// the PrDetail context) to keep the chrome crash-free pre-load. The Show-me
+// test asserts the spy was called with the target sub-tab id. No provider is
+// mounted here, mirroring production. The FILES_TAB_STUB route remains harmless.
 function renderPanel(session: ReviewSessionDto, opts: RenderOpts = {}) {
   const onMutated = opts.onMutated ?? vi.fn();
-  return render(
+  const onSelectSubTab = vi.fn();
+  const result = render(
     <MemoryRouter initialEntries={[opts.initialPath ?? '/pr/octocat/hello/42']}>
       <Routes>
         <Route
           path="/pr/:owner/:repo/:number"
-          element={<UnresolvedPanel prRef={ref} session={session} onMutated={onMutated} />}
+          element={
+            <UnresolvedPanel
+              prRef={ref}
+              session={session}
+              onMutated={onMutated}
+              onSelectSubTab={onSelectSubTab}
+            />
+          }
         />
         <Route path="/pr/:owner/:repo/:number/files/*" element={<div>FILES_TAB_STUB</div>} />
       </Routes>
     </MemoryRouter>,
   );
+  return { ...result, onSelectSubTab };
 }
 
 afterEach(() => {
@@ -223,7 +238,14 @@ describe('UnresolvedPanel', () => {
           <Routes>
             <Route
               path="/pr/:owner/:repo/:number"
-              element={<UnresolvedPanel prRef={ref} session={reconciled} onMutated={vi.fn()} />}
+              element={
+                <UnresolvedPanel
+                  prRef={ref}
+                  session={reconciled}
+                  onMutated={vi.fn()}
+                  onSelectSubTab={vi.fn()}
+                />
+              }
             />
           </Routes>
         </MemoryRouter>,
@@ -260,18 +282,18 @@ describe('UnresolvedPanel', () => {
     expect(deleteIdx).toBeLessThan(keepIdx);
   });
 
-  it('ShowMe_OnFileDraft_NavigatesToFilesTab_PlainNoLineParam', async () => {
-    // FilesTab does not consume `?line=` (deferrals doc); navigation
-    // lands on the bare /files route.
+  it('ShowMe_OnFileDraft_SelectsFilesSubTab_PlainNoLineParam', async () => {
+    // FilesTab does not consume `?line=` (deferrals doc); Show-me selects the
+    // bare Files sub-tab via onSelectSubTab (no URL / line param).
     const session = mkSession({
       draftComments: [
         mkComment({ id: 'a', status: 'stale', filePath: 'src/Foo.cs', lineNumber: 7 }),
       ],
     });
-    renderPanel(session);
+    const { onSelectSubTab } = renderPanel(session);
     await userEvent.click(screen.getByRole('button', { name: /show me/i }));
     await waitFor(() => {
-      expect(screen.getByText('FILES_TAB_STUB')).toBeInTheDocument();
+      expect(onSelectSubTab).toHaveBeenCalledWith('files');
     });
   });
 });

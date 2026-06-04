@@ -255,47 +255,73 @@
 
 /* PR-detail Files view: bind the shell to the viewport so the diff scrolls in
    an internal container and its horizontal scrollbar sits at the BOTTOM OF THE
-   SCREEN — not below a tall, page-scrolled file (#191). Scoped via
-   :has(.files-tab) so it activates ONLY on the Files tab; Inbox, Settings, and
-   the Overview/Drafts tabs keep their normal document scroll untouched. Works
-   in the browser and composes with the desktop-shell rules above. */
-[data-app-shell]:has(.files-tab) {
+   SCREEN — not below a tall, page-scrolled file (#191).
+
+   Under keep-alive the Files sub-tab is always present in the DOM (mounted-but-
+   hidden) on EVERY open PR tab, so the old `:has(.files-tab)` selector would
+   latch the viewport-bound layout on whenever any tab had ever visited Files —
+   including the Inbox/Overview/Drafts views. The trigger is now an explicit
+   `[data-files-active]` marker on [data-app-scroll], set by PrDetailView only
+   when it is the ACTIVE view showing Files (and removed otherwise). The nested
+   selectors target the active view's `.pr-detail-page` + its visible
+   `[data-subtab='files']` slot rather than the bare `.files-tab` class, since
+   hidden sibling Files slots also carry `.files-tab`. Works in the browser and
+   composes with the desktop-shell rules above. */
+[data-app-shell]:has([data-app-scroll][data-files-active]) {
   height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-[data-app-shell]:has(.files-tab) > * {
+[data-app-shell]:has([data-app-scroll][data-files-active]) > * {
   flex-shrink: 0;
 }
-[data-app-shell]:has(.files-tab) [data-app-scroll] {
-  flex: 1;
-  min-height: 0;
+[data-app-scroll][data-files-active] {
   /* overflow-y: auto (not hidden) is the escape hatch: if the rigid header
      stack (PrHeader + banners + a tall UnresolvedPanel) exceeds the viewport,
      the page scrolls vertically to reach it instead of clipping into a
      dead-end (Copilot #155). In the common case the page fits exactly and this
      never engages, so the diff keeps its internal scroll + bottom scrollbar. */
-  overflow-x: hidden;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  /* overflow-x: hidden is explicit because setting overflow-y to a non-visible
+     value makes the UA compute overflow-x as `auto` (CSS Overflow §3), which
+     would surface a spurious outer horizontal scrollbar. The diff keeps its
+     OWN internal horizontal scroller (DiffPane) — the shared outer scroller
+     must never scroll horizontally (#156/#149/#155 regression contract). */
+  overflow-x: hidden;
 }
-.pr-detail-page:has(.files-tab) {
+[data-files-active] .pr-detail-page:not([hidden]) {
   /* min-height (not height) so the page can grow past the viewport when the
-     header stack is tall, letting [data-app-scroll] scroll to it. */
+     header stack is tall, letting [data-app-scroll] scroll to it. The
+     :not([hidden]) guard is essential under keep-alive: an explicit `display:
+     flex` here would otherwise override the `hidden` attribute's UA
+     `display:none` and un-hide the inactive PR tabs' .pr-detail-page roots.
+     Only the active view (the one matching the route, hidden={false}) is laid
+     out; the hidden siblings keep their UA display:none. */
   min-height: 100%;
   display: flex;
   flex-direction: column;
 }
-.pr-detail-page:has(.files-tab) > * {
+[data-files-active] .pr-detail-page:not([hidden]) > * {
   flex-shrink: 0;
 }
-.pr-detail-page:has(.files-tab) > .files-tab {
-  /* flex-basis 0 (not auto) so the diff's own content height never inflates the
-     page — it fills the remaining viewport and scrolls INTERNALLY. The min-height
-     floor keeps it usable (never collapses to 0) when a tall header forces the
-     page to scroll instead. */
+[data-files-active] [data-subtab='files']:not([hidden]) {
+  /* The keep-alive Files slot is the flex child that fills the remaining
+     viewport. flex-basis 0 (not auto) so the diff's content height never
+     inflates the page — it scrolls INTERNALLY. The min-height floor keeps it
+     usable when a tall header forces the page to scroll instead. :not([hidden])
+     guards against the same display:flex-overrides-hidden trap for the
+     non-active Overview/Drafts sub-tab slots, which also live in the DOM. */
   flex: 1 1 0;
   min-height: 360px;
+  display: flex;
+  flex-direction: column;
+}
+[data-files-active] [data-subtab='files']:not([hidden]) > .files-tab {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 /* ======================================================================

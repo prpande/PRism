@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Modal } from '../../Modal/Modal';
 import { sendPatch } from '../../../api/draft';
 import type { PrReference, DraftSuggestion } from '../../../api/types';
 import type { DraftLike } from '../draftKinds';
+import type { PrTabId } from '../PrSubTabStrip';
 import styles from './StaleDraftRow.module.css';
 
 // StaleDraftRow operates on the same shape as DraftListItem — see
@@ -20,6 +20,13 @@ interface StaleDraftRowProps {
   // this draft's (filePath, lineNumber) anchor. Null when gate is off,
   // when no suggestion matches, or when draft is a reply (no anchor).
   aiSuggestion: DraftSuggestion | null;
+  // Switches the active sub-tab. Threaded as an explicit prop (not read
+  // from PrDetailContext) because UnresolvedPanel → StaleDraftRow is
+  // always-visible chrome that renders BEFORE the data-gated provider
+  // exists. Reading the context here threw "must be used inside
+  // PrDetailContextProvider" during the pre-load window and tore the app
+  // down to the ErrorBoundary. See keep-alive deferrals § Step 3b.
+  onSelectSubTab: (tab: PrTabId) => void;
 }
 
 const PREVIEW_CHARS = 80;
@@ -29,8 +36,13 @@ function previewBody(body: string): string {
   return body.slice(0, PREVIEW_CHARS).trimEnd() + '…';
 }
 
-export function StaleDraftRow({ prRef, draft, onMutated, aiSuggestion }: StaleDraftRowProps) {
-  const navigate = useNavigate();
+export function StaleDraftRow({
+  prRef,
+  draft,
+  onMutated,
+  aiSuggestion,
+  onSelectSubTab,
+}: StaleDraftRowProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -39,20 +51,17 @@ export function StaleDraftRow({ prRef, draft, onMutated, aiSuggestion }: StaleDr
   const filePath = draft.kind === 'comment' ? draft.data.filePath : null;
   const lineNumber = draft.kind === 'comment' ? draft.data.lineNumber : null;
 
-  const base = `/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;
-
   // FilesTab does not currently consume `:filePath/*` splat or `?line=`
-  // (deferrals doc § "FilesTab URL→state hydration deferred"). Navigate
-  // to the bare Files tab and let the user pick the file manually for
-  // now. Lift when FilesTab gains the deep-link mechanic spec § 5.4
-  // describes.
+  // (deferrals doc § "FilesTab URL→state hydration deferred"). Switch to
+  // the bare Files tab and let the user pick the file manually for now.
+  // Lift when FilesTab gains the deep-link mechanic spec § 5.4 describes.
   const handleShowMe = () => {
     if (filePath != null) {
-      navigate(`${base}/files`);
+      onSelectSubTab('files');
       return;
     }
-    // PR-root drafts and replies route to Overview tab.
-    navigate(base);
+    // PR-root drafts and replies route to the Overview tab.
+    onSelectSubTab('overview');
   };
 
   const handleEdit = () => handleShowMe();
