@@ -1,5 +1,5 @@
 import { test, expect, request } from '@playwright/test';
-import { resetBackendState, setupAndOpenScenarioPr, advanceHead } from './helpers/s4-setup';
+import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 // ---------------------------------------------------------------------------
 // Keep-alive PR-detail tabs — end-to-end against the REAL fake backend.
@@ -106,10 +106,20 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
   }) => {
     await setupAndOpenScenarioPr(page);
     // Inject a tall src/Calc.cs at a fresh head BEFORE first detail load so the
-    // Files diff genuinely overflows [data-app-scroll]. advanceHead re-seeds the
+    // Files diff genuinely overflows [data-app-scroll]. This re-seeds the
     // active-PR cache to TALL_SHA, so the navigation below sees it synchronously
     // (no poller race) — same pattern as diff-scroll-regression.spec.ts.
-    await advanceHead(page, TALL_SHA, [{ path: 'src/Calc.cs', content: TALL_CONTENT }]);
+    //
+    // Pin the /test hook to the absolute backend URL (5180) rather than the
+    // shared advanceHead() helper, which POSTs the RELATIVE /test/advance-head:
+    // under the `dev` Playwright project baseURL is http://localhost:5173 (Vite),
+    // which proxies /api/* but NOT /test/*, so a relative POST 404s. Mirrors the
+    // emit-pr-updated call in Test 2 and no-layout-shift-on-banner.spec.ts.
+    const advanceResp = await page.request.post('http://localhost:5180/test/advance-head', {
+      data: { newHeadSha: TALL_SHA, fileChanges: [{ path: 'src/Calc.cs', content: TALL_CONTENT }] },
+      headers: { Origin: 'http://localhost:5180' },
+    });
+    expect(advanceResp.ok()).toBe(true);
 
     await openScenarioPrViaInboxRow(page);
 
