@@ -29,10 +29,12 @@
  * hidden on the last comment. The node carries a ring in the section color so the
  * line appears to pass behind it.
  *
- * Node/line `top` are pixel constants approximating the band's optical center
- * (band padding-top var(--s-2)=8px + ~half the --text-xs line-box). If the band
- * padding or --text-xs ever changes, re-tune these two values (verified at the
- * B1 visual gate).
+ * Vertical alignment has a single source of truth, `--rail-node-y`: the node's
+ * center and the line's start both sit at that y (≈ the band's optical center:
+ * band padding-top var(--s-2)=8px + ~half the --text-xs line-box). The line
+ * starts there so it emerges from the node center; the node is offset up by half
+ * its height (--rail-node-size / 2). Re-tune only `--rail-node-y` if the band
+ * padding or --text-xs changes (verified at the B1 visual gate).
  */
 .rail {
   position: relative;
@@ -40,6 +42,8 @@
      cell reliably stretches to the row height and the ::before line + .node
      anchor to a full-height box. */
   display: block;
+  --rail-node-size: 9px;
+  --rail-node-y: 16px;
 }
 
 .rail::before {
@@ -47,7 +51,7 @@
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  top: 16px;
+  top: var(--rail-node-y);
   bottom: calc(-1 * var(--s-3));
   width: 2px;
   background: var(--border-2);
@@ -61,9 +65,9 @@
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  top: 12px;
-  width: 9px;
-  height: 9px;
+  top: calc(var(--rail-node-y) - var(--rail-node-size) / 2);
+  width: var(--rail-node-size);
+  height: var(--rail-node-size);
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px var(--surface-1);

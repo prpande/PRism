@@ -31,7 +31,7 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
   return (
     <section className={`overview-card ${styles.prRootConversation}`}>
       {comments.length > 0 && (
-        <ol className={styles.timeline}>
+        <ol className={styles.timeline} aria-label="PR comments">
           {comments.map((comment) => (
             <li key={comment.id} className={styles.item}>
               <span className={styles.rail} aria-hidden="true">
