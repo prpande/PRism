@@ -29,7 +29,10 @@ export interface OpenTabsContextValue {
   clearAllTabs(): void;
 }
 
-const OpenTabsContext = createContext<OpenTabsContextValue | null>(null);
+// Exported as a test seam so a unit test can supply a stub context value
+// (e.g. an empty openTabs + no-op addTab) without the full OpenTabsProvider.
+// Application code should consume via useOpenTabs(), not this object directly.
+export const OpenTabsContext = createContext<OpenTabsContextValue | null>(null);
 
 export function OpenTabsProvider({ children }: { children: ReactNode }) {
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);

@@ -304,7 +304,7 @@ test.describe('parity baselines — PR Detail', () => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixtureWithStaleDraft(page);
     await page.goto('/pr/acme/api/123/drafts');
-    const drafts = page.locator('[data-testid="drafts-tab"]');
+    const drafts = page.locator('[data-testid="drafts-tab-root"]');
     await drafts.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(drafts).toHaveScreenshot('pr-detail-drafts.png', SCREENSHOT_OPTS);

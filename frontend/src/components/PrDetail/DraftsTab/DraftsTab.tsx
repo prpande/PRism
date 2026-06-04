@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import type {
   DraftCommentDto,
   DraftReplyDto,
@@ -7,6 +6,7 @@ import type {
   ReviewSessionDto,
 } from '../../../api/types';
 import type { DraftSessionStatus } from '../../../hooks/useDraftSession';
+import { usePrDetailContext } from '../prDetailContext';
 import type { DraftLike } from '../draftKinds';
 import { DraftsTabSkeleton } from './DraftsTabSkeleton';
 import { DraftsTabError } from './DraftsTabError';
@@ -84,7 +84,7 @@ function groupByFile(session: ReviewSessionDto): FileGroup[] {
 }
 
 export function DraftsTab({ prRef, session, status, refetch, readOnly = false }: DraftsTabProps) {
-  const navigate = useNavigate();
+  const { onSelectSubTab } = usePrDetailContext();
 
   // Hooks must run unconditionally — branch on `session` *after* memoizing.
   const summary = useMemo(() => (session ? summarize(session) : null), [session]);
@@ -108,13 +108,12 @@ export function DraftsTab({ prRef, session, status, refetch, readOnly = false }:
   // let the user pick the file from the tree manually. Tracked in the
   // deferrals doc; lift when FilesTab gains URL→state hydration.
   const handleEdit = (draft: DraftLike) => {
-    const base = `/pr/${prRef.owner}/${prRef.repo}/${prRef.number}`;
     if (draft.kind === 'comment' && draft.data.filePath != null) {
-      navigate(`${base}/files`);
+      onSelectSubTab('files');
       return;
     }
-    // PR-root drafts (filePath null) and replies navigate to the Overview tab.
-    navigate(base);
+    // PR-root drafts (filePath null) and replies switch to the Overview tab.
+    onSelectSubTab('overview');
   };
 
   const handleMutated = () => {
@@ -125,14 +124,14 @@ export function DraftsTab({ prRef, session, status, refetch, readOnly = false }:
     // Empty state shows only DraftListEmpty — the "0 drafts" count header was
     // redundant alongside it (#118). The count header returns for total > 0.
     return (
-      <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab">
+      <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab-root">
         <DraftListEmpty />
       </div>
     );
   }
 
   return (
-    <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab">
+    <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab-root">
       <div className={`drafts-tab-header row gap-2 ${styles.draftsTabHeader}`}>
         <span className={`drafts-tab-header-title ${styles.draftsTabHeaderTitle}`}>
           {summary.total} draft{summary.total === 1 ? '' : 's'}

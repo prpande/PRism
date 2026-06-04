@@ -1,20 +1,8 @@
-import { useMemo } from 'react';
-import { useOutletContext, useParams } from 'react-router-dom';
-import type { PrReference } from '../../../api/types';
-import type { PrDetailOutletContext } from '../../../pages/PrDetailPage';
+import { usePrDetailContext } from '../prDetailContext';
 import { DraftsTab } from './DraftsTab';
 
 export function DraftsTabRoute() {
-  const {
-    draftSession,
-    prDetail,
-    readOnly: contextReadOnly,
-  } = useOutletContext<PrDetailOutletContext>();
-  const params = useParams<{ owner: string; repo: string; number: string }>();
-  const prRef: PrReference = useMemo(
-    () => ({ owner: params.owner!, repo: params.repo!, number: Number(params.number) }),
-    [params.owner, params.repo, params.number],
-  );
+  const { prRef, prDetail, draftSession, readOnly: contextReadOnly } = usePrDetailContext();
 
   const prState: 'open' | 'closed' | 'merged' = prDetail.pr.isMerged
     ? 'merged'

@@ -1,11 +1,9 @@
 import { useMemo } from 'react';
-import { useNavigate, useOutletContext, useParams } from 'react-router-dom';
-import type { PrReference } from '../../../api/types';
 import { usePreferences } from '../../../hooks/usePreferences';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
 import { useAiGate } from '../../../hooks/useAiGate';
-import type { PrDetailOutletContext } from '../../../pages/PrDetailPage';
+import { usePrDetailContext } from '../prDetailContext';
 import { buildAllRange } from '../range';
 import { AiSummaryCard } from './AiSummaryCard';
 import { PrDescription } from './PrDescription';
@@ -15,15 +13,8 @@ import { ReviewFilesCta } from './ReviewFilesCta';
 import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
-  const { prDetail, draftSession, readOnly } = useOutletContext<PrDetailOutletContext>();
+  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab } = usePrDetailContext();
   const { preferences } = usePreferences();
-  const navigate = useNavigate();
-  const params = useParams<{ owner: string; repo: string; number: string }>();
-
-  const prRef: PrReference = useMemo(
-    () => ({ owner: params.owner!, repo: params.repo!, number: Number(params.number) }),
-    [params.owner, params.repo, params.number],
-  );
 
   const aiPreview = preferences?.ui.aiPreview ?? false; // still needed for PrDescription prop
   const aiOn = useAiGate('summary');
@@ -45,8 +36,7 @@ export function OverviewTab() {
   // as an empty-PR state.
   const hasFiles = !(diff.data !== null && diff.data.files.length === 0);
 
-  const handleReviewFiles = () =>
-    navigate(`/pr/${prRef.owner}/${prRef.repo}/${prRef.number}/files`);
+  const handleReviewFiles = () => onSelectSubTab('files');
 
   // Hydrate `existingPrRootDraft` from the shared draft session so the
   // PR-root composer opens with the persisted body when one exists. PR-root
