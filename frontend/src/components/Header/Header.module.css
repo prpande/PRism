@@ -27,6 +27,8 @@
 .spacer {
   flex: 1;
 }
+/* Styling for the gated ⌘K search input — only live when SEARCH_PALETTE_ENABLED
+   (Header.tsx) is flipped on; retained alongside that flag, not dead styling. */
 .search {
   height: 32px;
   padding: 0 12px;
