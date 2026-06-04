@@ -60,28 +60,40 @@ jobs:
       - name: Test (.NET)
         run: dotnet test --no-build --configuration Release --settings .runsettings --logger "trx;LogFileName=test-results.trx"
 
-      # INSTALL: the suite runs only the headless `chromium` project (no channel),
-      # so install JUST the chrome-headless-shell binary it actually launches.
-      # `npx playwright install chromium` did NOT fetch the separate
-      # chrome-headless-shell build, so every browser spec died at launch while
-      # `continue-on-error` reported green (#171). `--only-shell` installs exactly
-      # what's needed and is a smaller download (lower extraction-hang surface than
-      # the full headed Chromium — the 2026-05-29 regression). `--with-deps` stays
-      # off: it is a Linux-only no-op on windows-latest.
-      #
-      # `continue-on-error` is retained ONLY on install (extraction-hang
-      # resilience) but is no longer a silent mask: the guard step below FAILS
-      # the job loudly if the browser is missing, and the test step now gates.
+      # The windows-latest runner extracts the Playwright browser as thousands of
+      # files; Windows Defender scans each one as it lands, which historically hung
+      # the install past 10 min and produced no browser (#171 — the 2026-05-29
+      # regression). Two mitigations, in order:
+      #   1. Exclude the browser dir from Defender so extraction isn't scanned.
+      #   2. Cache the extracted binaries so only a cache MISS ever pays the cost.
+      # The suite runs only the headless `chromium` project (no channel), so we
+      # install JUST chrome-headless-shell (`--only-shell`) — `npx playwright
+      # install chromium` never fetched that separate build, so every spec died at
+      # launch (#171). `--with-deps` stays off (Linux-only no-op on windows).
+      - name: Exclude Playwright browser dir from Defender
+        shell: pwsh
+        continue-on-error: true # tamper-protection may block it; cache+timeout still cover us
+        run: |
+          $p = "$env:LOCALAPPDATA\ms-playwright"
+          New-Item -ItemType Directory -Force -Path $p | Out-Null
+          Add-MpPreference -ExclusionPath $p
+          Write-Host "Added Defender exclusion for $p"
+
+      - name: Restore Playwright browser cache
+        id: pw-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
       - name: Playwright install (headless shell)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         working-directory: frontend
         run: npx playwright install --only-shell
-        timeout-minutes: 10
-        continue-on-error: true
+        timeout-minutes: 20
 
-      # Loud failure if install hung/omitted the binary — replaces the old silent
-      # `continue-on-error` mask on the test step. `playwright install --dry-run`
-      # prints the resolved install location and exits non-zero work-free; we
-      # assert the headless-shell executable actually exists on disk.
+      # Loud failure if the browser is missing (hung/partial install, or an empty
+      # cache) — replaces the old silent continue-on-error mask on the test step.
       - name: Verify Playwright browser is installed
         working-directory: frontend
         shell: pwsh
@@ -94,9 +106,17 @@ jobs:
           }
           Write-Host "Found headless shell: $($shell.FullName)"
 
-      # No `continue-on-error`: a genuine e2e failure now turns the job RED. The
-      # D104 tablist a11y violation is allowlisted inside a11y-audit.spec.ts (see
-      # #174), so it no longer requires masking the whole suite.
+      # Save the cache ONLY on a clean miss+install+verify, so a partial/hung
+      # extraction is never persisted (a poisoned cache would break every run).
+      - name: Save Playwright browser cache
+        if: steps.pw-cache.outputs.cache-hit != 'true' && success()
+        uses: actions/cache/save@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+
+      # No continue-on-error: a genuine e2e failure now turns the job RED. The
+      # D104 tablist a11y violation is allowlisted inside a11y-audit.spec.ts (#174).
       - name: Playwright tests
         working-directory: frontend
         run: npx playwright test
