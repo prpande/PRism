@@ -27,7 +27,7 @@ above the ~`0.01–0.02` lightness JND so the hierarchy is perceptible at low
 chroma (where L is the sole differentiator), while staying inside the AA headroom
 computed below.
 
-| Token | Role | Current L | New L | Step from prev visible level |
+| Token | Role | Old L | New L | Step from prev visible level |
 |-------|------|-----------|-------|------|
 | `--surface-1` | cards / diff (lightest) | `1.0` | `0.99` | — (top of ladder) |
 | `--surface-0` | page bg | `0.985` | `0.96` | `0.03` below cards |
@@ -47,7 +47,7 @@ deliberately small so border weight does not dominate the surface hierarchy it i
 meant to support (a larger darkening would make card edges read heavier than the
 surface-to-surface separation that is the point of this change):
 
-| Token | Current L | New L |
+| Token | Old L | New L |
 |-------|-----------|-------|
 | `--border-1` | `0.91` | `0.89` |
 | `--border-2` | `0.87` | `0.85` |
