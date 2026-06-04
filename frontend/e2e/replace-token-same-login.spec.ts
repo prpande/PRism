@@ -42,6 +42,9 @@ test('Replace token to a PAT with the SAME login navigates to / without an ident
   // post-navigation render.
   await page.waitForURL(/\/$|^http.*\/$/, { timeout: 10_000 });
 
-  // No identity-change toast surfaced. role="status" is the toast surface.
-  await expect(page.getByRole('status')).toHaveCount(0);
+  // No identity-change toast surfaced. Filter the role="status" toast surface
+  // by its identity-change copy (matching the sibling different-login spec) so
+  // this does not race the Inbox first-load spinner, which is also role="status"
+  // (#125) while /api/inbox resolves.
+  await expect(page.getByRole('status').filter({ hasText: /connected as/i })).toHaveCount(0);
 });
