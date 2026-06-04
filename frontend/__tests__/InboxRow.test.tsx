@@ -86,10 +86,12 @@ describe('InboxRow', () => {
 
   it('IS unread for a never-opened PR (lastViewedHeadSha null) — its current state is unseen', () => {
     renderRow({ ...basePr, lastViewedHeadSha: null, headSha: 'abc' });
-    expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'true');
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'true');
+    expect(row.getAttribute('aria-label')).toContain('unread');
   });
 
-  it('is NOT unread for a done PR even if the head moved', () => {
+  it('is NOT unread for a merged PR even if the head moved', () => {
     renderRow({
       ...basePr,
       lastViewedHeadSha: 'old',
@@ -99,6 +101,16 @@ describe('InboxRow', () => {
     const row = screen.getByRole('button');
     expect(row).toHaveAttribute('data-unread', 'false');
     expect(row.getAttribute('aria-label')).not.toContain('unread');
+  });
+
+  it('is NOT unread for a closed PR even if the head moved', () => {
+    renderRow({
+      ...basePr,
+      lastViewedHeadSha: 'old',
+      headSha: 'new',
+      closedAt: new Date().toISOString(),
+    });
+    expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
   });
 
   it('shows CI failing dot when ci is failing', () => {
@@ -151,6 +163,8 @@ describe('InboxRow', () => {
   it('does not show the New chip on a done row even when lastViewedHeadSha is null', () => {
     renderRow({ ...basePr, lastViewedHeadSha: null, mergedAt: new Date().toISOString() });
     expect(screen.queryByText('New')).not.toBeInTheDocument();
+    // ...and the unread bar is suppressed too (done rows never flag).
+    expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
   });
 
   it('does not show the CI-failing dot on a done row', () => {
