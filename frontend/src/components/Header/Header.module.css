@@ -17,12 +17,38 @@
   border-radius: 6px;
   text-decoration: none;
   color: var(--text-2);
+  transition:
+    color var(--t-fast),
+    background var(--t-fast),
+    box-shadow var(--t-fast);
+}
+/* Hover / keyboard-focus: a subtle accent GLOW (accent text + faint tint + soft
+   outer shadow) instead of the global a:hover underline (#120). Uses only the
+   existing --accent / --accent-ring tokens, so it tracks every accent + theme.
+   Specificity (0,2,0) beats the global `a:hover` (0,1,1), killing the underline. */
+.tab:hover,
+.tab:focus-visible {
+  text-decoration: none;
+  color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+  box-shadow: 0 0 12px -2px var(--accent-ring);
 }
 .tabActive {
   composes: tab;
-  background: var(--surface-2);
+  /* Selected tab: a soft solid accent tint (a steadier fill than the hover glow)
+     so "selected" reads distinct from "hovering". */
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
   color: var(--text-1);
   font-weight: 500;
+}
+/* The selected tab keeps its tint when hovered — don't stack the hover glow on
+   top, so the active state stays stable. Placed after .tab:hover (equal
+   specificity) so source order wins. */
+.tabActive:hover,
+.tabActive:focus-visible {
+  color: var(--text-1);
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  box-shadow: none;
 }
 .spacer {
   flex: 1;
