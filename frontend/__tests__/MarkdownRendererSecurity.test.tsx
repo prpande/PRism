@@ -51,4 +51,21 @@ describe.each(CONSUMERS)('$name — security contract (spec § 5.6)', ({ render:
     render(renderConsumer('[click](data:text/html,<script>alert(1)</script>)'));
     expect(document.querySelector('a[href^="data:"]')).toBeNull();
   });
+
+  it('FencedCodePayload_RendersAsInertText_NotElement', async () => {
+    const { getHighlighterAsync } = await import('../src/components/Markdown/shikiInstance');
+    await getHighlighterAsync();
+    const { container } = render(
+      renderConsumer('```ts\nconst x = "<img src=x onerror=alert(1)>";\n```'),
+    );
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.textContent).toContain('onerror=alert(1)'); // present as text
+  });
+
+  it('FencedScriptPayload_DoesNotInjectMarkup', async () => {
+    const { getHighlighterAsync } = await import('../src/components/Markdown/shikiInstance');
+    await getHighlighterAsync();
+    render(renderConsumer('```js\n</script><script>alert(1)\n```'));
+    expect(document.querySelector('script')).toBeNull();
+  });
 });
