@@ -440,7 +440,13 @@ export function DiffPane({
         hunkCounter += 1;
         if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') {
           rows.push(
-            <SplitDiffLineRow key={idx} kind="header" content={line.content} filePath={path} />,
+            <SplitDiffLineRow
+              key={idx}
+              kind="header"
+              content={line.content}
+              filePath={path}
+              syntax={syntax}
+            />,
           );
           const annotations = annotationsForFile?.get(hunkCounter);
           if (annotations) {
@@ -504,6 +510,7 @@ export function DiffPane({
               oldText={line.content}
               newText={next.content}
               filePath={path}
+              syntax={syntax}
               onLineClick={onLineClick}
             />,
           );
@@ -729,7 +736,7 @@ interface SplitDiffLineRowProps {
   newText?: string;
   content?: string;
   filePath: string;
-  syntax?: SyntaxTokenMaps;
+  syntax: SyntaxTokenMaps;
   isFilled?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
 }
@@ -746,7 +753,7 @@ function SplitDiffLineRow({
   isFilled,
   onLineClick,
 }: SplitDiffLineRowProps) {
-  const maps: SyntaxTokenMaps = syntax ?? { oldLineTokens: new Map(), newLineTokens: new Map() };
+  const maps = syntax;
   if (kind === 'header') {
     return (
       <tr className="diff-line diff-line--hunk-header">

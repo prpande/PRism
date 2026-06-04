@@ -45,4 +45,30 @@ describe('DiffPane syntax highlighting', () => {
       expect(c.parentElement!.querySelectorAll(':scope > .codeLine').length).toBe(1),
     );
   });
+
+  it('renders .codeToken spans in split (side-by-side) mode', async () => {
+    await getHighlighterAsync();
+    const { container } = render(
+      <DiffPane
+        prRef={prRef}
+        selectedPath="a.ts"
+        file={file}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        headSha="h"
+        baseSha="b"
+      />,
+    );
+    await waitFor(() => {
+      expect(container.querySelector('.codeToken')).not.toBeNull();
+    });
+    // every content cell still has exactly one .codeLine wrapper
+    const cells = container.querySelectorAll('.diff-content .codeLine');
+    expect(cells.length).toBeGreaterThan(0);
+    cells.forEach((c) =>
+      expect(c.parentElement!.querySelectorAll(':scope > .codeLine').length).toBe(1),
+    );
+  });
 });
