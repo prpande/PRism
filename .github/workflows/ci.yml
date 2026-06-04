@@ -60,31 +60,49 @@ jobs:
       - name: Test (.NET)
         run: dotnet test --no-build --configuration Release --settings .runsettings --logger "trx;LogFileName=test-results.trx"
 
-      # `--with-deps` removed: Linux-only flag, no-op on windows-latest.
-      # Both Playwright steps carry `continue-on-error: true`:
-      # - INSTALL step: stopgap for the 2026-05-29 runner regression where
-      #   chromium extraction hangs after a clean download (suspected AV
-      #   scanning ~15K extracted files). 10-min install timeout surfaces fast.
-      # - TEST step: D94 attempted to remove this when D82 lifted the
-      #   nested-interactive a11y violation, but the lift introduced a
-      #   different critical axe-core violation (aria-required-children on
-      #   role="tablist" with the now-sibling close button). Both are inherent
-      #   to the WAI-ARIA "deletable tabs" pattern. Restored as stopgap
-      #   pending D85's full kbd-nav redesign bundle that resolves the
-      #   trade-off cleanly. See D104 in the deferrals sidecar.
-      - name: Playwright install
+      # INSTALL: the suite runs only the headless `chromium` project (no channel),
+      # so install JUST the chrome-headless-shell binary it actually launches.
+      # `npx playwright install chromium` did NOT fetch the separate
+      # chrome-headless-shell build, so every browser spec died at launch while
+      # `continue-on-error` reported green (#171). `--only-shell` installs exactly
+      # what's needed and is a smaller download (lower extraction-hang surface than
+      # the full headed Chromium — the 2026-05-29 regression). `--with-deps` stays
+      # off: it is a Linux-only no-op on windows-latest.
+      #
+      # `continue-on-error` is retained ONLY on install (extraction-hang
+      # resilience) but is no longer a silent mask: the guard step below FAILS
+      # the job loudly if the browser is missing, and the test step now gates.
+      - name: Playwright install (headless shell)
         working-directory: frontend
-        run: npx playwright install chromium
+        run: npx playwright install --only-shell
         timeout-minutes: 10
         continue-on-error: true
 
+      # Loud failure if install hung/omitted the binary — replaces the old silent
+      # `continue-on-error` mask on the test step. `playwright install --dry-run`
+      # prints the resolved install location and exits non-zero work-free; we
+      # assert the headless-shell executable actually exists on disk.
+      - name: Verify Playwright browser is installed
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          $root = if ($env:PLAYWRIGHT_BROWSERS_PATH) { $env:PLAYWRIGHT_BROWSERS_PATH } else { "$env:LOCALAPPDATA\ms-playwright" }
+          $shell = Get-ChildItem -Path $root -Recurse -Filter 'chrome-headless-shell.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $shell) {
+            Write-Error "chrome-headless-shell.exe not found under $root — Playwright install failed or omitted the headless shell (see #171)."
+            exit 1
+          }
+          Write-Host "Found headless shell: $($shell.FullName)"
+
+      # No `continue-on-error`: a genuine e2e failure now turns the job RED. The
+      # D104 tablist a11y violation is allowlisted inside a11y-audit.spec.ts (see
+      # #174), so it no longer requires masking the whole suite.
       - name: Playwright tests
         working-directory: frontend
         run: npx playwright test
         env:
           CI: 'true'
         timeout-minutes: 30
-        continue-on-error: true
 
       - name: Upload test artifacts
         if: failure()
