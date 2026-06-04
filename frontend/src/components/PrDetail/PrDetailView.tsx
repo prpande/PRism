@@ -109,10 +109,12 @@ export function PrDetailView({
     setSubTab(tab);
   }, []);
 
-  // Save/restore per-(prRef, subTab) scroll offset on the shared [data-app-scroll]
-  // scroller. Cleanup-before-setup ordering ensures the outgoing view's offset is
-  // persisted before the incoming view restores its own — no cross-view race.
-  useTabScrollMemory({ prRefKey: refKey, subTab, active });
+  // Ordering dependency: the marker effect must precede useTabScrollMemory so
+  // [data-app-scroll] is a scroll container before scrollTop is restored (in
+  // browser mode it's only scrollable when data-files-active is set; writing
+  // scrollTop to a non-scrollable element clamps to 0). React runs layout-effect
+  // setups in declaration order, so on Files re-activation this effect turns on
+  // overflow first, then useTabScrollMemory restores the saved offset.
 
   // Viewport-bound Files layout marker. Under keep-alive every open PR tab keeps
   // a (hidden) Files sub-tab in the DOM, so the layout can no longer key off the
@@ -134,6 +136,13 @@ export function PrDetailView({
       if (on) slot.removeAttribute('data-files-active');
     };
   }, [active, subTab]);
+
+  // Save/restore per-(prRef, subTab) scroll offset on the shared [data-app-scroll]
+  // scroller. Cleanup-before-setup ordering ensures the outgoing view's offset is
+  // persisted before the incoming view restores its own — no cross-view race.
+  // Declared AFTER the data-files-active marker effect above so the container is
+  // already a scroller when this restores scrollTop (see ordering note above).
+  useTabScrollMemory({ prRefKey: refKey, subTab, active });
 
   const handleReload = () => {
     updates.clear();
