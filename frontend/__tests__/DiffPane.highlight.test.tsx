@@ -128,13 +128,15 @@ describe('DiffPane syntax highlighting', () => {
 
   it('shows the large-file indicator when highlighting is suppressed by size', async () => {
     await getHighlighterAsync();
-    const bigBody =
-      '@@ -1,2001 +1,2001 @@\n' +
-      Array.from({ length: 2001 }, (_, i) => ` const v${i} = ${i};`).join('\n');
+    // Trip the byte guard (>200 KB) with few but very long lines, so the test
+    // renders ~60 rows instead of 2000+ (keeps the jsdom render light enough to
+    // not destabilize a parallel vitest worker).
+    const longLine = ' ' + 'x'.repeat(3500); // leading space ⇒ context line
+    const bigBody = '@@ -1,60 +1,60 @@\n' + Array.from({ length: 60 }, () => longLine).join('\n');
     const big = {
       path: 'a.ts',
       status: 'modified',
-      hunks: [{ oldStart: 1, oldLines: 2001, newStart: 1, newLines: 2001, body: bigBody }],
+      hunks: [{ oldStart: 1, oldLines: 60, newStart: 1, newLines: 60, body: bigBody }],
     } as unknown as FileChange;
     const { container, queryByText } = render(
       <DiffPane
