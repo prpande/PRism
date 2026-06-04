@@ -43,13 +43,12 @@ function renderAt(path: string, hasToken: boolean = true) {
 }
 
 describe('Header', () => {
-  it('renders logo + Inbox/Settings/Setup tabs + global-search placeholder', () => {
+  it('renders logo + Inbox/Settings/Setup tabs', () => {
     renderAt('/');
     expect(screen.getByAltText('PRism')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /inbox/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /^settings$/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /setup/i })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/jump to PR or file/i)).toBeInTheDocument();
   });
 
   it('marks Inbox active on "/"', () => {
@@ -102,13 +101,18 @@ describe('Header', () => {
     expect(setupTab.textContent?.trim()).toBe('Setup');
   });
 
-  // PR9b-search (D101 closure): the disabled global-search input gets a forward-
-  // looking tooltip so users hovering see "where this is going" instead of an
-  // unexplained disabled field. Spec § 4.9.2 line 454 — "Search palette — v1.1".
-  it('disabled global-search input carries the v1.1 tooltip', () => {
+  // #119: the ⌘K search palette isn't built, so the permanently-disabled
+  // "Jump to PR or file…" box (a dead not-allowed control) is hidden until the
+  // feature ships (SEARCH_PALETTE_ENABLED). Guard it renders on no route today.
+  it('does not render the disabled global-search box on the Inbox (#119)', () => {
     renderAt('/');
-    const input = screen.getByLabelText(/global search/i);
-    expect(input).toBeDisabled();
-    expect(input).toHaveAttribute('title', 'Search palette — v1.1');
+    expect(screen.queryByPlaceholderText(/jump to PR or file/i)).toBeNull();
+    expect(screen.queryByLabelText(/global search/i)).toBeNull();
+  });
+
+  it('does not render the disabled global-search box off the Inbox either (#119)', () => {
+    renderAt('/settings');
+    expect(screen.queryByPlaceholderText(/jump to PR or file/i)).toBeNull();
+    expect(screen.queryByLabelText(/global search/i)).toBeNull();
   });
 });
