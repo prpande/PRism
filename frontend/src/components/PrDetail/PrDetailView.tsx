@@ -20,6 +20,7 @@ import { useReconcile } from '../../hooks/useReconcile';
 import type { PrReference } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
+import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 
 // Keep-alive PR-detail view. Owns the active sub-tab as component STATE (not
 // URL routing) and renders sub-tabs DIRECTLY (not via React Router <Outlet>),
@@ -107,6 +108,11 @@ export function PrDetailView({
     visited.current.add(tab);
     setSubTab(tab);
   }, []);
+
+  // Save/restore per-(prRef, subTab) scroll offset on the shared [data-app-scroll]
+  // scroller. Cleanup-before-setup ordering ensures the outgoing view's offset is
+  // persisted before the incoming view restores its own — no cross-view race.
+  useTabScrollMemory({ prRefKey: refKey, subTab, active });
 
   // Viewport-bound Files layout marker. Under keep-alive every open PR tab keeps
   // a (hidden) Files sub-tab in the DOM, so the layout can no longer key off the
