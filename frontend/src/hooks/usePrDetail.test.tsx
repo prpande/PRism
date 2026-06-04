@@ -73,7 +73,10 @@ describe('usePrDetail — preservation on failed same-PR reload', () => {
 
     // Next fetch (the focus-refetch) rejects.
     getPrDetailMock.mockRejectedValueOnce(new Error('network down'));
-    act(() => {
+    // `await act(async …)` flushes the reload's scheduled effect + the rejected
+    // fetch's microtask inside an act() scope, so the error state settles before
+    // waitFor runs and React emits no "not wrapped in act" warning.
+    await act(async () => {
       result.current.reload();
     });
 

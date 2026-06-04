@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
-import type { PrDetailDto, PrReference, FileChange } from '../../api/types';
+import type { PrDetailDto, PrReference, FileChange, DiffDto } from '../../api/types';
 import { OpenTabsContext, type OpenTabsContextValue } from '../../contexts/OpenTabsContext';
 import { PrDetailView } from './PrDetailView';
 import { FilesTab } from './FilesTab/FilesTab';
@@ -176,7 +176,7 @@ vi.mock('../../hooks/useCapabilities', () => ({
 const { fileDiffResult } = vi.hoisted(() => ({
   fileDiffResult: {
     current: {
-      data: null as { files: FileChange[]; truncated: boolean } | null,
+      data: null as DiffDto | null,
       isLoading: false,
       showSkeleton: false,
       error: null as Error | null,
@@ -268,7 +268,10 @@ describe('PrDetailView — freshness on activation (Task 8)', () => {
     view.rerender({ active: false });
     view.rerender({ active: true }); // false -> true: re-activation
 
-    // The focus-refetch supersedes the latched banner: it is cleared once.
+    // The focus-refetch supersedes the latched banner: it is cleared once. The
+    // count-of-1 is implicitly scoped to the activation path — the other
+    // updates.clear() call site, handleReload, is never invoked in this test (no
+    // user interaction, transitionState is null), so it cannot inflate the count.
     expect(updatesClearSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -386,7 +389,7 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
   test('preserved selectedPath absent from the refetched list resets to first file', () => {
     // Initial list: src/a.ts (auto-selected first) + src/b.ts.
     fileDiffResult.current = {
-      data: { files: [file('src/a.ts'), file('src/b.ts')], truncated: false },
+      data: { range: 'all', files: [file('src/a.ts'), file('src/b.ts')], truncated: false },
       isLoading: false,
       showSkeleton: false,
       error: null,
@@ -397,7 +400,7 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
 
     // Focus-refetch returns a NEW list that does not contain src/a.ts.
     fileDiffResult.current = {
-      data: { files: [file('src/c.ts'), file('src/d.ts')], truncated: false },
+      data: { range: 'all', files: [file('src/c.ts'), file('src/d.ts')], truncated: false },
       isLoading: false,
       showSkeleton: false,
       error: null,
