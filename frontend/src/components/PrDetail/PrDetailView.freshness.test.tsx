@@ -64,17 +64,28 @@ const PR_DETAIL: PrDetailDto = {
 // Hoisted spies + a mutable result holder so individual tests can reshape what
 // usePrDetail returns (e.g. inject an error for the OQ6 failure case) without
 // re-mocking the module.
-const { reloadSpy, clearUnreadSpy, prDetailResult } = vi.hoisted(() => ({
-  reloadSpy: vi.fn(),
-  clearUnreadSpy: vi.fn(),
-  prDetailResult: {
-    current: {
-      data: null as PrDetailDto | null,
-      showSkeleton: false,
-      error: null as Error | null,
+const { reloadSpy, clearUnreadSpy, updatesClearSpy, prDetailResult, updatesResult } = vi.hoisted(
+  () => ({
+    reloadSpy: vi.fn(),
+    clearUnreadSpy: vi.fn(),
+    updatesClearSpy: vi.fn(),
+    prDetailResult: {
+      current: {
+        data: null as PrDetailDto | null,
+        showSkeleton: false,
+        error: null as Error | null,
+      },
     },
-  },
-}));
+    // Mutable holder for useActivePrUpdates so a test can latch the banner
+    // (hasUpdate: true) before driving the activation transition. `clear` is the
+    // cross-render-stable updatesClearSpy so the focus-refetch's banner-clear
+    // can be observed across re-renders (an inline vi.fn() would be a fresh spy
+    // every render — useless for the assertion).
+    updatesResult: {
+      current: { hasUpdate: false },
+    },
+  }),
+);
 
 vi.mock('../../hooks/usePrDetail', () => ({
   usePrDetail: () => ({
@@ -117,12 +128,12 @@ vi.mock('../../hooks/useDraftSession', () => ({
 
 vi.mock('../../hooks/useActivePrUpdates', () => ({
   useActivePrUpdates: () => ({
-    hasUpdate: false,
+    hasUpdate: updatesResult.current.hasUpdate,
     headShaChanged: false,
     commentCountDelta: 0,
     isMerged: false,
     isClosed: false,
-    clear: vi.fn(),
+    clear: updatesClearSpy,
   }),
 }));
 
@@ -216,7 +227,9 @@ function renderPrDetailView({ active }: { active: boolean }) {
 beforeEach(() => {
   reloadSpy.mockClear();
   clearUnreadSpy.mockClear();
+  updatesClearSpy.mockClear();
   prDetailResult.current = { data: PR_DETAIL, showSkeleton: false, error: null };
+  updatesResult.current = { hasUpdate: false };
   fileDiffResult.current = { data: null, isLoading: false, showSkeleton: false, error: null };
 });
 
@@ -235,6 +248,28 @@ describe('PrDetailView — freshness on activation (Task 8)', () => {
     expect(reloadSpy).toHaveBeenCalledTimes(1);
     expect(clearUnreadSpy).toHaveBeenCalledTimes(1);
     expect(clearUnreadSpy).toHaveBeenCalledWith('acme/api/7');
+  });
+
+  // OQ8 — a backgrounded tab can latch a "PR updated" banner (useActivePrUpdates
+  // hasUpdate flips true on an SSE pr-updated frame while inactive). The
+  // activation callback already fires reload() to fetch fresh data, so the
+  // latched banner is now a redundant, stale Reload affordance. The activation
+  // path must clear it (updates.clear), exactly once on the false->true
+  // transition — never on first mount.
+  test('activation clears the latched update banner; first mount does not', () => {
+    // Latch the banner before mounting: hasUpdate is true.
+    updatesResult.current = { hasUpdate: true };
+    const view = renderPrDetailView({ active: true });
+
+    // First mount, already active: the activation transition must NOT fire, so
+    // the latched banner is NOT cleared by an activation that never happened.
+    expect(updatesClearSpy).not.toHaveBeenCalled();
+
+    view.rerender({ active: false });
+    view.rerender({ active: true }); // false -> true: re-activation
+
+    // The focus-refetch supersedes the latched banner: it is cleared once.
+    expect(updatesClearSpy).toHaveBeenCalledTimes(1);
   });
 
   // OQ6 — a failed focus-refetch keeps the last-known data rendered and shows

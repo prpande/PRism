@@ -113,6 +113,9 @@ export function PrDetailView({
   useActivationTransition(active, () => {
     reload();
     clearUnread(refKey);
+    // OQ8: the focus-refetch supersedes any latched "PR updated" banner — drop
+    // it so it doesn't linger as a redundant Reload affordance.
+    updates.clear();
   });
 
   // Sub-tab state replaces the URL-derived activeTab. `visited` seeds with
