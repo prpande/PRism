@@ -32,14 +32,31 @@ fs.mkdirSync(e2eDataDir, { recursive: true });
 const isCI = !!process.env.CI;
 
 const backendWebServer = {
+  // The frontend build is folded INTO the webServer command — not run from
+  // globalSetup — because Playwright starts `webServer` BEFORE `globalSetup`.
+  // On a fresh checkout (CI container) wwwroot does not exist yet, so a
+  // server that boots first resolves an empty WebRoot ("WebRootPath was not
+  // found"), and MapStaticAssets/MapFallbackToFile then 404s every SPA route
+  // for the life of the process — globalSetup's later build is too late to
+  // help the already-listening server. Building here guarantees wwwroot AND
+  // the static-web-assets manifest exist before Kestrel binds. (Locally this
+  // command is skipped when reuseExistingServer reuses a running app.)
+  //
+  // The explicit `dotnet build` after `npm run build` regenerates
+  // PRism.Web.staticwebassets.endpoints.json against the fresh wwwroot;
+  // without it an incremental `dotnet run` keeps a stale manifest and serves
+  // bundle JS/CSS as 200 OK / 0 bytes.
+  //
   // --no-launch-profile so PRism.Web/Properties/launchSettings.json (which
   // forces ASPNETCORE_ENVIRONMENT=Development) doesn't override the Test env
   // var Playwright passes via `env` below. Without this flag, the
   // FakeReviewService swap never engages.
-  command: `cd .. && dotnet run --project PRism.Web --no-launch-profile --urls http://localhost:5180 -- --no-browser`,
+  command: `npm run build && cd .. && dotnet build PRism.Web --nologo --verbosity minimal && dotnet run --project PRism.Web --no-launch-profile --urls http://localhost:5180 -- --no-browser`,
   url: 'http://localhost:5180/api/health',
   reuseExistingServer: !isCI,
-  timeout: 120_000,
+  // Headroom for the folded build (npm build + dotnet build) on a cold CI
+  // container before Kestrel binds the health URL.
+  timeout: 180_000,
   stdout: 'pipe' as const,
   stderr: 'pipe' as const,
   // Boots the backend with the test-only IReviewService swap so the new S4 PR7
@@ -92,7 +109,10 @@ export default defineConfig({
   // becomes load-bearing.
   workers: 1,
   retries: 1,
-  globalSetup: './e2e/global-setup.ts',
+  // No globalSetup: the frontend/.NET build it used to run is now folded into
+  // the webServer command, because Playwright runs webServer BEFORE globalSetup
+  // — so a globalSetup build lands too late to populate wwwroot on a fresh
+  // checkout. See backendWebServer.command above.
   webServer: [backendWebServer],
   use: {
     trace: 'on-first-retry',
