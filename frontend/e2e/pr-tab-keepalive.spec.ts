@@ -156,14 +156,19 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
     ).toHaveAttribute('data-selected', 'true');
 
     // (c) Scroll offset restored (useTabScrollMemory saves on deactivation
-    //     cleanup, restores on re-activation setup). Poll because restore runs
-    //     in a layout effect after the marker effect re-establishes overflow —
-    //     never a fixed sub-second sleep (Windows CI is slow).
+    //     cleanup, restores on re-activation setup). Poll the DISTANCE-to-target
+    //     in a single atomic browser round-trip — restore runs in a layout
+    //     effect after the marker effect re-establishes overflow, so we wait for
+    //     it rather than using a fixed sub-second sleep (Windows CI is slow).
+    //     Polling |scrollTop - target| (not scrollTop>0 then a separate read)
+    //     closes the race window where a re-render between two round-trips could
+    //     read a transient offset: a 0 here yields |0 - 300| = 300 > 5 and keeps
+    //     polling until the restore settles within tolerance.
     await expect
-      .poll(() => scroller.evaluate((el) => el.scrollTop), { timeout: 15_000 })
-      .toBeGreaterThan(0);
-    const restored = await scroller.evaluate((el) => el.scrollTop);
-    expect(Math.abs(restored - target)).toBeLessThanOrEqual(5);
+      .poll(() => scroller.evaluate((el) => Math.abs(el.scrollTop - target)), {
+        timeout: 15_000,
+      })
+      .toBeLessThanOrEqual(5);
   });
 
   // -------------------------------------------------------------------------
@@ -229,6 +234,6 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
     // --- ASSERT cleared: on re-activation useActivationTransition clears the
     // latched banner, so BannerRefresh unmounts (hasUpdate flips false). This is
     // the OQ8 contract.
-    await expect(banner).toHaveCount(0);
+    await expect(banner).toHaveCount(0, { timeout: 15_000 });
   });
 });
