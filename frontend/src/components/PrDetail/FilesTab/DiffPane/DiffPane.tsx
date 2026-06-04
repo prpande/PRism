@@ -21,6 +21,7 @@ import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
 import { WholeFileFailureBanner } from './WholeFileFailureBanner';
+import { Spinner } from '../../../Spinner';
 import styles from './DiffPane.module.css';
 
 export type DiffMode = 'side-by-side' | 'unified';
@@ -47,8 +48,9 @@ export interface DiffPaneProps {
   // `<ReplyComposer>`. Absent → DiffPane test harnesses render threads
   // read-only.
   replyContext?: ExistingCommentWidgetReplyContext;
-  // D36 — when true, renders a Loading… span in the diff-pane header. JSX
-  // (not CSS ::after) so screen readers announce it (WCAG 2.1 F87).
+  // D36 / #125 — when true, renders a <Spinner> in the diff-pane header. A real
+  // element with an sr-only label (not CSS ::after) so screen readers announce
+  // it (WCAG 2.1 F87).
   isLoading?: boolean;
 
   // Slice 2 additions (all optional with defaults — see destructuring below):
@@ -242,13 +244,7 @@ export function DiffPane({
       <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
         <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
           <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
-          <span
-            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
-            role="status"
-            aria-live="polite"
-          >
-            Loading…
-          </span>
+          <Spinner size="sm" className={styles.diffPaneLoading} />
         </div>
       </div>
     );
@@ -515,15 +511,7 @@ export function DiffPane({
     >
       <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
-        {isLoading && (
-          <span
-            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
-            role="status"
-            aria-live="polite"
-          >
-            Loading…
-          </span>
-        )}
+        {isLoading && <Spinner size="sm" className={styles.diffPaneLoading} />}
       </div>
       {localFailure !== null && (
         <WholeFileFailureBanner reason={localFailure} onDismiss={dismissBanner} />
@@ -535,8 +523,8 @@ export function DiffPane({
         }`}
       >
         {wholeFileEnabled && wholeFile.fetchStatus === 'loading' && (
-          <div role="status" aria-live="polite" className={styles.diffPaneLoadingOverlay}>
-            Loading whole file…
+          <div className={styles.diffPaneLoadingOverlay}>
+            <Spinner size="md" label="Loading whole file…" />
           </div>
         )}
         <table className={`diff-table ${styles.diffTable}`}>

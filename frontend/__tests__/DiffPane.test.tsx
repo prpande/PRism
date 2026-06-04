@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DiffPane } from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane';
 import type { FileChange, ReviewThreadDto, PrReference } from '../src/api/types';
@@ -84,6 +84,46 @@ describe('DiffPane', () => {
       />,
     );
     expect(screen.getByText(/select a file/i)).toBeInTheDocument();
+  });
+
+  it('renders the loading spinner in the header while the file fetch is in flight', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={null}
+        isLoading
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const status = screen.getByRole('status');
+    expect(within(status).getByText(/loading/i)).toBeInTheDocument();
+  });
+
+  it('renders the loading spinner with a distinct label in the whole-file overlay', () => {
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'loading',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        wholeFileEnabled
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const status = screen.getByRole('status');
+    expect(within(status).getByText(/loading whole file/i)).toBeInTheDocument();
   });
 
   it('renders file path in header when file selected', () => {

@@ -8,6 +8,7 @@ import { InboxSection } from '../components/Inbox/InboxSection';
 import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
 import { ActivityRail } from '../components/ActivityRail/ActivityRail';
+import { Spinner } from '../components/Spinner';
 import styles from './InboxPage.module.css';
 
 export function InboxPage() {
@@ -30,7 +31,12 @@ export function InboxPage() {
     return m;
   }, [sections]);
 
-  if (isLoading && !data) return <main aria-busy="true">Loading…</main>;
+  if (isLoading && !data)
+    return (
+      <main className={styles.loading}>
+        <Spinner size="lg" />
+      </main>
+    );
   if (error && !data)
     return (
       <main role="alert">
