@@ -56,7 +56,18 @@ public static class ServiceCollectionExtensions
             return state;
         });
         services.AddSingleton<IAppStateStore>(_ => new AppStateStore(dataDir));
-        services.AddSingleton<ITokenStore>(_ => new TokenStore(dataDir));
+        // In the e2e Test backend, persist tokens to an unprotected file instead
+        // of the OS keyring. The browser e2e runs in a headless Linux container
+        // (windows-latest can't extract the Playwright browser — #171) which has
+        // no D-Bus/X11, so MSAL's Linux keyring throws "Cannot autolaunch D-Bus
+        // without X11 $DISPLAY" and every auth-dependent spec times out. The e2e
+        // DataDir is ephemeral, so plaintext is fine. Production (no PRISM_E2E_*
+        // env var) keeps the encrypted OS keychain. Gated on the same env vars
+        // Program.cs uses to swap in the fake/real-inject test seams.
+        var useUnprotectedTokenCache =
+            Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1"
+            || Environment.GetEnvironmentVariable("PRISM_E2E_REAL_INJECT") == "1";
+        services.AddSingleton<ITokenStore>(_ => new TokenStore(dataDir, useUnprotectedTokenCache));
         services.AddSingleton<IViewerLoginProvider, ViewerLoginProvider>();
 
         services.AddSingleton<IReviewEventBus, ReviewEventBus>();
