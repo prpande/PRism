@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { InboxResponse, AiCapabilities, PreferencesResponse } from '../src/api/types';
@@ -148,10 +148,11 @@ function renderPage() {
 describe('InboxPage', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('shows loading state while fetching first snapshot', () => {
+  it('shows the loading spinner while fetching first snapshot', () => {
     setHooks({ data: null, isLoading: true });
     renderPage();
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    const status = screen.getByRole('status');
+    expect(within(status).getByText(/loading/i)).toBeInTheDocument();
   });
 
   it('shows error state with retry button when initial fetch fails', () => {

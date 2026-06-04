@@ -357,3 +357,46 @@ test.describe('A11y audit — LoadingScreen honors prefers-reduced-motion', () =
     expect(animationName).toBe('none');
   });
 });
+
+test.describe('A11y audit — Spinner honors prefers-reduced-motion (#125)', () => {
+  test('ring rotation is replaced by a pulse under reducedMotion: reduce', async ({
+    page,
+  }, testInfo) => {
+    // Assert against the production build (what ships, and the only project CI
+    // runs). The vite-dev project re-optimizes dependencies on first load and
+    // forces a full page reload mid-test, tearing down the transient inbox
+    // spinner before the computed-style read can settle — a dev-server artifact,
+    // not a product behavior.
+    test.skip(testInfo.project.name === 'dev', 'computed-style assertion targets the prod build');
+
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await setupBaseMocks(page);
+    // Hold the inbox response open so InboxPage stays in its loading branch and
+    // keeps the <Spinner> mounted for the duration of the assertions.
+    await page.unroute('**/api/inbox');
+    await page.route('**/api/inbox', HANG_FOREVER);
+    await page.goto('/');
+
+    // The inbox loading state is the only spinner inside a <main> (LoadingScreen
+    // is a top-level div), so this uniquely targets the ring (the aria-hidden
+    // child of the spinner's status region).
+    const ring = page.locator('main [role="status"] [aria-hidden="true"]');
+    await expect(ring).toBeVisible({ timeout: 10_000 });
+
+    // Assert via animation-duration (hash-independent, unlike keyframe names
+    // which CSS-modules hashes): rotation is 0.6s, the reduced-motion pulse is
+    // 1.2s. Poll to ride out the LoadingScreen→Inbox remount.
+    await expect
+      .poll(
+        async () => {
+          try {
+            return await ring.evaluate((el) => window.getComputedStyle(el).animationDuration);
+          } catch {
+            return null;
+          }
+        },
+        { timeout: 10_000 },
+      )
+      .toBe('1.2s'); // the reduced-motion pulse, not the 0.6s rotation
+  });
+});
