@@ -59,17 +59,23 @@
    LIGHT — slate-tinted whites; never pure white
    ====================================================================== */
 [data-theme="light"] {
-  /* surfaces (multiple levels) */
-  --surface-0: oklch(0.985 0.003 250);   /* page bg */
-  --surface-1: oklch(1 0 0);              /* cards / diff */
-  --surface-2: oklch(0.97 0.004 250);    /* panels, sidebars */
-  --surface-3: oklch(0.945 0.005 250);   /* hover, raised */
-  --surface-inset: oklch(0.96 0.004 250);
+  /* surfaces (multiple levels)
+     Ladder rebalanced for visible hierarchy (#124): lowered overall and widened
+     to 0.025–0.035 L steps so page / card / panel / raised read as distinct (was
+     compressed into 0.945–1.0 with surface-1 at pure white). Worst body-text pair
+     (--text-3 on --surface-3) computes to 4.85:1 — clears WCAG 1.4.3 AA (4.5:1).
+     See docs/specs/2026-06-04-light-theme-contrast-design.md. */
+  --surface-0: oklch(0.96 0.003 250);     /* page bg */
+  --surface-1: oklch(0.99 0 0);           /* cards / diff (lightest) */
+  --surface-2: oklch(0.925 0.004 250);    /* panels, sidebars */
+  --surface-3: oklch(0.90 0.005 250);     /* hover, raised */
+  --surface-inset: oklch(0.95 0.004 250); /* recessive: nested input wells */
 
-  /* borders */
-  --border-1: oklch(0.91 0.005 250);
-  --border-2: oklch(0.87 0.006 250);
-  --border-strong: oklch(0.78 0.008 250);
+  /* borders — darkened only ~0.02 so edge weight supports, not dominates, the
+     surface hierarchy above (#124) */
+  --border-1: oklch(0.89 0.005 250);
+  --border-2: oklch(0.85 0.006 250);
+  --border-strong: oklch(0.76 0.008 250);
 
   /* text */
   /* text-3 lowered from oklch(0.58 0.008 250) to oklch(0.48 0.010 250)
