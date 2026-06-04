@@ -25,11 +25,10 @@
   color: var(--text-1);
 }
 .diffPaneLoading {
-  /* D36 — JSX-rendered `<span>Loading…</span>` conditional on isLoading.
-     CSS-generated content via ::after was rejected for WCAG 2.1 F87
-     (CSS content not announced by screen readers). */
+  /* #125 — layout hook for the <Spinner> in the diff-pane header (formerly a
+     JSX `<span>Loading…</span>`; the spinner keeps a real sr-only label, so the
+     WCAG 2.1 F87 concern about CSS-generated content still does not apply). */
   margin-left: auto;
-  font-size: var(--text-xs);
 }
 .diffPanePath {
   font-family: var(--font-mono);

@@ -1,0 +1,56 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ring {
+  display: inline-block;
+  box-sizing: border-box;
+  /* Color declared on the ring itself (not inherited) so ambient text color
+     such as `.muted` (--text-3) at a call site cannot defeat the accent. A
+     consumer can override by setting `--spinner-color` (e.g. `currentColor`). */
+  color: var(--spinner-color, var(--accent));
+  border: 2px solid currentColor;
+  border-top-color: transparent; /* the gap that reads as rotation */
+  border-radius: 50%;
+  animation: spinner-rotate 0.6s linear infinite;
+}
+
+.sm {
+  width: 16px;
+  height: 16px;
+}
+.md {
+  width: 24px;
+  height: 24px;
+}
+.lg {
+  width: 40px;
+  height: 40px;
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Reduced motion: no rotation. Restore the full ring and convey activity with a
+   gentle opacity pulse (non-vestibular) rather than a silent static circle. */
+@media (prefers-reduced-motion: reduce) {
+  .ring {
+    border-top-color: currentColor;
+    animation: spinner-pulse 1.2s ease-in-out infinite;
+  }
+}
+
+@keyframes spinner-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}

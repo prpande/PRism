@@ -91,6 +91,9 @@ Thumbs.db
 # pr-autopilot ephemeral state (not versioned)
 .pr-autopilot/
 
+# Scratch / ephemeral working files
+.tmp/
+
 # Code coverage reports
 coveragereport/
 
