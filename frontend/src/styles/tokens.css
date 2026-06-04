@@ -945,3 +945,28 @@ a:hover { text-decoration: underline; }
   color: var(--accent);
   font-size: var(--text-xs);
 }
+/* Syntax highlighting — global classes so the dual-theme selector below
+   matches the literal rendered class (CSS-module hashing would not). */
+.codeLine {
+  display: inline; /* single direct child of the diff content cell; in split
+                      scroll-mode the existing .diffContent > * rule forces
+                      inline-block + translateX onto it. Never display:contents. */
+}
+.codeToken {
+  color: var(--shiki-light); /* light is the default; tokens carry no bare color */
+}
+html[data-theme='dark'] .codeToken {
+  color: var(--shiki-dark);
+}
+/* Background-only word-diff variants for the highlighted (merged) path —
+   foreground is owned by .codeToken. Full-color .wordDiffInsert/.wordDiffDelete
+   in WordDiffOverlay.module.css stay for the no-token fallback path. */
+.wordDiffInsertBg {
+  background: var(--diff-add-bg);
+  border-radius: 2px;
+}
+.wordDiffDeleteBg {
+  background: var(--diff-rem-bg);
+  border-radius: 2px;
+  text-decoration: line-through;
+}
