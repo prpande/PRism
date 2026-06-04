@@ -78,6 +78,20 @@ function MergedPairedContent({
   // sideText is the token concatenation, NOT pair.content — guarantees
   // sum(token.length) === sideText.length so the merge's index walk is always in-bounds.
   const sideText = toks.map((t) => t.text).join('');
+  // Defense-in-depth: the word-diff indexes sideText's coordinate space, so the
+  // tokens for this line MUST equal this side's content. In whole-file mode a
+  // line-number/blob disagreement would silently mis-highlight; fall back to the
+  // always-correct overlay instead.
+  const expected = normalizeEol(side === 'old' ? oldText : newText);
+  if (sideText !== expected) {
+    return (
+      <WordDiffOverlay
+        oldText={oldText}
+        newText={newText}
+        type={side === 'old' ? 'delete' : 'insert'}
+      />
+    );
+  }
   const parts = diffWordsWithSpace(normalizeEol(oldText), normalizeEol(newText));
   const spans = mergeWordDiffWithTokens(sideText, toks, parts, side);
   return <HighlightedLine spans={spans} fallback={sideText} />;
@@ -352,11 +366,13 @@ export function DiffPane({
   // (over the large-file budget). Briefly true during normal warm-up too — the
   // header label trades a short flicker for an honest "off" signal on big files.
   const highlightSuppressed =
-    syntax.newLineTokens.size === 0 &&
+    syntax.ready &&
+    selectedPath != null &&
+    pathToLang(selectedPath) !== null &&
     file != null &&
     file.hunks.length > 0 &&
-    selectedPath != null &&
-    pathToLang(selectedPath) !== null;
+    syntax.oldLineTokens.size === 0 &&
+    syntax.newLineTokens.size === 0;
 
   function renderDiffRows(): React.ReactNode[] {
     if (isSplit) return renderSplitRows();

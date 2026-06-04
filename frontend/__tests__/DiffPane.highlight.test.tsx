@@ -103,5 +103,56 @@ describe('DiffPane syntax highlighting', () => {
     await waitFor(() => expect(container.querySelector('.codeToken')).not.toBeNull());
     // a changed token carries both a syntax color var AND a background class
     expect(container.querySelector('.codeToken.wordDiffInsertBg')).not.toBeNull();
+    // the paired delete row carries the delete-background class on its changed token
+    expect(container.querySelector('.codeToken.wordDiffDeleteBg')).not.toBeNull();
+  });
+
+  it('does not show the large-file indicator for a normal small file', async () => {
+    await getHighlighterAsync();
+    const { container, queryByText } = render(
+      <DiffPane
+        prRef={prRef}
+        selectedPath="a.ts"
+        file={file}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        headSha="h"
+        baseSha="b"
+      />,
+    );
+    await waitFor(() => expect(container.querySelector('.codeToken')).not.toBeNull());
+    expect(queryByText(/Syntax highlighting off/)).toBeNull();
+  });
+
+  it('shows the large-file indicator when highlighting is suppressed by size', async () => {
+    await getHighlighterAsync();
+    const bigBody =
+      '@@ -1,2001 +1,2001 @@\n' +
+      Array.from({ length: 2001 }, (_, i) => ` const v${i} = ${i};`).join('\n');
+    const big = {
+      path: 'a.ts',
+      status: 'modified',
+      hunks: [{ oldStart: 1, oldLines: 2001, newStart: 1, newLines: 2001, body: bigBody }],
+    } as unknown as FileChange;
+    const { container, queryByText } = render(
+      <DiffPane
+        prRef={prRef}
+        selectedPath="a.ts"
+        file={big}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        headSha="h"
+        baseSha="b"
+      />,
+    );
+    await waitFor(() =>
+      expect(queryByText(/Syntax highlighting off \(large file\)/)).not.toBeNull(),
+    );
+    // suppressed → no syntax tokens emitted
+    expect(container.querySelector('.codeToken')).toBeNull();
   });
 });

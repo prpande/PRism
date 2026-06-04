@@ -22,13 +22,14 @@ export interface UseSyntaxTokensInput {
 export interface SyntaxTokenMaps {
   oldLineTokens: Map<number, LineToken[]>;
   newLineTokens: Map<number, LineToken[]>;
+  ready: boolean;
 }
 
 const MAX_FILE_LINES = 2000;
 const MAX_FILE_BYTES = 200_000;
 // Shared stable-identity sentinel — returned (never mutated) so downstream
 // memo consumers don't re-render when the maps are empty.
-const EMPTY: SyntaxTokenMaps = { oldLineTokens: new Map(), newLineTokens: new Map() };
+const EMPTY: SyntaxTokenMaps = { oldLineTokens: new Map(), newLineTokens: new Map(), ready: false };
 
 export function normalizeEol(s: string): string {
   return s.replace(/\r$/, '');
@@ -99,7 +100,7 @@ export function useSyntaxTokens(input: UseSyntaxTokensInput): SyntaxTokenMaps {
     const oldLineTokens =
       oldSource !== null ? mapWhole(oldSource, lang) : mapHunks(file, 'old', lang);
 
-    return { oldLineTokens, newLineTokens };
+    return { oldLineTokens, newLineTokens, ready: true };
     // headSha/baseSha bust the memo on PR navigation / force-push even when
     // path & lang are unchanged; newSource/oldSource cover content changes.
   }, [ready, lang, file, newSource, oldSource, input.headSha, input.baseSha]);
