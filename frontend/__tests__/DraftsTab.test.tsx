@@ -149,7 +149,7 @@ describe('DraftsTab', () => {
     const empty = screen.getByText(/No drafts on this PR yet/i);
     expect(empty).toBeInTheDocument();
     expect(empty).toHaveClass(emptyStyles.draftsTabEmpty);
-    expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
+    expect(screen.getByTestId('drafts-tab-root')).toBeInTheDocument();
   });
 
   it('AppliesBothLiteralAndModuleClasses_OnDraftsTabRoot', () => {
@@ -157,7 +157,7 @@ describe('DraftsTab', () => {
       session: mkSession({ draftComments: [mkComment()] }),
       status: 'ready',
     });
-    const root = screen.getByTestId('drafts-tab');
+    const root = screen.getByTestId('drafts-tab-root');
     expect(root).toHaveClass('drafts-tab');
     expect(root).toHaveClass(draftsTabStyles.draftsTab);
   });
@@ -184,7 +184,7 @@ describe('DraftsTab', () => {
     // Two file group headers
     expect(screen.getByText('src/Foo.cs')).toBeInTheDocument();
     expect(screen.getByText('src/Bar.cs')).toBeInTheDocument();
-    expect(screen.getByTestId('drafts-tab')).toBeInTheDocument();
+    expect(screen.getByTestId('drafts-tab-root')).toBeInTheDocument();
   });
 
   it('RendersHeader_CountsDraftsAndFiles', () => {

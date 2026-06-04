@@ -409,7 +409,7 @@ export function FilesTab() {
   );
 
   return (
-    <div className={`files-tab ${styles.filesTab}`} data-testid="files-tab">
+    <div className={`files-tab ${styles.filesTab}`} data-testid="files-tab-root">
       <div className={`files-tab-toolbar ${styles.filesTabToolbar}`}>
         {isLowQuality ? (
           <CommitMultiSelectPicker

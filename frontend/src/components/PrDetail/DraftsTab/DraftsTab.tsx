@@ -124,14 +124,14 @@ export function DraftsTab({ prRef, session, status, refetch, readOnly = false }:
     // Empty state shows only DraftListEmpty — the "0 drafts" count header was
     // redundant alongside it (#118). The count header returns for total > 0.
     return (
-      <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab">
+      <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab-root">
         <DraftListEmpty />
       </div>
     );
   }
 
   return (
-    <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab">
+    <div className={`drafts-tab ${styles.draftsTab}`} data-testid="drafts-tab-root">
       <div className={`drafts-tab-header row gap-2 ${styles.draftsTabHeader}`}>
         <span className={`drafts-tab-header-title ${styles.draftsTabHeaderTitle}`}>
           {summary.total} draft{summary.total === 1 ? '' : 's'}
