@@ -29,7 +29,11 @@
 .tab:hover,
 .tab:focus-visible {
   text-decoration: none;
-  color: var(--accent);
+  /* --accent-hover (not --accent): on the faint tint, plain --accent text only
+     reaches ~4.1–4.3:1 in light theme (below WCAG AA 4.5 for 14px labels) across
+     all three accents; --accent-hover is darker in light / lighter in dark, which
+     lifts every accent to ~5.3–5.6:1 light and higher in dark. */
+  color: var(--accent-hover);
   background: color-mix(in oklch, var(--accent) 10%, transparent);
   box-shadow: 0 0 12px -2px var(--accent-ring);
 }
