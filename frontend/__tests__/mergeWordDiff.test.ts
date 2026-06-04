@@ -45,6 +45,7 @@ describe('mergeWordDiffWithTokens', () => {
     const spans = mergeWordDiffWithTokens(newText, [tok(newText)], parts, 'new');
     // text is reproduced exactly — no normalization drift
     expect(spans.map((s) => s.text).join('')).toBe(newText);
+    expect(spans.some((s) => s.change === 'insert' && s.text.includes('y'))).toBe(true);
   });
 
   it('marks removed words on the old side as delete', () => {
@@ -53,7 +54,13 @@ describe('mergeWordDiffWithTokens', () => {
     const parts = diffWordsWithSpace(oldText, newText);
     const spans = mergeWordDiffWithTokens(oldText, [tok(oldText)], parts, 'old');
     expect(spans.map((s) => s.text).join('')).toBe(oldText);
-    expect(spans.some((s) => s.change === 'delete')).toBe(true);
+    const deleted = spans
+      .filter((s) => s.change === 'delete')
+      .map((s) => s.text)
+      .join('');
+    expect(deleted.length).toBeGreaterThan(0);
+    // 'foo(' is unchanged context — a sign-flip in the old-side branch would wrongly flag it
+    expect(spans.find((s) => s.text === 'foo(')?.change).toBeUndefined();
   });
 
   it('handles a capped single plaintext token (still backgrounds changes)', () => {
@@ -62,5 +69,25 @@ describe('mergeWordDiffWithTokens', () => {
     const parts = diffWordsWithSpace(oldText, newText);
     const spans = mergeWordDiffWithTokens(newText, [tok('b')], parts, 'new');
     expect(spans).toEqual([{ text: 'b', style: {}, change: 'insert' }]);
+  });
+
+  it('returns no spans for an empty token list', () => {
+    const parts = diffWordsWithSpace('x', 'y');
+    expect(mergeWordDiffWithTokens('y', [], parts, 'new')).toEqual([]);
+  });
+
+  it('marks an old-side deletion straddling a token boundary', () => {
+    const oldText = 'aa bb';
+    const newText = 'aa';
+    const parts = diffWordsWithSpace(oldText, newText);
+    // token boundary ('aa ' | 'bb') sits inside the deleted ' bb'
+    const spans = mergeWordDiffWithTokens(oldText, [tok('aa '), tok('bb')], parts, 'old');
+    expect(spans.map((s) => s.text).join('')).toBe('aa bb');
+    const deleted = spans
+      .filter((s) => s.change === 'delete')
+      .map((s) => s.text)
+      .join('');
+    expect(deleted).toBe(' bb');
+    expect(spans.find((s) => s.text === 'aa')?.change).toBeUndefined();
   });
 });
