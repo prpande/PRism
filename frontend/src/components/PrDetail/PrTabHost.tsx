@@ -43,16 +43,27 @@ export function PrTabHost() {
     if (route && route.valid) addTab(route.ref, null);
   }, [addTab, activeKey]);
   if (route && !route.valid) {
-    return <div role="alert">Invalid PR reference: number must be an integer.</div>;
+    return <div role="alert">Invalid PR reference: the PR number must be a positive integer.</div>;
+  }
+  // On a cold direct load of a /pr/... URL (refresh, deep link), openTabs is
+  // still empty on first paint — the addTab effect above runs post-render.
+  // Union the active route's ref into the mounted set so its view renders
+  // immediately instead of flashing blank for a frame. addTab then makes it a
+  // permanent openTabs entry (idempotent on prRefKey); because PrDetailView is
+  // keyed by prRefKey, it stays mounted across that transition (no remount, no
+  // lost state).
+  const refs: PrReference[] = openTabs.map((t) => t.ref);
+  if (route && route.valid && activeKey && !refs.some((r) => prRefKey(r) === activeKey)) {
+    refs.push(route.ref);
   }
   return (
     <>
-      {openTabs.map((t) => {
-        const key = prRefKey(t.ref);
+      {refs.map((ref) => {
+        const key = prRefKey(ref);
         return (
           <PrDetailView
             key={key}
-            prRef={t.ref}
+            prRef={ref}
             active={key === activeKey}
             initialSubTab={key === activeKey ? route?.subTab : undefined}
           />

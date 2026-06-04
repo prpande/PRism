@@ -4,7 +4,7 @@
 
 **Goal:** Keep every open PR-detail tab mounted (hidden when inactive) so its view state — sub-tab, scroll position, selected file, expanded folders, open composers — survives navigating to the Inbox or another tab, instead of React Router unmounting and resetting it.
 
-**Architecture:** A persistent `PrTabHost` (sibling to `<Routes>`) renders one mounted `PrDetailView` per open tab, toggling visibility with the `hidden` attribute. Sub-tab selection moves from nested routes into per-view component state; the three sub-tab components (`OverviewTab`/`FilesTab`/`DraftsTabRoute`) take `prRef` + session as props instead of `useParams`/`useOutletContext`. Each view is its own scroll container so `hidden` (`display:none`) natively preserves `scrollTop`. A focus-transition hook re-fetches detail (re-stamping `mark-viewed`) and clears the unread dot when a tab is re-activated.
+**Architecture:** A persistent `PrTabHost` (sibling to `<Routes>`) renders one mounted `PrDetailView` per open tab, toggling visibility with the `hidden` attribute. Sub-tab selection moves from nested routes into per-view component state; the three sub-tab components (`OverviewTab`/`FilesTab`/`DraftsTabRoute`) take `prRef` + session as props instead of `useParams`/`useOutletContext`. All views share the single outer `data-app-scroll` scroller; each view's `scrollTop` is saved/restored per `(prRef, subTab)` by `useTabScrollMemory`, and a `data-files-active` marker rescopes the Files viewport rules to fire only for the active Files view (see the "Scroll model decision" note below — the spec's per-view-container idea was rejected during plan review). A focus-transition hook re-fetches detail (re-stamping `mark-viewed`) and clears the unread dot when a tab is re-activated.
 
 **Tech Stack:** React 18 + TypeScript + Vite + React Router v6, Vitest + Testing Library (jsdom), Playwright. Source spec: [`../specs/2026-06-04-pr-tab-state-keepalive-design.md`](../specs/2026-06-04-pr-tab-state-keepalive-design.md).
 
@@ -37,12 +37,12 @@ Spec §7 sketches a 5-PR sequence that ships keep-alive (PR3) before the per-vie
 - `frontend/src/App.tsx` — PR route renders `null`; mount `<PrTabHost/>` as a sibling.
 - `frontend/src/pages/PrDetailPage.tsx` — becomes a thin re-export/shim or is deleted; logic moves to `PrDetailView`. Keep `PrDetailOutletContext` type's fields in `prDetailContext.ts`.
 - `frontend/src/components/PrDetail/OverviewTab/OverviewTab.tsx`, `FilesTab/FilesTab.tsx`, `DraftsTab/DraftsTabRoute.tsx` — consume `usePrDetailContext()` instead of `useOutletContext`/`useParams`; `OverviewTab` sub-tab nav via context callback.
-- `frontend/src/styles/tokens.css` — scope the `:has(.files-tab)` viewport rules to the per-view container.
+- `frontend/src/styles/tokens.css` — replace the global `:has(.files-tab)` viewport rules with rules scoped to a `data-files-active` marker the active view stamps on the shared `data-app-scroll` while showing Files.
 - Test files listed in PR3.
 
 ---
 
-## PR1 — Structural core: host, sub-tab state, scroll container
+## PR1 — Structural core: host, sub-tab state, scroll memory
 
 ### Task 1: Per-view PR-detail context (replaces Outlet + useParams)
 

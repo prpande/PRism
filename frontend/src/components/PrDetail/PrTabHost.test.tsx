@@ -4,7 +4,11 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
 import type { PrDetailDto } from '../../api/types';
 import { App } from '../../App';
-import { parsePrRoute } from './PrTabHost';
+import { PrTabHost, parsePrRoute } from './PrTabHost';
+import { OpenTabsContext, type OpenTabsContextValue } from '../../contexts/OpenTabsContext';
+import { ToastProvider } from '../../components/Toast';
+import { CheatsheetProvider } from '../../components/Cheatsheet';
+import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 
 // ---------------------------------------------------------------------------
 // Keep-alive host integration test. We mount the REAL <App/> (its provider tree
@@ -190,6 +194,39 @@ describe('PrTabHost', () => {
 
     navigate('/pr/acme/api/7');
     expect(screen.getByTestId('files-tab-root')).toBeVisible(); // state survived
+  });
+
+  test('renders the active PR view on direct load even before addTab populates openTabs', () => {
+    // Regression: on a cold direct load (refresh / deep link) openTabs is empty
+    // on first paint and addTab only runs post-render. Stub addTab to a no-op so
+    // openTabs NEVER gains the entry — the view must still render, proving the
+    // host unions the active route ref into the mounted set rather than waiting
+    // on the effect (which would flash blank).
+    const stub: OpenTabsContextValue = {
+      openTabs: [],
+      unreadKeys: new Set<string>(),
+      addTab: vi.fn(),
+      setTitle: vi.fn(),
+      closeTab: vi.fn(),
+      clearAllTabs: vi.fn(),
+      markUnread: vi.fn(),
+      clearUnread: vi.fn(),
+    };
+    render(
+      <ToastProvider>
+        <CheatsheetProvider>
+          <OpenTabsContext.Provider value={stub}>
+            <AskAiDrawerProvider>
+              <MemoryRouter initialEntries={['/pr/acme/api/7']}>
+                <PrTabHost />
+              </MemoryRouter>
+            </AskAiDrawerProvider>
+          </OpenTabsContext.Provider>
+        </CheatsheetProvider>
+      </ToastProvider>,
+    );
+    expect(document.querySelector('[data-prref="acme/api/7"]')).toBeInTheDocument();
+    expect(stub.addTab).toHaveBeenCalled(); // effect still tries to register it
   });
 });
 

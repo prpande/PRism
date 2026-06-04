@@ -4,7 +4,7 @@
 **Status**: Approved — brainstorm output; implementation plan written (`../plans/2026-06-04-pr-tab-state-keepalive.md`) and in execution. The scroll model (§3.3 / §5.1) was revised during planning from per-view containers to a shared scroller with manual save/restore; those sections carry the revision note.
 **Source authorities**:
 - `frontend/src/App.tsx` — the current `<Routes>` table that renders one route element at a time and unmounts `PrDetailPage` on every navigation. This spec restructures it.
-- `frontend/src/pages/PrDetailPage.tsx` — today's PR-detail container (`PrDetailPage` + `PrDetailPageInner`). Becomes the per-tab keep-alive view.
+- `frontend/src/pages/PrDetailPage.tsx` *(historical — deleted by this slice)* — was the PR-detail container (`PrDetailPage` + `PrDetailPageInner`). Its logic is extracted into `frontend/src/components/PrDetail/PrDetailView.tsx` (the per-tab keep-alive view) and this file is removed.
 - `frontend/src/contexts/OpenTabsContext.tsx` — the in-memory open-tabs registry (`addTab`/`setTitle`/`closeTab`/`clearAllTabs`). The host reads it to decide which views to mount.
 - `frontend/src/components/PrTabStrip/PrTabStrip.tsx` — the browser-style tab strip. Tab clicks activate a kept-alive view instead of remounting one.
 - `frontend/src/hooks/usePrDetail.ts` — fetch + `postMarkViewed` stamp coupling (lines 52–79) that makes refetch-on-focus re-stamp for free; the same-PR reload guard (lines 46–48) keeps prior data visible so the refresh has no skeleton flash.
