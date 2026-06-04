@@ -26,6 +26,8 @@ export interface SyntaxTokenMaps {
 
 const MAX_FILE_LINES = 2000;
 const MAX_FILE_BYTES = 200_000;
+// Shared stable-identity sentinel — returned (never mutated) so downstream
+// memo consumers don't re-render when the maps are empty.
 const EMPTY: SyntaxTokenMaps = { oldLineTokens: new Map(), newLineTokens: new Map() };
 
 export function normalizeEol(s: string): string {
@@ -39,6 +41,7 @@ function tooLarge(text: string): boolean {
 // Build a line→tokens map from a whole-file blob (1-based line numbers).
 function mapWhole(content: string, lang: ReturnType<typeof pathToLang>): Map<number, LineToken[]> {
   const m = new Map<number, LineToken[]>();
+  if (content === '') return m; // empty file → no lines (avoid a phantom line-1 token)
   if (tooLarge(content)) return m;
   const lines = tokenizeLines(content, lang);
   lines.forEach((toks, i) => m.set(i + 1, toks));
@@ -97,5 +100,7 @@ export function useSyntaxTokens(input: UseSyntaxTokensInput): SyntaxTokenMaps {
       oldSource !== null ? mapWhole(oldSource, lang) : mapHunks(file, 'old', lang);
 
     return { oldLineTokens, newLineTokens };
+    // headSha/baseSha bust the memo on PR navigation / force-push even when
+    // path & lang are unchanged; newSource/oldSource cover content changes.
   }, [ready, lang, file, newSource, oldSource, input.headSha, input.baseSha]);
 }

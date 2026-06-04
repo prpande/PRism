@@ -85,4 +85,40 @@ describe('useSyntaxTokens', () => {
         .join(''),
     ).toBe('const a = 1;');
   });
+
+  it('returns empty maps when file is null', async () => {
+    await getHighlighterAsync();
+    const { result } = renderHook(() =>
+      useSyntaxTokens({
+        path: 'a.ts',
+        file: null,
+        wholeFileEnabled: false,
+        wholeFile: { ...okWhole, fetchStatus: 'idle' },
+        isSplit: true,
+        headSha: 'h',
+        baseSha: 'b',
+      }),
+    );
+    expect(result.current.newLineTokens.size).toBe(0);
+    expect(result.current.oldLineTokens.size).toBe(0);
+  });
+
+  it('suppresses whole-file tokens past the large-file line guard', async () => {
+    await getHighlighterAsync();
+    const big = Array.from({ length: 2001 }, (_, i) => `const v${i} = ${i};`).join('\n');
+    const { result } = renderHook(() =>
+      useSyntaxTokens({
+        path: 'a.ts',
+        file: file('@@ -1,1 +1,1 @@\n-x\n+y'),
+        wholeFileEnabled: true,
+        wholeFile: { fetchStatus: 'ok', headContent: big, baseContent: null, failureReason: null },
+        isSplit: true,
+        headSha: 'h',
+        baseSha: 'b',
+      }),
+    );
+    // Whole-file new side is too large → mapWhole returns empty; no whole-file tokens.
+    await waitFor(() => expect(result.current).toBeDefined());
+    expect(result.current.newLineTokens.size).toBe(0);
+  });
 });
