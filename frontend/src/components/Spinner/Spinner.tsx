@@ -13,8 +13,10 @@ interface SpinnerProps {
  * Reusable accent-colored loading spinner. Color resolves from the ring's own
  * `--spinner-color` (defaults to `--accent`), so it is immune to ambient text
  * color at the call site. `prefers-reduced-motion` swaps rotation for a gentle
- * opacity pulse. The visible label lives in the global `.sr-only` util so the
- * status region carries a non-empty accessible name.
+ * opacity pulse. The label lives in the global `.sr-only` util as the status
+ * region's text content, which is what assistive tech announces (the `status`
+ * role does not derive an accessible name from content, so assert on the text,
+ * not a name-scoped query).
  */
 export function Spinner({ size = 'md', label = 'Loading…', className }: SpinnerProps) {
   const rootClass = [styles.root, className].filter(Boolean).join(' ');

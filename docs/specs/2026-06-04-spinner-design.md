@@ -58,9 +58,9 @@ out of scope for this slice:
 
 ```tsx
 interface SpinnerProps {
-  size?: 'sm' | 'md' | 'lg'; // 16 / 24 / 40 px — default 'md'
-  label?: string;            // a11y text — default 'Loading…'
-  className?: string;        // layout hook for the call site (centering, margins)
+  size?: "sm" | "md" | "lg"; // 16 / 24 / 40 px — default 'md'
+  label?: string; // a11y text — default 'Loading…'
+  className?: string; // layout hook for the call site (centering, margins)
 }
 ```
 
@@ -73,7 +73,7 @@ return (
   <span
     role="status"
     aria-live="polite"
-    className={[styles.root, className].filter(Boolean).join(' ')}
+    className={[styles.root, className].filter(Boolean).join(" ")}
   >
     <span className={`${styles.ring} ${sizeClass}`} aria-hidden="true" />
     <span className="sr-only">{label}</span>
@@ -101,15 +101,28 @@ diff-pane loading span) and cannot be defeated by single-class cascade order:
   box-sizing: border-box;
   color: var(--spinner-color, var(--accent)); /* accent default; overridable */
   border: 2px solid currentColor;
-  border-top-color: transparent;              /* the gap that reads as motion */
+  border-top-color: transparent; /* the gap that reads as motion */
   border-radius: 50%;
   animation: spinner-rotate 0.6s linear infinite;
 }
-.sm { width: 16px; height: 16px; }
-.md { width: 24px; height: 24px; }
-.lg { width: 40px; height: 40px; }
+.sm {
+  width: 16px;
+  height: 16px;
+}
+.md {
+  width: 24px;
+  height: 24px;
+}
+.lg {
+  width: 40px;
+  height: 40px;
+}
 
-@keyframes spinner-rotate { to { transform: rotate(360deg); } }
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
 
 /* Reduced motion: no rotation. Restore the full ring and convey activity with a
    gentle opacity pulse (non-vestibular) instead of a silent static circle. */
@@ -119,7 +132,15 @@ diff-pane loading span) and cannot be defeated by single-class cascade order:
     animation: spinner-pulse 1.2s ease-in-out infinite;
   }
 }
-@keyframes spinner-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes spinner-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
 ```
 
 A future consumer that wants the inherited-color behavior (the discard one-off)
@@ -145,22 +166,30 @@ sets `--spinner-color: currentColor` via its `className` — no component change
 
 ## Testing
 
-- `Spinner.test.tsx`: renders `getByRole('status')`; default accessible name is
-  `Loading…` (`getByRole('status', { name: /loading/i })`); custom `label`
-  honored and non-empty; size class applied to the ring. (jsdom cannot assert CSS
-  animation — that is covered by the e2e below.)
+- `Spinner.test.tsx`: renders `getByRole('status')`; the default label `Loading…`
+  is present as the region's text (`within(getByRole('status')).getByText(/loading/i)`,
+  not a name-scoped query — see the note below); custom `label` honored and
+  non-empty; size class applied to the ring. (jsdom cannot assert CSS animation —
+  that is covered by the e2e below.)
 - **DiffPane loading branches have zero test coverage today** — add new coverage:
-  assert `getByRole('status', { name: /loading/i })` renders in the file-fetch
-  branch and `name: /loading whole file/i` in the overlay branch.
+  assert the file-fetch branch renders a `role="status"` region whose label text
+  matches `/loading/i`, and the overlay branch one whose text matches
+  `/loading whole file/i`. Query as `within(getByRole('status')).getByText(...)`,
+  **not** a name-scoped `getByRole('status', { name })`: the `status` role does
+  not derive its accessible name from content, so a name-scoped query would not
+  match the sr-only label. The text-within-region check still guards a dropped
+  label.
 - **InboxPage.test.tsx:154** currently asserts `getByText(/loading/i)`. Migrate to
-  `getByRole('status', { name: /loading/i })` (name-scoped, not bare role — a bare
-  role check would stay green if the label were dropped). This is the *only*
-  existing spec that asserts the literal text; the DiffPane specs do not.
+  `within(getByRole('status')).getByText(/loading/i)` — scopes the text assertion
+  to the live region (a bare `getByText` would also match incidental copy), while
+  still failing if the label is dropped. This is the _only_ existing spec that
+  asserts the literal text; the DiffPane specs do not.
 - **Reduced-motion e2e** (`a11y-audit.spec.ts`, mirroring the LoadingScreen case):
   `page.emulateMedia({ reducedMotion: 'reduce' })`, render a route showing a
-  spinner, assert the ring's computed `animation-name` is **not** `spinner-rotate`
-  (it is `spinner-pulse` — i.e. rotation is suppressed). Required to evidence
-  acceptance criterion #4.
+  spinner, assert the ring's computed `animation-duration` is `1.2s` (the pulse
+  timing) rather than `0.6s` (the rotation) — CSS-modules hash the `@keyframes`
+  name, so `animation-name` is not a stable assertion target across dev/prod
+  builds, but the duration is. Required to evidence acceptance criterion #4.
 - **Contrast check (B1 / WCAG 1.4.11 non-text 3:1):** verify the default
   `--accent` ring against the surfaces it renders on — light `--surface-0`
   (oklch L≈0.96, Inbox) and `--surface-1` (L≈0.99, diff pane) — by computing
@@ -179,4 +208,7 @@ sets `--spinner-color: currentColor` via its `className` — no component change
   dropping `aria-busy` on the Inbox `<main>`.
 - Ambient `color` defeating an accent ring — mitigated by declaring color on
   `.ring` via `--spinner-color`/`--accent`, not relying on inheritance.
-- Tests weakening to bare role existence — mitigated by name-scoped queries.
+- Tests weakening to bare role existence — mitigated by asserting the label text
+  _within_ the live region (`within(getByRole('status')).getByText(...)`), which
+  fails if the label is dropped. (Name-scoped `getByRole('status', { name })`
+  would not work here: the `status` role does not derive its name from content.)
