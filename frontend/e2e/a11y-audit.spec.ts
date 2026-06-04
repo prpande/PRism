@@ -278,6 +278,63 @@ test.describe('A11y audit — automated axe-core pass per spec § 6', () => {
     await runAxe(page);
   });
 
+  // ---------------------------------------------------------------------------
+  // Spec § 6 (Task 10) — highlighted diff must not introduce new axe violations.
+  //
+  // The base setupBaseMocks returns an empty diff ({files:[]}) so the
+  // /pr/.../1/files test above never exercises HighlightedLine / .codeToken
+  // spans. This test overrides that route with a real .ts hunk that forces
+  // pathToLang → TypeScript grammar → Shiki token expansion, including a
+  // context line, a paired delete/insert (word-diff background classes), and
+  // a solo insert — covering all three HighlightedLine code paths. The single
+  // file auto-selects via the FilesTab useEffect (fileList[0]), so no
+  // tree-row click is needed.
+  // ---------------------------------------------------------------------------
+  test('PR files — highlighted diff (.codeToken spans) — no serious/critical violations', async ({
+    page,
+  }) => {
+    // Fixture: one .ts file with a mixed hunk to exercise all highlight paths.
+    const highlightedDiff = {
+      range: 'abc..def',
+      truncated: false,
+      files: [
+        {
+          path: 'sample.ts',
+          status: 'modified',
+          hunks: [
+            {
+              oldStart: 1,
+              oldLines: 2,
+              newStart: 1,
+              newLines: 3,
+              body: '@@ -1,2 +1,3 @@\n const greeting = "hello";\n-const count = 1;\n+const count = 2;\n+const done = true;',
+            },
+          ],
+        },
+      ],
+    };
+
+    await setupBaseMocks(page);
+    // Override the empty-diff mock with the highlightable fixture.
+    await page.unroute('**/api/pr/octocat/Hello-World/1/diff**');
+    await page.route('**/api/pr/octocat/Hello-World/1/diff**', (route: Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(highlightedDiff),
+      }),
+    );
+
+    await page.goto('/pr/octocat/Hello-World/1/files');
+    await expect(
+      page.getByRole('heading', { name: /sample pull request for a11y audit/i }),
+    ).toBeVisible({ timeout: 30_000 });
+    // The single file auto-selects (FilesTab useEffect sets selectedPath =
+    // fileList[0]). Wait for Shiki to resolve and .codeToken spans to render.
+    await expect(page.locator('.codeToken').first()).toBeVisible({ timeout: 30_000 });
+    await runAxe(page);
+  });
+
   test('PR drafts (/pr/octocat/Hello-World/1/drafts) — no serious/critical violations', async ({
     page,
   }) => {
