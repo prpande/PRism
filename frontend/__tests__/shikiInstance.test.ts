@@ -52,12 +52,18 @@ describe('tokenizeLines', () => {
     const lines = tokenizeLines(`${long}\nshort`, 'typescript');
     expect(lines[0]).toEqual([{ text: long, style: {} }]);
     expect(lines[0].length).toBe(1);
+    // The non-capped line must be highlighted, not also plaintext.
+    expect(lines[1].map((t) => t.text).join('')).toBe('short');
+    expect(lines[1].find((t) => Object.keys(t.style).length > 0)).toBeDefined();
   }, 15_000);
 
   it('drops non-hex color values (supply-chain guard)', async () => {
     await getHighlighterAsync();
     const lines = tokenizeLines('return;', 'typescript');
-    const styled = lines.flat().find((t) => t.style['--shiki-light']);
-    expect(styled!.style['--shiki-light']).toMatch(/^#[0-9a-fA-F]{3,8}$/);
+    const allStyled = lines.flat().filter((t) => '--shiki-light' in t.style);
+    expect(allStyled.length).toBeGreaterThan(0);
+    for (const t of allStyled) {
+      expect(t.style['--shiki-light']).toMatch(/^#[0-9a-fA-F]{3,8}$/);
+    }
   }, 15_000);
 });

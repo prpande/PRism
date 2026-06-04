@@ -75,7 +75,8 @@ export interface LineToken {
 }
 
 const MAX_LINE_CHARS = 2000;
-const HEX = /^#[0-9a-fA-F]{3,8}$/;
+// Valid CSS hex lengths: 3, 4, 6, or 8 hex digits (5 and 7 are not valid CSS).
+const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 // Shiki types htmlStyle as `string | Record<string,string> | undefined`; the
 // dual-theme defaultColor:false path always yields the object form, but the
@@ -92,11 +93,17 @@ function safeStyle(htmlStyle: string | Record<string, string> | undefined): Reco
 export function tokenizeLines(code: string, lang: ShikiLang | null): LineToken[][] {
   const rawLines = code.split('\n');
   const hl = highlighterInstance;
+  // Two reasons to fall back to plaintext: (1) highlighter not yet loaded, or
+  // (2) no grammar registered for this file type (lang === null).
   if (!hl || lang === null) {
     return rawLines.map((line) => [{ text: line, style: {} }]);
   }
   // Per-line char cap: blank over-long lines in the tokenize source (keeps line
   // count stable) and override their result with a single plaintext token.
+  // Known PoC limitation: blanking a line can disturb multi-line grammar state
+  // (e.g. an open template literal or block comment spanning the blanked line
+  // will cause miscoloring on subsequent lines). Accepted because >2000-char
+  // lines are almost always minified single-line blobs in practice.
   const capped = new Set<number>();
   const source = rawLines
     .map((line, i) => {
@@ -120,6 +127,13 @@ export function tokenizeLines(code: string, lang: ShikiLang | null): LineToken[]
   });
 }
 
+// Derive the set of langs to load from the lookup maps so they can never drift.
+// If a lang is referenced in a map but missing here, pathToLang would return a
+// grammar that codeToTokens would throw on.
+const LANGS_TO_LOAD: ShikiLang[] = [
+  ...new Set<ShikiLang>([...Object.values(EXT_TO_LANG), ...Object.values(BASENAME_TO_LANG)]),
+];
+
 export function getHighlighter(): Highlighter | null {
   if (highlighterInstance) return highlighterInstance;
 
@@ -127,26 +141,7 @@ export function getHighlighter(): Highlighter | null {
     highlighterPromise = import('shiki').then(async (mod) => {
       const hl = await mod.createHighlighter({
         themes: ['github-dark', 'github-light'],
-        langs: [
-          'typescript',
-          'javascript',
-          'json',
-          'html',
-          'css',
-          'markdown',
-          'yaml',
-          'bash',
-          'csharp',
-          'python',
-          'go',
-          'rust',
-          'jsx',
-          'tsx',
-          'sql',
-          'xml',
-          'dockerfile',
-          'toml',
-        ],
+        langs: LANGS_TO_LOAD,
       });
       highlighterInstance = hl;
       return hl;
