@@ -71,4 +71,37 @@ describe('DiffPane syntax highlighting', () => {
       expect(c.parentElement!.querySelectorAll(':scope > .codeLine').length).toBe(1),
     );
   });
+
+  it('layers token color and background-only word-diff on paired lines', async () => {
+    await getHighlighterAsync();
+    const paired = {
+      path: 'a.ts',
+      status: 'modified',
+      hunks: [
+        {
+          oldStart: 1,
+          oldLines: 1,
+          newStart: 1,
+          newLines: 1,
+          body: '@@ -1,1 +1,1 @@\n-const a = 1;\n+const a = 2;',
+        },
+      ],
+    } as unknown as FileChange;
+    const { container } = render(
+      <DiffPane
+        prRef={prRef}
+        selectedPath="a.ts"
+        file={paired}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        headSha="h"
+        baseSha="b"
+      />,
+    );
+    await waitFor(() => expect(container.querySelector('.codeToken')).not.toBeNull());
+    // a changed token carries both a syntax color var AND a background class
+    expect(container.querySelector('.codeToken.wordDiffInsertBg')).not.toBeNull();
+  });
 });

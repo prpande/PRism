@@ -26,7 +26,9 @@ import {
   type SyntaxTokenMaps,
 } from '../../../../hooks/useSyntaxTokens';
 import { HighlightedLine } from '../../../Markdown/HighlightedLine';
-import { type LineToken } from '../../../Markdown/shikiInstance';
+import { type LineToken, pathToLang } from '../../../Markdown/shikiInstance';
+import { mergeWordDiffWithTokens } from './mergeWordDiff';
+import { diffWordsWithSpace } from 'diff';
 import { WholeFileFailureBanner } from './WholeFileFailureBanner';
 import styles from './DiffPane.module.css';
 
@@ -43,6 +45,42 @@ function tokensFor(
 ): LineToken[] {
   if (lineNum == null) return [];
   return (side === 'old' ? maps.oldLineTokens : maps.newLineTokens).get(lineNum) ?? [];
+}
+
+// Renders one side of a paired (modified) line: shiki syntax color layered with
+// background-only word-diff. When tokens are not yet available (highlighter
+// warming, or large-file suppression), falls back to the legacy WordDiffOverlay
+// so the changed-region emphasis never regresses to plaintext.
+function MergedPairedContent({
+  syntax,
+  side,
+  lineNum,
+  oldText,
+  newText,
+}: {
+  syntax: SyntaxTokenMaps;
+  side: 'old' | 'new';
+  lineNum: number | null | undefined;
+  oldText: string;
+  newText: string;
+}) {
+  const toks = tokensFor(syntax, side, lineNum ?? null);
+  if (toks.length === 0) {
+    // No tokens yet (highlighter warming / large file) → existing word-diff fallback.
+    return (
+      <WordDiffOverlay
+        oldText={oldText}
+        newText={newText}
+        type={side === 'old' ? 'delete' : 'insert'}
+      />
+    );
+  }
+  // sideText is the token concatenation, NOT pair.content — guarantees
+  // sum(token.length) === sideText.length so the merge's index walk is always in-bounds.
+  const sideText = toks.map((t) => t.text).join('');
+  const parts = diffWordsWithSpace(normalizeEol(oldText), normalizeEol(newText));
+  const spans = mergeWordDiffWithTokens(sideText, toks, parts, side);
+  return <HighlightedLine spans={spans} fallback={sideText} />;
 }
 
 export interface DiffPaneProps {
@@ -309,6 +347,17 @@ export function DiffPane({
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
   const wrapClass = lineWrap ? ' diff-pane--wrap' : '';
 
+  // Large-file indicator: when the file is a highlightable language and has
+  // hunks, but the syntax hook produced no tokens, highlighting was suppressed
+  // (over the large-file budget). Briefly true during normal warm-up too — the
+  // header label trades a short flicker for an honest "off" signal on big files.
+  const highlightSuppressed =
+    syntax.newLineTokens.size === 0 &&
+    file != null &&
+    file.hunks.length > 0 &&
+    selectedPath != null &&
+    pathToLang(selectedPath) !== null;
+
   function renderDiffRows(): React.ReactNode[] {
     if (isSplit) return renderSplitRows();
     return renderUnifiedRows();
@@ -566,6 +615,11 @@ export function DiffPane({
             Loading…
           </span>
         )}
+        {!isLoading && highlightSuppressed && (
+          <span className={`diff-pane-loading muted ${styles.diffPaneLoading}`}>
+            Syntax highlighting off (large file)
+          </span>
+        )}
       </div>
       {localFailure !== null && (
         <WholeFileFailureBanner reason={localFailure} onDismiss={dismissBanner} />
@@ -646,7 +700,16 @@ function DiffLineRow({
     if ((line.type === 'insert' || line.type === 'delete') && pair) {
       const oldText = line.type === 'delete' ? line.content : pair.content;
       const newText = line.type === 'insert' ? line.content : pair.content;
-      return <WordDiffOverlay oldText={oldText} newText={newText} type={line.type} />;
+      const side = line.type === 'delete' ? 'old' : 'new';
+      return (
+        <MergedPairedContent
+          syntax={syntax}
+          side={side}
+          lineNum={line.type === 'delete' ? line.oldLineNum : line.newLineNum}
+          oldText={oldText}
+          newText={newText}
+        />
+      );
     }
 
     // Side-aware: a unified delete line has no newLineNum — its tokens live on
@@ -900,7 +963,13 @@ function SplitDiffLineRow({
           {oldLineNum ?? ''}
         </td>
         <td data-side="old" className={`diff-content ${styles.diffContent}`}>
-          <WordDiffOverlay oldText={oldText ?? ''} newText={newText ?? ''} type="delete" />
+          <MergedPairedContent
+            syntax={syntax}
+            side="old"
+            lineNum={oldLineNum}
+            oldText={oldText ?? ''}
+            newText={newText ?? ''}
+          />
         </td>
         <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
           {newLineNum != null && onLineClick ? (
@@ -917,7 +986,13 @@ function SplitDiffLineRow({
           )}
         </td>
         <td data-side="new" className={`diff-content ${styles.diffContent}`}>
-          <WordDiffOverlay oldText={oldText ?? ''} newText={newText ?? ''} type="insert" />
+          <MergedPairedContent
+            syntax={syntax}
+            side="new"
+            lineNum={newLineNum}
+            oldText={oldText ?? ''}
+            newText={newText ?? ''}
+          />
         </td>
       </tr>
     );
