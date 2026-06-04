@@ -285,6 +285,12 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  /* overflow-x: hidden is explicit because setting overflow-y to a non-visible
+     value makes the UA compute overflow-x as `auto` (CSS Overflow §3), which
+     would surface a spurious outer horizontal scrollbar. The diff keeps its
+     OWN internal horizontal scroller (DiffPane) — the shared outer scroller
+     must never scroll horizontally (#156/#149/#155 regression contract). */
+  overflow-x: hidden;
 }
 [data-files-active] .pr-detail-page:not([hidden]) {
   /* min-height (not height) so the page can grow past the viewport when the

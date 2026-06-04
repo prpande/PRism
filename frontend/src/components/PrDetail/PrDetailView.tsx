@@ -128,12 +128,20 @@ export function PrDetailView({
   // react-hooks plugin is not enabled in this config, so no disable directive is
   // needed for the deps array.
   useLayoutEffect(() => {
+    // Only the ACTIVE view manages the shared marker. Inactive views must NOT
+    // run the body — otherwise, with 2+ open tabs, an inactive view whose effect
+    // happens to run after the active view's would clear the marker the active
+    // Files view just set (whichever toggles last wins). Early-returning for
+    // inactive views means at most one view (the active one) ever writes the
+    // marker, so there is no last-writer race across mounted tabs.
+    if (!active) return;
     const slot = document.querySelector('[data-app-scroll]');
     if (!slot) return;
-    const on = active && subTab === 'files';
-    slot.toggleAttribute('data-files-active', on);
+    slot.toggleAttribute('data-files-active', subTab === 'files');
+    // Cleanup runs on deactivation / sub-tab change; the next active view's
+    // setup (which runs after all cleanups in the commit) re-stamps correctly.
     return () => {
-      if (on) slot.removeAttribute('data-files-active');
+      slot.removeAttribute('data-files-active');
     };
   }, [active, subTab]);
 
