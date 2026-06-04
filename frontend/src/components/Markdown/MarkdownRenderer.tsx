@@ -2,35 +2,21 @@ import { lazy, Suspense, useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
-import { getHighlighterAsync, tokenizeLines, type ShikiLang } from './shikiInstance';
+import {
+  getHighlighterAsync,
+  tokenizeLines,
+  SHIKI_LANGS_SET,
+  type ShikiLang,
+} from './shikiInstance';
 import { HighlightedLine } from './HighlightedLine';
 
 const MermaidBlock = lazy(() =>
   import('./MermaidBlock').then((m) => ({ default: m.MermaidBlock })),
 );
 
-const FENCE_LANGS = new Set<ShikiLang>([
-  'typescript',
-  'javascript',
-  'json',
-  'html',
-  'css',
-  'markdown',
-  'yaml',
-  'bash',
-  'csharp',
-  'python',
-  'go',
-  'rust',
-  'jsx',
-  'tsx',
-  'sql',
-  'xml',
-  'dockerfile',
-  'toml',
-]);
-
-// Common fence-tag aliases (e.g. ```ts → typescript, ```py → python).
+// Common fence-tag aliases (e.g. ```ts → typescript, ```py → python). The
+// canonical names themselves come from SHIKI_LANGS_SET so the supported-fence
+// list can't drift from the grammars actually loaded.
 const FENCE_ALIASES: Record<string, ShikiLang> = {
   ts: 'typescript',
   js: 'javascript',
@@ -44,7 +30,7 @@ const FENCE_ALIASES: Record<string, ShikiLang> = {
 
 function fenceLang(info: string | undefined): ShikiLang | null {
   const tag = (info ?? '').trim().toLowerCase();
-  if (FENCE_LANGS.has(tag as ShikiLang)) return tag as ShikiLang;
+  if (SHIKI_LANGS_SET.has(tag as ShikiLang)) return tag as ShikiLang;
   return FENCE_ALIASES[tag] ?? null;
 }
 
@@ -99,43 +85,47 @@ function urlTransform(url: string): string | undefined {
   return trimmed;
 }
 
+// Defined once at module scope (it closes over no props) so ReactMarkdown
+// receives a stable `components.code` identity across renders — otherwise every
+// parent re-render (theme toggle, status banner) would remount each
+// HighlightedCodeBlock and re-flash its load state.
+const components: Components = {
+  code({ className: codeClassName, children, ...props }) {
+    const match = /language-(\w+)/.exec(codeClassName || '');
+    const lang = match?.[1];
+    const codeString = String(children).replace(/\n$/, '');
+
+    if (lang === 'mermaid') {
+      return (
+        <Suspense fallback={<div className="mermaid-loading muted">Loading diagram…</div>}>
+          <MermaidBlock code={codeString} />
+        </Suspense>
+      );
+    }
+
+    const shikiLang = fenceLang(lang);
+    if (shikiLang) {
+      return <HighlightedCodeBlock code={codeString} lang={shikiLang} />;
+    }
+
+    if (lang) {
+      return (
+        <code className={codeClassName} {...props}>
+          {children}
+        </code>
+      );
+    }
+
+    return <code {...props}>{children}</code>;
+  },
+};
+
 export interface MarkdownRendererProps {
   source: string;
   className?: string;
 }
 
 export function MarkdownRenderer({ source, className }: MarkdownRendererProps) {
-  const components: Components = {
-    code({ className: codeClassName, children, ...props }) {
-      const match = /language-(\w+)/.exec(codeClassName || '');
-      const lang = match?.[1];
-      const codeString = String(children).replace(/\n$/, '');
-
-      if (lang === 'mermaid') {
-        return (
-          <Suspense fallback={<div className="mermaid-loading muted">Loading diagram…</div>}>
-            <MermaidBlock code={codeString} />
-          </Suspense>
-        );
-      }
-
-      const shikiLang = fenceLang(lang);
-      if (shikiLang) {
-        return <HighlightedCodeBlock code={codeString} lang={shikiLang} />;
-      }
-
-      if (lang) {
-        return (
-          <code className={codeClassName} {...props}>
-            {children}
-          </code>
-        );
-      }
-
-      return <code {...props}>{children}</code>;
-    },
-  };
-
   return (
     <div className={className ? `markdown-body ${className}` : 'markdown-body'}>
       <ReactMarkdown

@@ -98,8 +98,9 @@ The async singleton highlighter stays. Add:
   **not** a string. Token offsets are **per-line** (Shiki tokenizes line-by-line; the
   merge in §3 relies on this). `lang === null` → one plaintext token per line (no
   color). As a defensive measure, `tokenizeLines` validates each emitted color value
-  against a **strict hex allowlist** (`/^#[0-9a-fA-F]{3,8}$/` — the format the github
-  themes actually emit) before placing it in the style object; a value that fails is
+  against a **strict hex allowlist** (`/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/`
+  — the 3/4/6/8-digit hex forms CSS actually accepts and the github themes emit; 5- and
+  7-digit lengths are invalid CSS and rejected) before placing it in the style object; a value that fails is
   dropped (that token renders with no color override). Functional notations, `url(...)`,
   and named keywords are rejected. Shiki output is trusted, but this closes a
   grammar-supply-chain edge cheaply.

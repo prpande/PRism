@@ -947,11 +947,13 @@ a:hover { text-decoration: underline; }
 }
 /* Syntax highlighting — global classes so the dual-theme selector below
    matches the literal rendered class (CSS-module hashing would not). */
-.codeLine {
-  display: inline; /* single direct child of the diff content cell; in split
-                      scroll-mode the existing .diffContent > * rule forces
-                      inline-block + translateX onto it. Never display:contents. */
-}
+/* .codeLine intentionally declares NO `display`. It is the single direct child
+   of the diff content cell, and in split scroll-mode DiffPane.module.css's
+   `.diffContent > * { display: inline-block; transform: … }` rule owns its
+   display + horizontal-scroll transform. Setting `display` here would fight
+   that rule at equal specificity (cascade-order dependent). As a <span> it
+   defaults to inline, which is correct for the Overview path. The one hard
+   rule: never `display: contents` (it would remove the transform target). */
 .codeToken {
   color: var(--shiki-light); /* light is the default; tokens carry no bare color */
 }

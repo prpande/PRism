@@ -1,5 +1,10 @@
 import type { Highlighter } from 'shiki';
 
+// Once rejected (e.g. WASM blocked by CSP, offline, or a load timeout), this
+// promise is never replaced — a transient failure permanently disables
+// highlighting until the page reloads. Callers degrade to plain code, so this
+// is an accepted MVP limitation rather than a runtime error; PR2 should not
+// compound it without adding a retry/reset path.
 let highlighterPromise: Promise<Highlighter> | null = null;
 let highlighterInstance: Highlighter | null = null;
 
@@ -137,7 +142,15 @@ const LANGS_TO_LOAD: ShikiLang[] = [
   ...new Set<ShikiLang>([...Object.values(EXT_TO_LANG), ...Object.values(BASENAME_TO_LANG)]),
 ];
 
-export function getHighlighter(): Highlighter | null {
+// The set of grammars actually registered with the highlighter. Fence-language
+// detection derives from this so a fence tag can never resolve to a grammar
+// that codeToTokens would throw on, and so the list can't drift from a manual
+// re-enumeration of the ShikiLang union.
+export const SHIKI_LANGS_SET: ReadonlySet<ShikiLang> = new Set<ShikiLang>(LANGS_TO_LOAD);
+
+// Internal: returns null while the highlighter is still loading. External
+// callers should use getHighlighterAsync() instead.
+function getHighlighter(): Highlighter | null {
   if (highlighterInstance) return highlighterInstance;
 
   if (!highlighterPromise) {

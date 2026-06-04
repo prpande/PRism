@@ -153,7 +153,9 @@ describe('tokenizeLines', () => {
     // this asserts the validator passes valid hex through unchanged.
     const lines = tokenizeLines('return;', 'typescript');
     const styled = lines.flat().find((t) => t.style['--shiki-light']);
-    expect(styled!.style['--shiki-light']).toMatch(/^#[0-9a-fA-F]{3,8}$/);
+    expect(styled!.style['--shiki-light']).toMatch(
+      /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/,
+    );
   });
 });
 ```
@@ -174,7 +176,8 @@ export interface LineToken {
 }
 
 const MAX_LINE_CHARS = 2000;
-const HEX = /^#[0-9a-fA-F]{3,8}$/;
+// Valid CSS hex lengths: 3, 4, 6, or 8 hex digits (5 and 7 are not valid CSS).
+const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
 // Shiki types htmlStyle as `string | Record<string,string> | undefined`; the
 // dual-theme defaultColor:false path always yields the object form, but the
