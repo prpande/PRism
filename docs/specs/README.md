@@ -1,6 +1,6 @@
 # Specs index
 
-Per-slice / per-task design docs. New specs land at `docs/specs/YYYY-MM-DD-<topic>-design.md` (output of the brainstorming skill). Each entry below names its matching plan under `docs/plans/`, the PR(s) that landed it, and — when present — the matching deferrals sidecar (`<source>-deferrals.md`) that records rejected/deferred alternatives from any planning or architectural decision-making session on the spec.
+Per-slice / per-task design docs. New specs land at `docs/specs/YYYY-MM-DD-<topic>-design.md` (output of the brainstorming skill). Each entry below names its matching plan under `docs/plans/`, the PR(s) that landed it, and its deferred work. Deferred / rejected alternatives are recorded per the [`.ai/docs/documentation-maintenance.md`](../../.ai/docs/documentation-maintenance.md) deferred-work convention, all surfaced in a spec's `## Deferred work` section: `[Defer]` items get a `deferred`-labelled GitHub issue (the system of record) linked from that section, while `[Skip]`/`[Superseded]` items are recorded inline only (no issue). Older specs instead carry a frozen `<source>-deferrals.md` sidecar (historical record — not migrated); reference it where present.
 
 When a spec's status changes, move its entry to the right group and add the PR reference. Per [`.ai/docs/documentation-maintenance.md`](../../.ai/docs/documentation-maintenance.md) (and [`CLAUDE.md`](../../CLAUDE.md) for Claude-only auto-review workflow), this update lands in the same PR that ships the implementation.
 
