@@ -81,6 +81,9 @@ const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
 // Shiki types htmlStyle as `string | Record<string,string> | undefined`; the
 // dual-theme defaultColor:false path always yields the object form, but the
 // param must accept the union or `tsc -b` (npm run build) fails under strict.
+// Only hex color values are forwarded; Shiki's --shiki-light-font-style /
+// --shiki-light-font-weight variables (italic/bold) are intentionally dropped
+// — we keep color only. This is by design, not an oversight.
 function safeStyle(htmlStyle: string | Record<string, string> | undefined): Record<string, string> {
   if (!htmlStyle || typeof htmlStyle === 'string') return {};
   const out: Record<string, string> = {};

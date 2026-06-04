@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import type { ReactElement } from 'react';
 import { MarkdownRenderer } from '../src/components/Markdown/MarkdownRenderer';
@@ -58,14 +58,16 @@ describe.each(CONSUMERS)('$name — security contract (spec § 5.6)', ({ render:
     const { container } = render(
       renderConsumer('```ts\nconst x = "<img src=x onerror=alert(1)>";\n```'),
     );
+    await waitFor(() => expect(container.querySelector('.codeToken')).not.toBeNull());
     expect(container.querySelector('img')).toBeNull();
-    expect(container.textContent).toContain('onerror=alert(1)'); // present as text
+    expect(container.textContent).toContain('onerror=alert(1)');
   });
 
   it('FencedScriptPayload_DoesNotInjectMarkup', async () => {
     const { getHighlighterAsync } = await import('../src/components/Markdown/shikiInstance');
     await getHighlighterAsync();
-    render(renderConsumer('```js\n</script><script>alert(1)\n```'));
+    const { container } = render(renderConsumer('```js\n</script><script>alert(1)\n```'));
+    await waitFor(() => expect(container.querySelector('.codeToken')).not.toBeNull());
     expect(document.querySelector('script')).toBeNull();
   });
 });

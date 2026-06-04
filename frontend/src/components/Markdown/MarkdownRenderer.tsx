@@ -39,6 +39,7 @@ const FENCE_ALIASES: Record<string, ShikiLang> = {
   sh: 'bash',
   yml: 'yaml',
   md: 'markdown',
+  rs: 'rust',
 };
 
 function fenceLang(info: string | undefined): ShikiLang | null {
