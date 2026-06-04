@@ -93,8 +93,13 @@ async function returnViaTabPill(page: import('@playwright/test').Page): Promise<
 test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
   test.beforeEach(async ({ page }) => {
     const ctx = await request.newContext();
-    await resetBackendState(ctx);
-    await ctx.dispose();
+    // try/finally so the request context is always disposed even if the reset
+    // POST throws (e.g. backend not yet up) — otherwise the context leaks.
+    try {
+      await resetBackendState(ctx);
+    } finally {
+      await ctx.dispose();
+    }
     await page.setViewportSize(VIEWPORT);
   });
 

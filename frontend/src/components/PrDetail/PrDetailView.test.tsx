@@ -213,6 +213,9 @@ describe('PrDetailView — title propagation on resolve (Task 11)', () => {
     );
 
     await waitFor(() => {
+      // Exactly once — also catches a double-fire from a misconfigured effect
+      // deps array (the title effect must run a single time on resolve).
+      expect(setTitleSpy).toHaveBeenCalledTimes(1);
       expect(setTitleSpy).toHaveBeenCalledWith(
         { owner: 'acme', repo: 'api', number: 7 },
         'Keep-alive title',

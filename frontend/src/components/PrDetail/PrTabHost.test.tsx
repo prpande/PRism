@@ -239,7 +239,11 @@ describe('PrTabHost', () => {
     const hidden = scroll.querySelector('[data-prref="acme/api/7"]') as HTMLElement;
 
     // Teeth: the hidden view must actually CONTAIN focusable elements, else the
-    // forEach below is vacuously true.
+    // forEach below is vacuously true. The query intentionally over-approximates
+    // the keyboard tab order: it also matches tabindex="-1" (script-focusable but
+    // NOT tab-order) elements. That's a stronger guarantee, not a bug — [hidden]
+    // removes BOTH keyboard-focusable (tabindex>=0) and script-focusable
+    // (tabindex=-1) descendants from the tab order and the a11y tree.
     const focusables = hidden.querySelectorAll(
       'button, a[href], input, select, textarea, [tabindex]',
     );
