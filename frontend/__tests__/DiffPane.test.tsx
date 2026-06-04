@@ -126,6 +126,32 @@ describe('DiffPane', () => {
     expect(within(status).getByText(/loading whole file/i)).toBeInTheDocument();
   });
 
+  it('suppresses the header spinner while the whole-file overlay is active (single live region)', () => {
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'loading',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        isLoading
+        wholeFileEnabled
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    // Header spinner is gated off, so only the overlay's live region announces.
+    const statuses = screen.getAllByRole('status');
+    expect(statuses).toHaveLength(1);
+    expect(within(statuses[0]).getByText(/loading whole file/i)).toBeInTheDocument();
+  });
+
   it('renders file path in header when file selected', () => {
     render(
       <DiffPane
