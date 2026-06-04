@@ -110,6 +110,10 @@ The CSS class names and the JSX that consumes them are coupled, so they land tog
  */
 .rail {
   position: relative;
+  /* Grid items are blockified by spec, but set display explicitly so the rail
+     cell reliably stretches to the row height and the ::before line + .node
+     anchor to a full-height box. */
+  display: block;
 }
 
 .rail::before {
@@ -349,7 +353,7 @@ Expected: all green (no regressions elsewhere).
 
 From repo root `D:/src/PRism-129-comment-cards`:
 Run: `./run.ps1 -Reset None --no-browser`
-Then open `http://localhost:5180`, navigate to a PR with root comments (real-mode PAT is configured; e.g. a `mindbody/Mindbody.BizApp.Bff` PR), open the **Overview** tab, and confirm in **both** light and dark (theme toggle): cards read as standalone, the rail is continuous and bridges gaps, the node sits on the band, a long author truncates, long code wraps. **This manual eyeball is the real check for the band's `--text-3` timestamp contrast and the card elevation, since the automated a11y/parity fixtures render comment-less or fixed content.**
+Then open `http://localhost:5180`, navigate to a PR with root comments (real-mode PAT is configured; e.g. a `mindbody/Mindbody.BizApp.Bff` PR), open the **Overview** tab, and confirm in **both** light and dark (theme toggle): cards read as standalone, the rail is continuous and bridges gaps, the node sits on the band, a long author truncates, long code wraps. **This manual eyeball is the real check for the band's `--text-3` timestamp contrast and the card elevation, since the automated a11y/parity fixtures render comment-less or fixed content.** Note (so it is not mistaken for a bug): in **light** mode the card (`--surface-1`, L≈0.99) is slightly *lighter* than the page (`--surface-0`, L≈0.96) — the border + band do the separating, and `--shadow-2` is intentionally faint here; in **dark** the shadow carries the lift. Confirm this reads acceptably; if not, the card surface/shadow may need a token tweak (do not silently revert the approach).
 
 - [ ] **Step 3: STOP the manually-launched app before the parity recapture**
 
@@ -416,3 +420,9 @@ Expected: PASS — no new serious/critical axe violations on the (comment-less) 
 - **Applied** — documented the rail/node `top` pixel constants as band-metric-dependent, tune at the visual gate (design-lens, fyi).
 - **Skipped** — `white-space: pre-wrap` on `.body p`: carried verbatim from the current implementation; changing comment-prose wrapping is a behavior change out of scope for a visual restyle (commented in the CSS) (design-lens).
 - **Rejected** — "`muted` is a bare JSX prop": misread; `muted` is inside the `className` template literal, matching the existing component (design-lens).
+
+**Round 2 (user-requested):**
+- **Applied** — `.rail { display: block }` added: defensive (grid items are blockified by spec, but explicit `display` guarantees the cell stretches to row height so the `::before` rail line + node anchor correctly) (design-lens, High; likely-false-positive but zero-cost insurance on a visual-critical element).
+- **Applied** — Task 3 Step 2 manual-check note: in light mode the card is *lighter* than the page (`--surface-1` > `--surface-0`); border/band separate, `--shadow-2` faint — flagged so the visual-gate reviewer doesn't mistake it for a bug (design-lens, advisory).
+- **Applied (spec)** — spec band description updated from "baseline-aligned" to "center-aligned (`align-items: center`)" to match the round-1 fix — removes spec/plan drift (coherence, High).
+- Feasibility round 2: clean — all round-1 fixes verified against the worktree, no new findings.

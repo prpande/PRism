@@ -101,7 +101,9 @@ column-gap: var(--s-3);
     `overflow: hidden` (clips the band's top corners), `min-width: 0`.
   - **Header band** — `background: var(--surface-2)`,
     `border-bottom: 1px solid var(--border-1)`, `padding: var(--s-2) var(--s-4)`,
-    `font-size: var(--text-xs)`; a baseline-aligned flex row holding the author
+    `font-size: var(--text-xs)`; a center-aligned flex row (`align-items: center`,
+    not `baseline` — the ellipsis author is a scroll container whose synthesized
+    baseline would misalign the time) holding the author
     (`font-weight: 600`, `--text-1`) and the `<time>` (`--text-3`). The author
     gets `min-width: 0; overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap` and the time `flex: none; white-space: nowrap`, so a long
