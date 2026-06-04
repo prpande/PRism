@@ -63,7 +63,10 @@ describe('tokenizeLines', () => {
     const allStyled = lines.flat().filter((t) => '--shiki-light' in t.style);
     expect(allStyled.length).toBeGreaterThan(0);
     for (const t of allStyled) {
-      expect(t.style['--shiki-light']).toMatch(/^#[0-9a-fA-F]{3,8}$/);
+      // Mirror safeStyle's HEX contract exactly (3/4/6/8 digits — not 5/7).
+      expect(t.style['--shiki-light']).toMatch(
+        /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/,
+      );
     }
   }, 15_000);
 });

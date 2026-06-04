@@ -52,9 +52,15 @@ function HighlightedCodeBlock({ code, lang }: { code: string; lang: ShikiLang })
   const [ready, setReady] = useState(false);
   useEffect(() => {
     let live = true;
-    void getHighlighterAsync().then(() => {
-      if (live) setReady(true);
-    });
+    void getHighlighterAsync()
+      .then(() => {
+        if (live) setReady(true);
+      })
+      .catch(() => {
+        // Highlighter unavailable (e.g. WASM load failure): the bare-code
+        // fallback rendered below is the correct graceful degradation, so we
+        // intentionally stay un-ready rather than surfacing an error.
+      });
     return () => {
       live = false;
     };
