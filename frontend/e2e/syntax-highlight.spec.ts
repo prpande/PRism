@@ -1,16 +1,21 @@
 import { test, expect, type Route } from '@playwright/test';
 import { resetBackendState, setupAndOpenScenarioPr, advanceHead } from './helpers/s4-setup';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Task 11 — Visual verification spec for diff-pane syntax highlighting.
 //
 // All four cases run against the fake Test-env backend (acme/api/123), which
-// always returns a single-file diff for "src/Calc.cs". The fake backend's
-// GetDiffAsync generates all lines as solo `+` inserts (there is no old-side
-// content), so every token in the hunk carries `.wordDiffInsertBg` — that's
-// the correct observable for "insert-background layered on a colored token".
+// returns a single-file diff for "src/Calc.cs". advanceHead injects a fresh
+// file body, so the fake GetDiffAsync renders the changed lines as SOLO `+`
+// inserts (not paired delete/insert) — solo lines carry no `.wordDiffInsertBg`
+// (that background only applies to paired lines via MergedPairedContent). The
+// paired word-diff backgrounds are covered by the vitest component test
+// (DiffPane.highlight.test.tsx asserts both wordDiffInsertBg + wordDiffDeleteBg)
+// and by the real-app B1 screenshot pass. Here we assert the deterministic,
+// backend-independent observables: that `.codeToken` spans render (highlighting
+// active), that the dual-theme --shiki-light var resolves, that an unsupported
+// extension yields no tokens, and that the large-file guard suppresses + shows
+// the indicator.
 //
 // Theme is toggled by writing `document.documentElement.dataset.theme`
 // directly via page.evaluate — the app reads this attribute to pick
@@ -18,9 +23,8 @@ import * as path from 'node:path';
 // the same attribute. Driving the Settings-page UI control would add ~3 extra
 // navigations per test that buy nothing for a visual-verification spec.
 //
-// Screenshots write to e2e/__artifacts__/ (gitignored). Each test tolerates
-// a missing artifacts dir and creates it lazily so CI workers with a read-only
-// source tree don't need a pre-created directory.
+// Screenshots write to each test's Playwright output dir via
+// test.info().outputPath(...) (already gitignored under test-results/).
 //
 // Edge cases 3 & 4 from the plan (block-comment-crossing-hunk-edge and
 // unified-whole-file-delete-at-boundary) are deferred:
@@ -57,12 +61,6 @@ const LARGE_CONTENT = Array.from(
   (_, i) => `// line ${String(i).padStart(4, '0')}`,
 ).join('\n');
 
-function ensureArtifactsDir(): string {
-  const dir = path.join(__dirname, '__artifacts__');
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
 test.describe('Syntax highlighting — diff pane visual verification', () => {
   test.beforeEach(async ({ page, request: _req }) => {
     await resetBackendState(_req);
@@ -71,12 +69,13 @@ test.describe('Syntax highlighting — diff pane visual verification', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 1: Dark theme — verify .codeToken and .wordDiffInsertBg are visible.
-  // The fake backend emits all lines as `+` inserts, so every token span
-  // carries wordDiffInsertBg. The highlighter must warm up and tokenize the
-  // injected C# content before the assertions run.
+  // Case 1: Dark theme — verify .codeToken spans render with dark-theme color.
+  // The injected lines render as solo inserts (no paired word-diff), so we
+  // assert highlighting is active (.codeToken present) and that the dark
+  // --shiki-dark var resolves. Word-diff backgrounds are covered elsewhere
+  // (see header comment).
   // -------------------------------------------------------------------------
-  test('dark theme: codeToken and wordDiffInsertBg spans render', async ({ page }) => {
+  test('dark theme: codeToken spans render with active --shiki-dark color', async ({ page }) => {
     await advanceHead(page, DARK_SHA, [{ path: 'src/Calc.cs', content: TS_CONTENT }]);
 
     // Ensure dark theme is active before navigating to the diff view.
@@ -90,14 +89,14 @@ test.describe('Syntax highlighting — diff pane visual verification', () => {
     // Wait up to 30s for Shiki to warm up and produce .codeToken spans.
     await expect(page.locator('.codeToken').first()).toBeVisible({ timeout: 30_000 });
 
-    // Every line is a `+` insert, so at least one codeToken must carry the
-    // insert-background class (insert-background layered on a colored token).
-    await expect(page.locator('.codeToken.wordDiffInsertBg').first()).toBeVisible({
-      timeout: 10_000,
-    });
+    // The dual-theme --shiki-dark var should resolve to a non-empty value.
+    const darkColor = await page
+      .locator('.codeToken')
+      .first()
+      .evaluate((el) => window.getComputedStyle(el).getPropertyValue('--shiki-dark').trim());
+    expect(darkColor).not.toBe('');
 
-    const dir = ensureArtifactsDir();
-    await page.screenshot({ path: path.join(dir, 'syntax-dark.png'), fullPage: false });
+    await page.screenshot({ path: test.info().outputPath('syntax-dark.png'), fullPage: false });
   });
 
   // -------------------------------------------------------------------------
@@ -138,8 +137,7 @@ test.describe('Syntax highlighting — diff pane visual verification', () => {
       });
     expect(lightColor).not.toBe('');
 
-    const dir = ensureArtifactsDir();
-    await page.screenshot({ path: path.join(dir, 'syntax-light.png'), fullPage: false });
+    await page.screenshot({ path: test.info().outputPath('syntax-light.png'), fullPage: false });
   });
 
   // -------------------------------------------------------------------------
@@ -191,8 +189,7 @@ test.describe('Syntax highlighting — diff pane visual verification', () => {
     // Poll with a brief ceiling rather than a fixed sleep (Windows CI contention).
     await expect.poll(() => page.locator('.codeToken').count(), { timeout: 5_000 }).toBe(0);
 
-    const dir = ensureArtifactsDir();
-    await page.screenshot({ path: path.join(dir, 'syntax-plain.png'), fullPage: false });
+    await page.screenshot({ path: test.info().outputPath('syntax-plain.png'), fullPage: false });
   });
 
   // -------------------------------------------------------------------------
@@ -215,7 +212,6 @@ test.describe('Syntax highlighting — diff pane visual verification', () => {
     // No codeToken spans should exist — the highlight path was skipped entirely.
     expect(await page.locator('.codeToken').count()).toBe(0);
 
-    const dir = ensureArtifactsDir();
-    await page.screenshot({ path: path.join(dir, 'syntax-large.png'), fullPage: false });
+    await page.screenshot({ path: test.info().outputPath('syntax-large.png'), fullPage: false });
   });
 });

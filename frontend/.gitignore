@@ -5,6 +5,3 @@ e2e/real/fixtures.json
 # under retries>0; never commit these even though they are local-only by default).
 playwright-report/
 test-results/
-# Per-test screenshot artifacts written by syntax-highlight.spec.ts (and any
-# future visual-verification spec). Not baseline images — never commit.
-e2e/__artifacts__/
