@@ -849,16 +849,26 @@ describe('mergeWordDiffWithTokens', () => {
   });
 
   it('splits at the union of token and word-diff boundaries', () => {
-    const oldText = 'ab';
-    const newText = 'aXb';
+    const oldText = 'xx yy';
+    const newText = 'xx zz';
     const parts = diffWordsWithSpace(oldText, newText);
-    // two tokens: "a" then "Xb"
-    const spans = mergeWordDiffWithTokens(newText, [tok('a'), tok('Xb')], parts, 'new');
-    expect(spans.map((s) => s.text).join('')).toBe('aXb');
-    // "X" is the only changed char
+    // The token boundary ('xx z' | 'z') deliberately falls INSIDE the changed
+    // word 'zz', so the merge must split on both token and change boundaries.
+    const spans = mergeWordDiffWithTokens(newText, [tok('xx z'), tok('z')], parts, 'new');
+    expect(spans.map((s) => s.text).join('')).toBe('xx zz');
+    // The unchanged prefix stays plain; the whole changed word 'zz' is flagged
+    // insert even though it straddles the token split.
     const changed = spans.filter((s) => s.change === 'insert').map((s) => s.text).join('');
-    expect(changed).toBe('X');
+    expect(changed).toBe('zz');
+    expect(spans.some((s) => s.text.startsWith('xx') && s.change === undefined)).toBe(true);
   });
+
+  // DEVIATION (impl-time): the original plan test used 'ab'→'aXb' and asserted
+  // the changed text was 'X' alone. diffWordsWithSpace is word-level, so a
+  // boundary-less 'ab'→'aXb' is a whole-word replacement ('aXb' changed), not a
+  // sub-word 'X' edit. Sub-word/char precision is intentionally out of scope
+  // (the design chose diffWordsWithSpace). Reworked into the whitespace-delimited
+  // case above, which exercises the same token/change boundary union correctly.
 
   it('stays aligned when sides differ in whitespace (round-1 regression)', () => {
     const oldText = '\tif (x)   return;';
