@@ -64,7 +64,7 @@ function MergedPairedContent({
   oldText: string;
   newText: string;
 }) {
-  const toks = tokensFor(syntax, side, lineNum ?? null);
+  const toks = tokensFor(syntax, side, lineNum);
   if (toks.length === 0) {
     // No tokens yet (highlighter warming / large file) → existing word-diff fallback.
     return (
@@ -92,6 +92,10 @@ function MergedPairedContent({
       />
     );
   }
+  // PERF (PoC-deferred): diffWordsWithSpace runs once per paired line per render
+  // (e.g. on theme toggle). Paired lines are a small subset, so this is fine at
+  // PoC scale; if large modify-heavy diffs become a hot path, memoize parts /
+  // wrap MergedPairedContent in React.memo. Tracked as a future optimization.
   const parts = diffWordsWithSpace(normalizeEol(oldText), normalizeEol(newText));
   const spans = mergeWordDiffWithTokens(sideText, toks, parts, side);
   return <HighlightedLine spans={spans} fallback={sideText} />;
@@ -363,8 +367,9 @@ export function DiffPane({
 
   // Large-file indicator: when the file is a highlightable language and has
   // hunks, but the syntax hook produced no tokens, highlighting was suppressed
-  // (over the large-file budget). Briefly true during normal warm-up too — the
-  // header label trades a short flicker for an honest "off" signal on big files.
+  // (over the large-file budget). Gated on syntax.ready, which only flips true
+  // after the highlighter has warmed up, so this never shows during warm-up —
+  // an empty token map with ready === true means the size guard genuinely fired.
   const highlightSuppressed =
     syntax.ready &&
     selectedPath != null &&
@@ -832,7 +837,6 @@ function SplitDiffLineRow({
   isFilled,
   onLineClick,
 }: SplitDiffLineRowProps) {
-  const maps = syntax;
   if (kind === 'header') {
     return (
       <tr className="diff-line diff-line--hunk-header">
@@ -863,7 +867,7 @@ function SplitDiffLineRow({
         </td>
         <td data-side="old" className={`diff-content ${styles.diffContent}`}>
           <HighlightedLine
-            spans={tokensFor(maps, 'old', oldLineNum)}
+            spans={tokensFor(syntax, 'old', oldLineNum)}
             fallback={normalizeEol(content ?? '')}
           />
         </td>
@@ -883,7 +887,7 @@ function SplitDiffLineRow({
         </td>
         <td data-side="new" className={`diff-content ${styles.diffContent}`}>
           <HighlightedLine
-            spans={tokensFor(maps, 'new', newLineNum)}
+            spans={tokensFor(syntax, 'new', newLineNum)}
             fallback={normalizeEol(content ?? '')}
           />
         </td>
@@ -899,7 +903,7 @@ function SplitDiffLineRow({
         </td>
         <td data-side="old" className={`diff-content ${styles.diffContent}`}>
           <HighlightedLine
-            spans={tokensFor(maps, 'old', oldLineNum)}
+            spans={tokensFor(syntax, 'old', oldLineNum)}
             fallback={normalizeEol(content ?? '')}
           />
         </td>
@@ -954,7 +958,7 @@ function SplitDiffLineRow({
         </td>
         <td data-side="new" className={`diff-content ${styles.diffContent}`}>
           <HighlightedLine
-            spans={tokensFor(maps, 'new', newLineNum)}
+            spans={tokensFor(syntax, 'new', newLineNum)}
             fallback={normalizeEol(content ?? '')}
           />
         </td>

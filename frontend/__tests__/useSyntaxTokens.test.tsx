@@ -118,7 +118,55 @@ describe('useSyntaxTokens', () => {
       }),
     );
     // Whole-file new side is too large → mapWhole returns empty; no whole-file tokens.
-    await waitFor(() => expect(result.current).toBeDefined());
+    // Gate on ready === true (not toBeDefined, which is satisfied by the pre-warm
+    // EMPTY sentinel): we want to prove the size guard fired AFTER warm-up, not
+    // that the map is empty merely because Shiki hasn't loaded yet.
+    await waitFor(() => expect(result.current.ready).toBe(true));
     expect(result.current.newLineTokens.size).toBe(0);
+  });
+
+  it('normalizes CRLF whole-file content to match LF token maps', async () => {
+    await getHighlighterAsync();
+    const lf = 'const x = 1;\nconst y = 2;\n';
+    const crlf = 'const x = 1;\r\nconst y = 2;\r\n';
+    const renderFor = (content: string) =>
+      renderHook(() =>
+        useSyntaxTokens({
+          path: 'a.ts',
+          file: file('@@ -1,1 +1,1 @@\n-x\n+y'),
+          wholeFileEnabled: true,
+          wholeFile: {
+            fetchStatus: 'ok',
+            headContent: content,
+            baseContent: null,
+            failureReason: null,
+          },
+          isSplit: false,
+          headSha: 'h',
+          baseSha: 'b',
+        }),
+      );
+
+    const lfRender = renderFor(lf);
+    await waitFor(() => expect(lfRender.result.current.ready).toBe(true));
+    const crlfRender = renderFor(crlf);
+    await waitFor(() => expect(crlfRender.result.current.ready).toBe(true));
+
+    // Same line count (no \r left dangling as a phantom extra line) and the
+    // per-line token text carries no trailing \r — so the paired-line drift
+    // guard (sideText === normalizeEol(content)) holds on CRLF files.
+    expect(crlfRender.result.current.newLineTokens.size).toBe(
+      lfRender.result.current.newLineTokens.size,
+    );
+    for (const [line, toks] of crlfRender.result.current.newLineTokens) {
+      const text = toks.map((t) => t.text).join('');
+      expect(text).not.toMatch(/\r/);
+      expect(text).toBe(
+        lfRender.result.current.newLineTokens
+          .get(line)!
+          .map((t) => t.text)
+          .join(''),
+      );
+    }
   });
 });

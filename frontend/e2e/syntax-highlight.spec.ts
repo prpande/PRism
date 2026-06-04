@@ -39,11 +39,12 @@ const DARK_SHA = 'aaaa0000000000000000000000000000000000aa';
 const LIGHT_SHA = 'bbbb0000000000000000000000000000000000bb';
 const LARGE_SHA = 'cccc0000000000000000000000000000000000cc';
 
-// A short TypeScript snippet that exercises all three HighlightedLine code
-// paths once the fake backend wraps it in `+` insert lines:
-//   - context tokens (keywords, identifiers, punctuation) → colored codeToken
-//   - insert background (all lines are `+`) → wordDiffInsertBg on every span
-// The content string itself is valid TS; Shiki will produce non-trivial tokens.
+// A short, valid TypeScript snippet. The fake backend wraps it in SOLO `+`
+// insert lines, so this exercises the context/solo-insert highlight path only:
+// each line gets colored `.codeToken` spans. It does NOT exercise paired
+// word-diff backgrounds (`.wordDiffInsertBg` applies only to paired delete/
+// insert lines via MergedPairedContent — see the header comment), so this spec
+// asserts token presence + theme-var resolution, not the word-diff background.
 const TS_CONTENT = [
   'const count = 1;',
   'const greeting = "hello";',

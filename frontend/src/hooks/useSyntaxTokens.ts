@@ -89,6 +89,7 @@ function mapHunks(
   // discontinuities in the file, so joining them would bleed grammar state (an
   // unclosed brace/comment in one hunk miscoloring the next).
   for (const lines of perHunkLines) {
+    if (lines.length === 0) continue; // solo hunk's opposite side: skip the empty Shiki call
     const source = lines.map((l) => normalizeEol(l.content)).join('\n');
     const toks = tokenizeLines(source, lang);
     lines.forEach((l, i) => {
