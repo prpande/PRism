@@ -37,19 +37,30 @@ The three views are not redundant — they cover different audiences (casual rea
 
 **Deferred-work convention (GitHub issues + in-spec links).** Deferred / skipped items affecting a source doc are tracked as **GitHub issues** (the system of record), with a thin pointer kept in the source doc so the decision stays visible in the PR diff. This replaces the former `<source>-deferrals.md` sidecar. Existing sidecars are a frozen historical record — **not migrated**; only new deferrals follow this convention.
 
-- **`[Defer]`** (will revisit): open a GitHub issue — label `deferred` (create the label once if absent), title the deferred work, and in the body capture **Reason**, **Revisit-when** (the concrete trigger), **Source** (which session — e.g. `ce-doc-review` pass on YYYY-MM-DD), **Severity** (P0–P3), **Original finding evidence** (quote/paraphrase), and a back-link to the source spec/plan. The issue is the durable record; close it when the work lands. When starting a slice, find prior deferrals that target it by searching **both** surfaces: `gh issue list --repo prpande/PRism --label deferred --state open` (new work) **and** a grep of the frozen `*-deferrals.md` sidecars under `docs/specs/` (older work, not migrated).
+- **`[Defer]`** (will revisit): open a GitHub issue — label `deferred` (create the label once if absent), title the deferred work, and fill the body from the template below. The issue is the durable record; close it when the work lands. When starting a slice, find prior deferrals that target it by searching **both** surfaces: `gh issue list --label deferred --state open` (new work — run from inside the repo so it isn't pinned to one owner/fork) **and** a grep of the frozen `*-deferrals.md` sidecars under `docs/specs/` (older work, not migrated).
 - **`[Skip]`** (rejected, do NOT revisit unless new evidence) and **`[Superseded]`** (a prior decision a later rigor pass overturned): **no issue** — there is nothing to track or close. Record them inline in `## Deferred work` only.
+
+Issue body template for a `[Defer]`:
+
+```markdown
+**Reason:** <why deferred — one paragraph>
+**Revisit-when:** <concrete trigger>
+**Source:** <session — e.g., ce-doc-review pass on YYYY-MM-DD>
+**Severity:** P0 | P1 | P2 | P3
+**Original finding evidence:** <quote or paraphrase>
+**Source doc:** [path/to/spec-or-plan.md](…)
+```
 
 Each source spec/plan carries a `## Deferred work` section; one line per item:
 
 ```markdown
 ## Deferred work
 
-- **[Defer] <Title>** — [#NNN](https://github.com/prpande/PRism/issues/NNN). <one-line reason>. Revisit: <trigger>.
+- **[Defer] <Title>** — #TBD. <one-line reason>. Revisit: <trigger>.
 - **[Skip] <Title>** — <one-line reason; why we will not revisit>.
 - **[Superseded] <Title>** — overturns <prior decision / issue>; <one-line reason>.
 ```
 
-Write the in-spec line immediately with a literal `#TBD` marker (it works offline); replace `#TBD` with the real `#NNN` link once the issue is filed — a deterministic find-and-replace. Don't rewrite a `[Defer]` line's history in place — status and decision changes live in the issue thread (or a new `[Superseded]` line), preserving the frozen-record property the sidecar used to provide.
+Write the `[Defer]` line immediately with the literal `#TBD` marker (it works offline); once the issue is filed, replace `#TBD` with the bare issue number, e.g. `#162` — GitHub auto-links it, so no full URL is needed and the line isn't pinned to a repo owner/name. Don't rewrite a `[Defer]` line's history in place — status and decision changes live in the issue thread (or a new `[Superseded]` line), preserving the frozen-record property the sidecar used to provide.
 
 **Auto-review workflow (Claude Code):** See [`CLAUDE.md`](../../CLAUDE.md) — `compound-engineering:ce-doc-review`, one-pass policy, and visible-rejection handoff apply when authoring specs/plans in Claude Code sessions.
