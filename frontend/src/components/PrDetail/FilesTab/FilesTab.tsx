@@ -1,6 +1,4 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { useOutletContext, useParams } from 'react-router-dom';
-import type { PrReference } from '../../../api/types';
 import { ApiError } from '../../../api/client';
 import { postFileViewed } from '../../../api/fileViewed';
 import { sendPatch } from '../../../api/draft';
@@ -19,7 +17,7 @@ import { buildTree, flattenPaths } from './treeBuilder';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { Modal } from '../../Modal/Modal';
-import type { PrDetailOutletContext } from '../../../pages/PrDetailPage';
+import { usePrDetailContext } from '../prDetailContext';
 import styles from './FilesTab.module.css';
 
 // True when the diff fetch failed specifically because the requested commit
@@ -53,21 +51,7 @@ function useViewportWidth() {
 }
 
 export function FilesTab() {
-  const { prDetail, draftSession, readOnly } = useOutletContext<PrDetailOutletContext>();
-  const {
-    owner,
-    repo,
-    number: numberStr,
-  } = useParams<{
-    owner: string;
-    repo: string;
-    number: string;
-  }>();
-
-  const prRef: PrReference = useMemo(
-    () => ({ owner: owner!, repo: repo!, number: Number(numberStr) }),
-    [owner, repo, numberStr],
-  );
+  const { prRef, prDetail, draftSession, readOnly } = usePrDetailContext();
 
   const isLowQuality = prDetail.clusteringQuality === 'low';
 
@@ -160,7 +144,7 @@ export function FilesTab() {
     [prDetail.reviewComments, selectedPath],
   );
 
-  const prUrl = `https://github.com/${owner}/${repo}/pull/${numberStr}`;
+  const prUrl = `https://github.com/${prRef.owner}/${prRef.repo}/pull/${prRef.number}`;
 
   const handleToggleViewed = useCallback(
     (path: string) => {
@@ -252,9 +236,9 @@ export function FilesTab() {
   });
 
   // S4 — drafts session is owned by PrDetailPage and threaded through the
-  // Outlet context (single source of truth for tab strip count, sticky-top
+  // PrDetail context (single source of truth for tab strip count, sticky-top
   // UnresolvedPanel, and per-tab consumers). Files tab pulls it through
-  // `useOutletContext` rather than re-instantiating its own hook.
+  // `usePrDetailContext` rather than re-instantiating its own hook.
 
   // Active inline composer state. activeAnchor + composerDraftId together
   // describe "the composer the user is currently in". pendingNewAnchor is

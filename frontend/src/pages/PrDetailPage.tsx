@@ -1,4 +1,6 @@
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { PrDetailContextProvider } from '../components/PrDetail/prDetailContext';
+import type { PrDetailContextValue } from '../components/PrDetail/prDetailContext';
 import { PrHeader } from '../components/PrDetail/PrHeader';
 import { BannerRefresh } from '../components/PrDetail/BannerRefresh';
 import { BannerTransition } from '../components/PrDetail/BannerTransition';
@@ -141,6 +143,13 @@ function PrDetailPageInner({
     else if (tab === 'drafts') navigate(`${basePath}/drafts`);
   };
 
+  // Provided to sub-tabs (and the always-visible UnresolvedPanel) via the
+  // PrDetail context so their CTAs switch sub-tabs without reconstructing a
+  // URL. Sub-tab selection is still URL-driven this task (the routing swap to
+  // a single keep-alive host is a later task), so this simply delegates to the
+  // existing URL-based navigation.
+  const handleTabChangeToSubTab = (tab: PrTabId) => handleTabChange(tab);
+
   const handleReload = () => {
     updates.clear();
     reload();
@@ -201,8 +210,31 @@ function PrDetailPageInner({
     ? 'pr-detail-page pr-detail-page-readonly'
     : 'pr-detail-page';
 
-  return (
-    <div className={pageClassName}>
+  // Provider value for the Outlet sub-tabs. Only built once `data` is present —
+  // `prDetail` is non-nullable in the context shape, and the Outlet leaf is the
+  // ONLY consumer of this provider (it renders only when `data` exists, see the
+  // `data ?` guard below). The always-visible chrome (UnresolvedPanel →
+  // StaleDraftRow) does NOT read this provider: it gets `onSelectSubTab` as an
+  // explicit prop instead, so it renders crash-free during the pre-load window
+  // when `data === null` (the provider doesn't exist yet). Before Task 2 this
+  // chrome was provider-independent; keeping it so preserves that behavior and
+  // matches how the final PrDetailView wires chrome (prop) vs. sub-tabs (context).
+  const prDetailValue: PrDetailContextValue | null = data
+    ? {
+        prRef: ref,
+        prDetail: data,
+        draftSession,
+        readOnly: presence.readOnly,
+        onSelectSubTab: handleTabChangeToSubTab,
+      }
+    : null;
+
+  // Always-visible chrome. UnresolvedPanel renders even before the Outlet's
+  // leaf resolves, so it must NOT depend on the data-gated provider — it
+  // receives `onSelectSubTab` directly. Only the Outlet leaf (which renders
+  // exclusively when `data` is present) is wrapped in the provider below.
+  const body = (
+    <>
       <PrHeader
         reference={ref}
         title={data?.pr.title ?? ''}
@@ -260,6 +292,7 @@ function PrDetailPageInner({
         session={draftSession.session}
         onMutated={() => void draftSession.refetch()}
         readOnly={presence.readOnly}
+        onSelectSubTab={handleTabChangeToSubTab}
       />
       {error && (
         <div role="alert" className="pr-detail-error">
@@ -268,19 +301,27 @@ function PrDetailPageInner({
       )}
       {showSkeleton ? (
         <PrDetailSkeleton />
-      ) : data ? (
-        <Outlet
-          context={
-            {
-              prDetail: data,
-              draftSession,
-              readOnly: presence.readOnly,
-            } satisfies PrDetailOutletContext
-          }
-        />
+      ) : prDetailValue ? (
+        // Only the Outlet leaf consumes the data-gated provider. It renders
+        // exclusively when `data` (⇒ prDetailValue) is non-null, so the
+        // provider always exists for its children. The surrounding chrome
+        // (above) stays provider-independent.
+        <PrDetailContextProvider value={prDetailValue}>
+          <Outlet
+            context={
+              {
+                prDetail: prDetailValue.prDetail,
+                draftSession,
+                readOnly: presence.readOnly,
+              } satisfies PrDetailOutletContext
+            }
+          />
+        </PrDetailContextProvider>
       ) : null}
-    </div>
+    </>
   );
+
+  return <div className={pageClassName}>{body}</div>;
 }
 
 function tabFromPath(pathname: string, basePath: string): PrTabId {

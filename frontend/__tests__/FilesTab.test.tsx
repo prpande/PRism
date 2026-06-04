@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
+import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
 import { useDraftSession } from '../src/hooks/useDraftSession';
 import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../src/api/types';
 
@@ -209,8 +210,17 @@ function jsonResponse(data: unknown, status = 200): Response {
 
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
   // Mirrors PrDetailPage's hoisted ownership of the draft session in S4 PR6.
+  // FilesTab now reads prRef/prDetail/session/readOnly from the PrDetail
+  // context (Task 2); the Outlet context prop is left intact during the
+  // migration but FilesTab no longer consumes it.
   const draftSession = useDraftSession(ref);
-  return <Outlet context={{ prDetail, draftSession }} />;
+  return (
+    <PrDetailContextProvider
+      value={{ prRef: ref, prDetail, draftSession, readOnly: false, onSelectSubTab: () => {} }}
+    >
+      <Outlet context={{ prDetail, draftSession }} />
+    </PrDetailContextProvider>
+  );
 }
 
 function renderFilesTab(prDetail: PrDetailDto = minimalPrDetail) {

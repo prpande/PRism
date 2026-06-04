@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
+import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
 import { __resetTabIdForTest } from '../src/api/draft';
 import { useDraftSession } from '../src/hooks/useDraftSession';
 import type { DiffDto, PrDetailDto, PrReference, ReviewSessionDto } from '../src/api/types';
@@ -153,8 +154,16 @@ function makeRouteHandler(
 
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
   // Mirrors PrDetailPage's hoisted ownership of the draft session in S4 PR6.
+  // FilesTab now reads prRef/prDetail/session/readOnly from the PrDetail
+  // context (Task 2); the Outlet context prop is left intact but unused.
   const draftSession = useDraftSession(ref);
-  return <Outlet context={{ prDetail, draftSession }} />;
+  return (
+    <PrDetailContextProvider
+      value={{ prRef: ref, prDetail, draftSession, readOnly: false, onSelectSubTab: () => {} }}
+    >
+      <Outlet context={{ prDetail, draftSession }} />
+    </PrDetailContextProvider>
+  );
 }
 
 function renderFilesTab() {

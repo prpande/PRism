@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { screen } from '@testing-library/react';
 import { DraftsTab } from './DraftsTab';
+import { renderWithPrDetailContext } from '../testUtils';
 import type { DraftCommentDto, PrReference, ReviewSessionDto } from '../../../api/types';
 
 const PR_REF: PrReference = { owner: 'acme', repo: 'api', number: 123 };
@@ -31,10 +31,9 @@ const ONE_COMMENT: DraftCommentDto = {
 };
 
 function renderTab(session: ReviewSessionDto) {
-  return render(
-    <MemoryRouter>
-      <DraftsTab prRef={PR_REF} session={session} status="ready" refetch={async () => {}} />
-    </MemoryRouter>,
+  return renderWithPrDetailContext(
+    <DraftsTab prRef={PR_REF} session={session} status="ready" refetch={async () => {}} />,
+    { prRef: PR_REF },
   );
 }
 

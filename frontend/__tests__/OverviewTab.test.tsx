@@ -1,8 +1,10 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { MemoryRouter, Routes, Route, Outlet, useLocation } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { OverviewTab } from '../src/components/PrDetail/OverviewTab/OverviewTab';
+import { PrDetailContextProvider } from '../src/components/PrDetail/prDetailContext';
+import type { PrDetailContextValue } from '../src/components/PrDetail/prDetailContext';
 import type { PrDetailDto, DiffDto, PrReference, ReviewSessionDto } from '../src/api/types';
 import type { UseDraftSessionResult } from '../src/hooks/useDraftSession';
 
@@ -175,9 +177,16 @@ function mockFetch(opts: MockOptions = {}) {
   });
 }
 
-function LocationProbe() {
-  const location = useLocation();
-  return <div data-testid="location-probe">{location.pathname}</div>;
+// Builds a PrDetailContextProvider value for the sub-tab. The sub-tab now
+// reads prRef/session/onSelectSubTab from this context (no longer from the
+// Outlet + useParams). The Outlet context prop is left intact during the
+// migration; OverviewTab simply ignores it.
+function providerValue(
+  prDetail: PrDetailDto,
+  draftSession: UseDraftSessionResult,
+  onSelectSubTab: (tab: 'overview' | 'files' | 'drafts') => void,
+): PrDetailContextValue {
+  return { prRef: ref, prDetail, draftSession, readOnly: false, onSelectSubTab };
 }
 
 function mountOverview(opts: MockOptions = {}) {
@@ -188,20 +197,30 @@ function mountOverview(opts: MockOptions = {}) {
   vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);
   const prDetailForRoute = opts.detail ?? baseDetail;
   const draftSession = opts.draftSession ?? fakeDraftSession();
-  return render(
+  const onSelectSubTab = vi.fn();
+  const result = render(
     <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
       <Routes>
         <Route
           path="/pr/:owner/:repo/:number"
           element={<Outlet context={{ prDetail: prDetailForRoute, draftSession }} />}
         >
-          <Route index element={<OverviewTab />} />
+          <Route
+            index
+            element={
+              <PrDetailContextProvider
+                value={providerValue(prDetailForRoute, draftSession, onSelectSubTab)}
+              >
+                <OverviewTab />
+              </PrDetailContextProvider>
+            }
+          />
           <Route path="files/*" element={<div data-testid="files-content">FILES</div>} />
         </Route>
-        <Route path="*" element={<LocationProbe />} />
       </Routes>
     </MemoryRouter>,
   );
+  return { ...result, onSelectSubTab };
 }
 
 beforeEach(() => {
@@ -245,13 +264,13 @@ describe('OverviewTab', () => {
     expect(screen.getByRole('button', { name: /mark all read/i })).toBeInTheDocument();
   });
 
-  it('navigates to the Files route when "Review files" is clicked', async () => {
-    mountOverview();
+  it('selects the Files sub-tab when "Review files" is clicked', async () => {
+    const { onSelectSubTab } = mountOverview();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /review files/i })).not.toBeDisabled(),
     );
     await userEvent.click(screen.getByRole('button', { name: /review files/i }));
-    expect(await screen.findByTestId('files-content')).toBeInTheDocument();
+    expect(onSelectSubTab).toHaveBeenCalledWith('files');
   });
 
   it('disables the "Review files" CTA with the empty-state help text on an empty PR', async () => {
@@ -314,16 +333,22 @@ describe('OverviewTab', () => {
       return Promise.resolve(jsonResponse({}, 204));
     });
     vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);
+    const loadingSession = fakeDraftSession();
     render(
       <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
         <Routes>
           <Route
             path="/pr/:owner/:repo/:number"
-            element={
-              <Outlet context={{ prDetail: baseDetail, draftSession: fakeDraftSession() }} />
-            }
+            element={<Outlet context={{ prDetail: baseDetail, draftSession: loadingSession }} />}
           >
-            <Route index element={<OverviewTab />} />
+            <Route
+              index
+              element={
+                <PrDetailContextProvider value={providerValue(baseDetail, loadingSession, vi.fn())}>
+                  <OverviewTab />
+                </PrDetailContextProvider>
+              }
+            />
           </Route>
         </Routes>
       </MemoryRouter>,
@@ -381,16 +406,22 @@ describe('OverviewTab', () => {
       return Promise.resolve(jsonResponse({}, 204));
     });
     vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock as typeof fetch);
+    const errorSession = fakeDraftSession();
     render(
       <MemoryRouter initialEntries={['/pr/octocat/hello/42']}>
         <Routes>
           <Route
             path="/pr/:owner/:repo/:number"
-            element={
-              <Outlet context={{ prDetail: baseDetail, draftSession: fakeDraftSession() }} />
-            }
+            element={<Outlet context={{ prDetail: baseDetail, draftSession: errorSession }} />}
           >
-            <Route index element={<OverviewTab />} />
+            <Route
+              index
+              element={
+                <PrDetailContextProvider value={providerValue(baseDetail, errorSession, vi.fn())}>
+                  <OverviewTab />
+                </PrDetailContextProvider>
+              }
+            />
           </Route>
         </Routes>
       </MemoryRouter>,
