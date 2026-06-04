@@ -20,6 +20,14 @@ interface HeaderProps {
 // built-in path-matching would mark /setup active even when ?replace=1 is set.
 // The `·` first-run indicator on Setup communicates first-run-needed without
 // altering tab weight (no token yet).
+//
+// The global ⌘K search palette is not built yet (#119). Rather than ship a
+// permanently-disabled box with a not-allowed cursor, the markup is kept but
+// gated behind this flag so nothing dead renders. When the palette lands: flip
+// to true, remove `disabled`, and wire the handler. It renders only off the
+// Inbox, where the central "Paste a PR URL…" box already covers the same need.
+const SEARCH_PALETTE_ENABLED = false;
+
 export function Header({ hasToken }: HeaderProps) {
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
@@ -63,13 +71,15 @@ export function Header({ hasToken }: HeaderProps) {
         </Link>
       </nav>
       <div className={styles.spacer} />
-      <input
-        className={styles.search}
-        placeholder="Jump to PR or file… ⌘K"
-        title="Search palette — v1.1"
-        disabled
-        aria-label="Global search (placeholder)"
-      />
+      {SEARCH_PALETTE_ENABLED && !inboxActive && (
+        <input
+          className={styles.search}
+          placeholder="Jump to PR or file… ⌘K"
+          title="Search palette — v1.1"
+          disabled
+          aria-label="Global search (placeholder)"
+        />
+      )}
       {/* Desktop shell only — renders nothing in the browser. The theme/accent/AI
           quick toggles that used to live here were removed (they're in Settings);
           the saved-appearance apply-on-load they also did now lives in the
