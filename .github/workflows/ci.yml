@@ -60,60 +60,67 @@ jobs:
       - name: Test (.NET)
         run: dotnet test --no-build --configuration Release --settings .runsettings --logger "trx;LogFileName=test-results.trx"
 
-      # The windows-latest runner extracts the Playwright browser as thousands of
-      # files; Windows Defender scans each one as it lands, which historically hung
-      # the install past 10 min and produced no browser (#171 — the 2026-05-29
-      # regression). Two mitigations, in order:
-      #   1. Exclude the browser dir from Defender so extraction isn't scanned.
-      #   2. Cache the extracted binaries so only a cache MISS ever pays the cost.
-      # The suite runs only the headless `chromium` project (no channel), so we
-      # install JUST chrome-headless-shell (`--only-shell`) — `npx playwright
-      # install chromium` never fetched that separate build, so every spec died at
-      # launch (#171). `--with-deps` stays off (Linux-only no-op on windows).
-      - name: Exclude Playwright browser dir from Defender
-        shell: pwsh
-        continue-on-error: true # tamper-protection may block it; cache+timeout still cover us
-        run: |
-          $p = "$env:LOCALAPPDATA\ms-playwright"
-          New-Item -ItemType Directory -Force -Path $p | Out-Null
-          Add-MpPreference -ExclusionPath $p
-          Write-Host "Added Defender exclusion for $p"
-
-      - name: Restore Playwright browser cache
-        id: pw-cache
-        uses: actions/cache/restore@v4
+      - name: Upload .NET test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
         with:
-          path: ~\AppData\Local\ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          name: dotnet-test-results
+          path: '**/test-results.trx'
 
-      - name: Playwright install (headless shell)
-        if: steps.pw-cache.outputs.cache-hit != 'true'
+  # ---------------------------------------------------------------------------
+  # Browser e2e runs on Linux, NOT windows-latest. The Playwright browser
+  # EXTRACTION hangs indefinitely on windows-latest — the ~111 MiB download
+  # finishes in ~2s, then Defender scans each of the thousands of extracted
+  # files and the unzip never completes (the 2026-05-29 regression, #171). That
+  # is exactly why the suite was previously masked with continue-on-error rather
+  # than fixed. Linux extracts in seconds. The web app under test (Kestrel
+  # serving /api + the React bundle, the fake .NET backend, the /test hooks) is
+  # platform-agnostic; only the Windows single-binary PACKAGING differs, which a
+  # browser e2e never exercised. So e2e gates here, for real.
+  # ---------------------------------------------------------------------------
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Frontend install
         working-directory: frontend
-        run: npx playwright install --only-shell
-        timeout-minutes: 20
+        run: npm ci
 
-      # Loud failure if the browser is missing (hung/partial install, or an empty
-      # cache) — replaces the old silent continue-on-error mask on the test step.
+      - name: Restore (.NET)
+        run: dotnet restore
+
+      # On Linux `--with-deps` IS required (installs the system libraries the
+      # browser links against — unlike windows where it is a no-op). `--only-shell`
+      # fetches just chrome-headless-shell, the binary this headless chromium suite
+      # launches (`npx playwright install chromium` never fetched it — #171).
+      - name: Playwright install (headless shell + deps)
+        working-directory: frontend
+        run: npx playwright install --with-deps --only-shell
+        timeout-minutes: 10
+
+      # Loud failure if the browser is missing — the test step gates, no mask.
       - name: Verify Playwright browser is installed
         working-directory: frontend
-        shell: pwsh
+        shell: bash
         run: |
-          $root = if ($env:PLAYWRIGHT_BROWSERS_PATH) { $env:PLAYWRIGHT_BROWSERS_PATH } else { "$env:LOCALAPPDATA\ms-playwright" }
-          $shell = Get-ChildItem -Path $root -Recurse -Filter 'chrome-headless-shell.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $shell) {
-            Write-Error "chrome-headless-shell.exe not found under $root — Playwright install failed or omitted the headless shell (see #171)."
+          root="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+          if find "$root" -name 'chrome-headless-shell' -type f 2>/dev/null | grep -q .; then
+            echo "Found headless shell under $root"
+          else
+            echo "chrome-headless-shell not found under $root — Playwright install failed (#171)." >&2
             exit 1
-          }
-          Write-Host "Found headless shell: $($shell.FullName)"
-
-      # Save the cache ONLY on a clean miss+install+verify, so a partial/hung
-      # extraction is never persisted (a poisoned cache would break every run).
-      - name: Save Playwright browser cache
-        if: steps.pw-cache.outputs.cache-hit != 'true' && success()
-        uses: actions/cache/save@v4
-        with:
-          path: ~\AppData\Local\ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+          fi
 
       # No continue-on-error: a genuine e2e failure now turns the job RED. The
       # D104 tablist a11y violation is allowlisted inside a11y-audit.spec.ts (#174).
@@ -124,12 +131,17 @@ jobs:
           CI: 'true'
         timeout-minutes: 30
 
-      - name: Upload test artifacts
-        if: failure()
+      # Always upload. On the FIRST Linux run the pixel-parity specs have no
+      # linux/ baseline yet, so Playwright WRITES them under
+      # e2e/__screenshots__/linux/ and fails those tests — download this artifact
+      # once to commit the linux baselines (the win32 ones were for the old,
+      # broken windows path and don't match a Linux runner).
+      - name: Upload e2e artifacts
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results
+          name: e2e-results
           path: |
-            **/test-results.trx
-            frontend/test-results/
+            frontend/e2e/__screenshots__/
             frontend/playwright-report/
+            frontend/test-results/
