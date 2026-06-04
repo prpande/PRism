@@ -37,7 +37,11 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
               <span className={styles.rail} aria-hidden="true">
                 <span className={styles.node} />
               </span>
-              <article className={styles.card} data-testid="pr-root-comment">
+              <article
+                className={styles.card}
+                data-testid="pr-root-comment"
+                aria-label={`Comment by ${comment.author}`}
+              >
                 <header className={styles.band}>
                   <span className={styles.author}>{comment.author}</span>
                   <time className={styles.time} dateTime={comment.createdAt}>

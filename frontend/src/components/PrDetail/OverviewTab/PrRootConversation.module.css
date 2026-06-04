@@ -43,7 +43,9 @@
      anchor to a full-height box. */
   display: block;
   --rail-node-size: 9px;
-  --rail-node-y: 16px;
+  /* band padding-top (var(--s-2)) + ~half the --text-xs line-box; token-derived
+     so a --s-2 change re-aligns the node/line automatically. */
+  --rail-node-y: calc(var(--s-2) + 8px);
 }
 
 .rail::before {
@@ -151,6 +153,9 @@
   background: var(--surface-3);
   border-radius: 3px;
   color: var(--text-1);
+  /* don't inherit the prose `pre-wrap` — inline code wraps normally and does
+     not preserve runs of whitespace (the `.body p` pre-wrap is for prose only). */
+  white-space: normal;
 }
 
 .prRootConversationActions {
