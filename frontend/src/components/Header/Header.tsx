@@ -23,9 +23,11 @@ interface HeaderProps {
 //
 // The global ⌘K search palette is not built yet (#119). Rather than ship a
 // permanently-disabled box with a not-allowed cursor, the markup is kept but
-// gated behind this flag so nothing dead renders. When the palette lands: flip
-// to true, remove `disabled`, and wire the handler. It renders only off the
-// Inbox, where the central "Paste a PR URL…" box already covers the same need.
+// gated behind this flag so nothing dead renders. When the palette lands, ALL
+// THREE of these are required — flipping the flag alone would just re-introduce
+// the dead control #119 removed: (1) set this to true, (2) remove `disabled`,
+// (3) wire the ⌘K handler. It renders only off the Inbox, where the central
+// "Paste a PR URL…" box already covers the same need.
 const SEARCH_PALETTE_ENABLED = false;
 
 export function Header({ hasToken }: HeaderProps) {
