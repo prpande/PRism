@@ -46,7 +46,8 @@
   position: relative;
   transition:
     background var(--t-fast),
-    color var(--t-fast);
+    color var(--t-fast),
+    border-color var(--t-fast);
   user-select: none;
 }
 
@@ -78,6 +79,9 @@
   background: var(--surface-1);
   color: var(--text-1);
   border-color: var(--border-1);
+  /* border-color shorthand also paints the top slot; restore the reserved 2px
+     transparent top (the accent-only slot) — same pattern as .tabActive. */
+  border-top-color: transparent;
 }
 
 /* Theme-aware hover (#126). Hover must LIGHTEN the chip ("lift") in both themes,
