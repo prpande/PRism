@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { PrDetailContextProvider } from './prDetailContext';
 import type { PrDetailContextValue } from './prDetailContext';
 import { PrHeader } from './PrHeader';
@@ -107,6 +107,27 @@ export function PrDetailView({
     visited.current.add(tab);
     setSubTab(tab);
   }, []);
+
+  // Viewport-bound Files layout marker. Under keep-alive every open PR tab keeps
+  // a (hidden) Files sub-tab in the DOM, so the layout can no longer key off the
+  // mere presence of `.files-tab`. Instead THIS view stamps a `data-files-active`
+  // marker on the shared [data-app-scroll] container only while it is the active
+  // view (route-matched) AND showing Files; the tokens.css rules scoped to that
+  // marker bind the shell to the viewport so the diff scrolls internally with a
+  // bottom-of-screen horizontal scrollbar (#191/#156). The cleanup removes the
+  // marker when this view deactivates or switches sub-tab, so a different active
+  // view (or a non-Files tab) reverts to normal document scroll. ESLint's
+  // react-hooks plugin is not enabled in this config, so no disable directive is
+  // needed for the deps array.
+  useLayoutEffect(() => {
+    const slot = document.querySelector('[data-app-scroll]');
+    if (!slot) return;
+    const on = active && subTab === 'files';
+    slot.toggleAttribute('data-files-active', on);
+    return () => {
+      if (on) slot.removeAttribute('data-files-active');
+    };
+  }, [active, subTab]);
 
   const handleReload = () => {
     updates.clear();

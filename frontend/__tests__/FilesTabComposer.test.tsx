@@ -153,15 +153,16 @@ function makeRouteHandler(
 }
 
 function Wrapper({ prDetail }: { prDetail: PrDetailDto }) {
-  // Mirrors PrDetailPage's hoisted ownership of the draft session in S4 PR6.
-  // FilesTab now reads prRef/prDetail/session/readOnly from the PrDetail
-  // context (Task 2); the Outlet context prop is left intact but unused.
+  // Mirrors the host's ownership of the draft session. FilesTab reads
+  // prRef/prDetail/session/readOnly from the PrDetail context (Task 2); the
+  // legacy Outlet `context` prop is gone (Task 5 removed the nested-route
+  // Outlet), leaving FilesTab as the bare Outlet leaf.
   const draftSession = useDraftSession(ref);
   return (
     <PrDetailContextProvider
       value={{ prRef: ref, prDetail, draftSession, readOnly: false, onSelectSubTab: () => {} }}
     >
-      <Outlet context={{ prDetail, draftSession }} />
+      <Outlet />
     </PrDetailContextProvider>
   );
 }
