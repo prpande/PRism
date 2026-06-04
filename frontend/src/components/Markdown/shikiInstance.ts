@@ -83,17 +83,29 @@ const MAX_LINE_CHARS = 2000;
 // Valid CSS hex lengths: 3, 4, 6, or 8 hex digits (5 and 7 are not valid CSS).
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 
+// The only style keys we forward. Keying the guard on the property NAME (not
+// just the value) preserves the dual-theme invariant: token foreground is
+// driven solely by these two custom properties via the .codeToken /
+// html[data-theme=dark] .codeToken cascade. If Shiki ever emitted a bare
+// `color: #…` it would beat that class selector and break theming; a
+// `background-color: #…` would fight diff/word-diff background ownership.
+// Whitelisting keys drops both even though their values are valid hex.
+const ALLOWED_STYLE_KEYS = new Set(['--shiki-light', '--shiki-dark']);
+
 // Shiki types htmlStyle as `string | Record<string,string> | undefined`; the
 // dual-theme defaultColor:false path always yields the object form, but the
 // param must accept the union or `tsc -b` (npm run build) fails under strict.
-// Only hex color values are forwarded; Shiki's --shiki-light-font-style /
-// --shiki-light-font-weight variables (italic/bold) are intentionally dropped
-// — we keep color only. This is by design, not an oversight.
-function safeStyle(htmlStyle: string | Record<string, string> | undefined): Record<string, string> {
+// Only the allowlisted hex-valued color vars are forwarded; Shiki's
+// --shiki-light-font-style / --shiki-light-font-weight variables (italic/bold)
+// are intentionally dropped — we keep color only. This is by design.
+export function safeStyle(
+  htmlStyle: string | Record<string, string> | undefined,
+): Record<string, string> {
   if (!htmlStyle || typeof htmlStyle === 'string') return {};
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(htmlStyle)) {
-    if (HEX.test(v)) out[k] = v; // drop anything that isn't a plain hex color
+    // Both guards must hold: an allowlisted key AND a plain hex value.
+    if (ALLOWED_STYLE_KEYS.has(k) && HEX.test(v)) out[k] = v;
   }
   return out;
 }

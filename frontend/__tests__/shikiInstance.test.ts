@@ -3,7 +3,33 @@ import {
   pathToLang,
   tokenizeLines,
   getHighlighterAsync,
+  safeStyle,
 } from '../src/components/Markdown/shikiInstance';
+
+describe('safeStyle', () => {
+  it('forwards only allowlisted hex-valued color vars', () => {
+    const out = safeStyle({
+      '--shiki-light': '#005cc5',
+      '--shiki-dark': '#79b8ff',
+    });
+    expect(out).toEqual({ '--shiki-light': '#005cc5', '--shiki-dark': '#79b8ff' });
+  });
+
+  it('drops non-allowlisted keys even when their value is valid hex', () => {
+    const out = safeStyle({
+      '--shiki-light': '#005cc5',
+      color: '#ff0000', // bare color would beat the html[data-theme] .codeToken selector
+      'background-color': '#00ff00', // would fight diff/word-diff background ownership
+      '--shiki-light-font-style': 'italic', // non-hex value, also dropped
+    });
+    expect(out).toEqual({ '--shiki-light': '#005cc5' });
+  });
+
+  it('returns an empty object for the string / undefined forms', () => {
+    expect(safeStyle('color:#fff')).toEqual({});
+    expect(safeStyle(undefined)).toEqual({});
+  });
+});
 
 describe('pathToLang', () => {
   it('maps common extensions to grammars', () => {
