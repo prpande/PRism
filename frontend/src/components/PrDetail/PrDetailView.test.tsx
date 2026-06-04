@@ -1,4 +1,4 @@
-import { describe, test, expect, vi } from 'vitest';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -195,9 +195,11 @@ describe('PrDetailView — title propagation on resolve (Task 11)', () => {
     clearAllTabs: vi.fn(),
   };
 
-  test('setTitle is called with prRef and resolved title when usePrDetail resolves', async () => {
+  beforeEach(() => {
     setTitleSpy.mockClear();
+  });
 
+  test('setTitle is called with prRef and resolved title when usePrDetail resolves', async () => {
     render(
       <MemoryRouter>
         <OpenTabsContext.Provider value={openTabsStub}>
