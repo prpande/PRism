@@ -503,11 +503,12 @@ function HighlightedCodeBlock({ code, lang }: { code: string; lang: ShikiLang })
     return <code className={`language-${lang}`}>{code}</code>;
   }
   const lines = tokenizeLines(code, lang);
+  const rawLines = code.split('\n');
   return (
     <code className={`language-${lang}`}>
       {lines.map((tokens, i) => (
         <span key={i}>
-          <HighlightedLine spans={tokens} fallback={'' /* tokens always present here */} />
+          <HighlightedLine spans={tokens} fallback={rawLines[i] ?? ''} />
           {i < lines.length - 1 ? '\n' : ''}
         </span>
       ))}
@@ -535,7 +536,7 @@ Then in the `components.code` callback, change the language branch:
       return <code {...props}>{children}</code>;
 ```
 
-> The fallback span uses `''` because, once `ready`, `tokenizeLines` always returns at least one token per line. The `\n` between lines preserves copy/paste fidelity inside the `<pre><code>`.
+> `fallback` is the raw line text — `HighlightedLine` uses it only when a line has zero token spans (e.g. a blank line, where the text is empty anyway). The `\n` between lines preserves copy/paste fidelity inside the `<pre><code>`.
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -598,9 +599,9 @@ Expected: both succeed (`feedback_run_full_pre_push_checklist`).
 - [ ] **Step 4: Commit**
 
 ```bash
-cd frontend && npx prettier --write __tests__/MarkdownRenderer.sanitization.test.tsx
+cd frontend && npx prettier --write __tests__/MarkdownRendererSecurity.test.tsx
 cd .. && git add frontend/__tests__/MarkdownRendererSecurity.test.tsx
-git commit -m "test(highlight): security baseline for highlighted markdown code path"
+git commit -m "test(highlight): add security baseline for highlighted markdown fences"
 ```
 
 > **PR1 boundary.** Open PR1 here via `pr-autopilot` (`feedback_use_pr_autopilot`). PR1 = Tasks 1–5: highlighter core, theme CSS, `HighlightedLine`, Overview markdown highlighting, security baseline.
