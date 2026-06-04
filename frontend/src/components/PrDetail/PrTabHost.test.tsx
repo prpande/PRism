@@ -234,9 +234,9 @@ describe('PrTabHost', () => {
       expect(el).toHaveAttribute('hidden');
     });
 
+    // waitFor above already proved the hidden view exists and carries [hidden];
+    // re-grab the element handle for the focusable-descendant sweep below.
     const hidden = scroll.querySelector('[data-prref="acme/api/7"]') as HTMLElement;
-    expect(hidden).not.toBeNull();
-    expect(hidden).toHaveAttribute('hidden');
 
     // Teeth: the hidden view must actually CONTAIN focusable elements, else the
     // forEach below is vacuously true.
