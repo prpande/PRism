@@ -226,7 +226,7 @@ Where `handleTabChangeToSubTab(tab)` reuses the existing `handleTabChange` navig
 
 - [ ] **Step 5: Update the three child specs to wrap in the provider**
 
-In `OverviewTab`/`FilesTab`/`DraftsTab` test files, replace any `MemoryRouter`+`Outlet` test harness with a `renderWithPrDetailContext(ui, { prRef, prDetail, draftSession, readOnly })` helper. Read each spec's current harness first; preserve the route mock only where a test asserts navigation (OverviewTab "Review files" now asserts `onSelectSubTab('files')` was called instead of a URL change).
+In `OverviewTab`/`FilesTab`/`DraftsTab` test files, replace any `MemoryRouter`+`Outlet` test harness with a `renderWithPrDetailContext(ui, value)` helper — **a thin wrapper that renders `ui` inside `PrDetailContextProvider value={value}`**, where `value` is `{ prRef, prDetail, draftSession, readOnly, onSelectSubTab: vi.fn() }`. (This is distinct from Task 4's `renderPrDetailView`, which mounts the *whole* `PrDetailView`; this one wraps a single child for the child-component unit tests.) Read each spec's current harness first; preserve the route mock only where a test asserts navigation (OverviewTab "Review files" now asserts the `onSelectSubTab` spy was called with `'files'` instead of a URL change).
 
 - [ ] **Step 6: Run the full frontend suite**
 
@@ -371,14 +371,28 @@ Expected: FAIL — module not found.
 Move the body of `PrDetailPageInner` (`PrDetailPage.tsx:70–284`) into `PrDetailView`, with these changes:
 
 ```tsx
-export function PrDetailView({ prRef, active }: { prRef: PrReference; active: boolean }) {
-  // ...all existing hooks: usePrDetail, useActivePrUpdates, useDraftSession,
-  //    useStateChangedSubscriber, useRootCommentPostedSubscriber,
-  //    useCrossTabPrPresence, useReconcile — UNCHANGED...
+export function PrDetailView({
+  prRef,
+  active,
+  initialSubTab,
+}: {
+  prRef: PrReference;
+  active: boolean;
+  initialSubTab?: PrTabId; // seeded from the entry URL by the host (deep-link)
+}) {
+  // ...all existing hooks: usePrDetail (destructures { data, error, reload, ... }),
+  //    useActivePrUpdates (→ `updates`), useDraftSession, useStateChangedSubscriber,
+  //    useRootCommentPostedSubscriber, useCrossTabPrPresence (→ `presence`),
+  //    useReconcile — UNCHANGED from PrDetailPageInner...
 
-  const [subTab, setSubTab] = useState<PrTabId>('overview');
-  // Track visited sub-tabs so we mount-on-first-visit then keep alive.
-  const visited = useRef<Set<PrTabId>>(new Set(['overview']));
+  // Seed from the deep-link sub-tab (read once at mount; the view owns sub-tab
+  // state thereafter). Defaults to overview.
+  const seed = initialSubTab ?? 'overview';
+  const [subTab, setSubTab] = useState<PrTabId>(seed);
+  // Mount-on-first-visit then keep alive. Seed `visited` with overview AND the
+  // entry sub-tab so a deep-link to /files renders FilesTab immediately (the
+  // #156 gate + e2e gotos depend on this).
+  const visited = useRef<Set<PrTabId>>(new Set<PrTabId>(['overview', seed]));
   const selectSubTab = useCallback((tab: PrTabId) => {
     visited.current.add(tab);
     setSubTab(tab);
@@ -487,14 +501,20 @@ import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { prRefKey, type PrReference } from '../../api/types';
 import { PrDetailView } from './PrDetailView';
 
-// Parses /pr/{owner}/{repo}/{number} (ignoring any trailing sub-path). Returns
-// null when not on a PR route. Uses the raw number segment so an invalid number
-// is detectable (NaN) rather than silently normalized.
-function parsePrRoute(pathname: string): { ref: PrReference; valid: boolean } | null {
-  const m = pathname.match(/^\/pr\/([^/]+)\/([^/]+)\/([^/]+)(?:\/|$)/);
+// Parses /pr/{owner}/{repo}/{number}[/files|/drafts]. Returns null when not on
+// a PR route. Uses the raw number segment so an invalid number is detectable
+// (NaN). ALSO extracts the trailing sub-tab segment so a *deep-link* to
+// .../files seeds the view's initial sub-tab. (Sub-tab leaves the URL for
+// in-app navigation per spec §1.6 — but entry-time seeding is a one-way
+// convenience that keeps the existing `page.goto('.../files')` e2e specs and
+// the #156 regression gate working without a URL-coupling.)
+function parsePrRoute(pathname: string): { ref: PrReference; valid: boolean; subTab: PrTabId } | null {
+  const m = pathname.match(/^\/pr\/([^/]+)\/([^/]+)\/([^/]+)(?:\/([^/]+))?/);
   if (!m) return null;
   const number = Number(m[3]);
-  return { ref: { owner: m[1], repo: m[2], number }, valid: Number.isInteger(number) };
+  const seg = m[4];
+  const subTab: PrTabId = seg === 'files' ? 'files' : seg === 'drafts' ? 'drafts' : 'overview';
+  return { ref: { owner: m[1], repo: m[2], number }, valid: Number.isInteger(number), subTab };
 }
 
 export function PrTabHost() {
@@ -518,7 +538,18 @@ export function PrTabHost() {
     <>
       {openTabs.map((t) => {
         const key = prRefKey(t.ref);
-        return <PrDetailView key={key} prRef={t.ref} active={key === activeKey} />;
+        // initialSubTab applies only to the view being deep-linked to right now
+        // (the active one at its first mount). Each view mounts at most once
+        // (keep-alive), so this seeds the sub-tab from the entry URL without
+        // ever overriding the user's in-app sub-tab state on later re-activation.
+        return (
+          <PrDetailView
+            key={key}
+            prRef={t.ref}
+            active={key === activeKey}
+            initialSubTab={key === activeKey ? route?.subTab : undefined}
+          />
+        );
       })}
     </>
   );
@@ -566,9 +597,11 @@ In `tokens.css`, replace the `[data-app-shell]:has(.files-tab)` + `.pr-detail-pa
 [data-app-shell]:has([data-app-scroll][data-files-active]) > * { flex-shrink: 0; }
 [data-app-scroll][data-files-active] { flex: 1; min-height: 0; overflow-y: auto; }
 /* Re-host the diff-sizing rule, accounting for the new [data-subtab] wrapper
-   layer between .pr-detail-page and .files-tab (Task 4). Without flex:1 1 0 +
-   min-height the diff content inflates the container and the bottom-pinned
-   h-scrollbar drops below the fold (#155/#191). */
+   layer between .pr-detail-page and .files-tab (Task 4). `.files-tab` is
+   FilesTab's existing root class (unchanged — these selectors depend on it,
+   so don't drop it during the migration). Without flex:1 1 0 + min-height the
+   diff content inflates the container and the bottom-pinned h-scrollbar drops
+   below the fold (#155/#191). */
 [data-files-active] .pr-detail-page { min-height: 100%; display: flex; flex-direction: column; }
 [data-files-active] .pr-detail-page > * { flex-shrink: 0; }
 [data-files-active] [data-subtab='files'] { flex: 1 1 0; min-height: 360px; display: flex; flex-direction: column; }
@@ -636,7 +669,31 @@ test('restores saved scrollTop for a (tab, subTab) on activation', () => {
   h.rerender({ active: true, subTab: 'files' });   // reactivate → restores 300
   expect(slot.scrollTop).toBe(300);
 });
+
+// Round-2 race guard: two views sharing the scroller, the INCOMING view earlier
+// in render order than the OUTGOING. The outgoing view's offset must survive.
+test('cross-view swap preserves the outgoing offset regardless of render order', () => {
+  const slot = makeScrollSlot(); // helper: appends [data-app-scroll] with writable scrollTop
+  // Render B (incoming) and A (outgoing) as siblings, A active.
+  const { rerender } = render(<>
+    <Mem prRefKey="acme/api/8" active={false} />   {/* B first in tree order */}
+    <Mem prRefKey="acme/api/7" active={true} />     {/* A active */}
+  </>);
+  slot.scrollTop = 420;                              // user scrolled A
+  rerender(<>
+    <Mem prRefKey="acme/api/8" active={true} />      {/* activate B (earlier) */}
+    <Mem prRefKey="acme/api/7" active={false} />     {/* deactivate A */}
+  </>);
+  // A's cleanup (save 420) runs before B's setup (restore) → A's offset intact.
+  rerender(<>
+    <Mem prRefKey="acme/api/8" active={false} />
+    <Mem prRefKey="acme/api/7" active={true} />      {/* re-activate A */}
+  </>);
+  expect(slot.scrollTop).toBe(420);
+});
 ```
+
+(`Mem` is a tiny test host calling `useTabScrollMemory({ prRefKey, subTab: 'files', active })`.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -660,29 +717,31 @@ export function useTabScrollMemory(opts: {
 }): void {
   const { prRefKey, subTab, active, slotSelector = '[data-app-scroll]' } = opts;
   const key = `${prRefKey}|${subTab}`;
-  const prevActive = useRef<boolean | null>(null);
 
   useLayoutEffect(() => {
     const slot = document.querySelector(slotSelector) as HTMLElement | null;
-    const was = prevActive.current;
-    prevActive.current = active;
-    if (!slot) return;
-    if (active && was !== true) {
-      // Restore on activation (incl. first mount-while-active = land at saved/0).
-      slot.scrollTop = store.get(key) ?? 0;
-    } else if (!active && was === true) {
-      // Save on deactivation.
+    if (!slot || !active) return;
+    // Restore on setup (activation, or sub-tab change within an active view).
+    slot.scrollTop = store.get(key) ?? 0;
+    // Save in CLEANUP. React runs all cleanups before any setups within a
+    // commit, so a deactivating view persists its scrollTop BEFORE the
+    // activating view overwrites the single shared [data-app-scroll] — no
+    // cross-view race regardless of openTabs order (this is the round-2 fix).
+    // The same property handles same-view sub-tab switches: changing `subTab`
+    // changes `key`, so cleanup saves the old sub-tab's offset before setup
+    // restores the new one.
+    return () => {
       store.set(key, slot.scrollTop);
-    }
+    };
   }, [active, key, slotSelector]);
 }
 ```
 
-(Also save on the *sub-tab* change within an active view: because `key` includes `subTab`, the effect re-runs when `subTab` changes — restoring the new sub-tab's offset. Save-before-switch is handled by tracking the previous key; if a test shows the prior sub-tab's offset is lost on same-view sub-tab switch, extend the effect to `store.set(prevKey, slot.scrollTop)` in a `prevKey` ref cleanup. Add that test if the e2e in PR3 surfaces it.)
+This eliminates the shared-scroller race the round-2 review found: with save-in-body, two views toggling in one commit could read each other's live `scrollTop` in undefined effect-body order; with save-in-cleanup the outgoing view always persists first.
 
 - [ ] **Step 4: Wire it into PrDetailView + run**
 
-In `PrDetailView`, call `useTabScrollMemory({ prRefKey: refKey, subTab, active })`. Run:
+This step **modifies the `PrDetailView.tsx` created in Task 4** — add the call alongside the existing `useActivationTransition` / `setTitle` / `clearUnread` hooks: `useTabScrollMemory({ prRefKey: refKey, subTab, active })`. Run:
 
 Run: `cd frontend && npm run test -- useTabScrollMemory && npm run test`
 Expected: PASS.
@@ -750,7 +809,7 @@ Expected: FAIL.
 
 In `PrDetailView`, add:
 
-`clearUnread` is already destructured from `useOpenTabs()` in Task 4 (alongside `setTitle`), and the one-shot first-mount `clearUnread(refKey)` effect was added there. Here, wire the **re-activation** path:
+`clearUnread` is already destructured from `useOpenTabs()` in Task 4 (alongside `setTitle`), the one-shot first-mount `clearUnread(refKey)` effect was added there, and `reload` comes from the existing `usePrDetail(...)` return (the `{ data, error, reload, … }` destructure carried over from `PrDetailPageInner`). This step only **adds** the re-activation wiring to the `PrDetailView.tsx` created in Task 4:
 
 ```tsx
 useActivationTransition(active, () => {
@@ -807,7 +866,7 @@ git commit -m "feat(pr-detail): refetch + clearUnread on tab re-activation (OQ1 
 - Modify: `frontend/src/pages/PrDetailPage.tabbing.test.tsx` (rename → `PrTabHost.tabbing.test.tsx`), `frontend/src/contexts/OpenTabsContext.test.tsx` (verify still valid), any Playwright spec navigating by `/files` `/drafts` URLs.
 
 - [ ] **Step 1:** Read each test. Replace URL assertions (`expect(location).toBe('/pr/.../files')`) with sub-tab control + content assertions (`click pr-tab-files` → `files-tab-root` visible; pathname unchanged). Un-`skip` any tests parked in PR1 Task 5.
-- [ ] **Step 2:** For Playwright specs that `page.goto('/pr/acme/api/123/files')`, change to `goto('/pr/acme/api/123')` then `click [data-testid=pr-tab-files]`.
+- [ ] **Step 2:** Playwright specs that **enter** via `page.goto('/pr/acme/api/123/files')` (and the shared helpers `openScenarioFilesTab` in `s4-setup.ts`, `parity-fixture.ts`, `s5-submit.ts`) **keep working** — the host seeds the initial sub-tab from the entry URL (Task 5 `parsePrRoute.subTab` → `initialSubTab`), so the deep-link still lands on Files. **No change needed** for entry-by-goto. Only migrate specs that assert the **URL changes after a sub-tab click** (sub-tab no longer round-trips to the URL per §1.6): replace the URL assertion with a `pr-tab-*` selected-state / content assertion. Audit: `grep -rn "/files'\|/drafts'" frontend/e2e` and classify each as entry-goto (keep) vs post-click-URL-assert (migrate).
 - [ ] **Step 3:** Run `npm run test` + targeted Playwright specs; all green.
 - [ ] **Step 4: Commit** `test(pr-detail): migrate sub-tab assertions from URL to state`
 
@@ -848,7 +907,7 @@ test('hidden PR view is not in the tab order or a11y tree', () => {
 
 ## Self-review (run before handing to execution)
 
-**Spec coverage:** §2 host/routing → Task 5; §3.1 sub-tab state → Task 4; §3.1 child prop migration → Tasks 2 + 3b (all three navigators); §3.2 mount-on-first-visit → Task 4; §3.3 scroll preservation → the §7 *revised* model (shared scroller + `:has`→marker in Task 5 Step 5b + per-tab save/restore in Task 6), NOT the spec's per-view container (rejected — see §7); §4.1 refetch-on-focus → Task 8; §2.3 clearUnread-on-activation → Tasks 4 (first mount) + 8 (re-activation); §4.2 SSE stay-live (no code) → inherent (hooks unchanged in PrDetailView); §4.2 OQ8 banner → Task 9; §5.1 diff-scroll gate → Task 5 Step 6b; §5.2 test migration → Task 11; §6 tests → Tasks 4/6/8/12/13; a11y contract → Task 12; OQ1 = option a → Task 8; OQ5 stale-file → Task 8 Step 6 (existing reset-to-first-file guard, divergence from spec default noted); OQ6 refetch-fail → Task 8 Step 5. **Not implemented (deferred):** §1.5 LRU/SSE-pause/Inbox (#161 — but Task 7 Step 3 *measures* the EventSource ceiling and promotes #161 into scope if updates stall), §8 OQ2 (backend N-subscription tolerance — verify in Task 7 Step 3 smoke), OQ3 cross-window readOnly, OQ7 dirty-composer (relies on existing `useComposerAutoSave`; unchanged close behavior), read-receipts (#160).
+**Spec coverage:** §2 host/routing → Task 5; §3.1 per-view context setup → Task 1; §3.1 sub-tab state (parent-owned, seeded from the entry URL via `parsePrRoute.subTab → initialSubTab` so deep-link `goto('.../files')` e2e specs + the #156 gate keep working) → Tasks 4 + 5; §3.1 child prop migration + all three sub-tab navigators → Tasks 2 + 3b; §3.2 mount-on-first-visit → Task 4; §3.3 scroll preservation → the §7 *revised* model (shared scroller + `:has`→marker in Task 5 Step 5b + per-tab save/restore in Task 6), NOT the spec's per-view container (rejected — see §7); §4.1 refetch-on-focus → Task 8; §2.3 clearUnread-on-activation → Tasks 4 (first mount) + 8 (re-activation); §4.2 SSE stay-live (no code) → inherent (hooks unchanged in PrDetailView); §4.2 OQ8 banner → Task 9; §5.1 diff-scroll gate → Task 5 Step 6b; §5.2 test migration → Task 11; §6 tests → Tasks 4/6/8/12/13; a11y contract → Task 12; OQ1 = option a → Task 8; OQ5 stale-file → Task 8 Step 6 (existing reset-to-first-file guard, divergence from spec default noted); OQ6 refetch-fail → Task 8 Step 5. **Not implemented (deferred):** §1.5 LRU/SSE-pause/Inbox (#161 — but Task 7 Step 3 *measures* the EventSource ceiling and promotes #161 into scope if updates stall), §8 OQ2 (backend N-subscription tolerance — verify in Task 7 Step 3 smoke), OQ3 cross-window readOnly, OQ7 dirty-composer (relies on existing `useComposerAutoSave`; unchanged close behavior), read-receipts (#160).
 
 **Type consistency:** `PrTabId` (`overview|files|drafts`) used consistently from `PrSubTabStrip`; `PrDetailContextValue` (Task 1) includes `prRef` + `onSelectSubTab` (the context **field** is `onSelectSubTab`; Task 4 implements it with a local `selectSubTab` callback passed as `onSelectSubTab: selectSubTab` — same function, field name is the public API); `useActivationTransition(active, cb)` signature matches Tasks 3/8; `useTabScrollMemory({prRefKey, subTab, active})` matches Task 6 call site.
 
