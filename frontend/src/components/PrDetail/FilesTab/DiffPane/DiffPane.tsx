@@ -511,7 +511,11 @@ export function DiffPane({
     >
       <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
-        {isLoading && <Spinner size="sm" className={styles.diffPaneLoading} />}
+        {/* Suppress the header spinner while the whole-file overlay spinner is
+            active so only one role=status live region announces at a time. */}
+        {isLoading && !(wholeFileEnabled && wholeFile.fetchStatus === 'loading') && (
+          <Spinner size="sm" className={styles.diffPaneLoading} />
+        )}
       </div>
       {localFailure !== null && (
         <WholeFileFailureBanner reason={localFailure} onDismiss={dismissBanner} />
