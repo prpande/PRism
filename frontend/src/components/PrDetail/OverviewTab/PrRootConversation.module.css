@@ -131,7 +131,7 @@
    it preserves intentional hard line breaks in comment prose. Kept unchanged to
    avoid altering how existing comments render in this visual restyle. */
 .body p {
-  margin: 0 0 8px;
+  margin: 0 0 var(--s-2);
   text-wrap: pretty;
   white-space: pre-wrap;
 }
