@@ -1,7 +1,7 @@
 # PR-detail tab state preservation (keep-alive)
 
 **Date**: 2026-06-04.
-**Status**: Draft — brainstorm output; implementation plan pending (`../plans/2026-06-04-pr-tab-state-keepalive.md`, not yet written).
+**Status**: Approved — brainstorm output; implementation plan written (`../plans/2026-06-04-pr-tab-state-keepalive.md`) and in execution. The scroll model (§3.3 / §5.1) was revised during planning from per-view containers to a shared scroller with manual save/restore; those sections carry the revision note.
 **Source authorities**:
 - `frontend/src/App.tsx` — the current `<Routes>` table that renders one route element at a time and unmounts `PrDetailPage` on every navigation. This spec restructures it.
 - `frontend/src/pages/PrDetailPage.tsx` — today's PR-detail container (`PrDetailPage` + `PrDetailPageInner`). Becomes the per-tab keep-alive view.
@@ -9,7 +9,7 @@
 - `frontend/src/components/PrTabStrip/PrTabStrip.tsx` — the browser-style tab strip. Tab clicks activate a kept-alive view instead of remounting one.
 - `frontend/src/hooks/usePrDetail.ts` — fetch + `postMarkViewed` stamp coupling (lines 52–79) that makes refetch-on-focus re-stamp for free; the same-PR reload guard (lines 46–48) keeps prior data visible so the refresh has no skeleton flash.
 - `frontend/src/hooks/useActivePrUpdates.ts`, `frontend/src/hooks/useStateChangedSubscriber.ts`, `frontend/src/hooks/useCrossTabPrPresence.ts` — the `prRef`-scoped SSE / presence subscriptions that stay live for hidden tabs.
-- `docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md` + PRs #149/#155/#156 — the recently-hardened, viewport-bound diff-scroll model that the per-view scroll-container change (§5) must not regress.
+- `docs/specs/2026-06-01-real-side-by-side-diff-rendering-design.md` + PRs #149/#155/#156 — the recently-hardened, viewport-bound diff-scroll model that the keep-alive scroll change (§3.3/§5) must not regress; it pins `data-app-scroll` as the bounded internal scroller, which is why the shipped design keeps that scroller shared rather than moving it per-view.
 - [`.ai/docs/frontend-conventions.md`](../../.ai/docs/frontend-conventions.md), [`.ai/docs/documentation-maintenance.md`](../../.ai/docs/documentation-maintenance.md).
 
 ---
@@ -41,7 +41,7 @@ The decisive factor: the user explicitly wants full fidelity (every component) *
 1. A persistent **`PrTabHost`** that renders one mounted PR-detail view per open tab, only the active one visible (§2).
 2. Routing restructure: PR views leave the `<Routes>` table; the `/pr/…` route becomes a thin placeholder (§2.1).
 3. **Sub-tab selection moves from URL into per-view component state** (§3). Sub-tabs become keep-alive, mounted on first visit (§3.2).
-4. **Per-view scroll containers** so each tab retains its own scroll position under `hidden` (§3.3).
+4. **Shared scroller with per-tab scroll save/restore** so each tab retains its own scroll position under `hidden`, without disturbing the hardened diff-scroll model (§3.3). *(Revised from per-view containers during planning — see §3.3.)*
 5. **Refetch-on-focus** for data freshness, which re-stamps `mark-viewed` for free (§4).
 6. Relocation of `addTab`/`setTitle` responsibility from `PrDetailPage` into the host + view (§2.2).
 7. Test migration + new keep-alive tests (§6).
@@ -60,7 +60,7 @@ See **§9 Deferred work** for the consolidated list with tracking links.
 ### 1.6 The load-bearing bets (vetoed-or-confirmed in brainstorm, both confirmed)
 
 1. **Sub-tab leaves the URL entirely.** The address bar stops reflecting the active sub-tab. Accepted because deep-linking is out of scope (§1.5).
-2. **Per-view scroll containers are the one integration risk** against the recently-hardened diff-scroll model (§5). Fallback: manual scroll save/restore on toggle instead of relying on `display:none` retention.
+2. **The scroll model is the one integration risk** against the recently-hardened diff-scroll model (§5). Resolved during planning by keeping the shared `data-app-scroll` scroller and restoring `scrollTop` manually per tab (§3.3), rather than the brainstorm's per-view containers — the former "fallback" became the primary design.
 
 ---
 
@@ -132,11 +132,13 @@ The outlet context (`PrDetailOutletContext`: `prDetail`, `draftSession`, `readOn
 
 A `visited` ref-set (`useRef(new Set<PrTabId>(['overview']))`, augmented in a `setSubTab` wrapper) tracks which sub-tabs have ever been opened. A sub-tab is rendered (and thereafter kept mounted, toggled by `hidden`) **only after its first visit**. Rationale: avoid eagerly mounting `FilesTab` — which lazily fetches the file tree + first diff — for a PR the user only skims on Overview. After first visit, the sub-tab keeps its state (selected file, compare picker, diff scroll) for the life of the tab.
 
-### 3.3 Per-view scroll containers
+### 3.3 Scroll retention — shared scroller + per-tab save/restore
 
-For each view (and each kept-alive sub-tab) to retain its own scroll position while `hidden`, **each `PrDetailView` becomes its own scroll container** (`overflow:auto; height:100%`) rather than all views sharing the outer `data-app-scroll` element. Under the `hidden` attribute (`display:none`), Chromium/Electron preserve a scroll container's `scrollTop`, so scroll restoration is automatic — no manual save/restore.
+> **Revised during planning.** The brainstorm proposed *per-view scroll containers* (each `PrDetailView` its own `overflow:auto` element, relying on the browser to preserve `scrollTop` under `display:none`). The `ce-doc-review` of the implementation plan rejected that: the hardened Files-tab scroll model (PRs #149/#155/#156) and the #156 regression spec both assert that the **outer `data-app-scroll` IS the bounded internal scroller**. Per-view containers would have forced `data-app-scroll` non-scrolling and re-hosted the viewport-binding rules on every view, fighting that contract. The shipped model below keeps the single shared scroller and restores scroll manually — the §5.1 "fallback" became primary.
 
-**Constraint (the §5.1 integration risk, stated precisely):** the desktop shell scrolls page content in a region below the navbar via `data-app-shell`/`data-app-scroll` (`App.tsx:77–80`), and the hardened Files-tab scroll model binds the **viewport-bound flex rules to `data-app-scroll` itself** via `[data-app-shell]:has(.files-tab) [data-app-scroll] { … }` (tokens.css ~250–293); the #156 regression asserts `data-app-scroll` *is* the bounded internal scroller. Moving the scroll container to per-`PrDetailView` therefore means (a) `data-app-scroll` must become **non-scrolling** (`overflow: visible`) for the PR-view subtree — two nested scrolling containers would fight — and (b) the per-view container must **re-host the `:has(.files-tab)` viewport-binding rules**, or the diff h-scroll regression fails. Given this coupling, treat the §5.1 manual-`scrollTop` fallback as **co-primary**, not a contingency.
+All PR views share the single outer `data-app-scroll` scroller (`App.tsx`). Each view's offset is saved and restored **per `(prRef, subTab)`** by `useTabScrollMemory` — a module-level `Map` with a restore-in-setup / save-in-cleanup `useLayoutEffect`. React runs all effect cleanups before any setups within a commit, so a deactivating view persists its `scrollTop` *before* the activating view restores its own — no cross-view race regardless of mount order. Switching sub-tabs within one view changes the `(prRef, subTab)` key, so the same property saves the outgoing sub-tab's offset before restoring the incoming one.
+
+**Files viewport-binding under keep-alive.** The hardened Files layout previously keyed off a global `[data-app-shell]:has(.files-tab) … ` selector. Under keep-alive that mis-fires: every open tab that has ever visited Files keeps a (hidden) `.files-tab` mounted, so `:has` would match for inactive tabs too. Instead, the route-active view stamps a `data-files-active` marker on `data-app-scroll` **only while it is the active view AND showing Files**; the viewport-binding rules in `tokens.css` are scoped to that marker. The marker effect is declared *before* `useTabScrollMemory` so the container is already a scroller when `scrollTop` is restored (in a real browser, writing `scrollTop` to a not-yet-scrollable element clamps to 0). `:not([hidden])` guards keep an explicit `display:flex` from overriding the `hidden` attribute and un-hiding inactive views. This preserves the exact #156 contract — `data-app-scroll` stays the bounded internal scroller — while making it keep-alive-correct.
 
 ---
 
@@ -148,7 +150,7 @@ When a view transitions to active (gains focus), it fires `usePrDetail.reload()`
 
 **"Focus" means the in-app tab-activation transition** — this view's `prRef` becoming the active route, i.e. `hidden` → visible. It explicitly does **not** mean window/OS focus or document `visibilitychange`. This precision is load-bearing for §5.3: `postMarkViewed` is un-debounced (`usePrDetail.ts:66–79`), so if "focus" included window focus, every alt-tab back into the app would re-GET + re-stamp the active view, breaking the no-write-amplification claim. The same active-transition hook also fires `clearUnread(refKey)` (§2.3).
 
-The trigger is gated so it fires on the *transition* into active (not on every render while active) and is a no-op for `readOnly` views' mutating legs already handled by `handleReload` (`PrDetailPage.tsx:144–153`). Whether to reuse `handleReload` (which also runs the reconcile leg) or a pure `usePrDetail.reload()` on focus is an implementation detail for the plan; the freshness requirement is the GET refetch + stamp, not necessarily the reconcile.
+The trigger is gated so it fires on the *transition* into active (not on every render while active) and is a no-op for `readOnly` views' mutating legs already handled by `handleReload` (`PrDetailView.tsx`, the keep-alive view that replaced `PrDetailPageInner`). Whether to reuse `handleReload` (which also runs the reconcile leg) or a pure `usePrDetail.reload()` on focus is an implementation detail for the plan; the freshness requirement is the GET refetch + stamp, not necessarily the reconcile.
 
 **Caveat — marking seen vs. preserved scroll (resolved: option a).** This "reproduces today's behavior" claim is *not* fully identical under keep-alive. Today's remount resets scroll to the top, so the user lands where new content typically is; keep-alive returns them to their *prior* scroll offset. Re-stamping `mark-viewed` on focus then clears the unread signal for comments the user may not have scrolled to. **Decision: keep the coupled stamp (option a)** — it preserves the fetch↔stamp simplicity this spec is built on. The principled alternatives (a "N new since last visit" affordance, and full viewport-based read receipts) are captured in **issue #160** for a future effort; they are explicitly out of scope here.
 
@@ -164,9 +166,9 @@ The trigger is gated so it fires on the *transition* into active (not on every r
 
 ## 5. Risks
 
-### 5.1 Per-view scroll container vs. hardened diff-scroll (primary risk)
+### 5.1 Scroll model vs. hardened diff-scroll (resolved → shared scroller)
 
-PRs #149/#155/#156 recently stabilized sticky diff bars and uniform horizontal scroll against a **desktop-viewport-bound** scroll model. Moving the vertical scroll container from `data-app-scroll` to per-`PrDetailView` changes the ancestor chain the diff panes scroll within — and `position: sticky` resolves against the *nearest scrolling ancestor*, so any sticky element in the diff subtree (e.g. the sticky diff bar; `.diffPaneLoadingOverlay`) re-anchors to the new per-view container, which sits at a different offset (below `PrHeader` + banners + `UnresolvedPanel` inside the view). **Mitigation:** the diff-scroll regression spec (the #156 fixture) is a gate — re-run it after the change. But the #156 fixture exercises horizontal/uniform scroll on a *single mounted view*; it does **not** cover sticky re-anchoring with chrome above the diff, nor a sticky element inside a `hidden` view on re-activation. Passing it is **necessary, not sufficient** — add the two sticky tests in §6. **Fallback** (co-primary per §3.3): keep the shared `data-app-scroll` container and instead save/restore each view's `scrollTop` manually on `hidden` toggle — more code, identical outcome, zero diff-scroll disturbance.
+PRs #149/#155/#156 stabilized sticky diff bars and uniform horizontal scroll against a **desktop-viewport-bound** model in which `data-app-scroll` itself is the bounded scroller (the #156 fixture asserts exactly this). The brainstorm's per-`PrDetailView` scroll container would have moved that boundary, re-anchoring every `position: sticky` element in the diff subtree (the sticky diff bar, `.diffPaneLoadingOverlay`) to a new per-view container sitting below `PrHeader` + banners + `UnresolvedPanel` — a real regression risk. **Resolution:** the shipped design keeps the shared `data-app-scroll` scroller and saves/restores `scrollTop` per tab (§3.3), so the diff-scroll model is untouched — zero re-anchoring. The #156 regression spec remains a gate (re-run after the routing swap), and §6 adds the keep-alive-specific marker test: `data-files-active` must bind the layout only for the route-active Files view, never for an inactive tab's hidden Files view.
 
 ### 5.2 Test migration
 
@@ -186,8 +188,8 @@ Tabs mount one at a time on user action (open), so there is no mount storm of `m
 - **Close discards state:** closing a tab unmounts its view; reopening starts fresh.
 - **Background banner:** a `pr-updated` SSE for a hidden tab latches its banner; switching to the tab shows it immediately.
 - **Sub-tab in state (no URL):** clicking sub-tabs changes rendered content without changing the pathname.
-- **Diff-scroll regression gate:** the #156 sticky/uniform-scroll fixture passes under the new per-view scroll container.
-- **Sticky re-anchoring:** the sticky diff bar pins correctly with `PrHeader` + banners above the diff inside the per-view container, and re-pins correctly after a `hidden` → visible re-activation.
+- **Diff-scroll regression gate:** the #156 sticky/uniform-scroll fixture passes unchanged — the shared `data-app-scroll` scroller is retained, so there is no re-anchoring to regress.
+- **Files marker correctness:** `data-files-active` is stamped only by the route-active view while showing Files, and removed when that view deactivates or leaves Files — so an inactive tab's hidden Files view never binds the viewport layout.
 - **Hidden-view a11y isolation:** keyboard focus (Tab order) cannot reach any focusable element inside a `hidden` view, and a screen reader does not announce hidden views.
 - **`clearUnread` on re-activation:** a hidden tab that latched an unread dot clears it when re-activated (not only on first mount).
 - **Playwright e2e:** open PR → Files → deep-scroll a diff → go to Inbox → return → assert same sub-tab + scroll + selected file.
@@ -196,13 +198,11 @@ Tabs mount one at a time on user action (open), so there is no mount storm of `m
 
 ## 7. Decomposition note
 
-This is one coherent slice but a meaty refactor (routing + host + sub-tab-in-state + per-view scroll + addTab/setTitle relocation + refetch-on-focus + test migration). `writing-plans` will likely sequence it into a few PRs, e.g.:
+This is one coherent slice but a meaty refactor (routing + host + sub-tab-in-state + shared-scroller scroll save/restore + addTab/setTitle relocation + refetch-on-focus + test migration). `writing-plans` sequenced it into three PRs:
 
-1. Host + routing skeleton (PR views leave `<Routes>`, host mounts/activates by URL; sub-tab still URL-driven temporarily or behind a flag).
-2. Sub-tab into component state; remove nested sub-routes; outlet-context → props.
-3. Keep-alive + per-view scroll container; diff-scroll regression gate.
-4. Refetch-on-focus + freshness tests.
-5. Test-migration hardening + Playwright e2e.
+1. **PR1** — host + routing swap (PR views leave `<Routes>`), sub-tab into component state (outlet-context → props/context), keep-alive sub-tab rendering, `useTabScrollMemory` shared-scroller save/restore + `data-files-active` marker, and the #156 diff-scroll regression gate.
+2. **PR2** — refetch-on-focus + `clearUnread`-on-activation via `useActivationTransition`, with freshness tests.
+3. **PR3** — test-migration hardening + Playwright e2e (open PR → Files → deep-scroll → Inbox → return → assert sub-tab + scroll + selected file).
 
 The exact split is the plan's call; this spec defines the target state, not the sequence.
 

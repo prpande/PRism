@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
 import type { PrDetailDto } from '../../api/types';
 import { App } from '../../App';
+import { parsePrRoute } from './PrTabHost';
 
 // ---------------------------------------------------------------------------
 // Keep-alive host integration test. We mount the REAL <App/> (its provider tree
@@ -189,5 +190,41 @@ describe('PrTabHost', () => {
 
     navigate('/pr/acme/api/7');
     expect(screen.getByTestId('files-tab-root')).toBeVisible(); // state survived
+  });
+});
+
+describe('parsePrRoute', () => {
+  test('parses a valid PR path and defaults the sub-tab to overview', () => {
+    expect(parsePrRoute('/pr/acme/api/7')).toEqual({
+      ref: { owner: 'acme', repo: 'api', number: 7 },
+      valid: true,
+      subTab: 'overview',
+    });
+  });
+
+  test('extracts files/drafts sub-tab segments and clamps unknown ones to overview', () => {
+    expect(parsePrRoute('/pr/acme/api/7/files')?.subTab).toBe('files');
+    expect(parsePrRoute('/pr/acme/api/7/drafts')?.subTab).toBe('drafts');
+    expect(parsePrRoute('/pr/acme/api/7/garbage')?.subTab).toBe('overview');
+  });
+
+  test('normalizes a zero-padded number (GitHub-consistent)', () => {
+    const r = parsePrRoute('/pr/acme/api/042');
+    expect(r?.valid).toBe(true);
+    expect(r?.ref.number).toBe(42);
+  });
+
+  test.each(['/pr/acme/api/0x1f', '/pr/acme/api/1e3', '/pr/acme/api/12abc', '/pr/acme/api/0'])(
+    'rejects non-decimal / non-positive number segment %s as invalid',
+    (path) => {
+      // The digit guard prevents Number()'s permissive hex/exponent/NaN parsing
+      // from mapping a malformed URL onto a real (or bogus) PR.
+      expect(parsePrRoute(path)?.valid).toBe(false);
+    },
+  );
+
+  test('returns null when the path is not a /pr/ route', () => {
+    expect(parsePrRoute('/')).toBeNull();
+    expect(parsePrRoute('/inbox')).toBeNull();
   });
 });

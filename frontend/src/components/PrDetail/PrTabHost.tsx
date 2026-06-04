@@ -11,15 +11,22 @@ import { PrDetailView } from './PrDetailView';
 // PR stays mounted, switching tabs (or navigating away and back) preserves each
 // view's sub-tab state, scroll position, and in-flight composer drafts — the
 // route table no longer owns PR-detail lifecycle.
-function parsePrRoute(
+export function parsePrRoute(
   pathname: string,
 ): { ref: PrReference; valid: boolean; subTab: PrTabId } | null {
   const m = pathname.match(/^\/pr\/([^/]+)\/([^/]+)\/([^/]+)(?:\/([^/]+))?/);
   if (!m) return null;
-  const number = Number(m[3]);
+  // Require the number segment to be plain decimal digits. Number() alone is
+  // too permissive for a path segment: it would silently accept hex ("0x1f"→31),
+  // exponent ("1e3"→1000), and whitespace forms, mapping a malformed URL onto a
+  // real PR. The digit guard rejects those; "0"/"00" are excluded via > 0 since
+  // PR numbers are 1-based. ("042" still normalizes to 42, matching GitHub.)
+  const seg3 = m[3];
+  const valid = /^\d+$/.test(seg3) && Number(seg3) > 0;
+  const number = Number(seg3);
   const seg = m[4];
   const subTab: PrTabId = seg === 'files' ? 'files' : seg === 'drafts' ? 'drafts' : 'overview';
-  return { ref: { owner: m[1], repo: m[2], number }, valid: Number.isInteger(number), subTab };
+  return { ref: { owner: m[1], repo: m[2], number }, valid, subTab };
 }
 
 export function PrTabHost() {
