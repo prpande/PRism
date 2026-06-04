@@ -22,7 +22,7 @@ The three views are not redundant — they cover different audiences (casual rea
 | New per-slice / per-task plan | `docs/plans/YYYY-MM-DD-<topic>.md` |
 | Spec status change (Not started → In progress → Implemented) | `docs/specs/README.md` group + cross-link to the PR(s) that moved it |
 | Spec edited after its plan was written | Mechanically sync the matching `docs/plans/<source>.md` in the **same PR** before any review or resumed implementation. Default values, file lists, schema fields, error contracts, and test rows propagating from the spec must reach the plan first; otherwise reviews surface stale-cross-ref noise instead of plan-quality findings. |
-| Planning or architectural decision rejects/defers an alternative | New entry in `<source>-deferrals.md` beside the source spec or plan under `docs/specs/` or `docs/plans/` (create if absent) + reference from the matching `docs/specs/README.md` bullet. Triggered by any session that weighs alternatives — ce-doc-review rigor passes, brainstorming Q-decisions, plan-writing alternatives, ADR deferrals, in-conversation rigor passes. See deferrals sidecar schema below. |
+| Planning or architectural decision rejects/defers an alternative | **Defer** → open (or update) a GitHub issue labelled `deferred` as the system of record, then add a one-line entry linking it under a `## Deferred work` section in the source spec/plan (create the section if absent). **Skip / Superseded** → record the one-line entry in `## Deferred work` only (no issue — nothing to track). Either way, reference from the matching `docs/specs/README.md` bullet. Triggered by any session that weighs alternatives — ce-doc-review rigor passes, brainstorming Q-decisions, plan-writing alternatives, ADR deferrals, in-conversation rigor passes. See deferred-work convention below. |
 | New `.github/workflows/` file or major workflow change | `.ai/docs/repo-overview.md` if visible to contributors |
 | New/changed behavioral guideline | `.ai/docs/behavioral-guidelines.md` |
 | New AI agent integration (new tool config directory) | Wire the tool to `.ai/docs/*.md`; update `.ai/README.md` index table |
@@ -35,26 +35,21 @@ The three views are not redundant — they cover different audiences (casual rea
 - `docs/spec/` describes the full PoC target — it is a forward-looking design contract, not a status board. Don't rewrite it to match shipped state. The roadmap, README Status, and spec index track shipped state.
 - `docs/spec-review.md` is transient working notes — no maintenance obligation.
 
-**Deferrals sidecar schema.** A `<source>-deferrals.md` records deferred / skipped items affecting the source doc. The first sidecar to land (`docs/specs/2026-05-06-s3-pr-detail-read-deferrals.md`) is the canonical reference for the schema:
+**Deferred-work convention (GitHub issues + in-spec links).** Deferred / skipped items affecting a source doc are tracked as **GitHub issues** (the system of record), with a thin pointer kept in the source doc so the decision stays visible in the PR diff. This replaces the former `<source>-deferrals.md` sidecar. Existing sidecars are a frozen historical record — **not migrated**; only new deferrals follow this convention.
+
+- **`[Defer]`** (will revisit): open a GitHub issue — label `deferred` (create the label once if absent), title the deferred work, and in the body capture **Reason**, **Revisit-when** (the concrete trigger), **Source** (which session — e.g. `ce-doc-review` pass on YYYY-MM-DD), **Severity** (P0–P3), **Original finding evidence** (quote/paraphrase), and a back-link to the source spec/plan. The issue is the durable record; close it when the work lands. Search open `deferred`-labelled issues (not a sidecar grep) when starting a slice, to find prior deferrals that target it.
+- **`[Skip]`** (rejected, do NOT revisit unless new evidence) and **`[Superseded]`** (a prior decision a later rigor pass overturned): **no issue** — there is nothing to track or close. Record them inline in `## Deferred work` only.
+
+Each source spec/plan carries a `## Deferred work` section; one line per item:
 
 ```markdown
----
-source-doc: docs/{specs|plans}/<source>.md   # path mirrors the source doc's location
-created: YYYY-MM-DD
-last-updated: YYYY-MM-DD                     # bump when entries are added or status changes
-status: open | resolved | superseded
----
+## Deferred work
 
-## [Defer|Skip|Superseded] <Title>
-
-- **Source:** <which session — e.g., `ce-doc-review` 7-persona pass on YYYY-MM-DD>
-- **Severity:** P0 | P1 | P2 | P3 | n/a
-- **Date:** YYYY-MM-DD
-- **Reason:** <why we deferred or skipped — one paragraph>
-- **Revisit when:** <concrete trigger; "n/a" for skips and superseded>
-- **Original finding evidence:** <quote or paraphrase>
+- **[Defer] <Title>** — [#NNN](https://github.com/prpande/PRism/issues/NNN). <one-line reason>. Revisit: <trigger>.
+- **[Skip] <Title>** — <one-line reason; why we will not revisit>.
+- **[Superseded] <Title>** — overturns <prior decision / issue>; <one-line reason>.
 ```
 
-`[Defer]` = will revisit (Revisit-when names the trigger). `[Skip]` = rejected with reasoning, do NOT revisit unless new evidence. `[Superseded]` = a prior Apply/Defer/Skip decision that a later rigor pass overturned; references the original entry. Don't re-edit entries after the fact — frozen record. Updates land as new entries citing the prior one.
+Write the in-spec line immediately (it works offline); backfill the `#NNN` link once the issue is created. Don't rewrite a `[Defer]` line's history in place — status and decision changes live in the issue thread (or a new `[Superseded]` line), preserving the frozen-record property the sidecar used to provide.
 
 **Auto-review workflow (Claude Code):** See [`CLAUDE.md`](../../CLAUDE.md) — `compound-engineering:ce-doc-review`, one-pass policy, and visible-rejection handoff apply when authoring specs/plans in Claude Code sessions.
