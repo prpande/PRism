@@ -42,9 +42,6 @@ export function PrTabHost() {
   useEffect(() => {
     if (route && route.valid) addTab(route.ref, null);
   }, [addTab, activeKey]);
-  if (route && !route.valid) {
-    return <div role="alert">Invalid PR reference: the PR number must be a positive integer.</div>;
-  }
   // On a cold direct load of a /pr/... URL (refresh, deep link), openTabs is
   // still empty on first paint — the addTab effect above runs post-render.
   // Union the active route's ref into the mounted set so its view renders
@@ -58,6 +55,16 @@ export function PrTabHost() {
   }
   return (
     <>
+      {/* Render the invalid-ref alert ALONGSIDE the kept-alive views, not
+          instead of them. An early `return <alert/>` would replace the whole
+          tree and unmount every open tab — losing each view's sub-tab, visited
+          set, and scroll memory — just because the user hit a malformed
+          `/pr/o/r/0` URL. With the alert as a sibling, the existing tabs stay
+          mounted (all hidden, since an invalid route has no activeKey) and
+          their state survives the detour. */}
+      {route && !route.valid && (
+        <div role="alert">Invalid PR reference: the PR number must be a positive integer.</div>
+      )}
       {refs.map((ref) => {
         const key = prRefKey(ref);
         return (

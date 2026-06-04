@@ -62,9 +62,13 @@ export function PrDetailView({
   // Wired alongside usePrDetail.reload — the two reload paths address
   // different concerns (PR-detail refetch vs. draft reconciliation) and run
   // concurrently when the user clicks the Reload button.
+  // Depend on the stable `draftSession.refetch` (a useCallback keyed on
+  // prRef/isOpen) rather than the whole `draftSession` object, which is a fresh
+  // literal every render. Narrowing the dep keeps this callback — and
+  // useReconcile's onReloadComplete — referentially stable across renders.
   const handleReconcileComplete = useCallback(() => {
     void draftSession.refetch();
-  }, [draftSession]);
+  }, [draftSession.refetch]);
   const reconcile = useReconcile({
     prRef,
     headSha: data?.pr.headSha ?? null,

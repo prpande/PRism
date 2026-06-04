@@ -196,6 +196,26 @@ describe('PrTabHost', () => {
     expect(screen.getByTestId('files-tab-root')).toBeVisible(); // state survived
   });
 
+  test('navigating to an invalid PR URL shows an alert but keeps open tabs mounted', async () => {
+    // Deep-link the Files sub-tab so the Files view is mounted (visited) up front.
+    const { navigate } = renderAppAt('/pr/acme/api/7/files');
+    await screen.findByTestId('files-tab-root');
+    expect(screen.getByTestId('files-tab-root')).toBeVisible();
+
+    // Malformed number segment → invalid route. The alert must render WITHOUT
+    // unmounting the kept-alive PR#7 view (whose state would otherwise be lost).
+    navigate('/pr/acme/api/0');
+    expect(screen.getByRole('alert')).toHaveTextContent(/positive integer/i);
+    expect(screen.getByTestId('files-tab-root')).toBeInTheDocument(); // survived
+    expect(
+      screen.getByTestId('files-tab-root').closest('[data-prref="acme/api/7"]'),
+    ).toHaveAttribute('hidden');
+
+    // Returning to the valid URL re-activates the same mounted view.
+    navigate('/pr/acme/api/7/files');
+    expect(screen.getByTestId('files-tab-root')).toBeVisible();
+  });
+
   test('renders the active PR view on direct load even before addTab populates openTabs', () => {
     // Regression: on a cold direct load (refresh / deep link) openTabs is empty
     // on first paint and addTab only runs post-render. Stub addTab to a no-op so
