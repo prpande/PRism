@@ -70,7 +70,11 @@
   border-radius: 4px;
 }
 
-.tab:hover {
+/* :not(.tabActive) so hover never repaints the ACTIVE tab — the active tab's
+   appearance is owned solely by .tabActive. The dark rule below is more specific
+   than .tabActive, so without the guard it would lighten the active tab on hover
+   (surface-1 → surface-3); the light rule out-specifies .tabActive too. */
+.tab:not(.tabActive):hover {
   background: var(--surface-1);
   color: var(--text-1);
   border-color: var(--border-1);
@@ -82,7 +86,7 @@
    --surface-2 (0.235). In dark, lift to --surface-3 (0.27) instead — otherwise
    hover would darken the chip and collide with the active fill (also 0.21).
    [data-theme] is a global attr on documentElement; .tab is the scoped class. */
-[data-theme='dark'] .tab:hover {
+[data-theme='dark'] .tab:not(.tabActive):hover {
   background: var(--surface-3);
 }
 

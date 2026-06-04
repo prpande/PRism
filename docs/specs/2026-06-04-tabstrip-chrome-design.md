@@ -71,7 +71,10 @@ ends of each theme's ladder:
 So hover is `--surface-1` by default (correct for light) with a
 `[data-theme="dark"] .tab:hover` override to `--surface-3` (correct for dark).
 Without the override, dark hover would *darken* the chip (0.235→0.21) and collide
-with the active fill (also 0.21).
+with the active fill (also 0.21). Both hover rules are scoped
+`:not(.tabActive)` so the active tab's appearance is never repainted on hover
+(the dark rule out-specifies `.tabActive`, so without the guard it would lighten
+the active tab — preflight adversarial catch).
 
 **Dark active-vs-inactive is intentionally NOT lightness-ordered.** In dark the
 active tab is `--surface-1` (0.21, it merges with the content surface below — the
