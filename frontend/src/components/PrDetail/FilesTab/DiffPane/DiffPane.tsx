@@ -20,10 +20,30 @@ import { useAiGate } from '../../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
 import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
+import {
+  useSyntaxTokens,
+  normalizeEol,
+  type SyntaxTokenMaps,
+} from '../../../../hooks/useSyntaxTokens';
+import { HighlightedLine } from '../../../Markdown/HighlightedLine';
+import { type LineToken } from '../../../Markdown/shikiInstance';
 import { WholeFileFailureBanner } from './WholeFileFailureBanner';
 import styles from './DiffPane.module.css';
 
 export type DiffMode = 'side-by-side' | 'unified';
+
+// Look up the syntax tokens for a single diff line, keyed by 1-based line
+// number on the requested side. Returns [] when the line has no number on
+// that side (e.g. a delete line has no new-side number) or the map has no
+// entry — HighlightedLine then renders its plaintext fallback.
+function tokensFor(
+  maps: SyntaxTokenMaps,
+  side: 'old' | 'new',
+  lineNum: number | null | undefined,
+): LineToken[] {
+  if (lineNum == null) return [];
+  return (side === 'old' ? maps.oldLineTokens : maps.newLineTokens).get(lineNum) ?? [];
+}
 
 export interface DiffPaneProps {
   prRef: PrReference;
@@ -123,6 +143,16 @@ export function DiffPane({
     baseSha,
     enabled: wholeFileEnabled,
     isSplit,
+  });
+
+  const syntax = useSyntaxTokens({
+    path: selectedPath,
+    file,
+    wholeFileEnabled,
+    wholeFile,
+    isSplit,
+    headSha,
+    baseSha,
   });
 
   // Failure latch: fires onWholeFileFailed once per transition to 'failed'.
@@ -306,6 +336,7 @@ export function DiffPane({
               threadsAtLine={threadsAtLine}
               filePath={path}
               colSpan={colSpan}
+              syntax={syntax}
               onLineClick={onLineClick}
               renderComposerForLine={renderComposerForLine}
               replyContext={replyContext}
@@ -356,6 +387,7 @@ export function DiffPane({
           threadsAtLine={threadsAtLine}
           filePath={path}
           colSpan={colSpan}
+          syntax={syntax}
           isFilled={line.isFilled}
           onLineClick={onLineClick}
           renderComposerForLine={renderComposerForLine}
@@ -451,6 +483,7 @@ export function DiffPane({
             newLineNum={line.newLineNum}
             content={line.content}
             filePath={path}
+            syntax={syntax}
             isFilled={line.isFilled}
             onLineClick={onLineClick}
           />,
@@ -485,6 +518,7 @@ export function DiffPane({
             oldLineNum={line.oldLineNum}
             content={line.content}
             filePath={path}
+            syntax={syntax}
           />,
         );
         continue;
@@ -498,6 +532,7 @@ export function DiffPane({
             newLineNum={line.newLineNum}
             content={line.content}
             filePath={path}
+            syntax={syntax}
             onLineClick={onLineClick}
           />,
         );
@@ -575,6 +610,7 @@ interface DiffLineRowProps {
   threadsAtLine: ReviewThreadDto[] | undefined;
   filePath: string;
   colSpan: number;
+  syntax: SyntaxTokenMaps;
   isFilled?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
@@ -587,6 +623,7 @@ function DiffLineRow({
   threadsAtLine,
   filePath,
   colSpan,
+  syntax,
   isFilled,
   onLineClick,
   renderComposerForLine,
@@ -605,7 +642,13 @@ function DiffLineRow({
       return <WordDiffOverlay oldText={oldText} newText={newText} type={line.type} />;
     }
 
-    return <span>{line.content}</span>;
+    // Side-aware: a unified delete line has no newLineNum — its tokens live on
+    // the old side (mapHunks('old') keys delete lines by oldLineNum). Context &
+    // insert lines use the new side. (The plan used 'new' only; that left
+    // unified solo-delete lines as plaintext.)
+    const side = line.type === 'delete' ? 'old' : 'new';
+    const toks = tokensFor(syntax, side, side === 'old' ? line.oldLineNum : line.newLineNum);
+    return <HighlightedLine spans={toks} fallback={normalizeEol(line.content)} />;
   };
 
   // PoC scope: only right-side (insert/context) clicks open the composer.
@@ -686,6 +729,7 @@ interface SplitDiffLineRowProps {
   newText?: string;
   content?: string;
   filePath: string;
+  syntax?: SyntaxTokenMaps;
   isFilled?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
 }
@@ -698,9 +742,11 @@ function SplitDiffLineRow({
   newText,
   content,
   filePath,
+  syntax,
   isFilled,
   onLineClick,
 }: SplitDiffLineRowProps) {
+  const maps: SyntaxTokenMaps = syntax ?? { oldLineTokens: new Map(), newLineTokens: new Map() };
   if (kind === 'header') {
     return (
       <tr className="diff-line diff-line--hunk-header">
@@ -730,7 +776,10 @@ function SplitDiffLineRow({
           {oldLineNum ?? ''}
         </td>
         <td data-side="old" className={`diff-content ${styles.diffContent}`}>
-          <span>{content}</span>
+          <HighlightedLine
+            spans={tokensFor(maps, 'old', oldLineNum)}
+            fallback={normalizeEol(content ?? '')}
+          />
         </td>
         <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
           {newLineNum != null && onLineClick ? (
@@ -747,7 +796,10 @@ function SplitDiffLineRow({
           )}
         </td>
         <td data-side="new" className={`diff-content ${styles.diffContent}`}>
-          <span>{content}</span>
+          <HighlightedLine
+            spans={tokensFor(maps, 'new', newLineNum)}
+            fallback={normalizeEol(content ?? '')}
+          />
         </td>
       </tr>
     );
@@ -760,7 +812,10 @@ function SplitDiffLineRow({
           {oldLineNum ?? ''}
         </td>
         <td data-side="old" className={`diff-content ${styles.diffContent}`}>
-          <span>{content}</span>
+          <HighlightedLine
+            spans={tokensFor(maps, 'old', oldLineNum)}
+            fallback={normalizeEol(content ?? '')}
+          />
         </td>
         <td
           aria-hidden="true"
@@ -812,7 +867,10 @@ function SplitDiffLineRow({
           )}
         </td>
         <td data-side="new" className={`diff-content ${styles.diffContent}`}>
-          <span>{content}</span>
+          <HighlightedLine
+            spans={tokensFor(maps, 'new', newLineNum)}
+            fallback={normalizeEol(content ?? '')}
+          />
         </td>
       </tr>
     );
