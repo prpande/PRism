@@ -1,6 +1,6 @@
 import { test, expect, afterEach } from 'vitest';
 import { render, renderHook } from '@testing-library/react';
-import { useTabScrollMemory } from './useTabScrollMemory';
+import { useTabScrollMemory, _clearStoreForTest } from './useTabScrollMemory';
 
 // Creates and appends a [data-app-scroll] div with a writable scrollTop.
 // jsdom's scrollTop getter always returns 0 and ignores writes; we override it
@@ -13,9 +13,12 @@ function makeScrollSlot(): HTMLDivElement {
   return slot;
 }
 
-// Remove all [data-app-scroll] elements between tests so no stale slot leaks.
+// Remove all [data-app-scroll] elements between tests so no stale slot leaks,
+// and reset the hook's module-level store so a saved offset from one test can't
+// bleed into the next (the store outlives individual tests within this file).
 afterEach(() => {
   document.querySelectorAll('[data-app-scroll]').forEach((el) => el.remove());
+  _clearStoreForTest();
 });
 
 // Tiny component for the cross-view race test. Uses the hook's default

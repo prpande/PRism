@@ -91,8 +91,10 @@ export function PrDetailView({
   // opened view starts read.
   // refKey/clearUnread are intentionally omitted: this is a one-shot first-mount
   // clear, not a re-fire on every refKey change (the host owns focus-driven
-  // clears under keep-alive). ESLint's react-hooks plugin is not enabled in this
-  // config, so no disable directive is needed.
+  // clears under keep-alive). `clearUnread` is a useCallback([]) from
+  // OpenTabsContext, so it's referentially stable for the provider's lifetime —
+  // the empty deps array can't go stale. ESLint's react-hooks plugin is not
+  // enabled in this config, so no disable directive is needed.
   useEffect(() => {
     clearUnread(refKey);
   }, []);
@@ -101,6 +103,15 @@ export function PrDetailView({
   // overview plus the initial sub-tab so a deep-linked open mounts that tab
   // immediately; each selectSubTab marks its target visited so it stays
   // mounted-but-hidden thereafter (keep-alive).
+  //
+  // `initialSubTab` is read ONCE, here, as the useState seed — React ignores
+  // it on every later render. So re-navigating to an already-open tab (e.g.
+  // following `…/7/overview` while PR #7 is already open on Files) keeps the
+  // live sub-tab; the incoming segment does NOT re-seed. That is deliberate:
+  // sub-tab clicks intentionally don't change the URL (keep-alive owns the
+  // sub-tab), so honoring a stale path segment on re-entry would fight the
+  // live state. Re-seeding on re-navigation is explicitly deferred — deep-link
+  // sharing is a non-goal for this local-only tool (spec § 2).
   const seed = initialSubTab ?? 'overview';
   const [subTab, setSubTab] = useState<PrTabId>(seed);
   const visited = useRef<Set<PrTabId>>(new Set<PrTabId>(['overview', seed]));

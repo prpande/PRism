@@ -4,6 +4,14 @@ import { useLayoutEffect } from 'react';
 // survives while another view drives the single [data-app-scroll] scroller.
 const store = new Map<string, number>();
 
+// Test-only: reset the module-level store between Vitest files. Vitest isolates
+// modules per file by default (so this rarely matters in practice), but tests
+// that share a `prRefKey|subTab` key would otherwise inherit a leftover offset.
+// Calling this in a test's afterEach makes the isolation intent explicit.
+export function _clearStoreForTest(): void {
+  store.clear();
+}
+
 export function useTabScrollMemory(opts: {
   prRefKey: string;
   subTab: string;
