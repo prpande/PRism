@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useNavigate } from 'react-router-dom';
 import type { PrDetailDto } from '../../api/types';
@@ -214,6 +214,51 @@ describe('PrTabHost', () => {
     // Returning to the valid URL re-activates the same mounted view.
     navigate('/pr/acme/api/7/files');
     expect(screen.getByTestId('files-tab-root')).toBeVisible();
+  });
+
+  test('a hidden (inactive) PR view has no focusable element in the tab order', async () => {
+    const { navigate } = renderAppAt('/pr/acme/api/7');
+    // Make the first view real + visited so it has focusable chrome (open Files).
+    await userEvent.click(await screen.findByTestId('pr-tab-files'));
+    expect(screen.getByTestId('files-tab-root')).toBeVisible();
+
+    // Open a second PR tab — #7 becomes hidden, #8 active.
+    navigate('/pr/acme/api/8');
+    // Wait for the second view to mount and the first to flip to hidden.
+    // Scope to [data-app-scroll] to avoid matching the PrTabStrip pill which
+    // also carries data-prref but never gets the hidden attribute.
+    const scroll = document.querySelector('[data-app-scroll]')!;
+    await waitFor(() => {
+      const el = scroll.querySelector('[data-prref="acme/api/7"]');
+      expect(el).not.toBeNull();
+      expect(el).toHaveAttribute('hidden');
+    });
+
+    // waitFor above already proved the hidden view exists and carries [hidden];
+    // re-grab the element handle for the focusable-descendant sweep below.
+    const hidden = scroll.querySelector('[data-prref="acme/api/7"]') as HTMLElement;
+
+    // Teeth: the hidden view must actually CONTAIN focusable elements, else the
+    // forEach below is vacuously true. The query intentionally over-approximates
+    // the keyboard tab order: it also matches tabindex="-1" (script-focusable but
+    // NOT tab-order) elements. That's a stronger guarantee, not a bug — [hidden]
+    // removes BOTH keyboard-focusable (tabindex>=0) and script-focusable
+    // (tabindex=-1) descendants from the tab order and the a11y tree.
+    const focusables = hidden.querySelectorAll(
+      'button, a[href], input, select, textarea, [tabindex]',
+    );
+    expect(focusables.length).toBeGreaterThan(0);
+
+    // Every focusable descendant is inside a [hidden] subtree → out of tab order
+    // + a11y tree (the inactive view's root carries [hidden]).
+    focusables.forEach((el) => {
+      expect(el.closest('[hidden]')).not.toBeNull();
+    });
+
+    // Sanity: the active view (#8) is NOT hidden.
+    const active = scroll.querySelector('[data-prref="acme/api/8"]') as HTMLElement;
+    expect(active).not.toBeNull();
+    expect(active).not.toHaveAttribute('hidden');
   });
 
   test('renders the active PR view on direct load even before addTab populates openTabs', () => {

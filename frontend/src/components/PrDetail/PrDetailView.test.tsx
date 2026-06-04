@@ -1,8 +1,12 @@
-import { describe, test, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, test, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
+import {
+  OpenTabsProvider,
+  OpenTabsContext,
+  type OpenTabsContextValue,
+} from '../../contexts/OpenTabsContext';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
 import type { PrDetailDto, PrReference } from '../../api/types';
@@ -162,5 +166,60 @@ describe('PrDetailView', () => {
     expect(files.closest('[data-subtab="files"]')).toHaveAttribute('hidden');
 
     expect(screen.queryByTestId('drafts-tab-root')).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 11 — title-on-resolve: when usePrDetail resolves with a PR title, the
+// view must propagate it into the open-tab entry via setTitle.
+//
+// This restores coverage that existed in the deleted PrDetailPage.tabbing.test.tsx
+// (the "direct URL load" title assertion) but re-targets the new state-based
+// architecture. The OpenTabsContext seam is used (same pattern as
+// PrDetailView.freshness.test.tsx) to supply a setTitle spy without involving
+// the real provider. The module-level usePrDetail mock above already returns
+// PR_DETAIL with title 'Keep-alive title' and reference acme/api#7, which is
+// exactly the resolved data the effect needs.
+// ---------------------------------------------------------------------------
+describe('PrDetailView — title propagation on resolve (Task 11)', () => {
+  const setTitleSpy = vi.fn();
+
+  const openTabsStub: OpenTabsContextValue = {
+    openTabs: [],
+    unreadKeys: new Set<string>(),
+    addTab: vi.fn(),
+    setTitle: setTitleSpy,
+    closeTab: vi.fn(),
+    markUnread: vi.fn(),
+    clearUnread: vi.fn(),
+    clearAllTabs: vi.fn(),
+  };
+
+  beforeEach(() => {
+    setTitleSpy.mockClear();
+  });
+
+  test('setTitle is called with prRef and resolved title when usePrDetail resolves', async () => {
+    render(
+      <MemoryRouter>
+        <OpenTabsContext.Provider value={openTabsStub}>
+          <AskAiDrawerProvider>
+            <ToastProvider>
+              <PrDetailView prRef={{ owner: 'acme', repo: 'api', number: 7 }} active={true} />
+            </ToastProvider>
+          </AskAiDrawerProvider>
+        </OpenTabsContext.Provider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      // Exactly once — also catches a double-fire from a misconfigured effect
+      // deps array (the title effect must run a single time on resolve).
+      expect(setTitleSpy).toHaveBeenCalledTimes(1);
+      expect(setTitleSpy).toHaveBeenCalledWith(
+        { owner: 'acme', repo: 'api', number: 7 },
+        'Keep-alive title',
+      );
+    });
   });
 });
