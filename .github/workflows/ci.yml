@@ -68,18 +68,23 @@ jobs:
           path: '**/test-results.trx'
 
   # ---------------------------------------------------------------------------
-  # Browser e2e runs on Linux, NOT windows-latest. The Playwright browser
-  # EXTRACTION hangs indefinitely on windows-latest — the ~111 MiB download
-  # finishes in ~2s, then Defender scans each of the thousands of extracted
-  # files and the unzip never completes (the 2026-05-29 regression, #171). That
-  # is exactly why the suite was previously masked with continue-on-error rather
-  # than fixed. Linux extracts in seconds. The web app under test (Kestrel
-  # serving /api + the React bundle, the fake .NET backend, the /test hooks) is
-  # platform-agnostic; only the Windows single-binary PACKAGING differs, which a
-  # browser e2e never exercised. So e2e gates here, for real.
+  # Browser e2e runs in the official Playwright CONTAINER on Linux, NOT on
+  # windows-latest. `playwright install` hangs after the download completes —
+  # confirmed on BOTH windows AND ubuntu runners: the ~112 MiB chrome-headless-
+  # shell download finishes in ~2s, then the install never progresses past it and
+  # times out (#171). That OS-independent post-download hang is exactly why the
+  # suite was masked with continue-on-error rather than fixed. The Playwright
+  # container ships the matching browser binaries PRE-INSTALLED, so there is no
+  # install step to hang. The web app under test (Kestrel serving /api + the
+  # React bundle, the fake .NET backend, the /test hooks) is platform-agnostic;
+  # only Windows single-binary PACKAGING differs, never exercised by a browser
+  # e2e. The image tag is pinned to the locked @playwright/test version so the
+  # baked browser revision matches (bump both together).
   # ---------------------------------------------------------------------------
   e2e:
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
     steps:
       - uses: actions/checkout@v6
 
@@ -90,8 +95,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: 'frontend/package-lock.json'
 
       - name: Frontend install
         working-directory: frontend
@@ -100,25 +103,18 @@ jobs:
       - name: Restore (.NET)
         run: dotnet restore
 
-      # On Linux `--with-deps` IS required (installs the system libraries the
-      # browser links against — unlike windows where it is a no-op). `--only-shell`
-      # fetches just chrome-headless-shell, the binary this headless chromium suite
-      # launches (`npx playwright install chromium` never fetched it — #171).
-      - name: Playwright install (headless shell + deps)
-        working-directory: frontend
-        run: npx playwright install --with-deps --only-shell
-        timeout-minutes: 10
-
-      # Loud failure if the browser is missing — the test step gates, no mask.
-      - name: Verify Playwright browser is installed
+      # No `playwright install` — the container ships the browsers. Assert the
+      # baked headless shell is present so a future image/version drift fails
+      # loudly here rather than mid-suite.
+      - name: Verify Playwright browser is present (baked into image)
         working-directory: frontend
         shell: bash
         run: |
-          root="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
+          root="${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}"
           if find "$root" -name 'chrome-headless-shell' -type f 2>/dev/null | grep -q .; then
             echo "Found headless shell under $root"
           else
-            echo "chrome-headless-shell not found under $root — Playwright install failed (#171)." >&2
+            echo "chrome-headless-shell not found under $root — image/version mismatch (#171)." >&2
             exit 1
           fi
 
