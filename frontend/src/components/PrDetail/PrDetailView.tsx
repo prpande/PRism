@@ -21,6 +21,7 @@ import type { PrReference } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
+import { useActivationTransition } from '../../hooks/useActivationTransition';
 
 // Keep-alive PR-detail view. Owns the active sub-tab as component STATE (not
 // URL routing) and renders sub-tabs DIRECTLY (not via React Router <Outlet>),
@@ -102,6 +103,20 @@ export function PrDetailView({
   useEffect(() => {
     clearUnread(refKey);
   }, []);
+
+  // Re-activation freshness: when the user switches BACK to this kept-alive
+  // tab (the false->true transition of `active`), re-GET the detail and clear
+  // the unread dot. useActivationTransition never fires on first mount, so the
+  // one-shot effect above owns first-open and this owns re-activation; the two
+  // paths don't double up. clearUnread is idempotent on an already-clear key,
+  // and reload() is usePrDetail's re-GET + re-stamp-mark-viewed.
+  useActivationTransition(active, () => {
+    reload();
+    clearUnread(refKey);
+    // OQ8: the focus-refetch supersedes any latched "PR updated" banner — drop
+    // it so it doesn't linger as a redundant Reload affordance.
+    updates.clear();
+  });
 
   // Sub-tab state replaces the URL-derived activeTab. `visited` seeds with
   // overview plus the initial sub-tab so a deep-linked open mounts that tab
