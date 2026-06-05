@@ -30,10 +30,25 @@ test('a visually-hidden .sr-only inside a tall static scroller cannot extend the
   page,
 }) => {
   await page.goto('/');
-  // Wait for the app shell so tokens.css (the `.sr-only` utility) is applied.
-  await expect(page.getByRole('heading', { name: /connect to github/i })).toBeVisible({
-    timeout: 30_000,
-  });
+  // Wait until the global `.sr-only` rule is actually applied (tokens.css
+  // loaded), independent of which screen the app routed to. The test only needs
+  // the stylesheet — NOT any particular app state — so we probe the computed
+  // `position` of a throwaway `.sr-only` element rather than waiting on a
+  // screen-specific element (the app may land on Setup, Inbox, or a PR
+  // depending on the seeded session — coupling to one of those screens is what
+  // made an earlier revision time out under CI's authenticated `prod` project).
+  await page.waitForFunction(
+    () => {
+      const el = document.createElement('span');
+      el.className = 'sr-only';
+      document.body.appendChild(el);
+      const applied = getComputedStyle(el).position === 'absolute';
+      el.remove();
+      return applied;
+    },
+    null,
+    { timeout: 30_000 },
+  );
   await page.setViewportSize(VIEWPORT);
 
   const probe = await page.evaluate(
@@ -59,8 +74,8 @@ test('a visually-hidden .sr-only inside a tall static scroller cannot extend the
       pane.appendChild(sr);
       document.body.appendChild(pane);
 
-      // Force layout, then measure.
-      void document.documentElement.scrollHeight;
+      // Reading scrollHeight forces a synchronous layout, so this measurement
+      // reflects the appended subtree.
       const after = document.documentElement.scrollHeight;
       const srRect = sr.getBoundingClientRect();
       const srStyle = getComputedStyle(sr);
@@ -81,7 +96,8 @@ test('a visually-hidden .sr-only inside a tall static scroller cannot extend the
   expect(probe.position).toBe('absolute');
 
   // The hardened utility adds at most the pane's own height to the document —
-  // NOT the deep static spacer depth. With the bug, `grew` ≈ SPACER_PX.
+  // NOT the deep static spacer depth. With the bug, `grew` ≈ SPACER_PX. The +20
+  // is slack for the pane's own border/margin and sub-pixel rounding.
   expect(probe.grew).toBeLessThanOrEqual(PANE_PX + 20);
 
   // And the box itself is pinned near the origin, not ~SPACER_PX down the page.
