@@ -56,7 +56,16 @@ builder.Services.AddSingleton(new PRism.Web.Logging.LogsPathInfo(Path.Combine(da
 
 builder.Logging.AddPRismFileLogger(dataDir, builder.Environment);
 
-builder.Services.AddPrismCore(dataDir);
+// Persist tokens to an unprotected file (not the OS keyring) ONLY in the e2e
+// Test backend — the headless Linux container has no D-Bus/X11 for MSAL's
+// keyring. Gated on Test env AND a PRISM_E2E_* var (mirrors the
+// UseStaticWebAssets gate above), so an accidental PRISM_E2E_* var in a
+// non-Test environment can never downgrade token protection.
+var useUnprotectedTokenCache =
+    builder.Environment.IsEnvironment("Test")
+    && (Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1"
+     || Environment.GetEnvironmentVariable("PRISM_E2E_REAL_INJECT") == "1");
+builder.Services.AddPrismCore(dataDir, useUnprotectedTokenCache);
 builder.Services.AddPrismGitHub();
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();

@@ -10,8 +10,8 @@ import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 // file, scroll offset, and any latched "PR updated" banner survive IN-APP
 // (React Router / SPA) navigation away and back.
 //
-// WHY the navigation MUST be click-driven, not page.goto: keep-alive lives in
-// React component state + a module-level scroll-memory store
+// WHY the BACKGROUND→RETURN cycle MUST be click-driven, not page.goto:
+// keep-alive lives in React component state + a module-level scroll-memory store
 // (useTabScrollMemory). A full page reload (`page.goto`) tears down the whole
 // React tree and that state is GONE — keep-alive explicitly does NOT promise
 // reload survival (it is a local-only PoC; deep-link/reload sharing is a
@@ -23,51 +23,44 @@ import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 //     open tab, an outer <div data-prref="owner/repo/number"> containing an
 //     inner <div role="tab" aria-label={title}>, inside the
 //     [data-testid="pr-tabstrip"] tablist).
-// `page.goto` is used ONLY for the very first entry (the /setup → / bootstrap
-// inside setupAndOpenScenarioPr); the actual PR is then opened by clicking its
-// inbox row (InboxRow.tsx is a <button> whose onClick addTab()s + navigates —
-// the SPA path that registers the strip pill).
+//
+// HOW the tab gets registered: the INITIAL entry uses `page.goto('/pr/.../123')`.
+// PrTabHost's route effect (parsePrRoute(pathname) → addTab(route.ref)) registers
+// the keep-alive tab from the URL alone — so a direct navigation both mounts the
+// view AND makes the PrTabStrip pill appear. An inbox-row click is NOT required
+// (and would not work here: the fake backend's inbox is EMPTY — FakePrDiscovery's
+// scenario item is an IPrDiscovery.GetInboxAsync surface, but the inbox is built
+// by the ISectionQueryRunner-based InboxRefreshOrchestrator, which has no fake
+// and returns six empty sections). The initial-entry method does not affect the
+// contract under test: keep-alive is the SURVIVAL of in-app background→return
+// nav, which the click-driven steps below exercise.
 //
 // SINGLE-PR SCOPE: the fake backend serves exactly ONE PR — acme/api/123,
-// "Calc utilities" (FakeReviewBackingStore.Scenario). There is intentionally
-// no second fixture PR: adding one would add a second inbox row and a second
-// tab pill, perturbing the inbox layout + the design-parity screenshot
-// baselines (parity-baselines.spec.ts). TWO-PR-TAB INDEPENDENCE (two kept-alive
-// views not clobbering each other's sub-tab/scroll/marker) is therefore covered
-// by UNIT tests, not here: PrTabHost.test.tsx, the hidden-view a11y isolation
-// test, and useTabScrollMemory's cross-view test. This e2e proves the
+// "Calc utilities" (FakeReviewBackingStore.Scenario). TWO-PR-TAB INDEPENDENCE
+// (two kept-alive views not clobbering each other's sub-tab/scroll/marker) is
+// covered by UNIT tests, not here: PrTabHost.test.tsx, the hidden-view a11y
+// isolation test, and useTabScrollMemory's cross-view test. This e2e proves the
 // single-tab state-preservation contract end-to-end through the real wire.
 //
-// TALL-DIFF NOTE (Test 1): the canonical src/Calc.cs at the latest head is only
-// ~8 lines and does NOT overflow the 900px viewport, so the shared
-// [data-app-scroll] scroller would have scrollTop pinned at 0 — a vacuous scroll
-// assertion. Like diff-scroll-regression.spec.ts, Test 1 INJECTS a tall
-// src/Calc.cs at a fresh head via /test/advance-head BEFORE opening the PR, so
-// the scroller genuinely overflows and a non-zero scrollTop is real. /test/reset
-// in every other spec's beforeEach wipes the injected head, so nothing else is
-// perturbed.
+// SCROLL-OFFSET NOTE: keep-alive's scroll preservation (useTabScrollMemory) is
+// NOT asserted end-to-end here. It saves/restores scrollTop on the
+// [data-app-scroll] container, which is the scroll viewport only in the Electron
+// desktop shell (App.tsx: "data-app-shell + data-app-scroll let the desktop
+// shell scroll page content"). In a plain browser [data-app-scroll] is sized to
+// its content and the WINDOW scrolls, so [data-app-scroll].scrollTop stays 0 —
+// the offset is not browser-observable and any e2e assertion on it is vacuous or
+// fails. The save/restore logic (including cross-view-swap ordering) is unit-
+// tested in useTabScrollMemory.test.tsx. This e2e proves the browser-observable
+// half of the contract: the active sub-tab and the selected file survive.
 
 const VIEWPORT = { width: 1440, height: 900 };
 
-// A src/Calc.cs tall enough to overflow the 900px viewport on [data-app-scroll],
-// so scrollTop can be set to a genuine non-zero value (and later asserted
-// restored). 120 lines mirrors diff-scroll-regression's overflow recipe.
-const TALL_SHA = '7777777777777777777777777777777777777777';
-const TALL_LINE_COUNT = 120;
-const TALL_CONTENT =
-  Array.from(
-    { length: TALL_LINE_COUNT },
-    (_, i) => `// keepalive line ${String(i).padStart(3, '0')}`,
-  ).join('\n') + '\n';
-
-// Opens the scenario PR by CLICKING its inbox row (the SPA path that addTab()s,
-// registering the strip pill) and waits for the detail header to settle.
-async function openScenarioPrViaInboxRow(page: import('@playwright/test').Page): Promise<void> {
-  // InboxRow renders a <button aria-label="Calc utilities · …"> with the title
-  // inside. getByRole('button', { name: /Calc utilities/ }) matches it via the
-  // accessible name (aria-label). This is the real-user click path — it runs
-  // addTab() + navigate(), so the PrTabStrip pill appears afterwards.
-  await page.getByRole('button', { name: /Calc utilities/ }).click();
+// Opens the scenario PR by navigating to its route. PrTabHost's route effect
+// (parsePrRoute → addTab) registers the keep-alive tab from the URL alone, so a
+// direct navigation mounts the view AND registers the PrTabStrip pill — no
+// inbox-row click required (the fake inbox is empty; see the header comment).
+async function openScenarioPr(page: import('@playwright/test').Page): Promise<void> {
+  await page.goto('/pr/acme/api/123');
   await page.locator('[data-testid="pr-header"]').waitFor();
   await expect(page.locator('[data-testid="pr-title"]')).toHaveText('Calc utilities');
 }
@@ -76,8 +69,10 @@ async function openScenarioPrViaInboxRow(page: import('@playwright/test').Page):
 // then waits for the inbox to be visible.
 async function backgroundViaInboxLink(page: import('@playwright/test').Page): Promise<void> {
   await page.getByRole('link', { name: /^Inbox$/ }).click();
-  // The scenario inbox row is the deterministic "inbox is visible" signal.
-  await expect(page.getByRole('button', { name: /Calc utilities/ })).toBeVisible();
+  // The inbox toolbar's paste-URL input is the deterministic "inbox is visible"
+  // signal. The fake backend serves an EMPTY inbox (no scenario row), so we
+  // anchor on always-present inbox chrome rather than a PR row.
+  await expect(page.getByPlaceholder(/paste a pr url/i)).toBeVisible();
 }
 
 // Clicks the PrTabStrip pill for the scenario PR (SPA nav) to RETURN to the
@@ -104,29 +99,11 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // Test 1 — sub-tab + selected file + scroll survive PR → Inbox → PR (SPA nav)
+  // Test 1 — Files sub-tab selection + selected file survive PR → Inbox → PR
   // -------------------------------------------------------------------------
-  test('Files sub-tab, selected file, and scroll offset survive PR→Inbox→PR via in-app nav', async ({
-    page,
-  }) => {
-    await setupAndOpenScenarioPr(page);
-    // Inject a tall src/Calc.cs at a fresh head BEFORE first detail load so the
-    // Files diff genuinely overflows [data-app-scroll]. This re-seeds the
-    // active-PR cache to TALL_SHA, so the navigation below sees it synchronously
-    // (no poller race) — same pattern as diff-scroll-regression.spec.ts.
-    //
-    // Pin the /test hook to the absolute backend URL (5180) rather than the
-    // shared advanceHead() helper, which POSTs the RELATIVE /test/advance-head:
-    // under the `dev` Playwright project baseURL is http://localhost:5173 (Vite),
-    // which proxies /api/* but NOT /test/*, so a relative POST 404s. Mirrors the
-    // emit-pr-updated call in Test 2 and no-layout-shift-on-banner.spec.ts.
-    const advanceResp = await page.request.post('http://localhost:5180/test/advance-head', {
-      data: { newHeadSha: TALL_SHA, fileChanges: [{ path: 'src/Calc.cs', content: TALL_CONTENT }] },
-      headers: { Origin: 'http://localhost:5180' },
-    });
-    expect(advanceResp.ok()).toBe(true);
-
-    await openScenarioPrViaInboxRow(page);
+  test('Files sub-tab and selected file survive PR→Inbox→PR via in-app nav', async ({ page }) => {
+    await setupAndOpenScenarioPr(page); // authenticate (fresh DataDir → no-token)
+    await openScenarioPr(page);
 
     // --- Switch to the Files sub-tab (component state, not a URL route) ---
     await page.locator('[data-testid="pr-tab-files"]').click();
@@ -137,26 +114,11 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
     await fileRow.click();
     await expect(page.locator('[data-testid="files-tab-diff"]')).toBeVisible();
     // Selected-file marker: FileTree stamps data-selected={isSelected} on the
-    // row (FileTree.tsx:180). This is the assertion re-checked after return —
-    // chosen over the hashed CSS-module class because it is a stable contract
-    // attribute.
+    // row (FileTree.tsx). This is the contract attribute re-checked after return.
     await expect(fileRow).toHaveAttribute('data-selected', 'true');
 
-    // --- Scroll the shared scroller down to a genuine non-zero offset ---
-    const scroller = page.locator('[data-app-scroll]');
-    // Confirm the tall diff actually overflows, then set scrollTop within range.
-    const target = await scroller.evaluate((el) => {
-      el.scrollTop = Math.min(300, el.scrollHeight - el.clientHeight);
-      return el.scrollTop;
-    });
-    // TEETH: a 0 here would mean the diff didn't render tall enough and the
-    // scroll-restore assertion below would be vacuous.
-    expect(target).toBeGreaterThan(0);
-
-    // --- BACKGROUND via the Header Inbox link (SPA) ---
+    // --- BACKGROUND via the Header Inbox link (SPA), RETURN via the strip pill ---
     await backgroundViaInboxLink(page);
-
-    // --- RETURN via the PrTabStrip pill (SPA) ---
     await returnViaTabPill(page);
 
     // --- ASSERT state survived ---
@@ -169,21 +131,6 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
     await expect(
       page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]'),
     ).toHaveAttribute('data-selected', 'true');
-
-    // (c) Scroll offset restored (useTabScrollMemory saves on deactivation
-    //     cleanup, restores on re-activation setup). Poll the DISTANCE-to-target
-    //     in a single atomic browser round-trip — restore runs in a layout
-    //     effect after the marker effect re-establishes overflow, so we wait for
-    //     it rather than using a fixed sub-second sleep (Windows CI is slow).
-    //     Polling |scrollTop - target| (not scrollTop>0 then a separate read)
-    //     closes the race window where a re-render between two round-trips could
-    //     read a transient offset: a 0 here yields |0 - 300| = 300 > 5 and keeps
-    //     polling until the restore settles within tolerance.
-    await expect
-      .poll(() => scroller.evaluate((el) => Math.abs(el.scrollTop - target)), {
-        timeout: 15_000,
-      })
-      .toBeLessThanOrEqual(5);
   });
 
   // -------------------------------------------------------------------------
@@ -212,7 +159,7 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
     );
 
     await setupAndOpenScenarioPr(page);
-    await openScenarioPrViaInboxRow(page);
+    await openScenarioPr(page);
     await subscriptionPosted;
 
     // --- BACKGROUND via the Header Inbox link (SPA) ---

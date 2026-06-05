@@ -90,7 +90,15 @@ test('drafts survive a browser-context restart', async ({ page, context }) => {
   );
 
   // Sanity check: the Drafts tab also lists the persisted draft, so the
-  // survival is visible from multiple surfaces.
+  // survival is visible from multiple surfaces. Scope to the Drafts subtab —
+  // under keep-alive the Files-tab InlineCommentComposer (also holding "this
+  // needs work") stays mounted-but-hidden, so an unscoped getByText().first()
+  // would resolve to that hidden textarea instead of the visible draft card.
   await freshPage.getByRole('tab', { name: /^Drafts/i }).click();
-  await expect(freshPage.getByText(/this needs work/i).first()).toBeVisible({ timeout: 10_000 });
+  await expect(
+    freshPage
+      .locator('[data-subtab="drafts"]')
+      .getByText(/this needs work/i)
+      .first(),
+  ).toBeVisible({ timeout: 10_000 });
 });

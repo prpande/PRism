@@ -108,8 +108,14 @@ public class EventsEndpointsTests
         resp.Dispose();
         stream.Dispose();
 
-        // Give the server a moment to process the disconnect.
-        await Task.Delay(200, CancellationToken.None);
+        // The server decrements the subscriber count asynchronously once the
+        // dropped connection is observed. Poll the observable condition rather
+        // than assuming a fixed 200ms is long enough — that fixed sleep races
+        // the async decrement on a slow/contended CI runner (#152).
+        await TestPoll.UntilAsync(
+            () => subs.Current == 0,
+            TimeSpan.FromSeconds(5),
+            "SSE subscriber count should return to 0 after the client disconnects");
 
         subs.Current.Should().Be(0);
     }
