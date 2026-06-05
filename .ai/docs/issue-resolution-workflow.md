@@ -83,6 +83,16 @@ still alive) sees it. This mirrors the gate-staleness re-ping under § Notificat
 > `gh label list --json name --jq '.[].name' | grep -qx in-progress || gh label create in-progress`.
 > Already created in `prpande/PRism`.
 
+**Releasing the claim.** The claim is released when the issue **closes** — the
+counterpart to staking it at step 0. You do not remove `in-progress` by hand on
+the happy path: the `unclaim-on-close.yml` workflow strips it automatically on
+the `issues: closed` event (a merged fix's `Closes #N` triggers the close). This
+is label hygiene, not a gate, so it does not change the "no CI enforcement"
+stance for tiers/risk. It also covers issues closed for any other reason
+(won't-fix, duplicate), so a closed issue never keeps claiming to be in flight.
+If that workflow is ever disabled, remove `in-progress` by hand as the last
+cleanup step (see decision-tree step 11).
+
 ## The decision tree
 
 ```
@@ -103,6 +113,11 @@ still alive) sees it. This mirrors the gate-staleness re-ping under § Notificat
 9. pr-autopilot → green-and-ready.
 10. Notify the human (§ Notification template). The human merges.
     (UI: pause for the visual assert. Risk-surface: you paused earlier.)
+11. Un-claim on completion: when the issue closes (the merged fix's `Closes #N`
+    closes it), the `in-progress` label is removed automatically by the
+    `unclaim-on-close.yml` workflow. This is label hygiene, not a gate. If you
+    do any post-merge cleanup, confirm `in-progress` is gone; if that workflow is
+    ever disabled, remove it by hand — a closed issue must never keep the claim.
 ```
 
 ## Tier (Axis A) — how much ceremony
