@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PrDetailContextProvider } from './prDetailContext';
 import type { PrDetailContextValue } from './prDetailContext';
 import { PrHeader } from './PrHeader';
@@ -22,6 +23,8 @@ import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
+import { ErrorModal } from '../ErrorModal';
+import bannerReconcileStyles from './BannerReconcile.module.css';
 
 // Keep-alive PR-detail view. Owns the active sub-tab as component STATE (not
 // URL routing) and renders sub-tabs DIRECTLY (not via React Router <Outlet>),
@@ -47,6 +50,7 @@ export function PrDetailView({
 }) {
   const { owner, repo, number } = prRef;
   const refKey = prRefKey(prRef);
+  const navigate = useNavigate();
 
   const { data, showSkeleton, error, reload } = usePrDetail(prRef);
   const updates = useActivePrUpdates(prRef);
@@ -282,9 +286,9 @@ export function PrDetailView({
         onDismiss={presence.dismissForSession}
       />
       {reconcile.banner && (
-        <div role="alert" className="reload-error-banner">
-          <span>{reconcile.banner}</span>
-          <button type="button" onClick={reconcile.clearBanner}>
+        <div role="alert" className="banner banner-danger">
+          <span className={bannerReconcileStyles.bannerReconcileMessage}>{reconcile.banner}</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={reconcile.clearBanner}>
             Dismiss
           </button>
         </div>
@@ -311,9 +315,28 @@ export function PrDetailView({
         onSelectSubTab={selectSubTab}
       />
       {error && (
-        <div role="alert" className="pr-detail-error">
-          Couldn't load PR — {error.message}
-        </div>
+        <ErrorModal
+          open={active}
+          title="Couldn't load this PR"
+          message={error.message}
+          dismissible
+          onClose={() => navigate('/')}
+          actions={
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                data-modal-role="primary"
+                onClick={handleReload}
+              >
+                Reload
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={() => navigate('/')}>
+                Back to inbox
+              </button>
+            </>
+          }
+        />
       )}
       {/* #180 — gate the page skeleton on the ABSENCE of data. On a same-PR
           background reload (re-activation freshness or the manual Reload

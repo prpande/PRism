@@ -300,15 +300,14 @@ describe('PrDetailView — freshness on activation (Task 8)', () => {
     // Content preserved: the Overview tab (default; Files is not visited in this
     // test) still renders its root.
     expect(screen.getByTestId('overview-tab')).toBeInTheDocument();
-    // And the error banner is present with the spec copy. Scope the query: the
-    // view renders two role="alert" nodes (reconcile banner + error banner), and
-    // a plain <div role="alert"> has no accessible name, so a role/name query
-    // can't disambiguate them. Match the spec copy directly, then assert it is
-    // the error banner (role="alert" + .pr-detail-error) rather than the
-    // reconcile banner.
-    const banner = screen.getByText(/Couldn't load PR/i);
-    expect(banner).toHaveAttribute('role', 'alert');
-    expect(banner).toHaveClass('pr-detail-error');
+    // The load error now surfaces as the ErrorModal alertdialog (gated on
+    // `active`, which is true here), distinct from the reconcile banner (a
+    // separate role="alert" strip). Disambiguate by role: alertdialog = load
+    // error; alert = reconcile banner. Assert the dialog carries the spec title
+    // and the underlying error message.
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent("Couldn't load this PR");
+    expect(dialog).toHaveTextContent('network down');
   });
 });
 
