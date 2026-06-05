@@ -396,7 +396,7 @@ git commit -m "feat(#131): expose prism.openExternal bridge + type"
 Create `frontend/__tests__/OpenInGitHubButton.test.tsx`:
 
 ```tsx
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { OpenInGitHubButton } from '../src/components/PrDetail/OpenInGitHubButton';
 
@@ -428,7 +428,9 @@ describe('OpenInGitHubButton', () => {
     render(<OpenInGitHubButton href={HREF} />);
     const link = screen.getByTestId('open-in-github-button');
     const evt = new MouseEvent('click', { bubbles: true, cancelable: true });
-    link.dispatchEvent(evt);
+    act(() => {
+      link.dispatchEvent(evt);
+    });
     expect(openExternal).toHaveBeenCalledWith(HREF);
     expect(evt.defaultPrevented).toBe(true);
   });
@@ -439,7 +441,7 @@ describe('OpenInGitHubButton', () => {
     const link = screen.getByTestId('open-in-github-button');
     const evt = new MouseEvent('click', { bubbles: true, cancelable: true });
     // Must not throw, and must NOT suppress native navigation.
-    expect(() => link.dispatchEvent(evt)).not.toThrow();
+    expect(() => act(() => { link.dispatchEvent(evt); })).not.toThrow();
     expect(evt.defaultPrevented).toBe(false);
   });
 });
@@ -614,11 +616,22 @@ import { OpenInGitHubButton } from './OpenInGitHubButton';
           <OpenInGitHubButton href={htmlUrl} />
 ```
 
-(f) Pass `htmlUrl` to the `<SubmitDialog>` (add inside its props, e.g. after `reference={reference}`, line 478) — used in Task 10:
+(f) Make the `SubmitDialog` consume-ready **in this same commit** so the tree stays type-clean (Task 10 only swaps its URL source + test). In `SubmitDialog.tsx`, add to the `Props` interface (after `reference: PrReference;`, line 43):
+
+```typescript
+  // #131 — authoritative PR web URL (PrDetailPr.htmlUrl). Absent → omit the
+  // "View on GitHub" link in the success footer. Nullable because PrDetailView
+  // passes data?.pr.htmlUrl (string | null | undefined).
+  htmlUrl?: string | null;
+```
+
+Then pass it to the `<SubmitDialog>` render in `PrHeader.tsx` (add inside its props, e.g. after `reference={reference}`, line 478):
 
 ```tsx
           htmlUrl={htmlUrl}
 ```
+
+This compiles cleanly now (the prop is declared + accepted; `SubmitDialog` ignores it until Task 10 consumes it). Stage `SubmitDialog.tsx` in this task's commit too.
 
 - [ ] **Step 4: Pass `htmlUrl` from `PrDetailView`**
 
@@ -633,13 +646,15 @@ In `PrDetailView.tsx`, add to the `<PrHeader ... />` props (after `avatarUrl={da
 Run: `cd frontend && npm test -- PrHeader`
 Expected: PASS (existing + 2 new).
 
-- [ ] **Step 6: Prettier + commit**
+- [ ] **Step 6: Typecheck (catches the cross-file prop wiring) + prettier + commit**
 
 ```bash
-cd frontend && npx prettier --write src/components/PrDetail/PrHeader.tsx src/components/PrDetail/PrDetailView.tsx __tests__/PrHeader.test.tsx && cd ..
-git add frontend/src/components/PrDetail/PrHeader.tsx frontend/src/components/PrDetail/PrDetailView.tsx frontend/__tests__/PrHeader.test.tsx
-git commit -m "feat(#131): render OpenInGitHubButton in PrHeader + thread htmlUrl"
+cd frontend && npx tsc --noEmit && npx prettier --write src/components/PrDetail/PrHeader.tsx src/components/PrDetail/PrDetailView.tsx src/components/PrDetail/SubmitDialog/SubmitDialog.tsx __tests__/PrHeader.test.tsx && cd ..
+git add frontend/src/components/PrDetail/PrHeader.tsx frontend/src/components/PrDetail/PrDetailView.tsx frontend/src/components/PrDetail/SubmitDialog/SubmitDialog.tsx frontend/__tests__/PrHeader.test.tsx
+git commit -m "feat(#131): render OpenInGitHubButton in PrHeader + thread htmlUrl (incl. SubmitDialog prop decl)"
 ```
+
+`tsc --noEmit` here is deliberate: the filtered `npm test` run uses esbuild (no type-check), so without this the cross-file `htmlUrl` wiring could ship a type-broken commit.
 
 ---
 
@@ -731,16 +746,27 @@ In `FilesTab.tsx`:
 
 - Line 531 stays `prUrl={prUrl}` (now `string | undefined`).
 
-- [ ] **Step 6: Run tests + typecheck**
+- [ ] **Step 6: Fix the existing DiffPane test that asserts the OLD label**
 
-Run: `cd frontend && npm test -- DiffTruncationBanner && npx tsc --noEmit`
-Expected: PASS + no type errors.
+`frontend/__tests__/DiffPane.test.tsx:200-201` asserts on the old `/open on github\.com/i` text and will now throw. Update both matchers to the host-agnostic label:
 
-- [ ] **Step 7: Prettier + commit**
+```tsx
+    expect(screen.getByText(/open on github/i)).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /open on github/i });
+```
+
+(The href assertion on the following line stays valid.)
+
+- [ ] **Step 7: Run tests + typecheck**
+
+Run: `cd frontend && npm test -- DiffTruncationBanner DiffPane && npx tsc --noEmit`
+Expected: PASS (both files) + no type errors.
+
+- [ ] **Step 8: Prettier + commit**
 
 ```bash
-cd frontend && npx prettier --write src/components/PrDetail/FilesTab/FilesTab.tsx src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx src/components/PrDetail/FilesTab/DiffPane/DiffTruncationBanner.tsx __tests__/DiffTruncationBanner.test.tsx && cd ..
-git add frontend/src/components/PrDetail/FilesTab/FilesTab.tsx frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx frontend/src/components/PrDetail/FilesTab/DiffPane/DiffTruncationBanner.tsx frontend/__tests__/DiffTruncationBanner.test.tsx
+cd frontend && npx prettier --write src/components/PrDetail/FilesTab/FilesTab.tsx src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx src/components/PrDetail/FilesTab/DiffPane/DiffTruncationBanner.tsx __tests__/DiffTruncationBanner.test.tsx __tests__/DiffPane.test.tsx && cd ..
+git add frontend/src/components/PrDetail/FilesTab/FilesTab.tsx frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx frontend/src/components/PrDetail/FilesTab/DiffPane/DiffTruncationBanner.tsx frontend/__tests__/DiffTruncationBanner.test.tsx frontend/__tests__/DiffPane.test.tsx
 git commit -m "feat(#131): source diff-truncation link from htmlUrl, relabel + omit on absent"
 ```
 
@@ -752,49 +778,40 @@ git commit -m "feat(#131): source diff-truncation link from htmlUrl, relabel + o
 - Modify: `frontend/src/components/PrDetail/SubmitDialog/SubmitDialog.tsx` (Props ~41-91, const ~317, link ~518)
 - Test: `frontend/__tests__/SubmitDialog.test.tsx` (add a case; create file if none exists)
 
-`PrHeader` already passes `htmlUrl={htmlUrl}` to `<SubmitDialog>` (Task 8 step 3f).
+`PrHeader` already passes `htmlUrl={htmlUrl}` to `<SubmitDialog>`, and the `htmlUrl?: string | null` prop is already declared on `SubmitDialog` `Props` (both from Task 8 step 3f). This task swaps the URL *source* and adds the test.
 
 - [ ] **Step 1: Write the failing test**
 
-If a `SubmitDialog` test file exists, add this case; otherwise create `frontend/__tests__/SubmitDialog.test.tsx` with the file's standard provider setup (model it on an existing dialog test). The assertion:
+If a `SubmitDialog` test file exists, add this case; otherwise create `frontend/__tests__/SubmitDialog.test.tsx` with the file's standard provider setup (model it on an existing dialog test). Reaching the success footer requires the success `SubmitState` — the discriminant is `kind: 'success'` (see `frontend/src/hooks/useSubmit.ts:36`: `{ kind: 'success'; pullRequestReviewId: string; steps: SubmitProgressStep[] }`). Confirm the `steps` element shape from an existing useSubmit/SubmitDialog test; `[]` is acceptable.
 
 ```tsx
-// within a test that renders SubmitDialog in its `success` state:
+// render SubmitDialog with submitState success + htmlUrl set to a GHES URL:
+//   submitState={{ kind: 'success', pullRequestReviewId: 'PRR_x', steps: [] }}
+//   htmlUrl="https://github.example.com/acme/api/pull/123"
 it('View on GitHub link uses htmlUrl, not a hardcoded host', () => {
-  // ...render SubmitDialog with submitState success + htmlUrl set to a GHES URL...
   const link = screen.getByRole('link', { name: /view on github/i });
   expect(link).toHaveAttribute('href', 'https://github.example.com/acme/api/pull/123');
 });
 ```
-
-(Reaching the success state requires `submitState={{ kind: 'succeeded', ... }}` — match the `SubmitState` success shape used elsewhere in the suite. If standing up the success state is disproportionate, assert at minimum that the `prUrl`-derived link prefers `htmlUrl` via a focused render; do not assert against a hardcoded `github.com`.)
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `cd frontend && npm test -- SubmitDialog`
 Expected: FAIL — link still uses hardcoded `https://github.com/...`.
 
-- [ ] **Step 3: Add the prop + use it + omit on absent**
+- [ ] **Step 3: Consume the prop + omit on absent**
 
-In `SubmitDialog.tsx`:
+In `SubmitDialog.tsx` (the `htmlUrl?: string | null` prop is already on `Props` from Task 8):
 
-(a) Add to `Props` (after `reference: PrReference;`, line 43):
+(a) Destructure `htmlUrl` where the other props are pulled from `props` (in the `const { open, ... } = props;` block near line 93).
 
-```typescript
-  // #131 — authoritative PR web URL (PrDetailPr.htmlUrl). Absent → omit the
-  // "View on GitHub" link in the success footer.
-  htmlUrl?: string;
-```
-
-(b) Destructure `htmlUrl` where the other props are pulled from `props` (in the `const { open, ... } = props;` block near line 93).
-
-(c) Replace line 317:
+(b) Replace line 317:
 
 ```typescript
   const prUrl = htmlUrl;
 ```
 
-(d) Replace the success-footer link (lines 516-525) to omit when absent:
+(c) Replace the success-footer link (lines 516-525) to omit when absent:
 
 ```tsx
           {success && (
@@ -834,11 +851,14 @@ git commit -m "feat(#131): SubmitDialog View-on-GitHub uses htmlUrl, omits on ab
 
 - [ ] **Step 1: Populate `HtmlUrl` on the fake scenario PR**
 
-Find where the fake review service builds the `acme/api/123` `Pr`:
+The e2e scenario PR (`acme/api/123`) is built by the `new Pr(...)` at **`PRism.Web/TestHooks/FakePrReader.cs:39-55`** (named-arg constructor ending `ClosedAt: closedAt`). Append a trailing named arg there:
 
-Run: `grep -rn "new Pr(" PRism.Web/TestHooks tests/PRism.Web.Tests/TestHelpers`
+```csharp
+            ClosedAt: closedAt,
+            HtmlUrl: "https://github.com/acme/api/pull/123");
+```
 
-In the fake that serves PR detail (e.g. `PRism.Web/TestHooks/FakePrReader.cs` or `tests/PRism.Web.Tests/TestHelpers/PrDetailFakeReviewService.cs` — whichever builds the scenario PR returned for `acme/api/123`), set `HtmlUrl: "https://github.com/acme/api/pull/123"` on that `Pr` (add the named arg to its constructor). Keep the existing host so the e2e assertion is stable.
+Keep `github.com` as the host so the e2e assertion (`/\/acme\/api\/pull\/123$/`) is stable. This flows `HtmlUrl` → `PrDetailDto` → `htmlUrl` on the wire to the rendered button. (Confirm with `grep -n "new Pr(" PRism.Web/TestHooks/FakePrReader.cs` if line numbers drift.)
 
 - [ ] **Step 2: Write the e2e spec**
 
@@ -878,7 +898,7 @@ Expected: PASS. (If `setupAndOpenScenarioPr`/`resetBackendState` signatures diff
 - [ ] **Step 4: Commit**
 
 ```bash
-git add frontend/e2e/open-in-github.spec.ts PRism.Web/TestHooks tests/PRism.Web.Tests/TestHelpers
+git add frontend/e2e/open-in-github.spec.ts PRism.Web/TestHooks/FakePrReader.cs
 git commit -m "test(#131): e2e asserts Open-in-GitHub control + href; fake PR carries HtmlUrl"
 ```
 
