@@ -28,6 +28,7 @@ import { AskAiButton } from './AskAiButton';
 import { Avatar } from '../Avatar/Avatar';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
+import { OpenInGitHubButton } from './OpenInGitHubButton';
 
 // #128 — double-chevron, authored pointing DOWN (the expanded state). The
 // collapsed state rotates it 180° via CSS (.prHeader[data-collapsed] .collapseToggle svg).
@@ -117,6 +118,8 @@ interface PrHeaderProps {
   // Merged/closed timestamp for the header status label (Task 13).
   mergedAt?: string | null;
   closedAt?: string | null;
+  // #131 — authoritative PR web URL (PrDetailPr.htmlUrl). Absent → no button.
+  htmlUrl?: string | null;
 }
 
 export function PrHeader({
@@ -142,6 +145,7 @@ export function PrHeader({
   onSessionRefetch,
   mergedAt,
   closedAt,
+  htmlUrl,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
@@ -202,6 +206,20 @@ export function PrHeader({
     // by PrDetailPage; including it would re-run the refetch every render while
     // in `success`. `submit.clearLastResume` is stable (useCallback([])).
   }, [submit.state.kind, submit.clearLastResume]);
+
+  // Dev-only signal: if a loaded PR (title present) has no htmlUrl, the escape-
+  // hatch links silently disappear — surface that so a ParsePr/GraphQL-shape
+  // regression is detectable. PrHeader is the always-rendered common ancestor of
+  // all three link sites on the detail page.
+  useEffect(() => {
+    if (import.meta.env.DEV && title && !htmlUrl) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        'PrHeader: PR detail rendered without htmlUrl — Open-in-GitHub links hidden',
+        reference,
+      );
+    }
+  }, [title, htmlUrl, reference]);
 
   const patchVerdict = (verdict: DraftVerdict | null) => {
     void sendPatch(reference, { kind: 'draftVerdict', payload: verdict }).then(() => {
@@ -443,6 +461,7 @@ export function PrHeader({
             onSubmit={() => setDialogOpen(true)}
           />
           <AskAiButton onClick={toggleAskAi} />
+          <OpenInGitHubButton href={htmlUrl} />
         </div>
       </div>
       <div className={styles.subTabRow}>
@@ -476,6 +495,7 @@ export function PrHeader({
         <SubmitDialog
           open
           reference={reference}
+          htmlUrl={htmlUrl}
           session={session}
           prState={prState}
           readOnly={readOnly}

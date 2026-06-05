@@ -257,6 +257,19 @@ describe('PrHeader', () => {
   });
 });
 
+describe('#131 Open in GitHub button', () => {
+  it('renders the button when htmlUrl is present', () => {
+    render(<PrHeader {...baseProps} htmlUrl="https://github.example.com/octocat/hello/pull/42" />);
+    const link = screen.getByTestId('open-in-github-button');
+    expect(link).toHaveAttribute('href', 'https://github.example.com/octocat/hello/pull/42');
+  });
+
+  it('renders nothing for the button when htmlUrl is absent', () => {
+    render(<PrHeader {...baseProps} />);
+    expect(screen.queryByTestId('open-in-github-button')).toBeNull();
+  });
+});
+
 describe('PrHeader — surfacing 4xx errors from /submit (regression: silent swallow)', () => {
   // Root cause from production debugging: PrHeader.tsx's onSubmit catch was
   // empty with a comment claiming useSubmitToasts handled the toast — but

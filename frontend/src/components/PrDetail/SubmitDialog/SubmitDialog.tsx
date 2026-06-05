@@ -41,6 +41,10 @@ const NOOP_GET_PR_ROOT_HOLDER = (): ComposerOwnerKey | null => null;
 interface Props {
   open: boolean;
   reference: PrReference;
+  // #131 — authoritative PR web URL (PrDetailPr.htmlUrl). Absent → omit the
+  // "View on GitHub" link in the success footer. Nullable because PrDetailView
+  // passes data?.pr.htmlUrl (string | null | undefined).
+  htmlUrl?: string | null;
   session: ReviewSessionDto;
   // The PR's open/closed/merged state — threads into PrRootBodyEditor's
   // closed-banner + autosave gate.
