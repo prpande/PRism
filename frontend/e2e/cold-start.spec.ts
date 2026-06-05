@@ -28,3 +28,17 @@ test('typing in PAT enables Continue', async ({ page }) => {
   await page.getByLabel(/personal access token/i).fill('ghp_test_token');
   await expect(page.getByRole('button', { name: /continue/i })).toBeEnabled();
 });
+
+test('cold start hides the top nav tabs (#130)', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: /connect to github/i })).toBeVisible({
+    timeout: 30_000,
+  });
+  // First-run: the nav tab strip is not rendered at all.
+  await expect(page.getByRole('navigation')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /^inbox$/i })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /^settings$/i })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /^setup$/i })).toHaveCount(0);
+  // Logo still present.
+  await expect(page.getByAltText('PRism')).toBeVisible();
+});
