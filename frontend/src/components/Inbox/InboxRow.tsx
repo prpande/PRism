@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { formatAge } from '../../utils/relativeTime';
+import { Avatar } from '../Avatar/Avatar';
 import { DiffBar } from './DiffBar';
 import styles from './InboxRow.module.css';
 
@@ -57,7 +58,10 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
         <span className={styles.meta}>
           <span className={styles.mono}>{pr.repo}</span>
           <span className={styles.dotsep}>·</span>
-          <span>{pr.author}</span>
+          <span className={styles.author} data-testid="inbox-author">
+            <Avatar src={pr.avatarUrl} login={pr.author} size="sm" />
+            <span>{pr.author}</span>
+          </span>
           <span className={styles.dotsep}>·</span>
           <span className={styles.mono}>iter {pr.iterationNumber}</span>
           <span className={styles.dotsep}>·</span>

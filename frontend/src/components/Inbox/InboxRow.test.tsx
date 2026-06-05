@@ -23,6 +23,7 @@ const PR: PrInboxItem = {
   lastSeenCommentId: null,
   mergedAt: null,
   closedAt: null,
+  avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
 };
 
 function TabsProbe() {
@@ -58,5 +59,21 @@ describe('InboxRow click → opens tab', () => {
     await userEvent.click(screen.getByRole('button', { name: /Add user pagination/i }));
     expect(screen.getByTestId('tab-count').textContent).toBe('1');
     expect(screen.getByTestId('path').textContent).toBe('/pr/acme/api/99');
+  });
+});
+
+describe('InboxRow avatar', () => {
+  it('renders the author avatar next to the author name', () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <OpenTabsProvider>
+          <InboxRow pr={PR} enrichment={undefined} showCategoryChip={false} maxDiff={100} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    const author = screen.getByText(PR.author);
+    const group = author.closest('[data-testid="inbox-author"]');
+    expect(group).not.toBeNull();
+    expect(group!.querySelector('[data-testid="avatar"]')).not.toBeNull();
   });
 });
