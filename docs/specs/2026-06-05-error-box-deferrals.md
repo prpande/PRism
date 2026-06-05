@@ -12,6 +12,12 @@ Tracks work intentionally left out of the #182 slice so it isn't silently lost.
 
 **Trigger:** A follow-up tech-debt issue, or fold into the next theming pass touching those components.
 
+## D3 — DraftsTabError has no danger color
+
+**What:** `DraftsTabError.tsx:9` carries `role="alert"` but renders neutral (`color: var(--text-2)` on a neutral background) — a user who hits a drafts-load failure gets no visual danger signal.
+
+**Why deferred:** Out of scope for #182, whose framing is "errors render as *unstyled* text." DraftsTabError *is* styled (centered empty-state); it just isn't danger-colored. Giving it a danger signal is a distinct error-signal-consistency decision, and its empty-state layout differs from the ErrorBox box. Fold into the convergence pass (D1) or a dedicated theming issue.
+
 ## D2 — Parity-baseline re-capture (conditional)
 
 **What:** If migrating any of the six bare sites visibly shifts a `parity-baselines.spec.ts` zone, re-capture that zone's baseline.
