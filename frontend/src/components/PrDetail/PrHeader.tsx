@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { usePrHeaderCollapsed } from '../../hooks/usePrHeaderCollapsed';
@@ -149,6 +149,11 @@ export function PrHeader({
 
   const submit = useSubmit(reference);
   const [collapsed, toggleCollapsed] = usePrHeaderCollapsed(prRefKey(reference));
+  // Per-instance id for aria-controls. PrTabHost keeps one PrDetailView (hence
+  // one PrHeader) mounted PER OPEN TAB simultaneously (inactive ones hidden), so
+  // a hardcoded id would duplicate across tabs — invalid HTML and aria-controls
+  // would resolve to the first tab's region. useId() guarantees uniqueness.
+  const metaId = useId();
   const { show } = useToast();
   // Cross-cutting submit toasts: submit-duplicate-marker-detected /
   // submit-orphan-cleanup-failed (spec § 11.4 / § 13.2).
@@ -355,7 +360,7 @@ export function PrHeader({
       data-collapsed={collapsed ? 'true' : undefined}
     >
       <div className={styles.prHeaderTop}>
-        <div className="pr-meta col gap-1" id="pr-header-meta">
+        <div className="pr-meta col gap-1" id={metaId}>
           <div className="row gap-2 muted-2 pr-meta-repo">
             <span>
               {reference.owner}/{reference.repo}
@@ -452,7 +457,7 @@ export function PrHeader({
           className={styles.collapseToggle}
           data-testid="pr-header-collapse-toggle"
           aria-expanded={!collapsed}
-          aria-controls="pr-header-meta"
+          aria-controls={metaId}
           aria-label={collapsed ? 'Expand PR details' : 'Collapse PR details'}
           title={collapsed ? 'Expand PR details' : 'Collapse PR details'}
           onClick={toggleCollapsed}

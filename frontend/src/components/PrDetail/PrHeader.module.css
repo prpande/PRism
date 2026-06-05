@@ -83,6 +83,10 @@
   align-items: center;
   gap: var(--s-3);
 }
+/* Assumes PrSubTabStrip is the FIRST child of .subTabRow (it grows; the chevron
+   stays fixed and is pushed right by its own margin-left:auto). If a future
+   element is inserted before the tab strip, give the strip an explicit class and
+   target that instead of :first-child. */
 .subTabRow > :first-child {
   flex: 1 1 auto;
   min-width: 0;
@@ -158,7 +162,10 @@
    PrHeader.tsx, no module rule), so they MUST be wrapped in :global() — a bare
    .chip-ci inside a CSS Module is hashed and matches nothing, which would hide
    the very chips we want to keep. Same idiom as DiffPane.module.css's
-   :global(.diff-pane--split:not(...)). */
+   :global(.diff-pane--split:not(...)).
+   FOOTGUN: this is an implicit allowlist — ANY new .prSubtitle child that is not
+   .chip-ci / .chip-mergeability will hide in collapsed mode. Add it to the keep
+   list here if a future child must stay visible when collapsed. */
 .prHeader[data-collapsed] .prSubtitle > :not(:global(.chip-ci)):not(:global(.chip-mergeability)) {
   display: none;
 }
