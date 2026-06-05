@@ -18,8 +18,14 @@ const VIEWPORT = { width: 1280, height: 900 };
 test('the Setup screen does not scroll the page (#205)', async ({ page }) => {
   await page.setViewportSize(VIEWPORT);
   await page.goto('/setup');
+  // The /setup route renders SetupPage unconditionally (App.tsx — only `/`
+  // redirects on auth), so this holds whether or not CI seeds a session.
+  // Assert it explicitly so a future routing change can't make the test
+  // silently measure a different screen.
+  await expect(page).toHaveURL(/\/setup$/);
   // Wait for the card (rendered once authState resolves and the LoadingScreen
-  // is gone), independent of connect-vs-replace mode.
+  // is gone), independent of connect-vs-replace mode. This also guarantees we
+  // are on SetupPage — it would time out, not pass vacuously, on any other view.
   await page.locator('[data-testid="setup-card"]').waitFor({ timeout: 30_000 });
 
   const layout = await page.evaluate(() => {
