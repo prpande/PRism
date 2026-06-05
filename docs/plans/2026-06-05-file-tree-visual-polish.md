@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the PR-detail Files tree read like an IDE explorer and fix two usability defects (illegible expand/collapse affordance; viewed-checkbox sliding off-screen) — larger SVG chevron, accent folder icons, 12px indent, deletion strikethrough, viewed gray-out, a pinned right-edge checkbox, and a screen-reader label for the status badge.
+**Goal:** Make the PR-detail Files tree read like an IDE explorer and fix two usability defects (illegible expand/collapse affordance; long directory names spilling past the tree's right edge and forcing a sideways scroll) — larger SVG chevron, accent folder icons, 12px indent, deletion strikethrough, viewed gray-out, directory-name truncation, and a screen-reader label for the status badge.
 
 **Architecture:** Presentation-plus-a11y only. No change to tree-building, selection, keep-alive, or AI-focus logic. All work lives in three files: `FileTree.tsx` (markup + two small constants/maps), `FileTree.module.css` (chevron, folder, deleted, viewed, dir-name truncation), and `FilesTab.module.css` (the grid container that actually causes the checkbox overflow). Tests are unit (vitest DOM-contract) plus a B1 human visual assert for the rendered layout.
 
@@ -525,19 +525,24 @@ cd D:/src/PRism-187-chevron && git add frontend/src/components/PrDetail/FilesTab
 
 ---
 
-### Task 7: Pinned checkbox — truncate names, never scroll sideways
+### Task 7: Directory-name truncation — stop long folder paths scrolling sideways
 
 **Files:**
-- Modify: `frontend/src/components/PrDetail/FilesTab/FilesTab.module.css` (`.filesTabTree` — add `min-width: 0`)
-- Modify: `frontend/src/components/PrDetail/FilesTab/FileTree.module.css` (`.fileTree` min-width/max-width; `.fileTreeDirName` truncation; `.fileTreeList` overflow-x guard)
+- Modify: `frontend/src/components/PrDetail/FilesTab/FileTree.module.css` (`.fileTreeDirName` truncation — **the load-bearing fix**; plus `.fileTree` min-width/max-width + `.fileTreeList` overflow-x — guards)
+- Modify: `frontend/src/components/PrDetail/FilesTab/FilesTab.module.css` (`.filesTabTree` — add `min-width: 0`, a guard)
 - Modify: `frontend/src/components/PrDetail/FilesTab/FileTree.tsx` (`title` attrs on file-name and dir-name spans)
 - Test: `frontend/__tests__/FileTree.test.tsx`
 
-**What vitest can prove here:** only the **DOM contract** — `title` attributes present on both name spans, and the dir-name span carries its module class. The actual non-overflow (grid item shrinks, name ellipsizes, checkbox stays at the right edge) is a **layout** behavior with no jsdom support → proven by the B1 visual assert (Task 9), which must distinguish **ellipsis** (name ends in "…", checkbox visible) from **clip** (hard-cut name, no ellipsis — meaning `overflow:hidden` is masking a still-too-wide row).
+**Empirically validated — the diagnosis was corrected against the running app (BFF PR #191, two viewport widths, tree at its 320px track):**
+- **The file-row viewed checkbox is already pinned** — every file-row checkbox renders at the same x inside the tree's right edge (measured `cbRight 294 ≤ edge 320`, zero offenders), and long file names ellipsize. The existing `.fileTreeFileName` ellipsis (present since the original port) already does this. The "checkbox slides off screen" framing was an **assumption that did not reproduce** — so this task does **not** add a checkbox pin.
+- **`.filesTabTree` does not overflow** (measured `scrollWidth == clientWidth == 319`), so its `min-width: 0` is a *guard*, not the fix.
+- **Directory names are the real defect:** `.fileTreeDirName` has no truncation, so a long path (`ApiClients/Mindbody.Scheduling.ApiClient/Models`) renders to right-edge **344px**, 24px past the 320 edge, giving `.fileTree` 35px of horizontal overflow (`scrollWidth 344` vs `clientWidth 309`) and a sideways scrollbar. **Truncating `.fileTreeDirName` (Step 7) is the load-bearing fix.**
 
-**On the `.filesTabTree min-width:0` guard (spec Testing asked for a vitest contract).** The spec's Testing section lists "`.filesTabTree` carries `min-width:0`" as a DOM contract. In practice this is a CSS-module rule on a **non-inline** property; jsdom's `getComputedStyle` does not reliably reflect matched-stylesheet values for it even with `css: true` (it resolves *class names*, not a full cascade), so an assertion here would be flaky rather than load-bearing. This change is therefore verified by **code review of the CSS diff + the B1 visual assert** (the overflow either reproduces or it doesn't), exactly as Task 6's `:has()` rule is. This is a conscious divergence from the spec's optimistic vitest ask, recorded in the trace table — not a skipped guard.
+**What vitest can prove here:** only the **DOM contract** — `title` attributes present on both name spans, and the dir-name span carries its module class. The actual rendered behavior (directory name ellipsizes, tree stops scrolling sideways, file-row checkbox stays pinned) is **layout** with no jsdom support → proven by the B1 visual assert (Task 9), which must show a long **directory** name ending in "…" with no sideways scroll, distinguish **ellipsis** from **clip** (hard-cut name, no ellipsis = `overflow:hidden` masking a still-too-wide row), and **confirm the file-row checkbox is still pinned** (a regression guard on already-correct behavior).
 
-**On `.fileTreeSpacer` (the existing right-push span).** `FileNodeComponent` renders `<span className="...fileTreeSpacer" />` (`FileTree.tsx:192`) with `flex: none; margin-left: auto` (`FileTree.module.css:130-133`). That spacer is what pins the checkbox to the right edge when a name is **short** (the `flex:1` name doesn't fill the row). It is `flex:none`, so it consumes no flex space and does not compete with the name's `flex:1` for shrink room — it stays correct once `min-width:0` lands. **Leave it as-is**; do not remove it and do not add a second right-push mechanism. The B1 set (Task 9) must include a *short*-name row (checkbox at edge via the spacer) and a *long*-name row on a genuinely narrow track (name ellipsizes, checkbox still at edge) to confirm both paths.
+**On the guard CSS (`.filesTabTree` / `.fileTree` `min-width:0`).** The spec's Testing section once listed "`.filesTabTree` carries `min-width:0`" as a vitest DOM contract. It is a CSS-module rule on a **non-inline** property; jsdom's `getComputedStyle` does not reliably reflect matched-stylesheet values for it even with `css: true` (it resolves *class names*, not a full cascade), so an assertion would be flaky. These are **robustness guards** (insurance for a very-narrow-tree future), verified by **code review of the CSS diff + B1**, not load-bearing — the load-bearing change is the directory-name truncation. Recorded in the trace table.
+
+**On `.fileTreeSpacer` (the existing right-push span).** `FileNodeComponent` renders `<span className="...fileTreeSpacer" />` (`FileTree.tsx:192`) with `flex: none; margin-left: auto` (`FileTree.module.css:130-133`). Together with the file-name ellipsis it is what already pins the checkbox to the right edge today (measured). It is `flex:none`, consumes no flex space, and does not compete with the name's `flex:1` for shrink room. **Leave it as-is**; do not remove it and do not add a second right-push mechanism. The B1 set (Task 9) must include a *short*-name row (checkbox at edge via the spacer) and a *long deep-nested directory* name on a genuinely narrow track (directory name ellipsizes, no sideways scroll) to confirm both paths.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -600,7 +605,7 @@ cd D:/src/PRism-187-chevron/frontend && npx vitest run __tests__/FileTree.test.t
 
 Expected: PASS.
 
-- [ ] **Step 5: Fix the grid item (the load-bearing change).** In `FilesTab.module.css`, add `min-width: 0` to `.filesTabTree` (`:29-36`):
+- [ ] **Step 5: Add the grid-item guard (robustness, not the fix).** In `FilesTab.module.css`, add `min-width: 0` to `.filesTabTree` (`:29-36`) — insurance for a very-narrow-tree future; `.filesTabTree` does not overflow today (measured). The load-bearing change is the directory-name truncation in Step 7:
 
 ```css
 .filesTabTree {
@@ -626,7 +631,7 @@ Expected: PASS.
 }
 ```
 
-- [ ] **Step 7: Add the dir-name truncation + the belt-and-suspenders overflow guard.** In `FileTree.module.css`, replace `.fileTreeDirName` (`:176-178`) so deep folder names ellipsize like file names:
+- [ ] **Step 7: Truncate directory names (the load-bearing fix) + the belt-and-suspenders overflow guard.** In `FileTree.module.css`, replace `.fileTreeDirName` (`:176-178`) so long folder paths ellipsize like file names — this is the change that actually stops the sideways scroll (measured: `.fileTreeDirName` is the only inline-axis content exceeding the track):
 
 ```css
 .fileTreeDirName {
@@ -659,7 +664,7 @@ Expected: PASS (all FileTree tests).
 - [ ] **Step 9: Commit**
 
 ```bash
-cd D:/src/PRism-187-chevron && git add frontend/src/components/PrDetail/FilesTab/FilesTab.module.css frontend/src/components/PrDetail/FilesTab/FileTree.module.css frontend/src/components/PrDetail/FilesTab/FileTree.tsx frontend/__tests__/FileTree.test.tsx && git commit -m "fix(#187): pin viewed checkbox via grid min-width:0 + name truncation"
+cd D:/src/PRism-187-chevron && git add frontend/src/components/PrDetail/FilesTab/FilesTab.module.css frontend/src/components/PrDetail/FilesTab/FileTree.module.css frontend/src/components/PrDetail/FilesTab/FileTree.tsx frontend/__tests__/FileTree.test.tsx && git commit -m "fix(#187): truncate long directory names to stop sideways scroll"
 ```
 
 ---
@@ -735,8 +740,8 @@ cd D:/src/PRism-187-chevron ; ./run.ps1 -Reset None --no-browser
   - a **viewed** file (dim + checked box, **no** strike),
   - a file that is **both deleted and viewed** — confirm it renders dim (`--text-3`) **with** the red strike (the intended "deleted + already looked at" look; spec item 6 documents this cascade outcome and nothing else tests it),
   - a **short**-name row — confirm the checkbox sits at the right edge via the `.fileTreeSpacer` (the short-name path),
-  - a **long file-name** row in both a shallow and a deep-nested position, captured on a **genuinely narrow track** (drag the splitter / use a narrow window so the name actually exceeds the column) — name ellipsizes with "…", checkbox at the right edge — **NOT** a hard clip. A long name at a wide default window does not exercise the fix.
-  - a **long deep-nested directory** name (ellipsizes).
+  - a **long file-name** row in both a shallow and a deep-nested position — confirm the name ellipsizes with "…" and the checkbox stays at the right edge (a **regression guard** on already-correct behavior; file rows are *not* what this task fixes — the existing ellipsis already pins them),
+  - **(the primary proof) a long deep-nested *directory* name** on a **genuinely narrow track** (drag the splitter / use a narrow window so the path actually exceeds the column) — the directory name ellipsizes with "…" and the tree does **NOT** scroll sideways; the cut must be an ellipsis, **NOT** a hard clip. This is the defect Task 7 actually fixes; a wide default window does not exercise it.
 
   The loading skeleton state is out of scope (pre-existing, unchanged).
 
@@ -776,7 +781,7 @@ cd D:/src/PRism-187-chevron && git add frontend/e2e/__screenshots__ && git commi
 | 4. Indentation 12px + shared constant | 1 |
 | 5. Deleted strikethrough | 5 |
 | 6. Viewed gray-out, drop strike | 6 |
-| 7. Pinned checkbox (grid min-width:0, .fileTree, dir-name truncation, title attrs, overflow-x guard) | 7 |
+| 7. Directory-name truncation (load-bearing) + title attrs; `.filesTabTree`/`.fileTree` min-width:0 + overflow-x guards | 7 |
 | 8. Status SR-only word + aria-hidden letter | 4 |
 | Accessibility section | 2 (contrast), 4 (1.4.1 carrier) |
 | Testing — vitest contracts | 1,2,3,4,5,7 |

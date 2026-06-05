@@ -15,9 +15,14 @@ plain and has two concrete usability defects:
    lowest-contrast text token), sized at the row's `--text-sm`. It is tiny and
    low-contrast, so a reviewer can't tell at a glance which rows are expandable
    or what state they're in. (This is the original #187 report.)
-2. **The viewed checkbox slides out of view.** On rows with long leaf names the
-   checkbox at the right end is pushed past the tree container's right edge,
-   forcing a horizontal scroll to reach it.
+2. **Long directory names spill past the tree's right edge.** A long
+   smart-compacted folder path overflows the tree container and makes the tree
+   scroll sideways, because `.fileTreeDirName` has no truncation (only
+   `font-weight: 500`). The *file*-row viewed checkbox does **not** have this
+   problem — the existing file-name ellipsis already keeps it pinned at the edge
+   (validated against the running app; see item 7). An earlier framing of this
+   defect as "the viewed checkbox slides off screen" was an assumption that did
+   not reproduce when measured.
 
 Beyond the defects, the tree could read more like an IDE explorer (VS Code's
 Solution Explorer was the reference) without adding noise. The design session
@@ -34,7 +39,9 @@ defects above are just its origin.
   mark per row.
 - Tighten indentation to GitHub's PR-tree density.
 - Make deletions obvious from the name itself (strikethrough).
-- Keep the viewed checkbox always reachable at the tree's right edge.
+- Keep long directory names from spilling past the tree's right edge (no
+  sideways scroll). The file-name ellipsis already keeps the viewed checkbox
+  reachable, so the checkbox itself needs no new work.
 
 ## Non-goals
 
@@ -62,8 +69,8 @@ All work is in three files:
 - `frontend/src/components/PrDetail/FilesTab/FileTree.tsx`
 - `frontend/src/components/PrDetail/FilesTab/FileTree.module.css`
 - `frontend/src/components/PrDetail/FilesTab/FilesTab.module.css` — item 7 only;
-  the grid container (`.filesTabContent` / `.filesTabTree`) that actually causes
-  the checkbox overflow.
+  the grid container (`.filesTabTree`) gets a `min-width: 0` robustness guard
+  (not the load-bearing fix — see item 7).
 
 ### 1. Chevron — larger SVG, higher contrast
 
@@ -198,54 +205,57 @@ For a row that is **both deleted and viewed**, the two rules now collide only on
 looked at" look — acceptable, and explicitly *not* something to fight with
 `!important`. No action needed beyond removing the viewed `text-decoration`.
 
-### 7. Pinned checkbox — truncate names, never scroll sideways
+### 7. Directory-name truncation — stop long folder paths scrolling sideways
 
 **Invariant:** the tree never scrolls horizontally; long **file and directory**
 names ellipsize at the container boundary; the viewed checkbox stays at the
 tree's right edge.
 
-**Root cause (diagnosed, not deferred).** The file name already has `flex: 1;
-min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap`,
-so the *row*'s name column would shrink — but the **container** above it won't.
-The tree lives in a CSS **grid**, not a flex chain:
+**Validated against the running app (BFF PR #191, tree at its 320px track, two
+viewport widths).** Live measurement *corrected* the original diagnosis:
 
-- `.filesTabContent` is `display: grid; grid-template-columns: minmax(240px,
-  320px) 1fr; overflow: hidden` (`FilesTab.module.css`).
-- The tree is the first grid item, `.filesTabTree`, which sets `overflow-y:
-  auto` but **no `min-width: 0`**. A grid item's automatic minimum size is its
-  *min-content* on the inline axis; `overflow-y` does not relax the inline-axis
-  minimum. So a long unbreakable name makes `.filesTabTree`'s min-content wide,
-  the grid item refuses to shrink below it, and its content (including the
-  right-edge checkbox) is pushed past the visible track — which
-  `.filesTabContent`'s `overflow: hidden` then clips out of reach.
-- `.fileTree` (the FileTree root, nested directly inside `.filesTabTree`)
-  additionally pins `min-width: 240px; max-width: 360px`. Both fight the fix: the
-  `min-width: 240px` keeps an inline-axis floor on the inner element that
-  partially neutralizes the grid-item `min-width: 0`, and the `max-width: 360px`
-  exceeds the grid track's 320px max (dead).
+- **File rows are already fine — no new work needed for the checkbox.** Every
+  file-row viewed checkbox renders at the same x, inside the tree's right edge
+  (measured `cbRight 294 ≤ edge 320`, **zero** offenders), and long file names
+  report `ellipsized: true`. The existing `.fileTreeFileName { flex: 1;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }`
+  (present since the original port `aa1908a`) already shrinks the name and pins
+  the checkbox. **The "viewed checkbox slides off screen" report did not
+  reproduce** — it was an assumption, not an observation.
+- **`.filesTabTree` (the grid item) does not overflow** (measured `scrollWidth ==
+  clientWidth == 319`). So a grid-item `min-width: 0` is **not** the load-bearing
+  fix — nothing is pushing the grid item wide.
+- **Directory names are the real, reproducible defect.** `.fileTreeDirName` has
+  *no* truncation (only `font-weight: 500`). A long smart-compacted path —
+  `ApiClients/Mindbody.Scheduling.ApiClient/Models` — renders to a right edge of
+  **344px**, 24px past the tree's 320px edge, driving `.fileTree`'s content to
+  `scrollWidth 344` vs `clientWidth 309` (35px of horizontal overflow) and making
+  the tree scroll sideways. Directory rows carry no checkbox, so this is a
+  folder-path-spill / horizontal-scroll defect, not a checkbox defect.
 
-**Fix:**
+**Fix (headline first):**
 
-- Add `min-width: 0` to `.filesTabTree` (the grid item) — the load-bearing fix;
-  this lets the track-constrained item shrink so the row's `flex: 1` name column
-  can finally ellipsize.
-- Also set `.fileTree` `min-width: 0` — let the grid track's own 240px floor own
-  the minimum; `.fileTree`'s 240px floor is redundant with the track and would
-  otherwise re-impose the inline-axis minimum the grid-item fix just removed.
-- Cap or drop `.fileTree`'s `max-width: 360px` (it exceeds the 320px track and is
-  inert).
+- **Truncate directory names — the load-bearing fix.** Give `.fileTreeDirName`
+  the same treatment file names already have: `min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap`. This removes the only
+  inline-axis content that exceeds the track, so the tree stops scrolling
+  sideways.
+- `title={node.name}` on **both** the file-name and directory-name spans so the
+  full name is available on hover when truncated.
+- **Robustness guards (explicitly *not* the fix — cheap insurance for a
+  very-narrow-tree future).** Add `min-width: 0` to `.filesTabTree` (the grid
+  item) and to `.fileTree`, and drop `.fileTree`'s inert `max-width: 360px` (it
+  exceeds the 320px track). These matter only if the tree were ever forced below
+  the dir-name min-content at an extreme width; directory-name truncation already
+  removes that pressure, but the guards keep the invariant from regressing if the
+  layout changes later. They are labeled guards, not load-bearing — the measured
+  `.filesTabTree` state today is already non-overflowing.
 - Belt-and-suspenders `overflow-x: hidden` on the list **after** the above — on
   its own it would only *clip* a still-too-wide row (hiding the name end under
-  the clip instead of showing an ellipsis), so it is a guard, not the fix.
-- **Directory names** (`.fileTreeDirName`) currently have *no* truncation
-  styling (only `font-weight: 500`), so a long deep-nested folder name overflows
-  the same way. Give `.fileTreeDirName` the same `min-width: 0; overflow:
-  hidden; text-overflow: ellipsis; white-space: nowrap` and a `title` attribute.
-  Without this the invariant holds for files but not directories.
-- Add `title={node.name}` to both the file-name and directory-name spans so the
-  full name is available on hover when truncated.
+  the clip instead of showing an ellipsis), so it is a final guard, not the fix.
 
-No `position: sticky` hack is needed once rows can't exceed the container.
+No `position: sticky` hack is needed: the file-name ellipsis already pins the
+checkbox, and directory-name truncation removes the sideways scroll.
 
 ### 8. Status badge — replace the bare letter for assistive tech
 
@@ -316,12 +326,16 @@ same code either way.
     added/modified/renamed. This is the regression guard for the a11y carrier the
     spec depends on.
 - **Layout (item 7):** a unit assertion on real truncation is brittle in jsdom
-  (no layout engine). Cover the *DOM contract* in vitest (name has the ellipsis
-  classes; `.filesTabTree` carries `min-width:0`) and rely on the B1 visual
-  assert for the rendered proof. The visual assert must distinguish **ellipsis**
-  (name ends in "…", checkbox visible) from **clip** (name hard-cut with no
-  ellipsis) — the latter means `overflow:hidden` is masking a still-too-wide row
-  rather than the grid item actually shrinking. A long-name row in *both* a
+  (no layout engine), and the grid `min-width:0` is now a robustness guard rather
+  than the load-bearing fix, so the meaningful proof is visual. Cover the *DOM
+  contract* in vitest (both name spans carry `title`; the directory-name span
+  carries the ellipsis-class contract) and rely on the B1 visual assert for the
+  rendered proof. The visual assert must show a long **directory** name
+  ellipsizing (ends in "…") with the tree no longer scrolling sideways, and must
+  distinguish **ellipsis** from **clip** (a hard-cut name with no ellipsis means
+  `overflow:hidden` is masking a still-too-wide row). It must also **confirm the
+  file-row checkbox stays pinned** — that is already-correct behavior, captured
+  as a regression guard, not as proof of a new fix. A long name in *both* a
   shallow and a deep-nested position is required in the screenshot set.
 - **Visual (B1):** before/after screenshots of the Files tree in **both** themes
   — covering a folder (expanded + collapsed), an added/modified/deleted file, a
@@ -333,10 +347,11 @@ same code either way.
 
 ## Risks / tradeoffs
 
-- **Truncation hides the end of long names.** Accepted: the tree already splits
-  the path into folders, so the row name is just the leaf; end-ellipsis + the
-  `title` tooltip matches GitHub. (Middle/left-ellipsis was considered and
-  rejected as non-standard.)
+- **Truncation hides the end of long names.** Accepted, for both file and
+  directory names: the tree already splits the path into folders, so a file row's
+  name is just the leaf, and a truncated directory path keeps its left (highest)
+  segments visible; end-ellipsis + the `title` tooltip matches GitHub.
+  (Middle/left-ellipsis was considered and rejected as non-standard.)
 - **Viewed styling change trades scannability for unambiguity.** This is a real
   trade, not a free win (review flagged it). The strikethrough was the strongest
   *peripheral-vision* cue for "already viewed" — detectable without foveating the
@@ -365,8 +380,10 @@ same code either way.
 - **Color-differentiated strikethrough for viewed vs deleted** (red strike vs
   gray strike). Superseded by item 6 — dropping the viewed strike entirely is
   simpler and unambiguous.
-- **`position: sticky` checkbox.** Unnecessary once the grid item shrinks; would
-  paper over the real overflow bug rather than fix it.
+- **`position: sticky` checkbox.** Unnecessary — the file-name ellipsis already
+  pins the checkbox at the right edge (measured against the running app); the
+  real overflow is directory names, fixed by truncation. Sticky would paper over
+  a bug the checkbox does not actually have.
 - **Whole directory header as the toggle target** (so clicking the name expands
   /collapses, and the focus ring spans the full row). Better keyboard UX, but it
   changes click semantics and is out of scope here — see Deferred.
