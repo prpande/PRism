@@ -21,25 +21,26 @@ describe('ErrorBoundary fallback', () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it('renders the fallback message inside a role="alert" node', () => {
+  it('renders the fallback as an alertdialog containing the message', () => {
     render(
       <ErrorBoundary>
         <Boom />
       </ErrorBoundary>,
     );
-    const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Something went wrong. The error has been logged.');
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Something went wrong');
+    expect(dialog).toHaveTextContent('The error has been logged.');
   });
 
-  it('keeps the "Reload" button OUTSIDE the alert region', () => {
+  it('renders the "Reload" button INSIDE the alertdialog (message + action as one unit)', () => {
     render(
       <ErrorBoundary>
         <Boom />
       </ErrorBoundary>,
     );
-    const alert = screen.getByRole('alert');
-    // a11y guarantee: the action button must not be announced as part of the alert.
-    expect(alert.textContent).not.toContain('Reload');
-    expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
+    const dialog = screen.getByRole('alertdialog');
+    const reload = screen.getByRole('button', { name: /reload/i });
+    // The recovery action is a legitimate control within the labelled dialog.
+    expect(dialog).toContainElement(reload);
   });
 });

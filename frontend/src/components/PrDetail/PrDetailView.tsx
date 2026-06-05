@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PrDetailContextProvider } from './prDetailContext';
 import type { PrDetailContextValue } from './prDetailContext';
 import { PrHeader } from './PrHeader';
@@ -22,7 +23,7 @@ import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
-import { ErrorBox } from '../ErrorBox';
+import { ErrorModal } from '../ErrorModal';
 import bannerReconcileStyles from './BannerReconcile.module.css';
 
 // Keep-alive PR-detail view. Owns the active sub-tab as component STATE (not
@@ -49,6 +50,7 @@ export function PrDetailView({
 }) {
   const { owner, repo, number } = prRef;
   const refKey = prRefKey(prRef);
+  const navigate = useNavigate();
 
   const { data, showSkeleton, error, reload } = usePrDetail(prRef);
   const updates = useActivePrUpdates(prRef);
@@ -312,8 +314,30 @@ export function PrDetailView({
         readOnly={presence.readOnly}
         onSelectSubTab={selectSubTab}
       />
-      {/* .pr-detail-error is a test hook only (no CSS rule); preserved for PrDetailView.freshness.test.tsx */}
-      {error && <ErrorBox className="pr-detail-error">Couldn't load PR — {error.message}</ErrorBox>}
+      {error && (
+        <ErrorModal
+          open={active}
+          title="Couldn't load this PR"
+          message={error.message}
+          dismissible
+          onClose={() => navigate('/')}
+          actions={
+            <>
+              <button
+                type="button"
+                className="btn btn-primary"
+                data-modal-role="primary"
+                onClick={() => reload()}
+              >
+                Reload
+              </button>
+              <button type="button" className="btn btn-secondary" onClick={() => navigate('/')}>
+                Back to inbox
+              </button>
+            </>
+          }
+        />
+      )}
       {/* #180 — gate the page skeleton on the ABSENCE of data. On a same-PR
           background reload (re-activation freshness or the manual Reload
           button) usePrDetail keeps `data` present but flips isLoading; the

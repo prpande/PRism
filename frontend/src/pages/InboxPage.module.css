@@ -4,13 +4,10 @@
   margin: 0 auto;
 }
 
-/* Shared by the loading (spinner) and error states — centered flex column. */
 .loading {
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--s-3);
   min-height: 40vh;
 }
 

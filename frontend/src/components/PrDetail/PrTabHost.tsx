@@ -1,10 +1,10 @@
 import { useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { prRefKey, type PrReference } from '../../api/types';
 import { type PrTabId } from './PrSubTabStrip';
 import { PrDetailView } from './PrDetailView';
-import { ErrorBox } from '../ErrorBox';
+import { ErrorModal } from '../ErrorModal';
 
 // Persistent keep-alive host for PR-detail views. Sibling to <Routes> (the /pr
 // route renders null), this renders one mounted PrDetailView per open tab and
@@ -32,6 +32,7 @@ export function parsePrRoute(
 
 export function PrTabHost() {
   const { pathname } = useLocation();
+  const navigate = useNavigate();
   const { openTabs, addTab } = useOpenTabs();
   const route = parsePrRoute(pathname);
   const activeKey = route && route.valid ? prRefKey(route.ref) : null;
@@ -64,7 +65,23 @@ export function PrTabHost() {
           mounted (all hidden, since an invalid route has no activeKey) and
           their state survives the detour. */}
       {route && !route.valid && (
-        <ErrorBox>Invalid PR reference: the PR number must be a positive integer.</ErrorBox>
+        <ErrorModal
+          open
+          title="Invalid PR reference"
+          message="The PR number must be a positive integer."
+          dismissible
+          onClose={() => navigate('/')}
+          actions={
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-modal-role="primary"
+              onClick={() => navigate('/')}
+            >
+              Back to inbox
+            </button>
+          }
+        />
       )}
       {refs.map((ref) => {
         const key = prRefKey(ref);

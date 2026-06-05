@@ -17,17 +17,17 @@ vi.mock('../hooks/useAiGate', () => ({
 import { InboxPage } from './InboxPage';
 
 describe('InboxPage error state', () => {
-  it('renders the error message inside a role="alert" node', () => {
+  it('renders an alertdialog titled "Couldn\'t load inbox"', () => {
     render(<InboxPage />);
-    const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent("Couldn't load inbox.");
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent("Couldn't load inbox");
   });
 
-  it('keeps the "Try again" button OUTSIDE the alert region', () => {
+  it('renders the "Try again" button INSIDE the alertdialog', () => {
     render(<InboxPage />);
-    const alert = screen.getByRole('alert');
-    // a11y guarantee: the action button must not be announced as part of the alert.
-    expect(alert.textContent).not.toContain('Try again');
-    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
+    const dialog = screen.getByRole('alertdialog');
+    const tryAgain = screen.getByRole('button', { name: /try again/i });
+    // The recovery action is a control within the labelled dialog (one unit).
+    expect(dialog).toContainElement(tryAgain);
   });
 });

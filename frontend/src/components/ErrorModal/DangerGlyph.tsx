@@ -6,8 +6,8 @@ interface DangerGlyphProps {
 /**
  * Decorative danger/alert glyph (a circled exclamation). Purely presentational
  * and `aria-hidden` — the surrounding dialog/alert text carries the meaning.
- * Extracted from the former `ErrorBox` so `ErrorModal` (and any future danger
- * surface) can reuse the exact same mark. See #182.
+ * Shared so `ErrorModal` (and any future danger surface) can reuse the exact
+ * same mark. See #182.
  */
 export function DangerGlyph({ className }: DangerGlyphProps) {
   return (
