@@ -360,37 +360,38 @@ describe('FilesTab', () => {
     expect(screen.queryByTestId('diff-unavailable')).not.toBeInTheDocument();
   });
 
-  it('renders a diff-mode toggle button in the toolbar with stateful label and aria-pressed', async () => {
+  it('renders a diff-mode toggle in the toolbar with the split radio checked by default', async () => {
     globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
-    const toggleButton = await screen.findByRole('button', { name: /side-by-side|unified/i });
-    expect(toggleButton).toBeInTheDocument();
-    expect(toggleButton.getAttribute('aria-pressed')).toBe('true'); // default is 'side-by-side'
-    expect(toggleButton.textContent).toMatch(/side-by-side/i);
+    // DiffViewToggle is a radiogroup; the split radio should be checked by default.
+    const splitRadio = (await screen.findByTestId('diff-view-split')) as HTMLInputElement;
+    expect(splitRadio).toBeInTheDocument();
+    expect(splitRadio.checked).toBe(true);
+    const unifiedRadio = screen.getByTestId('diff-view-unified') as HTMLInputElement;
+    expect(unifiedRadio.checked).toBe(false);
   });
 
-  it('toggles diff mode when clicked', async () => {
+  it('toggles diff mode when clicking the unified tile radio', async () => {
     globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
-    const toggleButton = await screen.findByRole('button', { name: /side-by-side|unified/i });
-    fireEvent.click(toggleButton);
-    expect(toggleButton.getAttribute('aria-pressed')).toBe('false');
-    expect(toggleButton.textContent).toMatch(/unified/i);
+    const unifiedRadio = await screen.findByTestId('diff-view-unified');
+    fireEvent.click(unifiedRadio);
+    await waitFor(() => {
+      expect((screen.getByTestId('diff-view-unified') as HTMLInputElement).checked).toBe(true);
+      expect((screen.getByTestId('diff-view-split') as HTMLInputElement).checked).toBe(false);
+    });
   });
 
-  it('disables the toggle button below 900px viewport and aria-pressed reflects forced effective mode', async () => {
+  it('disables the split radio below 900px viewport and forced effective mode is unified', async () => {
     Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 800 });
     window.dispatchEvent(new Event('resize'));
     globalThis.fetch = diffOrDraft(() => Promise.resolve(jsonResponse(sampleDiff))) as typeof fetch;
     renderFilesTab();
-    const toggleButton = (await screen.findByRole('button', {
-      name: /side-by-side|unified/i,
-    })) as HTMLButtonElement;
-    expect(toggleButton.disabled).toBe(true);
-    // Effective mode forced to 'unified' by the viewport gate; aria-pressed
-    // and label both reflect THAT (not the stored diffMode).
-    expect(toggleButton.getAttribute('aria-pressed')).toBe('false');
-    expect(toggleButton.textContent).toMatch(/unified/i);
+    const splitRadio = (await screen.findByTestId('diff-view-split')) as HTMLInputElement;
+    expect(splitRadio.disabled).toBe(true);
+    // Effective mode forced to 'unified' — unified radio is checked.
+    const unifiedRadio = screen.getByTestId('diff-view-unified') as HTMLInputElement;
+    expect(unifiedRadio.checked).toBe(true);
     // Restore for subsequent tests.
     Object.defineProperty(window, 'innerWidth', {
       writable: true,
@@ -402,67 +403,90 @@ describe('FilesTab', () => {
 });
 
 describe('FilesTab line-wrap toggle (#115)', () => {
-  it('renders a line-wrap toggle defaulting to scroll-within (aria-pressed=false)', async () => {
+  it('renders a line-wrap checkbox in the gear menu defaulting to unchecked', async () => {
     globalThis.fetch = diffOrDraft(() =>
       Promise.resolve(jsonResponse(sampleModifiedDiff)),
     ) as typeof fetch;
     renderFilesTab();
-    const button = await screen.findByTestId('line-wrap-toggle');
-    expect(button).toHaveAttribute('aria-pressed', 'false');
-    expect(button).toHaveTextContent(/wrap/i);
+    // Open the gear menu first.
+    const gear = await screen.findByTestId('diff-settings-trigger');
+    fireEvent.click(gear);
+    const checkbox = await screen.findByTestId('line-wrap-checkbox');
+    expect((checkbox as HTMLInputElement).checked).toBe(false);
   });
 
-  it('toggling line-wrap applies diff-pane--wrap to the diff pane and flips aria-pressed', async () => {
+  it('toggling line-wrap checkbox applies diff-pane--wrap to the diff pane', async () => {
     globalThis.fetch = diffOrDraft(() =>
       Promise.resolve(jsonResponse(sampleModifiedDiff)),
     ) as typeof fetch;
     renderFilesTab();
-    const button = await screen.findByTestId('line-wrap-toggle');
+    // Open the gear menu.
+    const gear = await screen.findByTestId('diff-settings-trigger');
+    fireEvent.click(gear);
+    const checkbox = await screen.findByTestId('line-wrap-checkbox');
     const diffPane = await screen.findByTestId('diff-pane');
     expect(diffPane).not.toHaveClass('diff-pane--wrap');
-    fireEvent.click(button);
-    expect(button).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(checkbox);
+    expect((screen.getByTestId('line-wrap-checkbox') as HTMLInputElement).checked).toBe(true);
     await waitFor(() => expect(diffPane).toHaveClass('diff-pane--wrap'));
   });
 });
 
 describe('FilesTab whole-file toggle', () => {
-  it('clicking "Show full file" on a modified file flips the button label and sets aria-pressed', async () => {
-    globalThis.fetch = mockWholeFileFetch({
+  it('checking "Show full file" in the gear menu enables full-file view for a modified file', async () => {
+    const fetchImpl = mockWholeFileFetch({
       diffResponse: () => Promise.resolve(jsonResponse(sampleModifiedDiff)),
       fileContent: 'whole content\nline 2\nline 3\n',
     });
+    const fetchSpy = vi.fn().mockImplementation(fetchImpl);
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
     renderFilesTab();
-    // Wait for the button to be enabled (diff loaded + auto-select settled).
-    const button = await screen.findByTestId('whole-file-toggle');
-    await waitFor(() => expect(button).not.toBeDisabled());
-    expect(button).toHaveTextContent('Show full file');
-    expect(button).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(button);
-    await waitFor(() => expect(button).toHaveTextContent('Hunks only'));
-    expect(button).toHaveAttribute('aria-pressed', 'true');
+    // Wait for file tree to settle before opening gear.
+    await screen.findByText('src/main.ts');
+    const gear = await screen.findByTestId('diff-settings-trigger');
+    fireEvent.click(gear);
+    const checkbox = (await screen.findByTestId('show-full-file-checkbox')) as HTMLInputElement;
+    // Default: unchecked (off).
+    expect(checkbox.checked).toBe(false);
+    // Not disabled for a modified+hunks file on 'all' range.
+    await waitFor(() => expect(checkbox).not.toBeDisabled());
+    fireEvent.click(checkbox);
+    await waitFor(() =>
+      expect((screen.getByTestId('show-full-file-checkbox') as HTMLInputElement).checked).toBe(
+        true,
+      ),
+    );
+    // Downstream signal: wholeFileEnabled=true triggers the whole-file fetch.
+    // Assert DiffPane actually requested the file content from the backend —
+    // the test would pass with a stale checkbox state even if deriveWholeFileEnabled
+    // stopped returning true, so this spy call confirms the prop propagated.
+    await waitFor(() => {
+      const fileCall = fetchSpy.mock.calls.find((args) => String(args[0]).includes('/file?path='));
+      expect(fileCall).toBeDefined();
+    });
   });
 
-  it('toggle disabled for added / deleted / renamed file statuses', async () => {
+  it('show-full-file enabled but shows inert helper for added / deleted / renamed file statuses', async () => {
     globalThis.fetch = mockWholeFileFetch({
       diffResponse: () => Promise.resolve(jsonResponse(sampleAddedDiff)),
     });
     renderFilesTab();
-    // The disabled state + title derive from `selectedFile`, which is set by
-    // the auto-select effect a tick AFTER the file tree renders 'new.ts'.
-    // Assert inside waitFor so the check survives that settle delay rather
-    // than racing it (mirrors the iteration-gate test below). A bare
-    // getByText('new.ts') await only proves the tree rendered, not that
-    // auto-select has run — reading `title` synchronously then can see the
-    // empty fall-through branch (selectedFile still null).
+    await screen.findByText('new.ts');
+    const gear = await screen.findByTestId('diff-settings-trigger');
+    fireEvent.click(gear);
+    // Checkbox is enabled (view-wide preference) but checking it + selecting an
+    // ineligible file shows "still on for other files" helper text (fullFileInertHere).
+    const checkbox = (await screen.findByTestId('show-full-file-checkbox')) as HTMLInputElement;
+    expect(checkbox.disabled).toBe(false);
+    fireEvent.click(checkbox);
     await waitFor(() => {
-      const button = screen.getByTestId('whole-file-toggle');
-      expect(button).toBeDisabled();
-      expect(button.getAttribute('title')).toMatch(/modified files only/i);
+      const helper = screen.queryByTestId('show-full-file-helper');
+      expect(helper).toBeInTheDocument();
+      expect(helper!.textContent).toMatch(/still on for other files/i);
     });
   });
 
-  it('toggle disabled when activeRange !== "all" (DSx11 gate)', async () => {
+  it('show-full-file checkbox disabled when activeRange !== "all" (DSx11 gate)', async () => {
     globalThis.fetch = mockWholeFileFetch({
       diffResponse: () => Promise.resolve(jsonResponse(sampleMultiIterationDiff)),
     });
@@ -470,15 +494,20 @@ describe('FilesTab whole-file toggle', () => {
     // Wait for the iteration tab strip to appear.
     const iterationTab1 = await screen.findByTestId('iteration-tab-1');
     fireEvent.click(iterationTab1);
+    const gear = await screen.findByTestId('diff-settings-trigger');
+    fireEvent.click(gear);
     await waitFor(() => {
-      const button = screen.getByTestId('whole-file-toggle');
-      expect(button).toBeDisabled();
+      const checkbox = screen.getByTestId('show-full-file-checkbox') as HTMLInputElement;
+      expect(checkbox.disabled).toBe(true);
     });
-    const button = screen.getByTestId('whole-file-toggle');
-    expect(button.getAttribute('title')).toMatch(/'all' iteration view/i);
+    // Helper text explains why.
+    await waitFor(() => {
+      const helper = screen.getByTestId('show-full-file-helper');
+      expect(helper.textContent).toMatch(/'all' iteration view/i);
+    });
   });
 
-  it('toggle disabled when selectedCommits !== null (DSx11 gate)', async () => {
+  it('show-full-file checkbox disabled when selectedCommits !== null (DSx11 gate)', async () => {
     globalThis.fetch = mockWholeFileFetch({
       diffResponse: () => Promise.resolve(jsonResponse(sampleLowQualityDiff)),
     });
@@ -490,24 +519,46 @@ describe('FilesTab whole-file toggle', () => {
     const options = await screen.findAllByRole('option');
     // options[0] is "Show all"; options[1] is the first commit.
     fireEvent.click(options[1]);
+    const gear = await screen.findByTestId('diff-settings-trigger');
+    fireEvent.click(gear);
     await waitFor(() => {
-      const button = screen.getByTestId('whole-file-toggle');
-      expect(button).toBeDisabled();
+      const checkbox = screen.getByTestId('show-full-file-checkbox') as HTMLInputElement;
+      expect(checkbox.disabled).toBe(true);
     });
-    const button = screen.getByTestId('whole-file-toggle');
-    expect(button.getAttribute('title')).toMatch(/'all' iteration view/i);
+    await waitFor(() => {
+      const helper = screen.getByTestId('show-full-file-helper');
+      expect(helper.textContent).toMatch(/'all' iteration view/i);
+    });
   });
 
-  it('onWholeFileFailed flow: failure callback removes path from wholeFilePaths; button reverts', async () => {
-    // 413 from /file → DiffPane's failure latch fires → onWholeFileFailed removes path → button reverts.
+  it('onWholeFileFailed flow: failure callback marks path failed; checkbox stays checked but banner appears', async () => {
+    // 413 from /file → DiffPane's failure latch fires → onWholeFileFailed marks path →
+    // wholeFileEnabled becomes false (path excluded by deriveWholeFileEnabled) →
+    // DiffPane renders the WholeFileFailureBanner (localFailure latch set).
     globalThis.fetch = mockWholeFileFetch({
       diffResponse: () => Promise.resolve(jsonResponse(sampleModifiedDiff)),
       fileProblem: { type: '/file/too-large', status: 413 },
     });
     renderFilesTab();
-    const button = await screen.findByTestId('whole-file-toggle');
-    fireEvent.click(button);
-    await waitFor(() => expect(button).toHaveTextContent('Show full file'));
-    expect(button).toHaveAttribute('aria-pressed', 'false');
+    await screen.findByText('src/main.ts');
+    const gear = await screen.findByTestId('diff-settings-trigger');
+    fireEvent.click(gear);
+    const checkbox = (await screen.findByTestId('show-full-file-checkbox')) as HTMLInputElement;
+    await waitFor(() => expect(checkbox).not.toBeDisabled());
+    fireEvent.click(checkbox);
+    // showFullFile stays true (checkbox remains checked) but the path is added to
+    // failedPaths, so deriveWholeFileEnabled returns false.
+    await waitFor(() =>
+      expect((screen.getByTestId('show-full-file-checkbox') as HTMLInputElement).checked).toBe(
+        true,
+      ),
+    );
+    // Downstream signal: DiffPane's failure latch renders the WholeFileFailureBanner,
+    // confirming markFailed / failedPaths / deriveWholeFileEnabled integration is intact.
+    // This assertion FAILS if the onWholeFileFailed callback is not wired, if markFailed
+    // doesn't update failedPaths, or if deriveWholeFileEnabled ignores failedPaths.
+    await waitFor(() => {
+      expect(screen.getByTestId('whole-file-failure-banner')).toBeInTheDocument();
+    });
   });
 });

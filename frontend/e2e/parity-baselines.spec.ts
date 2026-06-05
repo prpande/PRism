@@ -288,8 +288,9 @@ test.describe('parity baselines — PR Detail', () => {
       expect(cellCount).toBe(4); // split: old-gutter | old-content | new-gutter | new-content
     }
 
-    // Toggle to unified via the toolbar button.
-    await page.getByRole('button', { name: /side-by-side|unified/i }).click();
+    // Select Unified via the inline diff-view tiles (the toolbar text button is
+    // gone). Click the label rather than the clip-hidden radio input.
+    await page.locator('label:has([data-testid="diff-view-unified"])').click();
     await page.waitForFunction(
       () => !!document.querySelector('[data-testid="diff-pane"].diff-pane--unified'),
     );
@@ -444,20 +445,23 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // are present, so the subsequent whole-file fetch doesn't 422 with snapshot-evicted.
     await diff.locator('tr.diff-line--insert').nth(7).waitFor();
 
-    const toggle = page.locator('[data-testid="whole-file-toggle"]');
-    await expect(toggle).toBeVisible();
-    await expect(toggle).toHaveText('Show full file');
+    // "Show full file" now lives in the DiffSettingsMenu gear panel.
+    // Open the gear, verify the checkbox is unchecked, then enable whole-file.
+    const gear = page.locator('[data-testid="diff-settings-trigger"]');
+    await expect(gear).toBeVisible();
+    await gear.click();
+    const showFullFileCheckbox = page.locator('[data-testid="show-full-file-checkbox"]');
+    await expect(showFullFileCheckbox).toBeVisible();
+    await expect(showFullFileCheckbox).not.toBeChecked();
     expect(await page.locator('tr[data-fill="true"]').count()).toBe(0);
 
-    await toggle.click();
-    // Wait for the toggle to flip to "Hunks only" (wholeFileEnabled=true) and for
-    // hunk-header rows to disappear (fetchStatus='ok'). The fixture's hunk spans
-    // all content lines; the file's trailing newline produces ONE empty filled-
-    // context row at headLines.length (the split of a terminal-newline string
-    // emits an extra empty element). Waiting for the hunk-header to leave is the
-    // correct liveness signal; the filled-row count assertion below pins the
-    // expected behavior.
-    await expect(toggle).toHaveText('Hunks only');
+    await showFullFileCheckbox.click();
+    await expect(showFullFileCheckbox).toBeChecked();
+    // Wait for hunk-header rows to disappear (wholeFileEnabled=true, fetchStatus='ok').
+    // The fixture's hunk spans all content lines; the file's trailing newline produces
+    // ONE empty filled-context row at headLines.length (the split of a terminal-newline
+    // string emits an extra empty element). Waiting for the hunk-header to leave is the
+    // correct liveness signal; the filled-row count assertion below pins the behavior.
     await expect(page.locator('.diff-line--hunk-header')).toHaveCount(0);
     await expect(page.locator('tr[data-fill="true"]')).toHaveCount(1);
 
@@ -467,12 +471,12 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
       SCREENSHOT_OPTS,
     );
 
-    // Toggle off + scroll-reset assertion
+    // Toggle off + scroll-reset assertion: uncheck the checkbox to revert.
     await page.locator('[data-testid="diff-pane"]').evaluate((el) => {
       (el.querySelector('.diff-pane-body') as HTMLElement).scrollTop = 500;
     });
-    await toggle.click();
-    await expect(toggle).toHaveText('Show full file');
+    await showFullFileCheckbox.click();
+    await expect(showFullFileCheckbox).not.toBeChecked();
     const scrollTop = await page.locator('[data-testid="diff-pane"]').evaluate((el) => {
       return (el.querySelector('.diff-pane-body') as HTMLElement).scrollTop;
     });
@@ -489,9 +493,14 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // The iteration-tab-strip exposes data-testid per iteration (added in Task 10).
     await page.locator('[data-testid="iteration-tab-1"]').click();
 
-    const toggle = page.locator('[data-testid="whole-file-toggle"]');
-    await expect(toggle).toBeDisabled();
-    await expect(toggle).toHaveAttribute('title', /'all' iteration view/);
+    // "Show full file" is now in the DiffSettingsMenu gear. Open it and assert
+    // the checkbox is disabled with the expected helper text.
+    await page.locator('[data-testid="diff-settings-trigger"]').click();
+    const checkbox = page.locator('[data-testid="show-full-file-checkbox"]');
+    await expect(checkbox).toBeDisabled();
+    await expect(page.locator('[data-testid="show-full-file-helper"]')).toContainText(
+      /'all' iteration view/,
+    );
   });
 
   test('whole-file force-failure renders banner and reverts toggle', async ({ page }) => {
@@ -513,17 +522,26 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // the PrDetailLoader snapshot-cache is populated so the /file endpoint
     // does not 422 with snapshot-evicted.
     await page.locator('[data-testid="files-tab-diff"] tr.diff-line--insert').first().waitFor();
-    const toggle = page.locator('[data-testid="whole-file-toggle"]');
-    await toggle.click();
+    // "Show full file" now lives in the DiffSettingsMenu gear. Open it and
+    // enable whole-file view for the current file.
+    await page.locator('[data-testid="diff-settings-trigger"]').click();
+    const checkbox = page.locator('[data-testid="show-full-file-checkbox"]');
+    await checkbox.click();
 
     const banner = page.locator('[data-testid="whole-file-failure-banner"]');
     await expect(banner).toBeVisible();
     await expect(banner).toContainText(/file is too large/i);
-    await expect(toggle).toHaveText('Show full file');
+    // After failure the checkbox stays checked (showFullFile=true) but
+    // wholeFileEnabled derives to false (failed path excluded).
+    await expect(checkbox).toBeChecked();
 
     await banner.locator('button[aria-label="Dismiss whole-file error banner"]').click();
     await expect(banner).toHaveCount(0);
-    await expect(toggle).toHaveText('Show full file');
+    // Dismissing the banner clicks outside the gear popover, which (correctly)
+    // closes it and unmounts the checkbox. Re-open the gear to assert that the
+    // global showFullFile preference persisted across the failure.
+    await page.locator('[data-testid="diff-settings-trigger"]').click();
+    await expect(checkbox).toBeChecked();
   });
 });
 
