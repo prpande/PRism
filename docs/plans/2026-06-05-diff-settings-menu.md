@@ -605,7 +605,6 @@ export function DiffSettingsMenu({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
   const instanceId = useId();
   const panelId = `${instanceId}-diff-settings-panel`;
   const helperId = `${instanceId}-full-file-helper`;
@@ -625,14 +624,14 @@ export function DiffSettingsMenu({
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [open, close]);
 
-  // Move focus into the panel on open (first enabled control).
-  useEffect(() => {
-    if (!open) return;
-    panelRef.current?.querySelector<HTMLElement>('input:not(:disabled)')?.focus();
-  }, [open]);
-
+  // Escape from anywhere in the component (trigger OR panel) closes it. We do
+  // NOT auto-move focus into the panel on open: a mouse user keeps their place
+  // and a keyboard user tabs in. The APG disclosure pattern does not require
+  // moving focus on open, and auto-focusing would jump the cursor for mouse
+  // users. Putting onKeyDown on the root (which wraps the trigger) is what lets
+  // Escape work whether focus is on the gear or on a panel control.
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
+    if (open && e.key === 'Escape') {
       e.stopPropagation();
       close();
     }
@@ -649,7 +648,12 @@ export function DiffSettingsMenu({
       : null;
 
   return (
-    <div ref={rootRef} className={`diff-settings-menu ${styles.root}`} data-testid="diff-settings-menu">
+    <div
+      ref={rootRef}
+      className={`diff-settings-menu ${styles.root}`}
+      onKeyDown={onKeyDown}
+      data-testid="diff-settings-menu"
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -668,12 +672,10 @@ export function DiffSettingsMenu({
 
       {open && (
         <div
-          ref={panelRef}
           id={panelId}
           role="group"
           aria-label="Diff settings"
           className={styles.panel}
-          onKeyDown={onKeyDown}
           data-testid="diff-settings-panel"
         >
           <label className={styles.row}>
@@ -971,46 +973,70 @@ import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { useFilesTabShortcuts } from './useFilesTabShortcuts';
 
-function Harness({ onToggleDiffMode }: { onToggleDiffMode: () => void }) {
-  useFilesTabShortcuts({ onNextFile: () => {}, onPrevFile: () => {}, onToggleViewed: () => {}, onToggleDiffMode });
+function Harness({
+  onToggleDiffMode,
+  onNextFile,
+}: {
+  onToggleDiffMode: () => void;
+  onNextFile: () => void;
+}) {
+  useFilesTabShortcuts({ onNextFile, onPrevFile: () => {}, onToggleViewed: () => {}, onToggleDiffMode });
   return (
     <div>
-      <input type="radio" data-testid="r" />
+      <div role="radiogroup">
+        <input type="radio" data-testid="r" /> {/* an inline diff-view tile */}
+      </div>
+      <input type="checkbox" data-testid="c" /> {/* a gear menu control */}
       <textarea data-testid="t" />
     </div>
   );
 }
 
 describe('useFilesTabShortcuts INPUT guard', () => {
-  it('fires d when a radio input is focused but not when a textarea is focused', () => {
+  it('fires from a radiogroup radio but stays suppressed in checkboxes and text fields', () => {
     const onToggle = vi.fn();
-    const { getByTestId } = render(<Harness onToggleDiffMode={onToggle} />);
+    const onNext = vi.fn();
+    const { getByTestId } = render(<Harness onToggleDiffMode={onToggle} onNextFile={onNext} />);
 
+    // Inline diff-view tile (radio in a radiogroup): shortcut fires.
     getByTestId('r').focus();
     getByTestId('r').dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
     expect(onToggle).toHaveBeenCalledTimes(1);
 
+    // Gear checkbox: 'j' must NOT navigate files while the menu is focused.
+    getByTestId('c').focus();
+    getByTestId('c').dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }));
+    expect(onNext).not.toHaveBeenCalled();
+
+    // Text field: still suppressed.
     getByTestId('t').focus();
     getByTestId('t').dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
-    expect(onToggle).toHaveBeenCalledTimes(1); // unchanged — still suppressed in text fields
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 });
 ```
 
-Run: `cd frontend && npx vitest run src/hooks/useFilesTabShortcuts.test.tsx` → FAIL (radio currently suppressed).
+Run: `cd frontend && npx vitest run src/hooks/useFilesTabShortcuts.test.tsx` → FAIL (radio currently suppressed; checkbox-suppressed leg already green).
 
 Then narrow the guard in `useFilesTabShortcuts.ts` — replace the body of `isInputTarget`:
 
 ```ts
+// INPUT_TAG_NAMES is the existing module-level const (['TEXTAREA','INPUT','SELECT'])
+// — unchanged; only isInputTarget's body changes.
 function isInputTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
-  if (target.tagName === 'INPUT') {
-    // Only text-entry inputs swallow single-key shortcuts; toggle controls
-    // (radio/checkbox) must not — the diff-view tiles + gear use them.
-    const type = (target as HTMLInputElement).type;
-    return type !== 'radio' && type !== 'checkbox';
+  // ONLY the inline diff-view tiles (radios inside a role="radiogroup") may let
+  // the single-key Files-tab shortcuts (j/k/v/d) through. Everything else — text
+  // fields AND the gear's checkboxes — still suppresses, so typing inside the
+  // open settings menu never navigates files / toggles mode underneath it.
+  if (
+    target.tagName === 'INPUT' &&
+    (target as HTMLInputElement).type === 'radio' &&
+    target.closest('[role="radiogroup"]')
+  ) {
+    return false;
   }
-  if (INPUT_TAG_NAMES.has(target.tagName)) return true; // TEXTAREA, SELECT
+  if (INPUT_TAG_NAMES.has(target.tagName)) return true; // TEXTAREA, INPUT (incl. checkbox), SELECT
   if (target.closest('[contenteditable="true"]')) return true;
   return false;
 }
@@ -1083,7 +1109,7 @@ git commit -m "feat(#185): wire FilesTab to inline DiffViewToggle + gear DiffSet
 **Files:**
 - Create: `frontend/e2e/diff-settings-menu.spec.ts`
 
-Use the hermetic fake fixture `acme/api/123` via the **real** `./helpers/s4-setup` harness (confirmed from `diff-scroll-regression.spec.ts`): `resetBackendState(request)` → `setupAndOpenScenarioPr(page)` → `page.goto('/pr/acme/api/123/files')`. Select file rows by `[data-testid="files-tab-tree-row"][data-path="<path>"]` (the canonical fixture includes `src/Calc.cs`; confirm a second modified file path from the fixture during implementation and use it for the file-switch step). The diff mode marker is the class on `[data-testid="diff-pane"]` — assert via `toHaveClass(/diff-pane--split/)` (there is **no** `data-diff-mode` attribute).
+Use the hermetic fixture `acme/api/123` via the **real** `./helpers/s4-setup` harness (confirmed from `diff-scroll-regression.spec.ts`): `resetBackendState(request)` → `setupAndOpenScenarioPr(page)` → `page.goto('/pr/acme/api/123/files')`. **The fixture is single-file** (`FakePrReader.cs` returns exactly one `FileChange("src/Calc.cs", Modified)`; `advance-head` only re-seeds that file's content, it cannot add a second path). So this spec proves the **chrome** hermetically; the view-wide "persists across files" property is single-file-unprovable here and is covered by the `deriveWholeFileEnabled` unit test (path-independent, Task 3) plus the Task 8 manual check on a real multi-file PR. The diff-mode marker is the class on `[data-testid="diff-pane"]` (`toHaveClass(/diff-pane--split|--unified/)` — there is **no** `data-diff-mode` attribute). The tiles' radio inputs are clip-hidden, so click the **visible label text**, not the input.
 
 - [ ] **Step 1: Write the e2e spec**
 
@@ -1095,42 +1121,40 @@ import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 test.describe('Diff settings menu (#185)', () => {
   test.beforeEach(async ({ page, request }) => {
     await resetBackendState(request);
+    await page.setViewportSize({ width: 1440, height: 900 }); // >=900 so Split is enabled
     await setupAndOpenScenarioPr(page);
     await page.goto('/pr/acme/api/123/files');
     await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
   });
 
-  test('inline tiles switch Split/Unified; gear toggles wrap; full-file is view-wide', async ({ page }) => {
+  test('inline tiles switch Split/Unified; gear toggles wrap; Escape returns focus', async ({ page }) => {
     const diffPane = page.locator('[data-testid="diff-pane"]');
 
-    // Inline tiles: select Split -> two-column diff; Unified -> single column.
-    await page.getByTestId('diff-view-split').check();
-    await expect(diffPane).toHaveClass(/diff-pane--split/);
-    await page.getByTestId('diff-view-unified').check();
+    // Inline tiles — click the visible label (the radio input is clip-hidden).
+    // Default mode is side-by-side, so flip to Unified first to prove a real change.
+    await page.getByText('Unified', { exact: true }).click();
     await expect(diffPane).toHaveClass(/diff-pane--unified/);
+    await page.getByText('Split', { exact: true }).click();
+    await expect(diffPane).toHaveClass(/diff-pane--split/);
 
-    // Gear opens; toggle Wrap long lines; Escape closes and returns focus.
+    // Gear opens; toggle Wrap + Show full file; Escape closes and returns focus.
     await page.getByTestId('diff-settings-trigger').click();
     await expect(page.getByTestId('diff-settings-panel')).toBeVisible();
     await page.getByTestId('line-wrap-checkbox').check();
-
-    // Toggle Show full file, close gear, switch to another eligible file ->
-    // the global preference persists (view-wide); no per-file re-toggle.
     await page.getByTestId('show-full-file-checkbox').check();
     await page.keyboard.press('Escape');
+    await expect(page.getByTestId('diff-settings-panel')).toBeHidden();
     await expect(page.getByTestId('diff-settings-trigger')).toBeFocused();
 
-    // Switch files (use a second known modified path from the fixture).
-    await page.locator('[data-testid="files-tab-tree-row"][data-path="<SECOND_MODIFIED_PATH>"]').click();
-    await page.getByTestId('diff-settings-trigger').click();
-    await expect(page.getByTestId('show-full-file-checkbox')).toBeChecked(); // still on
+    // The gear's modified indicator reflects the non-default settings.
+    await expect(page.getByTestId('diff-settings-trigger')).toHaveAttribute('aria-label', /modified/i);
   });
 });
 ```
 
-> Replace `<SECOND_MODIFIED_PATH>` with a real second modified file from the `acme/api/123` fixture (list the tree during implementation; if the fixture has only one file, inject a second via the `advance-head` hook as `diff-scroll-regression.spec.ts` does, or assert the view-wide persistence by toggling iteration range instead). The persistence assertion (checkbox still checked after a file switch) is the observable proof of the view-wide behavior.
+> **View-wide cross-file persistence** is NOT asserted here (single-file fixture). It is proven by the Task 3 unit test (`deriveWholeFileEnabled` is path-independent: same `showFullFile` → true for any eligible path) and the Task 8 Step 2 manual check on a real multi-file PR (toggle once, browse several files, each stays full).
 
-> **Ineligible auto-select scenario** (spec-required, but needs an added/no-hunks first file the hermetic fixture may not provide): covered as a manual check in Task 8 Step 2 on a real PR (enable Show full file, select an added file, confirm the diff falls back to hunks and the mandatory inert note renders) rather than forced into a brittle hermetic e2e. The eligibility logic itself is unit-tested in Task 3 (`deriveWholeFileEnabled` → false for `added`/no-hunks).
+> **Ineligible auto-select scenario** (spec-required; needs an added/no-hunks file the hermetic fixture lacks): covered by the Task 3 unit test (`deriveWholeFileEnabled` → false for `added`/no-hunks) + the Task 8 Step 2 manual check (enable Show full file, select an added file, confirm hunks fallback + the mandatory inert note).
 
 - [ ] **Step 2: Run the e2e**
 
@@ -1150,7 +1174,7 @@ git commit -m "test(#185): Playwright e2e — inline tiles, gear, view-wide full
 
 **Files:** none (verification + assets).
 
-- [ ] **Step 1: a11y sweep** — confirm the new controls pass axe. Run the existing audit: `cd frontend && npx playwright test a11y-audit.spec.ts`. Expected: no new violations on the Files tab (labelled radiogroup, gear with accessible name, checkboxes with labels, helper text via `aria-describedby`). Fix any violation before proceeding. **Also manually verify the helper-text contrast** (`.helper` = `--text-2` on `--surface-1` at `--text-xs`) meets WCAG AA (4.5:1) in **both** light and dark themes — compute oklch→luminance per the PR #165 method. If it falls short, bump `.helper` to `--text-1` or raise the size to ≥0.8125rem. The inert note is mandatory communication, so it must be readable.
+- [ ] **Step 1: a11y sweep** — confirm the new controls pass axe. Run the existing audit: `cd frontend && npx playwright test a11y-audit.spec.ts`. Expected: no new violations on the Files tab (labelled radiogroup, gear with accessible name, checkboxes with labels, helper text via `aria-describedby`). Fix any violation before proceeding. **Also manually verify the helper-text contrast** (`.helper` = `--text-2` on `--surface-1` at `--text-xs`) meets WCAG AA (4.5:1) in **both** light and dark themes — compute oklch→luminance per the PR #165 method. If it falls short, bump `.helper` to `--text-1` or raise the size to ≥0.8125rem. The inert note is mandatory communication, so it must be readable. **Also check the two non-text UI indicators (WCAG 1.4.11, 3:1) in both themes:** the gear's `.modifiedDot` (`--accent` on the `--surface-2` gear) and the selected-tile ring (`--accent` inset on `--surface-3`). If either is below 3:1, add a 1px `--surface-1` separator ring to the dot / thicken the tile ring to 2px or add an icon-color change. (The dot is reinforced by the `aria-label="… (modified)"` for AT, but should still pass as a visual affordance; confirm the selected tile is visually distinct from a *hovered* unselected tile.)
 
 - [ ] **Step 2: Launch the app and capture B1 visual proof** — start the app with `pwsh ./run.ps1 -Reset None --no-browser` (Development, real PAT, `localhost:5180`). Open a real PR with modified files (e.g. the BFF repo). Capture **light + dark** screenshots of: (a) the toolbar showing the inline `[Unified | Split]` tiles + the gear (incl. the gear's modified-dot when a setting is on), and (b) the open Diff-settings panel. Verify the ADO icons read correctly and the Split tile greys out below 900px. **Also exercise the ineligible-file path** (spec-required, not in the hermetic e2e): with Show full file enabled, select an **added** file — confirm the diff falls back to hunks, the gear's modified-dot stays on, and the mandatory inert note renders in the panel. Confirm the gear dot does **not** show when the only "on" setting is a view-blocked full-file (non-'all' iteration).
 
@@ -1166,6 +1190,7 @@ git commit -m "test(#185): Playwright e2e — inline tiles, gear, view-wide full
 - **Escape `stopPropagation` in the gear.** The menu deliberately stops Escape from bubbling so it closes only the menu, not an ancestor (PR-detail/keep-alive). During Task 6, confirm no ancestor relies on receiving Escape while the menu is open; if one does, it is intentionally shadowed only while the panel is open.
 - **`diffIcons.tsx` single-file for three icons.** Kept (not inlined) for cohesion of the icon set and as the natural home for #184's future toggle icon; the file boundary aids discoverability. A reviewer flagged it as possible premature extraction — accepted as a deliberate, low-cost choice.
 - **ADO bowtie glyph fidelity.** The Task 1 SVG paths approximate `bowtie-diff-inline` / `bowtie-diff-side-by-side`; the **B1 visual gate is the confirmation**. If they read wrong, a mid-PR SVG swap is expected and cheap (single file).
+- **Gear modified-dot reflects *effective* state, by design.** With Show full file on, navigating to a non-'all' iteration (where it's view-blocked) extinguishes the dot, and returning to 'all' re-lights it — without the user touching the gear. This is the intended "blocked/forced states never count" rule (the dot tracks what's actually in effect), not a glitch. Surfaced in the Task 8 B1 checklist so the reviewer expects it; a distinct "set-but-inert" dimmed state was considered and deferred (YAGNI).
 
 ## Self-Review (run before handoff)
 
