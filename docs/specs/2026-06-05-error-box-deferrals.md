@@ -6,11 +6,11 @@ Tracks work intentionally left out of the #182 slice so it isn't silently lost.
 
 **What:** Migrate the surfaces that already render a correct danger box via their own module `.error` rule onto the shared `<ErrorBox>` component, eliminating the copy-pasted CSS.
 
-**Candidates:** `SetupForm.tsx:87` (`styles.error`), `PasteUrlInput.tsx:71` (`styles.error`), and any other structurally-compatible inline danger boxes surfaced during execution.
+**Candidates:** `SetupForm.tsx:87` (`styles.error`), `PasteUrlInput.tsx:71` (`styles.error`), `DraftsTabError.tsx:9` (shares InboxPage's message+button shape, already styled), and any other structurally-compatible danger surfaces surfaced during execution.
 
-**Why deferred:** These surfaces are not broken — they render correctly today. Converging them risks changing the look of working UI (PasteUrlInput is an inline `<span>`; SetupForm carries a bespoke `margin-top`), which is scope creep against #182's framing ("errors surface correctly, they just aren't styled"). The shared component shipped by #182 makes this convergence mechanical and low-risk later.
+**Why deferred:** These surfaces are not broken — they render correctly today. Converging them risks changing the look of working UI (PasteUrlInput is an inline `<span>`; SetupForm carries a bespoke `margin-top`; DraftsTabError is a centered min-height empty-state), which is scope creep against #182's framing ("errors surface correctly, they just aren't styled"). The shared component shipped by #182 makes this convergence mechanical and low-risk later.
 
-**Trigger:** A follow-up tech-debt issue, or fold into the next theming pass touching those components.
+**Trigger:** File a follow-up tech-debt issue immediately after #182 merges, linking this D1 entry as its scope, so the convergence doesn't dissolve into untracked general tech-debt. (DraftsTabError's missing danger color, D3, folds into the same follow-up.)
 
 ## D3 — DraftsTabError has no danger color
 
