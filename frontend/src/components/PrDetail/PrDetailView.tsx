@@ -23,6 +23,7 @@ import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
 import { ErrorBox } from '../ErrorBox';
+import bannerReconcileStyles from './BannerReconcile.module.css';
 
 // Keep-alive PR-detail view. Owns the active sub-tab as component STATE (not
 // URL routing) and renders sub-tabs DIRECTLY (not via React Router <Outlet>),
@@ -282,9 +283,9 @@ export function PrDetailView({
         onDismiss={presence.dismissForSession}
       />
       {reconcile.banner && (
-        <div role="alert" className="reload-error-banner">
-          <span>{reconcile.banner}</span>
-          <button type="button" onClick={reconcile.clearBanner}>
+        <div role="alert" className="banner banner-danger">
+          <span className={bannerReconcileStyles.bannerReconcileMessage}>{reconcile.banner}</span>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={reconcile.clearBanner}>
             Dismiss
           </button>
         </div>
