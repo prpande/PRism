@@ -29,9 +29,66 @@ You have been assigned a GitHub issue in this repo (`prpande/PRism`).
   table below. With no CI enforcement, the safety property leans entirely on the
   agent's classification plus the human merge.
 
+## Claiming an issue (before you start)
+
+Before you invest any work in an issue — including reproduction — confirm no other
+agent is already working it, then stake your own claim. This is the
+**distributed** guard against two agents (on this machine or any other) picking up
+the same issue: the claim lives on the issue itself, visible to every agent
+everywhere, not in a local worktree that only this machine can see.
+
+**An issue is already claimed if any of these hold:**
+
+- it has an **assignee** other than you, **or**
+- it carries the **`in-progress`** label, **or**
+- it has a triage comment (§ Triage-comment template) from another agent.
+
+If the issue is claimed and the claim is **fresh** (see Fresh vs. stale below),
+**do not pick it up** — choose a different issue.
+
+**To claim an issue:** at intake, **before reproduction** (decision-tree step 0):
+
+1. **Self-assign** the issue, **and**
+2. add the **`in-progress`** label.
+
+These two actions *are* your binding claim, and they happen before you invest in
+reproduction. The triage comment (§ Triage-comment template) is **not** part of
+the at-intake claim — it lands later at **step 4**, once you have classified the
+issue, and only fills in the human-readable detail behind a claim you already
+staked.
+
+Then **re-read the issue.** GitHub assignees are **multi-valued** — self-assigning
+*adds* you, it does not evict an existing assignee — so two agents claiming
+near-simultaneously end up **co-assigned**, each visible to the other. That
+visibility is the tie-breaker: if, after claiming, you find another agent also
+assigned, the **earlier** claimant wins — back off and pick another issue. To
+decide who was earlier, compare **assignee-list order** (GitHub preserves
+insertion order), falling back to triage-comment timestamp only if one already
+exists (at step 0 it usually won't). This shrinks the check-then-claim race but
+does not eliminate it; the human (who ultimately merges) is the final backstop
+against duplicate work.
+
+**Fresh vs. stale.** A claim is **fresh** — leave it alone — unless it is
+**stale**. A claim is **stale (reclaimable)** only when it shows **no sign of
+active work for ~2 working days**: no new triage/progress comment, no linked open
+PR, *and* no recent commits on a branch linked to the issue. The inactivity test
+matters because a legitimate T3 claim can run for days before a PR exists — the
+absence of a PR alone is **not** staleness. Before reclaiming a stale claim, post a
+comment noting the takeover and re-assign to yourself so the original agent (if
+still alive) sees it. This mirrors the gate-staleness re-ping under § Notification
+(minimum bar) and keeps a dead claim from starving an otherwise-available issue.
+
+> **Prerequisite:** the repo needs an `in-progress` label. Create it once
+> (guarded with an exact-name match so it is safe to re-run):
+> `gh label list --json name --jq '.[].name' | grep -qx in-progress || gh label create in-progress`.
+> Already created in `prpande/PRism`.
+
 ## The decision tree
 
 ```
+0. Claim: confirm the issue is unclaimed (§ Claiming an issue) and stake your
+   claim (self-assign + `in-progress` label) BEFORE investing in reproduction.
+   If it's already claimed and the claim is fresh, pick a different issue.
 1. Reproduce (bug) / restate the ask (feature). Establish acceptance criteria.
    HARD STOP if the bug can't be reproduced (even statistically), or the
    acceptance criteria can't be made concrete enough to check.
