@@ -15,7 +15,7 @@ export function DiffTruncationBanner({ prUrl }: DiffTruncationBannerProps) {
       <p>
         PRism shows GitHub&apos;s first portion of this diff. Full-diff support is on the roadmap.{' '}
         {prUrl && (
-          <a href={prUrl} target="_blank" rel="noopener noreferrer">
+          <a href={prUrl} target="_blank" rel="noreferrer">
             Open on GitHub
           </a>
         )}
