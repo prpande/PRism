@@ -139,7 +139,9 @@
   min-width: 0;
 }
 .prHeader[data-collapsed] .prTitle {
-  font-size: var(--text-base);
+  /* Gentle step down from the expanded --text-xl (20px); --text-base (14px)
+     read as too small against the action-row height (#128 review feedback). */
+  font-size: var(--text-lg);
   margin: 0;
   max-width: none;
   flex: 1 1 auto;
