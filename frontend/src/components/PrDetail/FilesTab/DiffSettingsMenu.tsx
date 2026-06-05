@@ -82,9 +82,8 @@ export function DiffSettingsMenu({
         ref={triggerRef}
         type="button"
         className={`${styles.gear}${isModified ? ` ${styles.gearModified}` : ''}`}
-        aria-haspopup="true"
         aria-expanded={open}
-        aria-controls={panelId}
+        aria-controls={open ? panelId : undefined}
         aria-label={isModified ? 'Diff settings (modified)' : 'Diff settings'}
         title="Diff settings"
         onClick={() => (open ? close() : setOpen(true))}
