@@ -1,6 +1,6 @@
 ---
 title: Collapsible PR-detail header + toolbar density trim (#128)
-status: draft
+status: implemented
 type: feat
 issue: 128
 tier: T2
