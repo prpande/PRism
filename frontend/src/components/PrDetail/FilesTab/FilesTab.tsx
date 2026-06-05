@@ -491,6 +491,12 @@ export function FilesTab() {
 
       <div className={`files-tab-content ${styles.filesTabContent}`}>
         <div className={`files-tab-tree ${styles.filesTabTree}`} data-testid="files-tab-tree">
+          {/* This tree skeleton is gated on the RANGE-keyed diff query
+              (useFileDiff: [owner,repo,number,range]), not the reload counter —
+              so it does NOT flip on PR-detail re-activation (#180) and is
+              intentionally not subject to that fix's `!data` gate. It shows only
+              on a genuine iteration/commit-range change, where the file row set
+              really is unknown and a skeleton is correct. */}
           {diff.showSkeleton ? (
             <div
               className={`file-tree-skeleton ${styles.fileTreeSkeleton}`}
