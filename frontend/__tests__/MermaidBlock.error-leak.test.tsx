@@ -1,6 +1,5 @@
 import { render, waitFor } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
-import { vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { MermaidBlock } from '../src/components/Markdown/MermaidBlock';
 
 // Issue #191: invalid Mermaid diagrams leak Mermaid's built-in "Syntax error in
@@ -17,6 +16,13 @@ import { MermaidBlock } from '../src/components/Markdown/MermaidBlock';
 //
 // Inputs here MUST be invalid Mermaid syntax only: real Mermaid cannot lay out a
 // valid SVG under jsdom (no getBBox), and the parse-failure path is what leaks.
+//
+// `vi.unmock` is NOT hoisted (unlike `vi.mock`), so it sits below the imports —
+// which is safe ONLY because MermaidBlock loads mermaid via a dynamic
+// `import('mermaid')` inside useEffect that resolves at render time, after this
+// unmock has run. If that dynamic import is ever converted to a static top-level
+// import, this test would silently bind to the global mock instead of the real
+// library (a false green); move the unmock into a hoisted setup if so.
 vi.unmock('mermaid');
 
 // The bomb is uniquely identified by Mermaid's error-graphic classes and caption,
