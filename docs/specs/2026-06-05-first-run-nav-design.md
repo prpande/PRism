@@ -254,8 +254,7 @@ separate setup-flow test task, noted in deferrals.
 - **"Replace token" relabel / discoverability** → #134 (Settings redesign) / #139.
 - **Full setup re-run** (host + repo re-selection from Settings) → out of scope
   pending the criterion-4 clarification above.
-- **In-app host correction on first-run** (pre-existing gap). The Setup screen has
-  no host editor; a wrong `github.host` on first-run is only fixable by editing
-  `config.json`. Not introduced by this slice, but this slice forecloses fixing it
-  via the nav. Candidate follow-up issue (relates to #134 / #140) — flag to the
-  user whether to file it.
+- **In-app host correction on first-run** (pre-existing gap) → tracked as **#194**.
+  The Setup screen has no host editor; a wrong `github.host` on first-run is only
+  fixable by editing `config.json`. Not introduced by this slice, but this slice
+  forecloses fixing it via the nav. Relates to #134 / #140.
