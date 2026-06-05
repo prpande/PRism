@@ -48,7 +48,8 @@ That constraint drives the core decision below.
 
 ## 3. Decision: plumb `avatarUrl` from the API (not client-side derivation)
 
-Both data paths already expose an avatar URL at zero extra cost:
+Both data paths already expose an avatar URL at low, mechanical cost (no new
+network calls, no login parsing — only DTO/mapper plumbing):
 
 - **PR-detail (GraphQL):** `author` is an `Actor`; `avatarUrl` is directly
   selectable and resolves for **both** `User` and `Bot` actors. No extra token
@@ -72,6 +73,14 @@ hands us for free on both paths.
 Plumbing's only cost is mechanical DTO/mapper churn — **no new network calls, no
 login parsing.** That is the chosen approach.
 
+**URL volatility is a non-issue here.** GitHub avatar URLs carry a `?v=` cache
+buster but the host (`avatars.githubusercontent.com/u/{id}`) is stable. More
+importantly, the DTOs that carry `AvatarUrl` are **never persisted** — `Pr` /
+comment DTOs are a per-fetch PR-detail snapshot (in-memory, keyed by head SHA)
+and `PrInboxItem` is rebuilt every inbox refresh tick. The URL is fetched and
+rendered within the same short-lived snapshot, so it cannot go stale on disk. A
+future reader must not persist these DTOs expecting the avatar URL to stay valid.
+
 ## 4. Data flow
 
 ```
@@ -90,9 +99,22 @@ Add `string? AvatarUrl` to each record that already carries an author:
 - `PrInboxItem` (inbox rows)
 
 Nullable: an Actor/user *may* lack an avatar URL; the component falls back to
-initials when null. New parameters are appended to each positional record to
-keep existing call sites that use named args stable, and to make the
-construction-site changes explicit and greppable.
+initials when null.
+
+**Append the new parameter with a default — `string? AvatarUrl = null` — on
+every record.** This is load-bearing, not cosmetic:
+
+- `Pr`, `PrInboxItem`, and `RawPrInboxItem` already end in optional params
+  (`MergedAt = null, ClosedAt = null`). Appending a *non-defaulted* param after a
+  defaulted one is a compile error (CS1737). The `= null` default is required.
+- `IssueCommentDto` and `ReviewCommentDto` have no trailing default today and are
+  constructed **positionally** in the mappers (`GitHubReviewService.cs:1069` and
+  `:1104`) and in some tests. Appending a *required* param would break every
+  positional construction site that doesn't pass it. `= null` keeps those sites
+  compiling; the two mapper lines we edit pass the real value.
+
+The mappers we touch pass the real `avatarUrl`; every other (test/seam) call site
+inherits `null` unchanged.
 
 ### 4.2 GraphQL (`GitHubReviewService.cs`)
 
@@ -112,9 +134,15 @@ pattern as other optional fields).
 ### 4.3 REST (`GitHubSectionQueryRunner.cs`)
 
 - Read `item.GetProperty("user").GetProperty("avatar_url")` (defensive
-  `TryGetProperty`) beside the existing `login` read at line 143.
-- Add the field to `RawPrInboxItem` and carry it through to `PrInboxItem` in the
-  enricher path (`GitHubPrEnricher`), which constructs the final `PrInboxItem`.
+  `TryGetProperty`) beside the existing `login` read at line 143; pass it to the
+  `RawPrInboxItem` constructor (`GitHubSectionQueryRunner.cs:148`).
+- Add `AvatarUrl` to `RawPrInboxItem`. The chain is `search/issues` JSON →
+  `RawPrInboxItem` → enricher → **`PrInboxItem`**. `GitHubPrEnricher` only maps
+  `RawPrInboxItem → RawPrInboxItem` (via `with { … }`); it does **not** build the
+  final item. The `RawPrInboxItem → PrInboxItem` conversion — the one positional
+  `PrInboxItem` construction site that must append `AvatarUrl` — is
+  **`InboxRefreshOrchestrator.ToInboxItem` (~line 287)**. Edit that mapper, not
+  the enricher.
 
 ### 4.4 Frontend types (`frontend/src/api/types.ts`)
 
@@ -143,15 +171,36 @@ interface AvatarProps {
 
 **Render rules:**
 
-1. `src` truthy and not previously errored → `<img>` at the requested size.
-2. `src` absent **or** the `<img>` fired `onError` → initials fallback: the
-   first character of `login`, uppercased. A leading `[bot]`-style suffix is
+1. `src` truthy and not previously errored → render `<img>` at the requested
+   size. The `<img>` carries:
+   - `width:100%; height:100%; object-fit:cover; border-radius:50%; display:block`
+     so the image fills and clips to the circle. (The `.avatar` token has
+     `border-radius:50%` but no `overflow:hidden`, so the **`<img>` itself** must
+     round/cover — otherwise a non-square or pre-CSS image flashes as a square.
+     Equivalently, add `overflow:hidden` to the `.avatar` rule; pick one and
+     state it. This spec chooses styling the `<img>`.)
+   - `referrerPolicy="no-referrer"` — strips the `Referer` header on the cross-
+     origin load to `avatars.githubusercontent.com` (see §8). Costs nothing.
+   - `loading="lazy"` for the `sm` (inbox-list) size; `loading="eager"` (default)
+     for `md`/`lg` single-PR views (see §6).
+   - `alt=""` (decorative — see a11y below).
+2. `src` absent **or** the `<img>` fired `onError` → initials fallback: the first
+   character of `login` (letter **or** digit — GitHub logins may start with a
+   digit, e.g. `42user` → `4`), uppercased. A leading `[bot]`-style suffix is
    stripped before taking the initial, so `dependabot[bot]` → `D`. An empty
-   `login` yields no initial (empty circle) rather than throwing.
-3. The `onError` → initials transition is local component state, so a dead or
-   expired avatar URL degrades to initials instead of a broken-image glyph.
+   `login` yields no initial (empty colored circle) rather than throwing.
+3. The `onError` → initials transition is a one-way boolean in local component
+   state. Once `errored` is set, the render switches to the initials branch and
+   the `<img>` is **removed from the tree entirely** (not kept with a fallback
+   `src`). This guarantees no re-attach / re-fire loop: a 200 that returns
+   non-image bytes fires `onError` (decode failure) and degrades to initials; a
+   slow/hanging request shows the colored circle until it resolves or errors. No
+   defensive timeout is needed.
 
-**Shape:** circle for every avatar in v1 (see §2 deferral).
+**Shape:** circle for every avatar in v1 (see §2 deferral). The container's
+`background: var(--text-3)` is always present behind the `<img>`, so the brief
+fetch window shows a colored circle, not a transparent gap (no layout shift —
+the fixed-size container reserves its space before the image loads).
 
 **Accessibility:**
 
@@ -159,7 +208,13 @@ interface AvatarProps {
   site. The avatar image is therefore redundant decoration → `alt=""` and
   `aria-hidden="true"` so screen readers do not announce the name twice.
 - The initials fallback is likewise `aria-hidden` (a visual stand-in for the
-  adjacent name).
+  adjacent name), so WCAG 1.4.3 text-contrast does not strictly gate it. It
+  should still be legible: `--text-inverse` on `--text-3` computes to ≈4.5:1 in
+  light mode at the `sm` 10px size — at the AA floor with no headroom. During
+  implementation, verify the computed light/dark contrast (oklch→relative
+  luminance, per the Phase-3 light-theme precedent); if it lands below ~4.5:1,
+  bump the `sm` initials weight or darken the fallback background. Record the
+  result rather than leaving it silent.
 - No focusable element is added; avatars are non-interactive.
 
 ## 6. Render-site integration
@@ -169,6 +224,20 @@ immediately before the existing name span. The name span is unchanged (avatars
 are additive; the text remains the accessible label). Per-site size is from the
 §2 table. Each site's layout already uses a flex row, so the avatar slots in as
 a leading flex child; `.avatar`'s `flex: none` prevents it from shrinking.
+
+**InboxRow needs care.** The author span lives inside `.meta` — a
+`flex-wrap: wrap` row of small (`xs`/10px) chips separated by dot-separators
+(repo · author · iter · age). Dropping a bare 20px circle into that row risks
+(a) the dot-separators orphaning the avatar across a wrap, and (b) vertical
+misalignment between the circle and the 10px text. Wrap the avatar **and** its
+author span together in a single inline-flex child with `align-items: center`
+and a small gap, so the pair stays atomic and the separators sit outside it.
+The other three sites (PR header, root comment, review comment) are single rows
+where a leading flex child with `align-items: center` is sufficient.
+
+**Loading priority:** the inbox `sm` avatar uses `loading="lazy"` (a section can
+hold many rows, each firing its own image request); the three single-PR detail
+sites use the eager default.
 
 ## 7. Testing
 
@@ -183,6 +252,12 @@ a leading flex child; `.avatar`'s `flex: none` prevents it from shrinking.
   bot avatar URL survives the mapper unchanged (the case client-side derivation
   would have broken).
 - A null-`avatarUrl` fixture proving the mapper yields `null` (not an exception).
+- **Required prerequisite:** add `avatarUrl` to `FixtureStripAllowlist.AllowedFieldNames`.
+  The frozen-PR fixture harness strips *every* field not in that allowlist to
+  null, and `avatarUrl` is currently excluded (the allowlist comment even names
+  it as stripped). Without this, the new mapper assertions would silently see
+  `AvatarUrl == null` and pass vacuously, proving nothing. This must be a task in
+  the plan, not discovered at debug time.
 
 **Frontend (vitest):** `Avatar.test.tsx` —
 
@@ -220,6 +295,19 @@ convention.
   render of each consuming view are verified in the same PR — the fields are
   additive and optional, so existing consumers compile unchanged, but the
   Avatar render sites are exercised before the PR opens.
+- **Third-party image privacy (deliberate posture):** avatars load directly from
+  `avatars.githubusercontent.com`, so each render sends the viewer's IP (and,
+  without mitigation, a `Referer`) to GitHub. This is acceptable for a local
+  desktop tool whose PAT calls already identify the user to GitHub, and it is
+  bounded by `referrerPolicy="no-referrer"` on the `<img>` (§5), which strips the
+  `Referer` at zero cost. Backend avatar proxying is **not** done (disproportate
+  for a PoC). No XSS vector: React HTML-escapes the `src` attribute and the URL
+  is never interpolated into CSS/markup; a non-`https` or `data:` `src` is inert
+  in an `<img>` (images don't execute), so explicit scheme validation is omitted.
+- **Logging:** `avatarUrl` is a public CDN URL with no secret material, so it is
+  intentionally **not** added to `SensitiveFieldScrubber.BlockedFieldNames`
+  (where `login`, `token`, `pat`, etc. live). Recorded here so a reviewer
+  auditing new DTO string fields against the scrub list sees the decision.
 
 ## 9. Open questions
 
