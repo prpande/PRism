@@ -311,7 +311,7 @@ export function PrDetailView({
         onSelectSubTab={selectSubTab}
       />
       {error && (
-        // .pr-detail-error is a test hook only (no CSS rule); preserved for PrDetailView.freshness.test.tsx
+        /* .pr-detail-error is a test hook only (no CSS rule); preserved for PrDetailView.freshness.test.tsx */
         <ErrorBox className="pr-detail-error">Couldn't load PR — {error.message}</ErrorBox>
       )}
       {/* #180 — gate the page skeleton on the ABSENCE of data. On a same-PR
