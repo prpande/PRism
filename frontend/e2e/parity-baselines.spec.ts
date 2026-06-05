@@ -288,8 +288,9 @@ test.describe('parity baselines — PR Detail', () => {
       expect(cellCount).toBe(4); // split: old-gutter | old-content | new-gutter | new-content
     }
 
-    // Toggle to unified via the toolbar button.
-    await page.getByRole('button', { name: /side-by-side|unified/i }).click();
+    // Select Unified via the inline diff-view tiles (the toolbar text button is
+    // gone). Click the label rather than the clip-hidden radio input.
+    await page.locator('label:has([data-testid="diff-view-unified"])').click();
     await page.waitForFunction(
       () => !!document.querySelector('[data-testid="diff-pane"].diff-pane--unified'),
     );
@@ -536,6 +537,10 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
 
     await banner.locator('button[aria-label="Dismiss whole-file error banner"]').click();
     await expect(banner).toHaveCount(0);
+    // Dismissing the banner clicks outside the gear popover, which (correctly)
+    // closes it and unmounts the checkbox. Re-open the gear to assert that the
+    // global showFullFile preference persisted across the failure.
+    await page.locator('[data-testid="diff-settings-trigger"]').click();
     await expect(checkbox).toBeChecked();
   });
 });
