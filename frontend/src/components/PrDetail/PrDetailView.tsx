@@ -312,10 +312,8 @@ export function PrDetailView({
         readOnly={presence.readOnly}
         onSelectSubTab={selectSubTab}
       />
-      {error && (
-        /* .pr-detail-error is a test hook only (no CSS rule); preserved for PrDetailView.freshness.test.tsx */
-        <ErrorBox className="pr-detail-error">Couldn't load PR — {error.message}</ErrorBox>
-      )}
+      {/* .pr-detail-error is a test hook only (no CSS rule); preserved for PrDetailView.freshness.test.tsx */}
+      {error && <ErrorBox className="pr-detail-error">Couldn't load PR — {error.message}</ErrorBox>}
       {/* #180 — gate the page skeleton on the ABSENCE of data. On a same-PR
           background reload (re-activation freshness or the manual Reload
           button) usePrDetail keeps `data` present but flips isLoading; the

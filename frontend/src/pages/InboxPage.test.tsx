@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 // Drive the `error && !data` branch. Mock every hook InboxPage calls so the
 // component renders the error state without needing real contexts/providers.
-const reload = vi.fn();
+const { reload } = vi.hoisted(() => ({ reload: vi.fn() }));
 vi.mock('../hooks/useInbox', () => ({
   useInbox: () => ({ data: null, error: new Error('boom'), isLoading: false, reload }),
 }));
