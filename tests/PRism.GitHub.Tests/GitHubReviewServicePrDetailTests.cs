@@ -139,10 +139,29 @@ public class GitHubReviewServicePrDetailTests
         dto!.Pr.HtmlUrl.Should().Be("https://github.com/o/r/pull/42");
     }
 
+    // Explicit empty-string url ("url": "") — the OTHER branch of the empty→null
+    // normalization (vs the absent-field PrDetailNoUrlBody). GetStr returns "" for
+    // both an absent field and a present-but-empty value; both must map to null.
+    private static readonly string PrDetailEmptyUrlBody =
+        PrDetailNoUrlBody.Replace(
+            "\"title\": \"No url here\",",
+            "\"title\": \"No url here\",\n            \"url\": \"\",",
+            StringComparison.Ordinal);
+
     [Fact]
     public async Task GetPrDetailAsync_maps_absent_url_to_null_HtmlUrl()
     {
         var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailNoUrlBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto!.Pr.HtmlUrl.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_maps_empty_url_to_null_HtmlUrl()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailEmptyUrlBody };
 
         var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
 
