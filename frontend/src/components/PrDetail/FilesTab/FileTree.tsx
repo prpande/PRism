@@ -201,6 +201,7 @@ function FileNodeComponent({
       {/* sr-only status word BEFORE the name; trailing space separates it from the filename when spoken */}
       <span className="sr-only">{`${STATUS_WORD[node.file.status] ?? 'Unknown'} `}</span>
       <span
+        title={node.name}
         className={`file-tree-file-name ${styles.fileTreeFileName}${
           node.file.status === 'deleted'
             ? ` file-tree-file-name--deleted ${styles.fileTreeFileNameDeleted}`
@@ -296,7 +297,9 @@ function DirectoryNodeComponent({
             />
           </svg>
         </button>
-        <span className={`file-tree-dir-name ${styles.fileTreeDirName}`}>{node.name}</span>
+        <span className={`file-tree-dir-name ${styles.fileTreeDirName}`} title={node.name}>
+          {node.name}
+        </span>
       </div>
       {expanded && (
         <div role="group">

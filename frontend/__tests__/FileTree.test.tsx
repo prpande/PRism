@@ -232,6 +232,24 @@ describe('FileTree', () => {
     expect(screen.getByText('gone.ts')).toHaveClass('file-tree-file-name--deleted');
     expect(screen.getByText('keep.ts')).not.toHaveClass('file-tree-file-name--deleted');
   });
+
+  it('adds title tooltips to file and directory name spans', () => {
+    render(
+      <FileTree
+        files={[file('src/really-long-file-name-that-would-overflow.ts')]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    const dirName = screen.getByText('src');
+    expect(dirName).toHaveAttribute('title', 'src');
+    const fileName = screen.getByText('really-long-file-name-that-would-overflow.ts');
+    expect(fileName).toHaveAttribute('title', 'really-long-file-name-that-would-overflow.ts');
+  });
 });
 
 describe('FileTree — status accessible label (item 8)', () => {
