@@ -300,12 +300,19 @@ sites use the eager default.
   bot avatar URL survives the mapper unchanged (the case client-side derivation
   would have broken).
 - A null-`avatarUrl` fixture proving the mapper yields `null` (not an exception).
-- **Required prerequisite:** add `avatarUrl` to `FixtureStripAllowlist.AllowedFieldNames`.
-  The frozen-PR fixture harness strips *every* field not in that allowlist to
-  null, and `avatarUrl` is currently excluded (the allowlist comment even names
-  it as stripped). Without this, the new mapper assertions would silently see
-  `AvatarUrl == null` and pass vacuously, proving nothing. This must be a task in
-  the plan, not discovered at debug time.
+- **CORRECTION (verified at implementation — supersedes the "required prerequisite"
+  originally drafted here).** Adding `avatarUrl` to `FixtureStripAllowlist.AllowedFieldNames`
+  is **NOT required and would be inert**, and the mapper value assertions do **not**
+  depend on the frozen fixture. Two facts, confirmed against the real code:
+  (1) the mapper **value** coverage above runs against **inline JSON** in
+  `GitHubReviewServicePrDetailTests`, so it can never "pass vacuously" regardless of the
+  allowlist; (2) `FixtureStripAllowlist` nulls the **entire `author` object wholesale**
+  (`author` is not an allowlisted container, so the stripper never recurses into it — the
+  committed `pr19-graphql-response.json` confirms all 15 `author` occurrences are `null`
+  with no nested `login`). Therefore adding `avatarUrl` *inside* `author` cannot change the
+  stripped shape that `Frozen_pr_graphql_shape_unchanged` (7g) compares — **no fixture
+  re-capture is needed and no allowlist entry is added**. See plan `docs/plans/2026-06-05-author-avatars.md`
+  Task 13 (IMPLEMENTATION FINDING) for the full reasoning.
 
 **Frontend (vitest):** `Avatar.test.tsx` —
 
