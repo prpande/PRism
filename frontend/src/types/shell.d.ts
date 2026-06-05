@@ -21,6 +21,9 @@ declare global {
   interface PrismApi {
     isDesktop: boolean;
     platform: string;
+    /** Open an external https URL in the OS browser. Resolves false if the URL
+     *  was rejected (non-https / malformed) or the OS open failed. */
+    openExternal(url: string): Promise<boolean>;
     windowControls: PrismWindowControls;
   }
 

@@ -41,6 +41,10 @@ const NOOP_GET_PR_ROOT_HOLDER = (): ComposerOwnerKey | null => null;
 interface Props {
   open: boolean;
   reference: PrReference;
+  // #131 — authoritative PR web URL (PrDetailPr.htmlUrl). Absent → omit the
+  // "View on GitHub" link in the success footer. Nullable because PrDetailView
+  // passes data?.pr.htmlUrl (string | null | undefined).
+  htmlUrl?: string | null;
   session: ReviewSessionDto;
   // The PR's open/closed/merged state — threads into PrRootBodyEditor's
   // closed-banner + autosave gate.
@@ -94,6 +98,7 @@ export function SubmitDialog(props: Props) {
   const {
     open,
     reference,
+    htmlUrl,
     session,
     prState = 'open',
     readOnly = false,
@@ -314,7 +319,7 @@ export function SubmitDialog(props: Props) {
         ? 'Submitting your review…'
         : 'Submit review';
 
-  const prUrl = `https://github.com/${reference.owner}/${reference.repo}/pull/${reference.number}`;
+  const prUrl = htmlUrl;
 
   const editTooltip =
     cantEdit === 'editing-in-other-tab'
@@ -515,9 +520,11 @@ export function SubmitDialog(props: Props) {
           )}
           {success && (
             <>
-              <a className="btn btn-secondary" href={prUrl} target="_blank" rel="noreferrer">
-                View on GitHub →
-              </a>
+              {prUrl && (
+                <a className="btn btn-secondary" href={prUrl} target="_blank" rel="noreferrer">
+                  View on GitHub →
+                </a>
+              )}
               <button type="button" className="btn btn-primary" onClick={onClose}>
                 Close
               </button>

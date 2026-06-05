@@ -502,6 +502,7 @@ describe('SubmitDialog', () => {
       <SubmitDialog
         {...baseProps({
           submitState: { kind: 'success', pullRequestReviewId: '', steps: doneSteps },
+          htmlUrl: 'https://github.com/o/r/pull/1',
         })}
       />,
     );
@@ -512,6 +513,49 @@ describe('SubmitDialog', () => {
     expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^cancel$/i })).not.toBeInTheDocument();
     expect(screen.getByText(/created pending review/i)).toBeInTheDocument();
+  });
+
+  it('View on GitHub link uses htmlUrl, not a hardcoded host', () => {
+    const doneSteps = (
+      [
+        'DetectExistingPendingReview',
+        'BeginPendingReview',
+        'AttachThreads',
+        'AttachReplies',
+        'Finalize',
+      ] as const
+    ).map((step) => ({ step, status: 'Succeeded' as const, done: 1, total: 1 }));
+    render(
+      <SubmitDialog
+        {...baseProps({
+          submitState: { kind: 'success', pullRequestReviewId: '', steps: doneSteps },
+          htmlUrl: 'https://github.example.com/acme/api/pull/123',
+        })}
+      />,
+    );
+    const link = screen.getByRole('link', { name: /view on github/i });
+    expect(link).toHaveAttribute('href', 'https://github.example.com/acme/api/pull/123');
+  });
+
+  it('success state omits the View on GitHub link when htmlUrl is absent', () => {
+    const doneSteps = (
+      [
+        'DetectExistingPendingReview',
+        'BeginPendingReview',
+        'AttachThreads',
+        'AttachReplies',
+        'Finalize',
+      ] as const
+    ).map((step) => ({ step, status: 'Succeeded' as const, done: 1, total: 1 }));
+    render(
+      <SubmitDialog
+        {...baseProps({
+          submitState: { kind: 'success', pullRequestReviewId: '', steps: doneSteps },
+        })}
+      />,
+    );
+    expect(screen.queryByRole('link', { name: /view on github/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /close/i })).toBeInTheDocument();
   });
 
   it('failed state: Cancel re-enabled, Retry button, checklist still visible', () => {

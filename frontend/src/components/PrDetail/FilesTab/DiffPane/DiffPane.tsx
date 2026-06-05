@@ -109,7 +109,7 @@ export interface DiffPaneProps {
   diffMode: DiffMode;
   truncated: boolean;
   reviewThreads: ReviewThreadDto[];
-  prUrl: string;
+  prUrl?: string;
   // Spec § 5.3a: clicking an "Add comment" affordance on a diff line opens
   // an InlineCommentComposer at that line. The handler is owned by FilesTab
   // because the composer's lifecycle (and the A2 click-another-line modal)
