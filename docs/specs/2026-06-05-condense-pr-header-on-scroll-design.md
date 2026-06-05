@@ -79,10 +79,9 @@ an IDE panel-collapse control.
 - **Affordance & placement.** A chevron button at the **right end of the
   Overview/Files/Drafts sub-tab row** (the `PrSubTabStrip` `role="tablist"`).
   That row is the stable anchor present in *both* states. The glyph is a **clean
-  SVG chevron icon** (themeable via `currentColor`, rotating 180° between states)
-  — **not** a Unicode caret. The exact icon is chosen at the visual gate from the
-  rendered candidates (line chevron / double chevron / bar+chevron); a bare text
-  caret (`⌃`/`⌄`) is explicitly rejected as looking cheap. It is a real
+  SVG double-chevron icon** (`»` rotated to point down when expanded / up when
+  collapsed; themeable via `currentColor`, rotating 180° between states) — **not**
+  a Unicode caret (a bare `⌃`/`⌄` was rejected as looking cheap). It is a real
   `<button>` with `aria-expanded`, `aria-controls` pointing at the collapsible
   meta region's id, and a label that flips between "Collapse PR details" /
   "Expand PR details".
