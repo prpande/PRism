@@ -35,7 +35,7 @@ test.describe('#128 collapsible PR header + toolbar trim', () => {
     const pathDs = await chevron
       .locator('path')
       .evaluateAll((ps) => ps.map((p) => p.getAttribute('d')));
-    expect([...pathDs].sort()).toEqual(['M4 12l4-4 4 4', 'M4 7l4-4 4 4'].sort());
+    expect([...pathDs].sort()).toEqual(['M4 7l4-4 4 4', 'M4 12l4-4 4 4'].sort());
     const expandedTransform = await chevron.evaluate((el) => getComputedStyle(el).transform);
     expect(['none', 'matrix(1, 0, 0, 1, 0, 0)']).toContain(expandedTransform);
 
@@ -47,10 +47,17 @@ test.describe('#128 collapsible PR header + toolbar trim', () => {
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
 
     // Collapsed: the same up-glyph is rotated 180° to point DOWN (clicking drops
-    // content down). matrix(-1, 0, 0, -1, 0, 0) === rotate(180deg).
+    // content down). Parse the computed transform via DOMMatrix and assert the
+    // rounded components are a 180° rotation (a=-1, b=0, c=0, d=-1) — robust to
+    // serialization spacing and float epsilon, and poll()ed for the transition.
     await expect
-      .poll(() => chevron.evaluate((el) => getComputedStyle(el).transform))
-      .toBe('matrix(-1, 0, 0, -1, 0, 0)');
+      .poll(() =>
+        chevron.evaluate((el) => {
+          const m = new DOMMatrixReadOnly(getComputedStyle(el).transform);
+          return [Math.round(m.a), Math.round(m.b), Math.round(m.c), Math.round(m.d)];
+        }),
+      )
+      .toEqual([-1, 0, 0, -1]);
 
     // Read-once meta hidden; title still present.
     await expect(page.locator('[data-testid="pr-header"] .pr-meta-repo')).toBeHidden();
