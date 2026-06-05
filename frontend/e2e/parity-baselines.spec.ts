@@ -82,6 +82,19 @@ test.beforeEach(async () => {
   await ctx.dispose();
 });
 
+// Avatar determinism (#127): the four avatar'd zones — inbox (sm), pr-detail-header
+// (lg), pr-detail-overview (md band), pr-detail-files-diff (sm review-comment widget)
+// — must not depend on a live avatars.githubusercontent.com fetch, or the baseline
+// would vary with CDN/network timing. Abort the avatar CDN so the deterministic
+// initials-fallback circle renders. Mirrors the fonts.gstatic.com abort precedent in
+// the pr-detail-files-diff test. Fake-mode fixtures generally carry no avatarUrl (so
+// most zones already render initials), but this guarantees determinism even if a
+// fixture ever gains one. Registered AFTER the CI-skip hook above so it inherits the
+// same local skip (the route only matters when the test actually runs, i.e. on CI).
+test.beforeEach(async ({ page }) => {
+  await page.route('**/avatars.githubusercontent.com/**', (route) => route.abort());
+});
+
 test.describe('parity baselines — Inbox', () => {
   test('inbox', async ({ page }) => {
     // Cold-start of the prod project (single-binary path) needs more wall-clock

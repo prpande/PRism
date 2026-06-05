@@ -290,7 +290,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             r.IterationNumberApprox, r.CommentCount,
             r.Additions, r.Deletions, r.HeadSha, ci,
             lastViewedHeadSha, lastSeenCommentId,
-            r.MergedAt, r.ClosedAt);
+            r.MergedAt, r.ClosedAt, r.AvatarUrl);
     }
 
     // NewOrUpdatedPrCount is named for the common case (added or updated PRs) but its
