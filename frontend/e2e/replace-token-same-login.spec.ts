@@ -52,10 +52,9 @@ test('Replace token to a PAT with the SAME login navigates to / without an ident
   // #130: replace-from-Settings is an authed state — nav stays shown, Settings active,
   // and there is still no Setup tab even though the path is /setup.
   await expect(page.getByRole('navigation')).toHaveCount(1);
-  await expect(page.getByRole('navigation').getByRole('link', { name: /^settings$/i })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
+  await expect(
+    page.getByRole('navigation').getByRole('link', { name: /^settings$/i }),
+  ).toHaveAttribute('aria-current', 'page');
   await expect(page.getByRole('navigation').getByRole('link', { name: /^setup$/i })).toHaveCount(0);
 
   await page.getByLabel(/personal access token/i).fill('ghp_same_login');
