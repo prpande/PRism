@@ -20,6 +20,7 @@ import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
 import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
 import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
 import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
+import { ErrorModal } from './components/ErrorModal';
 
 function TabSignals() {
   useTabUnreadSignal();
@@ -42,7 +43,24 @@ export function App() {
   }, []);
 
   if (authState === null && error) {
-    return <div role="alert">Failed to load auth state: {error.message}</div>;
+    return (
+      <ErrorModal
+        open
+        title="Couldn't load auth state"
+        message={error.message}
+        actions={
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-modal-role="primary"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        }
+        onClose={() => {}}
+      />
+    );
   }
   if (authState === null) return <LoadingScreen />;
 
@@ -72,7 +90,7 @@ export function App() {
           navbar, not beside it). In the browser these are unstyled passthrough
           divs and the document scrolls as before. */}
       <div data-app-shell>
-        <Header hasToken={authState.hasToken} />
+        <Header isAuthed={isAuthed} />
         <PrTabStrip />
         <div data-app-scroll>
           <Routes>

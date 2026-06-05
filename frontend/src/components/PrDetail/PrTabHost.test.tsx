@@ -202,10 +202,11 @@ describe('PrTabHost', () => {
     await screen.findByTestId('files-tab-root');
     expect(screen.getByTestId('files-tab-root')).toBeVisible();
 
-    // Malformed number segment → invalid route. The alert must render WITHOUT
-    // unmounting the kept-alive PR#7 view (whose state would otherwise be lost).
+    // Malformed number segment → invalid route. The error dialog must render
+    // WITHOUT unmounting the kept-alive PR#7 view (whose state would otherwise
+    // be lost). The invalid-ref error is now an ErrorModal alertdialog.
     navigate('/pr/acme/api/0');
-    expect(screen.getByRole('alert')).toHaveTextContent(/positive integer/i);
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(/positive integer/i);
     expect(screen.getByTestId('files-tab-root')).toBeInTheDocument(); // survived
     expect(
       screen.getByTestId('files-tab-root').closest('[data-prref="acme/api/7"]'),
