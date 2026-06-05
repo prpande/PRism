@@ -1,13 +1,21 @@
 /* `flex: 1` is the handoff's hook for an ancestor `<.app display:flex height:100vh>`
-   layout that PRism's App.tsx doesn't have. `min-height: 100vh` makes the screen
-   fill the viewport on its own so the card vertically centers and the radial
-   gradient backdrop paints across the full viewport even without a flex ancestor.
-   The page picks up a small Header-height scrollbar; acceptable trade-off vs the
-   alternative of a top-aligned card with an unfilled gradient. */
+   layout that PRism's App.tsx doesn't have. The screen fills the viewport on its
+   own so the card vertically centers and the radial gradient backdrop paints
+   across it even without a flex ancestor.
+
+   `min-height` is `100dvh - var(--header-h)`, NOT `100vh`: the screen renders
+   inside `[data-app-scroll]`, BELOW the `--header-h` header bar, so a full
+   `100vh` made `header + 100vh` overflow the viewport by the header height and
+   the page scrolled into empty space (issue #205). Subtracting the header makes
+   `header + (100dvh − header) = 100dvh` exactly — no page scroll, card still
+   centered, gradient still filling the visible area. `var(--header-h)` tracks
+   the comfortable⇄compact density (48/56px); `dvh` follows mobile viewport
+   chrome. `overflow: auto` keeps the card reachable on a viewport too short to
+   fit it, scrolling INTERNALLY rather than growing the page. */
 .screen {
   position: relative;
   flex: 1;
-  min-height: 100vh;
+  min-height: calc(100dvh - var(--header-h, 56px));
   display: flex;
   align-items: center;
   justify-content: center;
