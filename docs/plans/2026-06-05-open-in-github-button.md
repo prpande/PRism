@@ -828,6 +828,23 @@ In `SubmitDialog.tsx` (the `htmlUrl?: string | null` prop is already on `Props` 
           )}
 ```
 
+- [ ] **Step 3b: Fix the EXISTING success-state test (it asserts the link with no htmlUrl)**
+
+`frontend/__tests__/SubmitDialog.test.tsx` has a pre-existing `success state` test (~lines 491-515) that renders with `baseProps` (no `htmlUrl`) and asserts the "View on GitHub" link is present with `href="https://github.com/o/r/pull/1"`. After step 3c the link is conditional on `htmlUrl`, so that test will red (link omitted). Add `htmlUrl` to that existing test's props so the assertion still holds — e.g.:
+
+```tsx
+  render(
+    <SubmitDialog
+      {...baseProps({
+        submitState: { kind: 'success', pullRequestReviewId: '', steps: doneSteps },
+        htmlUrl: 'https://github.com/o/r/pull/1',
+      })}
+    />,
+  );
+```
+
+Match the file's actual `baseProps(...)` shape + the existing `doneSteps`/success fixture. (This is the same class of fix as Task 9's DiffPane test update — flipping a URL source breaks the test that asserted the old unconditional link.)
+
 - [ ] **Step 4: Run tests + typecheck**
 
 Run: `cd frontend && npm test -- SubmitDialog && npx tsc --noEmit`
