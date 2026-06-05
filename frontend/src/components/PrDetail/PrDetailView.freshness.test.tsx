@@ -1,5 +1,6 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
@@ -409,5 +410,85 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
 
     // No crash; the orphaned selection resets to the new first file.
     expect(selectedPathOf()).toBe('src/c.ts');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #180 — returning to a kept-alive Files tab must NOT reset the selected file
+// + scroll. Root cause: on re-activation, usePrDetail.reload() sets isLoading
+// true; once the GET exceeds useDelayedLoading's 100ms threshold, showSkeleton
+// flips true while `data` is still present. PrDetailView's render gate
+// (`showSkeleton ? <Skeleton/> : data ? <content/> : null`) then lets the
+// skeleton WIN over present data, unmounting the entire data-subtree
+// (Overview/Files/Drafts). FilesTab loses its selectedPath + inner scroll and
+// remounts fresh on data-return (auto-selecting the first file).
+//
+// The fix gates the skeleton on `!data`: a background refresh keeps content
+// mounted (the skeleton only shows on the genuine initial load, data still
+// null). This test locks "showSkeleton + data present → kept-alive subtree and
+// its selection survive". RED on main (skeleton unmounts FilesTab).
+// ---------------------------------------------------------------------------
+describe('PrDetailView — background reload preserves kept-alive Files state (#180)', () => {
+  function file(path: string): FileChange {
+    return {
+      path,
+      status: 'modified',
+      hunks: [
+        { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, body: '@@ -1 +1 @@\n-a\n+b\n' },
+      ],
+    };
+  }
+
+  // Top-level paths (no slash) so they render as direct tree rows — no
+  // directory node to expand before the row is clickable.
+  function renderFilesActive() {
+    const ui = (a: boolean) => (
+      <MemoryRouter>
+        <OpenTabsContext.Provider value={openTabsStub}>
+          <AskAiDrawerProvider>
+            <ToastProvider>
+              <PrDetailView prRef={PR_REF} active={a} initialSubTab="files" />
+            </ToastProvider>
+          </AskAiDrawerProvider>
+        </OpenTabsContext.Provider>
+      </MemoryRouter>
+    );
+    const result = render(ui(true));
+    return { ...result, rerender: (a: boolean) => result.rerender(ui(a)) };
+  }
+
+  function selectedPathOf(): string | null {
+    const rows = screen.getAllByTestId('files-tab-tree-row');
+    const selected = rows.find((r) => r.getAttribute('data-selected') === 'true');
+    return selected?.getAttribute('data-path') ?? null;
+  }
+
+  test('showSkeleton while data is present keeps FilesTab mounted and its selected file', async () => {
+    fileDiffResult.current = {
+      data: { range: 'all', files: [file('alpha.ts'), file('beta.ts')], truncated: false },
+      isLoading: false,
+      showSkeleton: false,
+      error: null,
+    };
+    prDetailResult.current = { data: PR_DETAIL, showSkeleton: false, error: null };
+    const view = renderFilesActive();
+
+    // Files tab mounted; auto-select chose the first file. Select the second so
+    // a reset-to-first regression is observable.
+    expect(screen.getByTestId('files-tab-root')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByText('beta.ts'));
+    expect(selectedPathOf()).toBe('beta.ts');
+
+    // A same-PR background reload is in flight: data is still present, but the
+    // delayed-loading skeleton has flipped on. The kept-alive subtree MUST stay
+    // mounted (the keep-alive contract) — the skeleton must NOT replace present
+    // data, and the user's selected file must survive.
+    prDetailResult.current = { data: PR_DETAIL, showSkeleton: true, error: null };
+    view.rerender(true);
+
+    expect(screen.queryByTestId('files-tab-root')).toBeInTheDocument();
+    expect(selectedPathOf()).toBe('beta.ts');
+    // The page-level skeleton must not blank present content.
+    expect(document.querySelector('.pr-detail-skeleton')).toBeNull();
   });
 });

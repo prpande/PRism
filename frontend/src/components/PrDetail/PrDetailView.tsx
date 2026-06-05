@@ -314,7 +314,17 @@ export function PrDetailView({
           Couldn't load PR — {error.message}
         </div>
       )}
-      {showSkeleton ? (
+      {/* #180 — gate the page skeleton on the ABSENCE of data. On a same-PR
+          background reload (re-activation freshness or the manual Reload
+          button) usePrDetail keeps `data` present but flips isLoading; the
+          GET routinely exceeds useDelayedLoading's 100ms threshold so
+          showSkeleton goes true. The old `showSkeleton ? skeleton : data ?...`
+          gate let the skeleton WIN over present data, unmounting this whole
+          subtree (Overview/Files/Drafts) and destroying each tab's local state
+          + inner scroll — defeating keep-alive. Gating on `!data` keeps content
+          mounted during a background refresh (it updates in place); the skeleton
+          shows only on a genuine first load / PR-navigation, where data is null. */}
+      {!data && showSkeleton ? (
         <PrDetailSkeleton />
       ) : data ? (
         // Direct keep-alive sub-tab rendering. Each visited sub-tab stays
