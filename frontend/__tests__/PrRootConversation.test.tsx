@@ -92,4 +92,15 @@ describe('PrRootConversation', () => {
     expect(within(entries[0] as HTMLElement).getByText('alice')).toBeInTheDocument();
     expect(within(entries[1] as HTMLElement).getByText('bob')).toBeInTheDocument();
   });
+
+  it('co-locates author, timestamp, and body inside a single comment card', () => {
+    const { container } = render(<PrRootConversation comments={[aliceComment]} />);
+    const entry = within(container).getByTestId('pr-root-comment');
+    // author, the <time> element, and the markdown body all live within ONE entry
+    expect(within(entry).getByText('alice')).toBeInTheDocument();
+    expect(
+      within(entry).getByText((_, el) => el?.tagName.toLowerCase() === 'time'),
+    ).toHaveAttribute('dateTime', '2026-05-08T14:00:00Z');
+    expect(within(entry).getByText('WhenAll').tagName.toLowerCase()).toBe('strong');
+  });
 });
