@@ -98,6 +98,57 @@ public class GitHubReviewServicePrDetailTests
     }
     """;
 
+    // Same shape as PrDetailGraphQLBody but with NO "url" field — exercises the
+    // empty→null normalization in ParsePr.
+    private const string PrDetailNoUrlBody = """
+    {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "title": "No url here",
+            "body": "",
+            "state": "OPEN",
+            "isDraft": false,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefName": "h",
+            "baseRefName": "main",
+            "headRefOid": "h",
+            "baseRefOid": "b",
+            "author": { "login": "alice" },
+            "createdAt": "2026-01-01T00:00:00Z",
+            "closedAt": null,
+            "mergedAt": null,
+            "changedFiles": 0,
+            "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+          }
+        }
+      }
+    }
+    """;
+
+    [Fact]
+    public async Task GetPrDetailAsync_maps_url_to_HtmlUrl()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailGraphQLBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 42), CancellationToken.None);
+
+        dto!.Pr.HtmlUrl.Should().Be("https://github.com/o/r/pull/42");
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_maps_absent_url_to_null_HtmlUrl()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailNoUrlBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto!.Pr.HtmlUrl.Should().BeNull();
+    }
+
     [Fact]
     public async Task GetPrDetailAsync_parses_pr_meta_root_comments_and_review_threads()
     {
