@@ -327,7 +327,7 @@ export function PrDetailView({
                 type="button"
                 className="btn btn-primary"
                 data-modal-role="primary"
-                onClick={() => reload()}
+                onClick={handleReload}
               >
                 Reload
               </button>
