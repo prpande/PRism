@@ -43,9 +43,10 @@
      anchor to a full-height box. */
   display: block;
   --rail-node-size: 9px;
-  /* band padding-top (var(--s-2)) + ~half the --text-xs line-box; token-derived
-     so a --s-2 change re-aligns the node/line automatically. */
-  --rail-node-y: calc(var(--s-2) + 8px);
+  /* band padding-top (var(--s-2)) + half the 24px md avatar that now sets the band
+     height; re-tuned for #127 (was var(--s-2) + 8px for the text-only band).
+     PROVISIONAL — confirm/adjust against the rendered band at the B1 gate. */
+  --rail-node-y: calc(var(--s-2) + 12px);
 }
 
 .rail::before {
