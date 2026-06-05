@@ -60,3 +60,60 @@ describe('DiffSettingsMenu — disclosure shell', () => {
     expect(trigger.getAttribute('aria-label')).toMatch(/modified/i);
   });
 });
+
+describe('DiffSettingsMenu — panel content', () => {
+  it('reflects and toggles Show full file and Wrap long lines with stable labels', async () => {
+    const { props, getByTestId } = setup({ showFullFile: true, lineWrap: false });
+    await userEvent.click(getByTestId('diff-settings-trigger'));
+    const full = getByTestId('show-full-file-checkbox') as HTMLInputElement;
+    const wrap = getByTestId('line-wrap-checkbox') as HTMLInputElement;
+    expect(full.checked).toBe(true);
+    expect(wrap.checked).toBe(false);
+    await userEvent.click(wrap);
+    expect(props.onLineWrapChange).toHaveBeenCalledWith(true);
+    await userEvent.click(full);
+    expect(props.onShowFullFileChange).toHaveBeenCalledWith(false);
+    expect(getByTestId('diff-settings-panel').textContent).toContain('Show full file');
+    expect(getByTestId('diff-settings-panel').textContent).toContain('Wrap long lines');
+  });
+
+  it('disables Show full file with a view-blocked reason wired via aria-describedby', async () => {
+    const { getByTestId } = setup({
+      fullFileViewBlocked: true,
+      fullFileViewBlockedReason: "Whole-file view available only on the 'all' iteration view",
+    });
+    await userEvent.click(getByTestId('diff-settings-trigger'));
+    const full = getByTestId('show-full-file-checkbox') as HTMLInputElement;
+    const helper = getByTestId('show-full-file-helper');
+    expect(full.disabled).toBe(true);
+    expect(full.getAttribute('aria-describedby')).toBe(helper.id);
+    expect(helper.textContent).toMatch(/all.*iteration/i);
+  });
+
+  it('keeps Show full file enabled but shows a mandatory inert note for an ineligible current file', async () => {
+    const { getByTestId } = setup({
+      showFullFile: true,
+      fullFileInertHere: true,
+      fullFileInertReason: 'Not available for this file — still on for other files',
+    });
+    await userEvent.click(getByTestId('diff-settings-trigger'));
+    const full = getByTestId('show-full-file-checkbox') as HTMLInputElement;
+    const helper = getByTestId('show-full-file-helper');
+    expect(full.disabled).toBe(false);
+    expect(full.checked).toBe(true);
+    expect(full.getAttribute('aria-describedby')).toBe(helper.id);
+    expect(helper.textContent).toMatch(/still on for other files/i);
+  });
+
+  it('closes on Escape pressed from a focused checkbox (not just from the trigger)', async () => {
+    const { getByTestId, queryByTestId } = setup();
+    const trigger = getByTestId('diff-settings-trigger');
+    await userEvent.click(trigger);
+    const wrap = getByTestId('line-wrap-checkbox');
+    wrap.focus();
+    expect(wrap).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    expect(queryByTestId('diff-settings-panel')).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+});
