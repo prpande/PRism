@@ -100,7 +100,9 @@ test.describe('#128 collapsible PR header + toolbar trim', () => {
     // inline DiffViewToggle (segmented radio control) and a DiffSettingsMenu
     // gear that houses line-wrap + show-full-file. Assert both are present so
     // the test still verifies "all controls are in the trimmed toolbar".
-    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible();
+    // Target the visible radiogroup container, not the clip-hidden radio input
+    // (Playwright's visibility check differs from visual visibility on sr-only inputs).
+    await expect(page.locator('[data-testid="diff-view-toggle"]')).toBeVisible();
     await expect(page.locator('[data-testid="diff-settings-trigger"]')).toBeVisible();
   });
 });
