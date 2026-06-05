@@ -97,6 +97,8 @@ Add `string? AvatarUrl` to each record that already carries an author:
 - `IssueCommentDto` (root comments)
 - `ReviewCommentDto` (review-thread comments)
 - `PrInboxItem` (inbox rows)
+- `RawPrInboxItem` (intermediate inbox record — not author-final, but the field
+  must ride through it from the REST read to `PrInboxItem`; see §4.3)
 
 Nullable: an Actor/user *may* lack an avatar URL; the component falls back to
 initials when null.
@@ -141,7 +143,8 @@ pattern as other optional fields).
   `RawPrInboxItem → RawPrInboxItem` (via `with { … }`); it does **not** build the
   final item. The `RawPrInboxItem → PrInboxItem` conversion — the one positional
   `PrInboxItem` construction site that must append `AvatarUrl` — is
-  **`InboxRefreshOrchestrator.ToInboxItem` (~line 287)**. Edit that mapper, not
+  **`InboxRefreshOrchestrator.MaterializePrInboxItem` (method at line 265; the
+  `new PrInboxItem(...)` is at line 287)**. Edit that mapper, not
   the enricher.
 
 ### 4.4 Frontend types (`frontend/src/api/types.ts`)
@@ -169,38 +172,49 @@ interface AvatarProps {
 }
 ```
 
-**Render rules:**
+**Render model — initials are the always-present base layer; the image overlays it.**
+This single model handles loading, error, and `src`-change cleanly, and avoids
+the two traps a naive `errored`-boolean version falls into (a nameless circle
+during load, and a stale error pinning a row to initials forever):
 
-1. `src` truthy and not previously errored → render `<img>` at the requested
-   size. The `<img>` carries:
+1. The circle **always** renders the initials as its base content: the first
+   character of `login` (letter **or** digit — GitHub logins may start with a
+   digit, e.g. `42user` → `4`), uppercased. A leading `[bot]`-style suffix is
+   stripped first, so `dependabot[bot]` → `D`. An empty `login` yields no initial
+   (a plain colored circle), never a throw.
+2. When `src` is truthy **and not errored for *this* `src`**, an `<img>` is
+   rendered on top of the initials, filling the circle. The `<img>` carries:
    - `width:100%; height:100%; object-fit:cover; border-radius:50%; display:block`
-     so the image fills and clips to the circle. (The `.avatar` token has
+     so it fills and clips to the circle. (The `.avatar` token has
      `border-radius:50%` but no `overflow:hidden`, so the **`<img>` itself** must
-     round/cover — otherwise a non-square or pre-CSS image flashes as a square.
-     Equivalently, add `overflow:hidden` to the `.avatar` rule; pick one and
-     state it. This spec chooses styling the `<img>`.)
+     round/cover — otherwise a non-square or pre-CSS image flashes as a square.)
    - `referrerPolicy="no-referrer"` — strips the `Referer` header on the cross-
      origin load to `avatars.githubusercontent.com` (see §8). Costs nothing.
    - `loading="lazy"` for the `sm` (inbox-list) size; `loading="eager"` (default)
      for `md`/`lg` single-PR views (see §6).
    - `alt=""` (decorative — see a11y below).
-2. `src` absent **or** the `<img>` fired `onError` → initials fallback: the first
-   character of `login` (letter **or** digit — GitHub logins may start with a
-   digit, e.g. `42user` → `4`), uppercased. A leading `[bot]`-style suffix is
-   stripped before taking the initial, so `dependabot[bot]` → `D`. An empty
-   `login` yields no initial (empty colored circle) rather than throwing.
-3. The `onError` → initials transition is a one-way boolean in local component
-   state. Once `errored` is set, the render switches to the initials branch and
-   the `<img>` is **removed from the tree entirely** (not kept with a fallback
-   `src`). This guarantees no re-attach / re-fire loop: a 200 that returns
-   non-image bytes fires `onError` (decode failure) and degrades to initials; a
-   slow/hanging request shows the colored circle until it resolves or errors. No
-   defensive timeout is needed.
+3. **Loading window:** because the initials base is always painted, the fetch
+   window shows the *initials* (not a nameless disc); the image simply appears
+   over them once it loads. No flash-of-nameless-circle even on a slow/lazy load.
+4. **Error handling, keyed to `src` (critical):** the error state is **not** a
+   lifetime-wide one-way boolean — it is scoped to the current `src`. Implement
+   with `key={src}` on the `<img>` (a new `src` mounts a fresh element that
+   re-attempts) **or** by deriving `errored = (erroredSrc === src)` and setting
+   `erroredSrc = src` in `onError`. On error the `<img>` is dropped and the
+   initials base shows through. This is required because `<Avatar>` instances are
+   **reused across inbox refresh ticks** (rows are keyed on PR identity, not on
+   `src`): a lifetime-wide boolean would let a transient blip (CDN hiccup, a
+   momentary null→URL fixture window, a changed `?v=` cache-buster) permanently
+   pin a row to initials even after a valid URL arrives. A 200 returning
+   non-image bytes fires `onError` (decode failure) and degrades to initials
+   correctly; a hanging request just leaves the initials showing. No defensive
+   timeout is needed; a test must cover bad-`src` → rerender-with-good-`src` →
+   image recovers (not stuck on initials).
 
 **Shape:** circle for every avatar in v1 (see §2 deferral). The container's
-`background: var(--text-3)` is always present behind the `<img>`, so the brief
-fetch window shows a colored circle, not a transparent gap (no layout shift —
-the fixed-size container reserves its space before the image loads).
+`background: var(--text-3)` sits behind everything, so there is never a
+transparent gap, and the fixed-size container reserves its space before the image
+loads (no layout shift).
 
 **Accessibility:**
 
@@ -219,21 +233,53 @@ the fixed-size container reserves its space before the image loads).
 
 ## 6. Render-site integration
 
-At each of the 4 sites, insert `<Avatar src={x.avatarUrl} login={x.author} size=…>`
-immediately before the existing name span. The name span is unchanged (avatars
-are additive; the text remains the accessible label). Per-site size is from the
-§2 table. Each site's layout already uses a flex row, so the avatar slots in as
-a leading flex child; `.avatar`'s `flex: none` prevents it from shrinking.
+The general move is: insert the avatar immediately before the existing name span,
+keep the name span as the accessible label, size per the §2 table. `.avatar`'s
+`flex: none` stops it shrinking. But each site has a real layout interaction that
+the plan must spell out — these are not uniform, and the §2-table pattern
+`<Avatar src={x.avatarUrl} login={x.author}>` does **not** apply verbatim
+everywhere (PrHeader has no per-item `x`). Per-site:
 
-**InboxRow needs care.** The author span lives inside `.meta` — a
-`flex-wrap: wrap` row of small (`xs`/10px) chips separated by dot-separators
-(repo · author · iter · age). Dropping a bare 20px circle into that row risks
-(a) the dot-separators orphaning the avatar across a wrap, and (b) vertical
-misalignment between the circle and the 10px text. Wrap the avatar **and** its
-author span together in a single inline-flex child with `align-items: center`
-and a small gap, so the pair stays atomic and the separators sit outside it.
-The other three sites (PR header, root comment, review comment) are single rows
-where a leading flex child with `align-items: center` is sufficient.
+- **InboxRow (`sm`).** The author span lives inside `.meta` — a `flex-wrap: wrap`
+  row of `xs`/10px chips separated by dot-separators (repo · author · iter · age).
+  A bare 20px circle there risks (a) a dot-separator orphaning the avatar across a
+  wrap and (b) vertical misalignment with the 10px text. Wrap the avatar **and**
+  its author span in a single `inline-flex; align-items: center` child with a
+  small gap so the pair is atomic and the separators stay outside it.
+
+- **PrHeader (`lg`).** `PrHeader` receives a **flat `author: string` prop**, not a
+  `pr` object — there is no `x.avatarUrl` in scope. The plan must: (a) add
+  `avatarUrl?: string` to `PrHeaderProps`; (b) pass `avatarUrl={data?.pr.avatarUrl}`
+  at the `PrDetailView.tsx:253` call site alongside the existing `author` prop;
+  (c) render `<Avatar src={avatarUrl} login={author} size="lg">` at
+  `PrHeader.tsx:345`. The author span sits in a `row gap-3` subtitle that
+  `flex-wrap`s alongside other chips, so apply the same atomic-pair wrapper as
+  InboxRow (avatar + name in one `inline-flex` child, a gap tighter than the
+  inter-chip `gap-3`) to prevent the avatar orphaning from the name on a narrow
+  window.
+
+- **PrRootConversation (`md`).** The author sits in the card's `.band` header,
+  which is `display:flex; align-items:center; padding: var(--s-2) var(--s-4)`.
+  Decide and state: the 24px avatar goes **inside** the band as a leading
+  `align-items:center` child. That raises the band's min-height to 24px and
+  shifts its optical center — and `--rail-node-y` (the continuous-rail node Y) is
+  calibrated in CSS to "band padding-top `var(--s-2)` + ~half the `--text-xs`
+  line-box." The plan must **re-derive `--rail-node-y` for the avatar'd band**
+  (or confirm an acceptable drift) so the rail node still points at the band, not
+  above it. This is the one site where the avatar perturbs a calibrated value.
+
+- **ExistingCommentWidget (`sm`).** `.commentMeta` is `display:flex;
+  align-items:baseline`. A replaced element (`<img>`) computes its baseline as the
+  bottom of its margin box, so a 20px avatar under `baseline` will sit low
+  relative to the `xs` text — the same trap PrRootConversation's band already
+  documents. Change `.commentMeta` to `align-items:center` when inserting the
+  avatar (or set `vertical-align:middle` on the img and justify why baseline
+  stays).
+
+**Truncation tooltip.** Several name spans truncate (`text-overflow:ellipsis`,
+e.g. root-comment `.author`). Give the avatar wrapper (or the name span) a
+`title={login}` so the full login is discoverable on hover at every site —
+specify it once here so it isn't decided ad hoc per site.
 
 **Loading priority:** the inbox `sm` avatar uses `loading="lazy"` (a section can
 hold many rows, each firing its own image request); the three single-PR detail
@@ -261,18 +307,40 @@ sites use the eager default.
 
 **Frontend (vitest):** `Avatar.test.tsx` —
 
-- renders `<img>` with the given `src` when `src` is set;
-- renders the uppercased initial when `src` is absent;
-- swaps to the initials fallback when the `<img>` fires `onError`;
+- renders `<img>` over the initials when `src` is set;
+- renders the uppercased initial as the base layer (always);
+- drops the `<img>` and shows the initials when the `<img>` fires `onError`;
+- **recovers on a new `src`:** render with a bad `src` → `onError` → initials,
+  then rerender the *same instance* with a good `src` → asserts the `<img>`
+  re-renders (the src-keyed error-reset; the regression guard for R2-01);
 - strips a `[bot]` suffix before deriving the initial (`dependabot[bot]` → `D`);
-- empty `login` renders an empty circle without throwing.
+- digit-leading login (`42user` → `4`); empty `login` renders a plain circle
+  without throwing.
 
-Plus one render-site assertion (e.g. `InboxRow`) that an avatar element renders
-next to the author name.
+**Render-site assertions (one per layout-sensitive site, vitest DOM — cheap):**
+
+- `InboxRow` — the avatar + author span form one atomic group (separators
+  outside it);
+- `PrRootConversation` — an avatar renders in the band next to the author;
+- `ExistingCommentWidget` — an avatar renders in `.commentMeta` next to the
+  author.
+
+A single InboxRow presence assertion would not catch the band/rail and
+baseline-alignment regressions at the other two sites.
 
 **Parity baseline:** re-capture the affected parity zones (inbox row, PR header,
 root-comment card, review-comment widget) since the avatars change the rendered
 output. Pre-existing unrelated baseline drift is not in scope.
+
+**Parity determinism (avoid a network-dependent baseline).** The parity specs run
+against fake-mode fixtures. If a fixture carries a real-looking `avatarUrl`, the
+captured screenshot would depend on a live fetch from `avatars.githubusercontent.com`
+completing within the capture window — a 404/hang yields initials in one run and a
+photo in another, busting `maxDiffPixelRatio`. Make it deterministic: either set
+`avatarUrl = null` in the parity fixtures (so the zone captures the stable initials
+circle) **or** `page.route`-intercept `avatars.githubusercontent.com` to a fixed
+local image in the parity spec (mirroring the existing `fonts.gstatic.com` abort).
+State which in the plan.
 
 **B1 visual proof (gate):** real-app screenshots against a repo with both human
 and bot authors (BFF repo `mindbody/Mindbody.BizApp.Bff`, which has real merged
@@ -282,8 +350,10 @@ convention.
 
 ## 8. Risk & process
 
-- **Tier:** T2/T3 (full-stack: 4 DTOs + 2 mappers + 2 API surfaces + 1 new
-  component + 4 render sites + tests).
+- **Tier:** T2/T3 (full-stack: 5 records incl. `RawPrInboxItem` + 4 mapper
+  methods (`ParsePr`, `ParseRootComments`, `ParseReviewThreads`,
+  `MaterializePrInboxItem`) + 2 API surfaces + 1 new component + 4 render sites +
+  tests).
 - **Risk:** **B1 — UI-visual, gated.** Changes perceptible rendering. No B2
   surface (no auth/PAT, submit pipeline, migrations, cross-tab stamp, sidecar,
   host-header, or architectural invariant touched). The avatar URLs are
@@ -301,9 +371,16 @@ convention.
   desktop tool whose PAT calls already identify the user to GitHub, and it is
   bounded by `referrerPolicy="no-referrer"` on the `<img>` (§5), which strips the
   `Referer` at zero cost. Backend avatar proxying is **not** done (disproportate
-  for a PoC). No XSS vector: React HTML-escapes the `src` attribute and the URL
-  is never interpolated into CSS/markup; a non-`https` or `data:` `src` is inert
-  in an `<img>` (images don't execute), so explicit scheme validation is omitted.
+  for a PoC). No XSS vector: an `<img>` never executes script from its `src`,
+  React HTML-escapes the attribute, and the URL is never interpolated into
+  CSS/markup. The URL also originates **only** from GitHub's API responses (§3) —
+  never user/persisted input — so it cannot be attacker-controlled without
+  compromising the GitHub channel itself. (Note: a `data:` URL is *not* literally
+  "inert" — `<img>` does render `data:` images — but it still cannot execute JS,
+  and none reach here from the API.) As cheap defense-in-depth the component MAY
+  guard `src?.startsWith('https://')` before rendering the `<img>` (falling back
+  to initials otherwise), since the only legitimate values are https GitHub CDN
+  URLs; full scheme validation beyond that is omitted.
 - **Logging:** `avatarUrl` is a public CDN URL with no secret material, so it is
   intentionally **not** added to `SensitiveFieldScrubber.BlockedFieldNames`
   (where `login`, `token`, `pat`, etc. live). Recorded here so a reviewer
