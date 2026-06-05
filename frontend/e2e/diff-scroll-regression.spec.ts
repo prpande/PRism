@@ -159,4 +159,29 @@ test.describe('diff horizontal scroll regression (#115 / #149 / #155)', () => {
     const distinctShifts = [...new Set(spans.filter((s) => s.tx !== null).map((s) => s.tx))];
     expect(distinctShifts).toHaveLength(1);
   });
+
+  test('file tree is an independent scroll container, separate from the diff body', async ({
+    page,
+  }) => {
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-diff"]').waitFor();
+
+    const shape = await page.evaluate(() => {
+      const tree = document.querySelector('[data-testid="files-tab-tree"]') as HTMLElement | null;
+      const body = document.querySelector('.diff-pane-body') as HTMLElement | null;
+      return {
+        treeOverflowY: tree ? getComputedStyle(tree).overflowY : null,
+        treeContainsBody: !!(tree && body && tree.contains(body)),
+        bodyContainsTree: !!(tree && body && body.contains(tree)),
+        docOverflow: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+      };
+    });
+
+    // Tree is its OWN vertical scroller, not the page and not the diff.
+    expect(shape.treeOverflowY).toBe('auto');
+    expect(shape.treeContainsBody).toBe(false);
+    expect(shape.bodyContainsTree).toBe(false);
+    // And the page itself does not scroll in the Files view (criterion 2).
+    expect(shape.docOverflow).toBeLessThanOrEqual(1);
+  });
 });
