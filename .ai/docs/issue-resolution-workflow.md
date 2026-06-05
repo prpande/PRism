@@ -57,14 +57,15 @@ the at-intake claim — it lands later at **step 4**, once you have classified t
 issue, and only fills in the human-readable detail behind a claim you already
 staked.
 
-Then **re-read the issue.** GitHub assignees are a **multi-valued, append-only**
-list — self-assigning *adds* you, it does not evict an existing assignee — so two
-agents claiming near-simultaneously end up **co-assigned**, each visible to the
-other. That visibility is the tie-breaker: if, after claiming, you find another
-agent already assigned (or an earlier `in-progress` label / triage comment from
-them), the **earlier** claimant wins — back off and pick another issue, comparing
-by triage-comment timestamp when in doubt. This shrinks the check-then-claim race
-but does not eliminate it; the human (who ultimately merges) is the final backstop
+Then **re-read the issue.** GitHub assignees are **multi-valued** — self-assigning
+*adds* you, it does not evict an existing assignee — so two agents claiming
+near-simultaneously end up **co-assigned**, each visible to the other. That
+visibility is the tie-breaker: if, after claiming, you find another agent also
+assigned, the **earlier** claimant wins — back off and pick another issue. To
+decide who was earlier, compare **assignee-list order** (GitHub preserves
+insertion order), falling back to triage-comment timestamp only if one already
+exists (at step 0 it usually won't). This shrinks the check-then-claim race but
+does not eliminate it; the human (who ultimately merges) is the final backstop
 against duplicate work.
 
 **Fresh vs. stale.** A claim is **fresh** — leave it alone — unless it is
@@ -78,9 +79,9 @@ still alive) sees it. This mirrors the gate-staleness re-ping under § Notificat
 (minimum bar) and keeps a dead claim from starving an otherwise-available issue.
 
 > **Prerequisite:** the repo needs an `in-progress` label. Create it once
-> (guarded so it is safe to re-run):
-> `gh label list | grep -q in-progress || gh label create in-progress`. Already
-> created in `prpande/PRism`.
+> (guarded with an exact-name match so it is safe to re-run):
+> `gh label list --json name --jq '.[].name' | grep -qx in-progress || gh label create in-progress`.
+> Already created in `prpande/PRism`.
 
 ## The decision tree
 
