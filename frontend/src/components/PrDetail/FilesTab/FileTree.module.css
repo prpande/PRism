@@ -162,6 +162,7 @@
 }
 .fileTreeDirToggle {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--s-2);
   background: transparent;
@@ -190,6 +191,7 @@
   color: var(--accent);
 }
 .fileTreeDirName {
+  flex: 1;
   font-weight: 500;
   min-width: 0;
   overflow: hidden;
