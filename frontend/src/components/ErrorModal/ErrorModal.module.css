@@ -19,6 +19,9 @@
 .message {
   flex: 1 1 auto;
   min-width: 0;
+  /* error.message can carry long unbroken tokens (URLs, SHAs); wrap them so a
+     single token can't overflow the modal card. */
+  overflow-wrap: anywhere;
 }
 .actions {
   display: flex;

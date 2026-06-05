@@ -44,6 +44,25 @@ describe('ErrorModal', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it('gives the primary action initial focus on open', () => {
+    render(
+      <ErrorModal
+        open
+        title="T"
+        actions={
+          <>
+            <button type="button" data-modal-role="primary">
+              Reload
+            </button>
+            <button type="button">Back to inbox</button>
+          </>
+        }
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Reload' })).toHaveFocus();
+  });
+
   it('calls onClose on Escape when dismissible=true', () => {
     const onClose = vi.fn();
     render(

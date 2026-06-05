@@ -2,9 +2,9 @@
 
 Tracks work intentionally left out of the #182 slice so it isn't silently lost.
 
-## D1 — Converge working `.error` duplicators onto `<ErrorBox>`
+## D1 — Converge working `.error` duplicators onto the shared error treatment
 
-**What:** Migrate the surfaces that already render a correct danger box via their own module `.error` rule onto the shared `<ErrorBox>` component, eliminating the copy-pasted CSS.
+**What:** Migrate the surfaces that already render a correct danger box via their own module `.error` rule onto the shared error treatment shipped by #182 (the `ErrorModal`/`DangerGlyph` family), eliminating the copy-pasted CSS. (Where a surface is an inline message rather than a modal, extract a small shared inline-error presentation alongside `DangerGlyph` rather than forcing a modal.)
 
 **Candidates:** `SetupForm.tsx:87` (`styles.error`), `PasteUrlInput.tsx:71` (`styles.error`), `DraftsTabError.tsx:9` (shares InboxPage's message+button shape, already styled), and any other structurally-compatible danger surfaces surfaced during execution.
 
@@ -16,7 +16,7 @@ Tracks work intentionally left out of the #182 slice so it isn't silently lost.
 
 **What:** `DraftsTabError.tsx:9` carries `role="alert"` but renders neutral (`color: var(--text-2)` on a neutral background) — a user who hits a drafts-load failure gets no visual danger signal.
 
-**Why deferred:** Out of scope for #182, whose framing is "errors render as *unstyled* text." DraftsTabError *is* styled (centered empty-state); it just isn't danger-colored. Giving it a danger signal is a distinct error-signal-consistency decision, and its empty-state layout differs from the ErrorBox box. Fold into the convergence pass (D1) or a dedicated theming issue.
+**Why deferred:** Out of scope for #182, whose framing is "errors render as *unstyled* text." DraftsTabError *is* styled (centered empty-state); it just isn't danger-colored. Giving it a danger signal is a distinct error-signal-consistency decision, and its empty-state layout differs from the shared error treatment. Fold into the convergence pass (D1) or a dedicated theming issue.
 
 ## D2 — Parity-baseline re-capture (conditional)
 
