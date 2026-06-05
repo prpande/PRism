@@ -269,6 +269,33 @@ public sealed class GitHubSectionQueryRunnerTests
             "the failed involves:@me sub-query must yield empty without throwing, leaving only the reviewed-by:@me result");
     }
 
+    [Fact]
+    public async Task Search_carries_user_avatar_url_to_raw_item()
+    {
+        const string body = """
+        {
+          "items": [
+            {
+              "number": 42,
+              "title": "Test PR",
+              "user": { "login": "amelia", "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4" },
+              "repository_url": "https://api.github.com/repos/acme/api",
+              "updated_at": "2026-05-06T10:00:00Z",
+              "comments": 3,
+              "pull_request": { "html_url": "https://github.com/acme/api/pull/42" }
+            }
+          ]
+        }
+        """;
+        var handler = new FakeHttpMessageHandler((_) => Respond(HttpStatusCode.OK, body));
+        var sut = BuildSut(handler);
+
+        var result = await sut.QueryAllAsync(new HashSet<string> { "review-requested" }, default);
+
+        result["review-requested"].Single().AvatarUrl
+            .Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
+    }
+
     private static string SearchResponseWithNumbers(params int[] numbers)
     {
         var items = numbers.Select(n => $$"""

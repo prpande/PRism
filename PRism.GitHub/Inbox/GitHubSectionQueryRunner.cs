@@ -141,6 +141,9 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
 
             var repo = $"{path[0]}/{path[1]}";
             var login = item.GetProperty("user").GetProperty("login").GetString() ?? "";
+            var avatarUrl = item.TryGetProperty("user", out var u)
+                && u.TryGetProperty("avatar_url", out var av) && av.ValueKind == JsonValueKind.String
+                ? av.GetString() : null;
             var title = item.GetProperty("title").GetString() ?? "";
             var updated = item.GetProperty("updated_at").GetDateTimeOffset();
             var comments = item.TryGetProperty("comments", out var c) ? c.GetInt32() : 0;
@@ -152,7 +155,8 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
                 comments,
                 0, 0, // additions/deletions not in Search API; refined in fan-out
                 "",   // head_sha not in Search API; refined in fan-out
-                1));  // iteration approx
+                1,    // iteration approx
+                AvatarUrl: avatarUrl));
         }
         return result;
     }
