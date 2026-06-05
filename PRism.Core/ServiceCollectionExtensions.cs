@@ -42,7 +42,10 @@ public static class ServiceCollectionExtensions
     /// <c>AddPrismGitHub</c> and <c>AddPrismAi</c> before <c>Build()</c>.</b>
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddPrismCore(this IServiceCollection services, string dataDir)
+    public static IServiceCollection AddPrismCore(
+        this IServiceCollection services,
+        string dataDir,
+        bool useUnprotectedTokenCache = false)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrEmpty(dataDir);
@@ -58,15 +61,16 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAppStateStore>(_ => new AppStateStore(dataDir));
         // In the e2e Test backend, persist tokens to an unprotected file instead
         // of the OS keyring. The browser e2e runs in a headless Linux container
-        // (windows-latest can't extract the Playwright browser — #171) which has
-        // no D-Bus/X11, so MSAL's Linux keyring throws "Cannot autolaunch D-Bus
-        // without X11 $DISPLAY" and every auth-dependent spec times out. The e2e
-        // DataDir is ephemeral, so plaintext is fine. Production (no PRISM_E2E_*
-        // env var) keeps the encrypted OS keychain. Gated on the same env vars
-        // Program.cs uses to swap in the fake/real-inject test seams.
-        var useUnprotectedTokenCache =
-            Environment.GetEnvironmentVariable("PRISM_E2E_FAKE_REVIEW") == "1"
-            || Environment.GetEnvironmentVariable("PRISM_E2E_REAL_INJECT") == "1";
+        // which has no D-Bus/X11, so MSAL's Linux keyring throws "Cannot
+        // autolaunch D-Bus without X11 $DISPLAY" and every auth-dependent spec
+        // times out. The e2e DataDir is ephemeral, so plaintext is fine.
+        //
+        // The decision is made by the caller (Program.cs composition root, where
+        // IHostEnvironment is available) and gated on Test env AND a PRISM_E2E_*
+        // var — the same condition Program.cs uses for UseStaticWebAssets and the
+        // fake/real-inject seams. Defaulting to false here means production (and
+        // any caller that doesn't opt in) always gets the encrypted OS keychain,
+        // even if a PRISM_E2E_* var is set outside a Test environment.
         services.AddSingleton<ITokenStore>(_ => new TokenStore(dataDir, useUnprotectedTokenCache));
         services.AddSingleton<IViewerLoginProvider, ViewerLoginProvider>();
 
