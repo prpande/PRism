@@ -21,6 +21,8 @@ const STATUS_LABELS: Record<string, string> = {
   renamed: 'R',
 };
 
+const INDENT_PER_LEVEL = 12;
+
 const FILE_STATUS_MODULE: Record<FileChangeStatus, string> = {
   added: styles.fileStatusAdded,
   modified: styles.fileStatusModified,
@@ -179,7 +181,7 @@ function FileNodeComponent({
       data-testid="files-tab-tree-row"
       data-selected={isSelected}
       data-path={node.path}
-      style={{ paddingLeft: `${(depth + 1) * 16}px` }}
+      style={{ paddingLeft: `${(depth + 1) * INDENT_PER_LEVEL}px` }}
       onClick={() => onSelectFile(node.path)}
       tabIndex={isSelected ? 0 : -1}
     >
@@ -242,7 +244,7 @@ function DirectoryNodeComponent({
     <div className={`file-tree-dir ${styles.fileTreeDir}`} role="treeitem" aria-expanded={expanded}>
       <div
         className={`file-tree-dir-header ${styles.fileTreeDirHeader}`}
-        style={{ paddingLeft: `${depth * 16}px` }}
+        style={{ paddingLeft: `${depth * INDENT_PER_LEVEL}px` }}
       >
         <button
           className={`file-tree-dir-toggle ${styles.fileTreeDirToggle}`}

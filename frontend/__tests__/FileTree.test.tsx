@@ -156,6 +156,26 @@ describe('FileTree', () => {
     );
     expect(screen.getByText(/no files/i)).toBeInTheDocument();
   });
+
+  it('indents rows at 12px per depth level', () => {
+    const { container } = render(
+      <FileTree
+        files={[file('src/a.ts')]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    // 'src' is a directory at depth 0 → paddingLeft 0
+    const dirHeader = screen.getByText('src').closest('.file-tree-dir-header') as HTMLElement;
+    expect(dirHeader.style.paddingLeft).toBe('0px');
+    // 'a.ts' is a file at depth 1 → (1 + 1) * 12 = 24px (would be 32px at the old 16 unit)
+    const fileRow = container.querySelector('[data-path="src/a.ts"]') as HTMLElement;
+    expect(fileRow.style.paddingLeft).toBe('24px');
+  });
 });
 
 const F = (path: string, status: FileChange['status'] = 'modified'): FileChange => ({
