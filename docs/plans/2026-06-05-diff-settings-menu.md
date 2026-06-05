@@ -186,6 +186,14 @@ describe('DiffViewToggle', () => {
     const { getByRole } = render(<DiffViewToggle diffMode="side-by-side" onDiffModeChange={() => {}} />);
     expect(getByRole('radiogroup', { name: /diff view/i })).toBeInTheDocument();
   });
+
+  it('moves selection with arrow keys (native radiogroup)', async () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<DiffViewToggle diffMode="unified" onDiffModeChange={onChange} />);
+    getByRole('radio', { name: /unified/i }).focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(onChange).toHaveBeenCalledWith('side-by-side');
+  });
 });
 ```
 
@@ -271,6 +279,7 @@ export function DiffViewToggle({
   border-radius: var(--radius-2);
 }
 .tile {
+  position: relative; /* containing block for .srInput so it can't escape */
   display: inline-flex;
   align-items: center;
   gap: var(--s-1);
@@ -287,7 +296,7 @@ export function DiffViewToggle({
 .tileSelected {
   background: var(--surface-3);
   color: var(--text-1);
-  box-shadow: inset 0 0 0 1px var(--border-strong);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 .tileDisabled {
   opacity: 0.5;
@@ -299,11 +308,15 @@ export function DiffViewToggle({
 .tileLabel {
   font-size: var(--text-sm);
 }
-/* Visually-hidden but focusable radio; focus ring shown on the tile. */
+/* Visually-hidden but focusable radio; focus ring shown on the tile.
+   clip-based hide (not bare position:absolute) so it stays confined to the
+   positioned .tile and cannot create a stray hit-test area. */
 .srInput {
   position: absolute;
   width: 1px;
   height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
   opacity: 0;
   margin: 0;
 }
@@ -339,7 +352,7 @@ git commit -m "feat(#185): inline DiffViewToggle segmented control (ADO diff ico
 // wholeFilePreference.test.tsx
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useWholeFilePreference, deriveWholeFileEnabled } from './wholeFilePreference';
+import { useWholeFilePreference, deriveWholeFileEnabled, isWholeFileEligible } from './wholeFilePreference';
 
 const base = {
   showFullFile: true,
@@ -414,6 +427,13 @@ export interface DeriveWholeFileParams {
   iterationGatePermits: boolean;
 }
 
+/** Single source of truth for per-file whole-file eligibility (status + hunks).
+ * Used by both deriveWholeFileEnabled and FilesTab's inert-note computation so
+ * the rule has one home. */
+export function isWholeFileEligible(status: string | undefined, hunkCount: number): boolean {
+  return status === 'modified' && hunkCount > 0;
+}
+
 /** The effective per-current-file whole-file flag passed to DiffPane. */
 export function deriveWholeFileEnabled(p: DeriveWholeFileParams): boolean {
   return (
@@ -421,8 +441,7 @@ export function deriveWholeFileEnabled(p: DeriveWholeFileParams): boolean {
     p.selectedPath !== null &&
     !p.failedPaths.has(p.selectedPath) &&
     p.iterationGatePermits &&
-    p.selectedFileStatus === 'modified' &&
-    p.selectedFileHunkCount > 0
+    isWholeFileEligible(p.selectedFileStatus, p.selectedFileHunkCount)
   );
 }
 
@@ -619,7 +638,10 @@ export function DiffSettingsMenu({
     }
   };
 
-  const isModified = showFullFile || lineWrap;
+  // Effective non-default state — a view-blocked full-file preference produces
+  // no visible effect, so it must not light the indicator (spec: blocked/forced
+  // states never count).
+  const isModified = (showFullFile && !fullFileViewBlocked) || lineWrap;
   const helperText = fullFileViewBlocked
     ? fullFileViewBlockedReason
     : fullFileInertHere
@@ -637,7 +659,7 @@ export function DiffSettingsMenu({
         aria-controls={panelId}
         aria-label={isModified ? 'Diff settings (modified)' : 'Diff settings'}
         title="Diff settings"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => (open ? close() : setOpen(true))}
         data-testid="diff-settings-trigger"
       >
         <GearIcon />
@@ -723,7 +745,7 @@ export function DiffSettingsMenu({
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent-fg, var(--border-strong));
+  background: var(--accent);
 }
 .panel {
   position: absolute;
@@ -826,6 +848,18 @@ describe('DiffSettingsMenu — panel content', () => {
     expect(full.getAttribute('aria-describedby')).toBe(helper.id);
     expect(helper.textContent).toMatch(/still on for other files/i);
   });
+
+  it('closes on Escape pressed from a focused checkbox (not just from the trigger)', async () => {
+    const { getByTestId, queryByTestId } = setup();
+    const trigger = getByTestId('diff-settings-trigger');
+    await userEvent.click(trigger);
+    const wrap = getByTestId('line-wrap-checkbox');
+    wrap.focus();
+    expect(wrap).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    expect(queryByTestId('diff-settings-panel')).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
 });
 ```
 
@@ -858,7 +892,7 @@ In `FilesTab.tsx`, alongside the existing FilesTab imports (near line 14):
 ```tsx
 import { DiffViewToggle } from './DiffViewToggle';
 import { DiffSettingsMenu } from './DiffSettingsMenu';
-import { useWholeFilePreference, deriveWholeFileEnabled } from './wholeFilePreference';
+import { useWholeFilePreference, deriveWholeFileEnabled, isWholeFileEligible } from './wholeFilePreference';
 ```
 
 - [ ] **Step 2: Replace the per-file whole-file state with the hook**
@@ -892,8 +926,7 @@ const wholeFileEnabled = deriveWholeFileEnabled({
 // Gating, split by scope (spec § Disabled / helper-text):
 const fullFileViewBlocked = !iterationGatePermits;
 const currentFileIneligible =
-  selectedFile !== null &&
-  (selectedFile.status !== 'modified' || selectedFile.hunks.length === 0);
+  selectedFile !== null && !isWholeFileEligible(selectedFile.status, selectedFile.hunks.length);
 const fullFileInertHere = showFullFile && iterationGatePermits && currentFileIneligible;
 const fullFileViewBlockedReason = fullFileViewBlocked
   ? "Whole-file view available only on the 'all' iteration view"
@@ -924,6 +957,72 @@ const handleWholeFileFailed = useCallback(
 
 Also delete `handleToggleLineWrap` (lines 198–200) — it is no longer referenced (the gear wires `onLineWrapChange` to `setLineWrap`). `handleToggleDiffMode` (line 193) **stays** — it is still used by `useFilesTabShortcuts` (`onToggleDiffMode`, line 235).
 
+- [ ] **Step 4b: Fix the keyboard-shortcut INPUT guard so radio/checkbox focus doesn't swallow shortcuts**
+
+The new inline `DiffViewToggle` renders always-visible **radio** inputs, and the gear renders **checkbox** inputs. `useFilesTabShortcuts` currently treats *any* `INPUT` as a text field and suppresses the `j`/`k`/`v`/`d` shortcuts when one has focus (`useFilesTabShortcuts.ts:10,14`) — so a focused tile silently breaks the shortcuts. Narrow the guard to text-entry inputs only.
+
+Files: Modify `frontend/src/hooks/useFilesTabShortcuts.ts`; Test: create `frontend/src/hooks/useFilesTabShortcuts.test.tsx`.
+
+Write the failing test first:
+
+```tsx
+// useFilesTabShortcuts.test.tsx
+import { describe, it, expect, vi } from 'vitest';
+import { render } from '@testing-library/react';
+import { useFilesTabShortcuts } from './useFilesTabShortcuts';
+
+function Harness({ onToggleDiffMode }: { onToggleDiffMode: () => void }) {
+  useFilesTabShortcuts({ onNextFile: () => {}, onPrevFile: () => {}, onToggleViewed: () => {}, onToggleDiffMode });
+  return (
+    <div>
+      <input type="radio" data-testid="r" />
+      <textarea data-testid="t" />
+    </div>
+  );
+}
+
+describe('useFilesTabShortcuts INPUT guard', () => {
+  it('fires d when a radio input is focused but not when a textarea is focused', () => {
+    const onToggle = vi.fn();
+    const { getByTestId } = render(<Harness onToggleDiffMode={onToggle} />);
+
+    getByTestId('r').focus();
+    getByTestId('r').dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+
+    getByTestId('t').focus();
+    getByTestId('t').dispatchEvent(new KeyboardEvent('keydown', { key: 'd', bubbles: true }));
+    expect(onToggle).toHaveBeenCalledTimes(1); // unchanged — still suppressed in text fields
+  });
+});
+```
+
+Run: `cd frontend && npx vitest run src/hooks/useFilesTabShortcuts.test.tsx` → FAIL (radio currently suppressed).
+
+Then narrow the guard in `useFilesTabShortcuts.ts` — replace the body of `isInputTarget`:
+
+```ts
+function isInputTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.tagName === 'INPUT') {
+    // Only text-entry inputs swallow single-key shortcuts; toggle controls
+    // (radio/checkbox) must not — the diff-view tiles + gear use them.
+    const type = (target as HTMLInputElement).type;
+    return type !== 'radio' && type !== 'checkbox';
+  }
+  if (INPUT_TAG_NAMES.has(target.tagName)) return true; // TEXTAREA, SELECT
+  if (target.closest('[contenteditable="true"]')) return true;
+  return false;
+}
+```
+
+Re-run the test → PASS. Commit:
+
+```bash
+git add frontend/src/hooks/useFilesTabShortcuts.ts frontend/src/hooks/useFilesTabShortcuts.test.tsx
+git commit -m "fix(#185): don't suppress Files-tab shortcuts when a radio/checkbox control has focus"
+```
+
 - [ ] **Step 5: Replace the three toolbar buttons with the new components**
 
 In the toolbar JSX, replace the three `<button>` elements (lines 427–473 — the `diffModeToggle`, `wholeFileToggle`, and `lineWrapToggle` buttons) with:
@@ -951,7 +1050,7 @@ In the toolbar JSX, replace the three `<button>` elements (lines 427–473 — t
 
 - [ ] **Step 6: Remove obsolete CSS**
 
-In `FilesTab.module.css`, delete the now-unused rules: `.toolbarToggleButton`, `.toolbarToggleButton[aria-pressed='true']`, `.toolbarToggleButton:disabled`, `.diffModeToggle`, `.wholeFileToggle`, `.lineWrapToggle` (lines 71–106). Leave `.filesTabToolbar` and the rest intact.
+In `FilesTab.module.css`, delete the now-unused rules **by name** (currently ~lines 73–106 — delete by rule name, not a fixed line range, to avoid clipping the adjacent `@keyframes skeleton-pulse`): `.toolbarToggleButton`, `.toolbarToggleButton[aria-pressed='true']`, `.toolbarToggleButton:disabled`, `.diffModeToggle`, `.wholeFileToggle`, `.lineWrapToggle`. Delete the base `.toolbarToggleButton` **together with** its three `composes:` consumers in the same edit — CSS Modules errors on a dangling `composes` target. Then grep `FilesTab.module.css` for any remaining `margin-left: auto` to confirm none lingers on a removed wrapper (the right-alignment now lives on `.diffViewToggle`). Leave `.filesTabToolbar` and the rest intact.
 
 - [ ] **Step 7: Verify types, tests, lint, build**
 
@@ -984,43 +1083,54 @@ git commit -m "feat(#185): wire FilesTab to inline DiffViewToggle + gear DiffSet
 **Files:**
 - Create: `frontend/e2e/diff-settings-menu.spec.ts`
 
-Use the hermetic fake fixture `acme/api/123` (per repo convention for hermetic specs). Mirror an existing toolbar spec — read `frontend/e2e/diff-scroll-regression.spec.ts` for the fixture-bootstrap + navigation helper used in this repo, and reuse the same setup (do not invent a new harness).
+Use the hermetic fake fixture `acme/api/123` via the **real** `./helpers/s4-setup` harness (confirmed from `diff-scroll-regression.spec.ts`): `resetBackendState(request)` → `setupAndOpenScenarioPr(page)` → `page.goto('/pr/acme/api/123/files')`. Select file rows by `[data-testid="files-tab-tree-row"][data-path="<path>"]` (the canonical fixture includes `src/Calc.cs`; confirm a second modified file path from the fixture during implementation and use it for the file-switch step). The diff mode marker is the class on `[data-testid="diff-pane"]` — assert via `toHaveClass(/diff-pane--split/)` (there is **no** `data-diff-mode` attribute).
 
 - [ ] **Step 1: Write the e2e spec**
 
 ```ts
 // diff-settings-menu.spec.ts
 import { test, expect } from '@playwright/test';
-// Reuse the same fixture bootstrap + navigation as diff-scroll-regression.spec.ts.
-// (Import/copy that file's setup helpers; placeholder import shown — wire to the
-// actual helper name found there during implementation.)
-import { gotoFilesTab } from './helpers/filesTab'; // adjust to the real helper used by diff-scroll-regression
+import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 test.describe('Diff settings menu (#185)', () => {
+  test.beforeEach(async ({ page, request }) => {
+    await resetBackendState(request);
+    await setupAndOpenScenarioPr(page);
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+  });
+
   test('inline tiles switch Split/Unified; gear toggles wrap; full-file is view-wide', async ({ page }) => {
-    await gotoFilesTab(page, { owner: 'acme', repo: 'api', number: 123 });
+    const diffPane = page.locator('[data-testid="diff-pane"]');
 
-    // Inline tiles select Split -> two-column diff.
+    // Inline tiles: select Split -> two-column diff; Unified -> single column.
     await page.getByTestId('diff-view-split').check();
-    await expect(page.locator('[data-testid="files-tab-diff"] .diff-pane--split, [data-diff-mode="side-by-side"]').first()).toBeVisible();
+    await expect(diffPane).toHaveClass(/diff-pane--split/);
+    await page.getByTestId('diff-view-unified').check();
+    await expect(diffPane).toHaveClass(/diff-pane--unified/);
 
-    // Gear opens; toggle Wrap long lines.
+    // Gear opens; toggle Wrap long lines; Escape closes and returns focus.
     await page.getByTestId('diff-settings-trigger').click();
     await expect(page.getByTestId('diff-settings-panel')).toBeVisible();
     await page.getByTestId('line-wrap-checkbox').check();
 
-    // Toggle Show full file, close gear, switch files -> still full file (view-wide).
+    // Toggle Show full file, close gear, switch to another eligible file ->
+    // the global preference persists (view-wide); no per-file re-toggle.
     await page.getByTestId('show-full-file-checkbox').check();
     await page.keyboard.press('Escape');
-    const rows = page.getByTestId('files-tab-tree-row');
-    await rows.nth(1).click();
+    await expect(page.getByTestId('diff-settings-trigger')).toBeFocused();
+
+    // Switch files (use a second known modified path from the fixture).
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="<SECOND_MODIFIED_PATH>"]').click();
     await page.getByTestId('diff-settings-trigger').click();
-    await expect(page.getByTestId('show-full-file-checkbox')).toBeChecked();
+    await expect(page.getByTestId('show-full-file-checkbox')).toBeChecked(); // still on
   });
 });
 ```
 
-> If `diff-scroll-regression.spec.ts` inlines its setup rather than using a shared helper, inline the same steps here instead of importing — match whatever that file does. The exact diff-mode selector (`.diff-pane--split` vs a `data-` attribute) must be confirmed against `DiffPane`'s rendered class; adjust the assertion to the real marker.
+> Replace `<SECOND_MODIFIED_PATH>` with a real second modified file from the `acme/api/123` fixture (list the tree during implementation; if the fixture has only one file, inject a second via the `advance-head` hook as `diff-scroll-regression.spec.ts` does, or assert the view-wide persistence by toggling iteration range instead). The persistence assertion (checkbox still checked after a file switch) is the observable proof of the view-wide behavior.
+
+> **Ineligible auto-select scenario** (spec-required, but needs an added/no-hunks first file the hermetic fixture may not provide): covered as a manual check in Task 8 Step 2 on a real PR (enable Show full file, select an added file, confirm the diff falls back to hunks and the mandatory inert note renders) rather than forced into a brittle hermetic e2e. The eligibility logic itself is unit-tested in Task 3 (`deriveWholeFileEnabled` → false for `added`/no-hunks).
 
 - [ ] **Step 2: Run the e2e**
 
@@ -1040,15 +1150,22 @@ git commit -m "test(#185): Playwright e2e — inline tiles, gear, view-wide full
 
 **Files:** none (verification + assets).
 
-- [ ] **Step 1: a11y sweep** — confirm the new controls pass axe. Run the existing audit: `cd frontend && npx playwright test a11y-audit.spec.ts`. Expected: no new violations on the Files tab (labelled radiogroup, gear with accessible name, checkboxes with labels, helper text via `aria-describedby`). Fix any violation before proceeding.
+- [ ] **Step 1: a11y sweep** — confirm the new controls pass axe. Run the existing audit: `cd frontend && npx playwright test a11y-audit.spec.ts`. Expected: no new violations on the Files tab (labelled radiogroup, gear with accessible name, checkboxes with labels, helper text via `aria-describedby`). Fix any violation before proceeding. **Also manually verify the helper-text contrast** (`.helper` = `--text-2` on `--surface-1` at `--text-xs`) meets WCAG AA (4.5:1) in **both** light and dark themes — compute oklch→luminance per the PR #165 method. If it falls short, bump `.helper` to `--text-1` or raise the size to ≥0.8125rem. The inert note is mandatory communication, so it must be readable.
 
-- [ ] **Step 2: Launch the app and capture B1 visual proof** — start the app with `pwsh ./run.ps1 -Reset None --no-browser` (Development, real PAT, `localhost:5180`). Open a real PR with modified files (e.g. the BFF repo). Capture **light + dark** screenshots of: (a) the toolbar showing the inline `[Unified | Split]` tiles + the gear (incl. the gear's modified-dot when a setting is on), and (b) the open Diff-settings panel. Verify the ADO icons read correctly and the Split tile greys out below 900px.
+- [ ] **Step 2: Launch the app and capture B1 visual proof** — start the app with `pwsh ./run.ps1 -Reset None --no-browser` (Development, real PAT, `localhost:5180`). Open a real PR with modified files (e.g. the BFF repo). Capture **light + dark** screenshots of: (a) the toolbar showing the inline `[Unified | Split]` tiles + the gear (incl. the gear's modified-dot when a setting is on), and (b) the open Diff-settings panel. Verify the ADO icons read correctly and the Split tile greys out below 900px. **Also exercise the ineligible-file path** (spec-required, not in the hermetic e2e): with Show full file enabled, select an **added** file — confirm the diff falls back to hunks, the gear's modified-dot stays on, and the mandatory inert note renders in the panel. Confirm the gear dot does **not** show when the only "on" setting is a view-blocked full-file (non-'all' iteration).
 
 - [ ] **Step 3: Full pre-push checklist** — from `.ai/docs/development-process.md`, run every step: `npx tsc --noEmit`, `npx vitest run`, `npm run lint` (prettier directly, not via rtk), `npm run build`. All green.
 
 - [ ] **Step 4: Commit any fixes** (if Steps 1–3 surfaced changes), then this task is the handoff point to `pr-autopilot` (the PR is opened with the B1 screenshots embedded for the human visual-assert gate — gated B1).
 
 ---
+
+## Residual risks (accepted / deferred — from plan review)
+
+- **`handleWholeFileFailed` closes over `selectedPath`.** If an in-flight whole-file fetch for file A rejects *after* an SSE-driven auto-select moved selection to file B, the wrong path could be marked failed. This is the **same shape as the pre-existing per-file code** (not a regression introduced here); the window is narrow (one selected file fetches at a time). Accepted as-is. If it proves real, the fix is to extend `DiffPane`'s `onWholeFileFailed(reason)` → `onWholeFileFailed(reason, path)` and mark that path — deferred (touches the DiffPane contract; out of this PR's scope).
+- **Escape `stopPropagation` in the gear.** The menu deliberately stops Escape from bubbling so it closes only the menu, not an ancestor (PR-detail/keep-alive). During Task 6, confirm no ancestor relies on receiving Escape while the menu is open; if one does, it is intentionally shadowed only while the panel is open.
+- **`diffIcons.tsx` single-file for three icons.** Kept (not inlined) for cohesion of the icon set and as the natural home for #184's future toggle icon; the file boundary aids discoverability. A reviewer flagged it as possible premature extraction — accepted as a deliberate, low-cost choice.
+- **ADO bowtie glyph fidelity.** The Task 1 SVG paths approximate `bowtie-diff-inline` / `bowtie-diff-side-by-side`; the **B1 visual gate is the confirmation**. If they read wrong, a mid-PR SVG swap is expected and cheap (single file).
 
 ## Self-Review (run before handoff)
 
@@ -1058,7 +1175,8 @@ git commit -m "test(#185): Playwright e2e — inline tiles, gear, view-wide full
 - Corrected reuse boundary (outside-click + focus-return-on-all-paths are net-new) → Task 4 (component + tests for all close paths).
 - Gear active-state indicator → Task 4.
 - Native checkboxes, stable labels, keyboard contract, Escape-from-any-control → Tasks 4, 5.
-- View-wide `showFullFile` + `wholeFileFailedPaths` + retry-on-re-enable + lazy fetch (one file) → Task 3 (hook/derive) + Task 6 (wiring; `wholeFileEnabled` derived, not raw `showFullFile`, to `DiffPane`).
+- View-wide `showFullFile` + `failedPaths` + retry-on-re-enable + lazy fetch (one file) → Task 3 (hook/derive; shared `isWholeFileEligible` predicate) + Task 6 (wiring; `wholeFileEnabled` derived, not raw `showFullFile`, to `DiffPane`).
+- `d`/`j`/`k`/`v` shortcuts keep working when a tile/checkbox has focus → Task 6 Step 4b (narrowed INPUT guard + test).
 - Gating reclassified: view-level disable vs mandatory per-file inert note → Tasks 5, 6.
 - Tests split chrome vs behavior-change → Tasks 2/4/5 (chrome) vs Task 3 + Task 7 (behavior).
 - B1 visual proof (light+dark) + a11y → Task 8.
