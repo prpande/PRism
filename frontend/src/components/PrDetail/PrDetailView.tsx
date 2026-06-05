@@ -22,6 +22,7 @@ import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
+import { ErrorBox } from '../ErrorBox';
 
 // Keep-alive PR-detail view. Owns the active sub-tab as component STATE (not
 // URL routing) and renders sub-tabs DIRECTLY (not via React Router <Outlet>),
@@ -310,9 +311,8 @@ export function PrDetailView({
         onSelectSubTab={selectSubTab}
       />
       {error && (
-        <div role="alert" className="pr-detail-error">
-          Couldn't load PR — {error.message}
-        </div>
+        // .pr-detail-error is a test hook only (no CSS rule); preserved for PrDetailView.freshness.test.tsx
+        <ErrorBox className="pr-detail-error">Couldn't load PR — {error.message}</ErrorBox>
       )}
       {/* #180 — gate the page skeleton on the ABSENCE of data. On a same-PR
           background reload (re-activation freshness or the manual Reload

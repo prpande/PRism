@@ -20,6 +20,7 @@ import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
 import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
 import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
 import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
+import { ErrorBox } from './components/ErrorBox';
 
 function TabSignals() {
   useTabUnreadSignal();
@@ -42,7 +43,11 @@ export function App() {
   }, []);
 
   if (authState === null && error) {
-    return <div role="alert">Failed to load auth state: {error.message}</div>;
+    return (
+      <div className="error-screen">
+        <ErrorBox>Failed to load auth state: {error.message}</ErrorBox>
+      </div>
+    );
   }
   if (authState === null) return <LoadingScreen />;
 

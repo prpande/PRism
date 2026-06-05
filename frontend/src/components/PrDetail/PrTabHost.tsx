@@ -4,6 +4,7 @@ import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { prRefKey, type PrReference } from '../../api/types';
 import { type PrTabId } from './PrSubTabStrip';
 import { PrDetailView } from './PrDetailView';
+import { ErrorBox } from '../ErrorBox';
 
 // Persistent keep-alive host for PR-detail views. Sibling to <Routes> (the /pr
 // route renders null), this renders one mounted PrDetailView per open tab and
@@ -63,7 +64,7 @@ export function PrTabHost() {
           mounted (all hidden, since an invalid route has no activeKey) and
           their state survives the detour. */}
       {route && !route.valid && (
-        <div role="alert">Invalid PR reference: the PR number must be a positive integer.</div>
+        <ErrorBox>Invalid PR reference: the PR number must be a positive integer.</ErrorBox>
       )}
       {refs.map((ref) => {
         const key = prRefKey(ref);
