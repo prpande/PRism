@@ -216,6 +216,22 @@ describe('FileTree', () => {
     expect(folder?.tagName.toLowerCase()).toBe('svg');
     expect(folder).toHaveAttribute('aria-hidden', 'true');
   });
+
+  it('marks a deleted file name with the deleted class; non-deleted files do not', () => {
+    render(
+      <FileTree
+        files={[file('gone.ts', { status: 'deleted' }), file('keep.ts', { status: 'modified' })]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    expect(screen.getByText('gone.ts')).toHaveClass('file-tree-file-name--deleted');
+    expect(screen.getByText('keep.ts')).not.toHaveClass('file-tree-file-name--deleted');
+  });
 });
 
 describe('FileTree — status accessible label (item 8)', () => {

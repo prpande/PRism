@@ -127,6 +127,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.fileTreeFileNameDeleted {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger-fg);
+  text-decoration-thickness: 1.5px;
+  color: var(--text-2);
+}
 .fileTreeSpacer {
   flex: none;
   margin-left: auto;
