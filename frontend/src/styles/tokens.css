@@ -406,6 +406,18 @@ a:hover { text-decoration: underline; }
   border: 0;
 }
 
+/* Full-page error centering: a column-flex viewport-tall surface that centers
+   an ErrorBox plus any sibling action controls. Used by full-page error
+   screens (issue #182). */
+.error-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+}
+
 /* ======================================================================
    Components
    ====================================================================== */

@@ -1,0 +1,20 @@
+.errorBox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--s-2) var(--s-3);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+  border: 1px solid color-mix(in oklch, var(--danger-fg) 35%, transparent);
+  border-radius: var(--radius-2);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
