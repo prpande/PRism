@@ -69,38 +69,3 @@
     opacity: 0.85;
   }
 }
-
-.toolbarToggleButton {
-  flex-shrink: 0;
-  background: var(--surface-2);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-2);
-  padding: var(--s-1) var(--s-3);
-  font-size: var(--text-sm);
-  color: var(--text-2);
-  cursor: pointer;
-}
-.toolbarToggleButton[aria-pressed='true'] {
-  background: var(--surface-3);
-  color: var(--text-1);
-  border-color: var(--border-strong);
-}
-.toolbarToggleButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.diffModeToggle {
-  composes: toolbarToggleButton;
-  margin-left: auto;
-}
-
-.wholeFileToggle {
-  composes: toolbarToggleButton;
-  margin-left: var(--s-2);
-}
-
-.lineWrapToggle {
-  composes: toolbarToggleButton;
-  margin-left: var(--s-2);
-}
