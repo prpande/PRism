@@ -21,6 +21,13 @@ const STATUS_LABELS: Record<string, string> = {
   renamed: 'R',
 };
 
+const STATUS_WORD: Record<string, string> = {
+  added: 'Added',
+  modified: 'Modified',
+  deleted: 'Deleted',
+  renamed: 'Renamed',
+};
+
 const INDENT_PER_LEVEL = 12;
 
 const FILE_STATUS_MODULE: Record<FileChangeStatus, string> = {
@@ -187,9 +194,11 @@ function FileNodeComponent({
     >
       <span
         className={`file-status file-status--${node.file.status} ${styles.fileStatus} ${FILE_STATUS_MODULE[node.file.status]}`}
+        aria-hidden="true"
       >
         {STATUS_LABELS[node.file.status] ?? '?'}
       </span>
+      <span className="sr-only">{`${STATUS_WORD[node.file.status] ?? 'Unknown'} `}</span>
       <span className={`file-tree-file-name ${styles.fileTreeFileName}`}>{node.name}</span>
       <span className={`file-tree-spacer ${styles.fileTreeSpacer}`} />
       <span

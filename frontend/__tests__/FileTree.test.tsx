@@ -216,6 +216,42 @@ describe('FileTree', () => {
   });
 });
 
+describe('FileTree — status accessible label (item 8)', () => {
+  const cases: Array<[FileChange['status'], string, string]> = [
+    ['added', 'A', 'Added'],
+    ['modified', 'M', 'Modified'],
+    ['deleted', 'D', 'Deleted'],
+    ['renamed', 'R', 'Renamed'],
+  ];
+  it.each(cases)(
+    'exposes the SR word for %s and hides the visible letter from AT',
+    (status, letter, word) => {
+      const { container } = render(
+        <FileTree
+          files={[file('x.ts', { status })]}
+          selectedPath={null}
+          onSelectFile={vi.fn()}
+          viewedPaths={new Set()}
+          onToggleViewed={vi.fn()}
+          focusEntries={null}
+          aiPreview={false}
+        />,
+      );
+      // SR word is present and readable as a prefix
+      expect(screen.getByText(word)).toBeInTheDocument();
+      // the visible badge letter is hidden from the accessibility tree (no double-announce)
+      const badge = container.querySelector('.file-status') as HTMLElement;
+      expect(badge).toHaveTextContent(letter);
+      expect(badge).toHaveAttribute('aria-hidden', 'true');
+      // the SR word sits BETWEEN the hidden badge and the name → reads as a prefix,
+      // NOT after the name like the trailing AI-focus sr-only span (regression guard)
+      const srWord = container.querySelector('.file-status + .sr-only') as HTMLElement | null;
+      expect(srWord).toHaveTextContent(word);
+      expect(srWord?.nextElementSibling).toHaveClass('file-tree-file-name');
+    },
+  );
+});
+
 const F = (path: string, status: FileChange['status'] = 'modified'): FileChange => ({
   path,
   status,
