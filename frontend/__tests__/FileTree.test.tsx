@@ -199,7 +199,7 @@ describe('FileTree', () => {
   });
 
   it('renders an accent folder icon inside the directory toggle button', () => {
-    const { container } = render(
+    render(
       <FileTree
         files={[file('src/a.ts')]}
         selectedPath={null}
