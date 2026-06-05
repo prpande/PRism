@@ -213,7 +213,6 @@ export function PrHeader({
   // all three link sites on the detail page.
   useEffect(() => {
     if (import.meta.env.DEV && title && !htmlUrl) {
-      // eslint-disable-next-line no-console
       console.warn(
         'PrHeader: PR detail rendered without htmlUrl — Open-in-GitHub links hidden',
         reference,
