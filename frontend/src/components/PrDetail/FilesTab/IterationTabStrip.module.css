@@ -3,7 +3,7 @@
   display: flex;
   gap: var(--s-2);
   flex-wrap: wrap;
-  padding: var(--s-2) 0;
+  padding: 2px 0;
 }
 
 .iterationTab {
@@ -11,7 +11,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  padding: var(--s-2) var(--s-3);
+  padding: 5px var(--s-3);
   background: var(--surface-2);
   border: 1px solid var(--border-1);
   border-radius: var(--radius-3);
