@@ -12,7 +12,9 @@
 
 **Plan deviation from spec A.2 (documented):** The spec suggested *moving* the CI/mergeability chip out of `.prSubtitle` in JSX. This plan keeps the chip in `.prSubtitle` and instead, in the collapsed state, **reflows `.pr-meta` to a row and hides only the non-chip subtitle children** — achieving the same compact row with pure CSS and no JSX restructure. Same acceptance criteria, simpler change.
 
-**Plan deviation — motion:** The collapse is **instant** (no height animation); only the chevron rotation transitions (≤150ms, suppressed under reduced-motion). A height/opacity ease over a `flex-direction`-changing reflow is not cleanly animatable, and on a user-initiated toggle an instant snap is acceptable and avoids the "empty-box intermediate frame" the review flagged.
+**Plan deviation — motion:** The collapse is **instant** (no height animation); only the chevron rotation transitions (≤150ms, suppressed under reduced-motion). A height/opacity ease over a `flex-direction`-changing reflow is not cleanly animatable, and on a user-initiated toggle an instant snap is acceptable and avoids the "empty-box intermediate frame" the review flagged. **Spec AC 9 interpretation:** the chevron rotation is the *only* animated transition, so reduced-motion has only that to suppress (handled by the Task 3 `@media` block); there is no collapse height/opacity transition, so the spec's "collapse transition suppressed" is satisfied vacuously and **no separate reduced-motion e2e case is written** (a CSS-level media query, not an observable behavioral assertion).
+
+**Plan deviation from spec A.1 — hook location:** Spec A.1 sketched the state in `PrDetailView` (passed to `PrHeader` as a prop). This plan puts `usePrHeaderCollapsed` **directly in `PrHeader`** (which already has `reference` → `prRefKey`), avoiding prop-drilling through `PrDetailView`. Same per-PR/session-only semantics; `PrDetailView` is untouched.
 
 ---
 
@@ -204,8 +206,9 @@ Change the root opening tag:
 ```tsx
 // FROM:
 <div className={styles.prHeader} data-testid="pr-header">
-// TO:
-<div className={styles.prHeader} data-testid="pr-header" data-collapsed={collapsed || undefined}>
+// TO: (explicit string value so e2e `toHaveAttribute('data-collapsed','true')`
+// is unambiguous; `undefined` omits the attribute entirely when expanded)
+<div className={styles.prHeader} data-testid="pr-header" data-collapsed={collapsed ? 'true' : undefined}>
 ```
 
 Change the meta column opening tag (the `pr-meta col gap-1` div) to add an id:
@@ -308,10 +311,25 @@ git commit -m "feat(#128): PrHeader chevron toggle (sibling of tablist) + data-c
 .collapseToggle:active {
   background: var(--surface-3);
 }
+/* Explicit focus ring clipped to the button's own radius (the global
+   :focus-visible uses --radius-1; the button is --radius-2, so match it here to
+   avoid a mismatched ring corner — spec called for an aligned focus state). */
+.collapseToggle:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-2);
+}
 .collapseToggle svg {
   transition: transform var(--t-fast);
 }
 ```
+
+> **Chevron vertical alignment (verify at the visual gate):** `.prTabs` carries
+> `margin-top: var(--s-4)`, so with `.subTabRow { align-items: center }` the
+> chevron may sit slightly low against the tab labels. If it floats, the fix is
+> to move that top spacing onto `.subTabRow` (`margin-top: var(--s-4)` on the row,
+> remove it from `.prTabs`) or switch the row to `align-items: flex-end`. Confirm
+> by eye in Step 3.
 
 - [ ] **Step 2: Append the collapsed-meta reflow rules**
 
@@ -344,7 +362,13 @@ git commit -m "feat(#128): PrHeader chevron toggle (sibling of tablist) + data-c
 .prHeader[data-collapsed] .prSubtitle {
   flex: 0 0 auto;
 }
-.prHeader[data-collapsed] .prSubtitle > :not(.chip-ci):not(.chip-mergeability) {
+/* Keep ONLY the CI + mergeability chips; hide author/branch/iterationLabel.
+   .chip-ci / .chip-mergeability are GLOBAL classes (className strings in
+   PrHeader.tsx, no module rule), so they MUST be wrapped in :global() — a bare
+   .chip-ci inside a CSS Module is hashed and matches nothing, which would hide
+   the very chips we want to keep. Same idiom as DiffPane.module.css's
+   :global(.diff-pane--split:not(...)). */
+.prHeader[data-collapsed] .prSubtitle > :not(:global(.chip-ci)):not(:global(.chip-mergeability)) {
   display: none;
 }
 .prHeader[data-collapsed] .collapseToggle svg {
@@ -528,7 +552,11 @@ test.describe('#128 collapsible PR header + toolbar trim', () => {
     const toolbarH = await page
       .locator('.files-tab-toolbar')
       .evaluate((el) => el.getBoundingClientRect().height);
-    expect(toolbarH).toBeLessThan(60); // was ~77px
+    // Was ~77px. <60 holds for the canonical 3-iteration acme/api/123 fixture at
+    // 1440px (single row). The toolbar has flex-wrap:wrap, so a much larger
+    // iteration set could wrap to 2 rows and break this — acceptable given the
+    // fixed hermetic fixture.
+    expect(toolbarH).toBeLessThan(60);
 
     await expect(page.locator('[data-testid="whole-file-toggle"]')).toBeVisible();
     await expect(page.locator('[data-testid="line-wrap-toggle"]')).toBeVisible();
@@ -660,7 +688,7 @@ A stale baseline must not be mistaken for a regression nor a real regression hid
 
 - [ ] **Step 3: Capture the B1 human-gate proof**
 
-Launch the real app and capture live before/after screenshots — expanded, collapsed, and toolbar-trimmed — in **light and dark**. These are the human-gated proof for the PR `## Proof` section (host on a `review-assets/pr-N` branch, embed via raw URLs).
+Launch the real app and capture live before/after screenshots — expanded, collapsed, and toolbar-trimmed — in **light and dark** (toggle the theme via the Settings page appearance control, which sets `data-theme`; the automated parity baselines only cover the default theme, so dark is manual-gate-only here). These are the human-gated proof for the PR `## Proof` section (host on a `review-assets/pr-N` branch, embed via raw URLs).
 
 - [ ] **Step 4: Commit**
 
