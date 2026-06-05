@@ -149,9 +149,11 @@ pattern as other optional fields).
 
 ### 4.4 Frontend types (`frontend/src/api/types.ts`)
 
-Add `avatarUrl?: string` to the 4 mirrored interfaces: `PrInboxItem` (line 94),
-`PrDetailPr` (line 146), `IssueCommentDto` (line 181), `ReviewCommentDto`
-(line 188).
+Add `avatarUrl?: string | null` to the 4 mirrored interfaces: `PrInboxItem`
+(line 94), `PrDetailPr` (line 146), `IssueCommentDto` (line 181),
+`ReviewCommentDto` (line 188). Optional **and** nullable: optional so existing
+object literals compile without churn; `| null` because the backend emits an
+explicit `null` (not an absent field) when an Actor has no avatar.
 
 ## 5. The `<Avatar>` component
 

@@ -31,7 +31,7 @@
 **Backend (test):**
 - `tests/PRism.GitHub.Tests/GitHubReviewServicePrDetailTests.cs` — inline-JSON value assertions (author/comment/bot/null)
 - `tests/PRism.GitHub.Tests/GitHubReviewServiceInboxSectionTests.cs` (or the existing inbox section-query test) — REST `avatar_url` assertion
-- `tests/PRism.GitHub.Tests.Integration/Helpers/FixtureStripAllowlist.cs` + `Fixtures/pr19-graphql-response.json` — **integration-gated** (see Task 9; not on the normal CI path)
+- `tests/PRism.GitHub.Tests.Integration/Helpers/FixtureStripAllowlist.cs` + `Fixtures/pr19-graphql-response.json` — **integration-gated** (see Task 13; not on the normal CI path)
 
 **Frontend (create):**
 - `frontend/src/components/Avatar/Avatar.tsx`
@@ -120,7 +120,7 @@ git commit -m "feat(#127): add nullable AvatarUrl to author-bearing records"
 ## Task 2: GraphQL query + PR-detail mappers carry `avatarUrl`
 
 **Files:**
-- Modify: `PRism.GitHub/GitHubReviewService.cs:40,41,43` (query) and `:1009-1013,1034-1050` (`ParsePr`), `:1061-1069` (`ParseRootComments`), `:1093-1104` (`ParseReviewThreads`)
+- Modify: `PRism.GitHub/GitHubReviewService.cs:40,41,43` (query) and `:1009-1013,1034-1050` (`ParsePr`), `:1053-1069` (`ParseRootComments`), `:1093-1104` (`ParseReviewThreads`)
 - Test: `tests/PRism.GitHub.Tests/GitHubReviewServicePrDetailTests.cs`
 
 `avatarUrl` is a field on GitHub's `Actor` interface, so it resolves for both `User` and `Bot` authors with no extra token scope (see the scope comment at `GitHubReviewService.cs:21`). The timeline query (`:44-49`) has no author render site and is **not** changed.
@@ -147,14 +147,15 @@ Then add this test method to the class:
     [Fact]
     public async Task GetPrDetailAsync_carries_avatar_urls_for_author_and_comments()
     {
-        var handler = new StubHandler(PrDetailGraphQLBody);
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailGraphQLBody };
         var svc = NewService(handler);
 
-        var detail = await svc.GetPrDetailAsync(new PrReference("o", "r", 42), CancellationToken.None);
+        var dto = await svc.GetPrDetailAsync(new PrReference("o", "r", 42), CancellationToken.None);
 
-        detail.Pr.AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
-        detail.RootComments.Single().AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/2?v=4");
-        detail.ReviewThreads.Single().Comments.Single().AvatarUrl
+        dto.Should().NotBeNull();
+        dto!.Pr.AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
+        dto.RootComments.Single().AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/2?v=4");
+        dto.ReviewComments.Single().Comments.Single().AvatarUrl
             .Should().Be("https://avatars.githubusercontent.com/u/2?v=4");
     }
 
@@ -179,16 +180,17 @@ Then add this test method to the class:
           } } }
         }
         """;
-        var svc = NewService(new StubHandler(body));
+        var svc = NewService(new GraphQLPlusRestHandler { GraphQLBody = body });
 
-        var detail = await svc.GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+        var dto = await svc.GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
 
-        detail.Pr.AvatarUrl.Should().Be("https://avatars.githubusercontent.com/in/29110?v=4");
-        detail.RootComments.Single().AvatarUrl.Should().BeNull();
+        dto.Should().NotBeNull();
+        dto!.Pr.AvatarUrl.Should().Be("https://avatars.githubusercontent.com/in/29110?v=4");
+        dto.RootComments.Single().AvatarUrl.Should().BeNull();
     }
 ```
 
-> Note: if the existing tests use a different stub-handler helper than `StubHandler`/`detail.RootComments`/`detail.ReviewThreads`, match the names already in this file (read the top of the file and an existing `GetPrDetailAsync_*` test). The two assertions that matter are `.AvatarUrl` on `Pr`, on a root `IssueCommentDto`, and on a `ReviewCommentDto`.
+> Confirmed against the real file: the harness is `GraphQLPlusRestHandler { GraphQLBody = ... }`; `GetPrDetailAsync` returns a **nullable** `PrDetailDto?`, so assert `dto.Should().NotBeNull(); dto!.…`. The PR-detail DTO's review collection member is **`ReviewComments`** (a `IReadOnlyList<ReviewThreadDto>`), not `ReviewThreads` — each thread's comments are under `.Comments`. The three load-bearing assertions are `.AvatarUrl` on `Pr`, on a root `IssueCommentDto` (`dto.RootComments`), and on a `ReviewCommentDto` (`dto.ReviewComments[..].Comments[..]`).
 
 - [ ] **Step 2: Run the tests to confirm they fail**
 
@@ -261,44 +263,46 @@ git commit -m "feat(#127): request + map avatarUrl on PR author and comments (Gr
 **Files:**
 - Modify: `PRism.GitHub/Inbox/GitHubSectionQueryRunner.cs:143-156`
 - Modify: `PRism.Core/Inbox/InboxRefreshOrchestrator.cs:287-293`
-- Test: `tests/PRism.GitHub.Tests/GitHubReviewServiceInboxSectionTests.cs` (locate the existing inbox section-query test by grepping for `SearchAsync`/`search/issues` in `tests/PRism.GitHub.Tests`; if none exists, create this file)
+- Test: `tests/PRism.GitHub.Tests/Inbox/GitHubSectionQueryRunnerTests.cs`
 
 GitHub's `search/issues` item `user` object is a simple-user that already includes `avatar_url` on the same node the code reads `login` from.
 
 - [ ] **Step 1: Write the failing test**
 
-Add (or create) a test that drives a `search/issues` response with a `user.avatar_url` through the section query and asserts the resulting `RawPrInboxItem.AvatarUrl`. Minimal shape (match the file's existing handler/helper if one exists):
+Add this test to `GitHubSectionQueryRunnerTests` (it uses the file's existing `BuildSut`, `FakeHttpMessageHandler` delegate, and `Respond` helpers — confirmed present). `QueryAllAsync` returns `IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>` keyed by section id, so index the section, then assert the item's `AvatarUrl`:
 
 ```csharp
     [Fact]
-    public async Task SearchAsync_carries_user_avatar_url_to_raw_item()
+    public async Task Search_carries_user_avatar_url_to_raw_item()
     {
         const string body = """
         {
           "items": [
             {
-              "title": "Add pagination",
-              "updated_at": "2026-01-01T00:00:00Z",
-              "comments": 2,
-              "user": { "login": "alice", "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4" },
-              "pull_request": { "html_url": "https://github.com/acme/api/pull/7" }
+              "number": 42,
+              "title": "Test PR",
+              "user": { "login": "amelia", "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4" },
+              "repository_url": "https://api.github.com/repos/acme/api",
+              "updated_at": "2026-05-06T10:00:00Z",
+              "comments": 3,
+              "pull_request": { "html_url": "https://github.com/acme/api/pull/42" }
             }
           ]
         }
         """;
-        var runner = NewRunner(new StubHandler(body));   // match the file's existing factory helper
+        var handler = new FakeHttpMessageHandler((_) => Respond(HttpStatusCode.OK, body));
+        var sut = BuildSut(handler);
 
-        var items = await runner.QueryAllAsync(/* sections */, token: "ghp_test", CancellationToken.None);
+        var result = await sut.QueryAllAsync(new HashSet<string> { "review-requested" }, default);
 
-        items.Single().AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
+        result["review-requested"].Single().AvatarUrl
+            .Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
     }
 ```
 
-> If no inbox-runner unit test exists, prefer adding the assertion to the closest existing inbox test instead of standing up a new harness. The single load-bearing assertion is `RawPrInboxItem.AvatarUrl` (and, end-to-end, `PrInboxItem.AvatarUrl`) equals the `avatar_url` string.
-
 - [ ] **Step 2: Run to confirm it fails**
 
-Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~InboxSection" --configuration Release`
+Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~GitHubSectionQueryRunner" --configuration Release`
 Expected: FAIL — `AvatarUrl` is null (not yet read).
 
 - [ ] **Step 3: Read `avatar_url` and pass it to `RawPrInboxItem`**
@@ -339,13 +343,13 @@ In `InboxRefreshOrchestrator.MaterializePrInboxItem` (`:287-293`), append `r.Ava
 
 - [ ] **Step 5: Run to confirm it passes**
 
-Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~InboxSection" --configuration Release`
+Run: `dotnet test tests/PRism.GitHub.Tests/PRism.GitHub.Tests.csproj --filter "FullyQualifiedName~GitHubSectionQueryRunner" --configuration Release`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add PRism.GitHub/Inbox/GitHubSectionQueryRunner.cs PRism.Core/Inbox/InboxRefreshOrchestrator.cs tests/PRism.GitHub.Tests/GitHubReviewServiceInboxSectionTests.cs
+git add PRism.GitHub/Inbox/GitHubSectionQueryRunner.cs PRism.Core/Inbox/InboxRefreshOrchestrator.cs tests/PRism.GitHub.Tests/Inbox/GitHubSectionQueryRunnerTests.cs
 git commit -m "feat(#127): carry user.avatar_url from inbox search through to PrInboxItem"
 ```
 
@@ -358,7 +362,7 @@ git commit -m "feat(#127): carry user.avatar_url from inbox search through to Pr
 - [ ] **Step 1: Run the full backend build + test**
 
 Run: `dotnet build --configuration Release` then `dotnet test --configuration Release`
-Expected: build 0 errors / 0 warnings; all unit tests pass. (The `Category=Integration` frozen-PR tests are handled in Task 9 and are not part of this run — they are gated by a live PAT.)
+Expected: build 0 errors / 0 warnings; all unit tests pass. (The `Category=Integration` frozen-PR tests are handled in Task 13 and are not part of this run — they are gated by a live PAT.)
 
 - [ ] **Step 2: Commit (only if any incidental fix was needed)**
 
@@ -375,17 +379,17 @@ git commit -am "test(#127): backend suite green with AvatarUrl plumbed" --allow-
 
 - [ ] **Step 1: Add the field to the four interfaces**
 
-`PrInboxItem` (after `author`, `:94`): add `avatarUrl: string | null;`
-`PrDetailPr` (after `author`, `:146`): add `avatarUrl: string | null;`
-`IssueCommentDto` (after `author`, `:181`): add `avatarUrl: string | null;`
-`ReviewCommentDto` (after `author`, `:188`): add `avatarUrl: string | null;`
+`PrInboxItem` (after `author`, `:94`): add `avatarUrl?: string | null;`
+`PrDetailPr` (after `author`, `:146`): add `avatarUrl?: string | null;`
+`IssueCommentDto` (after `author`, `:181`): add `avatarUrl?: string | null;`
+`ReviewCommentDto` (after `author`, `:188`): add `avatarUrl?: string | null;`
 
-Use `string | null` (the backend always emits the camelCase `avatarUrl`, null when absent), matching the existing nullable-field convention (`editedAt: string | null`).
+Use `?: string | null` (optional **and** nullable). The backend always emits the camelCase `avatarUrl` (null when absent), so `| null` matches the wire; making it **optional** (`?:`) means existing object literals that build these interfaces without the field still compile — avoiding churn across every mocked fixture. This also matches the Avatar prop type `src?: string | null`. (This refines the spec §4.4 `avatarUrl?: string` to additionally allow `null`, the honest wire shape.)
 
 - [ ] **Step 2: Typecheck**
 
 Run: `cd frontend && npx tsc -b`
-Expected: 0 errors. (Existing test fixtures that build these objects literally will now error if they're strict — fix any by adding `avatarUrl: null` to those literals. The `InboxRow.test.tsx` `PR` literal at `:9-26` is updated in Task 7; PR-detail fixtures, if strict, get `avatarUrl: null` here.)
+Expected: 0 errors. Because the field is optional, existing literals need no change; the Task 7 InboxRow fixture adds `avatarUrl` only to exercise the populated path.
 
 - [ ] **Step 3: Commit**
 
@@ -410,64 +414,70 @@ The component reuses the global `.avatar` / `.avatar-sm` / `.avatar-lg` token cl
 `Avatar.test.tsx`:
 ```tsx
 import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, fireEvent } from '@testing-library/react';
 import { Avatar } from './Avatar';
 
 const HTTPS = 'https://avatars.githubusercontent.com/u/1?v=4';
 
 describe('Avatar', () => {
   it('always renders the initial as the base layer, uppercased', () => {
-    render(<Avatar login="alice" />);
-    expect(screen.getByText('A')).toBeInTheDocument();
+    const { getByText } = render(<Avatar login="alice" />);
+    expect(getByText('A')).toBeInTheDocument();
   });
 
   it('renders an <img> over the initials when src is an https URL', () => {
-    render(<Avatar src={HTTPS} login="alice" />);
-    const img = screen.getByRole('presentation', { hidden: true });
-    expect(img).toHaveAttribute('src', HTTPS);
-    expect(img).toHaveAttribute('referrerpolicy', 'no-referrer');
+    const { container } = render(<Avatar src={HTTPS} login="alice" />);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe(HTTPS);
+    expect(img!.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(img!.getAttribute('loading')).toBe('eager'); // md default
+  });
+
+  it('uses lazy loading at the sm size', () => {
+    const { container } = render(<Avatar src={HTTPS} login="alice" size="sm" />);
+    expect(container.querySelector('img')!.getAttribute('loading')).toBe('lazy');
   });
 
   it('drops the <img> and shows initials when the image errors', () => {
-    render(<Avatar src={HTTPS} login="alice" />);
-    fireEvent.error(screen.getByRole('presentation', { hidden: true }));
-    expect(screen.queryByRole('presentation', { hidden: true })).not.toBeInTheDocument();
-    expect(screen.getByText('A')).toBeInTheDocument();
+    const { container, getByText } = render(<Avatar src={HTTPS} login="alice" />);
+    fireEvent.error(container.querySelector('img')!);
+    expect(container.querySelector('img')).toBeNull();
+    expect(getByText('A')).toBeInTheDocument();
   });
 
   it('recovers on a new src after a prior error (instance reused)', () => {
-    const { rerender } = render(<Avatar src={HTTPS} login="alice" />);
-    fireEvent.error(screen.getByRole('presentation', { hidden: true }));
-    expect(screen.queryByRole('presentation', { hidden: true })).not.toBeInTheDocument();
+    const { container, rerender } = render(<Avatar src={HTTPS} login="alice" />);
+    fireEvent.error(container.querySelector('img')!);
+    expect(container.querySelector('img')).toBeNull();
     rerender(<Avatar src="https://avatars.githubusercontent.com/u/2?v=4" login="alice" />);
-    expect(screen.getByRole('presentation', { hidden: true })).toHaveAttribute(
-      'src',
+    expect(container.querySelector('img')!.getAttribute('src')).toBe(
       'https://avatars.githubusercontent.com/u/2?v=4',
     );
   });
 
   it('strips a [bot] suffix before deriving the initial', () => {
-    render(<Avatar login="dependabot[bot]" />);
-    expect(screen.getByText('D')).toBeInTheDocument();
+    const { getByText } = render(<Avatar login="dependabot[bot]" />);
+    expect(getByText('D')).toBeInTheDocument();
   });
 
   it('uses a digit initial for digit-leading logins and tolerates empty login', () => {
-    const { rerender } = render(<Avatar login="42user" />);
-    expect(screen.getByText('4')).toBeInTheDocument();
+    const { getByText, getByTestId, rerender } = render(<Avatar login="42user" />);
+    expect(getByText('4')).toBeInTheDocument();
     rerender(<Avatar login="" />);
     // empty login: no throw, no initial character
-    expect(screen.getByTestId('avatar')).toBeInTheDocument();
+    expect(getByTestId('avatar')).toBeInTheDocument();
   });
 
   it('does not render an <img> for a non-https src (falls back to initials)', () => {
-    render(<Avatar src={'data:image/svg+xml,<svg/>' as string} login="alice" />);
-    expect(screen.queryByRole('presentation', { hidden: true })).not.toBeInTheDocument();
-    expect(screen.getByText('A')).toBeInTheDocument();
+    const { container, getByText } = render(<Avatar src="data:image/svg+xml,<svg/>" login="alice" />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(getByText('A')).toBeInTheDocument();
   });
 });
 ```
 
-> `alt=""` makes the `<img>` an ARIA presentation/decorative element, so `getByRole('presentation', { hidden: true })` selects it. If that selector proves brittle in this jsdom version, fall back to `container.querySelector('img')`.
+> The decorative `<img alt="">` is selected via `container.querySelector('img')` (robust across jsdom versions — no reliance on the ambiguous `presentation` role mapping). The parent span carries `data-testid="avatar"` for the empty-login case.
 
 - [ ] **Step 2: Run to confirm it fails**
 
@@ -504,12 +514,14 @@ export function Avatar({ src, login, size = 'md' }: AvatarProps) {
   // are reused across inbox refresh ticks, so a lifetime-wide flag would pin a row to
   // initials forever after one transient blip. A new src re-attempts the load.
   const [erroredSrc, setErroredSrc] = useState<string | null>(null);
-  const sizeClass = SIZE_CLASS[size];
   const showImg = !!src && src.startsWith('https://') && erroredSrc !== src;
+  // filter(Boolean) drops the empty md class so there's no double space (md has no
+  // size-suffix class — the base `avatar` token is the 24px default).
+  const className = ['avatar', SIZE_CLASS[size], styles.avatar].filter(Boolean).join(' ');
 
   return (
     <span
-      className={`avatar ${sizeClass} ${styles.avatar}`.trim()}
+      className={className}
       aria-hidden="true"
       title={login || undefined}
       data-testid="avatar"
@@ -654,6 +666,7 @@ git commit -m "feat(#127): avatar in inbox rows (atomic avatar+author group)"
 
 **Files:**
 - Modify: `frontend/src/components/PrDetail/PrHeader.tsx:57-95` (props), `:344-345` (render)
+- Modify: `frontend/src/components/PrDetail/PrHeader.module.css` (atomic-pair class)
 - Modify: `frontend/src/components/PrDetail/PrDetailView.tsx:253-256` (call site)
 
 `PrHeader` takes a flat `author: string` prop — there is no per-item object — so `avatarUrl` must be threaded as a new explicit prop.
@@ -681,14 +694,22 @@ In `PrDetailView.tsx` (`:256`, after `author={data?.pr.author ?? ''}`):
 
 - [ ] **Step 3: Render the lg avatar atomically**
 
-In `PrHeader.tsx`, import `Avatar` (`import { Avatar } from '../Avatar/Avatar';`) and replace the author span (`:345`):
+In `PrHeader.tsx`, import `Avatar` (`import { Avatar } from '../Avatar/Avatar';`) and replace the author span (`:345`) with an atomic avatar+name group using a module class (consistent with InboxRow's `.author` in Task 7; `styles` is already imported in this file):
 ```tsx
-            <span className="pr-subtitle-author" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span className={`pr-subtitle-author ${styles.subtitleAuthor}`}>
               <Avatar src={avatarUrl} login={author} size="lg" />
               {author}
             </span>
 ```
-(The inline style keeps the avatar+name atomic inside the `row gap-3` wrapping subtitle so they don't orphan across a wrap. If the project prefers a module class, add `.subtitleAuthor` to `PrHeader.module.css` instead — but the existing span uses the global `pr-subtitle-author` class, so an inline style here avoids touching the global stylesheet.)
+In `PrHeader.module.css`, add:
+```css
+.subtitleAuthor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+```
+This keeps the avatar+name atomic inside the `row gap-3` wrapping subtitle so they don't orphan across a wrap (`gap: 6px` is tighter than the inter-chip `gap-3`).
 
 - [ ] **Step 4: Typecheck + the existing PR-detail tests**
 
@@ -698,8 +719,8 @@ Expected: 0 type errors; existing PrDetailView tests still pass (the avatar is a
 - [ ] **Step 5: Prettier + commit**
 
 ```bash
-cd frontend && npx prettier --write src/components/PrDetail/PrHeader.tsx src/components/PrDetail/PrDetailView.tsx
-cd .. && git add frontend/src/components/PrDetail/PrHeader.tsx frontend/src/components/PrDetail/PrDetailView.tsx
+cd frontend && npx prettier --write src/components/PrDetail/PrHeader.tsx src/components/PrDetail/PrHeader.module.css src/components/PrDetail/PrDetailView.tsx
+cd .. && git add frontend/src/components/PrDetail/PrHeader.tsx frontend/src/components/PrDetail/PrHeader.module.css frontend/src/components/PrDetail/PrDetailView.tsx
 git commit -m "feat(#127): lg avatar in the PR header (threaded avatarUrl prop)"
 ```
 
@@ -757,11 +778,11 @@ In `PrRootConversation.tsx`, import `Avatar` (`import { Avatar } from '../../Ava
                   <Avatar src={comment.avatarUrl} login={comment.author} size="md" />
                   <span className={styles.author}>{comment.author}</span>
 ```
-In `PrRootConversation.module.css`, re-tune `--rail-node-y` (`:48`) from half the text-xs line-box to half the 24px avatar (the band now centers on the avatar):
+In `PrRootConversation.module.css`, re-tune `--rail-node-y` (`:48`) from half the text-xs line-box to half the 24px avatar (the band now centers on the avatar). This is a **provisional** value — the exact alignment is confirmed (and nudged if needed) against the real render at the B1 visual gate (Task 14):
 ```css
   /* band padding-top (var(--s-2)) + half the 24px md avatar that now sets the band
-     height; re-tuned for #127 (was var(--s-2) + 8px for the text-only band). Verified
-     at the B1 visual gate. */
+     height; re-tuned for #127 (was var(--s-2) + 8px for the text-only band).
+     PROVISIONAL — confirm/adjust against the rendered band at the B1 gate (Task 14). */
   --rail-node-y: calc(var(--s-2) + 12px);
 ```
 
@@ -818,14 +839,14 @@ const thread: ReviewThreadDto = {
 
 describe('ExistingCommentWidget', () => {
   it('renders an avatar next to the review-comment author', () => {
-    render(<ExistingCommentWidget thread={thread} />);
+    render(<ExistingCommentWidget threads={[thread]} />);
     const author = screen.getByText('bob');
     const meta = author.closest('.comment-meta');
     expect(meta?.querySelector('[data-testid="avatar"]')).not.toBeNull();
   });
 });
 ```
-> Match `ExistingCommentWidget`'s real required props (read its props type — it may need more than `thread`, e.g. reply callbacks). Pass the minimal shape; the assertion is the avatar inside `.comment-meta`.
+> Confirmed against the real component: the required prop is **`threads: ReviewThreadDto[]`** (the component returns null on an empty array and maps over it); `replyContext` is optional and can be omitted. The assertion target `.comment-meta` is correct.
 
 - [ ] **Step 2: Run to confirm it fails**
 
@@ -919,7 +940,10 @@ git commit -m "test(#127): deterministic avatar parity baselines (abort CDN) + r
 - Modify: `tests/PRism.GitHub.Tests.Integration/Helpers/FixtureStripAllowlist.cs:33-52`
 - Re-capture/update: `tests/PRism.GitHub.Tests.Integration/Fixtures/pr19-graphql-response.json`
 
-**Plan deviation note (visible per standing rule):** The spec (§7, SEC-003) framed adding `avatarUrl` to the strip-allowlist as required so "the new mapper assertions would not pass vacuously." In this codebase the mapper **value** assertions use inline JSON (Task 2), **not** the frozen fixture — so the allowlist is not load-bearing for value coverage. What *is* required: adding `avatarUrl` to the GraphQL query (Task 2) changes the frozen response **shape**, so the `Frozen_pr_graphql_shape_unchanged` (test 7g) fixture must gain the `avatarUrl` key or 7g flags `+ …/author/avatarUrl`. These integration tests are `Category=Integration`, gated by a live `PRISM_INTEGRATION_PAT`, and are **not** on the normal CI path — so this task does not block the green-and-ready gate, but it is included for correctness and must be run before the integration suite is next dispatched.
+**Plan deviation note (visible per standing rule):** The spec (§7, SEC-003) framed adding `avatarUrl` to the strip-allowlist as required "or the new mapper assertions would pass vacuously." That reasoning assumed the mapper **value** assertions run against the frozen fixture. In this codebase they don't — Task 2's value assertions use inline JSON — so the **allowlist** step specifically is not load-bearing for value coverage. But this task is **not** skippable. Two things here are genuinely required, just **off the normal CI path** (these are `Category=Integration` tests gated by a live `PRISM_INTEGRATION_PAT`, not run in the gating CI):
+
+1. **Fixture re-capture is required (not optional).** Adding `avatarUrl` to the GraphQL query (Task 2) changes the frozen response **shape**, so `Frozen_pr_graphql_shape_unchanged` (test 7g) WILL false-fail (`+ …/author/avatarUrl`) until `pr19-graphql-response.json` is refreshed. It does not block the green-and-ready gate only because 7g is not in normal CI — it MUST be run before the integration suite is next dispatched, or that suite goes red.
+2. **Allowlist update is recommended** so a future capture keeps the real URL rather than nulling it (7g passes either way, since it checks shape not value).
 
 - [ ] **Step 1: Add `avatarUrl` to the allowlist**
 
