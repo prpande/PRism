@@ -30,8 +30,10 @@ import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 import { OpenInGitHubButton } from './OpenInGitHubButton';
 
-// #128 — double-chevron, authored pointing DOWN (the expanded state). The
-// collapsed state rotates it 180° via CSS (.prHeader[data-collapsed] .collapseToggle svg).
+// #128/#203 — double-chevron, authored pointing UP (the expanded state, where
+// content folds toward when collapsed). The collapsed state rotates it 180° to
+// point DOWN via CSS (.prHeader[data-collapsed] .collapseToggle svg), so the
+// glyph always points toward the action (#203 point-toward-action convention).
 function CollapseChevron() {
   return (
     <svg
@@ -45,8 +47,8 @@ function CollapseChevron() {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d="M4 4l4 4 4-4" />
-      <path d="M4 9l4 4 4-4" />
+      <path d="M4 7l4-4 4 4" />
+      <path d="M4 12l4-4 4 4" />
     </svg>
   );
 }
