@@ -128,7 +128,7 @@ describe('FileTree', () => {
   });
 
   it('renders file status icon for added files', () => {
-    render(
+    const { container } = render(
       <FileTree
         files={[file('new.ts', { status: 'added' })]}
         selectedPath={null}
@@ -139,7 +139,9 @@ describe('FileTree', () => {
         aiPreview={false}
       />,
     );
-    expect(screen.getByText('A')).toBeInTheDocument();
+    const badge = container.querySelector('.file-status') as HTMLElement;
+    expect(badge).toHaveTextContent('A');
+    expect(badge).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('renders empty state when files is empty', () => {

@@ -198,6 +198,7 @@ function FileNodeComponent({
       >
         {STATUS_LABELS[node.file.status] ?? '?'}
       </span>
+      {/* sr-only status word BEFORE the name; trailing space separates it from the filename when spoken */}
       <span className="sr-only">{`${STATUS_WORD[node.file.status] ?? 'Unknown'} `}</span>
       <span className={`file-tree-file-name ${styles.fileTreeFileName}`}>{node.name}</span>
       <span className={`file-tree-spacer ${styles.fileTreeSpacer}`} />
