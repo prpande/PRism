@@ -43,33 +43,44 @@ everywhere, not in a local worktree that only this machine can see.
 - it carries the **`in-progress`** label, **or**
 - it has a triage comment (§ Triage-comment template) from another agent.
 
-If the issue is claimed *and the claim is fresh* (see Staleness below), **do not
-pick it up** — choose a different issue.
+If the issue is claimed and the claim is **fresh** (see Fresh vs. stale below),
+**do not pick it up** — choose a different issue.
 
-**To claim an issue** (do this at intake, before reproduction):
+**To claim an issue:** at intake, **before reproduction** (decision-tree step 0):
 
-1. **Self-assign** the issue.
-2. Add the **`in-progress`** label.
-3. Post the triage comment (§ Triage-comment template) once you have classified it
-   — this is the human-readable detail behind the claim.
+1. **Self-assign** the issue, **and**
+2. add the **`in-progress`** label.
 
-Self-assign **first**: the assignee is a single GitHub field, so it is the
-**tie-breaker** when two agents claim near-simultaneously — the later write wins,
-and an agent that finds its own assignment overwritten must back off and pick
-another issue. The label and comment are for discovery and humans; the assignee
-settles races. This shrinks the check-then-claim race but does not fully eliminate
-it; the human (who ultimately merges) is the final backstop against duplicate
-work.
+These two actions *are* your binding claim, and they happen before you invest in
+reproduction. The triage comment (§ Triage-comment template) is **not** part of
+the at-intake claim — it lands later at **step 4**, once you have classified the
+issue, and only fills in the human-readable detail behind a claim you already
+staked.
 
-**Staleness / abandonment.** A claim is **reclaimable** if it is older than ~2
-working days **and** has no linked open PR (or its linked PR is closed unmerged) —
-the claiming agent has crashed or walked away. Before reclaiming, post a comment
-noting the takeover and re-assign to yourself, so the original agent (if still
-alive) sees it. This mirrors the gate-staleness re-ping under § Notification and
-keeps a dead claim from starving an otherwise-available issue forever.
+Then **re-read the issue.** GitHub assignees are a **multi-valued, append-only**
+list — self-assigning *adds* you, it does not evict an existing assignee — so two
+agents claiming near-simultaneously end up **co-assigned**, each visible to the
+other. That visibility is the tie-breaker: if, after claiming, you find another
+agent already assigned (or an earlier `in-progress` label / triage comment from
+them), the **earlier** claimant wins — back off and pick another issue, comparing
+by triage-comment timestamp when in doubt. This shrinks the check-then-claim race
+but does not eliminate it; the human (who ultimately merges) is the final backstop
+against duplicate work.
 
-> **Prerequisite:** the repo needs an `in-progress` label. Create it once with
-> `gh label create in-progress` if it does not already exist.
+**Fresh vs. stale.** A claim is **fresh** — leave it alone — unless it is
+**stale**. A claim is **stale (reclaimable)** only when it shows **no sign of
+active work for ~2 working days**: no new triage/progress comment, no linked open
+PR, *and* no recent commits on a branch linked to the issue. The inactivity test
+matters because a legitimate T3 claim can run for days before a PR exists — the
+absence of a PR alone is **not** staleness. Before reclaiming a stale claim, post a
+comment noting the takeover and re-assign to yourself so the original agent (if
+still alive) sees it. This mirrors the gate-staleness re-ping under § Notification
+(minimum bar) and keeps a dead claim from starving an otherwise-available issue.
+
+> **Prerequisite:** the repo needs an `in-progress` label. Create it once
+> (guarded so it is safe to re-run):
+> `gh label list | grep -q in-progress || gh label create in-progress`. Already
+> created in `prpande/PRism`.
 
 ## The decision tree
 
