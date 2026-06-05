@@ -54,7 +54,11 @@ flattened-prop components that do not receive the `Pr` object:
   (three components today carry the pre-computed string). The
   `/files#diff-…` suffix `DiffPane` appends stays a **frontend convention** (the
   backend does not vend per-file deep-links); a test must cover the appended URL
-  against a non-`github.com` GHES base.
+  against a non-`github.com` GHES base. `DiffTruncationBanner` **keeps its existing
+  `rel="noopener noreferrer"`** (the new button and `SubmitDialog` use
+  `rel="noreferrer"`, matching the current `SubmitDialog` link — `noreferrer`
+  implies `noopener`, so no security regression; this just records which convention
+  each site keeps so implementers don't normalise inconsistently).
 - **SubmitDialog:** receives **only** `reference` today (no `Pr`). Removing its
   hardcode requires a **new `htmlUrl?` prop** threaded from `PrHeader` — counted as
   in-scope plumbing.
@@ -114,6 +118,11 @@ element semantics and base class so two implementers don't diverge.
   the whole escape-hatch disappears with no user-visible signal, `PrHeader` logs a
   **dev-side `console.warn`** when it renders a PR detail without `htmlUrl`, so a
   regression in `ParsePr` or the GraphQL shape is detectable rather than invisible.
+  The warn is `import.meta.env.DEV`-guarded (dev-only, never in the packaged app)
+  and its message is a component name + field-absence only — no token/PII content.
+  It lives on `PrHeader` because that is the always-rendered common ancestor of all
+  three link sites on the detail page; if any site is later reused outside that view,
+  the warn must move or be duplicated.
 
 ### D3 — Desktop bridge: https-only validation + sender guard (the B2 surface)
 
@@ -139,7 +148,11 @@ footgun (`file://`, `javascript:`, `smb://`, …). Two guards:
 - **`desktop/src/preload.ts`**: add `openExternal(url): Promise<boolean>` to the
   `contextBridge`, invoking `ipcRenderer.invoke('shell:open-external', url)`.
 - **`frontend/src/types/shell.d.ts`**: add
-  `openExternal(url: string): Promise<boolean>` to `PrismApi`.
+  `openExternal(url: string): Promise<boolean>` to `PrismApi`. The preload wrapper
+  logs a dev-side `console.warn('openExternal rejected', url)` when the resolved
+  value is `false`, so a validation miss (which D1 makes unreachable on the real
+  data path, but a stray caller could still hit) is observable in devtools without
+  any user-facing toast — mirroring the absent-`htmlUrl` warn in D2.
 
 **Rejected — protocol + host allowlist (require URL host == configured GitHub
 host).** Tightest, but `main.ts` does not know the configured host (it lives in
@@ -190,8 +203,8 @@ red-on-main requirement.
     exercised), label reads "Open on GitHub", and the link is omitted when `htmlUrl`
     is absent.
 - **Desktop (`node --test`)**: `isOpenableUrl` accepts `https:` (incl. `HTTPS:`),
-  rejects `http:`, `file:`, `javascript:`, and malformed input — the exact case list
-  is the predicate's contract.
+  rejects `http:`, `file:`, `javascript:`, `data:`, and malformed input — the exact
+  case list is the predicate's security contract.
 - **Playwright e2e**: on PR detail, the "Open in GitHub" control is present with the
   expected `href`. Required by the standing wire-shape rule (a new DTO field with
   frontend consumers must be exercised end-to-end, not just unit-mocked).
@@ -240,6 +253,9 @@ become a split/overflow control. No code implication now.
 - **`Pr` record shape (confirmed positional):** `Pr` is a positional `sealed record`
   with a trailing optional `AvatarUrl = null` precedent — add `string? HtmlUrl = null`
   as the trailing positional param (source-compatible with existing constructors).
+  Also update the record's type-level CA1054/CA1056 `SuppressMessage` justification
+  to name both `AvatarUrl` and `HtmlUrl` (the suppression already covers the new
+  member, so the build won't break — this just keeps the justification text honest).
 - **Consumer reach (confirmed):** `PrDetailView` has `prDetail.pr`; `PrHeader`,
   `FilesTab`/`DiffPane`/`DiffTruncationBanner`, and `SubmitDialog` are flattened-prop
   components needing `htmlUrl` threaded as described in D1 (not a leaf "consume").
