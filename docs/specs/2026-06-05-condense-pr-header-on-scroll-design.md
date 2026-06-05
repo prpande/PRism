@@ -76,15 +76,27 @@ issue history doesn't show four checked boxes under a silent redefinition.
 A small chevron button collapses/expands the PrHeader meta block on demand, like
 an IDE panel-collapse control.
 
-- **Affordance & placement.** A chevron button at the **right end of the
-  Overview/Files/Drafts sub-tab row** (the `PrSubTabStrip` `role="tablist"`).
-  That row is the stable anchor present in *both* states. The glyph is a **clean
-  SVG double-chevron icon** (`»` rotated to point down when expanded / up when
-  collapsed; themeable via `currentColor`, rotating 180° between states) — **not**
-  a Unicode caret (a bare `⌃`/`⌄` was rejected as looking cheap). It is a real
-  `<button>` with `aria-expanded`, `aria-controls` pointing at the collapsible
-  meta region's id, and a label that flips between "Collapse PR details" /
-  "Expand PR details".
+- **Affordance & placement.** A chevron button anchored to the **right end of the
+  Overview/Files/Drafts sub-tab row**, which is the stable anchor present in *both*
+  states. **Critical a11y constraint:** the button is a **sibling of the
+  `role="tablist"`, never a child of it.** Adding a non-`role="tab"` child inside
+  the tablist trips axe `aria-required-children` (critical) — the exact violation
+  the project already deferred and *masked only for `[data-testid="pr-tabstrip"]`*
+  (`a11y-audit.spec.ts`); a second offending tablist would fail the "no new
+  serious/critical" gate (AC) and re-spread debt #174 contains. So `PrHeader`
+  wraps `<PrSubTabStrip>` and the chevron in a flex row; the chevron is
+  right-anchored (`margin-left:auto`, `flex-shrink:0`) so the tabs can't crowd it
+  out at narrow widths.
+- **Icon.** A **double-chevron SVG**, authored at rest pointing **down** (the
+  expanded state, "more below"); collapsed state rotates it **180°** to point up.
+  Themeable via `currentColor`. Not a Unicode caret (`⌃`/`⌄` rejected as cheap).
+- **Button semantics & states.** A real `<button>` with `aria-expanded` reflecting
+  state, `aria-controls` → the collapsible meta region's id, a `title` tooltip +
+  matching accessible label that flips "Collapse PR details" / "Expand PR details",
+  and explicit `:hover` / `:focus-visible` / `:active` treatments in existing
+  tokens (the button has no parent style to inherit — the sub-tab row holds only
+  `role="tab"` buttons — so its states must be specified, aligned with the row
+  idiom: `--text-3` resting → `--text-1` on hover, standard focus ring).
 - **Collapsed state** = the compact row already approved in the mock: the title
   (ellipsized, ~1rem) + the CI/mergeability chip + the action cluster
   (Submit/AskAi/Verdict) on one row; the sub-tab row + chevron below. Hidden:
@@ -112,25 +124,37 @@ no scroll listener, no hysteresis, no imperative attribute, none of the
 scroll-design hazards:
 
 - `PrDetailView` owns `const [collapsed, setCollapsed] = useState(() => store.get(refKey) ?? false)`,
-  seeded from the module store and re-seeded when `refKey` changes (keep-alive:
-  switching the active PR must read that PR's flag). The toggle handler flips
-  state **and** writes the store so the choice survives a tab switch within the
-  session.
+  seeded **once** from the module store. No re-seed effect is needed:
+  `PrTabHost` renders one `PrDetailView` *keyed by `prRefKey`* per open tab
+  (`PrTabHost.tsx`), so `refKey` is immutable for an instance's lifetime — the
+  instance is never reused across PRs. This mirrors the existing `initialSubTab`
+  "read once as the useState seed" pattern in `PrDetailView`; an effect that
+  re-seeds on `refKey` change would be dead code. The toggle handler flips state
+  **and** writes the store so the choice survives a tab switch (the keyed instance
+  stays mounted under keep-alive; the store backstops a future unmount).
 - `collapsed` is passed to `PrHeader`, which renders `data-collapsed` as a normal
   JSX attribute on its root (`<div className={styles.prHeader} data-collapsed={collapsed || undefined} …>`).
-  CSS condense rules are scoped `.prHeader[data-collapsed] …`. No imperative
+  CSS collapse rules are scoped `.prHeader[data-collapsed] …`. No imperative
   `toggleAttribute`, no "React preserves attributes it didn't set" dependency.
-- The collapse is a pure CSS state change. Because the Files view is already
+- The *meta hide / title restyle* is a CSS state change driven by `data-collapsed`
+  (see A.2 for the one JSX move it requires). Because the Files view is already
   viewport-bound flex (`.pr-detail-page` column; the files slot is `flex:1 1 0`),
   shrinking PrHeader's height hands the reclaimed pixels straight to the diff —
   no overlay, no scroll math. On a click this reflow is expected user feedback.
 
 ### A.2 Visual mechanics + motion
 
-- `data-collapsed` rules target `.prTitle`, `.prSubtitle`,
-  `.statusMerged`/`.statusClosed` (module classes on the same root) and
-  `:global(.pr-meta-repo)` (global class). The CI/mergeability chip is pulled out
-  of the hidden subtitle line into the compact title row so it survives collapse.
+- `data-collapsed` rules hide `.prSubtitle` (author + branch), the
+  `.statusMerged`/`.statusClosed` line, and `:global(.pr-meta-repo)` (repo·#), and
+  restyle `.prTitle` small + ellipsized.
+- **One required JSX move (not pure CSS).** The CI/mergeability chips currently
+  live *inside* `.prSubtitle` (`PrHeader.tsx`, interleaved with author/branch), so
+  hiding `.prSubtitle` would hide them too. To keep them in the compact row the
+  `ciSummary`/`mergeability` `<span>`s must be **moved out of `.prSubtitle` in the
+  JSX** into a slot that stays visible when collapsed (the title row), in a way
+  that preserves the expanded-state layout (chips on the subtitle line today). The
+  plan must define the chip's home in *both* states. This is the one spot that is
+  a structure edit, not a scoped CSS rule.
 - **The condensed title is the same `<h1 data-testid="pr-title">` node**,
   restyled smaller and ellipsized — *not* a second element. This preserves the
   heading landmark in the accessibility tree (a `display:none` on the full title
@@ -140,8 +164,10 @@ scroll-design hazards:
   open-PR action cluster (VerdictPicker "Request changes" ~100px +
   SubmitInProgressBadge + pending-review pill + Submit + AskAi ≈ 500–600px) from
   overflowing the row near the 900px breakpoint.
-- **Motion:** content hides immediately; the header height eases over **≤150ms**,
-  **suppressed under `@media (prefers-reduced-motion: reduce)`**.
+- **Motion:** the meta region's height + opacity transition **together** over
+  **≤150ms** (content fades *as* the row collapses — avoids a content-gone /
+  empty-box-still-shrinking intermediate frame), **suppressed under
+  `@media (prefers-reduced-motion: reduce)`**.
 
 ## Decision B — Files toolbar density trim
 
@@ -158,10 +184,17 @@ PrHeader meta; the toolbar is permanently shorter regardless of chevron state.
 | iteration chip | `8px` | `5px` | top + bottom |
 
 Measured effect: toolbar **77px → ~51px (+~26px to the diff)**. Horizontal
-padding, gaps, fonts, and the control set are untouched. The trim is always-on
-(not tied to the chevron), and composes with the existing
-`[data-density="compact"]` mode rather than fighting it. Exact px values are a
-plan detail; the target is "~50px toolbar, no cramping."
+padding, gaps, fonts, and the control set are untouched.
+
+**Density-token interaction (pin in the plan).** `.filesTabToolbar` currently uses
+`var(--s-3)` vertical padding, which `[data-density="compact"]` overrides to 10px.
+The trimmed values here (8/2/5px) are **deliberately density-independent** — they
+sit below compact's 10px, so compact mode no longer shrinks the toolbar height
+(its `--s-3` override simply stops reaching this axis). That is intentional, not a
+regression; the plan should state it explicitly (and may add a `[data-density="compact"]`
+override pushing the toolbar lower still if cramping allows). Don't describe this
+as "composing with compact" — it supersedes compact on the vertical axis. Exact px
+are a plan detail; target "~50px toolbar, no cramping."
 
 ## Scope boundary with #185
 
@@ -187,8 +220,13 @@ are unchanged; #185 later makes them narrower.
   session-only per the owner's decision; no prefs plumbing.
 - **Closed/merged orientation in collapsed state** — the `Merged/Closed …` status
   line is hidden when collapsed (along with the rest of the meta). This is
-  deliberate: the user explicitly chose collapse, and expanding restores it. The
-  CI/mergeability chip (kept) still conveys state.
+  deliberate: the user explicitly chose collapse, and expanding restores it; the
+  open-PR-tab-strip chip and the kept CI/mergeability chip still hint at state.
+  Noted as a conscious trade because reviewing already-merged PRs is a primary
+  PRism workflow — if the human gate decides the merged/closed status deserves to
+  survive collapse, the cheapest fix is to keep it as a compact pill in the title
+  row alongside the CI chip (same mechanism). Left out by default per the owner's
+  "drop the status meta" decision.
 
 ## Acceptance criteria
 
@@ -222,7 +260,11 @@ are unchanged; #185 later makes them narrower.
   `document`/`[data-app-scroll]` non-overflow and the diff-as-scroller). The only
   genuinely-new assertion is **file tree is a separate `overflow-y:auto`
   container**. Assert "does not overflow at this viewport," **not** "is not a
-  scroll container" (the element is `overflow-y:auto` by design).
+  scroll container" (the element is `overflow-y:auto` by design). Note the
+  existing spec's single-file fixture yields a one-row tree that won't overflow —
+  the tree-independence check needs a **multi-file fixture** (or asserts the tree
+  is a distinct scroll container from the diff body, independent of whether it
+  currently overflows).
 - **Collapse behavior e2e (Playwright):** click the chevron → assert
   `data-collapsed` on `[data-testid="pr-header"]`, the meta lines hidden, the CI
   chip + title still present, and the diff body `clientHeight` increased (use
@@ -233,12 +275,18 @@ are unchanged; #185 later makes them narrower.
   the three toggle buttons + iteration tabs are still present and clickable.
 - **Visual (the B1 gate):** live before/after screenshots of the real running app
   — expanded, collapsed, and toolbar-trimmed — in light and dark. Human-gated proof.
-- **a11y (Playwright `a11y-audit`):** no new serious/critical vs `main`; confirm
-  the `h1` heading landmark persists in the collapsed state and the toggle button
-  exposes `aria-expanded`.
-- **Re-baseline:** any committed parity/screenshot baseline scoped to the PrHeader
-  or Files toolbar will diff; re-capture with `--update-snapshots` and review the
-  diff as part of the visual gate.
+- **a11y (Playwright `a11y-audit`):** no new serious/critical vs `main`. Explicitly
+  confirm the chevron-in-PrHeader (sibling of, not child of, the tablist)
+  introduces **no `aria-required-children`** finding, the `h1` heading landmark
+  persists in the collapsed state, and the toggle exposes `aria-expanded`.
+- **Reduced-motion:** assert the collapse height/opacity transition is suppressed
+  under `prefers-reduced-motion: reduce` (covers AC 9 explicitly).
+- **Re-baseline:** the toolbar trim + collapsed header will diff specific committed
+  baselines — expect `pr-detail-files-diff.png`, `pr-detail-files-diff-whole-file.png`
+  (diff container grows as the toolbar shrinks), and `pr-detail-header.png`
+  (`parity-baselines.spec.ts`) to drift. Re-capture with `--update-snapshots` and
+  review each diff as part of the visual gate (a stale baseline must not read as a
+  regression).
 - **vitest:** PrHeader/PrSubTabStrip render tests — assert the chevron renders,
   toggles `data-collapsed`, and exposes the right `aria-expanded`. (No dedicated
   hysteresis unit test — the scroll design that needed it is gone.)
