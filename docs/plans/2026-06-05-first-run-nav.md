@@ -86,13 +86,17 @@ describe('Header', () => {
     expect(screen.queryByRole('link', { name: /setup/i })).toBeNull();
   });
 
-  it('hides the whole nav (no landmark, no tab links) when not authed; keeps the logo', () => {
+  it('hides the whole nav (no landmark, no tab links) when not authed; keeps the logo + spacer', () => {
     renderAt('/setup', false);
     expect(screen.getByAltText('PRism')).toBeInTheDocument();
     expect(screen.queryByRole('navigation')).toBeNull();
     expect(screen.queryByRole('link', { name: /inbox/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /^settings$/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /setup/i })).toBeNull();
+    // The spacer must survive nav removal — it owns the middle so the Logo stays
+    // left-flush (not re-centered). Guards the "wrap spacer inside {isAuthed &&}"
+    // mistake that would collapse the layout.
+    expect(screen.getByTestId('header-spacer')).toBeInTheDocument();
   });
 
   it('marks Inbox active on "/"', () => {
@@ -166,6 +170,15 @@ git commit -m "test(#130): migrate Header suite to nav-hidden + no-Setup-tab beh
     expect(screen.queryByRole('navigation')).toBeNull();
     expect(screen.queryByRole('link', { name: /inbox/i })).toBeNull();
 ```
+
+- [ ] **Step 1b: Add a no-Header assertion to the existing host-mismatch test.** This is the spec's "host-mismatch renders only the HostChangeModal (no Header, no nav)" no-regress (covered here at the unit level — far more reliable than a screenshot of a transient state). In the `it('renders host-change modal when hostMismatch present', ...)` block, after the `findByRole('dialog')` assertion, add:
+
+```tsx
+    // #130 no-regress: host-mismatch is an early return before <Header>, so no nav.
+    expect(screen.queryByRole('navigation')).toBeNull();
+```
+
+(The loading state — `authState === null` → `LoadingScreen` — is likewise an early return before `<Header>`; it is structurally guaranteed and not separately unit-tested.)
 
 - [ ] **Step 2: Add a dedicated rejected-token case** (the `authInvalidated` branch is only observable at the App level — `Header` receives a single `isAuthed` bool). Add this `it(...)` inside `describe('App routing', ...)`:
 
@@ -287,7 +300,9 @@ export function Header({ isAuthed }: HeaderProps) {
           </Link>
         </nav>
       )}
-      <div className={styles.spacer} />
+      {/* Unconditional — owns the middle so the Logo stays left-flush in the
+          no-nav state. Must NOT be wrapped in the {isAuthed && …} block. */}
+      <div className={styles.spacer} data-testid="header-spacer" />
       {SEARCH_PALETTE_ENABLED && !inboxActive && (
         <input
           className={styles.search}
@@ -369,6 +384,15 @@ test('cold start hides the top nav tabs (#130)', async ({ page }) => {
   await expect(nav.getByRole('link', { name: /^inbox$/i })).toBeVisible();
   await expect(nav.getByRole('link', { name: /^settings$/i })).toBeVisible();
   await expect(nav.getByRole('link', { name: /^setup$/i })).toHaveCount(0);
+  // Active-tab highlighting (spec B1) — on /settings, Settings is current, Inbox is not.
+  await expect(nav.getByRole('link', { name: /^settings$/i })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(nav.getByRole('link', { name: /^inbox$/i })).not.toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 ```
 
 - [ ] **Step 3: Run the two specs** (requires the dev server / Playwright projects configured per the repo; run if the local Playwright environment is available):
@@ -410,9 +434,11 @@ Run: `cd frontend && npm run build`
 Expected: build succeeds.
 
 - [ ] **Step 4: Capture B1 visual proof.** Launch a fresh first-run instance and the authed instance (non-destructive temp dataDir) and screenshot the three states for the PR:
-  - First-run (`--dataDir <temp>` → `/setup`): no nav tabs, Logo left, WindowControls right, Connect card below.
-  - Authed (`/`): nav = Inbox + Settings, no Setup tab.
+  - First-run (`--dataDir <temp>` → `/setup`): **no nav tabs; Logo left-flush and NOT re-centered; empty center; WindowControls right;** Connect card below. (Explicitly confirm the Logo did not drift to center when the nav was removed.)
+  - Authed (`/`): nav = Inbox + Settings, **no** Setup tab; active tab highlighted.
   - Replace (`/setup?replace=1` authed): nav shown, Settings active, Setup form with Cancel → /settings.
+
+  The remaining two spec B1 states — **loading** (`authState === null` → LoadingScreen) and **host-mismatch** (HostChangeModal) — render no Header at all and are covered at the unit level (Task 2 Step 1b for host-mismatch; loading is a structural early return). They are **not** screenshotted (loading is a transient flash; host-mismatch needs a misconfigured host) — the unit assertions are the standing no-regress guard.
 
 ```pwsh
 # fresh first-run (real config untouched):
@@ -438,4 +464,6 @@ git commit -m "chore(#130): lint/format fixups"
 - [ ] Re-running setup reachable via Settings → Auth "Replace token" — Task 4 (the replace spec still drives that link).
 - [ ] After setup completion the app lands on Inbox (no-regress) — unchanged `SetupPage.tsx`; not separately re-tested (see spec Deferred).
 - [ ] Rejected-token re-auth hides the nav and recovers — Task 2.
-- [ ] B1 visual assert (first-run / authed / replace + loading & host-mismatch no-regress) — Task 5 Step 4.
+- [ ] No-nav layout: spacer survives, Logo stays left-flush — Task 1 (`header-spacer` assertion) + Task 5 Step 4 (visual).
+- [ ] Loading + host-mismatch render no Header/nav (no-regress) — Task 2 Step 1b (host-mismatch unit) + structural early return (loading).
+- [ ] B1 visual assert (first-run / authed / replace) — Task 5 Step 4.
