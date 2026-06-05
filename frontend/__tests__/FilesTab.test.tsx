@@ -434,10 +434,12 @@ describe('FilesTab line-wrap toggle (#115)', () => {
 
 describe('FilesTab whole-file toggle', () => {
   it('checking "Show full file" in the gear menu enables full-file view for a modified file', async () => {
-    globalThis.fetch = mockWholeFileFetch({
+    const fetchImpl = mockWholeFileFetch({
       diffResponse: () => Promise.resolve(jsonResponse(sampleModifiedDiff)),
       fileContent: 'whole content\nline 2\nline 3\n',
     });
+    const fetchSpy = vi.fn().mockImplementation(fetchImpl);
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
     renderFilesTab();
     // Wait for file tree to settle before opening gear.
     await screen.findByText('src/main.ts');
@@ -454,6 +456,14 @@ describe('FilesTab whole-file toggle', () => {
         true,
       ),
     );
+    // Downstream signal: wholeFileEnabled=true triggers the whole-file fetch.
+    // Assert DiffPane actually requested the file content from the backend —
+    // the test would pass with a stale checkbox state even if deriveWholeFileEnabled
+    // stopped returning true, so this spy call confirms the prop propagated.
+    await waitFor(() => {
+      const fileCall = fetchSpy.mock.calls.find((args) => String(args[0]).includes('/file?path='));
+      expect(fileCall).toBeDefined();
+    });
   });
 
   it('show-full-file enabled but shows inert helper for added / deleted / renamed file statuses', async () => {
@@ -521,8 +531,10 @@ describe('FilesTab whole-file toggle', () => {
     });
   });
 
-  it('onWholeFileFailed flow: failure callback marks path failed; checkbox auto-unchecks', async () => {
-    // 413 from /file → DiffPane's failure latch fires → onWholeFileFailed marks path → wholeFileEnabled becomes false.
+  it('onWholeFileFailed flow: failure callback marks path failed; checkbox stays checked but banner appears', async () => {
+    // 413 from /file → DiffPane's failure latch fires → onWholeFileFailed marks path →
+    // wholeFileEnabled becomes false (path excluded by deriveWholeFileEnabled) →
+    // DiffPane renders the WholeFileFailureBanner (localFailure latch set).
     globalThis.fetch = mockWholeFileFetch({
       diffResponse: () => Promise.resolve(jsonResponse(sampleModifiedDiff)),
       fileProblem: { type: '/file/too-large', status: 413 },
@@ -534,12 +546,19 @@ describe('FilesTab whole-file toggle', () => {
     const checkbox = (await screen.findByTestId('show-full-file-checkbox')) as HTMLInputElement;
     await waitFor(() => expect(checkbox).not.toBeDisabled());
     fireEvent.click(checkbox);
-    // After DiffPane signals failure the path is marked failed, so
-    // wholeFileEnabled derives to false (even though showFullFile stays true).
+    // showFullFile stays true (checkbox remains checked) but the path is added to
+    // failedPaths, so deriveWholeFileEnabled returns false.
     await waitFor(() =>
       expect((screen.getByTestId('show-full-file-checkbox') as HTMLInputElement).checked).toBe(
         true,
       ),
     );
+    // Downstream signal: DiffPane's failure latch renders the WholeFileFailureBanner,
+    // confirming markFailed / failedPaths / deriveWholeFileEnabled integration is intact.
+    // This assertion FAILS if the onWholeFileFailed callback is not wired, if markFailed
+    // doesn't update failedPaths, or if deriveWholeFileEnabled ignores failedPaths.
+    await waitFor(() => {
+      expect(screen.getByTestId('whole-file-failure-banner')).toBeInTheDocument();
+    });
   });
 });

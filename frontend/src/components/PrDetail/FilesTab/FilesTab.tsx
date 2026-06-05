@@ -213,6 +213,11 @@ export function FilesTab() {
 
   const handleWholeFileFailed = useCallback(
     (reason: string) => {
+      // `reason` is part of the onWholeFileFailed callback contract (DiffPane
+      // passes the failure reason string) but unused here: DiffPane's own local
+      // latch holds the reason and renders the WholeFileFailureBanner. FilesTab
+      // only needs to know that the current file's whole-file fetch failed so it
+      // can add the path to failedPaths and let deriveWholeFileEnabled fall back.
       void reason;
       if (!selectedPath) return;
       markFailed(selectedPath);
