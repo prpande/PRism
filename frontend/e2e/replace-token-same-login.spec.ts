@@ -30,9 +30,32 @@ test('Replace token to a PAT with the SAME login navigates to / without an ident
     timeout: 30_000,
   });
 
+  // #130: authed nav is Inbox + Settings only — the standalone Setup tab is gone.
+  const nav = page.getByRole('navigation');
+  await expect(nav.getByRole('link', { name: /^inbox$/i })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /^settings$/i })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /^setup$/i })).toHaveCount(0);
+  // Active-tab highlighting (spec B1) — on /settings, Settings is current, Inbox is not.
+  await expect(nav.getByRole('link', { name: /^settings$/i })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(nav.getByRole('link', { name: /^inbox$/i })).not.toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+
   await page.getByRole('link', { name: /^replace token$/i }).click();
   await page.waitForURL(/\/setup\?replace=1/, { timeout: 10_000 });
   await expect(page.getByRole('link', { name: /cancel/i })).toBeVisible();
+
+  // #130: replace-from-Settings is an authed state — nav stays shown, Settings active,
+  // and there is still no Setup tab even though the path is /setup.
+  await expect(page.getByRole('navigation')).toHaveCount(1);
+  await expect(
+    page.getByRole('navigation').getByRole('link', { name: /^settings$/i }),
+  ).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation').getByRole('link', { name: /^setup$/i })).toHaveCount(0);
 
   await page.getByLabel(/personal access token/i).fill('ghp_same_login');
   await page.getByRole('button', { name: /continue/i }).click();
