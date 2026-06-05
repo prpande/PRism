@@ -55,9 +55,10 @@ export async function setupAndOpenScenarioPr(page: Page): Promise<void> {
   await expect(page.getByRole('button', { name: /continue/i })).toBeDisabled();
   await page.getByLabel(/personal access token/i).fill('ghp_e2e_token');
   await page.getByRole('button', { name: /continue/i }).click();
-  // After connect, the SPA navigates to /. Wait for the inbox to render
-  // (the fake exposes one section, "Review requested", with the canonical
-  // scenario row). Click into the PR detail.
+  // After connect, the SPA navigates to / (inbox). Wait for that route — the
+  // fake exposes one section, "Review requested", with the canonical scenario
+  // row. This helper stops at the inbox; callers that need the PR detail must
+  // navigate there separately (e.g. openScenarioPr / page.goto('/pr/...')).
   await page.waitForURL('/');
 }
 
