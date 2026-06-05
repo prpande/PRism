@@ -1,9 +1,15 @@
 .fileTree {
+  /* Single-line rows of a fixed height so the scrolling tree column and the fixed
+     checkbox column stay aligned row-for-row. */
+  --tree-row-h: 32px;
   display: flex;
   flex-direction: column;
   background: var(--surface-1);
   min-width: 0;
-  overflow-y: auto;
+  /* No inner vertical scroll: the tree grows to its content height and the outer
+     tree pane (.filesTabTree) owns vertical scrolling, so there is no vertical
+     scrollbar dividing the two columns. */
+  overflow: visible;
 }
 .fileTreeHeader {
   padding: var(--s-3) var(--s-4);
@@ -17,10 +23,43 @@
   padding: var(--s-4);
   font-size: var(--text-sm);
 }
-.fileTreeList {
+/* Two-column body: the tree scrolls horizontally as one object inside
+   .fileTreeScroll (one native bottom scrollbar); the checkbox column sits OUTSIDE
+   that scroller so it never moves horizontally. Vertical scroll position is mirrored
+   onto the checkbox column in JS so the two stay row-aligned. */
+.fileTreeBody {
+  display: flex;
+}
+.fileTreeScroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Horizontal scroll only — height grows to content, so vertical space is handled
+     by the outer pane, not an inner vertical scrollbar. */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.fileTreeInner {
+  /* Widest row sets the width; every row is width:100% of this, so the whole tree
+     shifts by the same amount on scroll and indentation stays aligned. */
+  width: max-content;
+  min-width: 100%;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
+}
+.fileTreeCheckCol {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  /* No border/seam — the checkbox column reads as part of the same surface as the
+     tree even though it is a separate, non-horizontally-scrolling object. */
+}
+.fileTreeCheckSlot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--tree-row-h);
+  padding: 0 var(--s-3);
+  flex: none;
 }
 
 /* File rows — handoff `tree-row` treatment */
@@ -28,7 +67,9 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  padding: 6px var(--s-3);
+  height: var(--tree-row-h);
+  box-sizing: border-box;
+  padding-right: var(--s-3);
   background: transparent;
   border: none;
   width: 100%;
@@ -47,8 +88,9 @@
 }
 
 /* Viewed-state — dim only. Strikethrough is reserved for deletion (item 5/6).
-   :has() sibling selector (D33). Baseline 2023; current Chrome/Safari/Firefox. */
-.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeFileName {
+   Driven by a row class because the checkbox now lives in a separate column, so the
+   old :has(sibling-checkbox) relationship no longer holds. */
+.fileTreeFileViewed .fileTreeFileName {
   color: var(--text-3);
 }
 
@@ -117,8 +159,9 @@
   flex: none;
 }
 
-/* The name renders at full width and is revealed by scrolling its row region
-   (.fileTreeNameScroll) — no ellipsis, so the whole filename is reachable. */
+/* The name renders at full width (no ellipsis); the whole filename is reachable by
+   scrolling the tree column. Long names extend the row, which widens .fileTreeInner
+   and so the shared horizontal scroll. */
 .fileTreeFileName {
   white-space: nowrap;
 }
@@ -128,42 +171,25 @@
   text-decoration-thickness: 1.5px;
   color: var(--text-2);
 }
-/* Per-row horizontal scroll region wrapping ONLY the name. flex:1 fills the row
-   between the fixed status badge (left) and the fixed ai/checkbox cluster
-   (right), so the viewed checkbox column never moves when a long name scrolls.
-   Scrollbars are hidden; rows scroll in sync via FileTree's capture-phase
-   listener (trackpad / shift-wheel). */
-.fileTreeNameScroll {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-.fileTreeNameScroll::-webkit-scrollbar {
-  display: none;
-}
 .fileTreeViewedCheckbox {
   flex: none;
   width: 14px;
   height: 14px;
   cursor: pointer;
 }
-.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeViewedCheckbox {
+.fileTreeViewedCheckbox:checked {
   /* Match handoff `tree-row.is-viewed .tree-viewed` filled-accent treatment */
   accent-color: var(--accent);
 }
 
 /* Directory rows — production-only structure; no handoff source */
-.fileTreeDir {
-  display: flex;
-  flex-direction: column;
-}
 .fileTreeDirHeader {
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  padding: 6px var(--s-3);
+  height: var(--tree-row-h);
+  box-sizing: border-box;
+  padding-right: var(--s-3);
   transition: background var(--t-fast);
 }
 .fileTreeDirHeader:hover {

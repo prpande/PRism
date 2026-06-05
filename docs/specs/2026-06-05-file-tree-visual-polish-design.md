@@ -205,11 +205,45 @@ For a row that is **both deleted and viewed**, the two rules now collide only on
 looked at" look — acceptable, and explicitly *not* something to fight with
 `!important`. No action needed beyond removing the viewed `text-decoration`.
 
-### 7. Directory-name truncation — stop long folder paths scrolling sideways
+### 7. Two-layer scrolling tree + fixed checkbox column — full names reachable by horizontal scroll
 
-**Invariant:** the tree never scrolls horizontally; long **file and directory**
-names ellipsize at the container boundary; the viewed checkbox stays at the
-tree's right edge.
+> **⚠️ DESIGN SUPERSEDED (2026-06-05, during implementation, user-directed).** The
+> truncation approach below was abandoned after live iteration with the user. The
+> shipped, user-approved design for item 7 is the **two-layer scrolling tree**
+> described in this box; treat it as authoritative for item 7. The original
+> truncation write-up is retained underneath for history (it still holds the useful
+> empirical finding that the checkbox-slides-off-screen report was an assumption).
+>
+> **Why it changed:** the user explicitly wanted long names reachable by *scrolling*
+> (not ellipsized away), the whole tree to scroll *as one object*, and the
+> checkboxes to stay *perfectly* static as a "separate object" — none of which
+> truncation delivers. `position: sticky` was tried and measurably drifts ~13px at
+> scroll-end, so it was rejected.
+>
+> **Shipped design:**
+> - **One horizontal scroll container** (`.file-tree-scroll`, `overflow-x: auto;
+>   overflow-y: hidden`) wraps the whole tree; its inner (`.file-tree-inner`,
+>   `width: max-content; min-width: 100%`) makes every row equal-width, so scrolling
+>   shifts the entire tree (indent, chevron, folder, badge, name) uniformly — it
+>   reads as one object and indentation stays aligned. No name truncation.
+> - **Separate checkbox column** (`.file-tree-check-col`) renders OUTSIDE that
+>   scroller, one slot per row (file → checkbox, dir → empty), so the checkboxes
+>   never move horizontally (measured constant x across scroll 0/mid/max — the
+>   property sticky failed). Both columns are rendered from one flat row list
+>   (directory expand/collapse state lifted to `FileTree`, keyed by the NUL-joined
+>   ancestor chain) and share a fixed `--tree-row-h` so they stay row-aligned.
+> - **No inner vertical scroll and no seam** (user follow-up): vertical space uses
+>   the outer `.files-tab-tree` pane scroll; the two columns are plain
+>   content-height siblings (no JS sync, no border) so they read as one surface.
+> - **a11y:** a single labeled `Viewed <name>` checkbox lives in the column;
+>   reading order trails the tree (accepted tradeoff for a PoC).
+> - **Consequence filed separately:** with the inner vertical scroll removed, an
+>   abspos `.sr-only` descendant escapes the pane's clip and lets the *page* scroll
+>   into empty space — tracked as issue #197 (pre-existing; not part of item 7).
+
+**Invariant (original truncation framing — superseded):** the tree never scrolls
+horizontally; long **file and directory** names ellipsize at the container
+boundary; the viewed checkbox stays at the tree's right edge.
 
 **Validated against the running app (BFF PR #191, tree at its 320px track, two
 viewport widths).** Live measurement *corrected* the original diagnosis:

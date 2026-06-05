@@ -525,7 +525,35 @@ cd D:/src/PRism-187-chevron && git add frontend/src/components/PrDetail/FilesTab
 
 ---
 
-### Task 7: Directory-name truncation — stop long folder paths scrolling sideways
+### Task 7: Two-layer scrolling tree + fixed checkbox column
+
+> **⚠️ SUPERSEDED DURING IMPLEMENTATION (2026-06-05, user-directed).** The
+> directory-name-truncation plan below was abandoned after live iteration. What
+> shipped (and the user approved as "perfect, exactly what I expected") is a
+> **two-layer scrolling tree**, implemented directly (not via the truncation steps):
+>
+> - `FileTree.tsx` rewritten to render a **flat ordered row list** with directory
+>   expand/collapse state **lifted** to `FileTree` (keyed by the NUL-joined ancestor
+>   chain). The same row list feeds both columns.
+> - **Tree column** = one horizontal scroll container `.file-tree-scroll`
+>   (`overflow-x: auto; overflow-y: hidden`) with inner `.file-tree-inner`
+>   (`width: max-content; min-width: 100%`) → whole tree scrolls as one object, names
+>   are reachable by scrolling (NOT truncated), indentation stays aligned.
+> - **Checkbox column** = `.file-tree-check-col` rendered OUTSIDE the scroller, one
+>   fixed-height slot per row → checkboxes are perfectly static horizontally
+>   (verified constant x at scroll 0/mid/max; `position: sticky` was tried and
+>   drifts ~13px, so rejected).
+> - **No inner vertical scroll, no seam** (user follow-up): vertical scroll falls
+>   through to the outer `.files-tab-tree` pane; the two columns are plain
+>   content-height siblings (no JS sync, no border) → read as one surface.
+> - Fixed `--tree-row-h: 32px` keeps the two columns row-aligned.
+> - Verified live (prpande/PRism #192) + unit tests rewritten in
+>   `FileTree.test.tsx` (whole-tree-in-one-scroller; checkbox-outside-scroller;
+>   one-checkbox-per-file/slot-per-dir). Filed issue #197 for the page-scroll
+>   consequence (pre-existing `.sr-only` containment leak).
+>
+> The steps and code blocks below reflect the abandoned truncation approach and are
+> retained for history only.
 
 **Files:**
 - Modify: `frontend/src/components/PrDetail/FilesTab/FileTree.module.css` (`.fileTreeDirName` truncation — **the load-bearing fix**; plus `.fileTree` min-width/max-width + `.fileTreeList` overflow-x — guards)
