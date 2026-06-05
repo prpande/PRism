@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { ErrorBox } from './ErrorBox';
 
 interface Props {
   children: ReactNode;
@@ -24,9 +25,13 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <div role="alert">
-          <p>Something went wrong. The error has been logged.</p>
-          <button type="button" onClick={() => window.location.reload()}>
+        <div className="error-screen">
+          <ErrorBox>Something went wrong. The error has been logged.</ErrorBox>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => window.location.reload()}
+          >
             Reload
           </button>
         </div>
