@@ -265,6 +265,18 @@ function DirectoryNodeComponent({
               />
             </svg>
           </span>
+          <svg
+            viewBox="0 0 16 16"
+            width="16"
+            height="16"
+            aria-hidden="true"
+            className={`file-tree-folder-icon ${styles.fileTreeFolderIcon}`}
+          >
+            <path
+              d="M1.5 4.5a1 1 0 0 1 1-1H6l1.5 1.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"
+              fill="currentColor"
+            />
+          </svg>
         </button>
         <span className={`file-tree-dir-name ${styles.fileTreeDirName}`}>{node.name}</span>
       </div>

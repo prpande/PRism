@@ -195,6 +195,25 @@ describe('FileTree', () => {
     expect(chevron).toHaveAttribute('aria-hidden', 'true');
     expect(container.textContent).not.toContain('▸');
   });
+
+  it('renders an accent folder icon inside the directory toggle button', () => {
+    const { container } = render(
+      <FileTree
+        files={[file('src/a.ts')]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    const toggle = screen.getByRole('button', { name: /toggle src/i });
+    const folder = toggle.querySelector('.file-tree-folder-icon');
+    expect(folder).toBeInTheDocument();
+    expect(folder?.tagName.toLowerCase()).toBe('svg');
+    expect(folder).toHaveAttribute('aria-hidden', 'true');
+  });
 });
 
 const F = (path: string, status: FileChange['status'] = 'modified'): FileChange => ({

@@ -150,7 +150,11 @@
 .fileTreeDirHeader {
   display: flex;
   align-items: center;
+  gap: var(--s-2);
   padding: 6px var(--s-3);
+}
+.fileTreeDirHeader:hover {
+  background: var(--surface-3);
 }
 .fileTreeDirToggle {
   display: inline-flex;
@@ -174,6 +178,11 @@
 }
 .fileTreeChevronOpen {
   transform: rotate(90deg);
+}
+.fileTreeFolderIcon {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent);
 }
 .fileTreeDirName {
   font-weight: 500;
