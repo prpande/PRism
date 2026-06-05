@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DraftCommentDto, IssueCommentDto, PrReference } from '../../../api/types';
+import { Avatar } from '../../Avatar/Avatar';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
@@ -43,6 +44,7 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
                 aria-label={`Comment by ${comment.author}`}
               >
                 <header className={styles.band}>
+                  <Avatar src={comment.avatarUrl} login={comment.author} size="md" />
                   <span className={styles.author}>{comment.author}</span>
                   <time className={styles.time} dateTime={comment.createdAt}>
                     {new Date(comment.createdAt).toLocaleDateString()}

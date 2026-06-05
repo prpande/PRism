@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DraftReplyDto, PrReference, ReviewThreadDto } from '../../../../api/types';
+import { Avatar } from '../../../Avatar/Avatar';
 import { MarkdownRenderer } from '../../../Markdown/MarkdownRenderer';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
 import styles from './ExistingCommentWidget.module.css';
@@ -82,6 +83,7 @@ function ThreadView({
       {thread.comments.map((comment) => (
         <div key={comment.commentId} className={`comment-entry ${styles.commentEntry}`}>
           <div className={`comment-meta ${styles.commentMeta}`}>
+            <Avatar src={comment.avatarUrl} login={comment.author} size="sm" />
             <span className={`comment-author ${styles.commentAuthor}`}>{comment.author}</span>
             <time className={`comment-time ${styles.commentTime}`} dateTime={comment.createdAt}>
               {new Date(comment.createdAt).toLocaleDateString()}

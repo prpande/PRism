@@ -1,0 +1,24 @@
+/* Layered avatar: the global .avatar token supplies the circle/size/color/initial-font.
+   The initials sit as the always-present base; the <img> overlays and clips to the circle. */
+.avatar {
+  position: relative;
+  overflow: hidden;
+}
+
+.initial {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}

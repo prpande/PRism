@@ -173,3 +173,9 @@
     transition: none;
   }
 }
+
+.subtitleAuthor {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
