@@ -152,6 +152,7 @@
   align-items: center;
   gap: var(--s-2);
   padding: 6px var(--s-3);
+  transition: background var(--t-fast);
 }
 .fileTreeDirHeader:hover {
   background: var(--surface-3);
@@ -181,6 +182,7 @@
 }
 .fileTreeFolderIcon {
   display: inline-flex;
+  align-items: center;
   flex: none;
   color: var(--accent);
 }

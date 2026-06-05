@@ -208,7 +208,7 @@ describe('FileTree', () => {
         aiPreview={false}
       />,
     );
-    const toggle = screen.getByRole('button', { name: /toggle src/i });
+    const toggle = screen.getByRole('button', { name: 'Toggle src' });
     const folder = toggle.querySelector('.file-tree-folder-icon');
     expect(folder).toBeInTheDocument();
     expect(folder?.tagName.toLowerCase()).toBe('svg');
