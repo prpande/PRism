@@ -23,6 +23,7 @@ import { DiscardPendingReviewConfirmationModal } from './DiscardPendingReviewCon
 import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDraftsBanner';
 import styles from './PrHeader.module.css';
 import { AskAiButton } from './AskAiButton';
+import { Avatar } from '../Avatar/Avatar';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 
@@ -58,6 +59,7 @@ interface PrHeaderProps {
   reference: PrReference;
   title: string;
   author: string;
+  avatarUrl?: string | null;
   branchInfo?: { headBranch: string; baseBranch: string };
   mergeability?: string;
   ciSummary?: string;
@@ -98,6 +100,7 @@ export function PrHeader({
   reference,
   title,
   author,
+  avatarUrl,
   branchInfo,
   mergeability,
   ciSummary,
@@ -342,7 +345,10 @@ export function PrHeader({
             <span className={styles.statusClosed}>Closed {formatAge(closedAt)}</span>
           )}
           <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
-            <span className="pr-subtitle-author">{author}</span>
+            <span className={`pr-subtitle-author ${styles.subtitleAuthor}`}>
+              <Avatar src={avatarUrl} login={author} size="lg" />
+              {author}
+            </span>
             {branchInfo && (
               <span className="pr-subtitle-branch">
                 {branchInfo.headBranch} → {branchInfo.baseBranch}
