@@ -29,6 +29,7 @@ describe('DiffViewToggle', () => {
     );
     const split = getByRole('radio', { name: /split/i }) as HTMLInputElement;
     expect(split.disabled).toBe(true);
+    expect(split.closest('label')).toHaveAttribute('title', 'Side-by-side needs a wider window.');
   });
 
   it('exposes a labelled radiogroup', () => {
