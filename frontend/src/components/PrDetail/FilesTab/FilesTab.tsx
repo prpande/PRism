@@ -10,6 +10,13 @@ import { useAiFileFocus } from '../../../hooks/useAiFileFocus';
 import { FileTree } from './FileTree';
 import { DiffPane } from './DiffPane';
 import type { DiffMode } from './DiffPane';
+import { DiffViewToggle } from './DiffViewToggle';
+import { DiffSettingsMenu } from './DiffSettingsMenu';
+import {
+  useWholeFilePreference,
+  deriveWholeFileEnabled,
+  isWholeFileEligible,
+} from './wholeFilePreference';
 import { IterationTabStrip } from './IterationTabStrip';
 import { CommitMultiSelectPicker } from './CommitMultiSelectPicker';
 import { buildAllRange } from '../range';
@@ -62,20 +69,16 @@ export function FilesTab() {
   const [selectedCommits, setSelectedCommits] = useState<string[] | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [diffMode, setDiffMode] = useState<DiffMode>('side-by-side');
-  const [wholeFilePaths, setWholeFilePaths] = useState<Set<string>>(new Set());
   // #115 — line-wrap is a view-wide preference (like diffMode, not per-file):
   // false = a single synthetic scrollbar shifts both split panes in lockstep
   // (useLockedPaneScroll); true = long lines soft-wrap within their pane.
   const [lineWrap, setLineWrap] = useState(false);
+  const { showFullFile, setShowFullFile, failedPaths, markFailed } = useWholeFilePreference();
 
   const iterationGatePermits = activeRange === 'all' && selectedCommits === null;
   // wholeFileEnabled is fully derived below, after `selectedFile` is computed,
-  // so it can include the file.status + file.hunks.length gates that the
-  // toolbar button's disabled-condition uses. This keeps the button's pressed
-  // state and the prop passed to DiffPane consistent — without those extra
-  // gates, a path persisted in wholeFilePaths across a status/hunks change
-  // would leave the button showing "Hunks only" / aria-pressed=true while the
-  // hook self-disables via its inactive gate (Copilot iter-3 findings F-B + F-C).
+  // so it can include the file.status + file.hunks.length gates. This keeps the
+  // effective flag passed to DiffPane consistent with the gear menu's helper text.
 
   const viewportWidth = useViewportWidth();
   const effectiveDiffMode: DiffMode = viewportWidth < 900 ? 'unified' : diffMode;
@@ -131,13 +134,26 @@ export function FilesTab() {
     [files, selectedPath],
   );
 
-  const wholeFileEnabled =
-    selectedPath !== null &&
-    wholeFilePaths.has(selectedPath) &&
-    iterationGatePermits &&
-    selectedFile !== null &&
-    selectedFile.status === 'modified' &&
-    selectedFile.hunks.length > 0;
+  const wholeFileEnabled = deriveWholeFileEnabled({
+    showFullFile,
+    failedPaths,
+    selectedPath,
+    selectedFileStatus: selectedFile?.status,
+    selectedFileHunkCount: selectedFile?.hunks.length ?? 0,
+    iterationGatePermits,
+  });
+
+  // Gating, split by scope (spec § Disabled / helper-text):
+  const fullFileViewBlocked = !iterationGatePermits;
+  const currentFileIneligible =
+    selectedFile !== null && !isWholeFileEligible(selectedFile.status, selectedFile.hunks.length);
+  const fullFileInertHere = showFullFile && iterationGatePermits && currentFileIneligible;
+  const fullFileViewBlockedReason = fullFileViewBlocked
+    ? "Whole-file view available only on the 'all' iteration view"
+    : null;
+  const fullFileInertReason = fullFileInertHere
+    ? 'Not available for this file — still on for other files'
+    : null;
 
   const fileThreads = useMemo(
     () => (selectedPath ? prDetail.reviewComments.filter((t) => t.filePath === selectedPath) : []),
@@ -195,35 +211,18 @@ export function FilesTab() {
     setDiffMode((prev) => (prev === 'side-by-side' ? 'unified' : 'side-by-side'));
   }, [viewportWidth]);
 
-  const handleToggleLineWrap = useCallback(() => {
-    setLineWrap((prev) => !prev);
-  }, []);
-
-  const handleToggleWholeFile = useCallback(() => {
-    if (!selectedPath) return;
-    setWholeFilePaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(selectedPath)) next.delete(selectedPath);
-      else next.add(selectedPath);
-      return next;
-    });
-  }, [selectedPath]);
-
   const handleWholeFileFailed = useCallback(
-    // Reason is part of the callback contract but not used here — FilesTab
-    // only needs to know SOMETHING failed, not what. DiffPane's local latch
-    // holds the reason string and renders the banner from it.
     (reason: string) => {
-      void reason; // reserved — see above
+      // `reason` is part of the onWholeFileFailed callback contract (DiffPane
+      // passes the failure reason string) but unused here: DiffPane's own local
+      // latch holds the reason and renders the WholeFileFailureBanner. FilesTab
+      // only needs to know that the current file's whole-file fetch failed so it
+      // can add the path to failedPaths and let deriveWholeFileEnabled fall back.
+      void reason;
       if (!selectedPath) return;
-      setWholeFilePaths((prev) => {
-        if (!prev.has(selectedPath)) return prev;
-        const next = new Set(prev);
-        next.delete(selectedPath);
-        return next;
-      });
+      markFailed(selectedPath);
     },
-    [selectedPath],
+    [selectedPath, markFailed],
   );
 
   useFilesTabShortcuts({
@@ -424,53 +423,22 @@ export function FilesTab() {
             onRangeChange={handleRangeChange}
           />
         ) : null}
-        <button
-          type="button"
-          className={styles.diffModeToggle}
-          aria-pressed={effectiveDiffMode === 'side-by-side'}
-          disabled={viewportWidth < 900}
-          onClick={handleToggleDiffMode}
-        >
-          {effectiveDiffMode === 'side-by-side' ? 'Side-by-side' : 'Unified'}
-        </button>
-        <button
-          type="button"
-          className={styles.wholeFileToggle}
-          aria-pressed={wholeFileEnabled}
-          disabled={
-            selectedPath === null ||
-            !selectedFile ||
-            selectedFile.status !== 'modified' ||
-            selectedFile.hunks.length === 0 ||
-            !iterationGatePermits
-          }
-          title={
-            !iterationGatePermits
-              ? "Whole-file view available only on the 'all' iteration view"
-              : selectedFile && selectedFile.status !== 'modified'
-                ? 'Whole-file view available for modified files only'
-                : selectedFile && selectedFile.hunks.length === 0
-                  ? 'Whole-file view not available — no diff hunks to expand'
-                  : ''
-          }
-          onClick={handleToggleWholeFile}
-          data-testid="whole-file-toggle"
-        >
-          {wholeFileEnabled ? 'Hunks only' : 'Show full file'}
-        </button>
-        <button
-          type="button"
-          className={styles.lineWrapToggle}
-          aria-pressed={lineWrap}
-          onClick={handleToggleLineWrap}
-          data-testid="line-wrap-toggle"
-          title={lineWrap ? 'Switch to scrolling long lines' : 'Switch to wrapping long lines'}
-        >
-          {/* Stable label + aria-pressed carries on/off — a label that flipped
-              with state would contradict aria-pressed for assistive tech
-              (Copilot PR #149 review). */}
-          Wrap long lines
-        </button>
+        <DiffViewToggle
+          diffMode={effectiveDiffMode}
+          onDiffModeChange={setDiffMode}
+          splitDisabled={viewportWidth < 900}
+          splitDisabledReason="Side-by-side needs a wider window."
+        />
+        <DiffSettingsMenu
+          showFullFile={showFullFile}
+          onShowFullFileChange={setShowFullFile}
+          fullFileViewBlocked={fullFileViewBlocked}
+          fullFileViewBlockedReason={fullFileViewBlockedReason}
+          fullFileInertHere={fullFileInertHere}
+          fullFileInertReason={fullFileInertReason}
+          lineWrap={lineWrap}
+          onLineWrapChange={setLineWrap}
+        />
       </div>
 
       {diff.error &&

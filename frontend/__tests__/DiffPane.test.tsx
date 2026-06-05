@@ -779,7 +779,8 @@ describe('DiffPane whole-file mode', () => {
     expect(await screen.findByTestId('whole-file-failure-banner')).toBeInTheDocument();
     expect(onFailed).toHaveBeenCalledTimes(1);
 
-    // Simulate FilesTab removing the path from wholeFilePaths: rerender with
+    // Simulate FilesTab marking the path failed (markFailed → failedPaths),
+    // so the derived wholeFileEnabled goes false: rerender with
     // wholeFileEnabled=false and the hook now returning 'idle'.
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'idle',

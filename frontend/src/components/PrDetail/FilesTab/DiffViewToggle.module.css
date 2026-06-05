@@ -1,0 +1,60 @@
+/* DiffViewToggle.module.css */
+.diffViewToggle {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+}
+.tile {
+  position: relative; /* containing block for .srInput so it can't escape */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-height: 24px;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius-1);
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.tile:hover {
+  background: var(--surface-3);
+}
+.tileSelected {
+  background: var(--surface-3);
+  color: var(--text-1);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.tileDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tileDisabled:hover {
+  background: transparent;
+}
+.tileLabel {
+  font-size: var(--text-sm);
+}
+/* Visually-hidden but focusable radio; focus ring shown on the tile.
+   clip-based hide (not bare position:absolute) so it stays confined to the
+   positioned .tile and cannot create a stray hit-test area. */
+.srInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0); /* legacy fallback */
+  clip-path: inset(50%); /* modern equivalent; clip is deprecated */
+  white-space: nowrap; /* keep the 1px box from expanding to fit content */
+  opacity: 0;
+  margin: 0;
+}
+.tile:focus-within {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
