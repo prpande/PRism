@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react';
 
 export interface DeriveWholeFileParams {
   showFullFile: boolean;
-  failedPaths: Set<string>;
+  failedPaths: ReadonlySet<string>;
   selectedPath: string | null;
   selectedFileStatus: string | undefined;
   selectedFileHunkCount: number;
@@ -32,13 +32,14 @@ export interface WholeFilePreference {
   showFullFile: boolean;
   /** Direction-aware: setting true clears failedPaths (a retry affordance). */
   setShowFullFile: (next: boolean) => void;
-  failedPaths: Set<string>;
+  /** Read-only to consumers; mutate only via markFailed / setShowFullFile. */
+  failedPaths: ReadonlySet<string>;
   markFailed: (path: string) => void;
 }
 
 export function useWholeFilePreference(): WholeFilePreference {
   const [showFullFile, setShow] = useState(false);
-  const [failedPaths, setFailedPaths] = useState<Set<string>>(new Set());
+  const [failedPaths, setFailedPaths] = useState<ReadonlySet<string>>(() => new Set());
 
   const setShowFullFile = useCallback(
     (next: boolean) => {
