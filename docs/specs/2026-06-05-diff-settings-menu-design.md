@@ -45,8 +45,9 @@ gear" once the hot-path ergonomics surfaced):
    toggle** — always visible, one click. It is the most frequently flipped control
    in a review session; PRism's toggles are *instant client-side* state (unlike
    GitHub's, which trigger a server reload), so the hot path must not be buried.
-   The tiles are GitHub-style illustrated thumbnails (the maintainer prefers the
-   tile aesthetic), and are *more* compact than today's text buttons.
+   The two tiles use **Azure DevOps' PR-compare diff icons** (`bowtie-diff-inline`
+   for Unified, `bowtie-diff-side-by-side` for Split — the maintainer's chosen
+   reference), and are *more* compact than today's text buttons.
 2. **A single ⚙ "Diff settings" gear → popover** holds the long-tail / set-and-
    forget controls — **Show full file** and **Wrap long lines** today, plus room
    for #184 and beyond. This is the growth valve that keeps the toolbar from
@@ -82,11 +83,14 @@ Resulting toolbar: `[iteration strip / commit picker] … [Unified|Split tiles] 
 On the PR **Files changed** view, GitHub hides all view controls behind a single
 **⚙ "Diff settings"** gear; its dropdown shows Unified / Split as illustrated radio
 tiles, a Hide-whitespace checkbox, and "Apply and reload" (server re-render). We
-take the **illustrated-tile aesthetic** and the **gear-as-growth-valve** idea, but
-**diverge deliberately**: (a) PRism's toggles are instant, so there is no "Apply
-and reload"; (b) because the diff-view toggle is instant and hot, we keep it
-*inline* rather than inside the gear (GitHub can bury it because its toggle is a
-heavy, infrequent reload). The gear holds the cheaper, set-and-forget controls.
+take the **gear-as-growth-valve** idea but **diverge deliberately**: (a) PRism's
+toggles are instant, so there is no "Apply and reload"; (b) because the diff-view
+toggle is instant and hot, we keep it *inline* rather than inside the gear (GitHub
+can bury it because its toggle is a heavy, infrequent reload); (c) the inline
+diff-view glyphs follow **Azure DevOps' PR-compare diff icons**
+(`bowtie-diff-inline` / `bowtie-diff-side-by-side`), the maintainer's preferred
+reference, rather than GitHub's thumbnail tiles. The gear holds the cheaper,
+set-and-forget controls.
 
 ## Approach
 
@@ -145,12 +149,16 @@ explanatory note).
 ### Inline diff-view control (`DiffViewToggle`)
 
 A horizontal segmented `radiogroup` (group label "Diff view") of two real
-`<input type="radio">` inputs, each visually rendered as an **illustrated tile +
+`<input type="radio">` inputs, each visually rendered as an **ADO diff icon +
 label**:
 
-- Tile ~48×32px. **Unified** = three full-width horizontal bars; **Split** = two
-  columns each with two half-width bars. All strokes/fills use **theme CSS
-  variables** (never hardcoded) so they switch with dark/light.
+- Tile ~48×32px (icon ~16–20px + label). The icons reproduce **Azure DevOps'
+  PR-compare diff glyphs** as inline SVG: **Unified** = `bowtie-diff-inline`
+  (a single column with stacked add/delete lines); **Split** =
+  `bowtie-diff-side-by-side` (two side-by-side columns). The bowtie icon set is
+  public; the exact glyph paths are sourced during implementation and confirmed at
+  the B1 visual gate. All strokes/fills use **theme CSS variables** (`currentColor`
+  / surface vars, never hardcoded) so they switch with dark/light.
 - **Selected** = `2px solid var(--accent)` border (no fill swap); **hover** =
   subtle surface change on the unselected tile; **Split disabled** (viewport
   < 900px) = greyed thumbnail + greyed label + helper text/tooltip "Side-by-side
@@ -334,9 +342,11 @@ chrome.)*
   literal title; rejected — abstract icons are less discoverable, reclaim less
   than a gear, and don't scale. The one inline control we keep is an *illustrative
   tile* radiogroup, not an abstract icon cluster.
-- **Labeled radios instead of illustrated tiles.** Lower build cost (no SVG/theming
-  /baseline), but the maintainer prefers the tile aesthetic; tiles chosen, themed
-  via CSS variables, covered by the B1 visual gate.
+- **Labeled radios / GitHub thumbnail tiles instead of ADO diff icons.** Plain
+  radios are lower build cost (no SVG); GitHub's layout-thumbnail tiles were the
+  prior draft. The maintainer chose **Azure DevOps' PR-compare diff icons**
+  (`bowtie-diff-inline` / `bowtie-diff-side-by-side`) for the inline toggle; sourced
+  as inline SVG, themed via CSS variables, covered by the B1 visual gate.
 - **Per-file "Show full file" kept as-is.** Rejected at the maintainer's explicit
   request — forces re-toggling on every file.
 - **On-failure flip the global preference off** (simpler than a failed-paths set).
