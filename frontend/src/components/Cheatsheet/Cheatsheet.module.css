@@ -103,9 +103,14 @@
 }
 /* Visually-hidden but exposed to screen readers — used on the per-table
    <thead> so the columns are announced ("Shortcut", "Context", "Action")
-   without consuming layout space. Standard CSS-clip pattern. */
+   without consuming layout space. Standard CSS-clip pattern.
+   `top: 0; left: 0` pins the box to its containing block's origin so it can
+   never extend the document from a deep static position — same hardening as
+   the global `.sr-only` utility (issue #197). */
 .srOnly {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   padding: 0;

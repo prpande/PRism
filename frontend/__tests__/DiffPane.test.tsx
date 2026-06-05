@@ -197,8 +197,8 @@ describe('DiffPane', () => {
         prUrl="https://github.com/octocat/hello/pull/42"
       />,
     );
-    expect(screen.getByText(/open on github\.com/i)).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: /open on github\.com/i });
+    expect(screen.getByText(/open on github/i)).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /open on github/i });
     expect(link.getAttribute('href')).toBe('https://github.com/octocat/hello/pull/42');
   });
 
@@ -214,7 +214,7 @@ describe('DiffPane', () => {
         prUrl=""
       />,
     );
-    expect(screen.queryByText(/open on github\.com/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/open on github/i)).not.toBeInTheDocument();
   });
 
   it('renders comment widget for matching thread', () => {
