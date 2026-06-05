@@ -52,7 +52,8 @@ internal sealed class FakePrReader : IPrReader
                 IsClosed: _store.IsClosed,
                 OpenedAt: _store.Now.AddHours(-1),
                 MergedAt: mergedAt,
-                ClosedAt: closedAt);
+                ClosedAt: closedAt,
+                HtmlUrl: "https://github.com/acme/api/pull/123");
             var detail = new PrDetailDto(
                 Pr: pr,
                 ClusteringQuality: ClusteringQuality.Ok,
