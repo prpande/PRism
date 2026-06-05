@@ -346,7 +346,7 @@ export function PrHeader({
           )}
           <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
             <span className={`pr-subtitle-author ${styles.subtitleAuthor}`}>
-              <Avatar src={avatarUrl} login={author} size="lg" />
+              <Avatar src={avatarUrl} login={author} size="sm" />
               {author}
             </span>
             {branchInfo && (

@@ -662,7 +662,13 @@ git commit -m "feat(#127): avatar in inbox rows (atomic avatar+author group)"
 
 ---
 
-## Task 8: PrHeader — thread avatarUrl + lg avatar
+## Task 8: PrHeader — thread avatarUrl + sm avatar
+
+> **DEVIATION (2026-06-05, post-CI):** the header avatar is **`sm` (20px)**, not `lg` (32px).
+> CI parity caught that a 32px avatar in the small-text subtitle row grew the header +12px
+> and rippled a layout shift into no-avatar zones (`files-tree`/`files-diff`). `sm` matches
+> the subtitle line height (no header growth) and is proportionate for a metadata row.
+> Read `size="lg"` / `gap: 6px` below as `size="sm"` / `gap: 4px`.
 
 **Files:**
 - Modify: `frontend/src/components/PrDetail/PrHeader.tsx:57-95` (props), `:344-345` (render)

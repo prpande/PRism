@@ -27,7 +27,7 @@ That constraint drives the core decision below.
 | Site | File | Author source | Avatar size |
 |------|------|---------------|-------------|
 | Inbox row | `frontend/src/components/Inbox/InboxRow.tsx:60` | REST `search/issues` | `sm` (20px) |
-| PR header | `frontend/src/components/PrDetail/PrHeader.tsx:345` | GraphQL PR author | `lg` (32px) |
+| PR header | `frontend/src/components/PrDetail/PrHeader.tsx:345` | GraphQL PR author | `sm` (20px) — revised from `lg`; see §6 |
 | Root comment | `frontend/src/components/PrDetail/OverviewTab/PrRootConversation.tsx:46` | GraphQL root comments | `md` (24px) |
 | Review comment | `frontend/src/components/PrDetail/FilesTab/DiffPane/ExistingCommentWidget.tsx:85` | GraphQL review threads | `sm` (20px) |
 
@@ -249,11 +249,18 @@ everywhere (PrHeader has no per-item `x`). Per-site:
   its author span in a single `inline-flex; align-items: center` child with a
   small gap so the pair is atomic and the separators stay outside it.
 
-- **PrHeader (`lg`).** `PrHeader` receives a **flat `author: string` prop**, not a
-  `pr` object — there is no `x.avatarUrl` in scope. The plan must: (a) add
-  `avatarUrl?: string` to `PrHeaderProps`; (b) pass `avatarUrl={data?.pr.avatarUrl}`
-  at the `PrDetailView.tsx:253` call site alongside the existing `author` prop;
-  (c) render `<Avatar src={avatarUrl} login={author} size="lg">` at
+- **PrHeader (`sm`).** **DECISION (2026-06-05, revised from `lg`):** the header avatar
+  is `sm` (20px), **not** `lg` (32px). A 32px avatar in the small-text *subtitle*
+  metadata row (`author · branch · status`) is taller than the ~20px text line, so it
+  grew the header +12px and rippled a layout shift into every content zone below it
+  (CI parity caught dimension changes in `files-tree`/`files-diff`, which have no
+  avatar). `sm` matches the subtitle line height, keeps the header height unchanged,
+  and is more proportionate for a metadata row. `PrHeader` receives a **flat
+  `author: string` prop**, not a `pr` object — there is no `x.avatarUrl` in scope.
+  The plan must: (a) add `avatarUrl?: string | null` to `PrHeaderProps`; (b) pass
+  `avatarUrl={data?.pr.avatarUrl}` at the `PrDetailView.tsx:253` call site alongside
+  the existing `author` prop;
+  (c) render `<Avatar src={avatarUrl} login={author} size="sm">` at
   `PrHeader.tsx:345`. The author span sits in a `row gap-3` subtitle that
   `flex-wrap`s alongside other chips, so apply the same atomic-pair wrapper as
   InboxRow (avatar + name in one `inline-flex` child, a gap tighter than the
