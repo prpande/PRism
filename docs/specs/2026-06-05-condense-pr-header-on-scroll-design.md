@@ -1,5 +1,5 @@
 ---
-title: Condense PR-detail header on diff scroll (#128)
+title: Collapsible PR-detail header + toolbar density trim (#128)
 status: draft
 type: feat
 issue: 128
@@ -8,7 +8,7 @@ risk: B1 (UI-visual)
 date: 2026-06-05
 ---
 
-# Condense PR-detail header on diff scroll (#128)
+# Collapsible PR-detail header + toolbar density trim (#128)
 
 ## Problem
 
@@ -16,10 +16,17 @@ In PR detail → Files, the chrome stack above the diff consumes ~half the
 viewport before a single line of code is visible. Measured live on
 `mindbody/Mindbody.BizApp.Bff#191` at a 773px viewport: App Header (52) +
 PrTabStrip (45) + **PrHeader meta (102)** + Overview/Files/Drafts sub-tabs (41)
-+ Files toolbar (77) + file-path header — leaving the diff body only **384px**.
-The PR-meta block is mostly read-once orientation info (repo·#, merge status,
-author, branch, CI/mergeability chips) that does not earn its ~100px while the
-reviewer is actually reading diffs and comments.
++ **Files toolbar (77)** + file-path header — leaving the diff body only **384px**.
+
+Two reclaimable targets, each with a different right treatment:
+
+- The **PrHeader meta** (repo·#, merge status, author, branch, CI/mergeability
+  chips) is read-once orientation info. It does not earn ~100px while the
+  reviewer reads diffs — but the reviewer may still want it on demand.
+- The **Files toolbar** is over-padded: its 77px is ~56px of nested vertical
+  padding (toolbar 12+12, iteration strip 8+8, each iteration chip 8+8) wrapping
+  ~17px of actual content. That is wasted vertical space regardless of what the
+  controls look like.
 
 Reported from a UI review session 2026-06-03.
 
@@ -32,158 +39,207 @@ viewport-bound Files layout (#191/#149/#155/#156):
 | Original criterion | Status | Evidence |
 |---|---|---|
 | File tree stays put while diff scrolls | ✅ shipped | Tree and diff are independent scrollers at a shared fixed `top`; `.diff-pane-body` is the diff's own `overflow:auto` scroller. |
-| Vertical scroll confined to diff container (no full-page scroll) | ✅ shipped | `document` not scrollable; `[data-app-shell]` pinned to `100dvh`; `[data-app-scroll]` not scrollable when `[data-files-active]`. |
+| Vertical scroll confined to diff container (no full-page scroll) | ✅ shipped (with a documented escape hatch) | `document` is not page-scrollable and `[data-app-scroll][data-files-active]` does not overflow at normal viewports. It is `overflow-y:auto` (not `hidden`) **by design** — the #155 escape hatch lets the page scroll only when the rigid header stack exceeds the viewport. So "diff is the sole scroller" holds at normal sizes, not unconditionally. |
 | Works in both desktop shell and browser | ✅ shipped | The `data-files-active` rules in `tokens.css` are **not** gated on `[data-shell="desktop"]`. |
-| **Top bar collapses on scroll-down, restores on scroll-up** | ❌ not built | No scroll-driven condense exists anywhere. |
+| **Top bar collapses on scroll-down, restores on scroll-up** | ↺ reframed | See "Reframe of criterion 4" below. |
 
-So this slice's net-new work is the **fourth** criterion only, reframed (per the
-issue owner) from a *total collapse* to a *condense*: shrink the title, drop the
-read-once meta, hand the reclaimed pixels to the diff. Criteria 1–3 get a
-**regression test** so the already-shipped behavior cannot silently regress.
+So this slice's net-new work is criterion 4 (reframed) plus a toolbar density
+trim; criteria 1–3 get a **regression test** so the already-shipped behavior
+cannot silently regress.
 
-## Decision
+### Reframe of criterion 4 (must be recorded on the issue when closing)
 
-### A. Condense, not collapse (Approach 1 — threshold-driven)
+The issue's criterion 4 ("collapses on scroll-**down** and restores on
+scroll-**up**") is reframed three ways, all approved by the issue owner during
+this design:
 
-When the diff body is scrolled past a threshold, the **PrHeader meta block**
-switches to a condensed state:
+1. **collapse → collapse-to-compact** (not a total hide; keeps title + CI chip +
+   actions).
+2. **scroll-triggered → manually triggered** by a chevron button. Scroll-driven
+   condense was prototyped and rejected: in this viewport-bound layout the diff
+   scrolls *inside* `.diff-pane-body` (not the page), so a scroll trigger would
+   require listening to that inner scroller and would introduce a content-jump
+   under the reader's eye, max-scroll-clamp oscillation on short diffs, and a
+   keep-alive scroll-restore/condense desync — all of which a user-initiated
+   button eliminates (the reflow becomes expected feedback, not a surprise).
+3. **"top bar(s)" (the whole stack) → PrHeader meta only**, plus a density trim
+   of the toolbar. App Header + PrTabStrip stay (global chrome); the toolbar's
+   *control form* is #185's job (see boundary).
 
-- **Title** → single-line, ellipsized, ~1rem, sitting on the actions row.
-- **Hidden:** `repo · #`, the `Merged/Closed …` status line, and the
-  `author · branch → base · CI/mergeability` subtitle line (the CI chip goes
-  with it — scrolling back up to check the build is cheap, and one lone chip
-  reads as visual debris).
-- **Kept, always visible:** Submit/AskAi/Verdict actions, and the
-  Overview/Files/Drafts sub-tab strip.
+Because the issue owner is also the reporter, this is a paper-trail concern, not
+a stakeholder one — but the disposition (criterion 4 reframed, with this
+rationale) **will be posted as a comment on #128 before it is closed** so the
+issue history doesn't show four checked boxes under a silent redefinition.
 
-Live mock measured the reclaimed space: diff body **384px → 455px (+71px,
-~18% taller diff)**, achieved purely by the existing flex layout (see below).
+## Decision A — Manual collapse toggle for the PrHeader meta
 
-**Trigger is scroll *position*, not scroll *direction*.** Condense when the diff
-body `scrollTop > 48px`; re-expand when `scrollTop < 8px`. The two thresholds
-give hysteresis so the header does not flicker when the user hovers near the
-boundary. Direction-aware auto-hide (hide-on-down / show-on-up) was explicitly
-rejected: it is the classic "disappearing header" that reviewers find janky, it
-re-triggers on any small upward scroll, and it would remove the title entirely.
+A small chevron button collapses/expands the PrHeader meta block on demand, like
+an IDE panel-collapse control.
 
-### B. The reclaim is free — no overlay, no scroll math
+- **Affordance & placement.** A chevron button at the **right end of the
+  Overview/Files/Drafts sub-tab row** (the `PrSubTabStrip` `role="tablist"`).
+  That row is the stable anchor present in *both* states. The glyph is a **clean
+  SVG chevron icon** (themeable via `currentColor`, rotating 180° between states)
+  — **not** a Unicode caret. The exact icon is chosen at the visual gate from the
+  rendered candidates (line chevron / double chevron / bar+chevron); a bare text
+  caret (`⌃`/`⌄`) is explicitly rejected as looking cheap. It is a real
+  `<button>` with `aria-expanded`, `aria-controls` pointing at the collapsible
+  meta region's id, and a label that flips between "Collapse PR details" /
+  "Expand PR details".
+- **Collapsed state** = the compact row already approved in the mock: the title
+  (ellipsized, ~1rem) + the CI/mergeability chip + the action cluster
+  (Submit/AskAi/Verdict) on one row; the sub-tab row + chevron below. Hidden:
+  `repo · #`, the `Merged/Closed …` status line, author, branch.
+  - **Keep the CI/mergeability chip** (revised from an earlier draft that dropped
+    it): "is the build green / mergeable" is a *frequent glance*, not read-once
+    orientation. It is the one piece of meta worth keeping pinned, and it sits
+    inline next to the title in the compact row.
+- **Expanded state** = today's full PrHeader, unchanged.
+- **Default = expanded.** First open of any PR shows the full header.
+- **State = per-PR, session-only, in-memory.** A module-level
+  `Map<prRefKey, boolean>` (mirroring `useTabScrollMemory`'s store) holds each
+  PR's collapsed flag. It is **not** persisted: closing/reopening the app resets
+  every PR to expanded. Per-PR (not per-sub-tab): the flag applies to the shared
+  PrHeader across all of a PR's sub-tabs.
+- **Scope = all sub-tabs.** The chevron is present and functional on
+  Overview/Files/Drafts. The diff-room payoff is largest on Files (viewport-bound
+  layout), but collapsing on Overview/Drafts simply gives their normally-scrolling
+  content more room — harmless and consistent.
 
-The Files view is already viewport-bound flex: `.pr-detail-page` is a column,
-its children are `flex-shrink:0` **except** the files slot which is `flex:1 1 0`.
-Shrinking PrHeader's height therefore hands the reclaimed pixels straight to the
-diff slot — no `position:sticky`, no absolute overlay, no manual height
-arithmetic. The condense is a pure CSS state change; the layout reflows the diff
-automatically.
+### A.1 Wiring (plain React state — the scroll-driven complexity is gone)
 
-Consequence to accept: as the header condenses, the diff content shifts up by
-~70px on screen (the diff body's top moves up). This is the standard
-sticky-condense behavior and is smoothed by a short transition. The diff body's
-`scrollTop` is **not** changed by the reflow (content above the viewport stays
-above it), so the user's reading position is preserved.
+Because the trigger is a click, not scroll, this is ordinary controlled state —
+no scroll listener, no hysteresis, no imperative attribute, none of the
+scroll-design hazards:
 
-### C. Wiring — imperative `data-condensed`, consistent with `data-files-active`
+- `PrDetailView` owns `const [collapsed, setCollapsed] = useState(() => store.get(refKey) ?? false)`,
+  seeded from the module store and re-seeded when `refKey` changes (keep-alive:
+  switching the active PR must read that PR's flag). The toggle handler flips
+  state **and** writes the store so the choice survives a tab switch within the
+  session.
+- `collapsed` is passed to `PrHeader`, which renders `data-collapsed` as a normal
+  JSX attribute on its root (`<div className={styles.prHeader} data-collapsed={collapsed || undefined} …>`).
+  CSS condense rules are scoped `.prHeader[data-collapsed] …`. No imperative
+  `toggleAttribute`, no "React preserves attributes it didn't set" dependency.
+- The collapse is a pure CSS state change. Because the Files view is already
+  viewport-bound flex (`.pr-detail-page` column; the files slot is `flex:1 1 0`),
+  shrinking PrHeader's height hands the reclaimed pixels straight to the diff —
+  no overlay, no scroll math. On a click this reflow is expected user feedback.
 
-Scroll events are high-frequency; driving React state on every event would
-re-render the whole PR detail subtree. The codebase already solves the identical
-problem imperatively: `PrDetailView` toggles `data-files-active` on
-`[data-app-scroll]` in a layout effect, and `useTabScrollMemory` writes
-`scrollTop` imperatively. This slice follows that pattern:
+### A.2 Visual mechanics + motion
 
-- A new hook (working name `useCondenseHeaderOnScroll`), wired by the **active**
-  `PrDetailView` (same `if (!active) return` guard as the `data-files-active`
-  effect, so only one view ever drives it), attaches a **passive, capture-phase**
-  `scroll` listener on the stable `[data-subtab='files']` slot.
-  - Capture phase is required because `scroll` does not bubble, and the inner
-    `.diff-pane-body` element is **recreated when the selected file changes** —
-    a capture listener on the stable slot catches scroll from whatever diff-body
-    element is current without re-attaching. The handler filters on
-    `e.target.matches('.diff-pane-body')` so the file-tree's own scroll and
-    other inner scrollers don't trigger condense.
-- On each scroll the handler applies the hysteresis and toggles a `data-condensed`
-  attribute on the **PrHeader root** element. React preserves data-* attributes
-  it did not set across re-renders, so an unrelated PrHeader re-render (e.g. a
-  session change) will not clear it.
-- Cleanup (deactivation, sub-tab change away from Files, unmount) removes both
-  the listener and `data-condensed`, so a non-Files view / inactive tab always
-  renders the full header.
+- `data-collapsed` rules target `.prTitle`, `.prSubtitle`,
+  `.statusMerged`/`.statusClosed` (module classes on the same root) and
+  `:global(.pr-meta-repo)` (global class). The CI/mergeability chip is pulled out
+  of the hidden subtitle line into the compact title row so it survives collapse.
+- **The condensed title is the same `<h1 data-testid="pr-title">` node**,
+  restyled smaller and ellipsized — *not* a second element. This preserves the
+  heading landmark in the accessibility tree (a `display:none` on the full title
+  + a separate `<span>` would drop the `h1`).
+- **Overflow safety:** in the compact row the title is `flex:1; min-width:0`
+  (ellipsizes) and the action cluster is `flex-shrink:0`. This prevents a wide
+  open-PR action cluster (VerdictPicker "Request changes" ~100px +
+  SubmitInProgressBadge + pending-review pill + Submit + AskAi ≈ 500–600px) from
+  overflowing the row near the 900px breakpoint.
+- **Motion:** content hides immediately; the header height eases over **≤150ms**,
+  **suppressed under `@media (prefers-reduced-motion: reduce)`**.
 
-The hysteresis decision is a tiny pure function (`shouldCondense(prev, scrollTop)`)
-so it is unit-testable without layout.
+## Decision B — Files toolbar density trim
 
-### D. Visual technique + motion
+Reduce the toolbar's wasted vertical space by trimming the three nested vertical
+paddings. **This is always-on and the new default toolbar size for every user —
+independent of the chevron (Decision A).** The chevron collapses only the
+PrHeader meta; the toolbar is permanently shorter regardless of chevron state.
+**CSS-only; no control is moved, relabeled, or converted to an icon.**
 
-- `data-condensed` lives on the PrHeader root (which already carries the
-  `.prHeader` module class + `data-testid="pr-header"`). CSS condense rules are
-  scoped `.prHeader[data-condensed] …`, targeting `.prTitle`, `.prSubtitle`,
-  `.statusMerged`/`.statusClosed` (module classes) and `:global(.pr-meta-repo)`.
-- Meta lines hidden via `display:none` cannot animate height. Acceptable
-  techniques (final choice left to the plan): wrap the collapsible meta in a
-  container animating `max-height`/`opacity`, or accept an instant meta hide with
-  the title font-size + row height transitioning. Either way the transition is
-  **≤150ms** and **suppressed under `@media (prefers-reduced-motion: reduce)`**.
+| Element | Vertical padding now | Trimmed to | Note |
+|---|---|---|---|
+| `.filesTabToolbar` | `12px` (`--s-3`) | `8px` (`--s-2`) | top + bottom |
+| `.iterationTabStrip` | `8px` | `2px` | top + bottom |
+| iteration chip | `8px` | `5px` | top + bottom |
+
+Measured effect: toolbar **77px → ~51px (+~26px to the diff)**. Horizontal
+padding, gaps, fonts, and the control set are untouched. The trim is always-on
+(not tied to the chevron), and composes with the existing
+`[data-density="compact"]` mode rather than fighting it. Exact px values are a
+plan detail; the target is "~50px toolbar, no cramping."
 
 ## Scope boundary with #185
 
-#185 ("convert the diff-toolbar text toggles to compact icon controls") owns the
-**Files toolbar** real estate (the 77px `Side-by-side / Show full file / Wrap
-long lines` row + iteration strip). This slice touches **only the PrHeader meta
-block** and must not restyle or collapse the toolbar — otherwise the two issues
-collide. The App Header and PrTabStrip are likewise out of scope (global chrome;
-condensing them would affect non-Files views and is jarring).
+#185 ("convert the diff-toolbar text toggles to compact **icon** controls") and
+this slice's Decision B are **orthogonal**: #185 changes the *form* of the toggle
+controls (text → icons, a horizontal-space win); Decision B trims *vertical
+padding* (a height win). Neither blocks the other and they compose. This slice
+must **not** convert toggles to icons, relabel them, or restructure the toolbar
+controls — that is #185. After this slice the toolbar is shorter but the controls
+are unchanged; #185 later makes them narrower.
 
 ## Out of scope / disposition
 
-- **Files toolbar / iteration strip condensing** — #185's job (see boundary
-  above). Not folded in.
-- **App Header + PrTabStrip condensing** — out of scope; global chrome.
-- **Small-viewport escape-hatch case** — when the rigid header stack exceeds the
-  viewport, `[data-app-scroll]` becomes scrollable and the whole page (including
-  the tree top) scrolls; that is the intentional #155 dead-end-avoidance escape
-  hatch. Condensing the header *reduces* how often it engages, but reworking the
-  escape hatch is not in scope. Noted, not changed.
-- **Persisting condensed state across tab switches** — condense is ephemeral
-  view state derived from the live scroll position; it resets to expanded on
-  re-entry. No persistence.
+- **Toolbar control-form / icon conversion** — #185.
+- **App Header + PrTabStrip collapsing** — global chrome; out of scope. (A future
+  unified "focus/reading mode" could let one control collapse meta + toolbar +
+  global chrome together; the chevron here is a deliberate first increment toward
+  that, not the whole thing.)
+- **Small-viewport escape-hatch rework** — the `[data-app-scroll]` `overflow-y:auto`
+  escape hatch (#155) stays. Collapsing the header *reduces* how often it engages
+  but reworking it is not in scope.
+- **Persisting the collapsed choice across app restarts** — deliberately
+  session-only per the owner's decision; no prefs plumbing.
+- **Closed/merged orientation in collapsed state** — the `Merged/Closed …` status
+  line is hidden when collapsed (along with the rest of the meta). This is
+  deliberate: the user explicitly chose collapse, and expanding restores it. The
+  CI/mergeability chip (kept) still conveys state.
 
 ## Acceptance criteria
 
-- [ ] In Files view, scrolling the diff body past the threshold condenses the
-      PrHeader: title shrinks to a single ellipsized line, and repo·#, status,
-      and the author/branch/CI-chip line are hidden.
-- [ ] Scrolling the diff body back to the top re-expands the full header.
-- [ ] The condense/expand boundary does not flicker (hysteresis: condense >48px,
-      expand <8px).
-- [ ] Submit/AskAi/Verdict actions and the Overview/Files/Drafts tabs remain
-      visible and functional in both states.
-- [ ] The diff body gains the reclaimed height when condensed (verified > full
-      state) — no overlay; the file tree and diff stay independent scrollers.
-- [ ] Switching to Overview/Drafts, or to another PR tab, renders the full
-      (non-condensed) header.
-- [ ] Under `prefers-reduced-motion: reduce`, the condense transition is
-      suppressed.
-- [ ] **Regression (criteria 1–3 from the issue):** in Files view the document
-      is not page-scrollable, `[data-app-scroll]` is not scrollable, the diff
-      body is the diff's own scroller, and the file tree is an independent
-      scroller — asserted so the #191 layout cannot silently regress.
+- [ ] A chevron toggle on the sub-tab row collapses the PrHeader meta to the
+      compact row (title + CI/mergeability chip + actions) and expands it back.
+- [ ] The toggle is a real button with `aria-expanded` reflecting state,
+      `aria-controls` on the meta region, and a state-appropriate accessible label;
+      reachable and operable by keyboard.
+- [ ] Collapsed state hides repo·#, status line, author, branch; keeps the
+      title (ellipsized, same `<h1>` node), CI/mergeability chip, and actions.
+- [ ] State is per-PR and survives switching to another tab and back **within a
+      session**; reopening the app resets to expanded.
+- [ ] The chevron is present and functional on all three sub-tabs; default is
+      expanded.
+- [ ] Collapsing hands the reclaimed height to the diff (diff body taller when
+      collapsed) — verified, no overlay.
+- [ ] The action cluster never overflows the compact row at ≥900px (title
+      ellipsizes, actions don't shrink).
+- [ ] The Files toolbar vertical padding is trimmed (~77px → ~50px) with no
+      change to the toggle controls or iteration tabs themselves.
+- [ ] Under `prefers-reduced-motion: reduce`, the collapse transition is suppressed.
+- [ ] **Regression (issue criteria 1–3):** in Files view the document is not
+      page-scrollable, `[data-app-scroll]` does **not overflow at the test
+      viewport**, the diff body is the diff's own scroller, and the file tree is
+      an independent `overflow-y:auto` scroller.
 
 ## Test plan
 
-- **Regression e2e (criteria 1–3, Playwright — jsdom has no layout):** open a
-  multi-file PR's Files view; assert `document.scrollingElement` is not
-  scrollable, `[data-app-scroll]` is not scrollable, `.diff-pane-body` is the
-  scroller, and the file tree is a separate `overflow-y:auto` container. This is
-  the guard that locks in the already-shipped behavior.
-- **Condense behavior e2e (Playwright):** scroll `.diff-pane-body` past 48px →
-  assert `data-condensed` appears on `[data-testid="pr-header"]`, the meta lines
-  are hidden, and the diff body's `clientHeight` increased vs the un-condensed
-  measurement; scroll back to <8px → assert it reverts. Verify boundary
-  hysteresis (a scroll to ~30px after condensing keeps it condensed).
-- **Hysteresis unit test (vitest):** the pure `shouldCondense(prev, scrollTop)`
-  function across the threshold band (0, 8, 30, 48, 60) for both prior states.
+- **Regression e2e (criteria 1–3, Playwright — jsdom has no layout):** extend the
+  existing `frontend/e2e/diff-scroll-regression.spec.ts` (which already asserts
+  `document`/`[data-app-scroll]` non-overflow and the diff-as-scroller). The only
+  genuinely-new assertion is **file tree is a separate `overflow-y:auto`
+  container**. Assert "does not overflow at this viewport," **not** "is not a
+  scroll container" (the element is `overflow-y:auto` by design).
+- **Collapse behavior e2e (Playwright):** click the chevron → assert
+  `data-collapsed` on `[data-testid="pr-header"]`, the meta lines hidden, the CI
+  chip + title still present, and the diff body `clientHeight` increased (use
+  `waitForFunction` on the height to avoid transition-timing flake). Click again →
+  reverts. Switch sub-tab → state persists; switch PR tab and back → per-PR state
+  restored.
+- **Toolbar trim:** assert the toolbar height dropped vs the pre-trim baseline and
+  the three toggle buttons + iteration tabs are still present and clickable.
 - **Visual (the B1 gate):** live before/after screenshots of the real running app
-  (full vs condensed) in light and dark. This is the human-gated proof.
-- **a11y (Playwright `a11y-audit`):** no new serious/critical violations vs
-  `main`; condensing must not orphan focus or hide a focused control (the hidden
-  meta lines are non-interactive text, so this is low-risk — confirm anyway).
-- **Reduced-motion:** confirm the transition is suppressed under
-  `prefers-reduced-motion: reduce`.
+  — expanded, collapsed, and toolbar-trimmed — in light and dark. Human-gated proof.
+- **a11y (Playwright `a11y-audit`):** no new serious/critical vs `main`; confirm
+  the `h1` heading landmark persists in the collapsed state and the toggle button
+  exposes `aria-expanded`.
+- **Re-baseline:** any committed parity/screenshot baseline scoped to the PrHeader
+  or Files toolbar will diff; re-capture with `--update-snapshots` and review the
+  diff as part of the visual gate.
+- **vitest:** PrHeader/PrSubTabStrip render tests — assert the chevron renders,
+  toggles `data-collapsed`, and exposes the right `aria-expanded`. (No dedicated
+  hysteresis unit test — the scroll design that needed it is gone.)
