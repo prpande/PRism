@@ -72,7 +72,7 @@ export function App() {
           navbar, not beside it). In the browser these are unstyled passthrough
           divs and the document scrolls as before. */}
       <div data-app-shell>
-        <Header hasToken={authState.hasToken} />
+        <Header isAuthed={isAuthed} />
         <PrTabStrip />
         <div data-app-scroll>
           <Routes>
