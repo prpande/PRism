@@ -34,8 +34,10 @@ as no-regression assertions.
 
 ## Scope
 
-**In scope** — `frontend/src/components/Header/Header.tsx` and the one signal it
-receives from `frontend/src/App.tsx`.
+**In scope** — `frontend/src/components/Header/Header.tsx`, the one signal it
+receives from `frontend/src/App.tsx`, and the existing Header unit suite
+`frontend/__tests__/header.test.tsx` (which must be migrated, not merely added to —
+see Testing).
 
 **Out of scope** (explicitly):
 - Settings page redesign → **#134**.
@@ -57,8 +59,18 @@ instead.
 `Header` renders the `<nav>` tab strip **only when `isAuthed`**. When not authed,
 the `<nav>` element is **omitted entirely** (not rendered empty — an empty
 `navigation` landmark is an a11y smell). `<Logo>` and `<WindowControls>` render in
-every state; hiding the desktop **close** button would trap the user. The layout
-spacer continues to right-align `WindowControls`.
+every state; hiding the desktop **close** button would trap the user.
+
+**No-nav header layout.** With the nav absent, the header keeps its existing flex
+layout: **Logo stays left-flush**, the spacer grows to fill the middle, and
+`WindowControls` stays right-aligned. The empty center is intentional — Logo is
+**not** re-centered, and no placeholder fills the gap. This is the natural outcome
+of the current flex rules (the spacer already owns the middle); the implementation
+should not add layout just for the no-nav state.
+
+**Transition.** Mount/unmount is a **hard cut** — no fade/slide animation, matching
+the app's existing nav (which has no show/hide animation today). The nav appears as
+part of the post-connect route change to `/`.
 
 This gate hides the nav in the two states where the tabs would only bounce:
 - **first-run** (`!hasToken`), and
@@ -67,6 +79,15 @@ This gate hides the nav in the two states where the tabs would only bounce:
 
 …and keeps the nav visible whenever it is usable, including the authed
 replace-from-Settings flow (`/setup?replace=1`, where `isAuthed` is still true).
+
+**First-run is intentionally a dead-end surface.** While the nav is hidden, the
+user has **no route to Inbox or Settings** — the Setup ("Connect to GitHub") screen
+is the only surface, by design. Implementers must not add a back-door link or
+keyboard shortcut to escape it. **Escape hatch:** the way forward is always the
+Setup form itself — in first-run a successful connect, in rejected-token re-auth a
+re-paste into the connect form (`/setup` without `?replace=1` → `onConnect`). So
+hiding the nav never traps the user: the actionable form is on-screen in every
+nav-hidden state.
 
 ### 2. Remove the standalone Setup tab
 
@@ -101,11 +122,37 @@ untouched.
 - Authed nav retains `aria-current="page"` on the active tab (Inbox/Settings).
 - `WindowControls` (including the close button) remains reachable in every state,
   including first-run.
+- **Focus on the auth transition is unchanged.** The nav appears as part of the
+  full route change to `/` (`navigate('/')`), which remounts the page — focus
+  handling across that route change is the app's existing behavior and is **not**
+  modified here. This slice adds no focus-management logic; if a stranded-focus
+  problem exists it predates this change and is out of scope.
 
 ## Testing
 
-**Header unit tests (vitest):**
-- `!isAuthed` → no nav landmark and no tab links rendered.
+**Migrate the existing Header suite — do not just add to it.**
+`frontend/__tests__/header.test.tsx` currently asserts behavior this slice deletes
+and passes the prop this slice renames; it will go **red** unless rewritten. The
+following existing cases must be **removed or rewritten**:
+- `renderAt(...)` passes `<Header hasToken={…} />` → update the helper to pass
+  `isAuthed`.
+- `"renders logo + Inbox/Settings/Setup tabs"` → drop the Setup-tab assertion;
+  assert **Inbox + Settings only**.
+- `"marks Setup active (NOT Settings) on '/setup' with no replace param"` → delete
+  (no Setup tab to mark active).
+- `"prefixes the Setup label with the first-run '·' indicator when !hasToken"` and
+  `"omits the '·' indicator once a token is configured"` → delete (indicator
+  removed).
+- Keep `"marks Inbox active on '/'"`, `"marks Settings active on '/settings'"`,
+  the nested-settings case, the `/setup?replace=1` → Settings-active case, and the
+  `#119` search-box cases — but all run only in the `isAuthed` state now.
+
+**New Header unit cases (vitest):**
+- `!isAuthed` (first-run) → **no `<nav>` landmark and no tab links** rendered;
+  Logo still present.
+- `!isAuthed` via **rejected-token** (`isAuthed` false even though a token exists)
+  → same nav-hidden assertion (covers the `authInvalidated` branch, not just
+  first-run).
 - `isAuthed` → Inbox + Settings links present; **no** Setup link.
 - `isAuthed` + `?replace=1` path → Settings link carries `aria-current="page"`.
 
@@ -115,8 +162,14 @@ untouched.
 - Settings → "Replace token" → Setup form → Cancel round-trips back to `/settings`
   (no-regression for criterion 4).
 
-**No-regression (existing coverage relied upon):** post-connect redirect to Inbox
-is covered by the existing setup specs; this change does not touch that path.
+**No-regression for criterion 2 (redirect to Inbox).** This is honest about the
+gap the adversarial pass found: **no existing spec asserts the post-connect
+`navigate('/')` transition** (`setup-page.test.tsx` does not cover it). The
+protection here is structural, not test-based — criterion 2 lives entirely in
+`SetupPage.tsx`, which **this slice does not modify**, so it cannot regress *from
+these changes*. This slice does not add a dedicated redirect test (that would be
+scope creep into the setup flow); if we want a standing guard, it belongs to a
+separate setup-flow test task, noted in deferrals.
 
 ## Acceptance criteria
 
@@ -124,7 +177,16 @@ is covered by the existing setup specs; this change does not touch that path.
 - [ ] The standalone Setup tab is removed; authed nav = Inbox + Settings.
 - [ ] Re-running setup stays reachable via Settings → Auth "Replace token".
 - [ ] After setup completion the app lands on Inbox (no-regress).
-- [ ] B1 visual assert: first-run, authed, and replace states each look correct.
+- [ ] **B1 visual assert** — concrete per-state pass criteria for the human eyeball:
+  - **First-run:** **no** nav tabs; Logo left-flush; `WindowControls` right; empty
+    center (Logo not re-centered); the "Connect to GitHub" card renders below.
+  - **Authed (Inbox/Settings):** exactly **two** tabs — Inbox, Settings — **no**
+    Setup tab; active tab highlighted; header height/balance unchanged vs. today
+    minus the third tab.
+  - **Replace from Settings (`/setup?replace=1`):** nav shown with **Settings**
+    highlighted (not a Setup tab — there is none); Setup form renders with
+    Cancel → `/settings`.
+  - Captured as before/after Playwright screenshots embedded on the PR.
 
 ## Notes / decisions
 
@@ -135,3 +197,25 @@ is covered by the existing setup specs; this change does not touch that path.
   users land directly on the Setup screen, so no "go to setup" pointer is needed.
 - "Replace token" copy is intentionally **not** changed (multi-account / relabel
   lives in #139).
+- **Criterion 4 — what "reachable from Settings" means here (open question for the
+  issue author).** #130's title says "move Setup into Settings," and we satisfy
+  that with the **existing** Settings → Auth "Replace token" link, which opens the
+  shared Setup form (`/setup?replace=1`) in replace mode (`onReplace` →
+  `/api/auth/replace`). That is a **token re-entry** flow, which is narrower than a
+  full first-run re-run (it does not re-walk repo selection the way connect does).
+  We are treating "reachable for re-running" as satisfied by that link, and
+  deferring (a) any **relabel** for discoverability — a user hunting for the word
+  "Setup" finds only "Replace token" — to #134 (Settings redesign) / #139, and
+  (b) any **fuller re-run** (host + repo re-selection) as out of scope. **Flag for
+  @prpande at the spec-review gate:** if you intended criterion 4 to mean a full
+  setup re-run rather than token re-entry, say so — that expands this slice.
+
+## Deferred
+
+- **Standing redirect guard for criterion 2.** No spec currently asserts the
+  post-connect `navigate('/')` → Inbox transition. This slice does not add one
+  (the redirect lives in untouched `SetupPage.tsx`); a dedicated setup-flow test
+  is a separate task if we want regression protection there.
+- **"Replace token" relabel / discoverability** → #134 (Settings redesign) / #139.
+- **Full setup re-run** (host + repo re-selection from Settings) → out of scope
+  pending the criterion-4 clarification above.
