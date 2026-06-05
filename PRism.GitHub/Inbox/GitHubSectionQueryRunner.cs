@@ -140,9 +140,9 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
             if (!int.TryParse(path[3], out var n)) continue;
 
             var repo = $"{path[0]}/{path[1]}";
-            var login = item.GetProperty("user").GetProperty("login").GetString() ?? "";
-            var avatarUrl = item.TryGetProperty("user", out var u)
-                && u.TryGetProperty("avatar_url", out var av) && av.ValueKind == JsonValueKind.String
+            var userEl = item.GetProperty("user");
+            var login = userEl.GetProperty("login").GetString() ?? "";
+            var avatarUrl = userEl.TryGetProperty("avatar_url", out var av) && av.ValueKind == JsonValueKind.String
                 ? av.GetString() : null;
             var title = item.GetProperty("title").GetString() ?? "";
             var updated = item.GetProperty("updated_at").GetDateTimeOffset();

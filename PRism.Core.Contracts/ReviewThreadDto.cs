@@ -11,9 +11,9 @@ public sealed record ReviewThreadDto(
     IReadOnlyList<ReviewCommentDto> Comments);
 
 [SuppressMessage("Design", "CA1054:Uri parameters should not be strings",
-    Justification = "AvatarUrl is deserialized from the GitHub REST API as a raw string.")]
+    Justification = "AvatarUrl is a raw URL string from the GitHub API.")]
 [SuppressMessage("Design", "CA1056:Uri properties should not be strings",
-    Justification = "AvatarUrl is deserialized from the GitHub REST API as a raw string.")]
+    Justification = "AvatarUrl is a raw URL string from the GitHub API.")]
 public sealed record ReviewCommentDto(
     string CommentId,
     string Author,

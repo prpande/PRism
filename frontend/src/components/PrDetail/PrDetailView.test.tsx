@@ -25,6 +25,7 @@ const PR_DETAIL: PrDetailDto = {
     title: 'Keep-alive title',
     body: 'A realistic body.',
     author: 'alice',
+    avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
     state: 'open',
     headSha: 'abc123',
     baseSha: 'def456',
@@ -166,6 +167,15 @@ describe('PrDetailView', () => {
     expect(files.closest('[data-subtab="files"]')).toHaveAttribute('hidden');
 
     expect(screen.queryByTestId('drafts-tab-root')).not.toBeInTheDocument();
+  });
+
+  // #127 — the lg author avatar renders in the PR header (the only render site
+  // without a dedicated per-site test; flagged by claude[bot] on PR #188).
+  test('renders the author avatar in the PR header next to the author', () => {
+    renderPrDetailView({ prRef: { owner: 'acme', repo: 'api', number: 7 } });
+    const header = screen.getByTestId('pr-header');
+    expect(header.querySelector('[data-testid="avatar"]')).not.toBeNull();
+    expect(header.textContent).toContain('alice');
   });
 });
 

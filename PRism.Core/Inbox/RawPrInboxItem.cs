@@ -5,9 +5,9 @@ using PRism.Core.Contracts;
 namespace PRism.Core.Inbox;
 
 [SuppressMessage("Design", "CA1054:Uri parameters should not be strings",
-    Justification = "AvatarUrl is sourced from the GitHub REST API as a raw string.")]
+    Justification = "AvatarUrl is a raw URL string from the GitHub API.")]
 [SuppressMessage("Design", "CA1056:Uri properties should not be strings",
-    Justification = "AvatarUrl is sourced from the GitHub REST API as a raw string.")]
+    Justification = "AvatarUrl is a raw URL string from the GitHub API.")]
 public sealed record RawPrInboxItem(
     PrReference Reference,
     string Title,
