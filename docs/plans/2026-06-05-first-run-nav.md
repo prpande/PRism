@@ -395,15 +395,28 @@ test('cold start hides the top nav tabs (#130)', async ({ page }) => {
   );
 ```
 
-- [ ] **Step 3: Run the two specs** (requires the dev server / Playwright projects configured per the repo; run if the local Playwright environment is available):
+- [ ] **Step 2b: Assert the nav survives the replace round-trip** (the `/setup?replace=1` matrix row — an `isAuthed=true` state, so the nav must stay shown with Settings active; this hard-gates against an implementer wrongly keying the gate on `pathname==='/setup'` instead of `isAuthed`). The same spec already clicks "Replace token" and waits for `/setup?replace=1`, then asserts the Cancel link is visible. Immediately **after that `Cancel` assertion** (still on `/setup?replace=1`, before the token is filled), add:
+
+```ts
+  // #130: replace-from-Settings is an authed state — nav stays shown, Settings active,
+  // and there is still no Setup tab even though the path is /setup.
+  await expect(page.getByRole('navigation')).toHaveCount(1);
+  await expect(page.getByRole('navigation').getByRole('link', { name: /^settings$/i })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(page.getByRole('navigation').getByRole('link', { name: /^setup$/i })).toHaveCount(0);
+```
+
+- [ ] **Step 3: Run the two specs:**
 
 Run: `cd frontend && npx playwright test cold-start.spec.ts replace-token-same-login.spec.ts`
-Expected: PASS. (If the local Playwright environment isn't set up, rely on CI — note it in the PR Proof.)
+Expected: PASS. Run locally if the Playwright environment is set up; otherwise CI runs them — note that PRism's CI e2e is now an **enforced (un-masked) gate** (the prior `continue-on-error` masking, issue #171, was removed in the test-reliability sweep), so a failure here will fail CI rather than pass silently.
 
-- [ ] **Step 4: Sanity-check the no-token a11y audit still passes** (it forces `hasToken:false` to audit the Setup screen; with the nav now hidden it must not expect a nav landmark):
+- [ ] **Step 4: Sanity-check the no-token a11y audit still passes.** **Verified:** `a11y-audit.spec.ts:250-267` (`setup (/setup) — no serious/critical violations`) asserts only the `connect to github` heading and runs axe — it makes **no** navigation-landmark assertion, so hiding the nav cannot break it (axe over a page with fewer elements can't gain a violation). If a future edit to that spec ever adds a nav-landmark assertion on the no-token screen, update that assertion (the no-token screen intentionally has no nav per #130) rather than treating the failure as an implementation bug.
 
 Run: `cd frontend && npx playwright test a11y-audit.spec.ts`
-Expected: PASS (no assertion there depends on a header nav on the no-token screen).
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -461,7 +474,7 @@ git commit -m "chore(#130): lint/format fixups"
 
 - [ ] First-run: nav tab strip not rendered (Logo + WindowControls remain) — Task 1 (`hides the whole nav ... when not authed`), Task 2 (no-token), Task 4 Step 1.
 - [ ] Standalone Setup tab removed; authed nav = Inbox + Settings — Task 1 (`no Setup tab`), Task 4 Step 2.
-- [ ] Re-running setup reachable via Settings → Auth "Replace token" — Task 4 (the replace spec still drives that link).
+- [ ] Re-running setup reachable via Settings → Auth "Replace token"; nav stays shown + Settings active on `/setup?replace=1` — Task 4 Step 2 + Step 2b.
 - [ ] After setup completion the app lands on Inbox (no-regress) — unchanged `SetupPage.tsx`; not separately re-tested (see spec Deferred).
 - [ ] Rejected-token re-auth hides the nav and recovers — Task 2.
 - [ ] No-nav layout: spacer survives, Logo stays left-flush — Task 1 (`header-spacer` assertion) + Task 5 Step 4 (visual).
