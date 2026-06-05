@@ -23,12 +23,28 @@ test.describe('#128 collapsible PR header + toolbar trim', () => {
     await expect(header).not.toHaveAttribute('data-collapsed', /.*/);
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
+    // #203 point-toward-action convention: the glyph is authored pointing UP and
+    // carries NO rotation while expanded (clicking folds content up). The CSS
+    // rotation lives only in the stylesheet, so this is asserted in a real
+    // browser (jsdom can't compute it). Guards against a future "fix" that
+    // flips the convention back — see #203.
+    const chevron = toggle.locator('svg');
+    await expect(chevron.locator('path').first()).toHaveAttribute('d', 'M4 7l4-4 4 4');
+    const expandedTransform = await chevron.evaluate((el) => getComputedStyle(el).transform);
+    expect(['none', 'matrix(1, 0, 0, 1, 0, 0)']).toContain(expandedTransform);
+
     const expandedH = await body.evaluate((el) => el.clientHeight);
 
     // Collapse.
     await toggle.click();
     await expect(header).toHaveAttribute('data-collapsed', 'true');
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+    // Collapsed: the same up-glyph is rotated 180° to point DOWN (clicking drops
+    // content down). matrix(-1, 0, 0, -1, 0, 0) === rotate(180deg).
+    await expect
+      .poll(() => chevron.evaluate((el) => getComputedStyle(el).transform))
+      .toBe('matrix(-1, 0, 0, -1, 0, 0)');
 
     // Read-once meta hidden; title still present.
     await expect(page.locator('[data-testid="pr-header"] .pr-meta-repo')).toBeHidden();
