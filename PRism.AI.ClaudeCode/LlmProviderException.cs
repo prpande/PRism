@@ -43,11 +43,15 @@ public sealed partial class LlmProviderException : Exception
     private static string Redact(string? raw)
     {
         if (string.IsNullOrEmpty(raw)) return string.Empty;
-        var s = BearerRegex().Replace(raw, "Bearer [redacted]");
+        var s = AnthropicKeyRegex().Replace(raw, "[redacted]");
+        s = BearerRegex().Replace(s, "Bearer [redacted]");
         s = TokenRegex().Replace(s, "token=[redacted]");
         s = HexRegex().Replace(s, "[redacted]");
         return s.Length > MaxStderr ? s[..MaxStderr] : s;
     }
+
+    [GeneratedRegex(@"sk-ant-\S+", RegexOptions.IgnoreCase)]
+    private static partial Regex AnthropicKeyRegex();
 
     [GeneratedRegex(@"Bearer\s+\S+", RegexOptions.IgnoreCase)]
     private static partial Regex BearerRegex();

@@ -167,4 +167,15 @@ public sealed class ClaudeCodeLlmProviderTests
         ex.Stderr.Length.Should().BeLessThanOrEqualTo(512);
         ex.Stderr.Should().NotContain("sk-ant-0123456789abcdef0123456789abcdef");
     }
+
+    [Fact]
+    public async Task Exception_stderr_redacts_bare_anthropic_key()
+    {
+        // A bare sk-ant key (no Bearer/token= prefix) printed in stderr must still be redacted.
+        const string bareKey = "error: invalid key sk-ant-api03-AbCdEf0123456789_-XyZ rejected";
+        var (provider, _) = Build(new ProcessResult(1, "", bareKey, false));
+        var ex = (await ((Func<Task>)(async () => await provider.CompleteAsync(Req(), CancellationToken.None)))
+            .Should().ThrowAsync<LlmProviderException>()).Which;
+        ex.Stderr.Should().NotContain("sk-ant-");
+    }
 }
