@@ -1,0 +1,35 @@
+name: Un-claim on close
+
+# Label hygiene, NOT gate enforcement. The issue-resolution workflow
+# (.ai/docs/issue-resolution-workflow.md) adds the `in-progress` claim label at
+# intake but had no matching removal on completion, so merged/closed issues kept
+# claiming to be in flight. This removes `in-progress` whenever an issue closes
+# (merged fix, or closed for any other reason) — it does not block or gate
+# anything, preserving the workflow's deliberate "no CI enforcement" stance for
+# tiers/risk gates.
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  remove-in-progress:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove the in-progress claim label (only if present)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # Guard on presence so closes of un-claimed issues don't error.
+          if gh issue view "$NUMBER" --repo "$REPO" --json labels \
+               --jq '.labels[].name' | grep -qx 'in-progress'; then
+            echo "Removing in-progress from #$NUMBER"
+            gh issue edit "$NUMBER" --repo "$REPO" --remove-label 'in-progress'
+          else
+            echo "#$NUMBER has no in-progress label; nothing to do."
+          fi
