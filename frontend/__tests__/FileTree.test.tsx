@@ -94,6 +94,24 @@ describe('FileTree', () => {
     expect(onToggle).toHaveBeenCalledWith('a.ts');
   });
 
+  it('labels each viewed checkbox by full path so same-named files are distinct', () => {
+    render(
+      <FileTree
+        files={[file('src/index.ts'), file('lib/index.ts')]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    // two files share the basename index.ts; the checkbox labels must disambiguate
+    // by full path so screen-reader users can tell the two controls apart
+    expect(screen.getByRole('checkbox', { name: 'Viewed src/index.ts' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Viewed lib/index.ts' })).toBeInTheDocument();
+  });
+
   it('marks a viewed file row with the gray-out class and never line-through', () => {
     const { container } = render(
       <FileTree

@@ -21,7 +21,7 @@ const STATUS_LABELS: Record<string, string> = {
   renamed: 'R',
 };
 
-const STATUS_WORD: Record<string, string> = {
+const STATUS_WORD: Record<FileChangeStatus, string> = {
   added: 'Added',
   modified: 'Modified',
   deleted: 'Deleted',
@@ -115,7 +115,10 @@ export function FileTree({
   aiPreview,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
-  const viewedCount = files.filter((f) => viewedPaths.has(f.path)).length;
+  const viewedCount = useMemo(
+    () => files.filter((f) => viewedPaths.has(f.path)).length,
+    [files, viewedPaths],
+  );
 
   // Collapse state intentionally persists across `files` changes (e.g. a background
   // freshness refetch): a dir the user collapsed stays collapsed on reload. Stale
@@ -304,7 +307,7 @@ function CheckSlot({
         type="checkbox"
         checked={isViewed}
         onChange={handleChange}
-        aria-label={`Viewed ${node.name}`}
+        aria-label={`Viewed ${node.path}`}
         className={`file-tree-viewed-checkbox ${styles.fileTreeViewedCheckbox}`}
       />
     </div>
@@ -328,6 +331,7 @@ function DirCell({ row, onToggle }: { row: DirRow; onToggle: (dirKey: string) =>
         className={`file-tree-dir-toggle ${styles.fileTreeDirToggle}`}
         onClick={() => onToggle(row.dirKey)}
         aria-label={`Toggle ${node.name}`}
+        aria-expanded={expanded}
       >
         <span
           className={`file-tree-chevron${expanded ? ' file-tree-chevron--open' : ''} ${styles.fileTreeChevron}${expanded ? ` ${styles.fileTreeChevronOpen}` : ''}`}
