@@ -20,7 +20,11 @@ plain and has two concrete usability defects:
    forcing a horizontal scroll to reach it.
 
 Beyond the defects, the tree could read more like an IDE explorer (VS Code's
-Solution Explorer was the reference) without adding noise.
+Solution Explorer was the reference) without adding noise. The design session
+expanded the work accordingly — folder icons, tighter indentation, deletion and
+viewed legibility, and a found accessibility gap (the status badge has no
+screen-reader label). The **Goals** section below is the full scope; the two
+defects above are just its origin.
 
 ## Goals
 
@@ -44,11 +48,12 @@ Solution Explorer was the reference) without adding noise.
   #74), not on a claim about reviewer behavior. The **directory accent icon**
   (item 2) is *not* a file-type icon and is in scope.
 - No icon library is added. All glyphs are hand-authored inline SVG.
-- No change to tree-building, selection, keep-alive, or AI-focus *behavior*.
-  This is presentation-plus-a11y only. Two deliberate exceptions: item 6 changes
-  the viewed *styling* (drops its strikethrough), and item 8 adds an SR-only
-  status label (an accessibility addition, not a behavior change to existing
-  flows). Both are called out where they occur.
+- No change to tree-building, selection, keep-alive, or AI-focus *logic*. This is
+  presentation-plus-a11y only — item 5 (deleted strikethrough) and the visual
+  parts of items 1–4, 6, 7 are additive styling. Two changes touch *existing*
+  treatment rather than only adding new styling, and are called out where they
+  occur: item 6 removes the viewed strikethrough, and item 8 re-labels the status
+  badge for assistive tech (marking the visible letter `aria-hidden`).
 
 ## Design
 
@@ -83,9 +88,9 @@ keeps its `aria-label="Toggle <name>"`), so keyboard/AT behavior is unchanged.
 
 ### 2. Folder icons (accent)
 
-Add an inline SVG folder glyph in `DirectoryNodeComponent`, after the chevron,
-before the directory name, inside the toggle button (so it shares the chevron's
-hit target):
+Add an inline SVG folder glyph as the **last child of the toggle button**, after
+the chevron (so it shares the chevron's hit target). The directory name stays a
+sibling *outside* the button, exactly as today — it does not move:
 
 ```html
 <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -109,6 +114,10 @@ name remains the accessible label.
   (`.fileTreeFile:hover { background: var(--surface-3) }`). Add a matching
   `.fileTreeDirHeader:hover { background: var(--surface-3) }` so the now-stronger
   directory affordance gives the same feedback as file rows.
+- **Spacing:** `.fileTreeDirHeader` has no `gap` today (the toggle button was
+  chevron-only and sat flush to the name). With the folder icon now ending the
+  button, add `gap: var(--s-2)` to `.fileTreeDirHeader` so the chevron+folder
+  cluster doesn't collide with the directory name — mirroring the file row's gap.
 - **Accent icon vs. selected-row background:** the selected row background is a
   muted same-hue tint (`accent-soft`-derived); the folder icon is full
   `--accent`. The icon stays `--accent` regardless of selection — the same-hue
@@ -209,17 +218,22 @@ The tree lives in a CSS **grid**, not a flex chain:
   the grid item refuses to shrink below it, and its content (including the
   right-edge checkbox) is pushed past the visible track — which
   `.filesTabContent`'s `overflow: hidden` then clips out of reach.
-- `.fileTree` additionally pins `min-width: 240px; max-width: 360px`; the
-  `max-width: 360px` exceeds the grid track's 320px max and should be reconciled
-  (cap at the track or drop the max-width) so the inner tree can't exceed its
-  track either.
+- `.fileTree` (the FileTree root, nested directly inside `.filesTabTree`)
+  additionally pins `min-width: 240px; max-width: 360px`. Both fight the fix: the
+  `min-width: 240px` keeps an inline-axis floor on the inner element that
+  partially neutralizes the grid-item `min-width: 0`, and the `max-width: 360px`
+  exceeds the grid track's 320px max (dead).
 
 **Fix:**
 
 - Add `min-width: 0` to `.filesTabTree` (the grid item) — the load-bearing fix;
   this lets the track-constrained item shrink so the row's `flex: 1` name column
   can finally ellipsize.
-- Reconcile `.fileTree`'s `max-width: 360px` against the 320px track (cap it).
+- Also set `.fileTree` `min-width: 0` — let the grid track's own 240px floor own
+  the minimum; `.fileTree`'s 240px floor is redundant with the track and would
+  otherwise re-impose the inline-axis minimum the grid-item fix just removed.
+- Cap or drop `.fileTree`'s `max-width: 360px` (it exceeds the 320px track and is
+  inert).
 - Belt-and-suspenders `overflow-x: hidden` on the list **after** the above — on
   its own it would only *clip* a still-too-wide row (hiding the name end under
   the clip instead of showing an ellipsis), so it is a guard, not the fix.
@@ -233,22 +247,39 @@ The tree lives in a CSS **grid**, not a flex chain:
 
 No `position: sticky` hack is needed once rows can't exceed the container.
 
-### 8. Status badge — add the missing SR-only label
+### 8. Status badge — replace the bare letter for assistive tech
 
 **Found in review:** the status badge today renders a bare glyph —
 `<span ...>{STATUS_LABELS[status] ?? '?'}</span>` (`FileTree.tsx:186-190`) — with
-**no** `aria-label`, `title`, or SR-only text. A screen-reader user hears just
-the letter "D"/"A"/"M"/"R" with no meaning, and the new deletion strikethrough
-(item 5) conveys nothing non-visually. So deletion (and every status) currently
-has no real non-visual carrier — the original a11y claim was false.
+**no** `aria-label`, `title`, SR-only text, *or* `aria-hidden`. A screen-reader
+user hears just the letter "D"/"A"/"M"/"R" with no meaning, and the new deletion
+strikethrough (item 5) conveys nothing non-visually. So deletion has no real
+non-visual carrier — the original a11y claim was false.
 
-Add an SR-only label alongside the badge, mapping status → word
-(`added`/`modified`/`deleted`/`renamed`), e.g. a visually-hidden
-`<span className="sr-only">Deleted </span>` (reusing the existing `.sr-only`
-utility, same pattern as the AI-focus SR text already in this component at
-`FileTree.tsx:205-207`). The visible badge stays the single letter. This makes
-status — including deletion — a genuine non-visual signal, independent of the
-color/strikethrough.
+The fix must **replace, not stack.** Because the letter is unguarded text,
+adding an SR-only word *next to it* would make AT announce both ("D Deleted
+Program.cs"). Mark the visible letter `aria-hidden` and add the word so AT reads
+the word *instead of* the letter. Exact structure, SR word **before** the name
+so it reads as a prefix:
+
+```jsx
+<span className={`file-status ... ${styles.fileStatus} ...`} aria-hidden="true">
+  {STATUS_LABELS[node.file.status] ?? '?'}
+</span>
+<span className="sr-only">{STATUS_WORD[node.file.status]} </span>
+```
+
+`STATUS_WORD` maps `added/modified/deleted/renamed →
+"Added"/"Modified"/"Deleted"/"Renamed"`. `.sr-only` already exists (tokens.css);
+the AI-focus SR text at `FileTree.tsx:205-207` is the same recipe — but place
+this span *before* the name span, not after (the AI span trails its row by
+design). Reading result: "Deleted Program.cs".
+
+**Scope note:** only `deleted` is strictly *required* for 1.4.1 — its
+strikethrough is the color-alone signal item 5 introduces. Labeling all four
+statuses is a consistency choice (uniform markup + cheap a11y hygiene), not four
+separate correctness fixes; we do all four because the per-status branch is the
+same code either way.
 
 ## Accessibility
 
@@ -278,10 +309,12 @@ color/strikethrough.
     depth, or that the shared constant is consumed).
   - Both file-name and directory-name spans carry `title={node.name}` and the
     ellipsis class contract.
-  - **Status SR-only label (item 8):** a `deleted` file's row exposes the
-    accessible word "Deleted" (e.g. `getByText`/role query on the SR-only span);
-    likewise added/modified/renamed. This is the regression guard for the a11y
-    carrier the spec depends on.
+  - **Status SR-only label (item 8):** assert **both** that a `deleted` row
+    exposes the accessible word "Deleted" *and* that the visible letter span
+    carries `aria-hidden` (i.e. the bare "D" is absent from the row's accessible
+    name) — otherwise the double-announce regression slips through. Likewise
+    added/modified/renamed. This is the regression guard for the a11y carrier the
+    spec depends on.
 - **Layout (item 7):** a unit assertion on real truncation is brittle in jsdom
   (no layout engine). Cover the *DOM contract* in vitest (name has the ellipsis
   classes; `.filesTabTree` carries `min-width:0`) and rely on the B1 visual
