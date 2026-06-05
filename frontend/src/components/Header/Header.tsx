@@ -78,7 +78,10 @@ export function Header({ isAuthed }: HeaderProps) {
           aria-label="Global search (placeholder)"
         />
       )}
-      {/* Desktop shell only — renders nothing in the browser. */}
+      {/* Desktop shell only — renders nothing in the browser. The theme/accent/AI
+          quick toggles that used to live here were removed (they're in Settings);
+          the saved-appearance apply-on-load they also did now lives in the
+          headless <AppearanceSync /> mounted by App. */}
       <WindowControls />
     </header>
   );
