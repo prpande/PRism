@@ -15,8 +15,10 @@ public static class PromptSanitizer
     /// <summary>Default cap on wrapped content length (2 MB).</summary>
     public const int DefaultMaxChars = 2_000_000;
 
-    // Zero-width space inserted after the angle bracket to break any sentinel tag found in the payload.
-    private const char ZeroWidthSpace = '​';
+    // Zero-width space inserted after the angle bracket to break any sentinel tag found in the
+    // payload. Written as an explicit \u200B escape (NOT a literal invisible char) so it survives
+    // review and refactors — an editor that strips zero-width characters can't silently disarm it.
+    private const char ZeroWidthSpace = '\u200B';
 
     /// <summary>Wrap <paramref name="content"/> as DATA inside &lt;<paramref name="tag"/>&gt; … &lt;/<paramref name="tag"/>&gt;.</summary>
     public static string WrapAsData(string content, string tag, int maxChars = DefaultMaxChars)
