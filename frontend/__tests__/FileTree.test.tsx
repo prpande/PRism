@@ -176,6 +176,25 @@ describe('FileTree', () => {
     const fileRow = container.querySelector('[data-path="src/a.ts"]') as HTMLElement;
     expect(fileRow.style.paddingLeft).toBe('24px');
   });
+
+  it('renders the directory chevron as an SVG, not the ▸ glyph', () => {
+    const { container } = render(
+      <FileTree
+        files={[file('src/a.ts')]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    const chevron = container.querySelector('.file-tree-chevron svg');
+    expect(chevron).not.toBeNull();
+    expect(chevron).toBeInTheDocument();
+    expect(chevron).toHaveAttribute('aria-hidden', 'true');
+    expect(container.textContent).not.toContain('▸');
+  });
 });
 
 const F = (path: string, status: FileChange['status'] = 'modified'): FileChange => ({

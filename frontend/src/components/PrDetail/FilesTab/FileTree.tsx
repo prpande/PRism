@@ -254,7 +254,16 @@ function DirectoryNodeComponent({
           <span
             className={`file-tree-chevron${expanded ? ' file-tree-chevron--open' : ''} ${styles.fileTreeChevron}${expanded ? ` ${styles.fileTreeChevronOpen}` : ''}`}
           >
-            ▸
+            <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                d="M6 4l4 4-4 4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </span>
         </button>
         <span className={`file-tree-dir-name ${styles.fileTreeDirName}`}>{node.name}</span>
