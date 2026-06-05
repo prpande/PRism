@@ -46,13 +46,10 @@
   color: var(--text-1);
 }
 
-/* Viewed-state — handoff strikethrough via :has() sibling selector (D33).
-   Baseline 2023; supported in current Chrome, Safari, Firefox. */
+/* Viewed-state — dim only. Strikethrough is reserved for deletion (item 5/6).
+   :has() sibling selector (D33). Baseline 2023; current Chrome/Safari/Firefox. */
 .fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeFileName {
   color: var(--text-3);
-  text-decoration: line-through;
-  text-decoration-color: var(--border-strong);
-  text-decoration-thickness: 1px;
 }
 
 /* File-status badges — handoff `tree-status-*` treatment.
