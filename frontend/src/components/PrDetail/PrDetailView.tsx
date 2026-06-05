@@ -256,6 +256,7 @@ export function PrDetailView({
         reference={prRef}
         title={data?.pr.title ?? ''}
         author={data?.pr.author ?? ''}
+        avatarUrl={data?.pr.avatarUrl}
         branchInfo={
           data ? { headBranch: data.pr.headBranch, baseBranch: data.pr.baseBranch } : undefined
         }
