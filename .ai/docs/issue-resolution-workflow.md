@@ -29,9 +29,54 @@ You have been assigned a GitHub issue in this repo (`prpande/PRism`).
   table below. With no CI enforcement, the safety property leans entirely on the
   agent's classification plus the human merge.
 
+## Claiming an issue (before you start)
+
+Before you invest any work in an issue — including reproduction — confirm no other
+agent is already working it, then stake your own claim. This is the
+**distributed** guard against two agents (on this machine or any other) picking up
+the same issue: the claim lives on the issue itself, visible to every agent
+everywhere, not in a local worktree that only this machine can see.
+
+**An issue is already claimed if any of these hold:**
+
+- it has an **assignee** other than you, **or**
+- it carries the **`in-progress`** label, **or**
+- it has a triage comment (§ Triage-comment template) from another agent.
+
+If the issue is claimed *and the claim is fresh* (see Staleness below), **do not
+pick it up** — choose a different issue.
+
+**To claim an issue** (do this at intake, before reproduction):
+
+1. **Self-assign** the issue.
+2. Add the **`in-progress`** label.
+3. Post the triage comment (§ Triage-comment template) once you have classified it
+   — this is the human-readable detail behind the claim.
+
+Self-assign **first**: the assignee is a single GitHub field, so it is the
+**tie-breaker** when two agents claim near-simultaneously — the later write wins,
+and an agent that finds its own assignment overwritten must back off and pick
+another issue. The label and comment are for discovery and humans; the assignee
+settles races. This shrinks the check-then-claim race but does not fully eliminate
+it; the human (who ultimately merges) is the final backstop against duplicate
+work.
+
+**Staleness / abandonment.** A claim is **reclaimable** if it is older than ~2
+working days **and** has no linked open PR (or its linked PR is closed unmerged) —
+the claiming agent has crashed or walked away. Before reclaiming, post a comment
+noting the takeover and re-assign to yourself, so the original agent (if still
+alive) sees it. This mirrors the gate-staleness re-ping under § Notification and
+keeps a dead claim from starving an otherwise-available issue forever.
+
+> **Prerequisite:** the repo needs an `in-progress` label. Create it once with
+> `gh label create in-progress` if it does not already exist.
+
 ## The decision tree
 
 ```
+0. Claim: confirm the issue is unclaimed (§ Claiming an issue) and stake your
+   claim (self-assign + `in-progress` label) BEFORE investing in reproduction.
+   If it's already claimed and the claim is fresh, pick a different issue.
 1. Reproduce (bug) / restate the ask (feature). Establish acceptance criteria.
    HARD STOP if the bug can't be reproduced (even statistically), or the
    acceptance criteria can't be made concrete enough to check.
