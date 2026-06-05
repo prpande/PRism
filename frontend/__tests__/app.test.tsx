@@ -97,7 +97,7 @@ describe('App routing', () => {
     );
     // Auth failure now surfaces as a centered ErrorModal (alertdialog), not a bare alert.
     const dialog = await screen.findByRole('alertdialog');
-    expect(dialog).toHaveTextContent('Couldn't load auth state');
+    expect(dialog).toHaveTextContent("Couldn't load auth state");
   });
 
   it('navigates to /setup when prism-auth-rejected event fires', async () => {
