@@ -146,6 +146,7 @@ export interface PrDetailPr {
   body: string;
   author: string;
   avatarUrl?: string | null;
+  htmlUrl?: string | null;
   state: string;
   headSha: string;
   baseSha: string;

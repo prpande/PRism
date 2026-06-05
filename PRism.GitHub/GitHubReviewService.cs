@@ -1016,6 +1016,11 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             if (!pull.TryGetProperty("author", out var a) || a.ValueKind != JsonValueKind.Object) return null;
             return a.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String ? av.GetString() : null;
         }
+        string? HtmlUrl()
+        {
+            var url = GetStr("url");
+            return string.IsNullOrEmpty(url) ? null : url;
+        }
 
         // GitHub returns "MERGEABLE" | "CONFLICTING" | "UNKNOWN" — pass through as-is.
         // mergeStateStatus is a finer-grained signal ("BEHIND", "DIRTY", etc.); we collapse
@@ -1053,7 +1058,8 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             OpenedAt: GetDate("createdAt"),
             MergedAt: mergedAt,
             ClosedAt: closedAt,
-            AvatarUrl: AvatarUrl());
+            AvatarUrl: AvatarUrl(),
+            HtmlUrl: HtmlUrl());
     }
 
     private static List<IssueCommentDto> ParseRootComments(JsonElement pull)

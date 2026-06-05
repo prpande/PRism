@@ -1,8 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { startSidecar, Sidecar } from "./sidecar";
 import { sidecarBinaryName } from "./platform";
+import { isOpenableUrl, windowOpenDecision } from "./urls";
 
 let sidecar: Sidecar | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -57,6 +58,22 @@ if (!gotLock) {
   ipcMain.handle("window:is-maximized", (e) =>
     fromMainWindow(e) ? (mainWindow?.isMaximized() ?? false) : false,
   );
+
+  // Open an external URL in the OS browser. shell.openExternal is security-
+  // sensitive, so: (1) only the main window's renderer may call (fromMainWindow),
+  // (2) only https: URLs pass (isOpenableUrl rejects file:/javascript:/data:/…),
+  // (3) the handler never throws to the renderer — returns true on success,
+  // false on a rejected URL or a thrown open.
+  ipcMain.handle("shell:open-external", async (e, url: string) => {
+    if (!fromMainWindow(e)) return false;
+    if (typeof url !== "string" || !isOpenableUrl(url)) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
   app.whenReady().then(bootstrap);
 
@@ -143,6 +160,19 @@ async function bootstrap(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  // External-link safety net. The header's OpenInGitHubButton intercepts its own
+  // click, but the diff-truncation + submit-success "Open on GitHub" links are
+  // plain target="_blank" anchors with no per-component intercept. Under
+  // sandbox:true Electron denies window.open by default and would drop them
+  // silently, so route every renderer-initiated open through shell.openExternal
+  // (https-only) and never spawn an in-app window. windowOpenDecision always
+  // returns action:"deny"; `open` gates the OS-browser hand-off.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    const { action, open } = windowOpenDecision(url);
+    if (open) void shell.openExternal(url);
+    return { action };
   });
 
   // macOS: "hidden" still shows the native traffic lights. Hide them so the SPA's
