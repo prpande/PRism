@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isOpenableUrl } from "../src/urls";
+import { isOpenableUrl, windowOpenDecision } from "../src/urls";
 
 test("isOpenableUrl accepts an https URL", () => {
   assert.equal(isOpenableUrl("https://github.com/o/r/pull/1"), true);
@@ -29,4 +29,18 @@ test("isOpenableUrl rejects data:", () => {
 test("isOpenableUrl rejects malformed input", () => {
   assert.equal(isOpenableUrl("not a url"), false);
   assert.equal(isOpenableUrl(""), false);
+});
+
+test("windowOpenDecision always denies the in-app window", () => {
+  assert.equal(windowOpenDecision("https://github.com/o/r/pull/1").action, "deny");
+  assert.equal(windowOpenDecision("javascript:alert(1)").action, "deny");
+  assert.equal(windowOpenDecision("not a url").action, "deny");
+});
+
+test("windowOpenDecision opens https in the OS browser, rejects the rest", () => {
+  assert.equal(windowOpenDecision("https://github.com/o/r/pull/1").open, true);
+  assert.equal(windowOpenDecision("http://github.com/o/r/pull/1").open, false);
+  assert.equal(windowOpenDecision("file:///etc/passwd").open, false);
+  assert.equal(windowOpenDecision("javascript:alert(1)").open, false);
+  assert.equal(windowOpenDecision("not a url").open, false);
 });
