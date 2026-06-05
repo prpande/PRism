@@ -380,6 +380,24 @@ test.describe('A11y audit — automated axe-core pass per spec § 6', () => {
     expect(blockers, JSON.stringify(results.violations, null, 2)).toEqual([]);
   });
 
+  test('PR files — collapsed header — no serious/critical violations', async ({ page }) => {
+    await setupBaseMocks(page);
+    await page.goto('/pr/octocat/Hello-World/1/files');
+    await expect(
+      page.getByRole('heading', { name: /sample pull request for a11y audit/i }),
+    ).toBeVisible({ timeout: 30_000 });
+    // Collapse the PR-detail header. The chevron must remain a SIBLING of the
+    // tablist (not inside it) — collapsing and re-auditing here catches any
+    // regression where someone moves the button into [role="tablist"], which
+    // would trip axe's aria-required-children critical rule.
+    await page.locator('[data-testid="pr-header-collapse-toggle"]').click();
+    await expect(page.locator('[data-testid="pr-header"]')).toHaveAttribute(
+      'data-collapsed',
+      'true',
+    );
+    await runAxe(page);
+  });
+
   test('PR drafts (/pr/octocat/Hello-World/1/drafts) — no serious/critical violations', async ({
     page,
   }) => {

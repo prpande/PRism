@@ -3,7 +3,11 @@
   display: flex;
   gap: var(--s-2);
   flex-wrap: wrap;
-  padding: var(--s-2) 0;
+  /* #128: intentional raw px, NOT tokens. These vertical paddings are tuned
+     density-independent literals (spec "Density-token interaction"): compact
+     mode shrinks --s-2/--s-3, but this strip is already at its minimum and must
+     not compress further. No token resolves to 2px, so a literal is correct. */
+  padding: 2px 0;
 }
 
 .iterationTab {
@@ -11,7 +15,9 @@
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  padding: var(--s-2) var(--s-3);
+  /* #128: 5px vertical is an intentional density-independent literal (see the
+     .iterationTabStrip note above); horizontal stays tokenized. */
+  padding: 5px var(--s-3);
   background: var(--surface-2);
   border: 1px solid var(--border-1);
   border-radius: var(--radius-3);
