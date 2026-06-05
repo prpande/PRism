@@ -1,0 +1,1068 @@
+# Diff Settings Menu + Inline Diff-View Tiles + Global "Show full file" — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace the three text toggle buttons in the Files-tab diff toolbar with an inline ADO-style Split/Unified tile toggle plus a single ⚙ "Diff settings" gear popover (Show full file, Wrap long lines), and make "Show full file" a view-wide preference.
+
+**Architecture:** Two new presentational components (`DiffViewToggle` inline, `DiffSettingsMenu` gear popover) + an extracted state hook (`useWholeFilePreference`) so the view-wide-full-file logic is unit-testable outside FilesTab. FilesTab is rewired to render them and pass a derived `wholeFileEnabled` to `DiffPane`. Icons are inline SVG reproductions of Azure DevOps' `bowtie-diff-inline` / `bowtie-diff-side-by-side`.
+
+**Tech Stack:** React + TypeScript + Vite, CSS Modules, vitest + @testing-library/react + user-event, Playwright e2e.
+
+**Spec:** `docs/specs/2026-06-05-diff-settings-menu-design.md`
+
+---
+
+## File Structure
+
+All paths under `frontend/src/components/PrDetail/FilesTab/`.
+
+| File | Responsibility |
+|------|----------------|
+| `diffIcons.tsx` (create) | Inline SVG icon components: `InlineDiffIcon`, `SideBySideDiffIcon`, `GearIcon`. Monochrome `currentColor`, `aria-hidden`. |
+| `DiffViewToggle.tsx` + `.module.css` (create) | Inline segmented radiogroup (Unified / Split) using the ADO diff icons. Hot-path, always visible. |
+| `DiffSettingsMenu.tsx` + `.module.css` (create) | Gear trigger + disclosure popover with Show-full-file / Wrap checkboxes, active-indicator, disabled + helper-text states, outside-click + focus-return. |
+| `wholeFilePreference.ts` (create) | `useWholeFilePreference()` hook (`showFullFile` boolean + `failedPaths` set + actions) and pure `deriveWholeFileEnabled()`. |
+| `FilesTab.tsx` (modify) | Replace the 3 toolbar buttons + per-file `wholeFilePaths` state with the new components + hook; pass derived `wholeFileEnabled` to `DiffPane`. |
+| `FilesTab.module.css` (modify) | Remove obsolete `.diffModeToggle`/`.wholeFileToggle`/`.lineWrapToggle`/`.toolbarToggleButton` rules. |
+| `*.test.tsx` (create) | Co-located unit tests per component/hook. |
+| `frontend/e2e/diff-settings-menu.spec.ts` (create) | Hermetic Playwright integration test. |
+
+Tasks are ordered leaf-first (icons → components/hook → FilesTab wiring → e2e → proof) so each builds on green predecessors.
+
+---
+
+## Task 1: ADO diff icons + gear icon
+
+**Files:**
+- Create: `frontend/src/components/PrDetail/FilesTab/diffIcons.tsx`
+- Test: `frontend/src/components/PrDetail/FilesTab/diffIcons.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+```tsx
+// diffIcons.test.tsx
+import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
+import { InlineDiffIcon, SideBySideDiffIcon, GearIcon } from './diffIcons';
+
+describe('diffIcons', () => {
+  it('renders each icon as an aria-hidden svg with a single column / two columns / gear shape', () => {
+    const { container: unified } = render(<InlineDiffIcon />);
+    const { container: split } = render(<SideBySideDiffIcon />);
+    const { container: gear } = render(<GearIcon />);
+
+    for (const c of [unified, split, gear]) {
+      const svg = c.querySelector('svg');
+      expect(svg).not.toBeNull();
+      expect(svg!.getAttribute('aria-hidden')).toBe('true');
+      expect(svg!.getAttribute('focusable')).toBe('false');
+    }
+    // Split has a vertical divider line that unified does not.
+    expect(split.querySelector('line[x1="8"][x2="8"]')).not.toBeNull();
+    expect(unified.querySelector('line[x1="8"][x2="8"]')).toBeNull();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/diffIcons.test.tsx`
+Expected: FAIL — cannot find module `./diffIcons`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+```tsx
+// diffIcons.tsx
+// Inline SVG reproductions of Azure DevOps PR-compare diff icons
+// (bowtie-diff-inline / bowtie-diff-side-by-side) + a settings gear.
+// Monochrome currentColor so selection/theme is driven by CSS, not fills.
+
+const SVG_PROPS = {
+  width: 16,
+  height: 16,
+  viewBox: '0 0 16 16',
+  'aria-hidden': true as const,
+  focusable: 'false' as const,
+};
+
+export function InlineDiffIcon() {
+  return (
+    <svg {...SVG_PROPS}>
+      <rect x="1.5" y="2" width="13" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <line x1="4" y1="5.5" x2="12" y2="5.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <line x1="4" y1="8" x2="12" y2="8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <line x1="4" y1="10.5" x2="12" y2="10.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function SideBySideDiffIcon() {
+  return (
+    <svg {...SVG_PROPS}>
+      <rect x="1.5" y="2" width="13" height="12" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <line x1="8" y1="2" x2="8" y2="14" stroke="currentColor" strokeWidth="1.2" />
+      <line x1="3.5" y1="6" x2="6.5" y2="6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <line x1="3.5" y1="9.5" x2="6.5" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <line x1="9.5" y1="6" x2="12.5" y2="6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      <line x1="9.5" y1="9.5" x2="12.5" y2="9.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function GearIcon() {
+  return (
+    <svg {...SVG_PROPS}>
+      <circle cx="8" cy="8" r="2.1" fill="none" stroke="currentColor" strokeWidth="1.2" />
+      <path
+        d="M8 1.5l1 1.6 1.9-.4.6 1.8 1.8.6-.4 1.9 1.6 1-1.6 1 .4 1.9-1.8.6-.6 1.8-1.9-.4-1 1.6-1-1.6-1.9.4-.6-1.8-1.8-.6.4-1.9-1.6-1 1.6-1-.4-1.9 1.8-.6.6-1.8 1.9.4z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/diffIcons.test.tsx`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/components/PrDetail/FilesTab/diffIcons.tsx frontend/src/components/PrDetail/FilesTab/diffIcons.test.tsx
+git commit -m "feat(#185): add inline ADO-style diff icons (inline/side-by-side) + gear"
+```
+
+---
+
+## Task 2: `DiffViewToggle` inline segmented control
+
+**Files:**
+- Create: `frontend/src/components/PrDetail/FilesTab/DiffViewToggle.tsx`
+- Create: `frontend/src/components/PrDetail/FilesTab/DiffViewToggle.module.css`
+- Test: `frontend/src/components/PrDetail/FilesTab/DiffViewToggle.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+```tsx
+// DiffViewToggle.test.tsx
+import { describe, it, expect, vi } from 'vitest';
+import { render } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { DiffViewToggle } from './DiffViewToggle';
+
+describe('DiffViewToggle', () => {
+  it('renders two radios reflecting the current mode', () => {
+    const { getByRole } = render(<DiffViewToggle diffMode="unified" onDiffModeChange={() => {}} />);
+    expect((getByRole('radio', { name: /unified/i }) as HTMLInputElement).checked).toBe(true);
+    expect((getByRole('radio', { name: /split/i }) as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('fires onDiffModeChange with the selected mode', async () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<DiffViewToggle diffMode="unified" onDiffModeChange={onChange} />);
+    await userEvent.click(getByRole('radio', { name: /split/i }));
+    expect(onChange).toHaveBeenCalledWith('side-by-side');
+  });
+
+  it('disables Split with a reason when splitDisabled', () => {
+    const { getByRole } = render(
+      <DiffViewToggle
+        diffMode="unified"
+        onDiffModeChange={() => {}}
+        splitDisabled
+        splitDisabledReason="Side-by-side needs a wider window."
+      />,
+    );
+    const split = getByRole('radio', { name: /split/i }) as HTMLInputElement;
+    expect(split.disabled).toBe(true);
+  });
+
+  it('exposes a labelled radiogroup', () => {
+    const { getByRole } = render(<DiffViewToggle diffMode="side-by-side" onDiffModeChange={() => {}} />);
+    expect(getByRole('radiogroup', { name: /diff view/i })).toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/DiffViewToggle.test.tsx`
+Expected: FAIL — cannot find module `./DiffViewToggle`.
+
+- [ ] **Step 3: Write the component**
+
+```tsx
+// DiffViewToggle.tsx
+import type { DiffMode } from './DiffPane';
+import { InlineDiffIcon, SideBySideDiffIcon } from './diffIcons';
+import styles from './DiffViewToggle.module.css';
+
+export interface DiffViewToggleProps {
+  diffMode: DiffMode;
+  onDiffModeChange: (mode: DiffMode) => void;
+  splitDisabled?: boolean;
+  splitDisabledReason?: string;
+}
+
+export function DiffViewToggle({
+  diffMode,
+  onDiffModeChange,
+  splitDisabled = false,
+  splitDisabledReason,
+}: DiffViewToggleProps) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Diff view"
+      className={`diff-view-toggle ${styles.diffViewToggle}`}
+      data-testid="diff-view-toggle"
+    >
+      <label
+        className={`${styles.tile}${diffMode === 'unified' ? ` ${styles.tileSelected}` : ''}`}
+      >
+        <input
+          type="radio"
+          name="diff-view"
+          className={styles.srInput}
+          checked={diffMode === 'unified'}
+          onChange={() => onDiffModeChange('unified')}
+          data-testid="diff-view-unified"
+        />
+        <InlineDiffIcon />
+        <span className={styles.tileLabel}>Unified</span>
+      </label>
+      <label
+        className={`${styles.tile}${diffMode === 'side-by-side' ? ` ${styles.tileSelected}` : ''}${splitDisabled ? ` ${styles.tileDisabled}` : ''}`}
+        title={splitDisabled ? splitDisabledReason : undefined}
+      >
+        <input
+          type="radio"
+          name="diff-view"
+          className={styles.srInput}
+          checked={diffMode === 'side-by-side'}
+          disabled={splitDisabled}
+          onChange={() => onDiffModeChange('side-by-side')}
+          data-testid="diff-view-split"
+        />
+        <SideBySideDiffIcon />
+        <span className={styles.tileLabel}>Split</span>
+      </label>
+    </div>
+  );
+}
+```
+
+```css
+/* DiffViewToggle.module.css */
+.diffViewToggle {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+}
+.tile {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-height: 24px;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius-1);
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.tile:hover {
+  background: var(--surface-3);
+}
+.tileSelected {
+  background: var(--surface-3);
+  color: var(--text-1);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.tileDisabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tileDisabled:hover {
+  background: transparent;
+}
+.tileLabel {
+  font-size: var(--text-sm);
+}
+/* Visually-hidden but focusable radio; focus ring shown on the tile. */
+.srInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+}
+.tile:focus-within {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 1px;
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/DiffViewToggle.test.tsx`
+Expected: PASS (4 tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/components/PrDetail/FilesTab/DiffViewToggle.tsx frontend/src/components/PrDetail/FilesTab/DiffViewToggle.module.css frontend/src/components/PrDetail/FilesTab/DiffViewToggle.test.tsx
+git commit -m "feat(#185): inline DiffViewToggle segmented control (ADO diff icons)"
+```
+
+---
+
+## Task 3: `useWholeFilePreference` hook + `deriveWholeFileEnabled`
+
+**Files:**
+- Create: `frontend/src/components/PrDetail/FilesTab/wholeFilePreference.ts`
+- Test: `frontend/src/components/PrDetail/FilesTab/wholeFilePreference.test.tsx`
+
+- [ ] **Step 1: Write the failing test**
+
+```tsx
+// wholeFilePreference.test.tsx
+import { describe, it, expect } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import { useWholeFilePreference, deriveWholeFileEnabled } from './wholeFilePreference';
+
+const base = {
+  showFullFile: true,
+  failedPaths: new Set<string>(),
+  selectedPath: 'a.ts',
+  selectedFileStatus: 'modified' as string | undefined,
+  selectedFileHunkCount: 3,
+  iterationGatePermits: true,
+};
+
+describe('deriveWholeFileEnabled', () => {
+  it('is true when the global pref is on and the file is eligible', () => {
+    expect(deriveWholeFileEnabled(base)).toBe(true);
+  });
+  it('is false when the global pref is off', () => {
+    expect(deriveWholeFileEnabled({ ...base, showFullFile: false })).toBe(false);
+  });
+  it('is false for a failed path, an ineligible status, no hunks, or a blocked view', () => {
+    expect(deriveWholeFileEnabled({ ...base, failedPaths: new Set(['a.ts']) })).toBe(false);
+    expect(deriveWholeFileEnabled({ ...base, selectedFileStatus: 'added' })).toBe(false);
+    expect(deriveWholeFileEnabled({ ...base, selectedFileHunkCount: 0 })).toBe(false);
+    expect(deriveWholeFileEnabled({ ...base, iterationGatePermits: false })).toBe(false);
+  });
+  it('stays true across a selectedPath change to another eligible file (view-wide)', () => {
+    expect(deriveWholeFileEnabled({ ...base, selectedPath: 'b.ts' })).toBe(true);
+  });
+});
+
+describe('useWholeFilePreference', () => {
+  it('toggles the boolean via setShowFullFile', () => {
+    const { result } = renderHook(() => useWholeFilePreference());
+    expect(result.current.showFullFile).toBe(false);
+    act(() => result.current.setShowFullFile(true));
+    expect(result.current.showFullFile).toBe(true);
+  });
+  it('records a failed path and clears it on re-enable (false -> true)', () => {
+    const { result } = renderHook(() => useWholeFilePreference());
+    act(() => result.current.setShowFullFile(true));
+    act(() => result.current.markFailed('a.ts'));
+    expect(result.current.failedPaths.has('a.ts')).toBe(true);
+    act(() => result.current.setShowFullFile(false));
+    act(() => result.current.setShowFullFile(true)); // retry affordance
+    expect(result.current.failedPaths.has('a.ts')).toBe(false);
+  });
+  it('does not clear failed paths when set to true while already true', () => {
+    const { result } = renderHook(() => useWholeFilePreference());
+    act(() => result.current.setShowFullFile(true));
+    act(() => result.current.markFailed('a.ts'));
+    act(() => result.current.setShowFullFile(true)); // no false->true transition inside the set itself
+    expect(result.current.failedPaths.has('a.ts')).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/wholeFilePreference.test.tsx`
+Expected: FAIL — cannot find module `./wholeFilePreference`.
+
+- [ ] **Step 3: Write the implementation**
+
+```ts
+// wholeFilePreference.ts
+import { useState, useCallback } from 'react';
+
+export interface DeriveWholeFileParams {
+  showFullFile: boolean;
+  failedPaths: Set<string>;
+  selectedPath: string | null;
+  selectedFileStatus: string | undefined;
+  selectedFileHunkCount: number;
+  iterationGatePermits: boolean;
+}
+
+/** The effective per-current-file whole-file flag passed to DiffPane. */
+export function deriveWholeFileEnabled(p: DeriveWholeFileParams): boolean {
+  return (
+    p.showFullFile &&
+    p.selectedPath !== null &&
+    !p.failedPaths.has(p.selectedPath) &&
+    p.iterationGatePermits &&
+    p.selectedFileStatus === 'modified' &&
+    p.selectedFileHunkCount > 0
+  );
+}
+
+export interface WholeFilePreference {
+  showFullFile: boolean;
+  /** Direction-aware: setting true clears failedPaths (a retry affordance). */
+  setShowFullFile: (next: boolean) => void;
+  failedPaths: Set<string>;
+  markFailed: (path: string) => void;
+}
+
+export function useWholeFilePreference(): WholeFilePreference {
+  const [showFullFile, setShow] = useState(false);
+  const [failedPaths, setFailedPaths] = useState<Set<string>>(new Set());
+
+  const setShowFullFile = useCallback((next: boolean) => {
+    setShow((prev) => {
+      // Clear the failed set only on a genuine false -> true transition.
+      if (next && !prev) setFailedPaths(new Set());
+      return next;
+    });
+  }, []);
+
+  const markFailed = useCallback((path: string) => {
+    setFailedPaths((prev) => {
+      if (prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.add(path);
+      return next;
+    });
+  }, []);
+
+  return { showFullFile, setShowFullFile, failedPaths, markFailed };
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/wholeFilePreference.test.tsx`
+Expected: PASS (7 assertions across the cases).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/components/PrDetail/FilesTab/wholeFilePreference.ts frontend/src/components/PrDetail/FilesTab/wholeFilePreference.test.tsx
+git commit -m "feat(#185): useWholeFilePreference hook + deriveWholeFileEnabled (view-wide full-file)"
+```
+
+---
+
+## Task 4: `DiffSettingsMenu` gear popover — disclosure shell
+
+**Files:**
+- Create: `frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.tsx`
+- Create: `frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.module.css`
+- Test: `frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.test.tsx`
+
+This task builds the gear + open/close/outside-click/focus-return + active indicator. Task 5 adds the panel-content assertions.
+
+- [ ] **Step 1: Write the failing test**
+
+```tsx
+// DiffSettingsMenu.test.tsx
+import { describe, it, expect, vi } from 'vitest';
+import { render } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { DiffSettingsMenu } from './DiffSettingsMenu';
+
+function setup(overrides = {}) {
+  const props = {
+    showFullFile: false,
+    onShowFullFileChange: vi.fn(),
+    fullFileViewBlocked: false,
+    fullFileViewBlockedReason: null,
+    fullFileInertHere: false,
+    fullFileInertReason: null,
+    lineWrap: false,
+    onLineWrapChange: vi.fn(),
+    ...overrides,
+  };
+  return { props, ...render(<DiffSettingsMenu {...props} />) };
+}
+
+describe('DiffSettingsMenu — disclosure shell', () => {
+  it('is closed initially with aria-expanded=false', () => {
+    const { getByTestId, queryByTestId } = setup();
+    expect(getByTestId('diff-settings-trigger').getAttribute('aria-expanded')).toBe('false');
+    expect(queryByTestId('diff-settings-panel')).toBeNull();
+  });
+
+  it('opens on click and closes on a second click, returning focus to the gear', async () => {
+    const { getByTestId, queryByTestId } = setup();
+    const trigger = getByTestId('diff-settings-trigger');
+    await userEvent.click(trigger);
+    expect(getByTestId('diff-settings-panel')).toBeInTheDocument();
+    await userEvent.click(trigger);
+    expect(queryByTestId('diff-settings-panel')).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('closes on Escape and returns focus to the gear', async () => {
+    const { getByTestId, queryByTestId } = setup();
+    const trigger = getByTestId('diff-settings-trigger');
+    await userEvent.click(trigger);
+    await userEvent.keyboard('{Escape}');
+    expect(queryByTestId('diff-settings-panel')).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('closes on outside click and returns focus to the gear', async () => {
+    const { getByTestId, queryByTestId } = setup();
+    const trigger = getByTestId('diff-settings-trigger');
+    await userEvent.click(trigger);
+    await userEvent.click(document.body);
+    expect(queryByTestId('diff-settings-panel')).toBeNull();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('marks the gear modified when a setting is non-default', () => {
+    const { getByTestId } = setup({ lineWrap: true });
+    const trigger = getByTestId('diff-settings-trigger');
+    expect(trigger.getAttribute('aria-label')).toMatch(/modified/i);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/DiffSettingsMenu.test.tsx`
+Expected: FAIL — cannot find module `./DiffSettingsMenu`.
+
+- [ ] **Step 3: Write the component (shell + panel — panel content asserted in Task 5)**
+
+```tsx
+// DiffSettingsMenu.tsx
+import { useState, useRef, useEffect, useId, useCallback } from 'react';
+import { GearIcon } from './diffIcons';
+import styles from './DiffSettingsMenu.module.css';
+
+export interface DiffSettingsMenuProps {
+  showFullFile: boolean;
+  onShowFullFileChange: (on: boolean) => void;
+  fullFileViewBlocked: boolean;
+  fullFileViewBlockedReason: string | null;
+  fullFileInertHere: boolean;
+  fullFileInertReason: string | null;
+  lineWrap: boolean;
+  onLineWrapChange: (on: boolean) => void;
+}
+
+export function DiffSettingsMenu({
+  showFullFile,
+  onShowFullFileChange,
+  fullFileViewBlocked,
+  fullFileViewBlockedReason,
+  fullFileInertHere,
+  fullFileInertReason,
+  lineWrap,
+  onLineWrapChange,
+}: DiffSettingsMenuProps) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const instanceId = useId();
+  const panelId = `${instanceId}-diff-settings-panel`;
+  const helperId = `${instanceId}-full-file-helper`;
+
+  const close = useCallback(() => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  }, []);
+
+  // Outside-click close — net-new vs CommitMultiSelectPicker, which has none.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [open, close]);
+
+  // Move focus into the panel on open (first enabled control).
+  useEffect(() => {
+    if (!open) return;
+    panelRef.current?.querySelector<HTMLElement>('input:not(:disabled)')?.focus();
+  }, [open]);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      close();
+    }
+  };
+
+  const isModified = showFullFile || lineWrap;
+  const helperText = fullFileViewBlocked
+    ? fullFileViewBlockedReason
+    : fullFileInertHere
+      ? fullFileInertReason
+      : null;
+
+  return (
+    <div ref={rootRef} className={`diff-settings-menu ${styles.root}`} data-testid="diff-settings-menu">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`${styles.gear}${isModified ? ` ${styles.gearModified}` : ''}`}
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-controls={panelId}
+        aria-label={isModified ? 'Diff settings (modified)' : 'Diff settings'}
+        title="Diff settings"
+        onClick={() => setOpen((o) => !o)}
+        data-testid="diff-settings-trigger"
+      >
+        <GearIcon />
+        {isModified && <span className={styles.modifiedDot} aria-hidden="true" />}
+      </button>
+
+      {open && (
+        <div
+          ref={panelRef}
+          id={panelId}
+          role="group"
+          aria-label="Diff settings"
+          className={styles.panel}
+          onKeyDown={onKeyDown}
+          data-testid="diff-settings-panel"
+        >
+          <label className={styles.row}>
+            <input
+              type="checkbox"
+              checked={showFullFile}
+              disabled={fullFileViewBlocked}
+              aria-describedby={helperText ? helperId : undefined}
+              onChange={(e) => onShowFullFileChange(e.target.checked)}
+              data-testid="show-full-file-checkbox"
+            />
+            <span>Show full file</span>
+          </label>
+          {helperText && (
+            <p id={helperId} className={styles.helper} data-testid="show-full-file-helper">
+              {helperText}
+            </p>
+          )}
+          <label className={styles.row}>
+            <input
+              type="checkbox"
+              checked={lineWrap}
+              onChange={(e) => onLineWrapChange(e.target.checked)}
+              data-testid="line-wrap-checkbox"
+            />
+            <span>Wrap long lines</span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+```css
+/* DiffSettingsMenu.module.css */
+.root {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-left: var(--s-2);
+}
+.gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-width: 32px;
+  min-height: 32px;
+  padding: var(--s-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.gear:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.gearModified {
+  color: var(--text-1);
+  border-color: var(--border-strong);
+}
+.modifiedDot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-fg, var(--border-strong));
+}
+.panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--s-3);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  cursor: pointer;
+}
+.helper {
+  margin: 0 0 0 calc(var(--s-2) + 1em);
+  font-size: var(--text-xs, 0.75rem);
+  color: var(--text-2);
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/DiffSettingsMenu.test.tsx`
+Expected: PASS (5 tests).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.tsx frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.module.css frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.test.tsx
+git commit -m "feat(#185): DiffSettingsMenu gear popover (open/close/outside-click/focus-return + active indicator)"
+```
+
+---
+
+## Task 5: `DiffSettingsMenu` panel content — checkboxes, disabled, notes
+
+**Files:**
+- Modify: `frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.test.tsx`
+
+The component already supports these (Task 4); this task adds the behavioral assertions.
+
+- [ ] **Step 1: Add failing tests**
+
+```tsx
+// append inside DiffSettingsMenu.test.tsx
+describe('DiffSettingsMenu — panel content', () => {
+  it('reflects and toggles Show full file and Wrap long lines with stable labels', async () => {
+    const { props, getByTestId } = setup({ showFullFile: true, lineWrap: false });
+    await userEvent.click(getByTestId('diff-settings-trigger'));
+    const full = getByTestId('show-full-file-checkbox') as HTMLInputElement;
+    const wrap = getByTestId('line-wrap-checkbox') as HTMLInputElement;
+    expect(full.checked).toBe(true);
+    expect(wrap.checked).toBe(false);
+    await userEvent.click(wrap);
+    expect(props.onLineWrapChange).toHaveBeenCalledWith(true);
+    await userEvent.click(full);
+    expect(props.onShowFullFileChange).toHaveBeenCalledWith(false);
+    // Labels are stable regardless of state:
+    expect(getByTestId('diff-settings-panel').textContent).toContain('Show full file');
+    expect(getByTestId('diff-settings-panel').textContent).toContain('Wrap long lines');
+  });
+
+  it('disables Show full file with a view-blocked reason wired via aria-describedby', async () => {
+    const { getByTestId } = setup({
+      fullFileViewBlocked: true,
+      fullFileViewBlockedReason: "Whole-file view available only on the 'all' iteration view",
+    });
+    await userEvent.click(getByTestId('diff-settings-trigger'));
+    const full = getByTestId('show-full-file-checkbox') as HTMLInputElement;
+    const helper = getByTestId('show-full-file-helper');
+    expect(full.disabled).toBe(true);
+    expect(full.getAttribute('aria-describedby')).toBe(helper.id);
+    expect(helper.textContent).toMatch(/all.*iteration/i);
+  });
+
+  it('keeps Show full file enabled but shows a mandatory inert note for an ineligible current file', async () => {
+    const { getByTestId } = setup({
+      showFullFile: true,
+      fullFileInertHere: true,
+      fullFileInertReason: 'Not available for this file — still on for other files',
+    });
+    await userEvent.click(getByTestId('diff-settings-trigger'));
+    const full = getByTestId('show-full-file-checkbox') as HTMLInputElement;
+    const helper = getByTestId('show-full-file-helper');
+    expect(full.disabled).toBe(false);
+    expect(full.checked).toBe(true);
+    expect(full.getAttribute('aria-describedby')).toBe(helper.id);
+    expect(helper.textContent).toMatch(/still on for other files/i);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify the new cases pass (component already supports them)**
+
+Run: `cd frontend && npx vitest run src/components/PrDetail/FilesTab/DiffSettingsMenu.test.tsx`
+Expected: PASS (8 tests total). If any fail, fix `DiffSettingsMenu.tsx` to satisfy them (do not weaken the test).
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/components/PrDetail/FilesTab/DiffSettingsMenu.test.tsx
+git commit -m "test(#185): DiffSettingsMenu panel content — toggles, disabled view-block, mandatory inert note"
+```
+
+---
+
+## Task 6: Wire FilesTab to the new components + view-wide state
+
+**Files:**
+- Modify: `frontend/src/components/PrDetail/FilesTab/FilesTab.tsx`
+- Modify: `frontend/src/components/PrDetail/FilesTab/FilesTab.module.css`
+
+No new unit test here — FilesTab has no existing unit harness (it depends on `usePrDetailContext` and many hooks); its logic is unit-tested through Tasks 2–5 and integration-tested by the Playwright e2e in Task 7. Verification for this task is `tsc` + the full vitest suite staying green + lint/build.
+
+- [ ] **Step 1: Add imports**
+
+In `FilesTab.tsx`, alongside the existing FilesTab imports (near line 14):
+
+```tsx
+import { DiffViewToggle } from './DiffViewToggle';
+import { DiffSettingsMenu } from './DiffSettingsMenu';
+import { useWholeFilePreference, deriveWholeFileEnabled } from './wholeFilePreference';
+```
+
+- [ ] **Step 2: Replace the per-file whole-file state with the hook**
+
+Remove line 65:
+
+```tsx
+const [wholeFilePaths, setWholeFilePaths] = useState<Set<string>>(new Set());
+```
+
+Add (next to the other `useState` declarations, e.g. after the `lineWrap` state at line 69):
+
+```tsx
+const { showFullFile, setShowFullFile, failedPaths, markFailed } = useWholeFilePreference();
+```
+
+- [ ] **Step 3: Replace the `wholeFileEnabled` derivation + gating flags**
+
+Replace the block at lines 134–140 (the old `wholeFileEnabled` derivation) with:
+
+```tsx
+const wholeFileEnabled = deriveWholeFileEnabled({
+  showFullFile,
+  failedPaths,
+  selectedPath,
+  selectedFileStatus: selectedFile?.status,
+  selectedFileHunkCount: selectedFile?.hunks.length ?? 0,
+  iterationGatePermits,
+});
+
+// Gating, split by scope (spec § Disabled / helper-text):
+const fullFileViewBlocked = !iterationGatePermits;
+const currentFileIneligible =
+  selectedFile !== null &&
+  (selectedFile.status !== 'modified' || selectedFile.hunks.length === 0);
+const fullFileInertHere = showFullFile && iterationGatePermits && currentFileIneligible;
+const fullFileViewBlockedReason = fullFileViewBlocked
+  ? "Whole-file view available only on the 'all' iteration view"
+  : null;
+const fullFileInertReason = fullFileInertHere
+  ? 'Not available for this file — still on for other files'
+  : null;
+```
+
+- [ ] **Step 4: Replace the whole-file handlers**
+
+Delete `handleToggleWholeFile` (lines 202–210). Replace `handleWholeFileFailed` (lines 212–227) with:
+
+```tsx
+const handleWholeFileFailed = useCallback(
+  // Reason is part of the callback contract but not used here — DiffPane's
+  // local latch holds the reason and renders the banner. We only need to know
+  // the current file's whole-file fetch failed so it falls back to hunks while
+  // the global preference stays on.
+  (reason: string) => {
+    void reason;
+    if (!selectedPath) return;
+    markFailed(selectedPath);
+  },
+  [selectedPath, markFailed],
+);
+```
+
+Also delete `handleToggleLineWrap` (lines 198–200) — it is no longer referenced (the gear wires `onLineWrapChange` to `setLineWrap`). `handleToggleDiffMode` (line 193) **stays** — it is still used by `useFilesTabShortcuts` (`onToggleDiffMode`, line 235).
+
+- [ ] **Step 5: Replace the three toolbar buttons with the new components**
+
+In the toolbar JSX, replace the three `<button>` elements (lines 427–473 — the `diffModeToggle`, `wholeFileToggle`, and `lineWrapToggle` buttons) with:
+
+```tsx
+<DiffViewToggle
+  diffMode={effectiveDiffMode}
+  onDiffModeChange={setDiffMode}
+  splitDisabled={viewportWidth < 900}
+  splitDisabledReason="Side-by-side needs a wider window."
+/>
+<DiffSettingsMenu
+  showFullFile={showFullFile}
+  onShowFullFileChange={setShowFullFile}
+  fullFileViewBlocked={fullFileViewBlocked}
+  fullFileViewBlockedReason={fullFileViewBlockedReason}
+  fullFileInertHere={fullFileInertHere}
+  fullFileInertReason={fullFileInertReason}
+  lineWrap={lineWrap}
+  onLineWrapChange={setLineWrap}
+/>
+```
+
+(`setDiffMode` accepts a `DiffMode`; the radio passes the explicit mode. The `margin-left:auto` that right-aligned the cluster now lives on `.diffViewToggle`, so the inline toggle + gear sit at the right of the toolbar as before.)
+
+- [ ] **Step 6: Remove obsolete CSS**
+
+In `FilesTab.module.css`, delete the now-unused rules: `.toolbarToggleButton`, `.toolbarToggleButton[aria-pressed='true']`, `.toolbarToggleButton:disabled`, `.diffModeToggle`, `.wholeFileToggle`, `.lineWrapToggle` (lines 71–106). Leave `.filesTabToolbar` and the rest intact.
+
+- [ ] **Step 7: Verify types, tests, lint, build**
+
+Run, in order:
+
+```bash
+cd frontend
+npx tsc --noEmit
+npx vitest run
+npm run lint
+npm run build
+```
+
+Expected: `tsc` clean (no references to removed `wholeFilePaths`/`handleToggleWholeFile`/`handleToggleLineWrap`); full vitest suite green; lint clean; build succeeds. If `tsc` flags an unused `setLineWrap`/`useState` import or a dangling reference, fix it.
+
+> **Lint note:** run prettier/eslint **directly**, not via the rtk proxy, which can mask failures:
+> `node ./node_modules/prettier/bin/prettier.cjs --check "src/components/PrDetail/FilesTab/**/*.{ts,tsx,css}"`
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add frontend/src/components/PrDetail/FilesTab/FilesTab.tsx frontend/src/components/PrDetail/FilesTab/FilesTab.module.css
+git commit -m "feat(#185): wire FilesTab to inline DiffViewToggle + gear DiffSettingsMenu; make Show full file view-wide"
+```
+
+---
+
+## Task 7: Playwright e2e (hermetic)
+
+**Files:**
+- Create: `frontend/e2e/diff-settings-menu.spec.ts`
+
+Use the hermetic fake fixture `acme/api/123` (per repo convention for hermetic specs). Mirror an existing toolbar spec — read `frontend/e2e/diff-scroll-regression.spec.ts` for the fixture-bootstrap + navigation helper used in this repo, and reuse the same setup (do not invent a new harness).
+
+- [ ] **Step 1: Write the e2e spec**
+
+```ts
+// diff-settings-menu.spec.ts
+import { test, expect } from '@playwright/test';
+// Reuse the same fixture bootstrap + navigation as diff-scroll-regression.spec.ts.
+// (Import/copy that file's setup helpers; placeholder import shown — wire to the
+// actual helper name found there during implementation.)
+import { gotoFilesTab } from './helpers/filesTab'; // adjust to the real helper used by diff-scroll-regression
+
+test.describe('Diff settings menu (#185)', () => {
+  test('inline tiles switch Split/Unified; gear toggles wrap; full-file is view-wide', async ({ page }) => {
+    await gotoFilesTab(page, { owner: 'acme', repo: 'api', number: 123 });
+
+    // Inline tiles select Split -> two-column diff.
+    await page.getByTestId('diff-view-split').check();
+    await expect(page.locator('[data-testid="files-tab-diff"] .diff-pane--split, [data-diff-mode="side-by-side"]').first()).toBeVisible();
+
+    // Gear opens; toggle Wrap long lines.
+    await page.getByTestId('diff-settings-trigger').click();
+    await expect(page.getByTestId('diff-settings-panel')).toBeVisible();
+    await page.getByTestId('line-wrap-checkbox').check();
+
+    // Toggle Show full file, close gear, switch files -> still full file (view-wide).
+    await page.getByTestId('show-full-file-checkbox').check();
+    await page.keyboard.press('Escape');
+    const rows = page.getByTestId('files-tab-tree-row');
+    await rows.nth(1).click();
+    await page.getByTestId('diff-settings-trigger').click();
+    await expect(page.getByTestId('show-full-file-checkbox')).toBeChecked();
+  });
+});
+```
+
+> If `diff-scroll-regression.spec.ts` inlines its setup rather than using a shared helper, inline the same steps here instead of importing — match whatever that file does. The exact diff-mode selector (`.diff-pane--split` vs a `data-` attribute) must be confirmed against `DiffPane`'s rendered class; adjust the assertion to the real marker.
+
+- [ ] **Step 2: Run the e2e**
+
+Run: `cd frontend && npx playwright test diff-settings-menu.spec.ts`
+Expected: PASS. (If the local Playwright browser/binary is unavailable, capture the blocker and note it; CI runs the suite.)
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/e2e/diff-settings-menu.spec.ts
+git commit -m "test(#185): Playwright e2e — inline tiles, gear, view-wide full-file"
+```
+
+---
+
+## Task 8: a11y check, B1 visual proof, verification
+
+**Files:** none (verification + assets).
+
+- [ ] **Step 1: a11y sweep** — confirm the new controls pass axe. Run the existing audit: `cd frontend && npx playwright test a11y-audit.spec.ts`. Expected: no new violations on the Files tab (labelled radiogroup, gear with accessible name, checkboxes with labels, helper text via `aria-describedby`). Fix any violation before proceeding.
+
+- [ ] **Step 2: Launch the app and capture B1 visual proof** — start the app with `pwsh ./run.ps1 -Reset None --no-browser` (Development, real PAT, `localhost:5180`). Open a real PR with modified files (e.g. the BFF repo). Capture **light + dark** screenshots of: (a) the toolbar showing the inline `[Unified | Split]` tiles + the gear (incl. the gear's modified-dot when a setting is on), and (b) the open Diff-settings panel. Verify the ADO icons read correctly and the Split tile greys out below 900px.
+
+- [ ] **Step 3: Full pre-push checklist** — from `.ai/docs/development-process.md`, run every step: `npx tsc --noEmit`, `npx vitest run`, `npm run lint` (prettier directly, not via rtk), `npm run build`. All green.
+
+- [ ] **Step 4: Commit any fixes** (if Steps 1–3 surfaced changes), then this task is the handoff point to `pr-autopilot` (the PR is opened with the B1 screenshots embedded for the human visual-assert gate — gated B1).
+
+---
+
+## Self-Review (run before handoff)
+
+**Spec coverage** (each spec section → task):
+- Inline ADO-icon Split/Unified toggle, hot path, split-disabled <900px → Tasks 1, 2, 6.
+- Gear ⚙ popover holding Show full file + Wrap (+ room for #184; no stubs) → Tasks 1, 4, 5, 6.
+- Corrected reuse boundary (outside-click + focus-return-on-all-paths are net-new) → Task 4 (component + tests for all close paths).
+- Gear active-state indicator → Task 4.
+- Native checkboxes, stable labels, keyboard contract, Escape-from-any-control → Tasks 4, 5.
+- View-wide `showFullFile` + `wholeFileFailedPaths` + retry-on-re-enable + lazy fetch (one file) → Task 3 (hook/derive) + Task 6 (wiring; `wholeFileEnabled` derived, not raw `showFullFile`, to `DiffPane`).
+- Gating reclassified: view-level disable vs mandatory per-file inert note → Tasks 5, 6.
+- Tests split chrome vs behavior-change → Tasks 2/4/5 (chrome) vs Task 3 + Task 7 (behavior).
+- B1 visual proof (light+dark) + a11y → Task 8.
+
+**Placeholder scan:** the only deliberate placeholder is the e2e helper import in Task 7, explicitly flagged to be wired to the real `diff-scroll-regression.spec.ts` setup during implementation (the repo's e2e harness shape can't be assumed blind). No other TBDs.
+
+**Type consistency:** `DiffMode` imported from `./DiffPane` in `DiffViewToggle` and used in `FilesTab` (already imported there). `deriveWholeFileEnabled` param names match between Task 3 definition and Task 6 call site (`selectedFileStatus`, `selectedFileHunkCount`, `iterationGatePermits`). `setShowFullFile`/`markFailed`/`failedPaths`/`showFullFile` names consistent across Tasks 3 and 6. `DiffSettingsMenuProps` fields match the Task 6 call site exactly. `onDiffModeChange` receives a `DiffMode`; `setDiffMode` is a `Dispatch<SetStateAction<DiffMode>>` and accepts a bare `DiffMode` value — compatible.
