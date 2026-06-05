@@ -17,6 +17,15 @@ const platform = process.platform;
 contextBridge.exposeInMainWorld("prism", {
   isDesktop: true,
   platform,
+  openExternal: async (url: string): Promise<boolean> => {
+    const ok: boolean = await ipcRenderer.invoke("shell:open-external", url);
+    // Observability: a false means the URL was rejected or the OS open threw.
+    // On the real data path the URL is always an authoritative GitHub https URL,
+    // so this fires only on a misconfiguration or a stray caller. Message is a
+    // URL + flag — no token/PII content.
+    if (!ok) console.warn("prism.openExternal: rejected", url);
+    return ok;
+  },
   windowControls: {
     minimize: () => ipcRenderer.send("window:minimize"),
     toggleMaximize: () => ipcRenderer.send("window:toggle-maximize"),
