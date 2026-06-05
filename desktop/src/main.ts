@@ -1,8 +1,9 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { startSidecar, Sidecar } from "./sidecar";
 import { sidecarBinaryName } from "./platform";
+import { isOpenableUrl } from "./urls";
 
 let sidecar: Sidecar | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -57,6 +58,22 @@ if (!gotLock) {
   ipcMain.handle("window:is-maximized", (e) =>
     fromMainWindow(e) ? (mainWindow?.isMaximized() ?? false) : false,
   );
+
+  // Open an external URL in the OS browser. shell.openExternal is security-
+  // sensitive, so: (1) only the main window's renderer may call (fromMainWindow),
+  // (2) only https: URLs pass (isOpenableUrl rejects file:/javascript:/data:/…),
+  // (3) the handler never throws to the renderer — returns true on success,
+  // false on a rejected URL or a thrown open.
+  ipcMain.handle("shell:open-external", async (e, url: string) => {
+    if (!fromMainWindow(e)) return false;
+    if (typeof url !== "string" || !isOpenableUrl(url)) return false;
+    try {
+      await shell.openExternal(url);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
   app.whenReady().then(bootstrap);
 
