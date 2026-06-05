@@ -23,7 +23,11 @@ Introduce one `<ErrorModal>` that presents an error **front-and-center, above a 
 
 **Why reuse `<Modal>`:** the codebase already standardizes modals on it (7 consumers — Discard, HostChange, SubmitDialog, etc.). Reusing it gives correct, consistent focus management and dismissal for free, and keeps the error dialog visually consistent with every other dialog.
 
-**One small, backward-compatible change to `Modal`:** add an optional `role?: 'dialog' | 'alertdialog'` prop, default `'dialog'`. `ErrorModal` passes `'alertdialog'` (the ARIA-correct role for "a dialog conveying an urgent message requiring response"), so assistive tech announces it assertively on open. All existing callers keep `role="dialog"` unchanged.
+**Two small, backward-compatible changes to `Modal`:**
+1. `role?: 'dialog' | 'alertdialog'`, default `'dialog'`. `ErrorModal` passes `'alertdialog'` (the ARIA-correct role for "a dialog conveying an urgent message requiring response"), so assistive tech announces it assertively on open.
+2. `align?: 'top' | 'center'`, default `'top'`. The shared `.modal-backdrop` is currently top-anchored (`align-items:flex-start` + top padding); the other 7 modals keep that. `ErrorModal` passes `'center'` for true vertical centering ("center of the screen" per the visual direction), applied via an extra backdrop class that overrides `align-items` to `center`.
+
+Both default to today's behavior, so all existing callers are unchanged.
 
 **Action + message as one unit:** the recovery action lives *inside* the dialog card. This is the correct pattern for an `alertdialog` (the dialog is the live region; its buttons are legitimate dialog controls) — it also resolves the earlier "button outside `role="alert"`" concern, which only applied to a bare `role="alert"`, not a dialog.
 
@@ -38,9 +42,10 @@ Introduce one `<ErrorModal>` that presents an error **front-and-center, above a 
 export interface ModalProps {
   // …existing…
   role?: 'dialog' | 'alertdialog';   // default 'dialog'
+  align?: 'top' | 'center';          // default 'top'
 }
 ```
-Apply `role` to the dialog element (currently hard-coded `role="dialog"`). No other behavior change. Existing tests/consumers unaffected (default preserves current role).
+Apply `role` to the dialog element (currently hard-coded `role="dialog"`). For `align`, add a modifier class to `.modal-backdrop` when `align==='center'` (e.g. `modal-backdrop--center { align-items: center; }`) — the default keeps the existing top-anchored placement. No other behavior change; existing tests/consumers unaffected (both defaults preserve current behavior).
 
 ### `ErrorModal` component
 
@@ -55,7 +60,7 @@ interface ErrorModalProps {
   dismissible?: boolean;    // default false. false → Esc suppressed (fatal, no underlying app). true → Esc → onClose.
 }
 ```
-- Renders `<Modal open role="alertdialog" title={title} onClose={onClose} disableEscDismiss={!dismissible}>` with a danger-styled body: leading `aria-hidden` alert glyph + `message` + an action row holding `actions`.
+- Renders `<Modal open role="alertdialog" align="center" title={title} onClose={onClose} disableEscDismiss={!dismissible}>` with a danger-styled body: leading `aria-hidden` alert glyph + `message` + an action row holding `actions`.
 - The glyph is the same inline SVG the prior `ErrorBox` used (extracted to a tiny shared `DangerGlyph` so it isn't duplicated). Danger accent via `ErrorModal.module.css` using `--danger-soft`/`--danger-fg` tokens (light + dark covered).
 - Action buttons use the project button utilities (`btn btn-primary` for the primary recovery action, `btn btn-secondary` for the secondary, e.g. "Back to inbox"). Tag the primary with `data-modal-role="primary"` so `Modal` initial-focuses it.
 - Purely presentational beyond `Modal`'s own hooks; safe inside `ErrorBoundary`'s fallback (no data deps, no throwing imports — `Modal` only uses `useId`/`useRef`/`useEffect`).
@@ -71,7 +76,8 @@ interface ErrorModalProps {
 | `PrTabHost.tsx:66` | "Invalid PR reference" | "The PR number must be a positive integer." | **Back to inbox** (`navigate('/')`) | Yes → onClose = Back to inbox |
 
 Notes:
-- `PrDetailView` already has `usePrDetail().reload`; `PrTabHost`/`PrDetailView` use `react-router` `useNavigate` for "Back to inbox" (`/`). Under keep-alive, navigating to `/` shows the inbox while open tabs persist.
+- `PrDetailView` already has `usePrDetail().reload`; `InboxPage` has `reload`. **Add** `useNavigate` (react-router-dom) to `PrDetailView` and `PrTabHost` for "Back to inbox" (`navigate('/')`) — neither imports it today, but both render inside the App `<Routes>` Router, so the hook is available with no provider change. Confirm keep-alive tabs survive `navigate('/')` (they should — navigating to the inbox route keeps the open-tabs state).
+- **Keep-alive guard (critical):** `PrTabHost` mounts one `PrDetailView` per open tab simultaneously (inactive ones hidden via `hidden`, not unmounted). `Modal` attaches a **document-level** Esc/Tab handler whenever `open` is true — regardless of visibility. So `ErrorModal`'s `open` for the PrDetailView site MUST be gated on **`active && !!error`**, not just `!!error`; otherwise an errored background tab installs a live Esc→`navigate('/')` handler (and multiple errored tabs stack handlers). Only the foreground tab's error dialog may be open.
 - App/ErrorBoundary/Inbox are non-dismissible (their only escape is the action) — `dismissible={false}` so Esc can't strand the user on a blank screen.
 
 ### Group C — reconcile banner (unchanged from prior cut)
