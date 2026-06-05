@@ -50,6 +50,8 @@ interface FileRow {
   key: string;
   depth: number;
   node: FileTreeNode;
+  setSize: number;
+  posInSet: number;
 }
 interface DirRow {
   kind: 'dir';
@@ -58,6 +60,8 @@ interface DirRow {
   node: DirectoryTreeNode;
   dirKey: string;
   expanded: boolean;
+  setSize: number;
+  posInSet: number;
 }
 type RenderRow = FileRow | DirRow;
 
@@ -65,6 +69,11 @@ type RenderRow = FileRow | DirRow;
 // state is keyed by the ancestor chain joined with a NUL separator — unique and
 // stable across re-renders. NUL cannot appear in a path segment.
 const DIR_KEY_SEP = String.fromCharCode(0);
+// The tree renders flat (siblings of one role=tree), not via nested role=group
+// wrappers, because the same flat row list also drives the fixed checkbox column.
+// A flat ARIA tree must therefore carry aria-level AND aria-setsize/aria-posinset so
+// assistive tech can still infer per-level grouping — `setSize`/`posInSet` are the
+// count of, and 1-based position within, this node's sibling group.
 function buildRows(
   nodes: TreeNode[],
   collapsed: Set<string>,
@@ -72,16 +81,27 @@ function buildRows(
   parentKey: string,
   out: RenderRow[],
 ): void {
-  for (const node of nodes) {
+  const setSize = nodes.length;
+  nodes.forEach((node, i) => {
+    const posInSet = i + 1;
     if (node.kind === 'file') {
-      out.push({ kind: 'file', key: `file:${node.path}`, depth, node });
+      out.push({ kind: 'file', key: `file:${node.path}`, depth, node, setSize, posInSet });
     } else {
       const dirKey = parentKey ? parentKey + DIR_KEY_SEP + node.name : node.name;
       const expanded = !collapsed.has(dirKey);
-      out.push({ kind: 'dir', key: `dir:${dirKey}`, depth, node, dirKey, expanded });
+      out.push({
+        kind: 'dir',
+        key: `dir:${dirKey}`,
+        depth,
+        node,
+        dirKey,
+        expanded,
+        setSize,
+        posInSet,
+      });
       if (expanded) buildRows(node.children, collapsed, depth + 1, dirKey, out);
     }
-  }
+  });
 }
 
 export function FileTree({
@@ -215,6 +235,8 @@ function FileCell({
       }`}
       role="treeitem"
       aria-level={row.depth + 1}
+      aria-setsize={row.setSize}
+      aria-posinset={row.posInSet}
       aria-selected={isSelected}
       data-testid="files-tab-tree-row"
       data-selected={isSelected}
@@ -297,6 +319,8 @@ function DirCell({ row, onToggle }: { row: DirRow; onToggle: (dirKey: string) =>
       className={`file-tree-dir-header ${styles.fileTreeDirHeader}`}
       role="treeitem"
       aria-level={row.depth + 1}
+      aria-setsize={row.setSize}
+      aria-posinset={row.posInSet}
       aria-expanded={expanded}
       style={{ paddingLeft: `${row.depth * INDENT_PER_LEVEL}px` }}
     >

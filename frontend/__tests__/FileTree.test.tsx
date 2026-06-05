@@ -94,6 +94,26 @@ describe('FileTree', () => {
     expect(onToggle).toHaveBeenCalledWith('a.ts');
   });
 
+  it('marks a viewed file row with the gray-out class and never line-through', () => {
+    const { container } = render(
+      <FileTree
+        files={[file('seen.ts', { status: 'modified' })]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set(['seen.ts'])}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    // item 6: viewed = dim only (via the row class, since the checkbox now lives in a
+    // separate column so the old :has(checkbox) selector no longer applies); the
+    // strikethrough class is reserved for deletion and must NOT appear here.
+    const row = container.querySelector('[data-path="seen.ts"]') as HTMLElement;
+    expect(row).toHaveClass('file-tree-file--viewed');
+    expect(container.querySelector('.file-tree-file-name--deleted')).toBeNull();
+  });
+
   it('collapses and expands directories', () => {
     render(
       <FileTree
