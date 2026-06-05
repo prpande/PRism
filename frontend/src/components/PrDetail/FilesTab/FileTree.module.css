@@ -24,9 +24,10 @@
   font-size: var(--text-sm);
 }
 /* Two-column body: the tree scrolls horizontally as one object inside
-   .fileTreeScroll (one native bottom scrollbar); the checkbox column sits OUTSIDE
-   that scroller so it never moves horizontally. Vertical scroll position is mirrored
-   onto the checkbox column in JS so the two stay row-aligned. */
+   .fileTreeScroll; the checkbox column sits OUTSIDE that scroller so it never moves
+   horizontally. Vertical alignment needs no JS — both columns are content-height
+   siblings in this flex row, so they grow together and the outer pane scrolls them
+   as one. */
 .fileTreeBody {
   display: flex;
 }

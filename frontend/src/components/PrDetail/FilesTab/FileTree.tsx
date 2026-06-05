@@ -28,6 +28,9 @@ const STATUS_WORD: Record<string, string> = {
   renamed: 'Renamed',
 };
 
+// File rows indent one level deeper than their parent directory header
+// ((depth + 1) vs depth) so a file sits visually inside its folder; a depth-0 file
+// (no parent dir) still gets one level of indent.
 const INDENT_PER_LEVEL = 12;
 
 const FILE_STATUS_MODULE: Record<FileChangeStatus, string> = {
@@ -94,6 +97,10 @@ export function FileTree({
   const tree = useMemo(() => buildTree(files), [files]);
   const viewedCount = files.filter((f) => viewedPaths.has(f.path)).length;
 
+  // Collapse state intentionally persists across `files` changes (e.g. a background
+  // freshness refetch): a dir the user collapsed stays collapsed on reload. Stale
+  // keys for dirs that no longer exist are harmless — they just sit unused, and any
+  // collapsed dir always has a chevron to re-expand it.
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const toggleDir = useCallback((dirKey: string) => {
     setCollapsed((prev) => {
@@ -208,6 +215,7 @@ function FileCell({
       }`}
       role="treeitem"
       aria-level={row.depth + 1}
+      aria-selected={isSelected}
       data-testid="files-tab-tree-row"
       data-selected={isSelected}
       data-path={node.path}

@@ -54,6 +54,8 @@ describe('FileTree', () => {
     );
     const selected = screen.getByText('a.ts').closest('[data-selected]');
     expect(selected?.getAttribute('data-selected')).toBe('true');
+    // selection is exposed to assistive tech on the treeitem, not just via data-*
+    expect(selected?.getAttribute('aria-selected')).toBe('true');
   });
 
   it('calls onSelectFile when a file row is clicked', () => {
