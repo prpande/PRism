@@ -393,9 +393,22 @@ a:hover { text-decoration: underline; }
    Spec § 6.1 Pass 2 ("SR-only badge labels"). Mirrors the well-known
    clip-rect pattern that survives flex/grid layouts without affecting
    sibling sizing. The Cheatsheet's `.srOnly` CSS-module class predates
-   this utility and uses an equivalent recipe locally. */
+   this utility and uses an equivalent recipe locally.
+
+   `top: 0; left: 0` pins the box to the origin of its containing block
+   instead of its static-flow position. Without this, an absolutely
+   positioned `.sr-only` inside a tall, internally-scrolled view with no
+   positioned ancestor takes its static position deep in the document and,
+   because its containing block is the initial containing block (<html>),
+   extends `documentElement.scrollHeight` past the viewport — the page
+   scrolls into empty space (issue #197). Pinned to the origin it can no
+   longer contribute trailing overflow. The element stays visually hidden
+   (1px + clip-rect) and SR-announced (reading order is DOM order, not
+   visual position; these spans are non-focusable). */
 .sr-only {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   padding: 0;
