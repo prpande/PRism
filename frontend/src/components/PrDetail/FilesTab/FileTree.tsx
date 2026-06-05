@@ -1,7 +1,22 @@
-import { useState, useCallback, useMemo } from 'react';
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useEffect,
+  useContext,
+  createContext,
+} from 'react';
 import type { FileChange, FileChangeStatus, FileFocus, FocusLevel } from '../../../api/types';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import styles from './FileTree.module.css';
+
+// Per-row name regions scroll horizontally to reveal long names; the status
+// badge (left) and the viewed checkbox (right) sit OUTSIDE these regions so they
+// stay fixed — the checkbox column never moves on scroll. This context hands
+// each region a ref callback so a freshly-mounted row adopts the shared scroll
+// position; ongoing sync is done by a capture-phase scroll listener on the root.
+const NameScrollContext = createContext<(el: HTMLDivElement | null) => void>(() => {});
 
 export interface FileTreeProps {
   files: FileChange[];
@@ -57,6 +72,33 @@ export function FileTree({
     return m;
   }, [focusEntries]);
 
+  // Synchronize horizontal scroll across every per-row name region so the tree
+  // scrolls as one unit (VS Code-like) while the checkbox column stays fixed.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const sharedScrollLeft = useRef(0);
+  const registerNameScroll = useCallback((el: HTMLDivElement | null) => {
+    // A newly-mounted region (e.g. on directory expand) adopts the shared offset.
+    if (el) el.scrollLeft = sharedScrollLeft.current;
+  }, []);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    // scroll events don't bubble, so listen in the capture phase.
+    const onScroll = (e: Event) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement) || !target.classList.contains('file-tree-name-scroll'))
+        return;
+      const x = target.scrollLeft;
+      if (x === sharedScrollLeft.current) return;
+      sharedScrollLeft.current = x;
+      root.querySelectorAll<HTMLElement>('.file-tree-name-scroll').forEach((el) => {
+        if (el !== target && el.scrollLeft !== x) el.scrollLeft = x;
+      });
+    };
+    root.addEventListener('scroll', onScroll, true);
+    return () => root.removeEventListener('scroll', onScroll, true);
+  }, []);
+
   if (files.length === 0) {
     if (isLoading) return null;
     return (
@@ -68,31 +110,34 @@ export function FileTree({
   }
 
   return (
-    <div
-      className={`file-tree ${styles.fileTree}`}
-      role="tree"
-      aria-label="File tree"
-      data-testid="file-tree"
-    >
-      <div className={`file-tree-header ${styles.fileTreeHeader}`}>
-        Files · {viewedCount}/{files.length} viewed
+    <NameScrollContext.Provider value={registerNameScroll}>
+      <div
+        ref={rootRef}
+        className={`file-tree ${styles.fileTree}`}
+        role="tree"
+        aria-label="File tree"
+        data-testid="file-tree"
+      >
+        <div className={`file-tree-header ${styles.fileTreeHeader}`}>
+          Files · {viewedCount}/{files.length} viewed
+        </div>
+        <div className={`file-tree-list ${styles.fileTreeList}`}>
+          {tree.map((node) => (
+            <TreeNodeComponent
+              key={nodeKey(node)}
+              node={node}
+              selectedPath={selectedPath}
+              onSelectFile={onSelectFile}
+              viewedPaths={viewedPaths}
+              onToggleViewed={onToggleViewed}
+              depth={0}
+              focusByPath={focusByPath}
+              aiPreview={aiPreview}
+            />
+          ))}
+        </div>
       </div>
-      <div className={`file-tree-list ${styles.fileTreeList}`}>
-        {tree.map((node) => (
-          <TreeNodeComponent
-            key={nodeKey(node)}
-            node={node}
-            selectedPath={selectedPath}
-            onSelectFile={onSelectFile}
-            viewedPaths={viewedPaths}
-            onToggleViewed={onToggleViewed}
-            depth={0}
-            focusByPath={focusByPath}
-            aiPreview={aiPreview}
-          />
-        ))}
-      </div>
-    </div>
+    </NameScrollContext.Provider>
   );
 }
 
@@ -166,6 +211,7 @@ function FileNodeComponent({
   focusByPath: Map<string, FocusLevel> | null;
   aiPreview: boolean;
 }) {
+  const registerNameScroll = useContext(NameScrollContext);
   const isSelected = selectedPath === node.path;
   const isViewed = viewedPaths.has(node.path);
   const focusLevel = focusByPath?.get(node.path) ?? null;
@@ -200,17 +246,22 @@ function FileNodeComponent({
       </span>
       {/* sr-only status word BEFORE the name; trailing space separates it from the filename when spoken */}
       <span className="sr-only">{`${STATUS_WORD[node.file.status] ?? 'Unknown'} `}</span>
-      <span
-        title={node.name}
-        className={`file-tree-file-name ${styles.fileTreeFileName}${
-          node.file.status === 'deleted'
-            ? ` file-tree-file-name--deleted ${styles.fileTreeFileNameDeleted}`
-            : ''
-        }`}
+      {/* Only the name scrolls horizontally; badge (left) and ai/checkbox (right) stay fixed. */}
+      <div
+        className={`file-tree-name-scroll ${styles.fileTreeNameScroll}`}
+        ref={registerNameScroll}
       >
-        {node.name}
-      </span>
-      <span className={`file-tree-spacer ${styles.fileTreeSpacer}`} />
+        <span
+          title={node.name}
+          className={`file-tree-file-name ${styles.fileTreeFileName}${
+            node.file.status === 'deleted'
+              ? ` file-tree-file-name--deleted ${styles.fileTreeFileNameDeleted}`
+              : ''
+          }`}
+        >
+          {node.name}
+        </span>
+      </div>
       <span
         className={`file-tree-ai ${styles.fileTreeAi}`}
         data-on={aiPreview ? '1' : '0'}
@@ -258,6 +309,7 @@ function DirectoryNodeComponent({
   aiPreview: boolean;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const registerNameScroll = useContext(NameScrollContext);
 
   return (
     <div className={`file-tree-dir ${styles.fileTreeDir}`} role="treeitem" aria-expanded={expanded}>
@@ -297,9 +349,14 @@ function DirectoryNodeComponent({
             />
           </svg>
         </button>
-        <span className={`file-tree-dir-name ${styles.fileTreeDirName}`} title={node.name}>
-          {node.name}
-        </span>
+        <div
+          className={`file-tree-name-scroll ${styles.fileTreeNameScroll}`}
+          ref={registerNameScroll}
+        >
+          <span className={`file-tree-dir-name ${styles.fileTreeDirName}`} title={node.name}>
+            {node.name}
+          </span>
+        </div>
       </div>
       {expanded && (
         <div role="group">

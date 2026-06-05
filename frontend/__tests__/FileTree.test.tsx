@@ -280,12 +280,65 @@ describe('FileTree — status accessible label (item 8)', () => {
       expect(badge).toHaveTextContent(letter);
       expect(badge).toHaveAttribute('aria-hidden', 'true');
       // the SR word sits BETWEEN the hidden badge and the name → reads as a prefix,
-      // NOT after the name like the trailing AI-focus sr-only span (regression guard)
+      // NOT after the name like the trailing AI-focus sr-only span (regression guard).
+      // The name is wrapped in its scroll region, so the word's next sibling is that
+      // region and the name is its child — reading order (word → name) is preserved.
       const srWord = container.querySelector('.file-status + .sr-only') as HTMLElement | null;
       expect(srWord).toHaveTextContent(word);
-      expect(srWord?.nextElementSibling).toHaveClass('file-tree-file-name');
+      const region = srWord?.nextElementSibling as HTMLElement | null;
+      expect(region).toHaveClass('file-tree-name-scroll');
+      expect(region?.firstElementChild).toHaveClass('file-tree-file-name');
     },
   );
+});
+
+describe('FileTree — horizontal name scroll + fixed checkbox (item 7)', () => {
+  it('wraps the name in a scroll region with the viewed checkbox OUTSIDE it', () => {
+    const { container } = render(
+      <FileTree
+        files={[file('a-really-long-file-name.ts')]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    const row = container.querySelector('[data-path="a-really-long-file-name.ts"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    const region = row.querySelector('.file-tree-name-scroll');
+    expect(region).not.toBeNull();
+    // the name lives inside the scroll region (so it can scroll)
+    expect(region!.querySelector('.file-tree-file-name')).toHaveTextContent(
+      'a-really-long-file-name.ts',
+    );
+    // the checkbox is a direct child of the row, NOT inside the scroll region, so it
+    // stays fixed at the right edge regardless of how far the name is scrolled
+    const checkbox = row.querySelector('.file-tree-viewed-checkbox') as HTMLElement;
+    expect(checkbox).not.toBeNull();
+    expect(region!.contains(checkbox)).toBe(false);
+    expect(checkbox.parentElement).toBe(row);
+  });
+
+  it('wraps directory names in a scroll region too', () => {
+    const { container } = render(
+      <FileTree
+        files={[file('src/deep/nested/file.ts')]}
+        selectedPath={null}
+        onSelectFile={vi.fn()}
+        viewedPaths={new Set()}
+        onToggleViewed={vi.fn()}
+        focusEntries={null}
+        aiPreview={false}
+      />,
+    );
+    const dirHeader = container.querySelector('.file-tree-dir-header') as HTMLElement;
+    expect(dirHeader).not.toBeNull();
+    const region = dirHeader.querySelector('.file-tree-name-scroll');
+    expect(region).not.toBeNull();
+    expect(region!.querySelector('.file-tree-dir-name')).not.toBeNull();
+  });
 });
 
 const F = (path: string, status: FileChange['status'] = 'modified'): FileChange => ({

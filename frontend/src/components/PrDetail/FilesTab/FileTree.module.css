@@ -117,11 +117,9 @@
   flex: none;
 }
 
+/* The name renders at full width and is revealed by scrolling its row region
+   (.fileTreeNameScroll) — no ellipsis, so the whole filename is reachable. */
 .fileTreeFileName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fileTreeFileNameDeleted {
@@ -130,9 +128,20 @@
   text-decoration-thickness: 1.5px;
   color: var(--text-2);
 }
-.fileTreeSpacer {
-  flex: none;
-  margin-left: auto;
+/* Per-row horizontal scroll region wrapping ONLY the name. flex:1 fills the row
+   between the fixed status badge (left) and the fixed ai/checkbox cluster
+   (right), so the viewed checkbox column never moves when a long name scrolls.
+   Scrollbars are hidden; rows scroll in sync via FileTree's capture-phase
+   listener (trackpad / shift-wheel). */
+.fileTreeNameScroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.fileTreeNameScroll::-webkit-scrollbar {
+  display: none;
 }
 .fileTreeViewedCheckbox {
   flex: none;
@@ -191,10 +200,6 @@
   color: var(--accent);
 }
 .fileTreeDirName {
-  flex: 1;
   font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
