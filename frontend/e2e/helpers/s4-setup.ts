@@ -1,4 +1,4 @@
-import type { APIRequestContext, Page } from '@playwright/test';
+import { expect, type APIRequestContext, type Page } from '@playwright/test';
 
 // Per-test state reset. The backend process is long-running across the whole
 // Playwright run; without this, FakeReviewService head-sha mutations and
@@ -47,11 +47,18 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
 // non-empty PAT input value is accepted.
 export async function setupAndOpenScenarioPr(page: Page): Promise<void> {
   await page.goto('/setup');
+  // Wait for hydration before filling (#148/D5): Continue starts DISABLED (a
+  // controlled React state), so asserting that first proves the form's onChange
+  // handlers are attached and the fill below drives state — otherwise .fill()
+  // can race hydration, the controlled input never updates, Continue stays
+  // disabled, the click no-ops, and waitForURL('/') times out.
+  await expect(page.getByRole('button', { name: /continue/i })).toBeDisabled();
   await page.getByLabel(/personal access token/i).fill('ghp_e2e_token');
   await page.getByRole('button', { name: /continue/i }).click();
-  // After connect, the SPA navigates to /. Wait for the inbox to render
-  // (the fake exposes one section, "Review requested", with the canonical
-  // scenario row). Click into the PR detail.
+  // After connect, the SPA navigates to / (inbox). Wait for that route — the
+  // fake exposes one section, "Review requested", with the canonical scenario
+  // row. This helper stops at the inbox; callers that need the PR detail must
+  // navigate there separately (e.g. openScenarioPr / page.goto('/pr/...')).
   await page.waitForURL('/');
 }
 

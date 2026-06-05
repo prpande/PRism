@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   build-and-test:
@@ -60,38 +61,86 @@ jobs:
       - name: Test (.NET)
         run: dotnet test --no-build --configuration Release --settings .runsettings --logger "trx;LogFileName=test-results.trx"
 
-      # `--with-deps` removed: Linux-only flag, no-op on windows-latest.
-      # Both Playwright steps carry `continue-on-error: true`:
-      # - INSTALL step: stopgap for the 2026-05-29 runner regression where
-      #   chromium extraction hangs after a clean download (suspected AV
-      #   scanning ~15K extracted files). 10-min install timeout surfaces fast.
-      # - TEST step: D94 attempted to remove this when D82 lifted the
-      #   nested-interactive a11y violation, but the lift introduced a
-      #   different critical axe-core violation (aria-required-children on
-      #   role="tablist" with the now-sibling close button). Both are inherent
-      #   to the WAI-ARIA "deletable tabs" pattern. Restored as stopgap
-      #   pending D85's full kbd-nav redesign bundle that resolves the
-      #   trade-off cleanly. See D104 in the deferrals sidecar.
-      - name: Playwright install
-        working-directory: frontend
-        run: npx playwright install chromium
-        timeout-minutes: 10
-        continue-on-error: true
+      - name: Upload .NET test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: dotnet-test-results
+          path: '**/test-results.trx'
 
+  # ---------------------------------------------------------------------------
+  # Browser e2e runs in the official Playwright CONTAINER on Linux, NOT on
+  # windows-latest. `playwright install` hangs after the download completes —
+  # confirmed on BOTH windows AND ubuntu runners: the ~112 MiB chrome-headless-
+  # shell download finishes in ~2s, then the install never progresses past it and
+  # times out (#171). That OS-independent post-download hang is exactly why the
+  # suite was masked with continue-on-error rather than fixed. The Playwright
+  # container ships the matching browser binaries PRE-INSTALLED, so there is no
+  # install step to hang. The web app under test (Kestrel serving /api + the
+  # React bundle, the fake .NET backend, the /test hooks) is platform-agnostic;
+  # only Windows single-binary PACKAGING differs, never exercised by a browser
+  # e2e. The image tag is pinned to the locked @playwright/test version so the
+  # baked browser revision matches (bump both together).
+  # ---------------------------------------------------------------------------
+  e2e:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
+
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Restore (.NET)
+        run: dotnet restore
+
+      # No `playwright install` — the container ships the browsers. Assert the
+      # baked headless shell is present so a future image/version drift fails
+      # loudly here rather than mid-suite.
+      - name: Verify Playwright browser is present (baked into image)
+        working-directory: frontend
+        shell: bash
+        run: |
+          root="${PLAYWRIGHT_BROWSERS_PATH:-/ms-playwright}"
+          if find "$root" -name 'chrome-headless-shell' -type f 2>/dev/null | grep -q .; then
+            echo "Found headless shell under $root"
+          else
+            echo "chrome-headless-shell not found under $root — image/version mismatch (#171)." >&2
+            exit 1
+          fi
+
+      # No continue-on-error: a genuine e2e failure now turns the job RED. The
+      # D104 tablist a11y violation is allowlisted inside a11y-audit.spec.ts (#174).
       - name: Playwright tests
         working-directory: frontend
         run: npx playwright test
         env:
           CI: 'true'
         timeout-minutes: 30
-        continue-on-error: true
 
-      - name: Upload test artifacts
-        if: failure()
+      # Always upload. On the FIRST Linux run the pixel-parity specs have no
+      # linux/ baseline yet, so Playwright WRITES them under
+      # e2e/__screenshots__/linux/ and fails those tests — download this artifact
+      # once to commit the linux baselines (the win32 ones were for the old,
+      # broken windows path and don't match a Linux runner).
+      - name: Upload e2e artifacts
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results
+          name: e2e-results
           path: |
-            **/test-results.trx
-            frontend/test-results/
+            frontend/e2e/__screenshots__/
             frontend/playwright-report/
+            frontend/test-results/

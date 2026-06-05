@@ -42,7 +42,10 @@ public static class ServiceCollectionExtensions
     /// <c>AddPrismGitHub</c> and <c>AddPrismAi</c> before <c>Build()</c>.</b>
     /// </para>
     /// </remarks>
-    public static IServiceCollection AddPrismCore(this IServiceCollection services, string dataDir)
+    public static IServiceCollection AddPrismCore(
+        this IServiceCollection services,
+        string dataDir,
+        bool useUnprotectedTokenCache = false)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrEmpty(dataDir);
@@ -56,7 +59,19 @@ public static class ServiceCollectionExtensions
             return state;
         });
         services.AddSingleton<IAppStateStore>(_ => new AppStateStore(dataDir));
-        services.AddSingleton<ITokenStore>(_ => new TokenStore(dataDir));
+        // In the e2e Test backend, persist tokens to an unprotected file instead
+        // of the OS keyring. The browser e2e runs in a headless Linux container
+        // which has no D-Bus/X11, so MSAL's Linux keyring throws "Cannot
+        // autolaunch D-Bus without X11 $DISPLAY" and every auth-dependent spec
+        // times out. The e2e DataDir is ephemeral, so plaintext is fine.
+        //
+        // The decision is made by the caller (Program.cs composition root, where
+        // IHostEnvironment is available) and gated on Test env AND a PRISM_E2E_*
+        // var — the same condition Program.cs uses for UseStaticWebAssets and the
+        // fake/real-inject seams. Defaulting to false here means production (and
+        // any caller that doesn't opt in) always gets the encrypted OS keychain,
+        // even if a PRISM_E2E_* var is set outside a Test environment.
+        services.AddSingleton<ITokenStore>(_ => new TokenStore(dataDir, useUnprotectedTokenCache));
         services.AddSingleton<IViewerLoginProvider, ViewerLoginProvider>();
 
         services.AddSingleton<IReviewEventBus, ReviewEventBus>();
