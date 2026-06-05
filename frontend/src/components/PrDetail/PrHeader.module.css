@@ -110,15 +110,14 @@
   background: var(--surface-2);
 }
 .collapseToggle:active {
+  color: var(--text-1);
   background: var(--surface-3);
 }
-/* Explicit focus ring clipped to the button's own radius (the global
-   :focus-visible uses --radius-1; the button is --radius-2, so match it here to
-   avoid a mismatched ring corner — spec called for an aligned focus state). */
+/* Focus ring. The outline automatically follows the button's own
+   border-radius (--radius-2 set above), so no radius re-declaration is needed. */
 .collapseToggle:focus-visible {
   outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
-  border-radius: var(--radius-2);
 }
 .collapseToggle svg {
   transition: transform var(--t-fast);
