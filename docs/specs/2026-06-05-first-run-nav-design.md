@@ -53,8 +53,9 @@ Two changes, one coherent unit.
 ### 1. Gate the nav tab strip on `isAuthed`
 
 `App.tsx` already computes `isAuthed = authState.hasToken && !authInvalidated`
-(`App.tsx:65`). Today it passes only `hasToken` to `Header`. Pass `isAuthed`
-instead.
+(`App.tsx:65`). Today it passes `hasToken` to `Header`. **Rename the Header prop
+`hasToken` → `isAuthed`** (the gate is no longer "has a token" — a rejected-token
+session has a token but is not authed) and pass `isAuthed` at the call site.
 
 `Header` renders the `<nav>` tab strip **only when `isAuthed`**. When not authed,
 the `<nav>` element is **omitted entirely** (not rendered empty — an empty
@@ -62,11 +63,13 @@ the `<nav>` element is **omitted entirely** (not rendered empty — an empty
 every state; hiding the desktop **close** button would trap the user.
 
 **No-nav header layout.** With the nav absent, the header keeps its existing flex
-layout: **Logo stays left-flush**, the spacer grows to fill the middle, and
-`WindowControls` stays right-aligned. The empty center is intentional — Logo is
-**not** re-centered, and no placeholder fills the gap. This is the natural outcome
-of the current flex rules (the spacer already owns the middle); the implementation
-should not add layout just for the no-nav state.
+layout: **Logo stays left-flush**, the spacer (kept **unconditional**, as today)
+grows to fill the middle, and `WindowControls` stays right-aligned. The empty
+center is intentional — Logo is **not** re-centered, and no placeholder fills the
+gap. This is the natural outcome of the current flex rules — verified against
+`Header.module.css` (`.header { display: flex }`, `.spacer { flex: 1 }`): omitting
+only the `<nav>` leaves Logo left, spacer owning the middle, `WindowControls`
+right. The implementation should not add layout just for the no-nav state.
 
 **Transition.** Mount/unmount is a **hard cut** — no fade/slide animation, matching
 the app's existing nav (which has no show/hide animation today). The nav appears as
@@ -82,12 +85,31 @@ replace-from-Settings flow (`/setup?replace=1`, where `isAuthed` is still true).
 
 **First-run is intentionally a dead-end surface.** While the nav is hidden, the
 user has **no route to Inbox or Settings** — the Setup ("Connect to GitHub") screen
-is the only surface, by design. Implementers must not add a back-door link or
-keyboard shortcut to escape it. **Escape hatch:** the way forward is always the
-Setup form itself — in first-run a successful connect, in rejected-token re-auth a
-re-paste into the connect form (`/setup` without `?replace=1` → `onConnect`). So
-hiding the nav never traps the user: the actionable form is on-screen in every
+is the only surface, by design. Implementers must not re-introduce the nav tabs (or
+a nav-equivalent jump) to escape it — that is the leak this issue removes.
+
+**Escape hatch — for token entry.** The way forward is always the Setup form on
+screen. The exact handler depends on how the user arrived:
+- **First-run** (`/setup`, no `?replace=1`) → `onConnect` → `/api/auth/connect`.
+- **Rejected-token bounced from a guarded route** → App routes to bare `/setup` →
+  `onConnect`.
+- **Rejected-token while already in the Settings→Replace flow** (`/setup?replace=1`)
+  → `onReplace` → `/api/auth/replace` (SetupPage keys `onSubmit` off `isReplaceMode`,
+  `SetupPage.tsx:169`).
+
+Both endpoints accept a fresh token over an existing-but-rejected one (verified:
+`/api/auth/connect` has no existing-token guard, `AuthEndpoints.cs`), so **token
+re-entry never traps the user** — the actionable form is on-screen in every
 nav-hidden state.
+
+**Known limitation (pre-existing, out of scope): wrong host on first-run.** The
+"never traps" claim covers *token* entry only. The Setup screen renders the
+configured host as **read-only** (`SetupForm.tsx` only builds the PAT-page link); a
+first-run user who configured a *wrong* `github.host` has no in-app way to correct
+it — `HostChangeModal` only *resolves* a detected mismatch, it cannot *set* a host.
+Editing `config.json` is the only path today. This predates this slice (the Setup
+screen never had a host editor); hiding the nav does not create it but does fore­close
+fixing it via a nav back-door. Left as-is here; see Deferred.
 
 ### 2. Remove the standalone Setup tab
 
@@ -148,13 +170,24 @@ following existing cases must be **removed or rewritten**:
   `#119` search-box cases — but all run only in the `isAuthed` state now.
 
 **New Header unit cases (vitest):**
-- `!isAuthed` (first-run) → **no `<nav>` landmark and no tab links** rendered;
-  Logo still present.
-- `!isAuthed` via **rejected-token** (`isAuthed` false even though a token exists)
-  → same nav-hidden assertion (covers the `authInvalidated` branch, not just
-  first-run).
-- `isAuthed` → Inbox + Settings links present; **no** Setup link.
-- `isAuthed` + `?replace=1` path → Settings link carries `aria-current="page"`.
+- `isAuthed={false}` → **no `<nav>` landmark and no tab links** rendered; Logo
+  still present.
+- `isAuthed={true}` → Inbox + Settings links present; **no** Setup link.
+- `isAuthed={true}` + `?replace=1` path → Settings link carries
+  `aria-current="page"`.
+
+  *Note:* the **rejected-token** branch cannot be tested at the Header unit level —
+  Header receives a single `isAuthed` boolean, so first-run (`!hasToken`) and
+  rejected-token (`authInvalidated`) both collapse to `isAuthed={false}` and render
+  identically. Testing a separate "rejected-token" Header case would just duplicate
+  the `isAuthed={false}` case. The `authInvalidated → isAuthed=false → nav hidden`
+  chain lives in `App.tsx`, so cover it there:
+
+**App-level case (vitest):** when a `prism-auth-rejected` event fires
+(`authInvalidated=true`) on a session that has a token, `App` passes
+`isAuthed={false}` to `Header` and the nav strip is not rendered — and a subsequent
+`prism-auth-recovered` restores it. This is the only place the rejected-token branch
+is observable.
 
 **e2e (Playwright):**
 - First-run screen (no token) shows the Connect screen with **zero** nav tabs.
@@ -186,6 +219,9 @@ separate setup-flow test task, noted in deferrals.
   - **Replace from Settings (`/setup?replace=1`):** nav shown with **Settings**
     highlighted (not a Setup tab — there is none); Setup form renders with
     Cancel → `/settings`.
+  - **Loading + host-mismatch (no-regress):** `authState === null` renders only the
+    `LoadingScreen` (no Header, no nav); host-mismatch renders only the
+    `HostChangeModal` (no Header, no nav). Confirm neither now shows a partial nav.
   - Captured as before/after Playwright screenshots embedded on the PR.
 
 ## Notes / decisions
@@ -197,18 +233,17 @@ separate setup-flow test task, noted in deferrals.
   users land directly on the Setup screen, so no "go to setup" pointer is needed.
 - "Replace token" copy is intentionally **not** changed (multi-account / relabel
   lives in #139).
-- **Criterion 4 — what "reachable from Settings" means here (open question for the
-  issue author).** #130's title says "move Setup into Settings," and we satisfy
-  that with the **existing** Settings → Auth "Replace token" link, which opens the
-  shared Setup form (`/setup?replace=1`) in replace mode (`onReplace` →
-  `/api/auth/replace`). That is a **token re-entry** flow, which is narrower than a
-  full first-run re-run (it does not re-walk repo selection the way connect does).
-  We are treating "reachable for re-running" as satisfied by that link, and
-  deferring (a) any **relabel** for discoverability — a user hunting for the word
-  "Setup" finds only "Replace token" — to #134 (Settings redesign) / #139, and
-  (b) any **fuller re-run** (host + repo re-selection) as out of scope. **Flag for
-  @prpande at the spec-review gate:** if you intended criterion 4 to mean a full
-  setup re-run rather than token re-entry, say so — that expands this slice.
+- **Criterion 4 — operative decision (so implementation is not blocked).** We read
+  "reachable from Settings for re-running" as satisfied by the **existing** Settings
+  → Auth "Replace token" link, which opens the shared Setup form (`/setup?replace=1`)
+  in replace mode (`onReplace` → `/api/auth/replace`). This is **token re-entry** —
+  narrower than a full first-run re-run (it does not re-walk repo selection the way
+  connect does). Per the approved narrow scope, **this slice builds nothing new for
+  criterion 4** and treats it as no-regress; we defer (a) any **relabel** for
+  discoverability (a user hunting for "Setup" finds only "Replace token") to #134 /
+  #139, and (b) any **fuller re-run** (host + repo re-selection) as out of scope.
+  **Confirm with @prpande at the review gate:** the default above is what we build;
+  if you intended a *full* setup re-run, say so and it expands this slice.
 
 ## Deferred
 
@@ -219,3 +254,8 @@ separate setup-flow test task, noted in deferrals.
 - **"Replace token" relabel / discoverability** → #134 (Settings redesign) / #139.
 - **Full setup re-run** (host + repo re-selection from Settings) → out of scope
   pending the criterion-4 clarification above.
+- **In-app host correction on first-run** (pre-existing gap). The Setup screen has
+  no host editor; a wrong `github.host` on first-run is only fixable by editing
+  `config.json`. Not introduced by this slice, but this slice forecloses fixing it
+  via the nav. Candidate follow-up issue (relates to #134 / #140) — flag to the
+  user whether to file it.
