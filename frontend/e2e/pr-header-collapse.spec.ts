@@ -29,7 +29,13 @@ test.describe('#128 collapsible PR header + toolbar trim', () => {
     // browser (jsdom can't compute it). Guards against a future "fix" that
     // flips the convention back — see #203.
     const chevron = toggle.locator('svg');
-    await expect(chevron.locator('path').first()).toHaveAttribute('d', 'M4 7l4-4 4 4');
+    // Both strokes are authored pointing UP. Assert as an order-independent set
+    // so a future path reorder can't false-fail; the down-glyph these replaced
+    // used `l4 4` (descending) for each segment, so this reds on main.
+    const pathDs = await chevron
+      .locator('path')
+      .evaluateAll((ps) => ps.map((p) => p.getAttribute('d')));
+    expect([...pathDs].sort()).toEqual(['M4 12l4-4 4 4', 'M4 7l4-4 4 4'].sort());
     const expandedTransform = await chevron.evaluate((el) => getComputedStyle(el).transform);
     expect(['none', 'matrix(1, 0, 0, 1, 0, 0)']).toContain(expandedTransform);
 
