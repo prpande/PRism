@@ -1,10 +1,15 @@
 .fileTree {
+  /* Single-line rows of a fixed height so the scrolling tree column and the fixed
+     checkbox column stay aligned row-for-row. */
+  --tree-row-h: 32px;
   display: flex;
   flex-direction: column;
   background: var(--surface-1);
-  min-width: 240px;
-  max-width: 360px;
-  overflow-y: auto;
+  min-width: 0;
+  /* No inner vertical scroll: the tree grows to its content height and the outer
+     tree pane (.filesTabTree) owns vertical scrolling, so there is no vertical
+     scrollbar dividing the two columns. */
+  overflow: visible;
 }
 .fileTreeHeader {
   padding: var(--s-3) var(--s-4);
@@ -18,9 +23,44 @@
   padding: var(--s-4);
   font-size: var(--text-sm);
 }
-.fileTreeList {
+/* Two-column body: the tree scrolls horizontally as one object inside
+   .fileTreeScroll; the checkbox column sits OUTSIDE that scroller so it never moves
+   horizontally. Vertical alignment needs no JS — both columns are content-height
+   siblings in this flex row, so they grow together and the outer pane scrolls them
+   as one. */
+.fileTreeBody {
+  display: flex;
+}
+.fileTreeScroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Horizontal scroll only — height grows to content, so vertical space is handled
+     by the outer pane, not an inner vertical scrollbar. */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.fileTreeInner {
+  /* Widest row sets the width; every row is width:100% of this, so the whole tree
+     shifts by the same amount on scroll and indentation stays aligned. */
+  width: max-content;
+  min-width: 100%;
   display: flex;
   flex-direction: column;
+}
+.fileTreeCheckCol {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  /* No border/seam — the checkbox column reads as part of the same surface as the
+     tree even though it is a separate, non-horizontally-scrolling object. */
+}
+.fileTreeCheckSlot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--tree-row-h);
+  padding: 0 var(--s-3);
+  flex: none;
 }
 
 /* File rows — handoff `tree-row` treatment */
@@ -28,7 +68,9 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  padding: 6px var(--s-3);
+  height: var(--tree-row-h);
+  box-sizing: border-box;
+  padding-right: var(--s-3);
   background: transparent;
   border: none;
   width: 100%;
@@ -46,13 +88,11 @@
   color: var(--text-1);
 }
 
-/* Viewed-state — handoff strikethrough via :has() sibling selector (D33).
-   Baseline 2023; supported in current Chrome, Safari, Firefox. */
-.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeFileName {
+/* Viewed-state — dim only. Strikethrough is reserved for deletion (item 5/6).
+   Driven by a row class because the checkbox now lives in a separate column, so the
+   old :has(sibling-checkbox) relationship no longer holds. */
+.fileTreeFileViewed .fileTreeFileName {
   color: var(--text-3);
-  text-decoration: line-through;
-  text-decoration-color: var(--border-strong);
-  text-decoration-thickness: 1px;
 }
 
 /* File-status badges — handoff `tree-status-*` treatment.
@@ -120,16 +160,17 @@
   flex: none;
 }
 
+/* The name renders at full width (no ellipsis); the whole filename is reachable by
+   scrolling the tree column. Long names extend the row, which widens .fileTreeInner
+   and so the shared horizontal scroll. */
 .fileTreeFileName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fileTreeSpacer {
-  flex: none;
-  margin-left: auto;
+.fileTreeFileNameDeleted {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger-fg);
+  text-decoration-thickness: 1.5px;
+  color: var(--text-2);
 }
 .fileTreeViewedCheckbox {
   flex: none;
@@ -137,23 +178,27 @@
   height: 14px;
   cursor: pointer;
 }
-.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeViewedCheckbox {
+.fileTreeViewedCheckbox:checked {
   /* Match handoff `tree-row.is-viewed .tree-viewed` filled-accent treatment */
   accent-color: var(--accent);
 }
 
 /* Directory rows — production-only structure; no handoff source */
-.fileTreeDir {
-  display: flex;
-  flex-direction: column;
-}
 .fileTreeDirHeader {
   display: flex;
   align-items: center;
-  padding: 6px var(--s-3);
+  gap: var(--s-2);
+  height: var(--tree-row-h);
+  box-sizing: border-box;
+  padding-right: var(--s-3);
+  transition: background var(--t-fast);
+}
+.fileTreeDirHeader:hover {
+  background: var(--surface-3);
 }
 .fileTreeDirToggle {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--s-2);
   background: transparent;
@@ -164,15 +209,24 @@
   cursor: pointer;
 }
 .fileTreeChevron {
-  display: inline-block;
-  width: 1em;
-  text-align: center;
-  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--text-2);
   transition: transform var(--t-fast);
 }
 .fileTreeChevronOpen {
   transform: rotate(90deg);
 }
+.fileTreeFolderIcon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--accent);
+}
 .fileTreeDirName {
   font-weight: 500;
+  white-space: nowrap;
 }
