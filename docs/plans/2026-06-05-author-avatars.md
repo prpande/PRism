@@ -945,6 +945,13 @@ git commit -m "test(#127): deterministic avatar parity baselines (abort CDN) + r
 1. **Fixture re-capture is required (not optional).** Adding `avatarUrl` to the GraphQL query (Task 2) changes the frozen response **shape**, so `Frozen_pr_graphql_shape_unchanged` (test 7g) WILL false-fail (`+ …/author/avatarUrl`) until `pr19-graphql-response.json` is refreshed. It does not block the green-and-ready gate only because 7g is not in normal CI — it MUST be run before the integration suite is next dispatched, or that suite goes red.
 2. **Allowlist update is recommended** so a future capture keeps the real URL rather than nulling it (7g passes either way, since it checks shape not value).
 
+> **IMPLEMENTATION FINDING (2026-06-05) — both premises above are FALSE in this codebase; Task 13 requires NO change.** Verified against the real `FixtureStripAllowlist.StripObject` + the committed fixture: `author` is **not** an allowlisted container, so the stripper sets `author = null` *wholesale without recursing into it*. The committed `pr19-graphql-response.json` confirms this — all 15 `author` occurrences are `null`, with no nested `login` key at all. Consequences:
+> - **(1) is wrong:** adding `avatarUrl` *inside* the `author` selection (Task 2) cannot change the stripped shape — the live `author` object collapses to `null` before `GraphQLShapeDiff` runs, exactly as it did pre-#127. 7g compares `null` (fixture) vs `null` (stripped live) → no drift. **No fixture re-capture is required**, and the Task 4 integration run (64/64) already reflects the unchanged shape.
+> - **(2) is wrong:** adding `"avatarUrl"` to `AllowedFieldNames` is **inert** — the stripper never descends into `author` (it's nulled at the parent level), so the entry would never be consulted. It would be dead, misleading code, so it is deliberately **NOT** added.
+> - `GraphQLShapeDiff.Diff` compares `JsonValueKind` only (not primitive values), confirming value coverage was never the fixture's job — it lives entirely in Task 2's inline-JSON value assertions.
+>
+> **Disposition: Steps 1–4 below are SKIPPED (no-op). No allowlist edit, no fixture edit, no commit for this task.** Value/bot/null coverage is fully provided by Task 2's `GitHubReviewServicePrDetailTests`.
+
 - [ ] **Step 1: Add `avatarUrl` to the allowlist**
 
 In `FixtureStripAllowlist.cs`, add `"avatarUrl"` to `AllowedFieldNames` (it is a public CDN URL containing only a numeric user id — no name/email/secret), e.g. on the timestamp/structural line group:
