@@ -1,7 +1,8 @@
 import styles from './DiffTruncationBanner.module.css';
 
 export interface DiffTruncationBannerProps {
-  prUrl: string;
+  // Authoritative PR web URL (PrDetailPr.htmlUrl). Absent → omit the link.
+  prUrl?: string;
 }
 
 export function DiffTruncationBanner({ prUrl }: DiffTruncationBannerProps) {
@@ -13,9 +14,11 @@ export function DiffTruncationBanner({ prUrl }: DiffTruncationBannerProps) {
     >
       <p>
         PRism shows GitHub&apos;s first portion of this diff. Full-diff support is on the roadmap.{' '}
-        <a href={prUrl} target="_blank" rel="noopener noreferrer">
-          Open on github.com
-        </a>
+        {prUrl && (
+          <a href={prUrl} target="_blank" rel="noopener noreferrer">
+            Open on GitHub
+          </a>
+        )}
       </p>
     </div>
   );

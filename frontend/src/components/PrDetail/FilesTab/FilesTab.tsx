@@ -144,7 +144,7 @@ export function FilesTab() {
     [prDetail.reviewComments, selectedPath],
   );
 
-  const prUrl = `https://github.com/${prRef.owner}/${prRef.repo}/pull/${prRef.number}`;
+  const prUrl = prDetail.pr.htmlUrl ?? undefined;
 
   const handleToggleViewed = useCallback(
     (path: string) => {
