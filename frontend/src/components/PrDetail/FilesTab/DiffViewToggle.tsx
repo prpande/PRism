@@ -1,4 +1,5 @@
 // DiffViewToggle.tsx
+import { useId } from 'react';
 import type { DiffMode } from './DiffPane';
 import { InlineDiffIcon, SideBySideDiffIcon } from './diffIcons';
 import styles from './DiffViewToggle.module.css';
@@ -16,6 +17,12 @@ export function DiffViewToggle({
   splitDisabled = false,
   splitDisabledReason,
 }: DiffViewToggleProps) {
+  // Per-instance radio group name: under keep-alive, multiple PR-detail tabs
+  // (hence multiple DiffViewToggle instances) are mounted at once. A static
+  // name would group radios document-wide, so selecting in one tab would
+  // visually deselect the same-name radio in another. useId keeps each toggle's
+  // radios independent.
+  const radioGroupName = useId();
   return (
     <div
       role="radiogroup"
@@ -26,7 +33,7 @@ export function DiffViewToggle({
       <label className={`${styles.tile}${diffMode === 'unified' ? ` ${styles.tileSelected}` : ''}`}>
         <input
           type="radio"
-          name="diff-view"
+          name={radioGroupName}
           className={styles.srInput}
           checked={diffMode === 'unified'}
           onChange={() => onDiffModeChange('unified')}
@@ -41,7 +48,7 @@ export function DiffViewToggle({
       >
         <input
           type="radio"
-          name="diff-view"
+          name={radioGroupName}
           className={styles.srInput}
           checked={diffMode === 'side-by-side'}
           disabled={splitDisabled}
