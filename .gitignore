@@ -91,6 +91,9 @@ Thumbs.db
 # pr-autopilot ephemeral state (not versioned)
 .pr-autopilot/
 
+# Brainstorming visual-companion mockups (not versioned)
+.superpowers/
+
 # Scratch / ephemeral working files
 .tmp/
 
