@@ -433,7 +433,9 @@ describe('PrDetailView — background reload preserves kept-alive Files state (#
     return {
       path,
       status: 'modified',
-      hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, body: '@@ -1 +1 @@\n-a\n+b\n' }],
+      hunks: [
+        { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, body: '@@ -1 +1 @@\n-a\n+b\n' },
+      ],
     };
   }
 
