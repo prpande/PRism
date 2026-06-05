@@ -96,7 +96,11 @@ test.describe('#128 collapsible PR header + toolbar trim', () => {
     // fixed hermetic fixture.
     expect(toolbarH).toBeLessThan(60);
 
-    await expect(page.locator('[data-testid="whole-file-toggle"]')).toBeVisible();
-    await expect(page.locator('[data-testid="line-wrap-toggle"]')).toBeVisible();
+    // The old individual button toggles are gone; the toolbar now renders an
+    // inline DiffViewToggle (segmented radio control) and a DiffSettingsMenu
+    // gear that houses line-wrap + show-full-file. Assert both are present so
+    // the test still verifies "all controls are in the trimmed toolbar".
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible();
+    await expect(page.locator('[data-testid="diff-settings-trigger"]')).toBeVisible();
   });
 });
