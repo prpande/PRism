@@ -162,7 +162,9 @@ import { prRefKey } from '../../api/types';
 import { usePrHeaderCollapsed } from '../../hooks/usePrHeaderCollapsed';
 ```
 
-(`PrReference` is already imported from `../../api/types`; add `prRefKey` to that line or as shown.)
+(`PrReference` is imported via `import type` from `../../api/types`; `prRefKey`
+is a runtime value, so it needs the separate `import { prRefKey }` shown above —
+do **not** add it to the `import type` line, or verbatim-module-syntax will reject it.)
 
 - [ ] **Step 2: Add a chevron icon component**
 
@@ -384,6 +386,10 @@ git commit -m "feat(#128): PrHeader chevron toggle (sibling of tablist) + data-c
 }
 ```
 
+> **Collapsed-state element dispositions (so the implementer doesn't guess):**
+> - **iterationLabel chip** (`PrHeader.tsx`, `<span className="chip">{iterationLabel}</span>`) is intentionally **hidden** when collapsed — it is secondary orientation info on par with author/branch (the keep-list is CI/mergeability only). The `:not()` rule above hides it correctly; no carve-out needed.
+> - **`ImportedDraftsBanner`** (the `submit.lastResume` path, rendered inside `.prHeader` below the tab row) **stays visible** when collapsed — it is transient and action-bearing ("you have imported drafts"), so hiding it would suppress a required user action. Deliberate; no collapse rule targets it.
+
 - [ ] **Step 3: Launch the app and verify both states visually**
 
 Run the app (`./run.ps1 -Reset None --no-browser`, then open `http://localhost:5180`), open a real multi-file PR's Files tab, and click the chevron.
@@ -391,6 +397,7 @@ Expected:
 - Expanded: full header (repo·#, title, status, author/branch, chips).
 - Collapsed: single row = ellipsized title + CI/mergeability chip + actions; chevron rotated up; the diff body is visibly taller.
 - The Overview/Files/Drafts tabs remain visible and clickable in both states.
+- **Also verify the no-chip case:** a PR with no `ciSummary`/`mergeability` (both chips absent) — collapsed, the row is just title + actions; confirm a long title still ellipsizes and the action cluster does not overflow at ~900px.
 
 - [ ] **Step 4: Commit**
 
@@ -747,5 +754,5 @@ When the PR merges and #128 is closed, post a comment recording that criterion 4
 | Collapsing grows the diff, no overlay | 3, 5 |
 | Action cluster never overflows compact row at ≥900px | 3 (title flex:1/min-width:0; actions flex:none) |
 | Toolbar vertical padding trimmed, controls unchanged | 4, 5 |
-| Reduced-motion suppresses the (chevron) transition | 3 |
+| Reduced-motion suppresses the (chevron-rotation) transition — AC 9 is satisfied vacuously for the instant collapse (no height/opacity transition exists); see the Motion deviation note | 3 |
 | Regression: doc/app-scroll not overflowing, diff is scroller, tree independent | 6 |
