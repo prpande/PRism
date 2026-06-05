@@ -242,8 +242,8 @@ separate setup-flow test task, noted in deferrals.
   criterion 4** and treats it as no-regress; we defer (a) any **relabel** for
   discoverability (a user hunting for "Setup" finds only "Replace token") to #134 /
   #139, and (b) any **fuller re-run** (host + repo re-selection) as out of scope.
-  **Confirm with @prpande at the review gate:** the default above is what we build;
-  if you intended a *full* setup re-run, say so and it expands this slice.
+  **Confirmed by @prpande:** the current "Replace token" (token re-entry) behavior
+  is the intended scope for criterion 4 — nothing new is built here.
 
 ## Deferred
 
