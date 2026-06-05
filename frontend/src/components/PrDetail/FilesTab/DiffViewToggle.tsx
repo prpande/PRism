@@ -23,13 +23,25 @@ export function DiffViewToggle({
   // visually deselect the same-name radio in another. useId keeps each toggle's
   // radios independent.
   const radioGroupName = useId();
+  // When Split is disabled, the `title` tooltip reaches pointer users only. Wire
+  // the same reason to the radiogroup via aria-describedby + a visually-hidden
+  // span so keyboard / screen-reader users hear it on group entry too (the
+  // disabled Split radio itself isn't focusable, so describing it is not enough).
+  const splitReasonId = `${radioGroupName}-split-reason`;
+  const describedBy = splitDisabled && splitDisabledReason ? splitReasonId : undefined;
   return (
     <div
       role="radiogroup"
       aria-label="Diff view"
+      aria-describedby={describedBy}
       className={`diff-view-toggle ${styles.diffViewToggle}`}
       data-testid="diff-view-toggle"
     >
+      {describedBy && (
+        <span id={splitReasonId} className="sr-only">
+          {splitDisabledReason}
+        </span>
+      )}
       <label className={`${styles.tile}${diffMode === 'unified' ? ` ${styles.tileSelected}` : ''}`}>
         <input
           type="radio"

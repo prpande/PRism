@@ -40,13 +40,18 @@ export function useWholeFilePreference(): WholeFilePreference {
   const [showFullFile, setShow] = useState(false);
   const [failedPaths, setFailedPaths] = useState<Set<string>>(new Set());
 
-  const setShowFullFile = useCallback((next: boolean) => {
-    setShow((prev) => {
-      // Clear the failed set only on a genuine false -> true transition.
-      if (next && !prev) setFailedPaths(new Set());
-      return next;
-    });
-  }, []);
+  const setShowFullFile = useCallback(
+    (next: boolean) => {
+      // Clear the failed set only on a genuine false -> true transition (a retry
+      // affordance). The condition is evaluated OUTSIDE the setShow updater so we
+      // never call one state setter inside another setter's updater function —
+      // React may double-invoke updaters (strict/concurrent mode), and an updater
+      // must stay pure. `showFullFile` is in the dep array so the closure is fresh.
+      if (next && !showFullFile) setFailedPaths(new Set());
+      setShow(next);
+    },
+    [showFullFile],
+  );
 
   const markFailed = useCallback((path: string) => {
     setFailedPaths((prev) => {

@@ -30,6 +30,19 @@ describe('DiffViewToggle', () => {
     const split = getByRole('radio', { name: /split/i }) as HTMLInputElement;
     expect(split.disabled).toBe(true);
     expect(split.closest('label')).toHaveAttribute('title', 'Side-by-side needs a wider window.');
+    // Reason is also wired to the radiogroup for keyboard / screen-reader users
+    // (the disabled Split radio isn't focusable, so title alone isn't announced).
+    const group = getByRole('radiogroup', { name: /diff view/i });
+    const describedById = group.getAttribute('aria-describedby');
+    expect(describedById).toBeTruthy();
+    expect(document.getElementById(describedById as string)).toHaveTextContent(
+      'Side-by-side needs a wider window.',
+    );
+  });
+
+  it('omits aria-describedby when Split is enabled', () => {
+    const { getByRole } = render(<DiffViewToggle diffMode="unified" onDiffModeChange={() => {}} />);
+    expect(getByRole('radiogroup', { name: /diff view/i })).not.toHaveAttribute('aria-describedby');
   });
 
   it('exposes a labelled radiogroup', () => {

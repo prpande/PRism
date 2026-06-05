@@ -17,7 +17,7 @@ function Harness({
   });
   return (
     <div>
-      <div role="radiogroup">
+      <div role="radiogroup" className="diff-view-toggle">
         <input type="radio" data-testid="r" />
       </div>
       <input type="checkbox" data-testid="c" />
