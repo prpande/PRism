@@ -291,6 +291,8 @@ Then update `.fileTreeDirHeader` (`:150-154`) to add the gap, and add a hover ru
 }
 ```
 
+> **Two intentional gaps, both `var(--s-2)`.** `.fileTreeDirToggle` **already** has `gap: var(--s-2)` (`FileTree.module.css:158-159`) — that spaces the chevron from the folder icon *inside* the button. The new `.fileTreeDirHeader` gap spaces the button (which now ends in the folder icon) from the dir-name span *outside* it. Keep **both**; do not delete the toggle's gap as "redundant" or the chevron and folder icon collide.
+
 - [ ] **Step 5: Run the test, verify it passes**
 
 ```bash
@@ -343,6 +345,12 @@ describe('FileTree — status accessible label (item 8)', () => {
       const badge = container.querySelector('.file-status') as HTMLElement;
       expect(badge).toHaveTextContent(letter);
       expect(badge).toHaveAttribute('aria-hidden', 'true');
+      // the SR word sits BETWEEN the hidden badge and the name → reads as a prefix,
+      // NOT after the name like the trailing AI-focus sr-only span (regression guard
+      // against placing it in the wrong DOM position)
+      const srWord = container.querySelector('.file-status + .sr-only') as HTMLElement | null;
+      expect(srWord).toHaveTextContent(word);
+      expect(srWord?.nextElementSibling).toHaveClass('file-tree-file-name');
     },
   );
 });
@@ -380,7 +388,7 @@ const STATUS_WORD: Record<string, string> = {
       <span className={`file-tree-file-name ${styles.fileTreeFileName}`}>{node.name}</span>
 ```
 
-(Reading result for assistive tech: "Deleted x.ts".)
+(Reading order for assistive tech: `[STATUS_WORD] [filename]` — e.g. "Deleted x.ts". The existing AI-focus `sr-only` span at `FileTree.tsx:205-207` keeps its **trailing** position by design — it follows its own visual column — so on a *focused* row AT reads "Deleted x.ts AI focus: high Viewed x.ts", which is correct. Do **not** move the AI-focus span; only the new status word goes *before* the name.)
 
 - [ ] **Step 5: Run the new test, verify it passes**
 
@@ -455,6 +463,8 @@ Expected: FAIL — class not applied.
       </span>
 ```
 
+> **Forward reference:** Task 7 Step 3 edits this *same* span again to add `title={node.name}` (the merged final form is shown there). That is additive, not a rollback — this task's commit stands; Task 7 layers the `title` on top. If you implement out of order, use Task 7 Step 3's version as the authoritative final markup for this span.
+
 - [ ] **Step 4: Add the CSS.** In `FileTree.module.css`, after the `.fileTreeFileName` rule (`:123-129`), add:
 
 ```css
@@ -524,6 +534,10 @@ cd D:/src/PRism-187-chevron && git add frontend/src/components/PrDetail/FilesTab
 - Test: `frontend/__tests__/FileTree.test.tsx`
 
 **What vitest can prove here:** only the **DOM contract** — `title` attributes present on both name spans, and the dir-name span carries its module class. The actual non-overflow (grid item shrinks, name ellipsizes, checkbox stays at the right edge) is a **layout** behavior with no jsdom support → proven by the B1 visual assert (Task 9), which must distinguish **ellipsis** (name ends in "…", checkbox visible) from **clip** (hard-cut name, no ellipsis — meaning `overflow:hidden` is masking a still-too-wide row).
+
+**On the `.filesTabTree min-width:0` guard (spec Testing asked for a vitest contract).** The spec's Testing section lists "`.filesTabTree` carries `min-width:0`" as a DOM contract. In practice this is a CSS-module rule on a **non-inline** property; jsdom's `getComputedStyle` does not reliably reflect matched-stylesheet values for it even with `css: true` (it resolves *class names*, not a full cascade), so an assertion here would be flaky rather than load-bearing. This change is therefore verified by **code review of the CSS diff + the B1 visual assert** (the overflow either reproduces or it doesn't), exactly as Task 6's `:has()` rule is. This is a conscious divergence from the spec's optimistic vitest ask, recorded in the trace table — not a skipped guard.
+
+**On `.fileTreeSpacer` (the existing right-push span).** `FileNodeComponent` renders `<span className="...fileTreeSpacer" />` (`FileTree.tsx:192`) with `flex: none; margin-left: auto` (`FileTree.module.css:130-133`). That spacer is what pins the checkbox to the right edge when a name is **short** (the `flex:1` name doesn't fill the row). It is `flex:none`, so it consumes no flex space and does not compete with the name's `flex:1` for shrink room — it stays correct once `min-width:0` lands. **Leave it as-is**; do not remove it and do not add a second right-push mechanism. The B1 set (Task 9) must include a *short*-name row (checkbox at edge via the spacer) and a *long*-name row on a genuinely narrow track (name ellipsizes, checkbox still at edge) to confirm both paths.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -665,10 +679,8 @@ Expected: PASS, no new failures vs. the pre-task baseline.
 - [ ] **Step 2: Prettier-format the touched files** (prettier `--check` gates CI; format before staging)
 
 ```bash
-cd D:/src/PRism-187-chevron/frontend && npx prettier --write src/components/PrDetail/FilesTab/FileTree.tsx src/components/PrDetail/FilesTab/FileTree.module.css src/components/PrDetail/FilesTab/FilesTab.module.css "../frontend/__tests__/FileTree.test.tsx"
+cd D:/src/PRism-187-chevron/frontend && npx prettier --write src/components/PrDetail/FilesTab/FileTree.tsx src/components/PrDetail/FilesTab/FileTree.module.css src/components/PrDetail/FilesTab/FilesTab.module.css __tests__/FileTree.test.tsx
 ```
-
-(Adjust the test path if the glob doesn't resolve from `frontend/`; the file is `frontend/__tests__/FileTree.test.tsx`.)
 
 - [ ] **Step 3: Lint**
 
@@ -718,10 +730,12 @@ cd D:/src/PRism-187-chevron ; ./run.ps1 -Reset None --no-browser
 - [ ] **Step 3: Open a real PR with a rich changed-file set.** Use the configured real PAT against the BFF repo (`mindbody/Mindbody.BizApp.Bff`, e.g. PR #191) so the tree shows added/modified/deleted files, nested directories, and long names.
 
 - [ ] **Step 4: Capture the required screenshot set in BOTH themes.** For dark and light, capture the Files tree showing:
-  - a folder **expanded** and a folder **collapsed** (chevron rotation + accent folder icon),
+  - a folder **expanded** and a folder **collapsed** (chevron rotation + accent folder icon). **Per-theme legibility checkpoint:** confirm the accent folder icon is clearly distinguishable from the `--surface-1` background in *each* theme — not washed out in light (`--accent` is mid-lightness there), not muddy in dark. This is a pass/fail item, not a glance.
   - an **added**, a **modified**, and a **deleted** file (deleted = red `[D]` + strikethrough),
   - a **viewed** file (dim + checked box, **no** strike),
-  - a **long file-name** row in both a shallow and a deep-nested position (name ellipsizes with "…", checkbox at the right edge — NOT a hard clip),
+  - a file that is **both deleted and viewed** — confirm it renders dim (`--text-3`) **with** the red strike (the intended "deleted + already looked at" look; spec item 6 documents this cascade outcome and nothing else tests it),
+  - a **short**-name row — confirm the checkbox sits at the right edge via the `.fileTreeSpacer` (the short-name path),
+  - a **long file-name** row in both a shallow and a deep-nested position, captured on a **genuinely narrow track** (drag the splitter / use a narrow window so the name actually exceeds the column) — name ellipsizes with "…", checkbox at the right edge — **NOT** a hard clip. A long name at a wide default window does not exercise the fix.
   - a **long deep-nested directory** name (ellipsizes).
 
   The loading skeleton state is out of scope (pre-existing, unchanged).
@@ -735,6 +749,10 @@ cd D:/src/PRism-187-chevron/frontend && npx playwright test e2e/parity-baselines
 ```
 
 Inspect `git diff --stat frontend/e2e/__screenshots__/` and spot-check a couple of updated PNGs before staging.
+
+Two clarifications:
+- **The parity baseline is the deterministic fixture tree, not the real PR.** `parity-baselines.spec.ts:206-212` snapshots `[data-testid="files-tab-tree"]` for fixture `acme/api/123` as `pr-detail-files-tree.png`. That fixture tree is what shifts here — it exercises the chevron/folder/indent/viewed changes but not necessarily a deleted file or a long name. The real-BFF screenshots from Steps 3–5 are the **separate** human-assert artifact that covers the deleted/long-name/both-themes cases; do not conflate the two.
+- **`--update-snapshots` regenerates only the host-OS (win32) PNGs.** The `{linux}` baselines under `e2e/__screenshots__/linux/` are refreshed by CI (or accepted from the CI artifact), matching prior PR practice — do not hand-author them on Windows.
 
 - [ ] **Step 7: Commit the refreshed baselines**
 
@@ -762,12 +780,12 @@ cd D:/src/PRism-187-chevron && git add frontend/e2e/__screenshots__ && git commi
 | 8. Status SR-only word + aria-hidden letter | 4 |
 | Accessibility section | 2 (contrast), 4 (1.4.1 carrier) |
 | Testing — vitest contracts | 1,2,3,4,5,7 |
-| Testing — viewed (no DOM contract) | 6 (visual) |
-| Testing — layout truncation | 7 + 9 (visual) |
+| Testing — viewed (no DOM contract) | 6 (visual) — *spec asked for a class/style contract; jsdom has no `:has()` computed-style, deferred to visual per § jsdom limits* |
+| Testing — layout truncation + `.filesTabTree min-width:0` | 7 + 9 (visual) — *spec listed a vitest `min-width:0` contract; that non-inline CSS-module prop isn't reliably reflected by jsdom `getComputedStyle`, so verified by code review + B1 per Task 7* |
 | Testing — B1 both-theme visual | 9 |
 | Baseline refresh | 9 |
 
-No spec item is unaddressed. Items 3 and 6 have no new vitest assertion — item 3 because it is an explicit no-op (verified by the suite not regressing), item 6 because `:has()` has no jsdom computed-style support (verified visually). Both are called out, not hidden.
+No spec item is unaddressed. Three testing items have no new vitest assertion, each for a stated reason, not hidden: item 3 is an explicit no-op (verified by the suite not regressing); item 6's viewed styling is a `:has()` rule with no jsdom computed-style support (visual); and the spec's `.filesTabTree min-width:0` vitest ask is a non-inline CSS-module property jsdom's `getComputedStyle` won't reliably reflect, so it is verified by code review + B1 (Task 7's note explains the divergence). The reading-order, prefix-position, deleted-class, title-attr, chevron-SVG, folder-icon, and indentation contracts **are** unit-asserted.
 
 **Placeholder scan:** none — every code/CSS step shows the literal content.
 
