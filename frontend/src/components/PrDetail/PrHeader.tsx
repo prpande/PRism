@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
+import { prRefKey } from '../../api/types';
+import { usePrHeaderCollapsed } from '../../hooks/usePrHeaderCollapsed';
 import type { ComposerOwnerKey } from '../../hooks/useDraftSession';
 import { formatAge } from '../../utils/relativeTime';
 import { sendPatch } from '../../api/draft';
@@ -25,6 +27,27 @@ import styles from './PrHeader.module.css';
 import { AskAiButton } from './AskAiButton';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
+
+// #128 — double-chevron, authored pointing DOWN (the expanded state). The
+// collapsed state rotates it 180° via CSS (.prHeader[data-collapsed] .collapseToggle svg).
+function CollapseChevron() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 4l4 4 4-4" />
+      <path d="M4 9l4 4 4-4" />
+    </svg>
+  );
+}
 
 // Closed/merged PRs can't accept a review submit; the verdict picker is hidden
 // and the bulk-discard button surfaces (spec § 13.1). PrDetailPage derives this
@@ -122,6 +145,7 @@ export function PrHeader({
     : [];
 
   const submit = useSubmit(reference);
+  const [collapsed, toggleCollapsed] = usePrHeaderCollapsed(prRefKey(reference));
   const { show } = useToast();
   // Cross-cutting submit toasts: submit-duplicate-marker-detected /
   // submit-orphan-cleanup-failed (spec § 11.4 / § 13.2).
@@ -322,9 +346,13 @@ export function PrHeader({
   };
 
   return (
-    <div className={styles.prHeader} data-testid="pr-header">
+    <div
+      className={styles.prHeader}
+      data-testid="pr-header"
+      data-collapsed={collapsed ? 'true' : undefined}
+    >
       <div className={styles.prHeaderTop}>
-        <div className="pr-meta col gap-1">
+        <div className="pr-meta col gap-1" id="pr-header-meta">
           <div className="row gap-2 muted-2 pr-meta-repo">
             <span>
               {reference.owner}/{reference.repo}
@@ -406,12 +434,26 @@ export function PrHeader({
           <AskAiButton onClick={toggleAskAi} />
         </div>
       </div>
-      <PrSubTabStrip
-        activeTab={activeTab}
-        onTabChange={onTabChange}
-        fileCount={fileCount}
-        draftsCount={draftsCount}
-      />
+      <div className={styles.subTabRow}>
+        <PrSubTabStrip
+          activeTab={activeTab}
+          onTabChange={onTabChange}
+          fileCount={fileCount}
+          draftsCount={draftsCount}
+        />
+        <button
+          type="button"
+          className={styles.collapseToggle}
+          data-testid="pr-header-collapse-toggle"
+          aria-expanded={!collapsed}
+          aria-controls="pr-header-meta"
+          aria-label={collapsed ? 'Expand PR details' : 'Collapse PR details'}
+          title={collapsed ? 'Expand PR details' : 'Collapse PR details'}
+          onClick={toggleCollapsed}
+        >
+          <CollapseChevron />
+        </button>
+      </div>
       {submit.lastResume && (
         <ImportedDraftsBanner
           snapshotA={submit.lastResume.snapshotA}
