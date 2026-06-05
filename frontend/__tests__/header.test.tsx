@@ -34,21 +34,34 @@ beforeAll(() => server.listen());
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-function renderAt(path: string, hasToken: boolean = true) {
+function renderAt(path: string, isAuthed: boolean = true) {
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <Header hasToken={hasToken} />
+      <Header isAuthed={isAuthed} />
     </MemoryRouter>,
   );
 }
 
 describe('Header', () => {
-  it('renders logo + Inbox/Settings/Setup tabs', () => {
+  it('renders logo + Inbox/Settings tabs (no Setup tab) when authed', () => {
     renderAt('/');
     expect(screen.getByAltText('PRism')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /inbox/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /^settings$/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /setup/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /setup/i })).toBeNull();
+  });
+
+  it('hides the whole nav (no landmark, no tab links) when not authed; keeps the logo + spacer', () => {
+    renderAt('/setup', false);
+    expect(screen.getByAltText('PRism')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('link', { name: /inbox/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /^settings$/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /setup/i })).toBeNull();
+    // The spacer must survive nav removal — it owns the middle so the Logo stays
+    // left-flush (not re-centered). Guards the "wrap spacer inside {isAuthed &&}"
+    // mistake that would collapse the layout.
+    expect(screen.getByTestId('header-spacer')).toBeInTheDocument();
   });
 
   it('marks Inbox active on "/"', () => {
@@ -57,37 +70,23 @@ describe('Header', () => {
     expect(screen.getByRole('link', { name: /^settings$/i })).not.toHaveAttribute('aria-current');
   });
 
-  it('marks Settings active on "/settings" and not Setup', () => {
+  it('marks Settings active on "/settings"', () => {
     renderAt('/settings');
     expect(screen.getByRole('link', { name: /^settings$/i })).toHaveAttribute(
       'aria-current',
       'page',
     );
-    expect(screen.getByRole('link', { name: /setup/i })).not.toHaveAttribute('aria-current');
   });
 
-  it('marks Settings active (NOT Setup) on "/setup?replace=1" — Replace flow is a Settings affordance per spec § 2.1', () => {
-    renderAt('/setup?replace=1');
+  it('keeps Settings active on "/setup?replace=1" — Replace flow is a Settings affordance (authed)', () => {
+    renderAt('/setup?replace=1', true);
     expect(screen.getByRole('link', { name: /^settings$/i })).toHaveAttribute(
       'aria-current',
       'page',
     );
-    expect(screen.getByRole('link', { name: /setup/i })).not.toHaveAttribute('aria-current');
   });
 
-  it('marks Setup active (NOT Settings) on "/setup" with no replace param', () => {
-    renderAt('/setup');
-    expect(screen.getByRole('link', { name: /setup/i })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('link', { name: /^settings$/i })).not.toHaveAttribute('aria-current');
-  });
-
-  it('prefixes the Setup label with the first-run "·" indicator when !hasToken', () => {
-    renderAt('/setup', false);
-    const setupTab = screen.getByRole('link', { name: /setup/i });
-    expect(setupTab.textContent).toMatch(/^·\s*setup$/i);
-  });
-
-  it('keeps Settings active on a nested settings route (future-proofing for /settings/<sub>)', () => {
+  it('keeps Settings active on a nested settings route (/settings/<sub>)', () => {
     renderAt('/settings/profile');
     expect(screen.getByRole('link', { name: /^settings$/i })).toHaveAttribute(
       'aria-current',
@@ -95,15 +94,7 @@ describe('Header', () => {
     );
   });
 
-  it('omits the "·" indicator once a token is configured', () => {
-    renderAt('/setup');
-    const setupTab = screen.getByRole('link', { name: /setup/i });
-    expect(setupTab.textContent?.trim()).toBe('Setup');
-  });
-
-  // #119: the ⌘K search palette isn't built, so the permanently-disabled
-  // "Jump to PR or file…" box (a dead not-allowed control) is hidden until the
-  // feature ships (SEARCH_PALETTE_ENABLED). Guard it renders on no route today.
+  // #119: the ⌘K search palette isn't built, so the disabled box stays hidden.
   it('does not render the disabled global-search box on the Inbox (#119)', () => {
     renderAt('/');
     expect(screen.queryByPlaceholderText(/jump to PR or file/i)).toBeNull();

@@ -1,0 +1,31 @@
+/* #182: danger-styled body inside the shared Modal card. Backdrop, centering,
+   title h2 and focus trap all come from <Modal>; this file only dresses the
+   error content (glyph + message) and the action row. */
+.body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  color: var(--danger-fg);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.glyph {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  color: var(--danger-fg);
+}
+.message {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* error.message can carry long unbroken tokens (URLs, SHAs); wrap them so a
+     single token can't overflow the modal card. */
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}

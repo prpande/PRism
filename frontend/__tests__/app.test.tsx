@@ -70,6 +70,9 @@ describe('App routing', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByText(/connect to github/i)).toBeInTheDocument();
+    // #130: first-run hides the nav entirely.
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('link', { name: /inbox/i })).toBeNull();
   });
 
   it('routes to / (InboxPage) when token present', async () => {
@@ -95,7 +98,9 @@ describe('App routing', () => {
         <App />
       </MemoryRouter>,
     );
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    // Auth failure now surfaces as a centered ErrorModal (alertdialog), not a bare alert.
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent("Couldn't load auth state");
   });
 
   it('navigates to /setup when prism-auth-rejected event fires', async () => {
@@ -133,5 +138,32 @@ describe('App routing', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    // #130 no-regress: host-mismatch is an early return before <Header>, so no nav.
+    expect(screen.queryByRole('navigation')).toBeNull();
+  });
+
+  it('hides the header nav when a token exists but auth is rejected, and restores it on recovery', async () => {
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    );
+    // Authed: nav is visible.
+    expect(await screen.findByRole('link', { name: /inbox/i })).toBeInTheDocument();
+
+    // 401 mid-session → isAuthed=false → nav hidden, bounced to /setup.
+    window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+    expect(await screen.findByText(/connect to github/i)).toBeInTheDocument();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('link', { name: /inbox/i })).toBeNull();
+
+    // Recovery → nav restored.
+    window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
+    expect(await screen.findByRole('link', { name: /inbox/i })).toBeInTheDocument();
   });
 });

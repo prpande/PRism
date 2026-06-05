@@ -9,6 +9,7 @@ import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
 import { ActivityRail } from '../components/ActivityRail/ActivityRail';
 import { Spinner } from '../components/Spinner';
+import { ErrorModal } from '../components/ErrorModal';
 import styles from './InboxPage.module.css';
 
 export function InboxPage() {
@@ -39,10 +40,21 @@ export function InboxPage() {
     );
   if (error && !data)
     return (
-      <main role="alert">
-        <p>Couldn't load inbox.</p>
-        <button onClick={() => void reload()}>Try again</button>
-      </main>
+      <ErrorModal
+        open
+        title="Couldn't load inbox"
+        actions={
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-modal-role="primary"
+            onClick={() => void reload()}
+          >
+            Try again
+          </button>
+        }
+        onClose={() => {}}
+      />
     );
   if (!data) return null;
 

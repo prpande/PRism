@@ -13,6 +13,14 @@ export interface ModalProps {
   // (the user must choose Re-create or Discard; otherwise the composer is
   // in an inconsistent state).
   disableEscDismiss?: boolean;
+  // ARIA role for the dialog element. 'dialog' (default) for ordinary
+  // dialogs; 'alertdialog' for urgent error dialogs that demand a response
+  // (announced assertively by assistive tech on open). See #182.
+  role?: 'dialog' | 'alertdialog';
+  // Vertical placement of the card. 'top' (default) keeps the shared
+  // top-anchored backdrop; 'center' vertically centers it via the
+  // .modal-backdrop--center modifier. See #182.
+  align?: 'top' | 'center';
   children: React.ReactNode;
 }
 
@@ -25,6 +33,8 @@ export function Modal({
   onClose,
   defaultFocus = 'primary',
   disableEscDismiss = false,
+  role = 'dialog',
+  align = 'top',
   children,
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -85,10 +95,10 @@ export function Modal({
   if (!open) return null;
 
   return (
-    <div className="modal-backdrop">
+    <div className={`modal-backdrop${align === 'center' ? ' modal-backdrop--center' : ''}`}>
       <div
         ref={dialogRef}
-        role="dialog"
+        role={role}
         aria-modal="true"
         aria-labelledby={titleId}
         className="modal-dialog"
