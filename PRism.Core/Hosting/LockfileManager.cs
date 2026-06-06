@@ -15,6 +15,10 @@ public sealed class LockfileHandle : IDisposable
     }
 }
 
+// StartedAt is the lockfile's *creation* time (DateTime.UtcNow at write), NOT the
+// process's real start time — liveness uses the executable path, not this field, so
+// it is informational only. (See #107 design: Approach A deliberately leaves the
+// started-at semantics unchanged.)
 public sealed record LockfileRecord(int Pid, string BinaryPath, DateTime StartedAt);
 
 /// <summary>
@@ -24,15 +28,19 @@ public sealed record LockfileRecord(int Pid, string BinaryPath, DateTime Started
 /// process is alive but its real executable path could not be read (access denied,
 /// cross-bitness, or unsupported platform).
 /// </summary>
-public sealed record RunningProcessInfo(string? ExecutablePath);
+internal sealed record RunningProcessInfo(string? ExecutablePath);
 
 public static class LockfileManager
 {
-    public static LockfileHandle Acquire(
+    public static LockfileHandle Acquire(string dataDir, string currentBinaryPath, int currentPid)
+        => Acquire(dataDir, currentBinaryPath, currentPid, DefaultProbe);
+
+    // Test seam: PRism.Core.Tests injects a fake probe (InternalsVisibleTo). Kept
+    // internal so the unit-test hook doesn't widen PRism.Core's public API surface.
+    internal static LockfileHandle Acquire(
         string dataDir, string currentBinaryPath, int currentPid,
-        Func<int, RunningProcessInfo?>? probeProcess = null)
+        Func<int, RunningProcessInfo?> probeProcess)
     {
-        probeProcess ??= DefaultProbe;
         var path = Path.Combine(dataDir, "state.json.lock");
 
         // Try atomic create first.

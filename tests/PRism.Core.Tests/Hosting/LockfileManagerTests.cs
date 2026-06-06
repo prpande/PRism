@@ -99,6 +99,19 @@ public class LockfileManagerTests
     }
 
     [Fact]
+    public void Acquire_throws_when_live_PID_real_path_matches_locked_case_insensitively()
+    {
+        using var dir = new TempDataDir();
+        WriteLock(dir.Path, pid: 4242, binaryPath: "/locked/PRism");
+        // Path matching is OrdinalIgnoreCase (Windows is case-insensitive): a real path
+        // that differs only by case is still the same PRism -> refuse.
+        Func<int, RunningProcessInfo?> probe = _ => new RunningProcessInfo("/LOCKED/prism");
+
+        Action act = () => LockfileManager.Acquire(dir.Path, currentBinaryPath: "/locked/PRism", currentPid: 9999, probeProcess: probe);
+        act.Should().Throw<LockfileException>().Where(e => e.Reason == LockfileFailure.AnotherInstanceRunning);
+    }
+
+    [Fact]
     public void Acquire_throws_when_live_PID_identity_unreadable()
     {
         using var dir = new TempDataDir();

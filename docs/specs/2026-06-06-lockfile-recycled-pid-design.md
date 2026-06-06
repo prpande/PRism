@@ -84,22 +84,29 @@ PIDs, which cannot deterministically reproduce an access-denied / unreadable
 process. Introduce a narrow injectable probe:
 
 ```csharp
-public sealed record RunningProcessInfo(string? ExecutablePath);
-
 // Returns null  -> no live process with that PID (dead / never-existed).
 // Returns a record -> process is alive; ExecutablePath is null if the real path is
 //                     unreadable (access denied / cross-bitness / unsupported OS).
-public static LockfileHandle Acquire(
+internal sealed record RunningProcessInfo(string? ExecutablePath);
+
+// Public production entry — unchanged 3-arg signature.
+public static LockfileHandle Acquire(string dataDir, string currentBinaryPath, int currentPid)
+    => Acquire(dataDir, currentBinaryPath, currentPid, DefaultProbe);
+
+// Internal test seam — PRism.Core.Tests injects a fake probe via InternalsVisibleTo.
+internal static LockfileHandle Acquire(
     string dataDir, string currentBinaryPath, int currentPid,
-    Func<int, RunningProcessInfo?>? probeProcess = null)
+    Func<int, RunningProcessInfo?> probeProcess)
 ```
 
-`probeProcess` defaults to a real implementation built on `Process`. Tests inject
-a fake. The default is an **optional parameter**, so the `Program.cs` call site is
-unchanged and the production path uses the real probe. No mutable static (keeps
-the test suite parallel-safe). The probe is reached **only on the lock-contended
-branch** (an existing, readable lockfile is present); the common no-lock launch
-hits the atomic-create fast path and never pays the `MainModule` cost.
+The seam is kept **internal** (`RunningProcessInfo` and the probe overload) so the
+unit-test hook does not widen PRism.Core's public API surface — PRism.Core already
+grants `InternalsVisibleTo` to `PRism.Core.Tests`. The public 3-arg `Acquire` is
+unchanged, so the `Program.cs` call site is untouched and the production path uses
+the real probe. No mutable static (keeps the test suite parallel-safe). The probe
+is reached **only on the lock-contended branch** (an existing, readable lockfile is
+present); the common no-lock launch hits the atomic-create fast path and never pays
+the `MainModule` cost.
 
 The real default probe mirrors the existing `ParentLivenessProbe.StartTimeOfProcess`
 catch set exactly (it solves the same recycle-resistant-liveness problem):
