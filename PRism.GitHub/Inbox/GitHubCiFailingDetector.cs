@@ -39,8 +39,14 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 var key = (c.Reference, c.HeadSha);
                 if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached);
 
-                var ci = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
-                _cache[key] = ci;
+                var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
+                // Only cache a result built from complete, successful reads. A DEGRADED
+                // result (a non-2xx from Checks/Status — a fine-grained 403 or a transient
+                // 5xx) is NOT cached, so the next tick re-probes: a transient failure
+                // recovers when GitHub heals, and a fine-grained 403 re-probes cheaply
+                // until the token is replaced. Caching None here would pin it until the
+                // head SHA changes — contradicting the "recovers next tick" contract. (#213)
+                if (!degraded) _cache[key] = ci;
                 return (Item: c, Ci: ci);
             }
             finally { sem.Release(); }
@@ -49,16 +55,20 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         return done;
     }
 
-    private async Task<CiStatus> ProbeAsync(PrReference pr, string headSha, string? token, CancellationToken ct)
+    // Returns the classified status plus a Degraded flag: true when either probe hit a
+    // non-success response (fine-grained 403 / transient 5xx) so the caller can skip
+    // caching an untrustworthy result. A definitively-observed Failing is never degraded.
+    private async Task<(CiStatus Status, bool Degraded)> ProbeAsync(PrReference pr, string headSha, string? token, CancellationToken ct)
     {
         var checksTask = FetchChecksAsync(pr, headSha, token, ct);
         var statusesTask = FetchCombinedStatusAsync(pr, headSha, token, ct);
         var results = await Task.WhenAll(checksTask, statusesTask).ConfigureAwait(false);
-        var checks = results[0];
-        var statuses = results[1];
-        if (checks == CiStatus.Failing || statuses == CiStatus.Failing) return CiStatus.Failing;
-        if (checks == CiStatus.Pending || statuses == CiStatus.Pending) return CiStatus.Pending;
-        return CiStatus.None;
+        var (checks, checksDegraded) = results[0];
+        var (statuses, statusesDegraded) = results[1];
+        var degraded = checksDegraded || statusesDegraded;
+        if (checks == CiStatus.Failing || statuses == CiStatus.Failing) return (CiStatus.Failing, degraded);
+        if (checks == CiStatus.Pending || statuses == CiStatus.Pending) return (CiStatus.Pending, degraded);
+        return (CiStatus.None, degraded);
     }
 
     // Defensive page cap: 10 pages * per_page=100 = 1,000 check_runs is well above
@@ -67,7 +77,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
     // The design spec is silent on a hard cap; this is a local safety valve.
     private const int MaxCheckRunPages = 10;
 
-    private async Task<CiStatus> FetchChecksAsync(PrReference pr, string sha, string? token, CancellationToken ct)
+    private async Task<(CiStatus Status, bool Degraded)> FetchChecksAsync(PrReference pr, string sha, string? token, CancellationToken ct)
     {
         var anyFailing = false;
         var anyPending = false;
@@ -84,17 +94,48 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             using var resp = nextUri is null
                 ? await SendAsync(initialUrl, token, ct).ConfigureAwait(false)
                 : await SendAsync(nextUri, token, ct).ConfigureAwait(false);
-            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return CiStatus.None;
+            if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return (CiStatus.None, false);
             if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                 throw new RateLimitExceededException(
                     "GitHub rate-limited (429); orchestrator should skip this tick.",
                     resp.Headers.RetryAfter?.Delta);
-            resp.EnsureSuccessStatusCode();
+            // Fine-grained PATs can't call the Checks API (GitHub returns 403). Degrade
+            // to "no CI signal" rather than throwing. A throw propagates through
+            // DetectAsync into InboxRefreshOrchestrator.RefreshAsync (no catch) and out to
+            // InboxPoller, whose tick-level catch (InboxPoller.cs:69) skips the WHOLE
+            // snapshot and retries next tick. For a fine-grained token that 403s on EVERY
+            // tick, that means the inbox NEVER refreshes — permanently stale. This guard
+            // fixes that. (#213)
+            //
+            // Why a 401 (revoked token) cannot produce a misleading CI signal here: a 401
+            // on the section search is SWALLOWED into an empty section by
+            // GitHubSectionQueryRunner.QueryAllAsync's per-section catch
+            // (GitHubSectionQueryRunner.cs:66) — it does NOT throw. With empty sections,
+            // GitHubPrEnricher.EnrichAsync early-returns without any HTTP call, and
+            // DetectAsync receives an empty authored-by-me list and returns before issuing
+            // any Checks call. So a dead token never reaches this line.
+            //
+            // The guard is intentionally BROAD (any non-2xx, not just 403): CI status is a
+            // non-critical enrichment that must never block the inbox. The degraded result
+            // is flagged so DetectAsync does NOT cache it — so a transient GitHub 5xx
+            // genuinely recovers next tick (re-probed), rather than being pinned to None
+            // until the head SHA changes. Accepted tradeoff (see spec Decision 1): for one
+            // tick the PR's CI badge is absent + one spurious "updated" event. Narrowing to
+            // 403-only would re-open the whole-tick abort for 5xx — the exact failure this
+            // task removes. The 429 branch above still throws, so backoff is preserved.
+            // A Failing already observed on an EARLIER page is definitive (a later page
+            // can't un-fail it), so it is returned non-degraded and may be cached.
+            if (!resp.IsSuccessStatusCode)
+            {
+                if (anyFailing) return (CiStatus.Failing, false);
+                if (anyPending) return (CiStatus.Pending, true);
+                return (CiStatus.None, true);
+            }
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(body);
             if (!doc.RootElement.TryGetProperty("check_runs", out var runs))
             {
-                if (!anyPage) return CiStatus.None;
+                if (!anyPage) return (CiStatus.None, false);
                 break;
             }
             anyPage = true;
@@ -113,7 +154,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             if (nextUri is null) break;
         }
 
-        return anyFailing ? CiStatus.Failing : (anyPending ? CiStatus.Pending : CiStatus.None);
+        return (anyFailing ? CiStatus.Failing : (anyPending ? CiStatus.Pending : CiStatus.None), false);
     }
 
     // Parses the GitHub Link response header and returns the URL whose attributes
@@ -151,16 +192,18 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         return null;
     }
 
-    private async Task<CiStatus> FetchCombinedStatusAsync(PrReference pr, string sha, string? token, CancellationToken ct)
+    private async Task<(CiStatus Status, bool Degraded)> FetchCombinedStatusAsync(PrReference pr, string sha, string? token, CancellationToken ct)
     {
         var url = $"repos/{pr.Owner}/{pr.Repo}/commits/{sha}/status";
         using var resp = await SendAsync(url, token, ct).ConfigureAwait(false);
-        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return CiStatus.None;
+        if (resp.StatusCode == System.Net.HttpStatusCode.NotFound) return (CiStatus.None, false);
         if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
             throw new RateLimitExceededException(
                 "GitHub rate-limited (429); orchestrator should skip this tick.",
                 resp.Headers.RetryAfter?.Delta);
-        resp.EnsureSuccessStatusCode();
+        // Same graceful degradation as FetchChecksAsync (#213): a single non-2xx read is
+        // degraded → None-but-not-cached, so it re-probes next tick.
+        if (!resp.IsSuccessStatusCode) return (CiStatus.None, true);
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);
         var state = doc.RootElement.TryGetProperty("state", out var s) ? s.GetString() : "success";
@@ -168,12 +211,13 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         // statuses are registered; combined with check-runs results in the outer
         // Failing > Pending > None precedence, so an "all-Checks-pass + no-statuses"
         // PR may still surface as Pending. Acceptable for PoC; v2 may refine.
-        return state switch
+        var status = state switch
         {
             "failure" or "error" => CiStatus.Failing,
             "pending" => CiStatus.Pending,
             _ => CiStatus.None,
         };
+        return (status, false);
     }
 
     private Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)

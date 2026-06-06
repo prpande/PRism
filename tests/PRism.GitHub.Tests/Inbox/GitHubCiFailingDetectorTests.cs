@@ -176,6 +176,31 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
+    public async Task Degraded_result_is_not_cached_and_reprobes_next_call()
+    {
+        // #213: a transient non-2xx degrades to None but must NOT be cached — otherwise
+        // the None is pinned for the same (prRef, headSha) until the head SHA changes,
+        // contradicting the "recovers next tick" contract. The next call must re-probe
+        // and reflect the recovered status (here: Failing).
+        var recovered = false;
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? (recovered
+                    ? Respond(HttpStatusCode.OK, FailingCheckRun)
+                    : Respond(HttpStatusCode.ServiceUnavailable, "{}"))
+                : Respond(HttpStatusCode.OK, AllPassingStatus));
+        var sut = BuildSut(handler);
+
+        var first = await sut.DetectAsync([Raw(1)], default);
+        first[0].Ci.Should().Be(CiStatus.None, "the 5xx tick degrades to None");
+
+        recovered = true;
+        var second = await sut.DetectAsync([Raw(1)], default);
+        second[0].Ci.Should().Be(CiStatus.Failing,
+            "the degraded None must not have been cached — the recovered tick re-probes");
+    }
+
+    [Fact]
     public async Task Concurrency_capped_at_eight()
     {
         var inFlight = 0;
@@ -322,5 +347,56 @@ public sealed class GitHubCiFailingDetectorTests
 
         var ex = (await act.Should().ThrowAsync<RateLimitExceededException>()).Which;
         ex.RetryAfter.Should().Be(TimeSpan.FromSeconds(45));
+    }
+
+    [Fact]
+    public async Task Forbidden_check_runs_degrades_to_none_not_throw()
+    {
+        // Fine-grained PATs cannot call the Checks API; GitHub returns a non-2xx.
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.Forbidden, "{}")
+                : Respond(HttpStatusCode.OK, AllPassingStatus));
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Should().HaveCount(1);
+        result[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task Forbidden_combined_status_degrades_to_none_not_throw()
+    {
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, AllPassingCheckRuns)
+                : Respond(HttpStatusCode.Forbidden, "{}"));
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Should().HaveCount(1);
+        result[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task ServerError_check_runs_degrades_to_none_not_throw()
+    {
+        // Intentional breadth (#213, spec Decision 1): the guard swallows ANY non-2xx,
+        // not just 403. A transient 5xx degrades this PR's CI to None for the tick rather
+        // than aborting the whole inbox refresh — locking in the deliberate tradeoff so a
+        // future "narrow this to 403" change has to delete this test on purpose. The 429
+        // rate-limit branch is tested separately and still throws RateLimitExceededException.
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.ServiceUnavailable, "{}")
+                : Respond(HttpStatusCode.OK, AllPassingStatus));
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Should().HaveCount(1);
+        result[0].Ci.Should().Be(CiStatus.None);
     }
 }

@@ -7,9 +7,21 @@ interface Props {
   onChange: (value: string) => void;
   placeholder?: string;
   ariaLabel: string;
+  hasError?: boolean;
+  // Id of the error element to associate when hasError is true (WCAG 1.3.1 /
+  // 3.3.1 — programmatic link between the field and its error text). (#213)
+  errorId?: string;
 }
 
-export function MaskedInput({ id, value, onChange, placeholder, ariaLabel }: Props) {
+export function MaskedInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  ariaLabel,
+  hasError,
+  errorId,
+}: Props) {
   const [shown, setShown] = useState(false);
   return (
     <div className={styles.wrap}>
@@ -20,6 +32,8 @@ export function MaskedInput({ id, value, onChange, placeholder, ariaLabel }: Pro
         onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={ariaLabel}
+        aria-invalid={hasError || undefined}
+        aria-describedby={hasError && errorId ? errorId : undefined}
         className={styles.input}
       />
       <button

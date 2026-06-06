@@ -12,6 +12,7 @@ export interface SegmentedControlProps<T extends string> {
   value: T;
   onChange: (value: T) => void;
   disabled?: boolean;
+  variant?: 'segmented' | 'nav';
 }
 
 export function SegmentedControl<T extends string>({
@@ -20,6 +21,7 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   disabled = false,
+  variant = 'segmented',
 }: SegmentedControlProps<T>) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const selectedIdx = Math.max(
@@ -39,8 +41,12 @@ export function SegmentedControl<T extends string>({
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') move(e, -1);
   };
 
+  const groupCls = variant === 'nav' ? styles.groupNav : styles.group;
+  const segCls = variant === 'nav' ? styles.segNav : styles.seg;
+  const segOnCls = variant === 'nav' ? styles.segNavOn : styles.segOn;
+
   return (
-    <div role="radiogroup" aria-label={label} className={styles.group} onKeyDown={onKeyDown}>
+    <div role="radiogroup" aria-label={label} className={groupCls} onKeyDown={onKeyDown}>
       {options.map((o, i) => {
         const selected = o.value === value;
         return (
@@ -58,7 +64,7 @@ export function SegmentedControl<T extends string>({
             // the radiogroup unreachable by keyboard. Mirrors AccentSwatches.
             tabIndex={i === selectedIdx ? 0 : -1}
             disabled={disabled}
-            className={`${styles.seg}${selected ? ` ${styles.segOn}` : ''}`}
+            className={`${segCls}${selected ? ` ${segOnCls}` : ''}`}
             onClick={() => onChange(o.value)}
           >
             {o.label}
