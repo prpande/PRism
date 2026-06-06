@@ -1,0 +1,70 @@
+/* StreamHealthSnackbar.module.css */
+.snackbar {
+  position: fixed;
+  bottom: 24px; /* B1 gate may move to top-center */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 200; /* literal per repo convention; above Header (100), below modal-backdrop (1000), below Cheatsheet (1500) */
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  font-size: 0.875rem;
+  animation: snackbar-in 150ms ease-out;
+}
+
+.message {
+  color: var(--text-1);
+  white-space: nowrap;
+}
+
+/* accent text-button, mirrors the global .btn-link convention */
+.retry {
+  background: transparent;
+  color: var(--accent);
+  border: none;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.retry:hover {
+  color: var(--accent-hover);
+  text-decoration: none;
+}
+
+/* icon button, mirrors the global .btn-icon convention */
+.dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0;
+}
+.dismiss:hover {
+  color: var(--text-1);
+}
+
+@keyframes snackbar-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .snackbar {
+    animation: none;
+  }
+}
