@@ -20,6 +20,13 @@ interface Props {
   // return to the /welcome landing. Absent (not disabled) otherwise, so re-auth
   // and replace users see no phantom back-link. Kept as a boolean prop (mirroring
   // isReplaceMode) so SetupForm stays router-agnostic and unit-testable bare.
+  //
+  // Mutually exclusive with isReplaceMode: SetupPage derives this from
+  // !authState.hasToken, and replace mode requires an existing token
+  // (hasToken === true), so the two are never both set at the call site. The
+  // component does NOT enforce this — passing both would render the Back link
+  // (top) and the Cancel link (bottom) simultaneously. The invariant lives in
+  // SetupPage, not here.
   showBackToWelcome?: boolean;
 }
 

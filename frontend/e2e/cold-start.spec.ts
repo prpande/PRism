@@ -41,6 +41,22 @@ test('typing in PAT enables Continue', async ({ page }) => {
   await expect(page.getByRole('button', { name: /continue/i })).toBeEnabled();
 });
 
+test('first-run /setup also hides the top nav tabs (#212)', async ({ page }) => {
+  // The Header gates nav rendering on isAuthed, and /setup on a true first run is
+  // unauthed — so the nav must be absent there too, not just on /welcome. Without
+  // this, a regression that rendered the nav on /setup first-run would slip past
+  // the /welcome-only nav assertion.
+  await page.goto('/setup');
+  await expect(page.getByRole('heading', { name: /connect to github/i })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByRole('navigation')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /^inbox$/i })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /^settings$/i })).toHaveCount(0);
+  // The header logo (alt="PRism") is still present.
+  await expect(page.getByAltText('PRism')).toBeVisible();
+});
+
 test('cold start hides the top nav tabs on /welcome (#130)', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { level: 1, name: 'PRism' })).toBeVisible({
