@@ -110,4 +110,24 @@ public sealed class AiModeMigrationTests
 
         store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview);
     }
+
+    [Fact]
+    public async Task InitAsync_rebuilds_ai_from_legacy_bool_when_mode_value_is_non_string()
+    {
+        // A valid `ai` OBJECT whose `mode` is a non-string scalar (here a number) must NOT
+        // short-circuit as "already migrated": the type-blind `mode is JsonValue` check would
+        // drop ai-preview, keep `mode: 42`, fail the enum Deserialize, and silently fall back to
+        // Off — permanently discarding the user's ai-preview:true intent (both in memory and on
+        // disk). The fast-path requires a STRING mode; a non-string falls through and rebuilds
+        // `ai` from the legacy bool. (Copilot + claude[bot] review, PR #242.)
+        using var dir = new TempDataDir();
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), """
+        { "ui": { "ai-preview": true, "ai": { "mode": 42 } } }
+        """, CancellationToken.None);
+
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview); // legacy intent preserved, not lost to Off
+    }
 }

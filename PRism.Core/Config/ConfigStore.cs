@@ -391,7 +391,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         if (rootNode is not JsonObject root) return false;
         if (root["ui"] is not JsonObject ui) return false;
         if (ui["ai-preview"] is not JsonValue legacy) return false;
-        if (ui["ai"] is JsonObject already && already["mode"] is JsonValue) { ui.Remove("ai-preview"); return true; } // already migrated (has a real mode); drop the stale key
+        if (ui["ai"] is JsonObject already && already["mode"] is JsonValue modeVal && modeVal.TryGetValue<string>(out _)) { ui.Remove("ai-preview"); return true; } // already migrated (has a real STRING mode); drop the stale key. A non-string mode (e.g. 42/null) is NOT "migrated" — fall through and rebuild from the legacy bool so ai-preview intent survives (PR #242 review).
         if (!legacy.TryGetValue<bool>(out var on)) return false;             // non-bool → leave for the Default fallback
         // A present-but-incomplete ui["ai"] — a malformed non-object (e.g. a JSON string) OR an empty/mode-less object
         // ({}) — is NOT short-circuited above; it falls through to the overwrite below and is rebuilt from the legacy
