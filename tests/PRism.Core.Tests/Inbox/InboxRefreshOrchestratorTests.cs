@@ -61,8 +61,13 @@ public sealed class InboxRefreshOrchestratorTests
             { _factory = factory; _closed = closed ?? Array.Empty<RawPrInboxItem>(); _onClosedQueried = onClosedQueried; }
         public Task<IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> QueryAllAsync(
             IReadOnlySet<string> v, CancellationToken ct) => Task.FromResult(_factory(v));
+        public int? LastClosedWindowDays { get; private set; }
         public Task<IReadOnlyList<RawPrInboxItem>> QueryClosedHistoryAsync(int windowDays, CancellationToken ct)
-            { _onClosedQueried?.Invoke(); return Task.FromResult(_closed); }
+        {
+            LastClosedWindowDays = windowDays;
+            _onClosedQueried?.Invoke();
+            return Task.FromResult(_closed);
+        }
     }
 
     // PR enricher: identity (returns the same items unchanged)
@@ -98,14 +103,16 @@ public sealed class InboxRefreshOrchestratorTests
         bool authoredByMe = true,
         bool mentioned = true,
         bool ciFailing = true,
-        bool recentlyClosed = false)
+        bool recentlyClosed = false,
+        int recentlyClosedWindowDays = 14)
         => AppConfig.Default with
         {
             Inbox = new InboxConfig(
                 Deduplicate: false,
                 Sections: new InboxSectionsConfig(
                     reviewRequested, awaitingAuthor, authoredByMe, mentioned, ciFailing, recentlyClosed),
-                ShowHiddenScopeFooter: true)
+                ShowHiddenScopeFooter: true,
+                RecentlyClosedWindowDays: recentlyClosedWindowDays)
         };
 
     private static Mock<IConfigStore> ConfigStoreMock(AppConfig? config = null)
@@ -613,5 +620,19 @@ public sealed class InboxRefreshOrchestratorTests
 
         sut.Current!.Sections.Should().NotContainKey(InboxHistoryConstants.SectionId);
         queried.Should().BeFalse("QueryClosedHistoryAsync must not be called when the section is disabled");
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_QueriesWithConfiguredWindow()
+    {
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
+            closed: Array.Empty<RawPrInboxItem>());
+        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true, recentlyClosedWindowDays: 30));
+        using var sut = Build(config: configMock.Object, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        sections.LastClosedWindowDays.Should().Be(30);
     }
 }

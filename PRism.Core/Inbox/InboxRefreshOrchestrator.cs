@@ -114,7 +114,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             if (recentlyClosedEnabled)
             {
                 closedRaw = await _sections
-                    .QueryClosedHistoryAsync(InboxHistoryConstants.HistoryWindowDays, ct)
+                    .QueryClosedHistoryAsync(_config.Current.Inbox.RecentlyClosedWindowDays, ct)
                     .ConfigureAwait(false);
                 Log.ClosedHistoryFetched(_log, closedRaw.Count);
             }
