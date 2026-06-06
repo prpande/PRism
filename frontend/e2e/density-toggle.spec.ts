@@ -67,7 +67,8 @@ test.use({ viewport: { width: 1280, height: 800 } });
 test('toggling density flips data-density and persists across reload', async ({ page }) => {
   test.setTimeout(60_000);
   await setupMocks(page);
-  await page.goto('/settings');
+  // #134: density is a SegmentedControl (role="radio") on the appearance pane.
+  await page.goto('/settings/appearance');
 
   // Baseline: comfortable is the default — no attribute on <html>.
   await expect(page.locator('html')).not.toHaveAttribute('data-density', /.+/, { timeout: 30_000 });
@@ -80,7 +81,7 @@ test('toggling density flips data-density and persists across reload', async ({ 
   const postPromise = page.waitForResponse(
     (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );
-  await page.getByLabel('Density').selectOption('compact');
+  await page.getByRole('radio', { name: 'Compact' }).click();
   await postPromise;
   await expect(page.locator('html')).toHaveAttribute('data-density', 'compact');
 
@@ -97,7 +98,7 @@ test('toggling density flips data-density and persists across reload', async ({ 
   const postBackPromise = page.waitForResponse(
     (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );
-  await page.getByLabel('Density').selectOption('comfortable');
+  await page.getByRole('radio', { name: 'Comfortable' }).click();
   await postBackPromise;
   await expect(page.locator('html')).not.toHaveAttribute('data-density', /.+/);
 });
@@ -105,11 +106,11 @@ test('toggling density flips data-density and persists across reload', async ({ 
 test('POST failure reverts density and surfaces error toast', async ({ page }) => {
   test.setTimeout(60_000);
   await setupMocks(page, { postFails: true });
-  await page.goto('/settings');
+  await page.goto('/settings/appearance');
 
   await expect(page.locator('html')).not.toHaveAttribute('data-density', /.+/, { timeout: 30_000 });
 
-  await page.getByLabel('Density').selectOption('compact');
+  await page.getByRole('radio', { name: 'Compact' }).click();
 
   // Optimistic apply may briefly land before rollback; the assertion the spec
   // cares about is the *final* state after rollback.

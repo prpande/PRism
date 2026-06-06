@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { parsePrRefFromPathname } from './parsePrRefFromPathname';
 
@@ -11,7 +11,7 @@ import { parsePrRefFromPathname } from './parsePrRefFromPathname';
  */
 export function DrawerEffects() {
   const { isOpen, close } = useAskAiDrawer();
-  const { pathname } = useLocation();
+  const { pathname } = useEffectiveLocation();
   const isOnPrDetail = parsePrRefFromPathname(pathname) !== null;
 
   useEffect(() => {

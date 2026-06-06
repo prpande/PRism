@@ -1,20 +1,24 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, type Location } from 'react-router-dom';
 import { Header } from './components/Header/Header';
 import { AppearanceSync } from './components/AppearanceSync';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider, ToastContainer } from './components/Toast';
 import { CheatsheetProvider, Cheatsheet } from './components/Cheatsheet';
+import { StreamHealthSnackbar } from './components/StreamHealthSnackbar';
 import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
+import { WelcomePage } from './pages/WelcomePage';
 import { InboxPage } from './pages/InboxPage';
-import { SettingsPage } from './pages/SettingsPage';
 import { PrTabHost } from './components/PrDetail/PrTabHost';
+import { isSettingsPath } from './hooks/useEffectiveLocation';
+import { SettingsModalRoutes } from './components/Settings/SettingsModalRoutes';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
 import { OpenTabsProvider } from './contexts/OpenTabsContext';
+import { PreferencesProvider } from './contexts/PreferencesContext';
 import { AskAiDrawerProvider } from './contexts/AskAiDrawerContext';
 import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
 import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
@@ -30,6 +34,15 @@ function TabSignals() {
 export function App() {
   const { authState, error, refetch } = useAuth();
   const [authInvalidated, setAuthInvalidated] = useState(false);
+  const location = useLocation();
+  // The chrome (Routes, PrTabHost, strip) renders against this location. When a
+  // Settings modal is open the live URL is /settings/*, but we keep the chrome
+  // pinned to the underlying PR/inbox behind the scrim — backgroundLocation if
+  // the gear/SettingsLink supplied one, else a synthetic Inbox for a cold
+  // deep-link. Non-settings paths render against the live location unchanged.
+  const backgroundLocation =
+    (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation ??
+    (isSettingsPath(location.pathname) ? ({ pathname: '/' } as Location) : location);
 
   useEffect(() => {
     const onRejected = () => setAuthInvalidated(true);
@@ -81,6 +94,10 @@ export function App() {
   }
 
   const isAuthed = authState.hasToken && !authInvalidated;
+  // #212: unauthed users split by whether they've ever connected. A true first
+  // run (!hasToken) gets the welcome screen; a token-rejected re-auth session
+  // (hasToken true) goes straight to the /setup token form — never re-onboarded.
+  const unauthedTarget = authState.hasToken ? '/setup' : '/welcome';
 
   const tree: ReactNode = (
     <>
@@ -93,13 +110,32 @@ export function App() {
         <Header isAuthed={isAuthed} />
         <PrTabStrip />
         <div data-app-scroll>
-          <Routes>
+          {/* #134: the chrome Routes render against backgroundLocation so an open
+              Settings modal (live URL /settings/*) doesn't tear down the PR/inbox
+              behind the scrim. The /settings PAGE route is gone — Settings is now
+              the SettingsModalRoutes modal rendered below the shell. */}
+          <Routes location={backgroundLocation}>
+            {/* #212: the welcome screen renders ONLY for a true first run
+                (!hasToken). A token-bearing user who somehow lands here is sent
+                onward — authed → Inbox, rejected-token re-auth → /setup. */}
+            <Route
+              path="/welcome"
+              element={
+                authState.hasToken ? (
+                  // hasToken is true in this arm, so unauthedTarget === '/setup' —
+                  // referencing it (not a literal) keeps every redirect target
+                  // sourced from the one `unauthedTarget` definition.
+                  <Navigate to={isAuthed ? '/' : unauthedTarget} replace />
+                ) : (
+                  <WelcomePage />
+                )
+              }
+            />
             <Route path="/setup" element={<SetupPage />} />
             <Route
-              path="/settings"
-              element={isAuthed ? <SettingsPage /> : <Navigate to="/setup" replace />}
+              path="/"
+              element={isAuthed ? <InboxPage /> : <Navigate to={unauthedTarget} replace />}
             />
-            <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
             {/* PR-detail views no longer live in the route table. The /pr route
                 renders null; the persistent PrTabHost below renders one
                 keep-alive PrDetailView per open tab and shows the one matching
@@ -107,17 +143,19 @@ export function App() {
                 navigating away and back with its sub-tab + scroll state intact. */}
             <Route
               path="/pr/:owner/:repo/:number/*"
-              element={isAuthed ? null : <Navigate to="/setup" replace />}
+              element={isAuthed ? null : <Navigate to={unauthedTarget} replace />}
             />
-            <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
+            <Route path="*" element={<Navigate to={isAuthed ? '/' : unauthedTarget} replace />} />
           </Routes>
           {isAuthed && <PrTabHost />}
         </div>
       </div>
+      <SettingsModalRoutes isAuthed={isAuthed} unauthedTarget={unauthedTarget} />
       <AskAiDrawer />
       <DrawerEffects />
       <TabSignals />
       <ToastContainer />
+      <StreamHealthSnackbar />
       <Cheatsheet />
     </>
   );
@@ -128,7 +166,16 @@ export function App() {
         <CheatsheetProvider>
           <OpenTabsProvider>
             <AskAiDrawerProvider>
-              {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+              {/* #143: one shared preferences store for the whole app. Mounted
+                  OUTSIDE the isAuthed?EventStreamProvider conditional so it
+                  covers both branches — AppearanceSync (inside `tree`) is the
+                  sole unauthed consumer. Consequence: it can't call
+                  useEventSource() directly (it's above EventStreamProvider); a
+                  future SSE-driven invalidation would use a window-event bridge,
+                  cf. OpenTabsContext. */}
+              <PreferencesProvider>
+                {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+              </PreferencesProvider>
             </AskAiDrawerProvider>
           </OpenTabsProvider>
         </CheatsheetProvider>
