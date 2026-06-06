@@ -61,4 +61,33 @@ describe('SegmentedControl', () => {
     // No option is checked, since the value matches none of them.
     expect(screen.queryByRole('radio', { checked: true })).toBeNull();
   });
+
+  it('renders the nav variant as an accessible radiogroup and toggles', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <SegmentedControl
+        variant="nav"
+        label="Choose a token type"
+        options={[
+          { value: 'classic', label: 'Classic' },
+          { value: 'fine-grained', label: 'Fine-grained' },
+        ]}
+        value="classic"
+        onChange={onChange}
+      />,
+    );
+    const group = screen.getByRole('radiogroup', { name: 'Choose a token type' });
+    expect(group).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Classic' })).toHaveAttribute('aria-checked', 'true');
+    await user.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    expect(onChange).toHaveBeenCalledWith('fine-grained');
+
+    // Arrow-key selection (spec a11y requirement): focus the selected radio and
+    // press ArrowRight — the nav variant must keep SegmentedControl's onKeyDown.
+    onChange.mockClear();
+    screen.getByRole('radio', { name: 'Classic' }).focus();
+    await user.keyboard('{ArrowRight}');
+    expect(onChange).toHaveBeenCalledWith('fine-grained');
+  });
 });

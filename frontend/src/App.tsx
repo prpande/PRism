@@ -5,6 +5,7 @@ import { AppearanceSync } from './components/AppearanceSync';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastProvider, ToastContainer } from './components/Toast';
 import { CheatsheetProvider, Cheatsheet } from './components/Cheatsheet';
+import { StreamHealthSnackbar } from './components/StreamHealthSnackbar';
 import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
@@ -157,6 +158,7 @@ export function App() {
       <DrawerEffects />
       <TabSignals />
       <ToastContainer />
+      <StreamHealthSnackbar />
       <Cheatsheet />
     </>
   );

@@ -128,9 +128,17 @@ export function PrDetailView({
   });
 
   // Sub-tab state replaces the URL-derived activeTab. `visited` seeds with
-  // overview plus the initial sub-tab so a deep-linked open mounts that tab
-  // immediately; each selectSubTab marks its target visited so it stays
-  // mounted-but-hidden thereafter (keep-alive).
+  // ONLY the landed sub-tab so that tab mounts immediately; each selectSubTab
+  // marks its target visited so it stays mounted-but-hidden thereafter
+  // (keep-alive). Overview is NOT pre-seeded: doing so mounted a hidden
+  // OverviewTab on any non-overview landing (e.g. a /files deep-link), and a
+  // persisted PR-root draft makes that hidden composer auto-open and claim the
+  // PR-root draft ('reply-composer'), which then disabled the Submit dialog's
+  // inline Edit toggle from the Files tab — #173. Seeding only `seed` keeps the
+  // active tab always mounted (subTab === seed at init, and selectSubTab adds
+  // before setSubTab) so there is no empty-screen path, while Overview now
+  // mounts on first actual visit. The inbox click defaults to 'overview' via
+  // parsePrRoute, so the common path is unaffected.
   //
   // `initialSubTab` is read ONCE, here, as the useState seed — React ignores
   // it on every later render. So re-navigating to an already-open tab (e.g.
@@ -142,7 +150,7 @@ export function PrDetailView({
   // sharing is a non-goal for this local-only tool (spec § 2).
   const seed = initialSubTab ?? 'overview';
   const [subTab, setSubTab] = useState<PrTabId>(seed);
-  const visited = useRef<Set<PrTabId>>(new Set<PrTabId>(['overview', seed]));
+  const visited = useRef<Set<PrTabId>>(new Set<PrTabId>([seed]));
   const selectSubTab = useCallback((tab: PrTabId) => {
     visited.current.add(tab);
     setSubTab(tab);

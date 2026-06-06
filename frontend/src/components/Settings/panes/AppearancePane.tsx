@@ -1,5 +1,4 @@
 import { usePreferences } from '../../../hooks/usePreferences';
-import { useCapabilities } from '../../../hooks/useCapabilities';
 import { applyThemeToDocument, applyDensityToDocument } from '../../../utils/applyTheme';
 import type { Accent, Density, Theme } from '../../../api/types';
 import { SegmentedControl } from '../../controls/SegmentedControl';
@@ -19,7 +18,6 @@ const DENSITIES = [
 
 export function AppearancePane() {
   const { preferences, set } = usePreferences();
-  const { refetch: refetchCapabilities } = useCapabilities();
   if (!preferences) return null;
 
   const onTheme = (value: Theme) => {
@@ -45,10 +43,10 @@ export function AppearancePane() {
   // documentElement on failure because they wrote a DOM side-effect optimistically.
   // aiPreview has no such DOM write — usePreferences.set reverts its own state on a
   // failed POST (+ error toast), so the controlled Switch reflects the revert.
+  // #221: the AI gates now derive from this shared preference (useCapabilities), so
+  // the toggle propagates reactively — no capabilities refetch to chase.
   const onAiToggle = (next: boolean) => {
-    set('aiPreview', next)
-      .then(() => refetchCapabilities())
-      .catch(() => {});
+    void set('aiPreview', next).catch(() => {});
   };
 
   return (
