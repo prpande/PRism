@@ -10,6 +10,7 @@ import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
 import { WelcomePage } from './pages/WelcomePage';
+import { HelpPage } from './pages/HelpPage';
 import { InboxPage } from './pages/InboxPage';
 import { PrTabHost } from './components/PrDetail/PrTabHost';
 import { isSettingsPath } from './hooks/useEffectiveLocation';
@@ -132,6 +133,10 @@ export function App() {
               }
             />
             <Route path="/setup" element={<SetupPage />} />
+            {/* #210: Help is reachable in every auth state (first-run users
+                need it most), so it sits outside the isAuthed gates like
+                /welcome. No auth redirect. */}
+            <Route path="/help" element={<HelpPage />} />
             <Route
               path="/"
               element={isAuthed ? <InboxPage /> : <Navigate to={unauthedTarget} replace />}
