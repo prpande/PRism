@@ -10,6 +10,7 @@ import {
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
 import { ToastProvider } from '../Toast/useToast';
 import type { PrDetailDto, PrReference } from '../../api/types';
+import type { PrTabId } from './PrSubTabStrip';
 import { PrDetailView } from './PrDetailView';
 
 // ---------------------------------------------------------------------------
@@ -137,13 +138,19 @@ vi.mock('../../hooks/useFirstActivePrPollComplete', () => ({
   useFirstActivePrPollComplete: () => true,
 }));
 
-function renderPrDetailView({ prRef }: { prRef: PrReference }) {
+function renderPrDetailView({
+  prRef,
+  initialSubTab,
+}: {
+  prRef: PrReference;
+  initialSubTab?: PrTabId;
+}) {
   return render(
     <MemoryRouter>
       <OpenTabsProvider>
         <AskAiDrawerProvider>
           <ToastProvider>
-            <PrDetailView prRef={prRef} active={true} />
+            <PrDetailView prRef={prRef} active={true} initialSubTab={initialSubTab} />
           </ToastProvider>
         </AskAiDrawerProvider>
       </OpenTabsProvider>
@@ -167,6 +174,22 @@ describe('PrDetailView', () => {
     expect(files.closest('[data-subtab="files"]')).toHaveAttribute('hidden');
 
     expect(screen.queryByTestId('drafts-tab-root')).not.toBeInTheDocument();
+  });
+
+  // #173 — landing on a non-overview sub-tab must NOT pre-mount the hidden
+  // Overview tab. Pre-seeding 'overview' into `visited` mounted a hidden
+  // OverviewTab whose auto-opened PR-root composer claimed the draft and
+  // disabled the Submit dialog's inline Edit toggle from the Files tab. The
+  // fix seeds `visited` with only the landed sub-tab, so Overview is absent
+  // from the DOM until first visit. (E2E S-dialog 2/3 cover the full lock
+  // behavior; this is the fast unit-level guard on the seeding logic.)
+  test('initialSubTab="files" does not pre-mount the Overview tab', () => {
+    renderPrDetailView({
+      prRef: { owner: 'acme', repo: 'api', number: 7 },
+      initialSubTab: 'files',
+    });
+    expect(screen.queryByTestId('overview-tab')).not.toBeInTheDocument();
+    expect(screen.getByTestId('files-tab-root')).toBeVisible();
   });
 
   // #127 — the lg author avatar renders in the PR header (the only render site

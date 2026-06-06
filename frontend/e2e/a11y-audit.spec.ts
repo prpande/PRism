@@ -10,7 +10,8 @@ import AxeBuilder from '@axe-core/playwright';
 // failure message when blockers exist but do not themselves block.
 //
 // Scope (spec § 6.1): /setup, /, /pr/{ref}, /pr/{ref}/files, /pr/{ref}/drafts,
-// /settings, plus the cheatsheet-open state on any page (we use /).
+// /settings/appearance (the Settings modal, #134), plus the cheatsheet-open
+// state on any page (we use /).
 //
 // The PR6 prefers-reduced-motion verification is folded in here per the
 // plan's "PR6 e2e or accessibility audit" deferral: the LoadingScreen
@@ -409,12 +410,13 @@ test.describe('A11y audit — automated axe-core pass per spec § 6', () => {
     await runAxe(page);
   });
 
-  test('settings (/settings) — no serious/critical violations', async ({ page }) => {
+  test('settings (/settings/appearance) — no serious/critical violations', async ({ page }) => {
     await setupBaseMocks(page);
-    await page.goto('/settings');
-    await expect(page.getByRole('heading', { name: /appearance/i, level: 2 })).toBeVisible({
-      timeout: 30_000,
-    });
+    // #134: Settings is a modal over a background location; the appearance pane
+    // is the cold-deep-link target. Audit covers the modal + the Inbox behind it.
+    await page.goto('/settings/appearance');
+    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: /appearance/i, level: 2 })).toBeVisible();
     await runAxe(page);
   });
 

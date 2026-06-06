@@ -311,7 +311,11 @@ describe('FilesTab', () => {
     await waitFor(() => {
       expect(diffPane.textContent ?? '').toContain('src/main.ts');
     });
-    fireEvent.click(screen.getByText('README.md'));
+    // findByText (not getByText): the async diff-pane re-render can transiently
+    // re-key the tree row between the assertion above and this click, so wait for
+    // README.md to be re-attached before clicking. (Surfaced under parallel-suite
+    // load; sync getByText here was a pre-existing race.)
+    fireEvent.click(await screen.findByText('README.md'));
     await waitFor(() => {
       expect(diffPane.textContent ?? '').toContain('README.md');
     });

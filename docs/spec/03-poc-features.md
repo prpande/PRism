@@ -122,7 +122,14 @@ Fine-grained personal access tokens are **scoped per-org** (and within an org, p
 1. **The footer cannot count PRs from orgs the token doesn't cover at all** (the API never reports them). It could count PRs from orgs the token covers but where specific repos are excluded — but that is a tiny fraction of the actual hidden set, and surfacing only that count would mislead more than not surfacing one. The footer drops the count entirely and surfaces a soft prompt: *"Some PRs may be hidden — paste a PR URL above to access ones not in your inbox."* If a count is ever reintroduced, it must be qualified explicitly with what it does and does not include.
 2. **The URL-paste escape hatch is the recovery path.** If a colleague shares a link to a PR in an unscoped repo, paste-the-URL hits `GET /repos/{owner}/{repo}/pulls/{n}` directly; if the token has no access, surface the standard 404 error with the message "your token doesn't cover this repo — update token scope at github.com/settings/tokens."
 
-Classic PATs (broader scope) work without these caveats but are deprecated by GitHub for new use cases. PoC documents fine-grained PAT support; classic-PAT compatibility is not actively prevented but not guaranteed.
+Because fine-grained PATs are per-org scoped (above) and cannot call the Checks API
+(so GitHub Actions CI is invisible to them), the setup screen now **recommends a
+classic PAT** (`repo` + `read:org`) as the primary token type, with fine-grained
+offered as a warned secondary option (see #213 /
+`docs/specs/2026-06-06-setup-pat-guidance-design.md`). Classic reads both Actions
+check-runs and commit statuses across all the user's orgs. GitHub discourages
+classic for new use cases, and an org can block it — a trade-off accepted because
+fine-grained is functionally insufficient for PRism's inbox + CI features.
 
 ### Implementation notes
 

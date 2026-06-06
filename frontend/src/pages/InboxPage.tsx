@@ -64,7 +64,7 @@ export function InboxPage() {
   };
 
   return (
-    <main className={styles.page} data-testid="inbox-page">
+    <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
       {updates.hasUpdate && (
         <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
       )}

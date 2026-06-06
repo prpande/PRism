@@ -367,11 +367,11 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
   // ─── STEP 2: Toggle ON ────────────────────────────────────────────────────
 
   // The navbar quick-toggle was removed; AI preview now lives only on the
-  // Settings page (AppearanceSection's `<input role="switch">`). Flip it there,
-  // then re-navigate to the PR detail. A fresh navigation remounts the page so
-  // useCapabilities/usePreferences refetch the now-updated mock state — which
-  // replaces the old window.dispatchEvent(new Event('focus')) trick.
-  await page.goto('/settings');
+  // Settings modal's appearance pane (#134: AppearancePane's `<input role="switch">`).
+  // Flip it there, then re-navigate to the PR detail. A fresh navigation remounts
+  // the page so useCapabilities/usePreferences refetch the now-updated mock state —
+  // which replaces the old window.dispatchEvent(new Event('focus')) trick.
+  await page.goto('/settings/appearance');
   const aiToggle = page.getByRole('switch', { name: /AI preview/i });
   await aiToggle.waitFor({ timeout: 30_000 });
   const toggleResponse = page.waitForResponse(
@@ -431,8 +431,8 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
 
   // ─── STEP 4: Toggle OFF ───────────────────────────────────────────────────
 
-  // Flip AI preview back off via the Settings page switch.
-  await page.goto('/settings');
+  // Flip AI preview back off via the Settings modal's appearance-pane switch.
+  await page.goto('/settings/appearance');
   const offToggle = page.getByRole('switch', { name: /AI preview/i });
   await offToggle.waitFor({ timeout: 30_000 });
   const offResponse = page.waitForResponse(
