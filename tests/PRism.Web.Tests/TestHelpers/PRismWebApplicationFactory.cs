@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using PRism.AI.Contracts.Provider;
 using PRism.Core;
 using PRism.Core.Contracts;
 using PRism.Core.Inbox;
@@ -19,6 +20,10 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
     // When set, this fake replaces the GitHubReviewService binding for all four
     // capability interfaces (ADR-S5-1) — used by PR-detail endpoint tests.
     public PrDetailFakeReviewService? ReviewServiceOverride { get; set; }
+
+    // When set, replaces the ILlmAvailabilityProbe binding — used by /api/capabilities
+    // Live-mode tests to script the provider availability result without touching a real CLI.
+    public ILlmAvailabilityProbe? AvailabilityProbeOverride { get; set; }
 
     // Lazily resolved per-process session token (the SessionTokenMiddleware checks
     // X-PRism-Session header / prism-session cookie against this value). Tests that
@@ -66,6 +71,13 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
             if (FakeOrchestrator is not null)
             {
                 ReplaceSingleton<IInboxRefreshOrchestrator>(services, FakeOrchestrator);
+            }
+
+            // Replace the LLM availability probe with a scripted result for Live-mode
+            // capability tests.
+            if (AvailabilityProbeOverride is not null)
+            {
+                ReplaceSingleton<ILlmAvailabilityProbe>(services, AvailabilityProbeOverride);
             }
         });
     }
@@ -127,4 +139,13 @@ internal sealed class StubReviewService : IReviewAuth
     public StubReviewService(Func<Task<AuthValidationResult>> validate) { _validate = validate; }
 
     public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) => _validate();
+}
+
+// Scripted availability probe. Wired in by PRismWebApplicationFactory.AvailabilityProbeOverride
+// for /api/capabilities Live-mode tests — returns a fixed LlmAvailability without invoking a real CLI.
+public sealed class StubAvailabilityProbe : ILlmAvailabilityProbe
+{
+    private readonly LlmAvailability _result;
+    public StubAvailabilityProbe(LlmAvailability result) => _result = result;
+    public Task<LlmAvailability> ProbeAsync(CancellationToken ct) => Task.FromResult(_result);
 }
