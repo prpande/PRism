@@ -326,9 +326,15 @@ testing guide — `.ai/docs/parallel-agent-testing.md` (§3), linked from
   constants test pinning the production 5180–5199 range. Verified: the 4 tests pass
   **while the other agent was still bound to 5180**. `Random` → `Guid`-hash scan
   start to satisfy `CA5394` (warnings-as-errors).
-- **Frontend port parse uses `Number(env) || 5180`** (not the spec's
-  `Number(env ?? 5180)`) so an empty-string `PRISM_E2E_PORT` falls back to 5180
-  rather than parsing to `0`. Strictly more robust; same intent.
+- **Frontend port parse validates an in-range integer** (`parseE2ePort`:
+  `Number.isInteger(n) && n >= 1 && n <= 65535 ? n : 5180`), superseding the
+  earlier `Number(env) || 5180` (itself a deviation from the spec's
+  `Number(env ?? 5180)`). The `|| 5180` form let truthy-but-invalid values like
+  `-1` or `5180.5` through, templating URLs such as `http://localhost:-1`;
+  anything that isn't an in-range integer now falls back to 5180. `run.ps1`'s
+  `-Port` likewise gains `[ValidateRange(1, 65535)]` so an out-of-range value
+  fails at parameter binding instead of inside `dotnet run --urls`. (Hardening
+  added in the #226 review follow-up; same intent — default 5180.)
 - **Smoke test loads the config via a runtime file URL**
   (`new URL('../playwright.config.ts', import.meta.url)` + dynamic import), not a
   static `import('../playwright.config')`. A static specifier dragged
