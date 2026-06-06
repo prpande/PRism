@@ -4,7 +4,14 @@
 
 **Scope of this document:** the *overarching* v2 AI roadmap — substrate, architecture, phasing, governance, and cost model. It is deliberately top-level. Per-slice design (`docs/specs/`) and per-task plans (`docs/plans/`) follow in subsequent discovery → spec → plan cycles, one phase at a time.
 
-**Branch:** This work lives on the long-lived `v2-ai` branch (worktree `C:/src/PRism-v2-ai`), cut from `main`. `main` continues shipping v1 fixes; `main → v2-ai` merges happen at regular cadence (every `main` PR touching AI seams / capability wiring / Settings / the PR-detail tab strip; weekly batch otherwise). `v2-ai` merges back to `main` once the foundation + first features land.
+**Branching & rollout:** AI development happens on a long-lived **`V2`** branch — forked from `main`, it acts as the *AI-development main*: the integration root for the entire v2 AI effort. The rules that keep v2 work isolated from customers until a deliberate cutover:
+
+- **All v2/AI PRs target `V2` (base = `V2`), never `main`.** Each increment is built on a feature branch off `V2` and merged back into `V2` after review + CI. (P0 PR1's substrate lands via the `v2-ai` feature branch → PR #218 → `V2`; subsequent increments branch off `V2` the same way.)
+- **`main` → `V2` merges at a regular cadence** — every `main` PR touching AI seams / capability wiring / Settings / the PR-detail tab strip, weekly batch otherwise — so `V2` stays current with v1 hotfixes and parallel work.
+- **`main` keeps shipping v1 to users with *no* v2 pieces.** Hotfixes and parallel feature work continue on `main` and release to customers independently; the AI substrate never reaches `main` through day-to-day work.
+- **`V2` → `main` happens only at a deliberate cutover** — when the v2 AI feature set is ready to ship to customers — *not* incrementally as foundations or first features land.
+
+Worktree: `C:/src/PRism-v2-ai` (currently the `v2-ai` P0-PR1 feature branch; future increments get their own feature branches off `V2`).
 
 ---
 
