@@ -33,6 +33,9 @@
   /* grid item: allow shrink below the track's min-content so the tree never forces sideways scroll */
   min-width: 0;
   overflow-y: auto;
+  /* #214: keep the sticky horizontal scrollbar (.fileTreeHScrollRow, 14px) from covering
+     a row that keyboard nav or scrollIntoView reveals at the bottom of the pane. */
+  scroll-padding-bottom: 14px;
   background: var(--surface-1);
   border-right: 1px solid var(--border-1);
 }
