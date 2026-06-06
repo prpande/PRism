@@ -138,8 +138,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             {
                 "theme"     => _current with { Ui = ui with { Theme  = (string)value! } },
                 "accent"    => _current with { Ui = ui with { Accent = (string)value! } },
-                "aiPreview" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = value is bool on ? (on ? AiMode.Preview : AiMode.Off) : throw new ConfigPatchException("aiPreview must be a boolean.") } } },
-                "ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = value is string modeStr ? ParseAiMode(modeStr) : throw new ConfigPatchException("ui.ai.mode must be a string (off|preview|live).") } } },
+                "aiPreview"  => _current with { Ui = ui with { Ai = ui.Ai with { Mode = (bool)value! ? AiMode.Preview : AiMode.Off } } },
+                "ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = ParseAiMode((string)value!) } } },
                 "density"   => _current with { Ui = ui with { Density = (string)value! } },
                 "inbox.sections.review-requested" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = (bool)value! } } },
@@ -181,8 +181,11 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // user-supplied `value` in the message — matches DescribeValue's redaction discipline.
     // Uses OrdinalIgnoreCase comparison rather than `value.ToLowerInvariant() switch` because
     // CA1308 (analyzers AllEnabledByDefault + TWAE) rejects ToLowerInvariant for normalization;
-    // OrdinalIgnoreCase is the codebase idiom (see ActivePrPoller / SubmitPipeline) and is
-    // case-insensitive without allocating a lowercased string.
+    // OrdinalIgnoreCase is the codebase's string-comparison idiom (e.g. ActivePrPoller,
+    // SubmitPipeline) and is case-insensitive without allocating a lowercased string. The
+    // hardcoded off/preview/live strings stay in lockstep with the on-disk kebab serialization
+    // only while AiMode members remain single words (kebab == lowercase); a future multi-word
+    // member (e.g. "live-read-only") must match KebabCaseJsonNamingPolicy here and the wire projection.
     private static AiMode ParseAiMode(string value)
     {
         if (string.Equals(value, "off", StringComparison.OrdinalIgnoreCase))
