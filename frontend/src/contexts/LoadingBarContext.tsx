@@ -38,8 +38,10 @@ export function LoadingBarProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const active = Object.keys(keys).length > 0;
-  const value = useMemo<LoadingBarStore>(() => ({ setLoading, active }), [setLoading, active]);
+  const value = useMemo<LoadingBarStore>(
+    () => ({ setLoading, active: Object.keys(keys).length > 0 }),
+    [setLoading, keys],
+  );
 
   return <LoadingBarContext.Provider value={value}>{children}</LoadingBarContext.Provider>;
 }
