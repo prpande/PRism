@@ -117,22 +117,33 @@ test.use({ viewport: { width: 1280, height: 800 } });
 
 // ---------------------------------------------------------------------------
 
-test('Settings page renders all four section headings', async ({ page }) => {
+test('Settings modal renders all four section headings across its panes', async ({ page }) => {
   await setupSettingsMocks(page);
-  await page.goto('/settings');
-  await expect(page.getByRole('heading', { name: /appearance/i, level: 2 })).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(page.getByRole('heading', { name: /inbox sections/i, level: 2 })).toBeVisible();
-  await expect(page.getByRole('heading', { name: /connection/i, level: 2 })).toBeVisible();
-  await expect(page.getByRole('heading', { name: /^auth$/i, level: 2 })).toBeVisible();
+  // #134: Settings is now a modal with routed panes — each section heading lives
+  // on its own pane, reached by navigating the modal nav. Assert each in turn.
+  await page.goto('/settings/appearance');
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: /appearance/i, level: 2 })).toBeVisible();
+
+  // Scope nav clicks to the dialog: the Header also has an "Inbox" link, so an
+  // unscoped getByRole('link', { name: 'Inbox' }) is a strict-mode violation.
+  await dialog.getByRole('link', { name: 'Inbox' }).click();
+  await expect(page.getByRole('heading', { name: /^inbox$/i, level: 2 })).toBeVisible();
+
+  await dialog.getByRole('link', { name: 'GitHub Connection' }).click();
+  await expect(page.getByRole('heading', { name: /github connection/i, level: 2 })).toBeVisible();
+
+  await dialog.getByRole('link', { name: 'Files & logs' }).click();
+  await expect(page.getByRole('heading', { name: /files & logs/i, level: 2 })).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
 
 test('toggling an inbox section persists across reload', async ({ page }) => {
   await setupSettingsMocks(page);
-  await page.goto('/settings');
+  // #134: inbox-section switches live on the Inbox pane of the Settings modal.
+  await page.goto('/settings/inbox');
 
   const reviewToggle = page.getByRole('switch', { name: /review requested/i });
   await expect(reviewToggle).toBeChecked({ timeout: 30_000 });
@@ -148,14 +159,15 @@ test('toggling an inbox section persists across reload', async ({ page }) => {
 
 test('changing the theme applies immediately to documentElement', async ({ page }) => {
   await setupSettingsMocks(page);
-  await page.goto('/settings');
+  await page.goto('/settings/appearance');
 
+  // #134: theme is now a SegmentedControl (role="radio"), not a native <select>.
   // System theme resolves to light or dark based on the matchMedia hint;
   // setting it explicitly avoids matching the system noise.
-  await page.getByLabel(/^theme$/i).selectOption('dark');
+  await page.getByRole('radio', { name: 'Dark' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark', { timeout: 5_000 });
 
-  await page.getByLabel(/^theme$/i).selectOption('light');
+  await page.getByRole('radio', { name: 'Light' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
 });
 
@@ -164,7 +176,8 @@ test('changing the theme applies immediately to documentElement', async ({ page 
 test('Copy config.json path button writes the path to the clipboard', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await setupSettingsMocks(page);
-  await page.goto('/settings');
+  // #134: copy-path buttons live on the Files & logs (system) pane.
+  await page.goto('/settings/system');
 
   await page.getByRole('button', { name: /copy config\.json path/i }).click();
   // The text was rendered into the read-only input — assert clipboard matches.

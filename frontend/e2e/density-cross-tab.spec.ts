@@ -68,8 +68,9 @@ test('density toggle in tab A propagates to tab B on focus refetch', async ({ br
     const tabA: Page = await context.newPage();
     const tabB: Page = await context.newPage();
 
-    await tabA.goto('/settings');
-    await tabB.goto('/settings');
+    // #134: density picker lives on the appearance pane of the Settings modal.
+    await tabA.goto('/settings/appearance');
+    await tabB.goto('/settings/appearance');
 
     // Both tabs see comfortable (no attribute).
     await expect(tabA.locator('html')).not.toHaveAttribute('data-density', /.+/, {
@@ -86,13 +87,14 @@ test('density toggle in tab A propagates to tab B on focus refetch', async ({ br
     const postPromise = tabA.waitForResponse(
       (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
     );
-    await tabA.getByLabel('Density').selectOption('compact');
+    await tabA.getByRole('radio', { name: 'Compact' }).click();
     await postPromise;
     await expect(tabA.locator('html')).toHaveAttribute('data-density', 'compact');
 
     // Bring tab B to the front + fire focus. usePreferences' `focus` listener
-    // refetches /api/preferences → HeaderControls' useEffect on `preferences`
-    // re-applies applyDensityToDocument.
+    // refetches /api/preferences → AppearanceSync's useEffect on `preferences`
+    // (#134: replaced HeaderControls' mount-effect) re-applies
+    // applyDensityToDocument.
     await tabB.bringToFront();
     await tabB.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(tabB.locator('html')).toHaveAttribute('data-density', 'compact', {

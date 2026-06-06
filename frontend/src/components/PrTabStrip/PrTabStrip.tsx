@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useOpenTabs, type OpenTab } from '../../contexts/OpenTabsContext';
 import { prRefKey, type PrReference } from '../../api/types';
 import { useSubmitInFlight } from '../../hooks/useSubmitInFlight';
@@ -60,7 +61,7 @@ export function PrTabStrip() {
 
 function PrTabStripBody() {
   const { openTabs, unreadKeys, closeTab } = useOpenTabs();
-  const location = useLocation();
+  const location = useEffectiveLocation();
   const navigate = useNavigate();
   const submit = useSubmitInFlight();
 

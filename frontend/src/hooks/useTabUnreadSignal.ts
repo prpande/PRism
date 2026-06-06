@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffectiveLocation } from './useEffectiveLocation';
 import { useEventSource } from './useEventSource';
 import { useOpenTabs } from '../contexts/OpenTabsContext';
 
@@ -15,7 +15,7 @@ function activeKeyFromPathname(pathname: string): string | null {
 export function useTabUnreadSignal(): void {
   const events = useEventSource();
   const { markUnread } = useOpenTabs();
-  const { pathname } = useLocation();
+  const { pathname } = useEffectiveLocation();
   // Ref mirror — reassigned every render so the SSE callback below always
   // reads the current pathname without forcing the effect to re-bind on
   // route change. Matches the pattern used in OpenTabsContext.tsx for the
