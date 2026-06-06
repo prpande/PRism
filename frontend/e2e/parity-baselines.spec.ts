@@ -171,19 +171,9 @@ test.describe('parity baselines — Setup', () => {
   });
 });
 
-test.describe('parity baselines — Settings', () => {
-  test('settings-page', async ({ page }) => {
-    await page.setViewportSize(VIEWPORT);
-    await setupAndOpenScenarioPr(page);
-    await page.goto('/settings');
-    await page.locator('[data-testid="settings-page"]').waitFor();
-    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(page.locator('[data-testid="settings-page"]')).toHaveScreenshot(
-      'settings-page.png',
-      SCREENSHOT_OPTS,
-    );
-  });
-});
+// #134: the standalone /settings page was replaced by the routed Settings modal.
+// Its visual coverage now lives in settings-modal-visual.spec.ts (appearance /
+// github-connection / narrow), so the old settings-page parity baseline is gone.
 
 test.describe('parity baselines — PR Detail', () => {
   test('pr-detail-header', async ({ page }) => {

@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { prRefKey, type PrReference } from '../../api/types';
 import { type PrTabId } from './PrSubTabStrip';
@@ -31,7 +32,7 @@ export function parsePrRoute(
 }
 
 export function PrTabHost() {
-  const { pathname } = useLocation();
+  const { pathname } = useEffectiveLocation();
   const navigate = useNavigate();
   const { openTabs, addTab } = useOpenTabs();
   const route = parsePrRoute(pathname);
