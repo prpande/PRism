@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using PRism.AI.ClaudeCode;
 using PRism.Core;
 using PRism.Core.Hosting;
 using PRism.GitHub;
@@ -67,6 +68,16 @@ var useUnprotectedTokenCache =
      || Environment.GetEnvironmentVariable("PRISM_E2E_REAL_INJECT") == "1");
 builder.Services.AddPrismCore(dataDir, useUnprotectedTokenCache);
 builder.Services.AddPrismGitHub();
+
+var llmCwd = Path.Combine(dataDir, "llm-cwd");      // stable, NON-git working dir
+var llmUsageDir = Path.Combine(dataDir, "llm-usage");
+Directory.CreateDirectory(llmCwd);                  // probe needs a stable cwd to exist before it can spawn; idempotent, owner-scoped
+// Do NOT eagerly create llmUsageDir — JsonlTokenUsageTracker creates AND owner-chmods it in its CONSTRUCTOR,
+// but the tracker is a singleton factory that nothing resolves in P0 (no seam calls RecordAsync), so the ctor
+// never runs and the dir is never materialized. Eager-creating it here would litter an empty owner-scoped dir.
+builder.Services.AddPrismClaudeCode(
+    new ClaudeCodeProviderOptions { WorkingDirectory = llmCwd },
+    llmUsageDir);
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
