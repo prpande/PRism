@@ -17,6 +17,7 @@ This directory is the **single source of truth** for repository-wide guidance co
     frontend-conventions.md
     operating-context.md
     issue-resolution-workflow.md
+    parallel-agent-testing.md
 
 CLAUDE.md            ← Claude Code entry point + Claude-only workflows (links here)
 .cursor/rules/*.mdc ← Cursor: frontmatter + mdc: links into .ai/docs/
@@ -35,6 +36,7 @@ CLAUDE.md            ← Claude Code entry point + Claude-only workflows (links 
 | `frontend-conventions.md` | React + Vite + TS + cross-ref to handoff |
 | `operating-context.md` | Current repo cadence, spec/plan paths |
 | `issue-resolution-workflow.md` | Agent workflow for assigned issues — tiered, risk-gated, proof-carrying |
+| `parallel-agent-testing.md` | Run the app + Playwright solo, with a private `(port, dataDir)`, without colliding with other sessions |
 
 ## Integrating a new AI tool
 

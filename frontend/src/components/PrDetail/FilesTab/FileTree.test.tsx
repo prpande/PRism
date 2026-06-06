@@ -1,0 +1,58 @@
+// FileTree.test.tsx — structural assertions for the #214 synthetic horizontal
+// scrollbar. jsdom does no layout, so the scroll GEOMETRY (overflow detection,
+// translateX sync, sticky pinning) is covered by tree-scroll-regression.spec.ts in a
+// real browser. These cover the DOM contract the e2e and the hook depend on.
+import { describe, it, expect } from 'vitest';
+import { render } from '@testing-library/react';
+import { FileTree } from './FileTree';
+import type { FileChange } from '../../../api/types';
+
+const file = (path: string): FileChange => ({ path, status: 'modified', hunks: [] });
+
+function renderTree(files: FileChange[]) {
+  return render(
+    <FileTree
+      files={files}
+      selectedPath={null}
+      onSelectFile={() => {}}
+      viewedPaths={new Set()}
+      onToggleViewed={() => {}}
+      focusEntries={null}
+      aiPreview={false}
+    />,
+  );
+}
+
+describe('FileTree synthetic horizontal scrollbar (#214)', () => {
+  it('renders the pinned scrollbar element when the tree has files', () => {
+    const { getByTestId } = renderTree([file('src/Calc.cs'), file('src/very/deep/Nested.cs')]);
+    expect(getByTestId('file-tree-hscroll')).toBeTruthy();
+  });
+
+  it('keeps the scrollbar out of the accessibility tree (aria-hidden, pointer affordance only)', () => {
+    const { getByTestId } = renderTree([file('a.cs')]);
+    const bar = getByTestId('file-tree-hscroll');
+    // The bar lives inside an aria-hidden footer row — matching DiffPane's .diffHScroll.
+    expect(bar.closest('[aria-hidden="true"]')).not.toBeNull();
+    // And it is not a tab stop.
+    expect(bar.getAttribute('tabindex')).toBeNull();
+  });
+
+  it('renders the bar inside a two-column footer so it aligns under the tree column', () => {
+    const { getByTestId } = renderTree([file('a.cs')]);
+    const bar = getByTestId('file-tree-hscroll');
+    // Name the footer row explicitly (the hScrollRowRef div) rather than relying on an
+    // unnamed parentElement, so the assertion doesn't silently test the wrong node if the
+    // JSX ever adds a wrapper.
+    const row = bar.closest('.file-tree-hscroll-row');
+    expect(row).not.toBeNull();
+    // Footer mirrors .fileTreeBody: [bar cell][checkbox-column spacer].
+    expect(row!.children.length).toBe(2);
+    expect(row!.children[0]).toBe(bar);
+  });
+
+  it('omits the scrollbar entirely on the empty state', () => {
+    const { queryByTestId } = renderTree([]);
+    expect(queryByTestId('file-tree-hscroll')).toBeNull();
+  });
+});

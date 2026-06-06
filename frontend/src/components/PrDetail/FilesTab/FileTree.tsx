@@ -1,6 +1,7 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import type { FileChange, FileChangeStatus, FileFocus, FocusLevel } from '../../../api/types';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
+import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import styles from './FileTree.module.css';
 
 export interface FileTreeProps {
@@ -147,6 +148,16 @@ export function FileTree({
     return m;
   }, [focusEntries]);
 
+  // #214 — synthetic, bottom-pinned horizontal scrollbar. The clipped tree column
+  // (.fileTreeScroll) is shifted via translateX from this bar's scrollLeft, so the bar
+  // (a sticky footer below) is reachable without scrolling the tree to its end. Refs stay
+  // null on the empty/loading render paths below; useTreeHScroll null-guards those.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const hScrollRowRef = useRef<HTMLDivElement>(null);
+  const hScrollRef = useRef<HTMLDivElement>(null);
+  const hScrollSpacerRef = useRef<HTMLDivElement>(null);
+  useTreeHScroll(scrollRef, hScrollRowRef, hScrollRef, hScrollSpacerRef, rows.length > 0, [rows]);
+
   if (files.length === 0) {
     if (isLoading) return null;
     return (
@@ -164,6 +175,7 @@ export function FileTree({
       </div>
       <div className={styles.fileTreeBody}>
         <div
+          ref={scrollRef}
           className={`file-tree-scroll ${styles.fileTreeScroll}`}
           role="tree"
           aria-label="File tree"
@@ -208,6 +220,27 @@ export function FileTree({
             ),
           )}
         </div>
+      </div>
+      {/* #214 — synthetic horizontal scrollbar, pinned to the bottom of the visible tree
+          pane. A sticky footer OUTSIDE the content-height tree body (so it stays reachable
+          without scrolling the tree to its end), mirroring .fileTreeBody's two-column
+          layout so the bar aligns under .fileTreeScroll and the thumb proportion stays
+          honest. aria-hidden + non-tabbable, matching DiffPane's .diffHScroll: it is a
+          pointer/trackpad affordance; full names reach assistive tech via the row title.
+          useTreeHScroll toggles `display` so it shows only when the tree overflows. */}
+      <div
+        ref={hScrollRowRef}
+        className={`file-tree-hscroll-row ${styles.fileTreeHScrollRow}`}
+        aria-hidden="true"
+      >
+        <div
+          ref={hScrollRef}
+          className={`file-tree-hscroll ${styles.fileTreeHScroll}`}
+          data-testid="file-tree-hscroll"
+        >
+          <div ref={hScrollSpacerRef} className={styles.fileTreeHScrollSpacer} />
+        </div>
+        <div className={styles.fileTreeHScrollSpacerCol} />
       </div>
     </div>
   );
