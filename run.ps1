@@ -33,6 +33,10 @@ param(
     [ValidateSet('None', 'Token', 'Auth', 'Full')]
     [string]$Reset = 'None',
 
+    # Valid TCP port range. An out-of-range value (0, negative, >65535) fails
+    # here at parameter binding with a clear message, instead of later inside
+    # `dotnet run --urls ...` with an opaque bind error.
+    [ValidateRange(1, 65535)]
     [int]$Port = 5180,
 
     [string]$DataDir = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'PRism'),

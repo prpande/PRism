@@ -114,7 +114,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             if (recentlyClosedEnabled)
             {
                 closedRaw = await _sections
-                    .QueryClosedHistoryAsync(InboxHistoryConstants.HistoryWindowDays, ct)
+                    .QueryClosedHistoryAsync(_config.Current.Inbox.RecentlyClosedWindowDays, ct)
                     .ConfigureAwait(false);
                 Log.ClosedHistoryFetched(_log, closedRaw.Count);
             }
@@ -206,11 +206,29 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             var sectionsFinal = deduped.ToDictionary(kv => kv.Key, kv => kv.Value);
             if (recentlyClosedEnabled)
             {
-                var closedItems = (IReadOnlyList<PrInboxItem>)closedRaw
-                    .Select(r => byRef.TryGetValue(r.Reference, out var e) ? e : r) // fallback: enrichment dropped this PR (e.g. 404) — sorts to bottom via MinValue; PrEnrichmentComplete log shows the input/output delta.
-                    .Select(r => MaterializePrInboxItem(r, ciByRef, state)) // NO HeadSha filter. CI status is intentionally None for history rows unless authored-by-me also populated ciByRef — CI is a live-PR concept, not a history one.
-                    .OrderByDescending(i => i.MergedAt ?? i.ClosedAt ?? DateTimeOffset.MinValue)
-                    .Take(InboxHistoryConstants.MaxHistoryRows)
+                var ordered = closedRaw
+                    .Select(r => byRef.TryGetValue(r.Reference, out var e)
+                        ? e
+                        // Enrichment dropped (e.g. 404): the raw Search item has null close
+                        // timestamps + empty headSha, so InboxRow would render it as a
+                        // non-terminal, falsely-unread row (doneState == null →
+                        // hasUnseenActivity true). This PR is in recently-closed by
+                        // definition, so synthesize a terminal ClosedAt — UpdatedAt is the
+                        // best available proxy (Search sorts by it; ≈ close time for a
+                        // closed PR) — which makes the FE treat it as a done, read row.
+                        : r with { ClosedAt = r.ClosedAt ?? r.UpdatedAt })
+                    .Select(r => MaterializePrInboxItem(r, ciByRef, state))         // NO HeadSha filter; CI is a live-PR concept.
+                    .OrderByDescending(i => i.MergedAt ?? i.ClosedAt ?? i.UpdatedAt) // UpdatedAt fallback (always populated) keeps dropped-enrichment rows in place.
+                    .ThenByDescending(i => i.Reference.Number)                       // total order so the top-N repo cut is stable across ticks…
+                    .ThenBy(i => i.Repo, StringComparer.Ordinal)                    // …even when newest-close timestamps tie.
+                    .ToList();
+                var topRepos = ordered
+                    .Select(i => i.Repo)
+                    .Distinct(StringComparer.Ordinal)        // first-seen order = repos by most-recent close
+                    .Take(InboxHistoryConstants.MaxHistoryRepos)
+                    .ToHashSet(StringComparer.Ordinal);
+                var closedItems = (IReadOnlyList<PrInboxItem>)ordered
+                    .Where(i => topRepos.Contains(i.Repo))   // keep all PRs of the kept repos
                     .ToList();
                 sectionsFinal[InboxHistoryConstants.SectionId] = closedItems;
             }
