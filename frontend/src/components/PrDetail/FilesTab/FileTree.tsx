@@ -153,9 +153,10 @@ export function FileTree({
   // (a sticky footer below) is reachable without scrolling the tree to its end. Refs stay
   // null on the empty/loading render paths below; useTreeHScroll null-guards those.
   const scrollRef = useRef<HTMLDivElement>(null);
+  const hScrollRowRef = useRef<HTMLDivElement>(null);
   const hScrollRef = useRef<HTMLDivElement>(null);
   const hScrollSpacerRef = useRef<HTMLDivElement>(null);
-  useTreeHScroll(scrollRef, hScrollRef, hScrollSpacerRef, rows.length > 0, [rows]);
+  useTreeHScroll(scrollRef, hScrollRowRef, hScrollRef, hScrollSpacerRef, rows.length > 0, [rows]);
 
   if (files.length === 0) {
     if (isLoading) return null;
@@ -227,7 +228,11 @@ export function FileTree({
           honest. aria-hidden + non-tabbable, matching DiffPane's .diffHScroll: it is a
           pointer/trackpad affordance; full names reach assistive tech via the row title.
           useTreeHScroll toggles `display` so it shows only when the tree overflows. */}
-      <div className={`file-tree-hscroll-row ${styles.fileTreeHScrollRow}`} aria-hidden="true">
+      <div
+        ref={hScrollRowRef}
+        className={`file-tree-hscroll-row ${styles.fileTreeHScrollRow}`}
+        aria-hidden="true"
+      >
         <div
           ref={hScrollRef}
           className={`file-tree-hscroll ${styles.fileTreeHScroll}`}

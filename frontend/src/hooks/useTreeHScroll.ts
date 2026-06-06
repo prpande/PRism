@@ -19,6 +19,7 @@ import type { RefObject } from 'react';
 // display toggle, clamp-on-resize), not the code. (#214 spec, adversarial review A4.)
 export function useTreeHScroll(
   viewportRef: RefObject<HTMLElement | null>,
+  rowRef: RefObject<HTMLElement | null>,
   scrollbarRef: RefObject<HTMLElement | null>,
   spacerRef: RefObject<HTMLElement | null>,
   enabled: boolean,
@@ -26,9 +27,10 @@ export function useTreeHScroll(
 ): void {
   useEffect(() => {
     const viewport = viewportRef.current;
+    const row = rowRef.current;
     const bar = scrollbarRef.current;
     const spacer = spacerRef.current;
-    if (!enabled || !viewport || !bar || !spacer) return;
+    if (!enabled || !viewport || !row || !bar || !spacer) return;
 
     // One write per frame: .fileTreeInner reads this var via `transform: translateX`.
     const apply = (x: number): void => {
@@ -36,19 +38,18 @@ export function useTreeHScroll(
     };
 
     const measure = (): void => {
-      // viewport is overflow-x: hidden, so scrollWidth reports the full content width
-      // (the max-content .fileTreeInner) and clientWidth is the visible column width.
-      // .fileTreeInner's translateX is paint-time only and affects neither reading, so
-      // `viewport` (not the bar) is the source of truth for the measured viewport width.
+      // viewport (.fileTreeScroll) is overflow-x: hidden and never display:none, so it is
+      // always measurable: scrollWidth reports the full content width (the max-content
+      // .fileTreeInner) and clientWidth is the visible column width. .fileTreeInner's
+      // translateX is paint-time only and affects neither reading.
       const overflow = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
-      // Sizing the spacer to `overflow + bar.clientWidth` makes the bar's max scrollLeft
-      // === overflow for ANY bar width — the bar is constrained to the tree column, so it
-      // is narrower than the full pane, and the algebra still holds. Make the bar
-      // measurable first (it may be display:none from a prior no-overflow measure), then
-      // show it only when scrolling is needed so a tree that fits shows no empty strip.
-      bar.style.display = 'block';
-      spacer.style.width = `${overflow + bar.clientWidth}px`;
-      bar.style.display = overflow > 0 ? 'block' : 'none';
+      // Toggle the whole footer ROW (not just the bar), so when the tree fits NOTHING —
+      // not even the row's 1px top border — is left pinned at the pane bottom. The bar is
+      // ~the viewport width (both are the flex:1 tree column beside a same-width fixed
+      // sibling), so sizing the spacer from viewport.clientWidth yields the same
+      // bar.maxScrollLeft === overflow without needing the bar visible to measure it.
+      row.style.display = overflow > 0 ? 'flex' : 'none';
+      spacer.style.width = `${overflow + viewport.clientWidth}px`;
       // Re-clamp the current offset after a re-measure (file-list change / resize).
       if (bar.scrollLeft > overflow) bar.scrollLeft = overflow;
       apply(bar.scrollLeft);
@@ -93,5 +94,5 @@ export function useTreeHScroll(
       viewport.style.removeProperty('--file-tree-hscroll');
     };
     // `deps` lets the caller re-measure when the rendered row set changes.
-  }, [enabled, viewportRef, scrollbarRef, spacerRef, ...deps]);
+  }, [enabled, viewportRef, rowRef, scrollbarRef, spacerRef, ...deps]);
 }

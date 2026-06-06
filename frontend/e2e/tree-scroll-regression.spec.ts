@@ -118,6 +118,24 @@ test.describe('file-tree horizontal scroll (#214)', () => {
     expect(Math.abs(checkXAfter - checkXBefore)).toBeLessThanOrEqual(1);
   });
 
+  test('bar is hidden (nothing pinned at the pane bottom) when the tree fits horizontally', async ({
+    page,
+  }) => {
+    // No seed: the canonical scenario has a single short path (src/Calc.cs) that never
+    // overflows the tree column. Criterion 5 — the bar appears ONLY on overflow.
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"]').first().waitFor();
+
+    const bar = page.locator('[data-testid="file-tree-hscroll"]');
+    // The element is always in the DOM; the footer ROW is display:none when it fits, so
+    // neither the bar nor its 1px top border is pinned at the pane bottom.
+    await expect(bar).not.toBeVisible();
+    const rowDisplay = await page
+      .locator('.file-tree-hscroll-row')
+      .evaluate((el) => getComputedStyle(el).display);
+    expect(rowDisplay).toBe('none');
+  });
+
   test('bar shows and stays on-screen for a horizontally-overflowing but vertically-short tree', async ({
     page,
   }) => {
