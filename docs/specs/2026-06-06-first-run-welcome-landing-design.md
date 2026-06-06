@@ -327,10 +327,12 @@ unit-testable without a Router wrapper.
 - **Interim first-impression while #222 is open.** Until #222 lands the human copy,
   the resting state is a warm-looking screen with admittedly-draft ("AI-slop") copy —
   arguably a *different* poor first impression than today's cold-but-honest form.
-  Mitigation: the placeholder copy shipped here should be **plain and honest** (not
-  faux-marketing), and #222 should land before the app reaches any external tester.
-  Flagged for the owner's explicit nod at the spec gate. (Lower urgency given the
-  PoC audience is currently the developer + a few testers, but real.)
+  **Resolved (owner, 2026-06-06):** external testing will be gated — **no external
+  tester sees the app until both #213 (PAT accuracy) and #222 (real copy) have
+  landed.** So the placeholder-copy resting state is only ever seen internally.
+  Placeholder copy shipped here should still be **plain and honest** (not
+  faux-marketing) as defense-in-depth. The structure-first sequencing (#212 before
+  #213/#222) is a deliberate owner call, not issue-number order.
 - **B1 baseline churn from #222.** The B1 screenshots capture placeholder copy; if
   #222 changes copy length/line-count materially, the visual baselines need
   regenerating. Expected and cheap — noted so it isn't a surprise.
