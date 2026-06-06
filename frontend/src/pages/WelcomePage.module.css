@@ -1,0 +1,106 @@
+.screen {
+  position: relative;
+  flex: 1;
+  min-height: calc(100dvh - var(--header-h, 56px));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: var(--s-6);
+}
+.bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      circle at 20% 0%,
+      color-mix(in oklch, var(--accent) 8%, transparent),
+      transparent 40%
+    ),
+    radial-gradient(
+      circle at 90% 100%,
+      color-mix(in oklch, var(--accent) 6%, transparent),
+      transparent 40%
+    );
+  pointer-events: none;
+}
+.card {
+  position: relative;
+  width: 440px;
+  max-width: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-4);
+  padding: var(--s-8);
+  box-shadow: var(--shadow-3);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.logo {
+  display: block;
+  margin-bottom: var(--s-3);
+}
+.wordmark {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--s-2);
+}
+.tagline {
+  margin: 0 0 var(--s-6);
+  color: var(--text-2);
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+.benefits {
+  list-style: none;
+  margin: 0 0 var(--s-6);
+  padding: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  text-align: left;
+}
+.benefit {
+  display: flex;
+  gap: var(--s-3);
+  align-items: flex-start;
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  line-height: 1.45;
+}
+.benefitEmoji {
+  flex: none;
+}
+/* The CTA is a <Link> styled as the primary button. Kill the global `a:hover`
+   underline so it reads as a button, not an underlined link. */
+.cta {
+  width: 100%;
+  text-decoration: none;
+}
+.cta:hover {
+  text-decoration: none;
+}
+.footer {
+  margin-top: var(--s-5);
+  padding-top: var(--s-4);
+  align-self: stretch;
+  border-top: 1px solid var(--border-1);
+  display: flex;
+  justify-content: center;
+  gap: var(--s-3);
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+.footerDivider {
+  color: var(--text-4);
+}
+/* The Help / Send-feedback stubs read as quiet "coming soon" labels, not links.
+   They inherit the muted `.footer` color; `cursor: default` reinforces that they
+   are not clickable. #210/#211 replace them with real links. */
+.footerStub {
+  cursor: default;
+}
