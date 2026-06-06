@@ -1,0 +1,21 @@
+.group { display: inline-flex; gap: var(--s-2); }
+.swatch {
+  appearance: none;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: var(--radius-2);
+  padding: 0;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.swatch:hover:not(:disabled) { border-color: var(--border-2); }
+.swatchOn { border-color: var(--text-1); }
+.swatch:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: 1px; }
+.swatch:disabled { opacity: 0.5; cursor: not-allowed; }
+.dot { width: 15px; height: 15px; border-radius: var(--radius-1); }
+.indigo { background: oklch(0.62 0.085 245); }
+.amber { background: oklch(0.72 0.1 75); }
+.teal { background: oklch(0.66 0.075 195); }
