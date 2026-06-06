@@ -56,7 +56,7 @@ The frontend (PR3 owns its rewrite) reads two shapes PR2 **must not break**:
 
 **KTD-5 — Wire `AddPrismClaudeCode` into the host now (mandated by the §7 P0 exit condition).** The exit requires `/api/capabilities` to report the correct disabled reason when the CLI is absent, which needs the probe registered. `Program.cs` constructs `ClaudeCodeProviderOptions { WorkingDirectory = <dataDir>/llm-cwd }` (a stable, **non-git** dir) + `usageDir = <dataDir>/llm-usage`.
 
-**KTD-6 — Minimal descriptor (disabled-states + a `SupportsStructuredOutput` stub), built + registered but not wire-surfaced in PR2.** Per §2.3 "P0 builds the descriptor with those two [axes]": the disabled-states axis (P0 consumer = PR3 Settings→AI) and the structured-output stub (P2 consumer) are modeled; cost/auth/caching/model-id are documented-but-omitted. PR2 **builds + DI-registers** the descriptor so PR3 can project its `DisabledStates[]` list; PR2 does **not** put that list on the wire (no PR2 consumer — scope finding). The one provider-supplied string PR2 *does* surface, the active `disabledReason`, is **length-capped, plain-text** (§2.3 trust-boundary rule). *(Note: a scope reviewer flagged the structured-output stub as P2-only; kept because §2.3 explicitly says "P0 builds the descriptor with those two" — disabled-states AND structured-output.)*
+**KTD-6 — Minimal descriptor (disabled-states + a `SupportsStructuredOutput` stub), built + registered but not wire-surfaced in PR2.** Per §2.3 "P0 builds the descriptor with those two [axes]": the disabled-states axis (P0 consumer = PR3 Settings→AI) and the structured-output stub (P2 consumer) are modeled; cost/auth/caching/model-id are documented-but-omitted. PR2 **builds + DI-registers** the descriptor so PR3 can project its `DisabledStates[]` list; PR2 does **not** put that list on the wire (no PR2 consumer — scope finding). The one provider-supplied string PR2 *does* surface, the active `disabledReason`, is **length-capped, plain-text** (§2.3 trust-boundary rule). *(Scope reviewer notes, kept deliberately: (1) the structured-output stub is P2-only — kept because §2.3 explicitly says "P0 builds the descriptor with those two" axes; (2) round-2 flagged that once `disabledStates` left the wire, the descriptor has **zero PR2 consumer** and could defer to PR3. Kept in PR2 because §2.3/the P0-doc assign the descriptor to P0, and because PR3 is the **frontend** PR — introducing a backend Contracts type there would break the backend/frontend split. This is a legitimate keep-vs-defer call for your sign-off.)*
 
 **KTD-7 — Wire-value strings are mapped explicitly** (`mode.ToString().ToLowerInvariant()` → `"off"/"preview"/"live"`), not left to the JSON enum converter, so the wire contract is deterministic regardless of how minimal-API anonymous objects pick up `JsonStringEnumConverter`. On disk, `AiConfig.Mode` relies on the **confirmed** kebab `JsonStringEnumConverter` (registered in both `Storage` and `Api` options) → `"off"/"preview"/"live"` — symmetric with the wire.
 
@@ -88,8 +88,9 @@ The frontend (PR3 owns its rewrite) reads two shapes PR2 **must not break**:
 | `PRism.Core/Config/ConfigStore.cs` | `_allowedFields` (translate `aiPreview`→mode; add `ui.ai.mode`); patch arms; `TryRewriteLegacyAiPreviewShape`; nested `Ai` null-backfill guard |
 | `PRism.Core/ServiceCollectionExtensions.cs` | `AddPrismCore`: register `AiModeState` (seed + `config.Changed` from `Ui.Ai.Mode`) instead of `AiPreviewState` |
 | `PRism.Web/Composition/ServiceCollectionExtensions.cs` | `AddPrismAi`: build the 3-bag tri-state selector + register `AiCapabilityResolver`; doc-comment update |
+| `PRism.Web/PRism.Web.csproj` | **Add `<ProjectReference>` to `PRism.AI.ClaudeCode`** — Web does not reference it today, so `AddPrismClaudeCode` in Program.cs won't resolve without it (Task 5 Step 0) |
 | `PRism.Web/Program.cs` | Call `AddPrismClaudeCode(options, usageDir)` (stable non-git cwd + usage dir under dataDir) |
-| `PRism.Web/Endpoints/CapabilitiesEndpoints.cs` | Async per-flag projection via resolver + probe + descriptor; keep `ai` envelope; add `mode`/`disabledReason`/`disabledStates` |
+| `PRism.Web/Endpoints/CapabilitiesEndpoints.cs` | Async per-flag projection via resolver + probe; keep `ai` envelope; add `mode`/`disabledReason` (descriptor built+registered for PR3, **not** wire-surfaced) |
 | `PRism.Web/Endpoints/PreferencesEndpoints.cs` | Mirror → `Mode`; `BuildResponse` derives `aiPreview` from mode + adds `aiMode` |
 | `PRism.Web/Endpoints/PreferencesDtos.cs` | `UiPreferencesDto`: keep `AiPreview` (derived) + add `string AiMode` |
 | `PRism.AI.ClaudeCode/ServiceCollectionExtensions.cs` | `AddPrismClaudeCode`: also register the `ProviderCapabilityDescriptor` |
@@ -100,6 +101,7 @@ The frontend (PR3 owns its rewrite) reads two shapes PR2 **must not break**:
 | `tests/PRism.Web.Tests/Endpoints/Ai*EndpointTests.cs` | `GetRequiredService<AiPreviewState>().IsOn = true` → `<AiModeState>().Mode = AiMode.Preview` |
 | `tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs` | `aiPreview` round-trip via mode + `aiMode` field |
 | `tests/PRism.Core.Tests/Config/ConfigStoreTests.cs` | `Ui.AiPreview` default assertion → `Ui.Ai.Mode == AiMode.Off`; new ui-field backfill |
+| `tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncDottedPathTests.cs` | L222 `Ui.AiPreview.Should().BeTrue()` → `Ui.Ai.Mode.Should().Be(AiMode.Preview)` (+ `using PRism.Core.Ai;`) |
 
 > The `AiEndpoints` four endpoints, `InboxRefreshOrchestrator`, the 9 seam interfaces, and the Noop/Placeholder impls + `AddNoopSeams`/`AddPlaceholderSeams` are **unchanged** — they call `Resolve<T>()` and get an impl exactly as before. Only the selection logic behind `Resolve` changes.
 
@@ -207,6 +209,18 @@ public async Task PatchAsync_ui_ai_mode_rejects_unknown_value()
         new Dictionary<string, object?> { ["ui.ai.mode"] = "bogus" }, CancellationToken.None);
     await act.Should().ThrowAsync<ConfigPatchException>();
 }
+
+[Fact]
+public async Task PatchAsync_ui_ai_mode_rejects_non_string_value()
+{
+    using var dir = new TempDataDir();
+    using var store = new ConfigStore(dir.Path);
+    await store.InitAsync(CancellationToken.None);
+
+    var act = async () => await store.PatchAsync(
+        new Dictionary<string, object?> { ["ui.ai.mode"] = 42 }, CancellationToken.None);
+    await act.Should().ThrowAsync<ConfigPatchException>();   // rejected by PatchAsync's pre-switch type gate
+}
 ```
 
 Add `using PRism.Core.Ai;` to the test file if not present.
@@ -235,6 +249,8 @@ In `AppConfig.Default`, change the `UiConfig` construction (was `new UiConfig("s
 new UiConfig("system", "indigo", new AiConfig(AiMode.Off), "comfortable"),
 ```
 
+> **Removing `UiConfig.AiPreview` breaks a second test (ce-doc-review, feasibility):** `tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncDottedPathTests.cs:222` reads `store.Current.Ui.AiPreview.Should().BeTrue();` → CS1061. Change it to `store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview);` (its on-disk `ai-preview: true` migrates to Preview) and add `using PRism.Core.Ai;` to that file.
+
 - [ ] **Step 4: Update `ConfigStore` allowlist + patch arms**
 
 In `PRism.Core/Config/ConfigStore.cs`, in `_allowedFields`, **replace** the `["aiPreview"] = ConfigFieldType.Bool` entry's behavior and **add** the dotted-path key. Keep `aiPreview` in the allowlist (FE compat) but add `ui.ai.mode`:
@@ -251,7 +267,7 @@ In `PatchAsync`'s switch, **replace** the `aiPreview` arm and **add** the mode a
 "ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = value is string modeStr ? ParseAiMode(modeStr) : throw new ConfigPatchException("ui.ai.mode must be a string (off|preview|live).") } } },
 ```
 
-> **Defensive cast (ce-doc-review, security + feasibility).** `PreferencesEndpoints` maps any JSON value that is not a string/`true`/`false` to `null` (its `_ => null` arm). A bare `(string)value!` / `(bool)value!` on `null` throws `NullReferenceException`/`InvalidCastException` — an unhandled **500** instead of the controlled `ConfigPatchException` → **400**. The `value is …` pattern keeps the clean-400 path for `{ "ui.ai.mode": 42 }` / `{ "aiPreview": "yes" }`. Add a `PatchAsync_ui_ai_mode_rejects_non_string_value` fact to Step 1 alongside the unknown-value reject.
+> **Type rejection — primary gate + defensive cast (ce-doc-review).** `ConfigStore.PatchAsync` runs a per-key type check against `_allowedFields` **before** the switch, so a non-string `ui.ai.mode` / non-bool `aiPreview` — including the `null` that `PreferencesEndpoints` maps unexpected JSON types to — is **already** rejected with a `ConfigPatchException` → **400** (this is what makes the `PatchAsync_ui_ai_mode_rejects_non_string_value` fact pass). The in-arm `value is …` guards are belt-and-suspenders: they keep each arm self-contained and avoid a raw `(string)value!` / `(bool)value!` cast that would `NullReferenceException` if the gate were ever bypassed. (Round-1 framed the in-arm guard as the *primary* defense; round-2 verified the pre-switch gate is — the guard is now correctly redundant-but-harmless.)
 
 Add the parser as a `private static` method on `ConfigStore` (throws `ConfigPatchException` per the `ConfigFieldType`-only-String/Bool gotcha):
 
@@ -261,7 +277,7 @@ private static AiMode ParseAiMode(string value) => value.ToLowerInvariant() swit
     "off" => AiMode.Off,
     "preview" => AiMode.Preview,
     "live" => AiMode.Live,
-    _ => throw new ConfigPatchException($"Invalid ui.ai.mode value '{value}' (expected off|preview|live)."),
+    _ => throw new ConfigPatchException("ui.ai.mode must be one of: off, preview, live."),  // do NOT echo `value` — matches ConfigStore.DescribeValue's "describe the type, never the contents" redaction discipline
 };
 ```
 
@@ -314,17 +330,17 @@ Update the synchronous mirror (was `aiState.IsOn = config.Current.Ui.AiPreview;`
 aiState.IsOn = config.Current.Ui.Ai.Mode != AiMode.Off;
 ```
 
-Add `using PRism.Core.Ai;` to `PreferencesEndpoints.cs`.
+Add `using PRism.Core.Ai;` to `PreferencesEndpoints.cs` **only if not already present** — it already imports it, and a duplicate `using` is CS0105 under `TreatWarningsAsErrors`.
 
 - [ ] **Step 7: Run the config tests**
 
 Run: `dotnet test tests/PRism.Core.Tests --filter "FullyQualifiedName~ConfigStoreTests"`
-Expected: PASS (including the 3 new facts). Then build the web project: `dotnet build PRism.Web/PRism.Web.csproj -c Debug` → 0 warnings/errors.
+Expected: PASS (including the 4 new facts). Then build the web project: `dotnet build PRism.Web/PRism.Web.csproj -c Debug` → 0 warnings/errors.
 
 - [ ] **Step 8: Commit**
 
 ```powershell
-git add PRism.Core/Config/AppConfig.cs PRism.Core/Config/ConfigStore.cs PRism.Core/ServiceCollectionExtensions.cs PRism.Web/Endpoints/PreferencesEndpoints.cs PRism.Web/Endpoints/PreferencesDtos.cs tests/PRism.Core.Tests/Config/ConfigStoreTests.cs
+git add PRism.Core/Config/AppConfig.cs PRism.Core/Config/ConfigStore.cs PRism.Core/ServiceCollectionExtensions.cs PRism.Web/Endpoints/PreferencesEndpoints.cs PRism.Web/Endpoints/PreferencesDtos.cs tests/PRism.Core.Tests/Config/ConfigStoreTests.cs tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncDottedPathTests.cs
 git commit -m "feat(ai): add ui.ai.mode tri-state config; keep aiPreview as derived/translated wire field"
 ```
 
@@ -423,17 +439,20 @@ private static bool TryRewriteLegacyAiPreviewShape(JsonNode? rootNode)
     if (rootNode is not JsonObject root) return false;
     if (root["ui"] is not JsonObject ui) return false;
     if (ui["ai-preview"] is not JsonValue legacy) return false;
-    if (ui["ai"] is JsonObject) { ui.Remove("ai-preview"); return true; } // already migrated to the nested shape; drop the stale key
+    if (ui["ai"] is JsonObject already && already["mode"] is JsonValue) { ui.Remove("ai-preview"); return true; } // already migrated (has a real mode); drop the stale key
     if (!legacy.TryGetValue<bool>(out var on)) return false;             // non-bool → leave for the Default fallback
-    // A present-but-malformed ui["ai"] (e.g. a JSON string, not an object) is NOT short-circuited above —
-    // it falls through to the overwrite below and is rebuilt from the legacy bool, so a corrupt `ai` value
-    // cannot silently discard the user's ai-preview intent (ce-doc-review, adversarial edge case).
+    // A present-but-incomplete ui["ai"] — a malformed non-object (e.g. a JSON string) OR an empty/mode-less object
+    // ({}) — is NOT short-circuited above; it falls through to the overwrite below and is rebuilt from the legacy
+    // bool, so a corrupt OR empty `ai` value cannot silently discard the user's ai-preview intent
+    // (ce-doc-review rounds 1+2, adversarial edge cases). The round-1 `is JsonObject` check missed the empty-{} case.
 
     ui["ai"] = new JsonObject { ["mode"] = on ? "preview" : "off" };
     ui.Remove("ai-preview");
     return true;
 }
 ```
+
+> Add a migration test for the empty-object edge: `{ "ui": { "ai-preview": true, "ai": {} } }` → `store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview)` (the empty `ai` must NOT short-circuit and lose the Preview intent).
 
 Wire it into `ReadFromDiskAsync` alongside the existing github rewrite — **OR the flags** so either rewrite triggers the re-serialize + persist-back (per the coupling gotcha):
 
@@ -724,7 +743,7 @@ In every `tests/PRism.Web.Tests/Endpoints/Ai*EndpointTests.cs` and `Capabilities
 factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
 ```
 
-Add `using PRism.Core.Ai;` to those test files. In `PreferencesEndpointsTests.cs`, update any `AiPreview`/`IsOn` assertions to the new mode/derived-`aiPreview` shape.
+Add `using PRism.Core.Ai;` to those test files **only where missing** — the `Ai*EndpointTests.cs` already import it (a duplicate `using` is CS0105 under `TreatWarningsAsErrors`). In `PreferencesEndpointsTests.cs`, update any `AiPreview`/`IsOn` assertions to the new mode/derived-`aiPreview` shape.
 
 - [ ] **Step 7: Run the affected suites**
 
@@ -748,8 +767,19 @@ git commit -m "feat(ai): replace AiPreviewState with tri-state AiModeState + per
 Make PR1's probe/provider resolvable in the live container (KTD-5) so the rewritten capabilities endpoint can inject `ILlmAvailabilityProbe`.
 
 **Files:**
+- Modify: `PRism.Web/PRism.Web.csproj` (add the `PRism.AI.ClaudeCode` project reference)
 - Modify: `PRism.Web/Program.cs`
 - Test: `tests/PRism.Web.Tests/Endpoints/CapabilitiesEndpointsTests.cs` (a host-resolvability assertion is added in Task 9; here we just verify startup)
+
+- [ ] **Step 0: Add the project reference (Web does NOT reference `PRism.AI.ClaudeCode` today)**
+
+`PRism.Web.csproj` references `PRism.Core`, `PRism.GitHub`, `PRism.AI.Contracts`, `PRism.AI.Placeholder` — **not** `PRism.AI.ClaudeCode`. Without this, `AddPrismClaudeCode` / `ClaudeCodeProviderOptions` / the `using` are unresolvable (CS0246). Add alongside the existing `PRism.AI.Placeholder` reference:
+
+```xml
+<ProjectReference Include="..\PRism.AI.ClaudeCode\PRism.AI.ClaudeCode.csproj" />
+```
+
+(The Web test project picks up the assembly transitively — the probe override uses only `PRism.AI.Contracts.Provider` types — so no test-csproj change is needed.)
 
 - [ ] **Step 1: Construct options + wire the registration**
 
@@ -759,8 +789,9 @@ In `PRism.Web/Program.cs`, after `AddPrismCore` / before `AddPrismAi` (the probe
 var llmCwd = Path.Combine(dataDir, "llm-cwd");      // stable, NON-git working dir (§2.1 inv. 4)
 var llmUsageDir = Path.Combine(dataDir, "llm-usage");
 Directory.CreateDirectory(llmCwd);                  // probe needs a stable cwd to exist before it can spawn; idempotent, owner-scoped
-// Do NOT eagerly create llmUsageDir — JsonlTokenUsageTracker creates it lazily (owner-only) on first RecordAsync,
-// which nothing calls in P0. Creating it here litters an empty dir for every user who never touches AI.
+// Do NOT eagerly create llmUsageDir — JsonlTokenUsageTracker creates AND owner-chmods it in its CONSTRUCTOR,
+// but the tracker is a singleton factory that nothing resolves in P0 (no seam calls RecordAsync), so the ctor
+// never runs and the dir is never materialized. Eager-creating it here would litter an empty owner-scoped dir.
 builder.Services.AddPrismClaudeCode(
     new ClaudeCodeProviderOptions { WorkingDirectory = llmCwd },
     llmUsageDir);
@@ -1015,9 +1046,13 @@ public sealed class AiCapabilityResolver
     }
 
     /// <summary>The active disabled reason for the wire: the provider's ReasonCode when Live is
-    /// unavailable, else "none" (Off/Preview are not "disabled" — they are deliberate modes).</summary>
+    /// unavailable, else "none" (Off/Preview are not "disabled" — they are deliberate modes). The
+    /// provider-supplied ReasonCode is length-capped HERE at the trust boundary (§2.3) so every caller —
+    /// not just the capabilities endpoint — gets a bounded, plain-text string (ce-doc-review, security).</summary>
     public static string DisabledReason(AiMode mode, LlmAvailability liveAvailability)
-        => mode == AiMode.Live && !liveAvailability.Available ? liveAvailability.ReasonCode : "none";
+        => mode == AiMode.Live && !liveAvailability.Available ? Cap(liveAvailability.ReasonCode) : "none";
+
+    private static string Cap(string s) => s.Length <= 200 ? s : s[..200];
 }
 ```
 
@@ -1110,7 +1145,7 @@ public sealed class StubAvailabilityProbe : ILlmAvailabilityProbe
 
 - [ ] **Step 2: Write the failing endpoint tests**
 
-In `tests/PRism.Web.Tests/Endpoints/CapabilitiesEndpointsTests.cs`: **replace** the existing `public sealed record CapabilitiesResponse(AiCapabilities Ai);` with the expanded record below (do **not** declare a second — that is a CS0101 duplicate-type error), **remove the `IClassFixture<PRismWebApplicationFactory>` interface and the `_factory` field**, and **delete the old `Returns_AllOff_when_aiPreview_is_false` test** (its assertion is subsumed by the new `Off_mode_...` fact). Every new fact below uses a per-test `using var factory` — these mutate `AiModeState` / set the probe override, so a shared class fixture would leak state across tests:
+In `tests/PRism.Web.Tests/Endpoints/CapabilitiesEndpointsTests.cs`: **replace** the existing `public sealed record CapabilitiesResponse(AiCapabilities Ai);` with the expanded record below (do **not** declare a second — that is a CS0101 duplicate-type error), **remove the `IClassFixture<PRismWebApplicationFactory>` interface and the `_factory` field**, and **delete the old `Returns_AllOff_when_aiPreview_is_false` test** (its assertion is subsumed by the new `Off_mode_...` fact). Every new fact below uses a per-test `using var factory` — these mutate `AiModeState` / set the probe override, so a shared class fixture would leak state across tests. **Add the imports these facts need** — the file today imports only FluentAssertions / `PRism.AI.Contracts.Capabilities` / TestHelpers / `System.Net.Http.Json` / Xunit, so add: `using Microsoft.Extensions.DependencyInjection;`, `using PRism.Core.Ai;`, `using System.Text.Json;`, and `using PRism.AI.Contracts.Provider;` (for `StubAvailabilityProbe`/`LlmAvailability`):
 
 ```csharp
 public sealed record CapabilitiesResponse(AiCapabilities Ai, string Mode, string DisabledReason);
@@ -1192,11 +1227,9 @@ app.MapGet("/api/capabilities", async (
     {
         ai = resolver.Resolve(mode, availability),                      // FE-compat: the `ai` envelope + 9 keys
         mode = mode.ToString().ToLowerInvariant(),                      // "off" | "preview" | "live"
-        // §2.3 trust boundary: the provider-supplied reason string is length-capped, plain text, never HTML.
-        disabledReason = Cap(AiCapabilityResolver.DisabledReason(mode, availability)),
+        // disabledReason is length-capped at the trust boundary inside DisabledReason (§2.3) — no extra cap here.
+        disabledReason = AiCapabilityResolver.DisabledReason(mode, availability),
     });
-
-    static string Cap(string s) => s.Length <= 200 ? s : s[..200];
 });
 // NOTE (ce-doc-review scope finding): the descriptor's full DisabledStates[] list is intentionally NOT
 // surfaced on the wire in PR2 — its only consumer is PR3's Settings → AI guidance. ProviderCapabilityDescriptor
@@ -1214,7 +1247,7 @@ Expected: PASS (Off/Preview/Live facts).
 
 ```powershell
 git add PRism.Web/Endpoints/CapabilitiesEndpoints.cs tests/PRism.Web.Tests/TestHelpers/PRismWebApplicationFactory.cs tests/PRism.Web.Tests/Endpoints/CapabilitiesEndpointsTests.cs
-git commit -m "feat(ai): per-flag /api/capabilities with mode + disabled reason + descriptor (FE envelope preserved)"
+git commit -m "feat(ai): per-flag /api/capabilities with mode + disabled reason (FE envelope preserved; descriptor registered for PR3)"
 ```
 
 ---
