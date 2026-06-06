@@ -137,11 +137,12 @@ public int? LastClosedWindowDays { get; private set; }
 public Task<IReadOnlyList<RawPrInboxItem>> QueryClosedHistoryAsync(int windowDays, CancellationToken ct)
 {
     LastClosedWindowDays = windowDays;
-    return Task.FromResult(_closed);   // keep whatever the fake already returns
+    _onClosedQueried?.Invoke();        // PRESERVE — RecentlyClosed_Disabled_NoSection_AndNoQuery depends on it
+    return Task.FromResult(_closed);
 }
 ```
 
-(If the fake's closed-history return is stored differently, keep that behavior — only add the `LastClosedWindowDays = windowDays;` capture line.)
+(The real fake body is `{ _onClosedQueried?.Invoke(); return Task.FromResult(_closed); }` — keep that side effect; only ADD the `LastClosedWindowDays` capture. Dropping `_onClosedQueried?.Invoke()` would silently neuter `RecentlyClosed_Disabled_NoSection_AndNoQuery` into a false pass.)
 
 - [ ] **Step 2: Write the failing test**
 
@@ -198,19 +199,19 @@ git commit -m "feat(#133): read recently-closed window from config"
 
 **Why:** GitHub `search/issues` defaults to `sort=best-match`. The repo ranking must operate on a *recency* slice, so the closed-history sub-queries (only) get `&sort=updated&order=desc`. Live-section searches are unchanged.
 
-- [ ] **Step 1: Write the failing test** (mirror the existing `QueryClosedHistory_FiresBothSubQueries_WithCutoff_AndDedupesByRef` harness which captures `req.RequestUri!.Query`):
+- [ ] **Step 1: Write the failing test** (mirror the existing `QueryClosedHistory_FiresBothSubQueries_WithCutoff_AndDedupesByRef` harness — it uses `FakeHttpMessageHandler`, `BuildSut(handler)`, and `Respond(HttpStatusCode.OK, body)`; capture `req.RequestUri!.Query`):
 
 ```csharp
 [Fact]
 public async Task QueryClosedHistory_RequestsUpdatedDescSort()
 {
     var calls = new List<string>();
-    var handler = new StubHandler(req =>
+    var handler = new FakeHttpMessageHandler(req =>
     {
         calls.Add(req.RequestUri!.Query);
-        return JsonOk("""{ "items": [] }""");
+        return Respond(HttpStatusCode.OK, """{ "items": [] }""");
     });
-    var sut = Build(handler);   // same Build(...) helper the other tests use
+    var sut = BuildSut(handler);
 
     await sut.QueryClosedHistoryAsync(14, default);
 
@@ -219,7 +220,7 @@ public async Task QueryClosedHistory_RequestsUpdatedDescSort()
 }
 ```
 
-(Use the exact stub-handler/`Build`/`JsonOk` helpers already present in this test file — match their names. If a helper returning a JSON 200 has a different name, use it.)
+(`FakeHttpMessageHandler`/`BuildSut`/`Respond` are the file's real helpers — confirm their exact names/signatures before pasting. `req.RequestUri!.Query` is URL-encoded, but `sort=updated`/`order=desc` have no reserved chars, so `.Contains` works on the raw query.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -754,10 +755,9 @@ export function RepoGroupAccordion({ group, enrichments, showCategoryChip, maxDi
 .header:hover {
   background: var(--surface-2);
 }
-.header:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
+/* No scoped :focus-visible — inherit the global ring from tokens.css (outline
+   --accent-ring, outline-offset 2px), the same treatment InboxRow relies on.
+   A scoped rule here would diverge (wrong color/offset) from the app pattern. */
 .repo {
   font-family: var(--font-mono);
 }
@@ -868,7 +868,7 @@ git commit -m "feat(#133): RecentlyClosedFooter unconditional caption (no props)
 - Modify: `frontend/src/components/Inbox/InboxSection.tsx`
 - Test: `frontend/src/components/Inbox/InboxSection.test.tsx`
 
-- [ ] **Step 1: Write the failing tests.** Add to `InboxSection.test.tsx` (follow the file's existing render/section-fixture helpers; construct sections with `items` of `PrInboxItem`):
+- [ ] **Step 1: Write the failing tests.** **Create** `frontend/src/components/Inbox/InboxSection.test.tsx` (it does not exist yet) with local helpers — `prFor(owner, repo, n)` returning a full `PrInboxItem` (copy the shape from `InboxRow.test.tsx`'s `PR` fixture), `makeSection(id, items)` returning `{ id, label: id, items }`, and `renderSection(section, props?)` wrapping `<InboxSection>` in `MemoryRouter` + `OpenTabsProvider` (as `RepoGroupAccordion.test.tsx` does):
 
 ```tsx
 // Multi-repo live section → one accordion per repo, repos open by default.
@@ -974,6 +974,9 @@ export function InboxSection({ section, enrichments, showCategoryChip, maxDiff, 
               />
             ))
           )}
+          {/* "Unconditional" per spec = not gated on truncation (the old >=30 hint). The
+              length>0 guard is intentional: an empty recently-closed shows EmptyCopy, not a
+              "most recent first" caption over nothing. */}
           {isRecentlyClosed && section.items.length > 0 && <RecentlyClosedFooter />}
         </div>
       )}
@@ -982,7 +985,7 @@ export function InboxSection({ section, enrichments, showCategoryChip, maxDiff, 
 }
 ```
 
-(This deletes the local `MaxHistoryRows = 30` constant and the `showTruncationHint` logic, and removes the now-unused `PrInboxItem` import. The `prId` helper now comes from `groupByRepo`.)
+(This deletes the **frontend** `MaxHistoryRows = 30` constant in `InboxSection.tsx` — distinct from the backend constant replaced by `MaxHistoryRepos` in Task 4 — and the `showTruncationHint` logic, and removes the now-unused `PrInboxItem` import. The `prId` helper now comes from `groupByRepo`.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1006,7 +1009,7 @@ git commit -m "feat(#133): InboxSection groups by repo (flatten single-repo) + u
 - [ ] **Step 1: Run the full frontend test suite; fix any fallout from the nested DOM**
 
 Run: `cd frontend && npx vitest run`
-Expected: PASS. `InboxPage.test.tsx` assertions that assumed a flat row list under a multi-repo section may need to expand a repo group first or assert on the accordion button — update them minimally to match the new structure (do not weaken assertions; expand the group then assert the row).
+Expected: PASS. Note: the current `InboxPage.test.tsx` only exercises the `error && !data` alertdialog branch (it mocks `useInbox` to return `data: null`) — it renders no `InboxSection`/`InboxRow`, so it likely needs **no** change. If any frontend test elsewhere asserted a flat row list under a multi-repo section, expand the repo group first then assert the row (do not weaken assertions).
 
 - [ ] **Step 2: Run the full backend test suite**
 
@@ -1045,4 +1048,5 @@ git add -A && git commit -m "docs(#133): B1 visual proof for inbox group-by-repo
 - **Wire contract unchanged:** no task edits `api/types.ts`, `/api/inbox` serialization, `InboxSnapshot`, `ComputeDiff`, or the SSE event. If a task tempts you to, stop — grouping is frontend-only.
 - **No `inbox.groupByRepo` pref / gate** is added (that's #219). Grouping ships default-on; the single call site is `InboxSection`'s `groups.length <= 1 ? flat : accordions`.
 - **Section-header hover/focus** is intentionally NOT added to `InboxSection.module.css` in this slice (avoid an unguarded change to existing UI) — only the new `RepoGroupAccordion` header gets hover/focus. Note any resulting inconsistency at the B1 review.
-- **Constants:** after Task 4, `grep -r MaxHistoryRows` and `grep -r HistoryWindowDays` across `PRism.*` and `frontend/` must return nothing (the FE `MaxHistoryRows` dies in Task 9).
+- **Constants:** after Task 4, `grep -r HistoryWindowDays` and `grep -r MaxHistoryRows` across `PRism.*` (backend) must return nothing. The **frontend** `MaxHistoryRows` lives until Task 9 — after Task 9, `grep -r MaxHistoryRows frontend/` must also return nothing.
+- **B1 visual open questions (validate at Task 10's screenshot gate):** (a) the repo count badge is styled identically to the section count badge — confirm it reads as distinct at the child level; (b) the empty recently-closed shows EmptyCopy with no caption (intentional); (c) the two deferred spec questions — small-live-section noise, recently-closed two-layer collapse.
