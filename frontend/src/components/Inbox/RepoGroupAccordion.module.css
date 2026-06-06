@@ -1,0 +1,43 @@
+.group {
+  border-bottom: 1px solid var(--border-1);
+}
+.group:last-child {
+  border-bottom: 0;
+}
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-2) var(--s-4);
+  padding-left: calc(var(--s-4) + var(--s-4));
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--text-2);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+.header:hover {
+  background: var(--surface-2);
+}
+.repo {
+  font-family: var(--font-mono);
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border-radius: 999px;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.body {
+  padding-left: var(--s-4);
+}
