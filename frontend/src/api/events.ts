@@ -108,6 +108,7 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
   let es: EventSource;
   let idPromise: Promise<string>;
   let resolveId: (id: string) => void;
+  let rejectId: (reason?: unknown) => void;
   let abortController: AbortController;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
@@ -129,9 +130,23 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
     {};
 
   function newIdPromise() {
-    idPromise = new Promise<string>((resolve) => {
+    idPromise = new Promise<string>((resolve, reject) => {
       resolveId = resolve;
+      rejectId = reject;
     });
+    // An orphaned handshake promise — rejected on teardown/reconnect before it
+    // settled — must not surface as an unhandled rejection when nothing is
+    // awaiting it. Consumers that DO await subscriberId() still observe the
+    // rejection through their own await.
+    idPromise.catch(() => {});
+  }
+
+  // Settle the in-flight handshake promise so awaiters of subscriberId() unblock
+  // instead of hanging on a promise that newIdPromise()/teardown is about to
+  // orphan (its resolveId is overwritten and can never fire). No-op if it already
+  // resolved. The sole consumer (useActivePrUpdates) catches and retries.
+  function rejectPendingHandshake() {
+    rejectId(new Error('SSE stream torn down before handshake'));
   }
 
   function newAbortController() {
@@ -213,6 +228,7 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
     es.close();
     if (watchdog) clearTimeout(watchdog);
     if (dwellTimer) clearTimeout(dwellTimer);
+    rejectPendingHandshake(); // unblock awaiters before the old promise is orphaned
     newIdPromise();
     newAbortController();
     armReconnectTimer(options?.immediate ? 0 : computeDelay(attempt++));
@@ -258,6 +274,8 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
             if (backoffTimer) clearTimeout(backoffTimer);
             if (dwellTimer) clearTimeout(dwellTimer);
             if (healthTimer) clearTimeout(healthTimer);
+            abortController.abort(); // notify reconnectSignal() awaiters the stream is dead
+            rejectPendingHandshake(); // unblock subscriberId() awaiters on de-auth
             myEs.close();
             return;
           }
@@ -394,6 +412,7 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
       if (dwellTimer) clearTimeout(dwellTimer);
       if (healthTimer) clearTimeout(healthTimer);
       abortController.abort();
+      rejectPendingHandshake(); // unblock any subscriberId() awaiter at unmount
       es.close();
     },
   };

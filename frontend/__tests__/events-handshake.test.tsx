@@ -51,6 +51,27 @@ describe('openEventStream — handshake', () => {
       stream.close();
     }
   });
+
+  it('rejects an in-flight subscriberId() when a reconnect rotates the id before handshake', async () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      // Capture the gen-0 handshake promise while still pending (no
+      // subscriber-assigned yet). A reconnect now rotates idPromise; without
+      // settling this promise it would hang forever (its resolveId is
+      // overwritten and can never fire), permanently stalling the consumer's
+      // subscribe loop on this PR. A malformed handshake (D4) is the reconnect
+      // trigger here.
+      const pending = stream.subscriberId();
+      FakeEventSource.instances[0].listeners['subscriber-assigned']?.forEach((cb) =>
+        cb({ data: 'not-json{' } as MessageEvent),
+      );
+      await expect(pending).rejects.toThrow();
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('openEventStream — typed listeners', () => {
@@ -348,6 +369,25 @@ describe('openEventStream — onerror probe via /api/events/ping', () => {
       // tombstoned: no further reconnects ever
       await vi.advanceTimersByTimeAsync(60_000);
       expect(FakeEventSource.instances).toHaveLength(1);
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('aborts reconnectSignal() on a 401 tombstone', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 401 })) as unknown as typeof fetch;
+      const stream = openEventStream({ random: () => 0.5 });
+      const signal = stream.reconnectSignal();
+      FakeEventSource.instances[0].fireError();
+      await vi.advanceTimersByTimeAsync(0); // ping resolves → 401 tombstone
+      // close() also aborts, so assert BEFORE close to prove the tombstone path
+      // itself notifies reconnectSignal() awaiters that the stream is dead.
+      expect(signal.aborted).toBe(true);
       stream.close();
     } finally {
       vi.useRealTimers();
