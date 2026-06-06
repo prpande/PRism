@@ -8,6 +8,13 @@ import { SystemPane } from './panes/SystemPane';
 
 export interface SettingsModalRoutesProps {
   isAuthed: boolean;
+  // #212: where an unauthed cold deep-link to /settings/* is sent. App computes
+  // this as the single source of truth — '/welcome' for a true first run
+  // (!hasToken), '/setup' for a rejected-token re-auth session. The modal's
+  // guard must use the same target as the chrome's, or the two <Navigate>s race
+  // and an unauthed /settings deep-link leaks back to /setup (app.test.tsx:
+  // "all four guard sites change together").
+  unauthedTarget: string;
 }
 
 // Redirect that FORWARDS the current entry's state. react-router's <Navigate>
@@ -19,7 +26,7 @@ function RedirectToAppearance() {
   return <Navigate to="/settings/appearance" replace state={location.state} />;
 }
 
-export function SettingsModalRoutes({ isAuthed }: SettingsModalRoutesProps) {
+export function SettingsModalRoutes({ isAuthed, unauthedTarget }: SettingsModalRoutesProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const close = () => {
@@ -28,11 +35,12 @@ export function SettingsModalRoutes({ isAuthed }: SettingsModalRoutesProps) {
   };
 
   // Spec §3.4 auth guard, on the /settings parent: an unauthenticated cold
-  // deep-link redirects to /setup before any pane (or the modal) renders.
+  // deep-link redirects away before any pane (or the modal) renders. Target is
+  // unauthedTarget (see prop docs) so it agrees with the chrome's own guard.
   if (!isAuthed) {
     return (
       <Routes>
-        <Route path="/settings/*" element={<Navigate to="/setup" replace />} />
+        <Route path="/settings/*" element={<Navigate to={unauthedTarget} replace />} />
       </Routes>
     );
   }

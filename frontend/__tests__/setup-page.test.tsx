@@ -20,6 +20,7 @@ function renderRouted(initialPath = '/setup') {
           <Route path="/setup" element={<SetupPage />} />
           <Route path="/" element={<div>InboxMock</div>} />
           <Route path="/settings" element={<div>SettingsMock</div>} />
+          <Route path="/welcome" element={<div>WelcomeMock</div>} />
         </Routes>
         <ToastContainer />
       </ToastProvider>
@@ -34,6 +35,23 @@ describe('SetupPage', () => {
         HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
       ),
     );
+  });
+
+  it('shows the first-run Back-to-welcome link when there is no token', async () => {
+    renderRouted();
+    const back = await screen.findByRole('link', { name: /back/i });
+    expect(back).toHaveAttribute('href', '/welcome');
+  });
+
+  it('hides the Back-to-welcome link for a token-bearing (re-auth) session', async () => {
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    renderRouted();
+    await screen.findByLabelText(/personal access token/i);
+    expect(screen.queryByRole('link', { name: /back/i })).not.toBeInTheDocument();
   });
 
   it('routes to / (InboxPage) on successful PAT submission', async () => {

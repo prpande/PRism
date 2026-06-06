@@ -170,6 +170,7 @@ export function SetupPage() {
             error={error}
             busy={busy}
             isReplaceMode={isReplaceMode}
+            showBackToWelcome={!authState.hasToken}
           />
         </div>
       </div>

@@ -19,7 +19,7 @@ describe('SettingsModalRoutes', () => {
   it('renders nothing for non-settings paths', () => {
     render(
       <MemoryRouter initialEntries={['/']}>
-        <SettingsModalRoutes isAuthed />
+        <SettingsModalRoutes isAuthed unauthedTarget="/setup" />
       </MemoryRouter>,
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -28,7 +28,7 @@ describe('SettingsModalRoutes', () => {
   it('redirects /settings to /settings/appearance', () => {
     render(
       <MemoryRouter initialEntries={['/settings']}>
-        <SettingsModalRoutes isAuthed />
+        <SettingsModalRoutes isAuthed unauthedTarget="/setup" />
       </MemoryRouter>,
     );
     expect(screen.getByText('appearance-pane')).toBeInTheDocument();
@@ -41,7 +41,7 @@ describe('SettingsModalRoutes', () => {
           { pathname: '/settings', state: { backgroundLocation: { pathname: '/pr/o/r/1' } } },
         ]}
       >
-        <SettingsModalRoutes isAuthed />
+        <SettingsModalRoutes isAuthed unauthedTarget="/setup" />
         <StateProbe />
       </MemoryRouter>,
     );
@@ -52,30 +52,36 @@ describe('SettingsModalRoutes', () => {
   it('renders the requested section pane inside the dialog', () => {
     render(
       <MemoryRouter initialEntries={['/settings/system']}>
-        <SettingsModalRoutes isAuthed />
+        <SettingsModalRoutes isAuthed unauthedTarget="/setup" />
       </MemoryRouter>,
     );
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.getByText('system-pane')).toBeInTheDocument();
   });
 
-  it('redirects an unauthenticated cold deep-link to /setup without rendering the dialog', () => {
+  it('redirects an unauthenticated cold deep-link to unauthedTarget without rendering the dialog', () => {
+    // #212: the guard honors the caller-supplied unauthedTarget (here /welcome,
+    // a first-run target) rather than a hardcoded /setup — so it agrees with the
+    // chrome's own guard and an unauthed /settings deep-link can't leak to /setup.
     render(
       <MemoryRouter initialEntries={['/settings/github-connection']}>
         <Routes>
-          <Route path="/setup" element={<div>setup-page</div>} />
-          <Route path="*" element={<SettingsModalRoutes isAuthed={false} />} />
+          <Route path="/welcome" element={<div>welcome-page</div>} />
+          <Route
+            path="*"
+            element={<SettingsModalRoutes isAuthed={false} unauthedTarget="/welcome" />}
+          />
         </Routes>
       </MemoryRouter>,
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByText('setup-page')).toBeInTheDocument();
+    expect(screen.getByText('welcome-page')).toBeInTheDocument();
   });
 
   it('falls back to appearance for an unknown section', () => {
     render(
       <MemoryRouter initialEntries={['/settings/ai-connection']}>
-        <SettingsModalRoutes isAuthed />
+        <SettingsModalRoutes isAuthed unauthedTarget="/setup" />
       </MemoryRouter>,
     );
     expect(screen.getByText('appearance-pane')).toBeInTheDocument();

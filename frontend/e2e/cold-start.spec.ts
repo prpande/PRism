@@ -1,14 +1,26 @@
 import { test, expect } from '@playwright/test';
 
-test('cold start lands on Setup screen when no token', async ({ page }) => {
-  await page.goto('/');
+// The first-run tests below depend on the no-token state. In the shared-backend CI
+// suite a PAT from an earlier spec can survive /test/reset (it lives in the
+// TokenStore cache), so clear it before each test rather than relying on this
+// spec running before any token-seeding spec. See /test/clear-tokens (PR8 Task 13).
+test.beforeEach(async ({ request, baseURL }) => {
+  // Full URL + Origin header: the backend's host/origin CSRF guard rejects a
+  // state-changing POST whose Origin doesn't match the bind host. baseURL is the
+  // project's configured origin, so this stays correct under the #217 port param.
+  const res = await request.post(`${baseURL}/test/clear-tokens`, {
+    headers: { Origin: baseURL ?? '' },
+  });
+  expect(res.ok(), `clear-tokens failed: ${res.status()}`).toBeTruthy();
+});
 
-  // Either Setup screen renders, or we're routed to /setup.
-  await expect(page.getByRole('heading', { name: /connect to github/i })).toBeVisible({
+test('cold start lands on the /welcome landing when no token', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/welcome$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'PRism' })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(page.getByLabel(/personal access token/i)).toBeVisible();
-  await expect(page.getByRole('button', { name: /continue/i })).toBeVisible();
+  await expect(page.getByRole('link', { name: /get started/i })).toBeVisible();
 });
 
 test('Continue button is disabled with empty input', async ({ page }) => {
@@ -29,16 +41,15 @@ test('typing in PAT enables Continue', async ({ page }) => {
   await expect(page.getByRole('button', { name: /continue/i })).toBeEnabled();
 });
 
-test('cold start hides the top nav tabs (#130)', async ({ page }) => {
+test('cold start hides the top nav tabs on /welcome (#130)', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: /connect to github/i })).toBeVisible({
+  await expect(page.getByRole('heading', { level: 1, name: 'PRism' })).toBeVisible({
     timeout: 30_000,
   });
   // First-run: the nav tab strip is not rendered at all.
   await expect(page.getByRole('navigation')).toHaveCount(0);
   await expect(page.getByRole('link', { name: /^inbox$/i })).toHaveCount(0);
   await expect(page.getByRole('link', { name: /^settings$/i })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: /^setup$/i })).toHaveCount(0);
   // Logo still present.
   await expect(page.getByAltText('PRism')).toBeVisible();
 });
