@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { FirstRunDisclosure } from './FirstRunDisclosure';
 import { MaskedInput } from './MaskedInput';
+import { GitHubMark } from '../icons/GitHubMark';
 import styles from './SetupForm.module.css';
 
 interface Props {
@@ -15,6 +16,11 @@ interface Props {
   // coupling SetupForm to react-router state and keeps the component testable
   // without a Router wrapper in existing tests (SetupForm tests render bare).
   isReplaceMode?: boolean;
+  // #212 — on a true first run (!hasToken), SetupPage passes this so the user can
+  // return to the /welcome landing. Absent (not disabled) otherwise, so re-auth
+  // and replace users see no phantom back-link. Kept as a boolean prop (mirroring
+  // isReplaceMode) so SetupForm stays router-agnostic and unit-testable bare.
+  showBackToWelcome?: boolean;
 }
 
 const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
@@ -24,7 +30,14 @@ const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
   { name: 'Commit statuses', level: 'Read' },
 ];
 
-export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props) {
+export function SetupForm({
+  host,
+  onSubmit,
+  error,
+  busy,
+  isReplaceMode,
+  showBackToWelcome,
+}: Props) {
   const [pat, setPat] = useState('');
   const patPageUrl = `${host.replace(/\/$/, '')}/settings/personal-access-tokens/new`;
 
@@ -36,13 +49,27 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
 
   return (
     <form onSubmit={handleSubmit} className={styles.form}>
+      {showBackToWelcome && (
+        <Link to="/welcome" className={styles.back}>
+          {/* Decorative arrow: aria-hidden so the link's accessible name is just
+              "Back", not "left arrow Back" (matches the WelcomePage emoji /
+              chevron aria-hidden pattern). */}
+          <span aria-hidden="true">← </span>Back
+        </Link>
+      )}
       {/* <div> not <header> — the App-level <Header /> already exposes a
           banner landmark, and <header> inside <form> is NOT excluded from
           the banner-role mapping per the HTML AAM (the exclusion list is
           article/aside/main/nav/section). Using <div> preserves the visual
           grouping without duplicating the banner role. */}
       <div className={styles.brand}>
-        <h1 className={styles.title}>Connect to GitHub</h1>
+        <h1 className={styles.title}>
+          {/* Decorative GitHub mark — the heading text already names GitHub, so
+              the icon is aria-hidden and the h1's accessible name stays
+              "Connect to GitHub". */}
+          <GitHubMark size={22} />
+          Connect to GitHub
+        </h1>
         <p className={styles.sub}>PRism is local-first. Your token never leaves this machine.</p>
       </div>
       <section className={styles.section}>
