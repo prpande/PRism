@@ -98,8 +98,6 @@ export type EventStreamHandle = {
 const SILENCE_WATCHER_MS = 35_000;
 const BASE_DELAY_MS = 1_000; // D2
 const MAX_DELAY_MS = 30_000; // D2
-// Pre-staged constants consumed by later tasks in this PR. The eslint-disable
-// markers come off as each one gains its first reference.
 const UNHEALTHY_AFTER_MS = 30_000;
 const STABLE_AFTER_MS = 10_000;
 const PING_TIMEOUT_MS = 5_000;
@@ -140,6 +138,7 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
   }
 
   function notifyHealth(next: boolean) {
+    if (closed) return;
     if (healthy === next) return;
     healthy = next;
     healthSubs.forEach((cb) => {
@@ -158,6 +157,10 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
     watchdog = setTimeout(() => scheduleReconnect(), SILENCE_WATCHER_MS);
   }
 
+  // The health countdown is armed once at init and re-armed only on a liveness signal
+  // (onLiveness). It is deliberately NOT re-armed at connect()-tail: reconnect/backoff
+  // churn must not restart the 30s countdown, or a fast-failing server would delay the
+  // "connection lost" indicator past 30s.
   function armHealthTimer() {
     // (re)arm the 30s health countdown
     if (healthTimer) clearTimeout(healthTimer);

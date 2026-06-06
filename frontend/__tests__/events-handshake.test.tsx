@@ -562,6 +562,45 @@ describe('openEventStream — health (D5/D6)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('does not flip unhealthy after close() (health timer cleared on teardown)', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      const onChange = vi.fn();
+      stream.onHealthChange(onChange);
+      stream.close();
+      vi.advanceTimersByTime(60_000);
+      expect(onChange).not.toHaveBeenCalled(); // no false-flip after teardown
+      expect(stream.streamHealthy()).toBe(true); // never went unhealthy
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not flip unhealthy after a 401 tombstone (health timer cleared)', async () => {
+    vi.useFakeTimers();
+    try {
+      const reload = vi.fn();
+      Object.defineProperty(window, 'location', {
+        configurable: true,
+        value: { ...window.location, reload },
+      });
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 401 })) as unknown as typeof fetch;
+      const stream = openEventStream({ random: () => 0.5 });
+      const onChange = vi.fn();
+      stream.onHealthChange(onChange);
+      FakeEventSource.instances[0].fireError();
+      await vi.advanceTimersByTimeAsync(0); // 401 → tombstone
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(onChange).not.toHaveBeenCalledWith(false);
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('openEventStream — malformed handshake (D4)', () => {
