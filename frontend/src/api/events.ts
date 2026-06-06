@@ -80,6 +80,12 @@ const WINDOW_EVENT_BRIDGE: Partial<Record<keyof EventPayloadByType, string>> = {
   'state-changed': 'prism-state-changed',
 };
 
+export type StreamHealthHandle = {
+  streamHealthy(): boolean;
+  onHealthChange(cb: (healthy: boolean) => void): () => void; // returns unsubscribe
+  forceReconnect(): void;
+};
+
 export type EventStreamHandle = {
   subscriberId(): Promise<string>;
   reconnectSignal(): AbortSignal;
@@ -88,16 +94,28 @@ export type EventStreamHandle = {
     callback: (payload: EventPayloadByType[T]) => void,
   ): () => void;
   close(): void;
-};
+} & StreamHealthHandle;
 
 const SILENCE_WATCHER_MS = 35_000;
+const BASE_DELAY_MS = 1_000; // D2
+const MAX_DELAY_MS = 30_000; // D2
+const UNHEALTHY_AFTER_MS = 30_000;
+const STABLE_AFTER_MS = 10_000;
+const PING_TIMEOUT_MS = 5_000;
 
-export function openEventStream(): EventStreamHandle {
+export function openEventStream(opts?: { random?: () => number }): EventStreamHandle {
+  const random = opts?.random ?? Math.random;
   let es: EventSource;
   let idPromise: Promise<string>;
   let resolveId: (id: string) => void;
+  let rejectId: (reason?: unknown) => void;
   let abortController: AbortController;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
+  let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+  let dwellTimer: ReturnType<typeof setTimeout> | null = null;
+  let healthTimer: ReturnType<typeof setTimeout> | null = null;
+  let healthy = true; // optimistic
+  const healthSubs = new Set<(h: boolean) => void>();
   let closed = false;
   // Tracks whether the first SSE connection has ever fully established (defined
   // as receiving the subscriber-assigned handshake). The cross-provider
@@ -105,38 +123,120 @@ export function openEventStream(): EventStreamHandle {
   // that come AFTER the first one — i.e., signaling an actual reconnect that
   // the new stream has confirmed alive, not a still-pending HTTP open.
   let hasEverConnected = false;
+  let attempt = 0;
+  let reconnectPending = false;
 
   const listeners: { [K in keyof EventPayloadByType]?: Set<(p: EventPayloadByType[K]) => void> } =
     {};
 
   function newIdPromise() {
-    idPromise = new Promise<string>((resolve) => {
+    idPromise = new Promise<string>((resolve, reject) => {
       resolveId = resolve;
+      rejectId = reject;
     });
+    // An orphaned handshake promise — rejected on teardown/reconnect before it
+    // settled — must not surface as an unhandled rejection when nothing is
+    // awaiting it. Consumers that DO await subscriberId() still observe the
+    // rejection through their own await.
+    idPromise.catch(() => {});
+  }
+
+  // Settle the in-flight handshake promise so awaiters of subscriberId() unblock
+  // instead of hanging on a promise that newIdPromise()/teardown is about to
+  // orphan (its resolveId is overwritten and can never fire). No-op if it already
+  // resolved. The sole consumer (useActivePrUpdates) catches and retries.
+  function rejectPendingHandshake() {
+    rejectId(new Error('SSE stream torn down before handshake'));
   }
 
   function newAbortController() {
     abortController = new AbortController();
   }
 
-  function resetWatchdog() {
-    if (watchdog) clearTimeout(watchdog);
+  function notifyHealth(next: boolean) {
     if (closed) return;
-    watchdog = setTimeout(reconnect, SILENCE_WATCHER_MS);
+    if (healthy === next) return;
+    healthy = next;
+    healthSubs.forEach((cb) => {
+      try {
+        cb(next);
+      } catch {
+        /* per-subscriber isolation */
+      }
+    });
   }
 
-  function reconnect() {
+  function armWatchdog() {
+    // watchdog ONLY (was resetWatchdog)
+    if (watchdog) clearTimeout(watchdog);
     if (closed) return;
+    watchdog = setTimeout(() => scheduleReconnect(), SILENCE_WATCHER_MS);
+  }
+
+  // The health countdown is armed once at init and re-armed only on a liveness signal
+  // (onLiveness). It is deliberately NOT re-armed at connect()-tail: reconnect/backoff
+  // churn must not restart the 30s countdown, or a fast-failing server would delay the
+  // "connection lost" indicator past 30s.
+  function armHealthTimer() {
+    // (re)arm the 30s health countdown
+    if (healthTimer) clearTimeout(healthTimer);
+    if (closed) return;
+    healthTimer = setTimeout(() => notifyHealth(false), UNHEALTHY_AFTER_MS);
+  }
+
+  function onLiveness() {
+    // a confirmed liveness signal arrived
+    notifyHealth(true);
+    armHealthTimer();
+    armWatchdog();
+  }
+
+  function computeDelay(n: number) {
+    const base = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** n);
+    return base * (0.75 + 0.5 * random()); // ±25% jitter
+  }
+
+  function armReconnectTimer(delay: number) {
+    backoffTimer = setTimeout(() => {
+      backoffTimer = null;
+      reconnectPending = false;
+      if (!closed) connect();
+    }, delay);
+  }
+
+  // Replaces the old reconnect(). Re-entrancy guard (reconnectPending) collapses
+  // rapid triggers (watchdog firing + onerror probe) into a single scheduled
+  // reconnect. Backoff delay grows per consecutive attempt (D2/D8).
+  function scheduleReconnect(options?: { immediate?: boolean }) {
+    if (closed) return;
+    if (reconnectPending) {
+      // A reconnect is already scheduled. Normal triggers (watchdog firing +
+      // onerror probe racing) collapse into the pending one. An immediate
+      // trigger (forceReconnect / "Retry now") instead OVERRIDES the pending
+      // backoff wait: cancel the armed timer and reschedule at 0. Without this
+      // the "Retry now" button is a no-op for the entire backoff window — which
+      // is exactly when the stream-health snackbar (PR2) puts it on screen. The
+      // EventSource was already torn down + re-prepared by the original call, so
+      // re-arming at 0 is sufficient; no second abort/close/id-rotation needed.
+      if (!options?.immediate) return;
+      if (backoffTimer) clearTimeout(backoffTimer);
+      armReconnectTimer(0);
+      return;
+    }
+    reconnectPending = true;
     abortController.abort();
     es.close();
+    if (watchdog) clearTimeout(watchdog);
+    if (dwellTimer) clearTimeout(dwellTimer);
+    rejectPendingHandshake(); // unblock awaiters before the old promise is orphaned
     newIdPromise();
     newAbortController();
-    connect();
+    armReconnectTimer(options?.immediate ? 0 : computeDelay(attempt++));
     // S6 PR4 (spec § 3.2.1) — reconnect-replay defense is signaled INSIDE the
     // subscriber-assigned handler in connect(), not here. Dispatching at this
     // point would fire before the new EventSource has actually opened (the
-    // browser may still be doing the HTTP handshake), and reconnect() can be
-    // re-invoked rapidly via es.onerror probing — every retry would emit a
+    // browser may still be doing the HTTP handshake), and scheduleReconnect can
+    // be re-invoked rapidly via es.onerror probing — every retry would emit a
     // spurious "reconnected" signal even while the stream is still down.
     // See connect()'s subscriber-assigned handler for the actual dispatch.
   }
@@ -154,17 +254,37 @@ export function openEventStream(): EventStreamHandle {
       // belongs to a stale EventSource and must not trigger another reconnect.
       if (myEs !== es) return;
       probed = true;
-      void fetch('/api/events/ping')
+      // D3: bound the ping with an explicit abort timer. AbortSignal.timeout's
+      // internal timer is not driven by vitest fake timers, so use a manual
+      // setTimeout/AbortController pair instead. A ping that times out OR rejects
+      // (network error) now schedules a reconnect rather than relying on
+      // EventSource native retry — which a closed-socket onerror won't perform.
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), PING_TIMEOUT_MS);
+      void fetch('/api/events/ping', { signal: ctrl.signal })
         .then((resp) => {
+          clearTimeout(t);
           if (closed || myEs !== es) return;
           if (resp.status === 401) {
-            window.location.reload();
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+            }
+            closed = true; // tombstone: no further reconnects
+            if (watchdog) clearTimeout(watchdog);
+            if (backoffTimer) clearTimeout(backoffTimer);
+            if (dwellTimer) clearTimeout(dwellTimer);
+            if (healthTimer) clearTimeout(healthTimer);
+            abortController.abort(); // notify reconnectSignal() awaiters the stream is dead
+            rejectPendingHandshake(); // unblock subscriberId() awaiters on de-auth
+            myEs.close();
             return;
           }
-          reconnect();
+          scheduleReconnect();
         })
         .catch(() => {
-          // Network error probing — leave EventSource native retry to handle.
+          clearTimeout(t);
+          if (closed || myEs !== es) return;
+          scheduleReconnect();
         });
     };
 
@@ -173,7 +293,11 @@ export function openEventStream(): EventStreamHandle {
         const data = JSON.parse((raw as MessageEvent).data) as { subscriberId: string };
         resolveId(data.subscriberId);
       } catch {
-        // Malformed handshake — leave promise pending; next reconnect retries.
+        // Malformed handshake — schedule a reconnect so idPromise is not left
+        // pending until the 35s watchdog. Return early to skip replay-dispatch
+        // and resetWatchdog: a garbled frame is not a valid liveness signal.
+        scheduleReconnect();
+        return;
       }
       // Reconnect-replay defense (spec § 3.2.1): fire prism-events-reconnected
       // only on subscriber-assigned events that come AFTER the initial connect.
@@ -189,11 +313,18 @@ export function openEventStream(): EventStreamHandle {
       } else {
         hasEverConnected = true;
       }
-      resetWatchdog();
+      // D2: only a stream that SURVIVES the dwell resets the backoff attempt counter.
+      // A drop before the dwell elapses → scheduleReconnect() clears this timer (D8),
+      // so accept-then-drop keeps backoff growing.
+      if (dwellTimer) clearTimeout(dwellTimer);
+      dwellTimer = setTimeout(() => {
+        if (!closed) attempt = 0;
+      }, STABLE_AFTER_MS);
+      onLiveness();
     });
 
     es.addEventListener('heartbeat', () => {
-      resetWatchdog();
+      onLiveness();
     });
 
     EVENT_TYPES.forEach((type) => {
@@ -230,16 +361,23 @@ export function openEventStream(): EventStreamHandle {
             }
           });
         }
-        resetWatchdog();
+        // Liveness fires even when parsed === null: a malformed data frame still
+        // proves the transport is reachable, so it resets the health timer +
+        // watchdog. This is deliberately asymmetric with subscriber-assigned,
+        // which skips onLiveness on a garbled frame and forces a reconnect —
+        // there a malformed handshake means idPromise never resolves, so the
+        // stream is functionally dead despite bytes arriving.
+        onLiveness();
       });
     });
 
-    resetWatchdog();
+    armWatchdog();
   }
 
   newIdPromise();
   newAbortController();
   connect();
+  armHealthTimer();
 
   return {
     subscriberId: () => idPromise,
@@ -257,10 +395,24 @@ export function openEventStream(): EventStreamHandle {
         set.delete(callback);
       };
     },
+    streamHealthy: () => healthy,
+    onHealthChange(cb) {
+      healthSubs.add(cb);
+      return () => {
+        healthSubs.delete(cb);
+      };
+    },
+    forceReconnect() {
+      scheduleReconnect({ immediate: true });
+    },
     close() {
       closed = true;
       if (watchdog) clearTimeout(watchdog);
+      if (backoffTimer) clearTimeout(backoffTimer);
+      if (dwellTimer) clearTimeout(dwellTimer);
+      if (healthTimer) clearTimeout(healthTimer);
       abortController.abort();
+      rejectPendingHandshake(); // unblock any subscriberId() awaiter at unmount
       es.close();
     },
   };
