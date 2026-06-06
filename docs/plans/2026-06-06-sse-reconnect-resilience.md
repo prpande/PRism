@@ -18,6 +18,7 @@
 - **The full suite must be green at the end of every task.** Several PR1 tasks change behavior that existing tests assert; those tasks migrate the affected tests in the same commit.
 - Commit after each task with the message shown.
 - Tests pin jitter by passing `openEventStream({ random: () => 0.5 })` → jitter factor `0.75 + 0.5·0.5 = 1.0`, so the backoff delay equals exactly `min(MAX, BASE·2^attempt)`.
+- **Fake-timer rule — land the watchdog exactly.** `advanceTimersByTime(35_001)` overshoots the 35 000 ms watchdog by 1 ms; if a *tight* "delay−1 → not yet / +1 → fires" backoff boundary follows on the same outage, that 1 ms (plus the reset backoff being small) lets the reconnect fire inside the combined advance and the count is off by one. When a tight boundary follows a watchdog, advance to land it exactly (`34_999`/`35_000` from the connect time) and assert, then advance the backoff separately. Full-backoff advances (e.g. `+1_000` after the watchdog with no tight boundary) are unaffected.
 
 ## File structure
 
@@ -307,10 +308,11 @@ describe('openEventStream — backoff', () => {
       vi.advanceTimersByTime(35_001);  // watchdog → attempt 0 → delay 1000
       vi.advanceTimersByTime(1_000);
       expect(FakeEventSource.instances).toHaveLength(2);
-      vi.advanceTimersByTime(35_001);  // attempt 1 → delay 2000
+      vi.advanceTimersByTime(34_999); // land watchdog exactly → attempt 1 → delay 2000 armed
+      expect(FakeEventSource.instances).toHaveLength(2);
       vi.advanceTimersByTime(1_999);
       expect(FakeEventSource.instances).toHaveLength(2); // not yet
-      vi.advanceTimersByTime(2);
+      vi.advanceTimersByTime(1);
       expect(FakeEventSource.instances).toHaveLength(3);
       stream.close();
     } finally { vi.useRealTimers(); }
@@ -526,11 +528,15 @@ describe('openEventStream — dwell-gated reset (D2)', () => {
       // new stream handshakes and SURVIVES the dwell → attempt resets to 0
       FakeEventSource.instances[1].dispatch('subscriber-assigned', { subscriberId: 's' });
       vi.advanceTimersByTime(10_000); // dwell elapses → attempt = 0
-      // next outage should again use delay 1000 (attempt 0), not 2000
-      vi.advanceTimersByTime(35_001); vi.advanceTimersByTime(999);
-      expect(FakeEventSource.instances).toHaveLength(2); // not yet at 999
-      vi.advanceTimersByTime(2);
-      expect(FakeEventSource.instances).toHaveLength(3);
+      // next outage should again use delay 1000 (attempt 0), not 2000.
+      // Land the watchdog exactly — overshooting would let the small reset
+      // backoff fire inside the same advance (see Conventions).
+      vi.advanceTimersByTime(25_000);  // watchdog fires → backoff(1000) armed
+      expect(FakeEventSource.instances).toHaveLength(2);
+      vi.advanceTimersByTime(999);
+      expect(FakeEventSource.instances).toHaveLength(2); // not yet
+      vi.advanceTimersByTime(1);
+      expect(FakeEventSource.instances).toHaveLength(3); // delay 1000 → attempt was 0
       stream.close();
     } finally { vi.useRealTimers(); }
   });
@@ -695,14 +701,16 @@ describe('openEventStream — forceReconnect (D6)', () => {
     vi.useFakeTimers();
     try {
       const stream = openEventStream({ random: () => 0.5 });
-      // climb to attempt 1
-      vi.advanceTimersByTime(35_001); vi.advanceTimersByTime(1_000); // attempt 0→1
-      stream.forceReconnect(); vi.advanceTimersByTime(0);            // immediate, attempt stays 1
-      // a subsequent silence outage should use attempt 1 → delay 2000
-      vi.advanceTimersByTime(35_001); vi.advanceTimersByTime(1_999);
-      const before = FakeEventSource.instances.length;
-      vi.advanceTimersByTime(2);
-      expect(FakeEventSource.instances.length).toBe(before + 1);
+      // climb to attempt 1 (one silence outage), then force an immediate reconnect.
+      vi.advanceTimersByTime(35_001); vi.advanceTimersByTime(1_000); // attempt 0→1, instance 2
+      stream.forceReconnect(); vi.advanceTimersByTime(0);            // immediate, instance 3, attempt stays 1
+      // instance 3 has no handshake; land its watchdog exactly (35_000 from t=36_001).
+      vi.advanceTimersByTime(35_000);  // watchdog → attempt 1 → delay 2000 armed
+      expect(FakeEventSource.instances).toHaveLength(3);
+      vi.advanceTimersByTime(1_999);
+      expect(FakeEventSource.instances).toHaveLength(3); // not yet (delay 2000 ⇒ attempt was NOT reset to 0)
+      vi.advanceTimersByTime(1);
+      expect(FakeEventSource.instances).toHaveLength(4);
       stream.close();
     } finally { vi.useRealTimers(); }
   });
@@ -752,11 +760,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { EventStreamHandle } from '../api/events';
 
-let currentHandle: EventStreamHandle | null = null;
+// vi.mock is hoisted above imports; its factory may only reference variables
+// co-hoisted via vi.hoisted (or named with a `mock` prefix). A plain module-level
+// `let` would throw a hoisting error, so hold the mutable handle in a hoisted box.
+const mockHolder = vi.hoisted(() => ({ current: null as EventStreamHandle | null }));
 vi.mock('./useEventSource', () => ({
-  useEventSource: () => currentHandle,
+  useEventSource: () => mockHolder.current,
 }));
-// Import AFTER vi.mock so the hook picks up the mocked useEventSource.
 import { useStreamHealth } from './useStreamHealth';
 
 function makeHandle(initial: boolean) {
@@ -775,11 +785,11 @@ function makeHandle(initial: boolean) {
   return { handle, set };
 }
 
-beforeEach(() => { currentHandle = null; });
+beforeEach(() => { mockHolder.current = null; });
 
 describe('useStreamHealth', () => {
   it('returns healthy:true and a no-op retry when no provider is present', () => {
-    currentHandle = null;
+    mockHolder.current = null;
     const { result } = renderHook(() => useStreamHealth());
     expect(result.current.healthy).toBe(true);
     expect(typeof result.current.retry).toBe('function');
@@ -788,7 +798,7 @@ describe('useStreamHealth', () => {
 
   it('tracks the handle health and exposes retry → forceReconnect', () => {
     const { handle, set } = makeHandle(true);
-    currentHandle = handle;
+    mockHolder.current = handle;
     const { result } = renderHook(() => useStreamHealth());
     expect(result.current.healthy).toBe(true);
     act(() => set(false));
