@@ -6,7 +6,7 @@
 
 **Architecture:** A new `SettingsModal` shell (portal above `data-app-shell`) renders over a react-router v7 background location. A shared `useEffectiveLocation()` hook + a `SettingsLink` wrapper keep the four chrome consumers mounted outside `<Routes>` (`PrTabHost`, `AskAiDrawer/DrawerEffects`, `PrTabStrip`, `useTabUnreadSignal`) resolving against the real app location, so the keep-alive PR view never deactivates while Settings is open. Four panes reuse the exact hooks/handlers from today's Settings section components; native widgets become reusable `SegmentedControl`/`AccentSwatches`/`Switch` primitives.
 
-**Tech Stack:** React 18, TypeScript, Vite, react-router-dom ^7, CSS modules + design tokens (`tokens.css`), Vitest + Testing Library, Playwright (e2e + B1 visual gate).
+**Tech Stack:** React 19, TypeScript, Vite, react-router-dom ^7, CSS modules + design tokens (`tokens.css`), Vitest + Testing Library, Playwright (e2e + B1 visual gate).
 
 **Spec:** `docs/specs/2026-06-06-settings-redesign-design.md`
 
@@ -774,13 +774,17 @@ const FOCUSABLE =
 export interface SettingsModalProps {
   onClose: () => void;
   children: ReactNode;
+  // Spec §6: on close, focus returns to the opener. On a cold deep-link there is
+  // no opener (body had focus), so focus moves to this background landmark
+  // selector instead of being left on bare <body>.
+  restoreFocusFallbackSelector?: string;
 }
 
 // New shell (not the Modal component — that has a fixed title+body layout). Reuses
 // the Modal behavioral contract: role=dialog, aria-modal, focus trap + restore,
 // ESC, scrim-only backdrop close. Portals above the app shell so it never sits in
 // [data-app-scroll] (which would perturb the kept-alive PR view's scroll).
-export function SettingsModal({ onClose, children }: SettingsModalProps) {
+export function SettingsModal({ onClose, children, restoreFocusFallbackSelector }: SettingsModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const scrimDownTarget = useRef<EventTarget | null>(null);
@@ -791,8 +795,15 @@ export function SettingsModal({ onClose, children }: SettingsModalProps) {
     const dialog = dialogRef.current;
     const target = dialog?.querySelector<HTMLElement>(FOCUSABLE);
     target?.focus();
-    return () => previouslyFocused.current?.focus();
-  }, []);
+    return () => {
+      // Trigger-opened → restore to the opener. Cold deep-link (body had focus)
+      // → move to the background landmark, never bare <body> (spec §6).
+      const opener = previouslyFocused.current;
+      if (opener && opener !== document.body) opener.focus();
+      else if (restoreFocusFallbackSelector)
+        document.querySelector<HTMLElement>(restoreFocusFallbackSelector)?.focus();
+    };
+  }, [restoreFocusFallbackSelector]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -1080,6 +1091,13 @@ git commit -m "feat(#134): add SettingsNav + SettingsLayout (sidebar, System gro
 ## Phase C — Panes (port existing logic onto new controls)
 
 A shared pane stylesheet provides the row scaffold all panes use.
+
+> **Note on failure/rollback testing:** rollback + the generic error toast on a
+> failed `set()` are owned by `usePreferences` (verified in its own suite) — the
+> panes simply `.catch()` the rethrow (verbatim from today's section components,
+> which do the same). So per-pane tests assert the **correct key write** and the
+> optimistic DOM apply; they do not re-test rollback/toast. This matches the
+> existing `*Section` component behavior the spec says to preserve.
 
 - [ ] **Pre-step (one-time): create `frontend/src/components/Settings/panes/Pane.module.css`**
 
@@ -1621,32 +1639,56 @@ vi.mock('./panes/SystemPane', () => ({ SystemPane: () => <div>system-pane</div> 
 
 describe('SettingsModalRoutes', () => {
   it('renders nothing for non-settings paths', () => {
-    render(<MemoryRouter initialEntries={['/']}><SettingsModalRoutes /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/']}><SettingsModalRoutes isAuthed /></MemoryRouter>);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('redirects /settings to /settings/appearance', () => {
-    render(<MemoryRouter initialEntries={['/settings']}><SettingsModalRoutes /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/settings']}><SettingsModalRoutes isAuthed /></MemoryRouter>);
+    expect(screen.getByText('appearance-pane')).toBeInTheDocument();
+  });
+
+  it('preserves backgroundLocation through the /settings redirect', () => {
+    // Renders a probe under the same router so we can read the post-redirect state.
+    render(
+      <MemoryRouter
+        initialEntries={[{ pathname: '/settings', state: { backgroundLocation: { pathname: '/pr/o/r/1' } } }]}
+      >
+        <SettingsModalRoutes isAuthed />
+      </MemoryRouter>,
+    );
+    // appearance pane shows (redirect happened) AND the dialog is present —
+    // the backgroundLocation survives because RedirectToAppearance forwards state.
     expect(screen.getByText('appearance-pane')).toBeInTheDocument();
   });
 
   it('renders the requested section pane inside the dialog', () => {
-    render(<MemoryRouter initialEntries={['/settings/system']}><SettingsModalRoutes /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={['/settings/system']}><SettingsModalRoutes isAuthed /></MemoryRouter>);
     expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.getByText('system-pane')).toBeInTheDocument();
   });
 
-  it('closes to the background route on ✕', async () => {
+  it('redirects an unauthenticated cold deep-link to /setup without rendering the dialog', () => {
     render(
-      <MemoryRouter initialEntries={[{ pathname: '/settings/appearance', state: { backgroundLocation: { pathname: '/' } } }]}>
-        <SettingsModalRoutes />
+      <MemoryRouter initialEntries={['/settings/github-connection']}>
+        <Routes>
+          <Route path="/setup" element={<div>setup-page</div>} />
+          <Route path="*" element={<SettingsModalRoutes isAuthed={false} />} />
+        </Routes>
       </MemoryRouter>,
     );
-    await userEvent.click(screen.getByRole('button', { name: /close settings/i }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByText('setup-page')).toBeInTheDocument();
+  });
+
+  it('falls back to appearance for an unknown section', () => {
+    render(<MemoryRouter initialEntries={['/settings/ai-connection']}><SettingsModalRoutes isAuthed /></MemoryRouter>);
+    expect(screen.getByText('appearance-pane')).toBeInTheDocument();
   });
 });
 ```
+
+(Add `Routes, Route` to the test's `react-router-dom` import. The authoritative ESC/✕-close assertion lives in Task 6's `SettingsModal.test.tsx`, which tests `onClose` directly without router coupling; this suite focuses on routing + pane selection + the guard.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1665,20 +1707,45 @@ import { InboxPane } from './panes/InboxPane';
 import { GitHubConnectionPane } from './panes/GitHubConnectionPane';
 import { SystemPane } from './panes/SystemPane';
 
-export function SettingsModalRoutes() {
+export interface SettingsModalRoutesProps {
+  isAuthed: boolean;
+}
+
+// Redirect that FORWARDS the current entry's state. react-router's <Navigate>
+// drops location.state by default, which would strip backgroundLocation on a
+// bare /settings hop and snap the chrome behind the scrim to the synthetic
+// Inbox (re-firing the #180 refetch the whole design prevents). Spec §3.4.
+function RedirectToAppearance() {
+  const location = useLocation();
+  return <Navigate to="/settings/appearance" replace state={location.state} />;
+}
+
+export function SettingsModalRoutes({ isAuthed }: SettingsModalRoutesProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const close = () => {
     const bg = (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation;
     navigate(bg ?? '/'); // cold deep-link → Inbox; never navigate(-1)
   };
+
+  // Spec §3.4 auth guard, on the /settings parent: an unauthenticated cold
+  // deep-link redirects to /setup before any pane (or the modal) renders, so the
+  // modal never flashes for an unauthed user.
+  if (!isAuthed) {
+    return (
+      <Routes>
+        <Route path="/settings/*" element={<Navigate to="/setup" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <Routes>
-      <Route path="/settings" element={<Navigate to="/settings/appearance" replace />} />
+      <Route path="/settings" element={<RedirectToAppearance />} />
       <Route
         path="/settings/*"
         element={
-          <SettingsModal onClose={close}>
+          <SettingsModal onClose={close} restoreFocusFallbackSelector="[data-app-shell] main h1">
             <SettingsLayout />
           </SettingsModal>
         }
@@ -1687,6 +1754,9 @@ export function SettingsModalRoutes() {
         <Route path="inbox" element={<InboxPane />} />
         <Route path="github-connection" element={<GitHubConnectionPane />} />
         <Route path="system" element={<SystemPane />} />
+        {/* Unknown / not-yet-built section (e.g. /settings/ai-connection before
+            that pane ships) → fall back to appearance rather than a blank pane. */}
+        <Route path="*" element={<Navigate to="/settings/appearance" replace />} />
       </Route>
     </Routes>
   );
@@ -1718,9 +1788,9 @@ const backgroundLocation =
   <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
 </Routes>
 {isAuthed && <PrTabHost />}
-{isAuthed && <SettingsModalRoutes />}
+<SettingsModalRoutes isAuthed={isAuthed} />
 ```
-   (Remove the `import { SettingsPage }` line and its `<Route path="/settings" …>`.) The auth gate for `/settings/*` is enforced by `SettingsModalRoutes` rendering only when `isAuthed` (the `{isAuthed && …}` guard above) — an unauthenticated user hitting `/settings/*` matches the primary `<Routes>` `*` route against the synthesized `/` background → `<Navigate to="/setup">`.
+   (Remove the `import { SettingsPage }` line and its `<Route path="/settings" …>`.) `SettingsModalRoutes` is rendered unconditionally and owns its own auth guard internally (spec §3.4): when `isAuthed` is false it redirects `/settings/*` → `/setup` before the modal renders, so the dialog never flashes for an unauthenticated user. Rendering it unconditionally (rather than behind `{isAuthed && …}`) is what lets that guard run and be unit-tested in isolation.
 
 - [ ] **Step 5: Run tests**
 
@@ -1745,56 +1815,73 @@ git commit -m "feat(#134): route /settings/:section as a modal over a background
 - Modify: `frontend/src/components/PrDetail/PrTabHost.tsx`, `frontend/src/components/AskAiDrawer/DrawerEffects.tsx`, `frontend/src/components/PrTabStrip/PrTabStrip.tsx`, `frontend/src/hooks/useTabUnreadSignal.ts`
 - Test: `frontend/src/components/Settings/keepAlive.test.tsx` (integration)
 
-- [ ] **Step 1: Write the failing keep-alive integration test**
+- [ ] **Step 1: Write the failing keep-alive integration test** (exercises the real consumers, not just the resolver — must be RED before the migrations below)
 
 ```tsx
 // frontend/src/components/Settings/keepAlive.test.tsx
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
-import { describe, it, expect } from 'vitest';
-import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
+import { MemoryRouter } from 'react-router-dom';
+import { describe, it, expect, vi } from 'vitest';
 
-// Stand-in for a chrome consumer: renders the PR it considers "active" based on
-// the EFFECTIVE location. While the Settings modal is open over /pr/o/r/1, this
-// must keep showing pr:o/r/1 (proving active never flips → no #180 refetch).
-function ActiveProbe() {
-  const eff = useEffectiveLocation();
-  const m = eff.pathname.match(/^\/pr\/([^/]+)\/([^/]+)\/(\d+)/);
-  return <div data-testid="active">{m ? `${m[1]}/${m[2]}/${m[3]}` : 'none'}</div>;
-}
+// Stub PrDetailView so we can read the `active` prop PrTabHost passes it.
+vi.mock('../PrDetail/PrDetailView', () => ({
+  PrDetailView: ({ prRef, active }: { prRef: { owner: string; repo: string; number: number }; active: boolean }) => (
+    <div data-testid={`pr-${prRef.owner}/${prRef.repo}/${prRef.number}`} data-active={String(active)} />
+  ),
+}));
+// Stub the AskAi drawer context with an open drawer + a close spy.
+const drawerClose = vi.fn();
+vi.mock('../../contexts/AskAiDrawerContext', () => ({
+  useAskAiDrawer: () => ({ isOpen: true, close: drawerClose }),
+  AskAiDrawerProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 
-describe('keep-alive under modal routing', () => {
-  it('keeps the PR active across open → pane-to-pane nav → close', async () => {
-    function Harness() {
-      const loc = useLocation();
-      return (
-        <>
-          <ActiveProbe />
-          <a href="x" onClick={(e) => { e.preventDefault(); }}>noop</a>
-          <Routes location={(loc.state as any)?.backgroundLocation ?? loc}>
-            <Route path="/pr/:o/:r/:n" element={<div>pr-bg</div>} />
-            <Route path="/" element={<div>inbox-bg</div>} />
-          </Routes>
-        </>
-      );
-    }
+import { PrTabHost } from '../PrDetail/PrTabHost';
+import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
+import { DrawerEffects } from '../AskAiDrawer/DrawerEffects';
+
+// Settings modal open over a PR: live URL is /settings/*, background is the PR.
+const MODAL_OVER_PR = [
+  { pathname: '/settings/appearance', state: { backgroundLocation: { pathname: '/pr/o/r/1' } } },
+];
+
+describe('keep-alive while the Settings modal is open over a PR', () => {
+  it('PrTabHost keeps the PR view mounted AND active (no deactivate → no #180 refetch)', () => {
+    // RED before migration: PrTabHost reads the LIVE pathname (/settings/*),
+    // parsePrRoute → null, no PR is rendered. GREEN after migration: it resolves
+    // via useEffectiveLocation → the PR ref is active.
     render(
-      <MemoryRouter initialEntries={[{ pathname: '/settings/appearance', state: { backgroundLocation: { pathname: '/pr/o/r/1' } } }]}>
-        <Harness />
+      <MemoryRouter initialEntries={MODAL_OVER_PR}>
+        <OpenTabsProvider>
+          <PrTabHost />
+        </OpenTabsProvider>
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('active').textContent).toBe('o/r/1');
+    expect(screen.getByTestId('pr-o/r/1')).toHaveAttribute('data-active', 'true');
+  });
+
+  it('DrawerEffects does NOT force-close an open Ask-AI drawer', () => {
+    // RED before migration: live /settings/* → parsePrRefFromPathname null →
+    // effect calls close(). GREEN after: effective /pr/o/r/1 → drawer stays open.
+    drawerClose.mockClear();
+    render(
+      <MemoryRouter initialEntries={MODAL_OVER_PR}>
+        <DrawerEffects />
+      </MemoryRouter>,
+    );
+    expect(drawerClose).not.toHaveBeenCalled();
   });
 });
 ```
 
-(Plus targeted assertions per consumer added in their own existing test files; the integration test above guards the shared resolver contract.)
+Additionally, add one assertion each to the existing consumer test files (these already have OpenTabsProvider/SSE harnesses to seed a tab):
+- `PrTabStrip` test: with an open tab for `o/r/1` and the router at `MODAL_OVER_PR`, assert the tab still renders its active treatment (`aria-selected="true"` / `tabActive` class). RED before migration (live `/settings/*` → `isActiveTab` false), GREEN after.
+- `useTabUnreadSignal` test: at `MODAL_OVER_PR`, dispatch a `pr-updated` for `o/r/1` and assert `markUnread` is **not** called (the backgrounded PR is "seen"). RED before migration, GREEN after.
 
-- [ ] **Step 2: Run to verify it passes already (resolver exists)**
+- [ ] **Step 2: Run to verify it FAILS (consumers still read the live location)**
 
 Run: `cd frontend && npx vitest run src/components/Settings/keepAlive.test.tsx`
-Expected: PASS — this pins the contract the consumer edits must honor.
+Expected: FAIL — `pr-o/r/1` not found (PrTabHost) and `drawerClose` called (DrawerEffects), because the consumers have not been migrated yet. (This red proves the migration is what makes it green.)
 
 - [ ] **Step 3: Migrate `PrTabHost.tsx`**
 
@@ -1900,7 +1987,13 @@ Expected: FAIL — the Settings affordance is currently a tab `Link to="/"`-sibl
 Replace the Settings `<Link>` inside the `<nav className={styles.tabs}>` with a gear icon button moved to the utility area (after the `spacer`, before `WindowControls`). Keep the Inbox tab. Use a `useLocation`-driven active flag (live pathname is correct for the gear). Concretely:
 
 ```tsx
-// inside Header(), keep: const { pathname } = useLocation();
+// inside Header(): keep the FULL location object (needed as backgroundLocation),
+// and keep the existing useSearchParams-derived isReplaceMode untouched:
+const location = useLocation();
+const { pathname } = location;
+const [searchParams] = useSearchParams();        // KEEP — do not remove
+const isReplaceMode = searchParams.has('replace'); // KEEP
+
 const settingsActive =
   pathname === '/settings' || pathname.startsWith('/settings/') || (pathname === '/setup' && isReplaceMode);
 
@@ -1914,7 +2007,7 @@ const settingsActive =
 {isAuthed && (
   <Link
     to="/settings/appearance"
-    state={{ backgroundLocation: { pathname, search } }}
+    state={{ backgroundLocation: location }}
     className={settingsActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
     aria-label="Settings"
     aria-current={settingsActive ? 'page' : undefined}
@@ -1923,7 +2016,7 @@ const settingsActive =
   </Link>
 )}
 ```
-Add `useLocation`'s `search` via `const { pathname, search } = useLocation();`. Import the gear: reuse `GearIcon` from `../PrDetail/FilesTab/diffIcons` (already exists), or add a local 16×16 inline SVG following that file's conventions. Remove the now-unused `settingsActive`-on-tab styling reference if dead.
+Pass the **full `location`** object as `backgroundLocation` (spec §3.4 — a full `Location`, not a `{pathname,search}` partial, so it satisfies the `Location` type the close handler and `useEffectiveLocation` consume). Import the gear: reuse `GearIcon` from `../PrDetail/FilesTab/diffIcons` (already exists). Remove the now-unused Settings-tab `classFor`/`settingsActive`-on-tab styling reference if dead.
 
 Append to `Header.module.css`:
 ```css
@@ -1990,19 +2083,32 @@ git commit -m "test(#134): migrate e2e specs to the Settings modal + routed pane
 // frontend/e2e/settings-modal-visual.spec.ts
 import { test, expect } from '@playwright/test';
 
-const THEMES = ['light', 'dark'] as const;
+const THEMES = [
+  { theme: 'light', radio: 'Light' },
+  { theme: 'dark', radio: 'Dark' },
+] as const;
 
-for (const theme of THEMES) {
+// Drive theme the way a user does — click the Appearance segmented control —
+// so the real applyThemeToDocument path runs (theme + accent vars together) and
+// AppearanceSync cannot clobber a hand-poked data-theme. The preference persists,
+// so a later navigation to another pane keeps the chosen theme.
+async function setTheme(page, radioName: string) {
+  await page.goto('/settings/appearance');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  await page.getByRole('radio', { name: radioName }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', radioName.toLowerCase());
+}
+
+for (const { theme, radio } of THEMES) {
   test(`settings modal — appearance (${theme})`, async ({ page }) => {
-    await page.goto('/settings/appearance');
-    await page.evaluate((t) => (document.documentElement.dataset.theme = t), theme);
-    await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+    await setTheme(page, radio);
     await expect(page).toHaveScreenshot(`settings-appearance-${theme}.png`);
   });
 
   test(`settings modal — github connection (${theme})`, async ({ page }) => {
-    await page.goto('/settings/github-connection');
-    await page.evaluate((t) => (document.documentElement.dataset.theme = t), theme);
+    await setTheme(page, radio);
+    await page.getByRole('link', { name: 'GitHub Connection' }).click();
+    await expect(page.getByRole('heading', { name: 'GitHub Connection' })).toBeVisible();
     await expect(page).toHaveScreenshot(`settings-ghc-${theme}.png`);
   });
 }
@@ -2014,6 +2120,8 @@ test('settings modal — narrow viewport collapses the nav', async ({ page }) =>
   await expect(page).toHaveScreenshot('settings-narrow.png');
 });
 ```
+
+(If the existing parity-baseline / theme e2e specs already centralize a theme-set helper, reuse that instead of the local `setTheme` above to stay consistent.)
 
 - [ ] **Step 2: Generate baselines**
 
@@ -2041,7 +2149,7 @@ git commit -m "test(#134): add B1 visual gate screenshots for the Settings modal
 ```bash
 git rm frontend/src/components/Settings/AppearanceSection.tsx frontend/src/components/Settings/InboxSectionsSection.tsx frontend/src/components/Settings/ConnectionSection.tsx frontend/src/components/Settings/AuthSection.tsx
 ```
-Grep first to confirm no other importers remain: `cd frontend && grep -rn "AppearanceSection\|InboxSectionsSection\|ConnectionSection\|AuthSection" src` → expect only the deleted files. Remove any stale `SettingsSections.module.css` if unreferenced.
+Grep first to confirm no other importers remain: `cd frontend && grep -rn "AppearanceSection\|InboxSectionsSection\|ConnectionSection\|AuthSection\|SettingsPage" src` → expect only the deleted files. (Run this **after** Task 15's e2e migration — a not-yet-migrated spec could still reference the old surface.) Remove any stale `SettingsSections.module.css` if unreferenced.
 
 - [ ] **Step 2: Full local pre-push checklist** (`.ai/docs/development-process.md`)
 
