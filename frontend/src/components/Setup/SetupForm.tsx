@@ -1,8 +1,10 @@
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { FirstRunDisclosure } from './FirstRunDisclosure';
 import { MaskedInput } from './MaskedInput';
+import { SegmentedControl } from '../controls/SegmentedControl';
 import { GitHubMark } from '../icons/GitHubMark';
+import { DangerGlyph } from '../ErrorModal/DangerGlyph';
 import styles from './SetupForm.module.css';
 
 interface Props {
@@ -28,14 +30,38 @@ interface Props {
   // (top) and the Cancel link (bottom) simultaneously. The invariant lives in
   // SetupPage, not here.
   showBackToWelcome?: boolean;
+  // #213 — fired when the user switches token type so the parent can drop a
+  // now-irrelevant connect error (a classic-scopes message must not persist
+  // against the fine-grained panel, and vice versa). The parent owns `error`.
+  onErrorClear?: () => void;
 }
 
-const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
+type TokenType = 'classic' | 'fine-grained';
+
+const FG_PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
   { name: 'Pull requests', level: 'Read and write' },
   { name: 'Contents', level: 'Read' },
-  { name: 'Checks', level: 'Read' },
   { name: 'Commit statuses', level: 'Read' },
 ];
+
+const ExternalIcon = () => (
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <path d="M9.5 2.75A.75.75 0 0110.25 2h3.5a.25.25 0 01.25.25v3.5a.75.75 0 01-1.5 0V4.56L8.78 8.28a.75.75 0 01-1.06-1.06l3.72-3.72H10.25a.75.75 0 01-.75-.75z" />
+    <path d="M3.75 2A1.75 1.75 0 002 3.75v8.5C2 13.216 2.784 14 3.75 14h8.5A1.75 1.75 0 0014 12.25v-3.5a.75.75 0 00-1.5 0v3.5a.25.25 0 01-.25.25h-8.5a.25.25 0 01-.25-.25v-8.5a.25.25 0 01.25-.25h3.5a.75.75 0 000-1.5z" />
+  </svg>
+);
+const OrgIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <path d="M1.75 16A1.75 1.75 0 010 14.25V1.75C0 .784.784 0 1.75 0h8.5C11.216 0 12 .784 12 1.75v12.5c0 .085-.006.168-.018.25h2.268a.25.25 0 00.25-.25V8.285a.25.25 0 00-.111-.208l-1.055-.703a.75.75 0 11.832-1.248l1.055.703c.487.325.779.871.779 1.456v5.965A1.75 1.75 0 0114.25 16h-3.5a.766.766 0 01-.197-.026c-.099.017-.2.026-.303.026h-3a.75.75 0 01-.75-.75V14h-1v1.25a.75.75 0 01-.75.75zM1.75 1.5a.25.25 0 00-.25.25v12.5c0 .138.112.25.25.25H4v-1.25a.75.75 0 01.75-.75h2.5a.75.75 0 01.75.75v1.25h2.25a.25.25 0 00.25-.25V1.75a.25.25 0 00-.25-.25zM3.75 6h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zM3 3.75A.75.75 0 013.75 3h.5a.75.75 0 010 1.5h-.5A.75.75 0 013 3.75zm4 3A.75.75 0 017.75 6h.5a.75.75 0 010 1.5h-.5A.75.75 0 017 6.75zM7.75 3h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5zM3 9.75A.75.75 0 013.75 9h.5a.75.75 0 010 1.5h-.5A.75.75 0 013 9.75zM7.75 9h.5a.75.75 0 010 1.5h-.5a.75.75 0 010-1.5z" />
+  </svg>
+);
+const WarnIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+    <path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0114.082 15H1.918a1.75 1.75 0 01-1.543-2.575zM8 5a.75.75 0 00-.75.75v2.5a.75.75 0 001.5 0v-2.5A.75.75 0 008 5zm1 6a1 1 0 10-2 0 1 1 0 002 0z" />
+  </svg>
+);
+// Error-pill icon reuses the shared DangerGlyph (ErrorModal/DangerGlyph, #182) —
+// same 14px circled-exclamation; no local duplicate.
 
 export function SetupForm({
   host,
@@ -44,67 +70,119 @@ export function SetupForm({
   busy,
   isReplaceMode,
   showBackToWelcome,
+  onErrorClear,
 }: Props) {
   const [pat, setPat] = useState('');
-  const patPageUrl = `${host.replace(/\/$/, '')}/settings/personal-access-tokens/new`;
+  const [tokenType, setTokenType] = useState<TokenType>('classic');
+  const errorId = useId();
+  const base = host.replace(/\/+$/, '');
+  const classicUrl = `${base}/settings/tokens/new`;
+  const fineGrainedUrl = `${base}/settings/personal-access-tokens/new`;
+  const placeholder = tokenType === 'classic' ? 'ghp_…' : 'github_pat_…';
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (pat.trim().length === 0) return;
-    void onSubmit(pat);
+    const trimmed = pat.trim();
+    // Submit the trimmed token: pasting from a terminal/password manager often
+    // appends a trailing newline/space, which the backend would otherwise reject. (#213)
+    if (trimmed.length === 0) return;
+    void onSubmit(trimmed);
   };
 
   return (
     <form onSubmit={handleSubmit} className={styles.form}>
       {showBackToWelcome && (
         <Link to="/welcome" className={styles.back}>
-          {/* Decorative arrow: aria-hidden so the link's accessible name is just
-              "Back", not "left arrow Back" (matches the WelcomePage emoji /
-              chevron aria-hidden pattern). */}
           <span aria-hidden="true">← </span>Back
         </Link>
       )}
-      {/* <div> not <header> — the App-level <Header /> already exposes a
-          banner landmark, and <header> inside <form> is NOT excluded from
-          the banner-role mapping per the HTML AAM (the exclusion list is
-          article/aside/main/nav/section). Using <div> preserves the visual
-          grouping without duplicating the banner role. */}
       <div className={styles.brand}>
         <h1 className={styles.title}>
-          {/* Decorative GitHub mark — the heading text already names GitHub, so
-              the icon is aria-hidden and the h1's accessible name stays
-              "Connect to GitHub". */}
           <GitHubMark size={22} />
           Connect to GitHub
         </h1>
-        <p className={styles.sub}>PRism is local-first. Your token never leaves this machine.</p>
       </div>
+
       <section className={styles.section}>
         <h2 className={styles.sectionHead}>
           <span className={styles.num}>1</span>
-          <a href={patPageUrl} target="_blank" rel="noreferrer" className={styles.link}>
-            Generate a token
-          </a>
+          Choose a token type
         </h2>
-        <dl className={styles.permissions}>
-          {PERMISSIONS.map((p) => (
-            <div key={p.name} className={styles.permissionRow}>
-              <dt>{p.name}</dt>
-              <dd>{p.level}</dd>
+        <SegmentedControl<TokenType>
+          variant="nav"
+          label="Choose a token type"
+          options={[
+            { value: 'classic', label: 'Classic' },
+            { value: 'fine-grained', label: 'Fine-grained' },
+          ]}
+          value={tokenType}
+          onChange={(t) => {
+            // SegmentedControl fires onChange on every click, including the already-
+            // selected option — guard so clicking the current tab doesn't clear a
+            // still-relevant error without an actual switch. (#213)
+            if (t === tokenType) return;
+            setTokenType(t);
+            // Clear any stale connect error so a classic-scopes message can't persist
+            // against the fine-grained panel (and vice versa). The parent owns `error`;
+            // this asks it to drop it.
+            onErrorClear?.();
+          }}
+        />
+
+        {tokenType === 'classic' ? (
+          <div className={styles.panel}>
+            <a href={classicUrl} target="_blank" rel="noreferrer" className={styles.link}>
+              Generate a classic token <ExternalIcon />
+            </a>
+            <p className={styles.lbl}>Required scopes</p>
+            <div className={styles.scopes}>
+              <code className={styles.chip}>repo</code>
+              <code className={styles.chip}>read:org</code>
             </div>
-          ))}
-        </dl>
-        <p className={styles.permissionsNote}>
-          Metadata: Read is auto-included by GitHub. For Repository access, choose
-          <em> All repositories</em> or <em>Select repositories</em>.
-        </p>
-        <p className={styles.footnote}>
-          Already have a classic PAT? It needs the <code>repo</code> and <code>read:org</code>{' '}
-          scopes.
-        </p>
+            <div className={styles.callout}>
+              <span className={styles.calloutIco}>
+                <OrgIcon />
+              </span>
+              <span>
+                Using <strong>SAML SSO</strong>? After creating the token, click{' '}
+                <strong>Configure SSO → Authorize</strong> for your organization.
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.panel}>
+            <a href={fineGrainedUrl} target="_blank" rel="noreferrer" className={styles.link}>
+              Generate a fine-grained token <ExternalIcon />
+            </a>
+            <p className={styles.lbl}>Fine-grained permissions</p>
+            <dl className={styles.permissions}>
+              {FG_PERMISSIONS.map((p) => (
+                <div key={p.name} className={styles.permissionRow}>
+                  <dt>{p.name}</dt>
+                  <dd>{p.level}</dd>
+                </div>
+              ))}
+            </dl>
+            <p className={styles.permissionsNote}>
+              Metadata: Read is auto-included by GitHub. For Repository access, choose
+              <em> All repositories</em> or <em>Select repositories</em>.
+            </p>
+            <div className={styles.warn}>
+              <span className={styles.warnIco}>
+                <WarnIcon />
+              </span>
+              <span>
+                Can&rsquo;t read <strong>GitHub Actions</strong> check results — Actions CI status
+                won&rsquo;t show in PRism. Other CI providers still work.
+              </span>
+            </div>
+          </div>
+        )}
       </section>
+
       <FirstRunDisclosure />
-      <section className={styles.section}>
+
+      <section className={`${styles.section} ${styles.sectionLast}`}>
         <h2 className={styles.sectionHead}>
           <span className={styles.num}>2</span>
           Paste it below
@@ -113,15 +191,20 @@ export function SetupForm({
           id="pat"
           value={pat}
           onChange={setPat}
-          placeholder="ghp_… or github_pat_…"
+          placeholder={placeholder}
           ariaLabel="Personal access token"
+          hasError={!!error}
+          errorId={errorId}
         />
       </section>
+
       {error && (
-        <div role="alert" className={styles.error}>
+        <div role="alert" id={errorId} className={styles.error}>
+          <DangerGlyph />
           {error}
         </div>
       )}
+
       <button
         type="submit"
         className={`${styles.continue} btn btn-primary btn-lg`}

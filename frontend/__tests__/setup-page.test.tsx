@@ -66,20 +66,32 @@ describe('SetupPage', () => {
     expect(await screen.findByText('InboxMock')).toBeInTheDocument();
   });
 
-  it('renders the error pill on validation failure', async () => {
+  it('renders the error pill and marks the field invalid on validation failure', async () => {
     server.use(
       http.post('/api/auth/connect', () =>
-        HttpResponse.json({
-          ok: false,
-          error: 'invalidtoken',
-          detail: 'GitHub rejected this token.',
-        }),
+        HttpResponse.json({ ok: false, error: 'insufficientscopes' }),
       ),
     );
     renderRouted();
     await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_bad');
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
-    expect(await screen.findByText(/rejected/i)).toBeInTheDocument();
+    expect(await screen.findByText(/missing required scopes/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/personal access token/i)).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('clears the error pill when the user switches token type', async () => {
+    server.use(
+      http.post('/api/auth/connect', () =>
+        HttpResponse.json({ ok: false, error: 'insufficientscopes' }),
+      ),
+    );
+    renderRouted();
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_bad');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(await screen.findByText(/missing required scopes/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    expect(screen.queryByText(/missing required scopes/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/personal access token/i)).not.toHaveAttribute('aria-invalid');
   });
 
   it('builds the PAT link from the configured GHES host', async () => {
@@ -93,10 +105,13 @@ describe('SetupPage', () => {
       ),
     );
     renderRouted();
-    const link = await screen.findByRole('link', { name: /generate a token/i });
-    expect(link.getAttribute('href')).toBe(
-      'https://github.acme.com/settings/personal-access-tokens/new',
-    );
+    expect(
+      (await screen.findByRole('link', { name: /generate a classic token/i })).getAttribute('href'),
+    ).toBe('https://github.acme.com/settings/tokens/new');
+    await userEvent.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    expect(
+      screen.getByRole('link', { name: /generate a fine-grained token/i }).getAttribute('href'),
+    ).toBe('https://github.acme.com/settings/personal-access-tokens/new');
   });
 
   it('renders a warning modal when connect returns no-repos-selected', async () => {
@@ -335,7 +350,26 @@ describe('SetupPage', () => {
       await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_x');
       await userEvent.click(screen.getByRole('button', { name: /continue/i }));
       const toast = await screen.findByRole('status');
-      expect(toast).toHaveTextContent(/Network error reaching GitHub/i);
+      expect(toast).toHaveTextContent(/Couldn't reach GitHub/i);
+    });
+
+    it('replace flow: an unknown error code shows the static fallback, never the raw code', async () => {
+      server.use(
+        http.post(
+          '/api/auth/replace',
+          () =>
+            new HttpResponse(JSON.stringify({ ok: false, error: 'weird-new-code-xyz' }), {
+              status: 400,
+              headers: { 'Content-Type': 'application/json' },
+            }),
+        ),
+      );
+      renderRouted('/setup?replace=1');
+      await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_new');
+      await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+      const toast = await screen.findByRole('status');
+      expect(toast).toHaveTextContent('Validation failed. Check your token and try again.');
+      expect(toast).not.toHaveTextContent(/weird-new-code-xyz/);
     });
 
     it('does NOT call /api/auth/connect when in replace mode (regression: cross-flow leak)', async () => {
