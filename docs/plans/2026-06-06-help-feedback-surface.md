@@ -781,9 +781,9 @@ public class GitHubFeedbackSubmitterTests
         new("Bug", "It broke", "Steps: do X", "/pr/:owner/:repo/:number", "desktop", "0.2.0",
             DateTimeOffset.Parse("2026-06-06T12:00:00Z"));
 
-    private static GitHubFeedbackSubmitter NewSubmitter(HttpMessageHandler handler) =>
+    private static GitHubFeedbackSubmitter NewSubmitter(HttpMessageHandler handler, string host = "https://github.com") =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
-            () => Task.FromResult<string?>("ghp_test"));
+            () => Task.FromResult<string?>("ghp_test"), host);
 
     [Fact]
     public async Task Posts_to_api_github_com_issues_with_title_body_and_context()
@@ -837,6 +837,16 @@ public class GitHubFeedbackSubmitterTests
         var result = await sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
         result.HtmlUrl.Should().BeEmpty(); // frontend will hide the Open-in-GitHub link
     }
+
+    [Fact]
+    public async Task Non_github_com_host_short_circuits_without_calling_github()
+    {
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.Created, "{}");
+        var sut = NewSubmitter(handler, host: "https://ghe.corp.example");
+        var result = await sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
+        result.Outcome.Should().Be(FeedbackOutcome.CannotCreate);
+        handler.RequestCount.Should().Be(0); // PAT never sent to api.github.com
+    }
 }
 ```
 
@@ -867,16 +877,31 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
+    private readonly string _configuredHost;
 
-    public GitHubFeedbackSubmitter(IHttpClientFactory httpFactory, Func<Task<string?>> readToken)
+    public GitHubFeedbackSubmitter(IHttpClientFactory httpFactory, Func<Task<string?>> readToken, string configuredHost)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
+        _configuredHost = configuredHost;
     }
+
+    // The configured GitHub host normalizes to github.com (case-insensitive,
+    // trailing slash ignored) — mirrors HostUrlResolver's own github.com test.
+    private static bool IsGitHubCom(string host) =>
+        Uri.TryCreate(host, UriKind.Absolute, out var u)
+        && u.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
 
     public async Task<FeedbackCreateResult> CreateFeedbackIssueAsync(FeedbackContent content, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(content);
+
+        // Defense-in-depth (not just the frontend gate): never read or egress the
+        // user's PAT to public api.github.com when they're on a GHES host. The
+        // feedback repo lives on github.com only, so a non-github.com session
+        // short-circuits to CannotCreate → the frontend opens the prefilled link.
+        if (!IsGitHubCom(_configuredHost))
+            return FeedbackCreateResult.CannotCreate();
 
         var title = $"[{content.Category}] {content.Summary}";
         var body = BuildBody(content);
@@ -949,11 +974,16 @@ In `PRism.GitHub/ServiceCollectionExtensions.cs`, after the existing `services.A
 
         services.AddSingleton<PRism.Core.Feedback.IFeedbackSubmitter>(sp =>
         {
+            var config = sp.GetRequiredService<IConfigStore>();
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
+            // Capture the configured host the same way GitHubReviewService does
+            // (early-bound). The submitter short-circuits to CannotCreate for any
+            // non-github.com host so a GHES PAT is never sent to api.github.com.
             return new PRism.GitHub.Feedback.GitHubFeedbackSubmitter(
                 factory,
-                () => tokens.ReadAsync(CancellationToken.None));
+                () => tokens.ReadAsync(CancellationToken.None),
+                config.Current.Github.Host);
         });
 ```
 
@@ -1212,7 +1242,6 @@ internal static class FeedbackEndpoints
     private static async Task<IResult> SubmitAsync(
         FeedbackRequestDto? request,
         IFeedbackSubmitter submitter,
-        TimeProvider time,
         CancellationToken ct)
     {
         if (request is null
@@ -1231,16 +1260,18 @@ internal static class FeedbackEndpoints
             return Results.BadRequest(new FeedbackErrorDto("field-too-long"));
 
         // Version + timestamp are stamped server-side (not trusted from the client).
-        // RoutePattern/Platform pass through as the allowlisted machine context;
-        // no arbitrary client object is forwarded into the issue body.
+        // RoutePattern/Platform pass through as the allowlisted machine context, with
+        // line endings stripped so a client can't inject extra context lines (e.g.
+        // "/inbox\nversion: 9.9.9") into the fenced block. No arbitrary client object
+        // is forwarded into the issue body.
         var content = new FeedbackContent(
             request.Category!,
             request.Summary!.Trim(),
             request.Details!.Trim(),
-            request.RoutePattern ?? "unknown",
-            request.Platform ?? "unknown",
+            (request.RoutePattern ?? "unknown").ReplaceLineEndings(" "),
+            (request.Platform ?? "unknown").ReplaceLineEndings(" "),
             AppVersion.Current,
-            time.GetUtcNow());
+            DateTimeOffset.UtcNow);
 
         var result = await submitter.CreateFeedbackIssueAsync(content, ct).ConfigureAwait(false);
         return result.Outcome == FeedbackOutcome.Created
@@ -1250,7 +1281,7 @@ internal static class FeedbackEndpoints
 }
 ```
 
-> `TimeProvider` is registered by default in .NET 10 hosting (`TimeProvider.System`); if the app doesn't already register it, add `builder.Services.AddSingleton(TimeProvider.System);` in `Program.cs`. A thrown `HttpRequestException` from the submitter is **not** caught here — `Program.cs`'s `app.UseExceptionHandler()` (verified at line ~202) turns it into a 500, matching the spec's "transport/5xx → 500 → frontend retry" contract (asserted by `Submitter_throw_surfaces_as_500`).
+> Timestamp uses `DateTimeOffset.UtcNow` inline (no `TimeProvider` injection — it is **not** registered in this app's DI, and no test asserts an exact time; the endpoint test only checks `SubmittedAt > MinValue`, which `UtcNow` satisfies). A thrown `HttpRequestException` from the submitter is **not** caught here — `Program.cs`'s `app.UseExceptionHandler()` (verified at line ~202) turns it into a 500, matching the spec's "transport/5xx → 500 → frontend retry" contract (asserted by `Submitter_throw_surfaces_as_500`).
 
 - [ ] **Step 5: Register in Program.cs**
 
@@ -1361,7 +1392,10 @@ export function buildFeedbackIssueUrl({
       const marker = '\n\n…(truncated — finish your report in the issue)';
       const overhead = makeUrl(title, marker).toString().length;
       const budget = Math.max(0, Math.floor((MAX_URL - overhead) / 3));
-      u = makeUrl(title, details.slice(0, budget) + marker);
+      // Slice by codepoint (spread), not UTF-16 code unit, so a multibyte char
+      // (emoji) isn't split into a lone surrogate → replacement-char mojibake.
+      const head = [...details].slice(0, budget).join('');
+      u = makeUrl(title, head + marker);
     }
   }
 
@@ -1730,6 +1764,7 @@ export function FeedbackDialog({ open, onClose, authed, host, routePattern }: Fe
   const liveRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const firstCategoryRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   // Reset to a blank idle form on each open (the component stays mounted while the
   // parent toggles `open`, so without this a second open shows stale success text).
@@ -1749,19 +1784,29 @@ export function FeedbackDialog({ open, onClose, authed, host, routePattern }: Fe
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Move focus to the post-submit primary action / alert so SR users hear the change.
+  // Move focus to the post-idle branch's primary action so keyboard + SR users
+  // land on the actionable control (Retry on error, Close/Open-on-GitHub otherwise).
+  // Scoped to THIS dialog's root (not document) so a second mounted dialog can't
+  // win the match. role="status" is never focused — it announces via its live role.
   useEffect(() => {
-    if (state.kind === 'success' || state.kind === 'offer-link' || state.kind === 'opened') {
-      // The branch's primary button carries data-modal-role="primary".
-      document
-        .querySelector<HTMLElement>('[data-feedback-active] [data-modal-role="primary"], [data-feedback-active] [data-feedback-close]')
-        ?.focus();
-    } else if (state.kind === 'error') {
-      liveRef.current?.focus();
-    }
+    if (state.kind === 'idle' || state.kind === 'in-flight') return;
+    rootRef.current
+      ?.querySelector<HTMLElement>('[data-modal-role="primary"], [data-feedback-close]')
+      ?.focus();
   }, [state.kind]);
 
-  const linkOnly = !authed || host !== 'https://github.com';
+  // Normalize the host before comparing (the backend treats github.com
+  // case-insensitively and ignores a trailing slash via Uri parsing). Exact-string
+  // matching would wrongly classify 'https://github.com/' or 'https://GitHub.com'
+  // as GHES and force a legitimate user link-only.
+  const isGitHubCom = (() => {
+    try {
+      return new URL(host).hostname.toLowerCase() === 'github.com';
+    } catch {
+      return false;
+    }
+  })();
+  const linkOnly = !authed || !isGitHubCom;
   const canSubmit = Boolean(category && summary.trim() && details.trim()) && state.kind === 'idle';
   const submitLabel = linkOnly ? 'Open on GitHub' : 'Send feedback';
   const dirty = Boolean(summary || details);
@@ -1784,6 +1829,9 @@ export function FeedbackDialog({ open, onClose, authed, host, routePattern }: Fe
 
   async function onSubmit() {
     if (linkOnly) return goToLink();
+    // Announce start: the submit button is about to be disabled, which strands
+    // focus on <body>; the polite live region tells SR users what's happening.
+    if (liveRef.current) liveRef.current.textContent = 'Sending your feedback…';
     setState({ kind: 'in-flight' });
     try {
       const req: FeedbackRequest = {
@@ -1821,8 +1869,8 @@ export function FeedbackDialog({ open, onClose, authed, host, routePattern }: Fe
   // disableEscDismiss while in-flight, and while dirty (we handle Esc ourselves above).
   return (
     <Modal open={open} title={title} onClose={onClose} disableEscDismiss={state.kind === 'in-flight' || dirty}>
-      <div data-feedback-active onKeyDown={onKeyDown}>
-        <div ref={liveRef} className={styles.srOnly} role="status" aria-live="polite" tabIndex={-1} />
+      <div ref={rootRef} data-feedback-active onKeyDown={onKeyDown}>
+        <div ref={liveRef} className={styles.srOnly} role="status" aria-live="polite" />
         {state.kind === 'success' ? (
           <div>
             <p>
@@ -2152,7 +2200,7 @@ Fetch + merge `origin/main`, then `pr-autopilot`. **B2-gated** (GitHub write sur
 
 **Spec coverage** (each spec section → task):
 - §3 `/help` route + entry points → Tasks 3, 4, 5.
-- §4.1 host resolution / api.github.com client / **host gate** → Task 10 (named `github.com` client; 401/403/404/422→CannotCreate) + Task 15 (`linkOnly = !authed || host !== 'https://github.com'`, with a GHES test asserting the PAT is never sent). **Now fully coded, not deferred.**
+- §4.1 host resolution / api.github.com client / **host gate (two-tier)** → Task 10 (named `github.com` client; 401/403/404/422→CannotCreate; **backend short-circuits to CannotCreate for any non-github.com host so the PAT is never read/egressed — defense-in-depth, not frontend-only**) + Task 15 (`linkOnly = !authed || !isGitHubCom`, host **normalized** via `new URL().hostname`, with a GHES test asserting the API isn't called). Backend + frontend agree on "is github.com."
 - §4.2 issue construction (title prefix, allowlisted body, version + timestamp) → Tasks 9, 10, 12.
 - §4.3 user-PAT rationale → design rationale (no code).
 - §4.4 prefilled-link (https-validated, two-stage Context-first truncation, openExternal divergence) → Tasks 13, 15.
@@ -2169,4 +2217,8 @@ Fetch + merge `origin/main`, then `pr-autopilot`. **B2-gated** (GitHub write sur
 
 **Type consistency:** `FeedbackContent` (now 7 fields incl. Version + SubmittedAt) consistent across Tasks 9/10/12; `IFeedbackSubmitter.CreateFeedbackIssueAsync` identical in interface (9), impl (10), endpoint (12), and fakes; `FeedbackOutcome` Created/CannotCreate consistent; frontend `FeedbackResult` (`'created'`/`'cannot-create'`) consistent across Tasks 14/15; `FeedbackDialogProps` (`open/onClose/authed/host/routePattern`) consistent between Task 15 def and Task 16 call sites; `buildFeedbackIssueUrl({title, details, context})` consistent between Tasks 13 and 15; `FEEDBACK_REPO_SLUG`/`FeedbackRepo.Slug` both `"prpande/PRism-feedback"`.
 
-**Open verification items for the executor** (mechanical, flagged not hidden): the real ⌘K binding (Task 2 Step 0); `ApiError` field name `status` vs `statusCode` (Task 14); `Modal`/`SegmentedControl` exact prop + focus-trap behavior (Task 15 Step 4 note); whether `TimeProvider` is DI-registered (Task 12 note).
+**Round-2 ce-doc-review fixes applied:** dropped `TimeProvider` (not DI-registered → would 500; `DateTimeOffset.UtcNow` inline, no test needs a seam); **added the backend host guard** (the GHES-PAT-egress property is now enforced on both tiers, not frontend-only); normalized the frontend host check; error-state focus now lands on Retry (not an empty live region); in-flight start is announced via the live region; the focus-on-transition query is scoped to the dialog root ref (not `document`, so concurrent mounts can't cross-focus); codepoint-safe truncation; line endings stripped from `routePattern`/`platform` server-side.
+
+**Deferred as minor (verified working / cosmetic):** the `firstCategoryRef` → `querySelector('[role="radio"]')` initial-focus mechanism (feasibility confirmed SegmentedControl renders `role="radio"` and child-effect-before-parent ordering makes the dialog win focus over Modal — the test pins it); the distinct `opened` state vs an `offer-link {hasOpened}` flag (cosmetic; left as a named state for readability); the empty-`htmlUrl` success branch lacks a dedicated test (the Open-in-GitHub link is simply hidden — benign).
+
+**Open verification items for the executor** (mechanical, flagged not hidden): the real ⌘K binding (Task 2 Step 0); `ApiError` field name `status` vs `statusCode` (Task 14); `Modal`/`SegmentedControl` exact prop names (Task 15 Step 4 note).
