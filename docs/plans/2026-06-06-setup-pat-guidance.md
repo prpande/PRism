@@ -71,6 +71,9 @@ In `FetchChecksAsync`, replace the line `resp.EnsureSuccessStatusCode();` (after
             // non-2xx). Degrade to "no CI signal" rather than throwing — a throw
             // propagates through DetectAsync into InboxRefreshOrchestrator.RefreshAsync,
             // which has no catch, aborting the WHOLE inbox refresh. (#213)
+            // A 401 (revoked token) does not reach here: GitHubSectionQueryRunner and
+            // GitHubPrEnricher run earlier in RefreshAsync and throw on 401, so a dead
+            // token already aborts the tick upstream — this guard only masks CI signal.
             if (!resp.IsSuccessStatusCode) return CiStatus.None;
 ```
 
@@ -125,6 +128,13 @@ it('renders the nav variant as an accessible radiogroup and toggles', async () =
   expect(group).toBeInTheDocument();
   expect(screen.getByRole('radio', { name: 'Classic' })).toHaveAttribute('aria-checked', 'true');
   await user.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+  expect(onChange).toHaveBeenCalledWith('fine-grained');
+
+  // Arrow-key selection (spec a11y requirement): focus the selected radio and
+  // press ArrowRight — the nav variant must keep SegmentedControl's onKeyDown.
+  onChange.mockClear();
+  screen.getByRole('radio', { name: 'Classic' }).focus();
+  await user.keyboard('{ArrowRight}');
   expect(onChange).toHaveBeenCalledWith('fine-grained');
 });
 ```
@@ -201,6 +211,10 @@ Append to `SegmentedControl.module.css`:
   background: color-mix(in oklch, var(--accent) 14%, transparent);
   color: var(--text-1);
   font-weight: 500;
+}
+.segNav:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 @media (prefers-reduced-motion: reduce) {
   .segNav {
@@ -459,6 +473,8 @@ describe('SetupForm', () => {
     expect(screen.getByText('read:org')).toBeInTheDocument();
     expect(screen.getByText(/Configure SSO/i)).toBeInTheDocument();
     expect(screen.getByLabelText('Personal access token')).toHaveAttribute('placeholder', 'ghp_…');
+    // Inactive (fine-grained) panel must not be in the DOM / a11y tree.
+    expect(screen.queryByText('Pull requests')).not.toBeInTheDocument();
   });
 
   it('switching to Fine-grained shows permissions, warning, fg link, github_pat_ placeholder', async () => {
@@ -476,6 +492,9 @@ describe('SetupForm', () => {
       'placeholder',
       'github_pat_…',
     );
+    // Inactive (classic) panel must not be in the DOM / a11y tree.
+    expect(screen.queryByText('repo')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Configure SSO/i)).not.toBeInTheDocument();
   });
 
   it('never mentions "Checks" and drops the local-first tagline', () => {
@@ -508,6 +527,7 @@ import { FirstRunDisclosure } from './FirstRunDisclosure';
 import { MaskedInput } from './MaskedInput';
 import { SegmentedControl } from '../controls/SegmentedControl';
 import { GitHubMark } from '../icons/GitHubMark';
+import { DangerGlyph } from '../ErrorModal/DangerGlyph';
 import styles from './SetupForm.module.css';
 
 type TokenType = 'classic' | 'fine-grained';
@@ -534,11 +554,8 @@ const WarnIcon = () => (
     <path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0114.082 15H1.918a1.75 1.75 0 01-1.543-2.575zM8 5a.75.75 0 00-.75.75v2.5a.75.75 0 001.5 0v-2.5A.75.75 0 008 5zm1 6a1 1 0 10-2 0 1 1 0 002 0z" />
   </svg>
 );
-const ErrorIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-    <path d="M8 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM8 4a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 018 4zm0 7.5a1 1 0 100-2 1 1 0 000 2z" />
-  </svg>
-);
+// Error-pill icon reuses the shared DangerGlyph (ErrorModal/DangerGlyph, #182) —
+// same 14px circled-exclamation; no local duplicate.
 
 export function SetupForm({
   host,
@@ -661,7 +678,7 @@ export function SetupForm({
 
       {error && (
         <div role="alert" className={styles.error}>
-          <ErrorIcon />
+          <DangerGlyph />
           {error}
         </div>
       )}
@@ -696,9 +713,13 @@ export function SetupForm({
 
 - [ ] **Step 4: Update SetupForm CSS**
 
-In `SetupForm.module.css`: **remove** the `.sub` and `.footnote` (and `.footnote code`) rules. Add:
+In `SetupForm.module.css`: **remove** the `.sub` and `.footnote` (and `.footnote code`) rules. The existing `.permissions`, `.permissionRow`, and `.permissionsNote` rules are **kept** (the fine-grained panel still uses the `dl` grid). Add:
 
 ```css
+.panel {
+  /* breathing room between the SegmentedControl and the panel body */
+  margin-top: var(--s-3);
+}
 .sectionLast {
   padding-bottom: 0;
 }
@@ -765,10 +786,28 @@ Also change the existing `.section` rule's `padding: var(--s-4) 0;` to `padding:
 Run: `cd frontend && npx vitest run src/components/Setup/SetupForm.test.tsx`
 Expected: PASS (all four tests).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Fix the existing SetupPage link test broken by this change**
+
+`frontend/__tests__/setup-page.test.tsx` has a test "builds the PAT link from the configured GHES host" (~lines 85-100) that queries `findByRole('link', { name: /generate a token/i })` and expects `…/settings/personal-access-tokens/new`. The default is now Classic, so that regex no longer matches. Replace the body's final two statements:
+
+```tsx
+    renderRouted();
+    expect(
+      (await screen.findByRole('link', { name: /generate a classic token/i })).getAttribute('href'),
+    ).toBe('https://github.acme.com/settings/tokens/new');
+    await userEvent.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    expect(
+      screen.getByRole('link', { name: /generate a fine-grained token/i }).getAttribute('href'),
+    ).toBe('https://github.acme.com/settings/personal-access-tokens/new');
+```
+
+Run: `cd frontend && npx vitest run __tests__/setup-page.test.tsx`
+Expected: PASS (this test + the rest of the suite still green; the connect/replace error tests are addressed in Task 6).
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add frontend/src/components/Setup/SetupForm.tsx frontend/src/components/Setup/SetupForm.module.css frontend/src/components/Setup/SetupForm.test.tsx
+git add frontend/src/components/Setup/SetupForm.tsx frontend/src/components/Setup/SetupForm.module.css frontend/src/components/Setup/SetupForm.test.tsx frontend/__tests__/setup-page.test.tsx
 git commit -m "feat(#213): classic-primary token-type selector + panels in SetupForm"
 ```
 
@@ -778,16 +817,49 @@ git commit -m "feat(#213): classic-primary token-type selector + panels in Setup
 
 **Files:**
 - Modify: `frontend/src/pages/SetupPage.tsx`
+- Modify: `frontend/__tests__/setup-page.test.tsx`
 
-- [ ] **Step 1: Replace the local `replaceErrorMessage` with the shared import**
+- [ ] **Step 1: Update the SetupPage tests for the new copy + error wiring (write-first)**
 
-Delete the entire local `function replaceErrorMessage(...) { … }` block (lines ~21-42) and add to the imports:
+In `frontend/__tests__/setup-page.test.tsx`:
+
+(a) The replace-mode test "maps networkerror / dnserror to actionable network-failure copy" (~line 338) asserts the OLD copy. The shared helper changes it. Update the expectation:
+
+```tsx
+      expect(toast).toHaveTextContent(/Couldn’t reach GitHub/i);
+```
+
+(b) Strengthen the connect "renders the error pill on validation failure" test (~lines 69-83) to also assert the field is marked invalid, and switch the mock to `insufficientscopes` so it exercises the classic-scopes copy (the only code that fires it):
+
+```tsx
+  it('renders the error pill and marks the field invalid on validation failure', async () => {
+    server.use(
+      http.post('/api/auth/connect', () =>
+        HttpResponse.json({ ok: false, error: 'insufficientscopes' }),
+      ),
+    );
+    renderRouted();
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_bad');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(await screen.findByText(/missing required scopes/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/personal access token/i)).toHaveAttribute('aria-invalid', 'true');
+  });
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `cd frontend && npx vitest run __tests__/setup-page.test.tsx`
+Expected: the two updated tests FAIL — SetupPage still shows the old network copy and still passes raw `detail`/`error` (no `connectErrorMessage`, no classic-scopes copy).
+
+- [ ] **Step 3: Replace the local `replaceErrorMessage` with the shared import**
+
+Delete the entire local `function replaceErrorMessage(...) { … }` block (~lines 21-42) and add to the imports (note: `apiClient` and `ApiError` are already imported in this file):
 
 ```ts
 import { connectErrorMessage, replaceErrorMessage } from '../components/Setup/tokenErrorCopy';
 ```
 
-- [ ] **Step 2: Route connect-flow errors through `connectErrorMessage`**
+- [ ] **Step 4: Route connect-flow errors through `connectErrorMessage` (with ApiError-aware catch)**
 
 In `onConnect`, change the `!result.ok` branch from `setError(result.detail ?? result.error ?? 'Validation failed.')` to:
 
@@ -795,24 +867,35 @@ In `onConnect`, change the `!result.ok` branch from `setError(result.detail ?? r
         setError(connectErrorMessage(result.error));
 ```
 
-And change the `catch` branch from `setError((e as Error).message)` to:
+And replace the `catch (e) { setError((e as Error).message); }` block with an ApiError-aware version (mirrors the replace flow, so an offline/proxy user isn't told their token is wrong — connect validation failures are 200-ok:false handled above, so this catch only fires on a thrown ApiError like 400 invalid-json/pat-required, or a true network reject):
 
 ```ts
-      setError(connectErrorMessage(undefined));
+    } catch (e) {
+      if (e instanceof ApiError) {
+        const body = e.body;
+        const code =
+          typeof body === 'object' && body !== null
+            ? (body as { error?: unknown }).error
+            : undefined;
+        setError(connectErrorMessage(typeof code === 'string' ? code : undefined));
+      } else {
+        setError(connectErrorMessage('networkerror'));
+      }
+    }
 ```
 
 (The replace flow already calls `replaceErrorMessage(...)` — it now resolves to the shared import; no other change there.)
 
-- [ ] **Step 3: Verify build + existing tests**
+- [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd frontend && npx tsc -b && npx vitest run`
-Expected: type-checks clean; full suite green (no test asserted the old connect raw-passthrough copy).
+Run: `cd frontend && npx vitest run __tests__/setup-page.test.tsx`
+Expected: PASS (updated network-copy + insufficientscopes/aria-invalid tests, and all the untouched replace-flow tests — `validation-failed`→"GitHub rejected", `submit-in-flight`→verbatim 409 copy — still green).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/pages/SetupPage.tsx
-git commit -m "feat(#213): route connect errors through shared token-error copy"
+git add frontend/src/pages/SetupPage.tsx frontend/__tests__/setup-page.test.tsx
+git commit -m "feat(#213): route connect errors through shared token-error copy (ApiError-aware)"
 ```
 
 ---
@@ -853,10 +936,10 @@ git commit -m "docs(#213): reconcile 03-poc-features PAT posture to classic-prim
 **Files:**
 - Modify: any e2e spec/snapshot asserting the old setup copy (search first)
 
-- [ ] **Step 1: Find setup-screen e2e references**
+- [ ] **Step 1: Find any remaining setup-screen copy references (e2e + unit)**
 
-Run: `cd frontend && grep -rniE "generate a token|local-first|ghp_… or github_pat_|Checks|read:org" e2e tests 2>/dev/null`
-For each hit asserting old copy (e.g. "Generate a token", the combined placeholder, the "Checks" row, or the old footnote), update the expectation to the new copy: "Generate a classic token" / "Generate a fine-grained token", token-type radios, and the per-tab placeholder.
+Run: `cd frontend && grep -rniE "generate a token|local-first|ghp_… or github_pat_|Checks: Read|already have a classic" e2e tests __tests__ src 2>/dev/null`
+(`__tests__/setup-page.test.tsx` is already updated in Tasks 5-6 — confirm no *other* hits remain.) For each remaining hit asserting old copy, update to the new copy: "Generate a classic token" / "Generate a fine-grained token", token-type radios, and the per-tab placeholder. A bare `Continue` / `personal access token` label hit is a false positive (those are preserved) — do not touch it.
 
 - [ ] **Step 2: Re-baseline any setup-screen visual snapshot (if present)**
 
