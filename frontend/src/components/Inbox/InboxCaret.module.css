@@ -1,0 +1,14 @@
+.caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+  transition: transform var(--t-fast);
+}
+
+.open {
+  transform: rotate(90deg);
+}
