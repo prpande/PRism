@@ -11,7 +11,10 @@ vi.mock('../PrDetail/PrDetailView', () => ({
     prRef: { owner: string; repo: string; number: number };
     active: boolean;
   }) => (
-    <div data-testid={`pr-${prRef.owner}/${prRef.repo}/${prRef.number}`} data-active={String(active)} />
+    <div
+      data-testid={`pr-${prRef.owner}/${prRef.repo}/${prRef.number}`}
+      data-active={String(active)}
+    />
   ),
 }));
 // Stub the AskAi drawer context with an open drawer + a close spy.

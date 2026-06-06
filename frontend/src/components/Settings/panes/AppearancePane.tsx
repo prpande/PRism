@@ -51,25 +51,65 @@ export function AppearancePane() {
     <section aria-labelledby="appearance-heading">
       <div className={pane.head}>
         <div>
-          <h2 id="appearance-heading" className={pane.title}>Appearance</h2>
+          <h2 id="appearance-heading" className={pane.title}>
+            Appearance
+          </h2>
           <p className={pane.sub}>Theme, accent color, density, and AI preview</p>
         </div>
       </div>
       <div className={pane.row}>
-        <div><div className={pane.label}>Theme</div><div className={pane.help}>Match your system or pick a mode</div></div>
-        <div className={pane.spring}><SegmentedControl label="Theme" options={THEMES} value={preferences.ui.theme} onChange={onTheme} /></div>
+        <div>
+          <div className={pane.label}>Theme</div>
+          <div className={pane.help}>Match your system or pick a mode</div>
+        </div>
+        <div className={pane.spring}>
+          <SegmentedControl
+            label="Theme"
+            options={THEMES}
+            value={preferences.ui.theme}
+            onChange={onTheme}
+          />
+        </div>
       </div>
       <div className={pane.row}>
-        <div><div className={pane.label}>Accent</div><div className={pane.help}>Highlight color across the app</div></div>
-        <div className={pane.spring}><AccentSwatches value={preferences.ui.accent} onChange={onAccent} /></div>
+        <div>
+          <div className={pane.label}>Accent</div>
+          <div className={pane.help}>Highlight color across the app</div>
+        </div>
+        <div className={pane.spring}>
+          <AccentSwatches value={preferences.ui.accent} onChange={onAccent} />
+        </div>
       </div>
       <div className={pane.row}>
-        <div><div className={pane.label}>Density</div><div className={pane.help}>Row height in lists and tables</div></div>
-        <div className={pane.spring}><SegmentedControl label="Density" options={DENSITIES} value={density} onChange={onDensity} /></div>
+        <div>
+          <div className={pane.label}>Density</div>
+          <div className={pane.help}>Row height in lists and tables</div>
+        </div>
+        <div className={pane.spring}>
+          <SegmentedControl
+            label="Density"
+            options={DENSITIES}
+            value={density}
+            onChange={onDensity}
+          />
+        </div>
       </div>
       <div className={pane.row}>
-        <div><div className={pane.label}>AI preview</div><div id="ai-help" className={pane.help}>Show AI-generated PR summaries and hotspots</div></div>
-        <div className={pane.spring}><Switch id="appearance-ai-preview" label="AI preview" describedById="ai-help" checked={preferences.ui.aiPreview} onChange={onAiToggle} /></div>
+        <div>
+          <div className={pane.label}>AI preview</div>
+          <div id="ai-help" className={pane.help}>
+            Show AI-generated PR summaries and hotspots
+          </div>
+        </div>
+        <div className={pane.spring}>
+          <Switch
+            id="appearance-ai-preview"
+            label="AI preview"
+            describedById="ai-help"
+            checked={preferences.ui.aiPreview}
+            onChange={onAiToggle}
+          />
+        </div>
       </div>
     </section>
   );

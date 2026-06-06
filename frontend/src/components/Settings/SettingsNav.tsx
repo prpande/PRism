@@ -35,7 +35,9 @@ export function SettingsNav() {
       ))}
       <div className={styles.navDivider} role="presentation" />
       <div className={styles.navGroup} role="group" aria-label="System">
-        <div className={styles.navGroupLabel} aria-hidden="true">System</div>
+        <div className={styles.navGroupLabel} aria-hidden="true">
+          System
+        </div>
         {SYSTEM.map((i) => (
           <Item key={i.section} {...i} active={current === i.section} />
         ))}

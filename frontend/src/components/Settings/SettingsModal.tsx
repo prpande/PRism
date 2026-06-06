@@ -14,7 +14,11 @@ export interface SettingsModalProps {
   restoreFocusFallbackSelector?: string;
 }
 
-export function SettingsModal({ onClose, children, restoreFocusFallbackSelector }: SettingsModalProps) {
+export function SettingsModal({
+  onClose,
+  children,
+  restoreFocusFallbackSelector,
+}: SettingsModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const scrimDownTarget = useRef<EventTarget | null>(null);
@@ -35,7 +39,10 @@ export function SettingsModal({ onClose, children, restoreFocusFallbackSelector 
       else if (fallbackRef.current)
         document.querySelector<HTMLElement>(fallbackRef.current)?.focus();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount/unmount; fallback read via ref
+    // Run once on mount/unmount; the fallback selector is read via fallbackRef so
+    // the empty dep array is intentional. (No exhaustive-deps suppression: the
+    // react-hooks plugin is not wired into this project's flat eslint config, and
+    // a stale disable directive for it errors as "rule not found".)
   }, []);
 
   useEffect(() => {
@@ -79,10 +86,23 @@ export function SettingsModal({ onClose, children, restoreFocusFallbackSelector 
       onPointerDown={onScrimPointerDown}
       onPointerUp={onScrimPointerUp}
     >
-      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} className={styles.modal}>
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className={styles.modal}
+      >
         <header className={styles.head}>
-          <h2 id={titleId} className={styles.title}>Settings</h2>
-          <button type="button" className={styles.close} aria-label="Close settings" onClick={onClose}>
+          <h2 id={titleId} className={styles.title}>
+            Settings
+          </h2>
+          <button
+            type="button"
+            className={styles.close}
+            aria-label="Close settings"
+            onClick={onClose}
+          >
             ✕
           </button>
         </header>

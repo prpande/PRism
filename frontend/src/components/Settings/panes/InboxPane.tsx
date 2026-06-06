@@ -22,11 +22,15 @@ export function InboxPane() {
     <section aria-labelledby="inbox-heading">
       <div className={pane.head}>
         <div>
-          <h2 id="inbox-heading" className={pane.title}>Inbox</h2>
+          <h2 id="inbox-heading" className={pane.title}>
+            Inbox
+          </h2>
           <p className={pane.sub}>Choose which lists appear in your inbox</p>
         </div>
       </div>
-      <p id={HELP_ID} className={pane.help}>Changes apply on the next inbox refresh (within 2 minutes).</p>
+      <p id={HELP_ID} className={pane.help}>
+        Changes apply on the next inbox refresh (within 2 minutes).
+      </p>
       {ROWS.map(({ id, label }) => (
         <div key={id} className={pane.row}>
           <div className={pane.label}>{label}</div>
@@ -36,7 +40,9 @@ export function InboxPane() {
               label={label}
               describedById={HELP_ID}
               checked={sections[id]}
-              onChange={(next) => set(`inbox.sections.${id}` as PreferenceKey, next).catch(() => {})}
+              onChange={(next) =>
+                set(`inbox.sections.${id}` as PreferenceKey, next).catch(() => {})
+              }
             />
           </div>
         </div>

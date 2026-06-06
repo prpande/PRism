@@ -14,7 +14,10 @@ describe('SettingsLink', () => {
     render(
       <MemoryRouter
         initialEntries={[
-          { pathname: '/settings/appearance', state: { backgroundLocation: { pathname: '/pr/o/r/1' } } },
+          {
+            pathname: '/settings/appearance',
+            state: { backgroundLocation: { pathname: '/pr/o/r/1' } },
+          },
         ]}
       >
         <SettingsLink to="/settings/system">System</SettingsLink>

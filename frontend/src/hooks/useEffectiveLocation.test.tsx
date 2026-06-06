@@ -30,7 +30,10 @@ describe('useEffectiveLocation', () => {
   it('returns backgroundLocation when present (modal open over a PR)', () => {
     const { result } = renderHook(() => useEffectiveLocation(), {
       wrapper: wrapper([
-        { pathname: '/settings/appearance', state: { backgroundLocation: { pathname: '/pr/o/r/1' } } },
+        {
+          pathname: '/settings/appearance',
+          state: { backgroundLocation: { pathname: '/pr/o/r/1' } },
+        },
       ]),
     });
     expect(result.current.pathname).toBe('/pr/o/r/1');

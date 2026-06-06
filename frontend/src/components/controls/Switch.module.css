@@ -19,7 +19,9 @@
   height: 16px;
   border-radius: 50%;
   background: var(--text-3);
-  transition: transform var(--t-fast) var(--ease-out), background var(--t-fast);
+  transition:
+    transform var(--t-fast) var(--ease-out),
+    background var(--t-fast);
 }
 .switch:checked {
   background: var(--accent-soft);

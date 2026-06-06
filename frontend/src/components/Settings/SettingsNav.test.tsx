@@ -4,7 +4,11 @@ import { describe, it, expect } from 'vitest';
 import { SettingsNav } from './SettingsNav';
 
 function renderAt(path: string) {
-  return render(<MemoryRouter initialEntries={[path]}><SettingsNav /></MemoryRouter>);
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <SettingsNav />
+    </MemoryRouter>,
+  );
 }
 
 describe('SettingsNav', () => {
@@ -18,7 +22,10 @@ describe('SettingsNav', () => {
 
   it('marks the active section with aria-current=page', () => {
     renderAt('/settings/github-connection');
-    expect(screen.getByRole('link', { name: 'GitHub Connection' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'GitHub Connection' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     expect(screen.getByRole('link', { name: 'Appearance' })).not.toHaveAttribute('aria-current');
   });
 });

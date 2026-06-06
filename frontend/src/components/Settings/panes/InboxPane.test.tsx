@@ -8,7 +8,16 @@ vi.mock('../../../hooks/usePreferences', () => ({
   usePreferences: () => ({
     preferences: {
       ui: {},
-      inbox: { sections: { 'review-requested': true, 'awaiting-author': false, 'authored-by-me': true, mentioned: true, 'ci-failing': false, 'recently-closed': true } },
+      inbox: {
+        sections: {
+          'review-requested': true,
+          'awaiting-author': false,
+          'authored-by-me': true,
+          mentioned: true,
+          'ci-failing': false,
+          'recently-closed': true,
+        },
+      },
       github: {},
     },
     set,

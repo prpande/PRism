@@ -6,11 +6,17 @@ import { AppearancePane } from './AppearancePane';
 const set = vi.fn().mockResolvedValue(undefined);
 vi.mock('../../../hooks/usePreferences', () => ({
   usePreferences: () => ({
-    preferences: { ui: { theme: 'dark', accent: 'indigo', density: 'comfortable', aiPreview: false }, inbox: { sections: {} }, github: {} },
+    preferences: {
+      ui: { theme: 'dark', accent: 'indigo', density: 'comfortable', aiPreview: false },
+      inbox: { sections: {} },
+      github: {},
+    },
     set,
   }),
 }));
-vi.mock('../../../hooks/useCapabilities', () => ({ useCapabilities: () => ({ refetch: vi.fn() }) }));
+vi.mock('../../../hooks/useCapabilities', () => ({
+  useCapabilities: () => ({ refetch: vi.fn() }),
+}));
 
 beforeEach(() => set.mockClear());
 

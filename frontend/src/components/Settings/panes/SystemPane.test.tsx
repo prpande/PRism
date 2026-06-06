@@ -5,7 +5,13 @@ import { SystemPane } from './SystemPane';
 
 const show = vi.fn();
 vi.mock('../../../hooks/usePreferences', () => ({
-  usePreferences: () => ({ preferences: { ui: {}, inbox: { sections: {} }, github: { host: 'h', configPath: 'C:/x/config.json', logsPath: 'C:/x/logs' } } }),
+  usePreferences: () => ({
+    preferences: {
+      ui: {},
+      inbox: { sections: {} },
+      github: { host: 'h', configPath: 'C:/x/config.json', logsPath: 'C:/x/logs' },
+    },
+  }),
 }));
 vi.mock('../../Toast', () => ({ useToast: () => ({ show }) }));
 beforeEach(() => show.mockClear());
