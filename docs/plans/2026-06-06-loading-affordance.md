@@ -621,9 +621,13 @@ git commit -m "feat(#181): mount LoadingBarProvider + TopProgressBar at app root
 
 **Files:**
 - Modify: `frontend/src/hooks/usePrDetail.ts`
-- Modify (mocks): `frontend/src/components/PrDetail/PrDetailView.test.tsx`, `PrDetailView.freshness.test.tsx`, `PrTabHost.test.tsx`
+- Modify (mocks/tests): `frontend/src/components/PrDetail/PrDetailView.test.tsx`, `PrDetailView.freshness.test.tsx`, `PrTabHost.test.tsx`, **and `frontend/__tests__/usePrDetail.test.tsx`** (the hook's own unit test — it has a `showSkeleton`-timing test that must be deleted, see Step 2).
 
 `PrDetailView` (Task 7) becomes the gate's only reader of `isLoading` and stops using `showSkeleton`. `showSkeleton` then has zero consumers, so remove it from the hook.
+
+> **Coupling note:** Task 5 and Task 7 are **type-coupled** — removing `showSkeleton` from `UsePrDetailResult` makes `PrDetailView.tsx` (which still destructures it until Task 7) fail to typecheck. So **Task 5's commit does not build in isolation**; the branch is green only after Task 7. Run the full `npx tsc -b` green check at the END of Task 7, not after Task 5. (Don't reorder — Task 5's mock reshape must precede Task 7's behavior tests.)
+
+> **Typecheck command:** this project uses a project-references `tsconfig.json` (`"files": []` + `references`). A bare `npx tsc --noEmit` typechecks **nothing** and prints a false "No errors found". The real typecheck is **`npx tsc -b`** (what `npm run build` runs). Use `tsc -b` everywhere this plan says to typecheck.
 
 - [ ] **Step 1: Remove `showSkeleton` from the result type and return**
 
@@ -673,14 +677,15 @@ This is **not optional** and **not just a removal**: after Task 7's gate becomes
   - `beforeEach` reset (~line 232) and the OQ6 holder writes (~lines 289, 293): replace `showSkeleton:` with `isLoading:` (loaded states use `isLoading: false`).
   - The #180 test has **two** holder writes — convert both: the initial loaded state (~line 472) `{ data: PR_DETAIL, showSkeleton: false, error: null }` → `{ ..., isLoading: false, ... }`, and the background-reload injection (~line 485) `{ data: PR_DETAIL, showSkeleton: true, error: null }` → `{ ..., isLoading: true, ... }`.
 
-**Do not touch `useFileDiff` / `useUnionDiff` mocks.** Those hooks have their *own* unrelated `showSkeleton` field (lines like `useUnionDiff: () => ({ data: null, isLoading: false, showSkeleton: false, error: null })`). Task 5 only removes `showSkeleton` from `UsePrDetailResult` — the diff hooks keep theirs. There is **no** `usePrDetail` mock that already supplies `isLoading`; the holder + the two static literals above are every `usePrDetail` site.
+**Do not touch `useFileDiff` / `useUnionDiff` mocks.** Those hooks have their *own* unrelated `showSkeleton` field (lines like `useUnionDiff: () => ({ data: null, isLoading: false, showSkeleton: false, error: null })`). Task 5 only removes `showSkeleton` from `UsePrDetailResult` — the diff hooks keep theirs. There is **no** `usePrDetail` mock that already supplies `isLoading`; the holder + the two static literals above are every `usePrDetail` *mock* site.
 
-After editing, `npx tsc --noEmit` must be clean — `UsePrDetailResult` no longer has `showSkeleton`, so any leftover `usePrDetail` site is a compile error (a useful backstop that the reshape is complete).
+**Also: delete the obsolete `showSkeleton`-timing test in `frontend/__tests__/usePrDetail.test.tsx`.** It has a test `'skeleton timing: showSkeleton=false within first 100ms of loading'` that reads `result.current.showSkeleton` — that behavior is *removed* (the 100ms anti-flash no longer lives in `usePrDetail`; `PrDetailView` now shows the skeleton immediately on cold open). Delete the whole `it(...)` block (replace with a one-line comment pointing to `PrDetailView`'s tests). NB there are **two** `usePrDetail.test.tsx` files — `__tests__/` and `src/hooks/`; only the `__tests__/` one has the `showSkeleton` test.
 
-- [ ] **Step 3: Run the affected suites + typecheck**
+- [ ] **Step 3: Run the affected suites + the REAL typecheck**
 
-Run: `cd frontend && npx vitest run src/hooks src/components/PrDetail/PrDetailView.test.tsx src/components/PrDetail/PrDetailView.freshness.test.tsx src/components/PrDetail/PrTabHost.test.tsx && npx tsc --noEmit`
-Expected: PASS; no type error about a missing/extra `showSkeleton`. (These tests still reference the OLD body — that's fine; Task 7 updates behavior. If a test asserts skeleton presence via `showSkeleton`, leave it for Task 7.)
+Run: `cd frontend && npx vitest run src/hooks __tests__ src/components/PrDetail/PrDetailView.test.tsx src/components/PrDetail/PrDetailView.freshness.test.tsx src/components/PrDetail/PrTabHost.test.tsx`
+Then the real typecheck: `cd frontend && npx tsc -b`
+Expected: vitest PASS. `tsc -b` will report **exactly one** remaining error — `PrDetailView.tsx:NN  Property 'showSkeleton' does not exist` — which is **expected** and fixed by Task 7 (the type coupling above). Do NOT touch `PrDetailView` here. If `tsc -b` reports any OTHER `showSkeleton` error, you missed a mock/test site — fix it. (`npx tsc --noEmit` is useless here — it checks nothing; always use `tsc -b`.)
 
 - [ ] **Step 4: Commit**
 
