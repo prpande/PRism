@@ -10,6 +10,14 @@ describe('SetupForm', () => {
     expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
   });
 
+  it('renders the decorative GitHub mark inside the Connect to GitHub heading', () => {
+    // #212: the mark is aria-hidden, so the heading's accessible name stays
+    // "Connect to GitHub" (this getByRole matching it proves that).
+    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
+    const heading = screen.getByRole('heading', { name: /connect to github/i });
+    expect(heading.querySelector('svg')).not.toBeNull();
+  });
+
   it('toggles mask/unmask on click of the eye', async () => {
     render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
     const input = screen.getByLabelText(/personal access token/i) as HTMLInputElement;
@@ -74,6 +82,21 @@ describe('SetupForm', () => {
     );
     const cancel = screen.getByRole('link', { name: /cancel/i });
     expect(cancel).toHaveAttribute('href', '/settings');
+  });
+
+  it('does NOT render a Back-to-welcome link by default', () => {
+    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
+    expect(screen.queryByRole('link', { name: /back/i })).not.toBeInTheDocument();
+  });
+
+  it('renders a Back link to /welcome when showBackToWelcome is true', () => {
+    render(
+      <MemoryRouter>
+        <SetupForm host="https://github.com" onSubmit={vi.fn()} showBackToWelcome />
+      </MemoryRouter>,
+    );
+    const back = screen.getByRole('link', { name: /back/i });
+    expect(back).toHaveAttribute('href', '/welcome');
   });
 
   it('disables Cancel (renders as aria-disabled span with role=link, not a navigable link) while busy=true', () => {
