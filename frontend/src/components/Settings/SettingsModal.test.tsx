@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import { SettingsModal } from './SettingsModal';
@@ -41,5 +41,24 @@ describe('SettingsModal', () => {
     );
     rerender(<></>); // unmount the modal → cleanup runs focus restore
     expect(document.activeElement).toBe(document.querySelector('[data-testid="bg"]'));
+  });
+
+  it('restores focus to the opener on close', async () => {
+    document.body.innerHTML = '<button data-testid="opener">open</button>';
+    const opener = document.querySelector<HTMLButtonElement>('[data-testid="opener"]')!;
+    opener.focus();
+    const { rerender } = render(<SettingsModal onClose={() => {}}><p>pane</p></SettingsModal>);
+    rerender(<></>);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('does NOT close when pointer-down starts on the scrim but pointer-up lands inside the modal (drag)', async () => {
+    const onClose = vi.fn();
+    render(<SettingsModal onClose={onClose}><p>pane</p></SettingsModal>);
+    const scrim = screen.getByTestId('settings-scrim');
+    const pane = screen.getByText('pane');
+    fireEvent.pointerDown(scrim);
+    fireEvent.pointerUp(pane);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

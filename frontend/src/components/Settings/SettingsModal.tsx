@@ -18,6 +18,8 @@ export function SettingsModal({ onClose, children, restoreFocusFallbackSelector 
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const scrimDownTarget = useRef<EventTarget | null>(null);
+  const fallbackRef = useRef(restoreFocusFallbackSelector);
+  fallbackRef.current = restoreFocusFallbackSelector;
   const titleId = useId();
 
   useEffect(() => {
@@ -30,10 +32,11 @@ export function SettingsModal({ onClose, children, restoreFocusFallbackSelector 
       // → move to the background landmark, never bare <body> (spec §6).
       const opener = previouslyFocused.current;
       if (opener && opener !== document.body) opener.focus();
-      else if (restoreFocusFallbackSelector)
-        document.querySelector<HTMLElement>(restoreFocusFallbackSelector)?.focus();
+      else if (fallbackRef.current)
+        document.querySelector<HTMLElement>(fallbackRef.current)?.focus();
     };
-  }, [restoreFocusFallbackSelector]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount/unmount; fallback read via ref
+  }, []);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {

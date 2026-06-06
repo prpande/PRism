@@ -34,10 +34,12 @@ export function SettingsNav() {
         <Item key={i.section} {...i} active={current === i.section} />
       ))}
       <div className={styles.navDivider} role="presentation" />
-      <div className={styles.navGroupLabel}>System</div>
-      {SYSTEM.map((i) => (
-        <Item key={i.section} {...i} active={current === i.section} />
-      ))}
+      <div className={styles.navGroup} role="group" aria-label="System">
+        <div className={styles.navGroupLabel} aria-hidden="true">System</div>
+        {SYSTEM.map((i) => (
+          <Item key={i.section} {...i} active={current === i.section} />
+        ))}
+      </div>
     </nav>
   );
 }
