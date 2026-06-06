@@ -98,10 +98,17 @@ between the two columns is unchanged.
 
 ### Shared spacer math (verified, width-independent)
 
-`spacer = (maxScroll − viewport) + bar.clientWidth` ⇒
+`spacer = (maxScroll − viewport) + viewport.clientWidth` ⇒
 `bar.maxScrollLeft = spacer − bar.clientWidth = maxScroll − viewport = overflow`,
-for **any** bar width. The longest path's end is reachable regardless of the bar's
-own width. A one-line code comment at the measurement site will note that `viewport`
+since the bar ≈ the viewport width (both are the flex:1 tree column beside a
+same-width fixed sibling). **Implementation note (preflight refinement):** the spacer
+is sized from `viewport.clientWidth`, not `bar.clientWidth`, because the hook now
+toggles the whole footer **row** (`display: none` when the tree fits, so nothing —
+not even a 1px border — is pinned at the pane bottom), which can leave the bar inside
+a `display:none` row and therefore unmeasurable. The viewport (`.fileTreeScroll`) is
+never hidden, so it is the stable measurement source. The longest path's end is
+reachable regardless of the bar's own width. A one-line code comment at the
+measurement site will note that `viewport`
 is measured from `.fileTreeScroll.clientWidth` (not the bar width) so a future reader
 doesn't "fix" the intentional bar-vs-viewport relationship. (Feasibility F4.)
 
