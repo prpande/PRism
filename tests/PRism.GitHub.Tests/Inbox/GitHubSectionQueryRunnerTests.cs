@@ -246,6 +246,23 @@ public sealed class GitHubSectionQueryRunnerTests
     }
 
     [Fact]
+    public async Task QueryClosedHistory_RequestsUpdatedDescSort()
+    {
+        var calls = new List<string>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls.Add(req.RequestUri!.Query);
+            return Respond(HttpStatusCode.OK, """{ "items": [] }""");
+        });
+        var sut = BuildSut(handler);
+
+        await sut.QueryClosedHistoryAsync(14, default);
+
+        calls.Should().NotBeEmpty();
+        calls.Should().OnlyContain(q => q.Contains("sort=updated") && q.Contains("order=desc"));
+    }
+
+    [Fact]
     public async Task QueryClosedHistory_OneSubQueryFails_ReturnsOtherSubQuerysResults()
     {
         // Per-sub-query failure isolation (mirrors QueryAllAsync's Section_failure test):

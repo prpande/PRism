@@ -1,0 +1,63 @@
+.group {
+  border-bottom: 1px solid var(--border-1);
+}
+
+.group:last-child {
+  border-bottom: 0;
+}
+
+/* Repo header reads as a distinct group band, not another row: filled surface,
+   stronger weight + foreground than the PR rows beneath it, so the grouping is
+   obvious at a glance. */
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  width: 100%;
+  padding: var(--s-2) var(--s-4);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-1);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.group:first-child .header {
+  border-top: 0;
+}
+
+.header:hover {
+  background: var(--surface-3);
+}
+
+.repoIcon {
+  flex: none;
+  color: var(--text-2);
+}
+
+.repo {
+  font-family: var(--font-mono);
+}
+
+.count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--surface-1);
+  color: var(--text-2);
+  border: 1px solid var(--border-1);
+  border-radius: 999px;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* Rows indent under the band so the group reads as nested. */
+.body {
+  padding-left: var(--s-4);
+}

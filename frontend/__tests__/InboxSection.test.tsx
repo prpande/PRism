@@ -105,7 +105,7 @@ describe('InboxSection', () => {
     );
   });
 
-  it('shows the truncation hint when a recently-closed section has 30 items', () => {
+  it('shows the recently-closed caption unconditionally for any non-empty recently-closed section', () => {
     const items: PrInboxItem[] = Array.from({ length: 30 }, (_, i) => ({
       ...examplePr,
       reference: { owner: 'acme', repo: 'api', number: 100 + i },
@@ -117,11 +117,11 @@ describe('InboxSection', () => {
       items,
     };
     renderSection(section);
-    expect(screen.getByText(/Showing the 30 most recent/)).toBeInTheDocument();
+    expect(screen.getByText(/most recent first/i)).toBeInTheDocument();
   });
 
-  it('does not show the truncation hint when a recently-closed section has fewer than 30 items', () => {
-    const items: PrInboxItem[] = Array.from({ length: 29 }, (_, i) => ({
+  it('shows the recently-closed caption even when fewer than 30 items', () => {
+    const items: PrInboxItem[] = Array.from({ length: 5 }, (_, i) => ({
       ...examplePr,
       reference: { owner: 'acme', repo: 'api', number: 100 + i },
       title: `Closed PR ${i}`,
@@ -132,7 +132,7 @@ describe('InboxSection', () => {
       items,
     };
     renderSection(section);
-    expect(screen.queryByText(/most recent/)).toBeNull();
+    expect(screen.getByText(/most recent first/i)).toBeInTheDocument();
   });
 
   it('does not show the truncation hint for a non-recently-closed section with 30 items', () => {

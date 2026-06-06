@@ -25,8 +25,8 @@
   gap: var(--s-2);
   width: 100%;
   padding: var(--s-3) var(--s-4);
-  font-size: var(--text-sm);
-  color: var(--text-2);
+  font-size: var(--text-md);
+  color: var(--text-1);
   text-align: left;
   border-bottom: 1px solid var(--border-1);
   background: transparent;
@@ -34,7 +34,7 @@
 }
 
 .label {
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .count {

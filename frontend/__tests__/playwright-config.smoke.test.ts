@@ -43,7 +43,14 @@ describe('playwright.config.ts port parameterization (#217)', () => {
   });
 
   afterEach(() => {
-    process.env = savedEnv;
+    // Restore env in place rather than reassigning process.env wholesale: Node
+    // treats process.env specially and code elsewhere may hold a reference to
+    // the original object, so replacing it can behave unexpectedly. Delete keys
+    // this test added, then re-apply the saved snapshot.
+    for (const key of Object.keys(process.env)) {
+      if (!(key in savedEnv)) delete process.env[key];
+    }
+    Object.assign(process.env, savedEnv);
     vi.resetModules();
   });
 
@@ -78,5 +85,23 @@ describe('playwright.config.ts port parameterization (#217)', () => {
     expect(onDefault.webServer[0].reuseExistingServer).toBe(false);
     const onCustom = await loadConfig({ port: '5300', ci: '1' });
     expect(onCustom.webServer[0].reuseExistingServer).toBe(false);
+  });
+
+  // A malformed PRISM_E2E_PORT must fall back to 5180 rather than produce an
+  // invalid URL like http://localhost:-1 or http://localhost:5180.5 (#226
+  // Copilot finding). `Number(x) || 5180` accepted these because they are
+  // truthy; the parse now requires an in-range integer.
+  it.each([
+    ['negative', '-1'],
+    ['fractional', '5180.5'],
+    ['non-numeric', 'abc'],
+    ['zero', '0'],
+    ['out-of-range', '70000'],
+  ])('falls back to 5180 for a %s PRISM_E2E_PORT (%s)', async (_label, port) => {
+    const config = await loadConfig({ port });
+    const server = config.webServer[0];
+    expect(server.command).toContain('http://localhost:5180');
+    expect(server.url).toBe('http://localhost:5180/api/health');
+    expect(config.projects[0].use.baseURL).toBe('http://localhost:5180');
   });
 });
