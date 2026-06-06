@@ -1,8 +1,21 @@
 # PreferencesContext — dedup the per-consumer preferences fetch
 
-- **Issue:** [#143](https://github.com/prpande/PRism/issues/143) — *usePreferences fires multiple parallel GETs per focus*
+- **Issue:** [#143](https://github.com/prpande/PRism/issues/143) — _usePreferences fires multiple parallel GETs per focus_
 - **Tier / Risk:** T2 / hands-off (preferences read-write path; no risk surface, no rendered-output change)
 - **Date:** 2026-06-06
+
+> **Post-#134 reconciliation.** #134 (Settings redesign) merged into `main`
+> mid-flight, replacing the page-level Settings _sections_ with modal _panes_:
+> `AppearanceSection` → `panes/AppearancePane`, `InboxSectionsSection` →
+> `panes/InboxPane`, `ConnectionSection` → `panes/GitHubConnectionPane` (plus a
+> new `SystemPane`), all rendered inside `SettingsModalRoutes` (which sits inside
+> `tree`, under the provider). References below to the old section names predate
+> that merge. Because this design is **consumer-agnostic** — the lenient
+> `usePreferences()` works for any consumer regardless of where it mounts — the
+> substance is unchanged: the new panes are just more consumers of the one shared
+> store. The old `AppearanceSection` was deleted by #134; the stale-comment
+> cleanup it would have received is moot (its replacement `AppearancePane`
+> carries no such comment). Only the `applyTheme.ts` comment refresh remains.
 
 ## Problem
 
@@ -10,14 +23,14 @@
 `GET /api/preferences` on mount, and registers its **own** `window` `focus`
 listener that refetches. Consumers are **app-wide**, not settings-only:
 
-| Consumer | Reads | Where |
-|----------|-------|-------|
-| `AppearanceSync` | `preferences` | app root (`App.tsx`), every page |
-| `useAiGate` → ~8 components | `preferences` | OverviewTab, FilesTab, DiffPane, PrHeader, AskAiButton, UnresolvedPanel, AiComposerAssistant, InboxPage |
-| `OverviewTab` | `preferences` | PR-detail |
-| `AppearanceSection` | `preferences`, `set` | /settings |
-| `InboxSectionsSection` | `preferences`, `set` | /settings |
-| `ConnectionSection` | `preferences` | /settings |
+| Consumer                    | Reads                | Where                                                                                                   |
+| --------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------- |
+| `AppearanceSync`            | `preferences`        | app root (`App.tsx`), every page                                                                        |
+| `useAiGate` → ~8 components | `preferences`        | OverviewTab, FilesTab, DiffPane, PrHeader, AskAiButton, UnresolvedPanel, AiComposerAssistant, InboxPage |
+| `OverviewTab`               | `preferences`        | PR-detail                                                                                               |
+| `AppearanceSection`         | `preferences`, `set` | /settings                                                                                               |
+| `InboxSectionsSection`      | `preferences`, `set` | /settings                                                                                               |
+| `ConnectionSection`         | `preferences`        | /settings                                                                                               |
 
 Every mounted consumer = one more `useState` + one more `focus`-triggered
 `GET /api/preferences`. On `/settings` with the navbar present that is 4+
@@ -119,7 +132,7 @@ mechanism untouched here. Called out so reviewers don't read it as a regression.
 
 The `error` field and the `preferences === null` loading window become **shared**
 across all consumers (today each holds its own). A failed initial GET now leaves
-*every* consumer in the graceful-degraded state at once (`useAiGate` → `false`,
+_every_ consumer in the graceful-degraded state at once (`useAiGate` → `false`,
 Settings sections → `return null`, `AppearanceSync` → no-op, default appearance),
 with the **single** `focus` listener as the sole retry path (today N independent
 listeners each retried). This is a real failure-topology change from
@@ -151,7 +164,7 @@ comments are refreshed to describe the shared-context model. No behavior change.
 - **`set` rollback regression stays where it is** (`__tests__/hooks.test.tsx`,
   `describe('usePreferences')`). It calls the real hook via
   `renderHook(() => usePreferences())`; under the lenient design that exercises
-  the **fallback** path of the *same* `usePreferencesStore` code, so the two
+  the **fallback** path of the _same_ `usePreferencesStore` code, so the two
   key-scoped rollback regressions are preserved **unchanged** (no wrapper added).
 - **Existing-test impact: zero edits** (verified by sweeping all specs that
   render a preferences consumer — directly or transitively via `useAiGate`).
@@ -160,7 +173,7 @@ comments are refreshed to describe the shared-context model. No behavior change.
     `vi.mock('.../usePreferences')` (`useAiGate.test`,
     `Settings/AppearanceSection.test`) both replace the module at its specifier
     path, so the re-export shim keeps them intercepting (confirmed green).
-  - **Real-consumer specs untouched** *because the consumer is lenient.*
+  - **Real-consumer specs untouched** _because the consumer is lenient._
     `appearance-sync.test` (real `<AppearanceSync/>`, MSW), `hooks.test` (real
     hook), and the ~11 PrDetail specs that render AI-gated components
     (`OverviewTab`, `FilesTab`, `FilesTabComposer`, `DiffPane`×2,
@@ -194,7 +207,7 @@ comments are refreshed to describe the shared-context model. No behavior change.
   self-fetching hook.** More churn; two ways to read prefs; the old hook lingers
   as a duplication footgun.
 - **C — naïve silent fallback (unconditional local self-fetch).** A2 is the
-  *refined* form of this; the naïve version is what's rejected. The difference:
+  _refined_ form of this; the naïve version is what's rejected. The difference:
   A2's fallback shares the **one** `usePreferencesStore` implementation (no
   duplicated logic) and is **inert** under a provider (the `enabled` gate), so it
   never reintroduces duplication on the production path — the path the app always
