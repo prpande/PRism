@@ -639,15 +639,39 @@ describe('openEventStream — forceReconnect (D6)', () => {
     }
   });
 
-  it('is a no-op while a reconnect is already pending (mashing → one EventSource)', () => {
+  it('collapses mashed Retry-now clicks into a single reconnect', () => {
     vi.useFakeTimers();
     try {
       const stream = openEventStream({ random: () => 0.5 });
+      // Each immediate trigger cancels the prior 0ms timer and re-arms it, so
+      // mashing the button does not spawn a thundering herd of EventSources —
+      // only the last-armed timer fires.
       stream.forceReconnect();
       stream.forceReconnect();
       stream.forceReconnect();
       vi.advanceTimersByTime(0);
       expect(FakeEventSource.instances).toHaveLength(2); // only one new stream
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('overrides a pending backoff wait (Retry now fires immediately mid-backoff)', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      // A silence outage arms a real backoff: instance 1 never handshakes, so the
+      // 35s watchdog fires → scheduleReconnect() arms a 1000ms (attempt 0) wait.
+      vi.advanceTimersByTime(35_000); // watchdog → backoff armed, reconnectPending
+      expect(FakeEventSource.instances).toHaveLength(1); // backoff has NOT elapsed
+      // User clicks "Retry now" mid-backoff. It must cancel the 1000ms wait and
+      // reconnect now — NOT silently no-op until the backoff would have elapsed.
+      // (Without the immediate-override, scheduleReconnect bails on reconnectPending
+      // and advancing 0ms leaves instances at 1.)
+      stream.forceReconnect();
+      vi.advanceTimersByTime(0);
+      expect(FakeEventSource.instances).toHaveLength(2);
       stream.close();
     } finally {
       vi.useRealTimers();

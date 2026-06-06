@@ -38,7 +38,7 @@
 
 ## Target state of `events.ts` (PR1 reference)
 
-This is the end state PR1 builds toward. Tasks 1–7 add the pieces; this block is the canonical reference for names and structure. The unchanged parts (typed-listener loop, `WINDOW_EVENT_BRIDGE`, `on()`, type exports) are elided with `// …unchanged…`.
+This is the end state PR1 builds toward. Tasks 1–7 add the pieces; this block is an **illustrative** sketch of names and structure, not the source of truth. **The shipped `frontend/src/api/events.ts` is authoritative** — it diverges from this sketch in places (most notably the health-timer arming model per D5, and the `scheduleReconnect` immediate-override that lets `forceReconnect()` cancel a pending backoff). Read the file, not this block, when modifying the code. The unchanged parts (typed-listener loop, `WINDOW_EVENT_BRIDGE`, `on()`, type exports) are elided with `// …unchanged…`.
 
 ```ts
 const SILENCE_WATCHER_MS = 35_000;

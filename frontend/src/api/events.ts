@@ -181,12 +181,33 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
     return base * (0.75 + 0.5 * random()); // ±25% jitter
   }
 
+  function armReconnectTimer(delay: number) {
+    backoffTimer = setTimeout(() => {
+      backoffTimer = null;
+      reconnectPending = false;
+      if (!closed) connect();
+    }, delay);
+  }
+
   // Replaces the old reconnect(). Re-entrancy guard (reconnectPending) collapses
   // rapid triggers (watchdog firing + onerror probe) into a single scheduled
   // reconnect. Backoff delay grows per consecutive attempt (D2/D8).
-  // immediate=true is a dead branch until Task 7.
   function scheduleReconnect(options?: { immediate?: boolean }) {
-    if (closed || reconnectPending) return;
+    if (closed) return;
+    if (reconnectPending) {
+      // A reconnect is already scheduled. Normal triggers (watchdog firing +
+      // onerror probe racing) collapse into the pending one. An immediate
+      // trigger (forceReconnect / "Retry now") instead OVERRIDES the pending
+      // backoff wait: cancel the armed timer and reschedule at 0. Without this
+      // the "Retry now" button is a no-op for the entire backoff window — which
+      // is exactly when the stream-health snackbar (PR2) puts it on screen. The
+      // EventSource was already torn down + re-prepared by the original call, so
+      // re-arming at 0 is sufficient; no second abort/close/id-rotation needed.
+      if (!options?.immediate) return;
+      if (backoffTimer) clearTimeout(backoffTimer);
+      armReconnectTimer(0);
+      return;
+    }
     reconnectPending = true;
     abortController.abort();
     es.close();
@@ -194,12 +215,7 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
     if (dwellTimer) clearTimeout(dwellTimer);
     newIdPromise();
     newAbortController();
-    const delay = options?.immediate ? 0 : computeDelay(attempt++);
-    backoffTimer = setTimeout(() => {
-      backoffTimer = null;
-      reconnectPending = false;
-      if (!closed) connect();
-    }, delay);
+    armReconnectTimer(options?.immediate ? 0 : computeDelay(attempt++));
     // S6 PR4 (spec § 3.2.1) — reconnect-replay defense is signaled INSIDE the
     // subscriber-assigned handler in connect(), not here. Dispatching at this
     // point would fire before the new EventSource has actually opened (the
@@ -234,7 +250,9 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
           clearTimeout(t);
           if (closed || myEs !== es) return;
           if (resp.status === 401) {
-            window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+            }
             closed = true; // tombstone: no further reconnects
             if (watchdog) clearTimeout(watchdog);
             if (backoffTimer) clearTimeout(backoffTimer);
@@ -325,6 +343,12 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
             }
           });
         }
+        // Liveness fires even when parsed === null: a malformed data frame still
+        // proves the transport is reachable, so it resets the health timer +
+        // watchdog. This is deliberately asymmetric with subscriber-assigned,
+        // which skips onLiveness on a garbled frame and forces a reconnect —
+        // there a malformed handshake means idPromise never resolves, so the
+        // stream is functionally dead despite bytes arriving.
         onLiveness();
       });
     });

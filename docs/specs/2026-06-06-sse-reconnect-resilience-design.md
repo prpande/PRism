@@ -156,25 +156,31 @@ watchdog.
 ### D5 — Health state machine (internal), anchored to liveness — not to reconnect
 
 Track stream health inside the `openEventStream()` closure with **one** health
-timer, armed and reset off the **same liveness signals as the watchdog**:
+timer, anchored to **liveness signals** (handshake / heartbeat / data frame):
 
-- The health timer is **armed at `connect()` start** and reset on the same liveness
-  signals as the watchdog. **Mechanism (not just property):** fold the health-timer
-  reset *into* the single `resetWatchdog()` chokepoint (called today from the
-  `subscriber-assigned`, `heartbeat`, every-typed-data-frame, and `connect()`-tail
-  sites). One reset path means lockstep is guaranteed *by construction* — a future
-  liveness signal that calls `resetWatchdog()` resets health automatically, with no
-  second call site to forget. (Equivalent alternative: a single `lastLivenessAt`
-  timestamp stamped by `resetWatchdog()` that one health check reads.)
+- **Mechanism (as implemented — see `frontend/src/api/events.ts`):** health is
+  driven by `onLiveness()`, the single chokepoint called from every liveness site
+  (`subscriber-assigned`, `heartbeat`, every-typed-data-frame). `onLiveness()` does
+  three things: flips health back to `true` (notifying subscribers), re-arms the
+  health timer (`armHealthTimer()`), and re-arms the watchdog (`armWatchdog()`).
+  The health timer is armed **once at stream init** (right after the first
+  `connect()`), and thereafter re-armed **only** by `onLiveness()`. **Crucially,
+  `connect()`-tail arms the *watchdog only*, never the health timer.** This is a
+  deviation from an earlier draft that folded health into a `resetWatchdog()`
+  chokepoint shared with `connect()`-tail: doing so would restart the 30s health
+  countdown on every reconnect attempt, so a fast-failing server (the primary
+  "connection lost" case) would keep deferring the indicator past 30s under backoff
+  churn. Anchoring to liveness — not to connect attempts — keeps "30s without a live
+  signal" honest. A discriminating deviation-proof test enforces this (`a reconnect
+  does NOT reset the health countdown`).
 - If the timer reaches `UNHEALTHY_AFTER_MS = 30000` without a reset →
   `streamHealthy = false`, notify subscribers.
 - The next liveness signal → `streamHealthy = true`, notify. (A single >30s outage
   that then recovers correctly shows once and clears — not a spurious flash,
   because it genuinely was down for 30s.)
 - Initial value is `true` (optimistic) so a normal cold-load never flashes; a cold
-  load that never connects flips `false` at a real 30s (the timer was armed at
-  `connect()` start), now that the ping `.catch` no longer silently swallows
-  network errors (D3).
+  load that never connects flips `false` at a real 30s (the timer was armed once at
+  init), now that the ping `.catch` no longer silently swallows network errors (D3).
 
 Because health resets on the same signals as the 35s watchdog, **`UNHEALTHY_AFTER_MS`
 (30s) genuinely sits inside `SILENCE_WATCHER_MS` (35s)**: the UI flips "connection
