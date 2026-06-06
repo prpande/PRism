@@ -10,6 +10,14 @@ describe('SetupForm', () => {
     expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled();
   });
 
+  it('renders the decorative GitHub mark inside the Connect to GitHub heading', () => {
+    // #212: the mark is aria-hidden, so the heading's accessible name stays
+    // "Connect to GitHub" (this getByRole matching it proves that).
+    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
+    const heading = screen.getByRole('heading', { name: /connect to github/i });
+    expect(heading.querySelector('svg')).not.toBeNull();
+  });
+
   it('toggles mask/unmask on click of the eye', async () => {
     render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
     const input = screen.getByLabelText(/personal access token/i) as HTMLInputElement;

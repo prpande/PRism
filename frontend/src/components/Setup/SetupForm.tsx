@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { FirstRunDisclosure } from './FirstRunDisclosure';
 import { MaskedInput } from './MaskedInput';
+import { GitHubMark } from '../icons/GitHubMark';
 import styles from './SetupForm.module.css';
 
 interface Props {
@@ -62,7 +63,13 @@ export function SetupForm({
           article/aside/main/nav/section). Using <div> preserves the visual
           grouping without duplicating the banner role. */}
       <div className={styles.brand}>
-        <h1 className={styles.title}>Connect to GitHub</h1>
+        <h1 className={styles.title}>
+          {/* Decorative GitHub mark — the heading text already names GitHub, so
+              the icon is aria-hidden and the h1's accessible name stays
+              "Connect to GitHub". */}
+          <GitHubMark size={22} />
+          Connect to GitHub
+        </h1>
         <p className={styles.sub}>PRism is local-first. Your token never leaves this machine.</p>
       </div>
       <section className={styles.section}>

@@ -6,6 +6,11 @@
   margin-bottom: var(--s-5);
 }
 .title {
+  /* inline-flex so the decorative GitHub mark sits on the same line as the
+     heading text, vertically centered, with a small gap (#212). */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
   font-size: var(--text-2xl);
   font-weight: 600;
   letter-spacing: -0.02em;

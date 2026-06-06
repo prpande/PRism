@@ -20,11 +20,12 @@ with no welcome, no "what is PRism / why would I want this," and no orientation
 before the app asks for a token.
 
 #212 asks for a warmer, more welcoming first-open experience that orients the user
-*before* asking for a token — without becoming a marketing site.
+_before_ asking for a token — without becoming a marketing site.
 
 ## Scope
 
 **In scope**
+
 - A new `/welcome` route + `WelcomePage` component (`frontend/src/pages/`).
 - Routing changes in `frontend/src/App.tsx` to land true-first-run users on
   `/welcome` and keep everyone else on their current path.
@@ -32,11 +33,12 @@ before the app asks for a token.
 - New unit tests (component + routing) and an e2e first-run flow + B1 visual.
 
 **Out of scope** (explicitly)
+
 - **PAT-type accuracy** (fine-grained vs classic, org/enterprise guidance) →
-  **#213**. `/setup`'s token *content* is unchanged here; #213 owns that rework and
+  **#213**. `/setup`'s token _content_ is unchanged here; #213 owns that rework and
   builds on whatever structure this slice leaves.
 - **The final human copy** for the welcome screen → **#222**. This slice ships
-  *placeholder* tagline/benefit copy; #222 owns the human rewrite so the words get a
+  _placeholder_ tagline/benefit copy; #222 owns the human rewrite so the words get a
   focused pass instead of being rubber-stamped inside the structural PR.
 - **Wiring the Help / Feedback links** → **#210 / #211**. This slice renders the
   footer slot with **stubs**; those issues replace the stubs with working entry
@@ -56,10 +58,11 @@ and `authState.hasToken`. The welcome screen keys off these **existing** signals
 
 The distinguishing fact: `authState.hasToken` is `false` **only** for a user who
 has never stored a token. Both the token-rejected re-auth session and the
-Settings→Replace flow have a token on disk (`hasToken === true`) — they are *not*
+Settings→Replace flow have a token on disk (`hasToken === true`) — they are _not_
 first runs and must not be re-onboarded.
 
 Concrete changes in `App.tsx`:
+
 - Add `<Route path="/welcome" element={…} />` rendering `WelcomePage`.
 - The unauthed redirects (`/`, `/settings`, `/pr/*`, and the `*` catch-all) send
   unauthed users to **`/welcome` when `!authState.hasToken`**, else to **`/setup`**.
@@ -77,15 +80,15 @@ Concrete changes in `App.tsx`:
 
 #### Routing behavior matrix
 
-| User state | `hasToken` | `isAuthed` | Default unauthed redirect lands on |
-|---|---|---|---|
-| True first run (never connected) | `false` | `false` | **`/welcome`** |
-| Token-rejected re-auth | `true` | `false` | `/setup` |
-| Settings → Replace (`/setup?replace=1`) | `true` | `true` | (stays on `/setup`, authed) |
-| Authed, normal | `true` | `true` | `/` (Inbox) |
-| `/welcome` hit by an authed user | `true` | `true` | redirect → `/` |
-| First-run `/pr/*` deep link | `false` | `false` | **`/welcome`** (requested PR ref dropped) |
-| Auth still loading (`authState === null`) | — | — | `LoadingScreen` (upstream, unchanged) |
+| User state                                | `hasToken` | `isAuthed` | Default unauthed redirect lands on        |
+| ----------------------------------------- | ---------- | ---------- | ----------------------------------------- |
+| True first run (never connected)          | `false`    | `false`    | **`/welcome`**                            |
+| Token-rejected re-auth                    | `true`     | `false`    | `/setup`                                  |
+| Settings → Replace (`/setup?replace=1`)   | `true`     | `true`     | (stays on `/setup`, authed)               |
+| Authed, normal                            | `true`     | `true`     | `/` (Inbox)                               |
+| `/welcome` hit by an authed user          | `true`     | `true`     | redirect → `/`                            |
+| First-run `/pr/*` deep link               | `false`    | `false`    | **`/welcome`** (requested PR ref dropped) |
+| Auth still loading (`authState === null`) | —          | —          | `LoadingScreen` (upstream, unchanged)     |
 
 #### Deliberate simplification — no "seen-welcome" flag
 
@@ -111,13 +114,13 @@ top to bottom:
    Rendered **decorative** (`alt=""`): the adjacent wordmark heading already names
    the product, so a non-empty `alt` here would make a screen reader announce
    "PRism" twice. (This differs from the header `Logo`, whose `alt="PRism"` is
-   correct *there* because no adjacent wordmark text accompanies it.)
+   correct _there_ because no adjacent wordmark text accompanies it.)
 2. **Wordmark** — the **literal brand name "PRism"** as the page's `<h1>` below the
-   icon. This is the fixed product name, **not** placeholder copy — it is *not* in
+   icon. This is the fixed product name, **not** placeholder copy — it is _not_ in
    #222's rewrite scope.
-3. **Tagline** — a one-line value statement. *Placeholder copy, owned by #222:*
+3. **Tagline** — a one-line value statement. _Placeholder copy, owned by #222:_
    "Review pull requests without leaving your machine."
-4. **Three benefit rows** — one line each. *Placeholder copy, owned by #222:*
+4. **Three benefit rows** — one line each. _Placeholder copy, owned by #222:_
    - 🔒 Local-first — your PAT never leaves this device.
    - ⚡ A focused PR-review workspace, not the GitHub web tab.
    - 🤖 AI hotspots surface the hunks worth a close look.
@@ -125,6 +128,7 @@ top to bottom:
    The leading emoji are **decorative** (`aria-hidden="true"`); the benefit text
    carries the meaning. (#222 may swap emoji for icon components; either way the
    glyph is not content.)
+
 5. **Primary CTA** — "Get started", reusing the **existing primary button**
    (`btn btn-primary btn-lg`, the same variant as `/setup`'s "Continue") so hover /
    focus / active states come from the already-tested design-system component, not
@@ -135,9 +139,9 @@ top to bottom:
    clickable links, so a sighted user doesn't click a dead link and a screen reader
    doesn't announce a working link. #210/#211 replace these stubs with real entry
    points. The slot is the designated pre-auth home for Help / Feedback, which the
-   nav can't reach during first-run (#130 hides the nav). *(Owner decision: render
+   nav can't reach during first-run (#130 hides the nav). _(Owner decision: render
    the slot now rather than defer it to #210/#211 — accepted with the cost noted in
-   Notes/decisions.)*
+   Notes/decisions.)_
 
 **Wordmark is fixed; tagline + benefit rows (items 3–4) are placeholder copy owned
 by #222.** The component fixes structure and the icon/wordmark/CTA treatment; final
@@ -147,7 +151,7 @@ layout) are not pinned here.
 **Short-viewport behavior.** On a window too short to fit the card
 (icon + wordmark + tagline + 3 rows + CTA + footer), the inherited
 `.screen { overflow: auto }` scrolls the card **internally** — exactly as `/setup`
-behaves today. The "no page scroll" B1 criterion means no *page* scroll (the
+behaves today. The "no page scroll" B1 criterion means no _page_ scroll (the
 `--header-h` / #205 fix); it does not promise the card always fits without internal
 scroll on tiny viewports.
 
@@ -168,15 +172,21 @@ orient-then-act handoff, not a redundancy. `/setup`'s heading is **unchanged**.
 
 ### 3. `/setup` — preserved, plus a first-run-only "← Back"
 
-Because the warmth now lives on `/welcome`, `/setup` keeps its current content
-unchanged (heading, numbered token steps, `FirstRunDisclosure`, masked input) —
-satisfying the "preserve existing trust copy + token steps" acceptance criterion.
+Because the warmth now lives on `/welcome`, `/setup` keeps its content essentially
+unchanged (numbered token steps, `FirstRunDisclosure`, masked input) — satisfying
+the "preserve existing trust copy + token steps" acceptance criterion. **One small
+addition (owner request):** a decorative GitHub mark sits inline, left of the
+"Connect to GitHub" heading. The mark is the existing octocat SVG, **lifted from
+`OpenInGitHubButton` into a shared `components/icons/GitHubMark` component** on its
+second consumer; it is `aria-hidden` (the heading text already names GitHub, so the
+accessible name stays "Connect to GitHub").
 
 One addition: a subtle **"← Back"** affordance on `/setup` that returns to
 `/welcome`, shown **only on a true first run**. **Gate on `!authState.hasToken`
-alone** — `hasToken === true` already precludes *both* the re-auth and the
+alone** — `hasToken === true` already precludes _both_ the re-auth and the
 Settings→Replace paths (Replace is only reachable from an authed session, which has
 a token), so no second "not in replace mode" condition is needed:
+
 - True first run (`!hasToken`) → show "← Back" → `/welcome`.
 - Re-auth (`hasToken`) → **no** "← Back" (those users never saw `/welcome`).
 - Settings→Replace (`hasToken`, `?replace=1`) → **no** "← Back"; excluded by the
@@ -185,7 +195,7 @@ a token), so no second "not in replace mode" condition is needed:
 **Why an in-app Back and not the browser back button** (the obvious cheaper
 alternative): PRism ships as an **Electron** desktop app (`desktop/`), whose
 `BrowserWindow` renders **no browser chrome** — there is no visible back button for
-the user to fall back on. The in-app affordance is the *only* way back to `/welcome`
+the user to fall back on. The in-app affordance is the _only_ way back to `/welcome`
 in the shipped product, so it is not redundant with browser navigation. It recovers
 a first-run user who clicked "Get started" by mistake or wants to re-read the
 framing, at near-zero cost, without showing a dangling back-link to users who have
@@ -221,6 +231,7 @@ unit-testable without a Router wrapper.
 ## Testing
 
 **Component (vitest) — `WelcomePage`:**
+
 - Renders the brand icon, the wordmark `<h1>` "PRism", the tagline, three benefit
   rows, the "Get started" CTA, and the two footer stubs.
 - "Get started" navigates to `/setup`.
@@ -228,6 +239,7 @@ unit-testable without a Router wrapper.
   `<a>`/`<button>`, with no `href` and not in the tab order).
 
 **Routing (vitest) — `App` redirect logic:**
+
 - Unauthed + `!hasToken` → `/welcome`.
 - `hasToken` + `authInvalidated` (re-auth) → `/setup`, **never** `/welcome`.
 - `?replace=1` (authed) → `/setup`.
@@ -242,11 +254,13 @@ unit-testable without a Router wrapper.
   `MemoryRouter`, not the App redirect, so they are unaffected.)
 
 **Component (vitest) — `/setup` back affordance:**
+
 - `!hasToken` (first run) → "← Back" link to `/welcome` present.
 - `hasToken` (re-auth) → no "← Back".
 - replace mode → no "← Back" (the existing `Cancel` → `/settings` is unaffected).
 
 **e2e (Playwright) + B1 visual:**
+
 - Fresh first run (temp `--dataDir`, no token) → app lands on `/welcome`; the card
   shows icon + wordmark + tagline + benefits + CTA + footer stubs.
 - "Get started" → `/setup`; "← Back" → `/welcome` round-trips.
@@ -259,22 +273,22 @@ unit-testable without a Router wrapper.
 ## Acceptance criteria
 
 - [ ] A true first-run user (`!hasToken`) lands on `/welcome` with orienting framing
-  (brand icon, wordmark, value tagline, three benefit lines) before any credentials
-  request.
+      (brand icon, wordmark, value tagline, three benefit lines) before any credentials
+      request.
 - [ ] The token-rejected re-auth path and the Settings→Replace path
-  (`hasToken === true`) route straight to `/setup` and never render the welcome hero.
+      (`hasToken === true`) route straight to `/setup` and never render the welcome hero.
 - [ ] "Get started" advances to `/setup`; the first-run "← Back" returns to
-  `/welcome`; re-auth/replace users get no "← Back".
+      `/welcome`; re-auth/replace users get no "← Back".
 - [ ] `/setup`'s existing local-first trust copy and numbered token steps are
-  preserved unchanged.
+      preserved unchanged.
 - [ ] A footer slot on `/welcome` renders Help / Send-feedback **stubs** as the
-  designated home for #210/#211.
+      designated home for #210/#211.
 - [ ] **B1 visual assert** (human eyeball, captured as Playwright screenshots on the
-  PR):
+      PR):
   - **First run (light + dark):** `/welcome` card centered on the accent backdrop;
     brand icon at hero size above the "PRism" wordmark; tagline + three benefit
     rows; "Get started" CTA; Help · Send-feedback footer (plain muted text, not
-    links) under a divider; no *page* scroll; logo legible on the dark card.
+    links) under a divider; no _page_ scroll; logo legible on the dark card.
   - **`/setup` (first run):** unchanged token card + a subtle "← Back" (top of card,
     `.cancel`-style muted link).
   - **Re-auth `/setup`:** identical to today (no welcome, no "← Back").
@@ -285,7 +299,7 @@ unit-testable without a Router wrapper.
   chosen by the owner over the lower-cost enrich-in-place default. The **load-bearing
   justification is the "learn vs connect" separation** — a clean orientation surface
   distinct from the credentials task. Being the pre-auth home for Help/Feedback is a
-  *forward-looking* benefit, **not yet cashable** in this slice (those links ship as
+  _forward-looking_ benefit, **not yet cashable** in this slice (those links ship as
   stubs, #210/#211 wire them), so it does not carry the decision on its own. The
   costs (an extra route, one click-through, re-auth suppression) are absorbed by the
   routing matrix above.
@@ -326,7 +340,7 @@ unit-testable without a Router wrapper.
 
 - **Interim first-impression while #222 is open.** Until #222 lands the human copy,
   the resting state is a warm-looking screen with admittedly-draft ("AI-slop") copy —
-  arguably a *different* poor first impression than today's cold-but-honest form.
+  arguably a _different_ poor first impression than today's cold-but-honest form.
   **Resolved (owner, 2026-06-06):** external testing will be gated — **no external
   tester sees the app until both #213 (PAT accuracy) and #222 (real copy) have
   landed.** So the placeholder-copy resting state is only ever seen internally.
