@@ -105,6 +105,8 @@ The connect flow currently shows the **raw** backend `detail`/code (no friendly 
 
 In `GitHubCiFailingDetector.FetchChecksAsync`, treat **any non-success status** the same as the existing 404 path → return `CiStatus.None`, instead of letting `EnsureSuccessStatusCode()` throw. (Keep the explicit 429 → `RateLimitExceededException` branch, which the orchestrator handles deliberately.) This guarantees a fine-grained token on an Actions repo *loses CI signal* rather than *aborting inbox refresh*, making the fine-grained warning truthful. Mirror the same guard in `FetchCombinedStatusAsync` for symmetry.
 
+**Why broad, not 403-only:** `InboxPoller` already catches tick-level exceptions and retries the next tick (`InboxPoller.cs:69`), so a thrown error doesn't crash — it *skips the whole snapshot*. A fine-grained token 403s on **every** tick, so without the guard the inbox would never refresh (permanently stale), not merely lose CI. The guard therefore must cover the 403 case. Extending it to all non-2xx (incl. transient 5xx) is deliberate: CI status is non-critical enrichment that must never block the inbox, and narrowing to 403-only would re-open the whole-tick abort for a 5xx on one PR's `/check-runs`. The accepted cost is that a transient GitHub 5xx degrades that PR's CI to `None` for one tick (badge briefly absent + one spurious "updated" event) and recovers next tick. A `ServerError…degrades_to_none` test locks this in so a future narrowing is a conscious choice. (Note: a *revoked* token never reaches this guard — a 401 on the section search is swallowed into an empty section by `GitHubSectionQueryRunner.QueryAllAsync`'s per-section catch (`:66`), so the detector gets an empty input list and issues no Checks call.)
+
 ## Component breakdown
 
 - **`SegmentedControl.tsx` (+ `.module.css`)** — add a backward-compatible `variant?: 'segmented' | 'nav'` prop (default `'segmented'`); the `'nav'` variant applies nav-styled classes (no track; accent-glow hover; accent-tint selected). `AppearancePane` (existing consumer) is unchanged.
@@ -152,6 +154,7 @@ E2e (Playwright): update setup-screen snapshots/specs asserting the old fine-gra
 - **Inline disclosure / popover / two-column chooser / always-visible callout:** earlier rounds — none kept a constant compact footprint while labeling the types.
 - **Pinning the panel to the taller option's height** (no reflow): re-introduces dead space on the default Classic panel.
 - **Copy-only without the Decision-1 fix:** rejected — a fine-grained token could abort inbox refresh, so no warning copy could be truthful without the graceful-degradation fix.
+- **Narrowing the Decision-1 guard to 403-only (let 5xx keep throwing):** rejected — because `InboxPoller` retries by skipping the whole tick, a transient or persistent 5xx on one PR's `/check-runs` would block the entire inbox refresh, re-creating the failure Decision 1 removes. The guard stays broad (any non-2xx → `None`); the accepted cost is a transient 5xx briefly hiding that PR's CI badge. See Decision 1.
 
 ## Deferrals / follow-ups
 

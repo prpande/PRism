@@ -55,6 +55,26 @@ public async Task Forbidden_combined_status_degrades_to_none_not_throw()
     result.Should().HaveCount(1);
     result[0].Ci.Should().Be(CiStatus.None);
 }
+
+[Fact]
+public async Task ServerError_check_runs_degrades_to_none_not_throw()
+{
+    // Intentional breadth (#213, spec Decision 1): the guard swallows ANY non-2xx,
+    // not just 403. A transient 5xx degrades this PR's CI to None for the tick rather
+    // than aborting the whole inbox refresh — locking in the deliberate tradeoff so a
+    // future "narrow this to 403" change has to delete this test on purpose. The 429
+    // rate-limit branch is tested separately and still throws RateLimitExceededException.
+    var handler = new FakeHttpMessageHandler(req =>
+        req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+            ? Respond(HttpStatusCode.ServiceUnavailable, "{}")
+            : Respond(HttpStatusCode.OK, AllPassingStatus));
+    var sut = BuildSut(handler);
+
+    var result = await sut.DetectAsync([Raw(1)], default);
+
+    result.Should().HaveCount(1);
+    result[0].Ci.Should().Be(CiStatus.None);
+}
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -67,13 +87,30 @@ Expected: the two new tests FAIL — `DetectAsync` throws `HttpRequestException`
 In `FetchChecksAsync`, replace the line `resp.EnsureSuccessStatusCode();` (after the 404 and 429 checks, ~line 92) with:
 
 ```csharp
-            // Fine-grained PATs can't call the Checks API (GitHub returns 403/other
-            // non-2xx). Degrade to "no CI signal" rather than throwing — a throw
-            // propagates through DetectAsync into InboxRefreshOrchestrator.RefreshAsync,
-            // which has no catch, aborting the WHOLE inbox refresh. (#213)
-            // A 401 (revoked token) does not reach here: GitHubSectionQueryRunner and
-            // GitHubPrEnricher run earlier in RefreshAsync and throw on 401, so a dead
-            // token already aborts the tick upstream — this guard only masks CI signal.
+            // Fine-grained PATs can't call the Checks API (GitHub returns 403). Degrade
+            // to "no CI signal" rather than throwing. A throw propagates through
+            // DetectAsync into InboxRefreshOrchestrator.RefreshAsync (no catch) and out to
+            // InboxPoller, whose tick-level catch (InboxPoller.cs:69) skips the WHOLE
+            // snapshot and retries next tick. For a fine-grained token that 403s on EVERY
+            // tick, that means the inbox NEVER refreshes — permanently stale. This guard
+            // fixes that. (#213)
+            //
+            // Why a 401 (revoked token) cannot produce a misleading CI signal here: a 401
+            // on the section search is SWALLOWED into an empty section by
+            // GitHubSectionQueryRunner.QueryAllAsync's per-section catch
+            // (GitHubSectionQueryRunner.cs:66) — it does NOT throw. With empty sections,
+            // GitHubPrEnricher.EnrichAsync early-returns without any HTTP call, and
+            // DetectAsync receives an empty authored-by-me list and returns before issuing
+            // any Checks call. So a dead token never reaches this line.
+            //
+            // The guard is intentionally BROAD (any non-2xx, not just 403): CI status is a
+            // non-critical enrichment that must never block the inbox. Accepted tradeoff
+            // (see spec Decision 1, Rejected alternatives): a transient GitHub 5xx on
+            // /check-runs degrades that PR's CI to None (badge briefly absent + one spurious
+            // "updated" event) and recovers next tick, rather than aborting the whole tick.
+            // Narrowing to 403-only would re-open the whole-tick abort for 5xx — the exact
+            // failure this task removes. The 429 branch above still throws
+            // RateLimitExceededException, so rate-limit backoff is preserved.
             if (!resp.IsSuccessStatusCode) return CiStatus.None;
 ```
 
@@ -308,6 +345,12 @@ Create `frontend/src/components/Setup/tokenErrorCopy.ts`:
 // GitHubReviewService only emits it for ghp_ tokens — so it names the classic
 // scopes; there is no fine-grained variant. The fallback is STATIC: it never
 // echoes the raw `code` into the UI. (#213)
+//
+// NOTE: the apostrophe in NETWORK is a curly U+2019 (’), not an ASCII '. Inside a
+// single-quoted literal that is valid and prettier-stable (prettier keeps single
+// quotes because U+2019 is not a string delimiter). If you retype this line, do NOT
+// use an ASCII apostrophe — it would terminate the string. Easiest safe path: copy
+// the line verbatim.
 const REJECTED = 'GitHub rejected this token. Check that you copied the whole token, then try again.';
 const CLASSIC_SCOPES = 'This token is missing required scopes. A classic token needs repo and read:org.';
 const NETWORK = 'Couldn’t reach GitHub. Check your connection, then try again.';
@@ -386,6 +429,33 @@ describe('MaskedInput', () => {
     render(<MaskedInput id="pat" value="" onChange={vi.fn()} ariaLabel="Personal access token" />);
     expect(screen.getByLabelText('Personal access token')).not.toHaveAttribute('aria-invalid');
   });
+  it('associates the error text via aria-describedby only when hasError is set', () => {
+    const { rerender } = render(
+      <MaskedInput
+        id="pat"
+        value=""
+        onChange={vi.fn()}
+        ariaLabel="Personal access token"
+        errorId="pat-err"
+      />,
+    );
+    // errorId present but no error → no association (avoids pointing at an absent node).
+    expect(screen.getByLabelText('Personal access token')).not.toHaveAttribute('aria-describedby');
+    rerender(
+      <MaskedInput
+        id="pat"
+        value=""
+        onChange={vi.fn()}
+        ariaLabel="Personal access token"
+        errorId="pat-err"
+        hasError
+      />,
+    );
+    expect(screen.getByLabelText('Personal access token')).toHaveAttribute(
+      'aria-describedby',
+      'pat-err',
+    );
+  });
 });
 ```
 
@@ -406,12 +476,17 @@ interface Props {
   placeholder?: string;
   ariaLabel: string;
   hasError?: boolean;
+  // Id of the error element to associate when hasError is true (WCAG 1.3.1 /
+  // 3.3.1 — programmatic link between the field and its error text). (#213)
+  errorId?: string;
 }
 
-export function MaskedInput({ id, value, onChange, placeholder, ariaLabel, hasError }: Props) {
+export function MaskedInput({ id, value, onChange, placeholder, ariaLabel, hasError, errorId }: Props) {
 ```
 
-On the `<input>` element add: `aria-invalid={hasError || undefined}` (so the attribute is omitted, not `"false"`, when there is no error).
+On the `<input>` element add both attributes:
+- `aria-invalid={hasError || undefined}` (so the attribute is omitted, not `"false"`, when there is no error).
+- `aria-describedby={hasError && errorId ? errorId : undefined}` (associate the pill text only when an error is actually shown, so the input never references an absent node).
 
 - [ ] **Step 4: Add the danger-ring style**
 
@@ -447,21 +522,23 @@ git commit -m "feat(#213): MaskedInput hasError prop with danger ring"
 **Files:**
 - Modify: `frontend/src/components/Setup/SetupForm.tsx`
 - Modify: `frontend/src/components/Setup/SetupForm.module.css`
-- Test: `frontend/src/components/Setup/SetupForm.test.tsx` (create)
+- Modify: `frontend/__tests__/setup-form.test.tsx` — the SetupForm unit tests ALREADY live here (14 tests, imports `SetupForm` from `../src/components/Setup/SetupForm`). Do **NOT** create a second `src/components/Setup/SetupForm.test.tsx`: that would duplicate coverage and the two files would contradict each other (the existing one asserts the old default copy this task deletes). Edit the existing file in place.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Update the existing SetupForm test file (write-first)**
 
-Create `frontend/src/components/Setup/SetupForm.test.tsx`:
+Open `frontend/__tests__/setup-form.test.tsx`. The rewrite in Step 3 changes the default panel from fine-grained to classic and removes the `Checks` permission, the `Metadata` note, and the classic footnote — so these existing tests now assert content that no longer renders by default and must be **removed**:
+- `renders the four fine-grained permission rows` (asserts `Checks`, `Contents`, `Read and write`, `Commit statuses` by default)
+- `mentions Metadata: Read as auto-included` (now fine-grained-panel-only)
+- `shows a classic-PAT footnote` (footnote deleted)
+- `renders error pill when error prop is set` (superseded by the stronger pill test below)
+
+**Keep** every other existing test unchanged — they still hold: `disables Continue when input is empty`, `renders the decorative GitHub mark…`, `toggles mask/unmask on click of the eye`, `calls onSubmit with the typed PAT…`, the two Cancel tests, the two Back tests, and `disables Cancel … while busy=true`.
+
+Add these new tests to the same `describe('SetupForm', …)` block (the file already imports `render`, `screen`, `userEvent` (default import — use `userEvent.setup()` / `userEvent.click`), `describe`, `it`, `expect`, `vi`, `MemoryRouter`, and `SetupForm`):
 
 ```tsx
-import { render, screen } from '@testing-library/react';
-import { userEvent } from '@testing-library/user-event';
-import { describe, it, expect, vi } from 'vitest';
-import { SetupForm } from './SetupForm';
+  const host = 'https://github.com';
 
-const host = 'https://github.com';
-
-describe('SetupForm', () => {
   it('defaults to Classic: scopes, classic link, SSO callout, ghp_ placeholder', () => {
     render(<SetupForm host={host} onSubmit={vi.fn()} />);
     expect(screen.getByRole('radio', { name: 'Classic' })).toHaveAttribute('aria-checked', 'true');
@@ -503,25 +580,45 @@ describe('SetupForm', () => {
     expect(screen.queryByText(/local-first/i)).not.toBeInTheDocument();
   });
 
-  it('shows the error pill and marks the input invalid when error is set', () => {
+  it('shows the error pill, marks the input invalid, and links them via aria-describedby', () => {
     render(<SetupForm host={host} onSubmit={vi.fn()} error="GitHub rejected this token." />);
-    expect(screen.getByRole('alert')).toHaveTextContent('GitHub rejected this token.');
-    expect(screen.getByLabelText('Personal access token')).toHaveAttribute('aria-invalid', 'true');
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('GitHub rejected this token.');
+    const input = screen.getByLabelText('Personal access token');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    // The field points at the pill so assistive tech can retrieve the message on focus.
+    expect(input.getAttribute('aria-describedby')).toBe(alert.id);
+    expect(alert.id).toBeTruthy();
   });
-});
+
+  it('clears a stale error when the token type is switched', async () => {
+    const user = userEvent.setup();
+    const onErrorClear = vi.fn();
+    render(
+      <SetupForm
+        host={host}
+        onSubmit={vi.fn()}
+        error="This token is missing required scopes."
+        onErrorClear={onErrorClear}
+      />,
+    );
+    await user.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    // A classic-scopes error must not persist against the fine-grained panel.
+    expect(onErrorClear).toHaveBeenCalledTimes(1);
+  });
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd frontend && npx vitest run src/components/Setup/SetupForm.test.tsx`
-Expected: FAIL — no radios (still the single "Generate a token" link), "Checks" present, tagline present.
+Run: `cd frontend && npx vitest run __tests__/setup-form.test.tsx`
+Expected: FAIL — no radios (still the single "Generate a token" link), `Configure SSO`/`generate a classic token` absent, `onErrorClear` never called.
 
 - [ ] **Step 3: Rewrite SetupForm's body**
 
 In `SetupForm.tsx`: add the import `import { SegmentedControl } from '../controls/SegmentedControl';`, replace the `PERMISSIONS` constant and the brand+section-1 markup. Full new file body (keep the existing `Props` interface incl. `showBackToWelcome`, and the replace-mode Cancel block unchanged):
 
 ```tsx
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { FirstRunDisclosure } from './FirstRunDisclosure';
 import { MaskedInput } from './MaskedInput';
@@ -564,9 +661,11 @@ export function SetupForm({
   busy,
   isReplaceMode,
   showBackToWelcome,
+  onErrorClear,
 }: Props) {
   const [pat, setPat] = useState('');
   const [tokenType, setTokenType] = useState<TokenType>('classic');
+  const errorId = useId();
   const base = host.replace(/\/$/, '');
   const classicUrl = `${base}/settings/tokens/new`;
   const fineGrainedUrl = `${base}/settings/personal-access-tokens/new`;
@@ -605,7 +704,13 @@ export function SetupForm({
             { value: 'fine-grained', label: 'Fine-grained' },
           ]}
           value={tokenType}
-          onChange={setTokenType}
+          onChange={(t) => {
+            setTokenType(t);
+            // Clear any stale connect error so a classic-scopes message can't persist
+            // against the fine-grained panel (and vice versa). The parent owns `error`;
+            // this asks it to drop it. (#213)
+            onErrorClear?.();
+          }}
         />
 
         {tokenType === 'classic' ? (
@@ -673,11 +778,12 @@ export function SetupForm({
           placeholder={placeholder}
           ariaLabel="Personal access token"
           hasError={!!error}
+          errorId={errorId}
         />
       </section>
 
       {error && (
-        <div role="alert" className={styles.error}>
+        <div role="alert" id={errorId} className={styles.error}>
           <DangerGlyph />
           {error}
         </div>
@@ -709,7 +815,7 @@ export function SetupForm({
 }
 ```
 
-(The `Props` interface and its comments above the function are unchanged — keep them as-is in the file.)
+(The `Props` interface above the function keeps all its existing fields and comments; add ONE optional field: `onErrorClear?: () => void;` — the callback fired when the user switches token type so the parent can drop a now-irrelevant error. All other props are unchanged.)
 
 - [ ] **Step 4: Update SetupForm CSS**
 
@@ -779,12 +885,12 @@ In `SetupForm.module.css`: **remove** the `.sub` and `.footnote` (and `.footnote
 }
 ```
 
-Also change the existing `.section` rule's `padding: var(--s-4) 0;` to `padding: var(--s-3) 0;` (tightened rhythm), and confirm `.error` keeps `display:flex; align-items:center; gap:6px;` so the new leading `ErrorIcon` aligns (it already does).
+Also change the existing `.section` rule's `padding: var(--s-4) 0;` to `padding: var(--s-3) 0;` (tightened rhythm), and confirm `.error` keeps `display:flex; align-items:center; gap:6px;` so the leading `DangerGlyph` aligns (it already does).
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd frontend && npx vitest run src/components/Setup/SetupForm.test.tsx`
-Expected: PASS (all four tests).
+Run: `cd frontend && npx vitest run __tests__/setup-form.test.tsx`
+Expected: PASS (the kept tests + the five new/updated tests).
 
 - [ ] **Step 6: Fix the existing SetupPage link test broken by this change**
 
@@ -807,7 +913,7 @@ Expected: PASS (this test + the rest of the suite still green; the connect/repla
 - [ ] **Step 7: Commit**
 
 ```bash
-git add frontend/src/components/Setup/SetupForm.tsx frontend/src/components/Setup/SetupForm.module.css frontend/src/components/Setup/SetupForm.test.tsx frontend/__tests__/setup-page.test.tsx
+git add frontend/src/components/Setup/SetupForm.tsx frontend/src/components/Setup/SetupForm.module.css frontend/__tests__/setup-form.test.tsx frontend/__tests__/setup-page.test.tsx
 git commit -m "feat(#213): classic-primary token-type selector + panels in SetupForm"
 ```
 
@@ -843,6 +949,45 @@ In `frontend/__tests__/setup-page.test.tsx`:
     await userEvent.click(screen.getByRole('button', { name: /continue/i }));
     expect(await screen.findByText(/missing required scopes/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/personal access token/i)).toHaveAttribute('aria-invalid', 'true');
+  });
+```
+
+(c) Add a replace-flow test proving an UNKNOWN error code falls back to the static copy and never interpolates the raw code (the spec's "default / unknown → static, never echoes `code`" requirement, replace side). Place it in the replace-mode `describe` block:
+
+```tsx
+  it('replace flow: an unknown error code shows the static fallback, never the raw code', async () => {
+    server.use(
+      http.post('/api/auth/replace', () =>
+        HttpResponse.json({ ok: false, error: 'weird-new-code-xyz' }),
+      ),
+    );
+    renderReplaceRouted(); // use the existing replace-mode render helper in this file
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_new');
+    await userEvent.click(screen.getByRole('button', { name: /replace/i }));
+    const toast = await screen.findByRole('alert');
+    expect(toast).toHaveTextContent('Validation failed. Check your token and try again.');
+    expect(toast).not.toHaveTextContent(/weird-new-code-xyz/);
+  });
+```
+
+(Match the file's actual replace-mode render helper and submit-button name; if the existing replace tests use a different harness/role, mirror theirs — the assertion content is the point.)
+
+(d) Add a connect-flow test proving the stale error clears when the token type is switched (the SetupPage owns `error`; this verifies the `onErrorClear` wiring end-to-end):
+
+```tsx
+  it('clears the error pill when the user switches token type', async () => {
+    server.use(
+      http.post('/api/auth/connect', () =>
+        HttpResponse.json({ ok: false, error: 'insufficientscopes' }),
+      ),
+    );
+    renderRouted();
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_bad');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    expect(await screen.findByText(/missing required scopes/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    expect(screen.queryByText(/missing required scopes/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/personal access token/i)).not.toHaveAttribute('aria-invalid');
   });
 ```
 
@@ -886,10 +1031,20 @@ And replace the `catch (e) { setError((e as Error).message); }` block with an Ap
 
 (The replace flow already calls `replaceErrorMessage(...)` — it now resolves to the shared import; no other change there.)
 
+- [ ] **Step 4b: Pass `onErrorClear` into `SetupForm` so a stale error clears on token-type switch**
+
+Find where `SetupPage` renders `<SetupForm … />` and add the prop wiring to clear the page-owned error:
+
+```tsx
+        onErrorClear={() => setError(undefined)}
+```
+
+(The `error` prop is already passed to `SetupForm`; this is the matching clear path. After the switch, `error` is `undefined`, so `SetupForm` drops the pill and `MaskedInput` drops `aria-invalid`/`aria-describedby`.)
+
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run __tests__/setup-page.test.tsx`
-Expected: PASS (updated network-copy + insufficientscopes/aria-invalid tests, and all the untouched replace-flow tests — `validation-failed`→"GitHub rejected", `submit-in-flight`→verbatim 409 copy — still green).
+Expected: PASS (updated network-copy + insufficientscopes/aria-invalid tests, the new replace-flow static-fallback test, the new clear-on-switch test, and all the untouched replace-flow tests — `validation-failed`→"GitHub rejected", `submit-in-flight`→verbatim 409 copy — still green).
 
 - [ ] **Step 6: Commit**
 
@@ -938,8 +1093,11 @@ git commit -m "docs(#213): reconcile 03-poc-features PAT posture to classic-prim
 
 - [ ] **Step 1: Find any remaining setup-screen copy references (e2e + unit)**
 
-Run: `cd frontend && grep -rniE "generate a token|local-first|ghp_… or github_pat_|Checks: Read|already have a classic" e2e tests __tests__ src 2>/dev/null`
-(`__tests__/setup-page.test.tsx` is already updated in Tasks 5-6 — confirm no *other* hits remain.) For each remaining hit asserting old copy, update to the new copy: "Generate a classic token" / "Generate a fine-grained token", token-type radios, and the per-tab placeholder. A bare `Continue` / `personal access token` label hit is a false positive (those are preserved) — do not touch it.
+Use the editor's ripgrep-backed search (the `Grep` tool), case-insensitive, across `frontend/e2e`, `frontend/tests`, `frontend/__tests__`, `frontend/src`, for this alternation:
+
+`generate a token|local-first|Checks|already have a classic|Metadata: Read`
+
+(Do NOT run a raw POSIX `grep … 2>/dev/null` — the repo shell is PowerShell, where that redirect and `grep` silently no-op, making the step falsely "pass". If you must use a shell, run it through `bash -c "grep -rniE …"` or use PowerShell `Select-String`.) `__tests__/setup-form.test.tsx` and `__tests__/setup-page.test.tsx` are already updated in Tasks 5-6 — confirm no *other* hits remain. For each remaining hit asserting old copy, update to the new copy: "Generate a classic token" / "Generate a fine-grained token", token-type radios, and the per-tab placeholder. A bare `Continue` / `personal access token` label hit is a false positive (those are preserved) — do not touch it; a `Checks` hit inside an unrelated test (e.g. a checks-API backend test) is also a false positive — only setup-screen copy matters here.
 
 - [ ] **Step 2: Re-baseline any setup-screen visual snapshot (if present)**
 
@@ -968,6 +1126,10 @@ git commit -m "test(#213): update setup-screen e2e to classic-primary copy"
 ## Self-Review
 
 - **Spec coverage:** classic-primary selector (T5), fine-grained warning (T5), no "Checks" (T5), per-tab placeholder (T5), SSO callout (T5), classic-only error copy (T3/T6), MaskedInput danger ring (T4), graceful CI degradation / Decision 1A (T1), SegmentedControl reuse + nav variant (T2), 03-poc-features reconcile (T7), tagline removal (T5), e2e parity (T8). All spec sections map to a task.
-- **Type consistency:** `TokenType = 'classic' | 'fine-grained'` used in SetupForm + SegmentedControl generic; `connectErrorMessage`/`replaceErrorMessage` signatures match across T3/T6; `hasError` prop matches across T4/T5.
+- **Type consistency:** `TokenType = 'classic' | 'fine-grained'` used in SetupForm + SegmentedControl generic; `connectErrorMessage`/`replaceErrorMessage` signatures match across T3/T6; `hasError`/`errorId` props match across T4/T5; `onErrorClear?: () => void` matches between SetupForm (T5) and SetupPage (T6 Step 4b).
 - **No placeholders:** every code step has complete content.
+- **Test-file consolidation (round-2 fix):** SetupForm unit tests live ONLY in `frontend/__tests__/setup-form.test.tsx` (modified in place, T5) — no second `src/components/Setup/SetupForm.test.tsx` is created, so there is no contradictory duplicate suite. The full `npm test` in T8 is the backstop.
+- **Stale-error UX (round-2 fix):** switching token type fires `onErrorClear`, so a classic-scopes error never persists against the fine-grained panel; covered by a SetupForm unit test (callback fired) and a SetupPage integration test (pill + `aria-invalid` cleared).
+- **a11y association (round-2 fix):** the error pill carries a `useId` id; `MaskedInput` links to it via `aria-describedby` only when an error is shown (WCAG 1.3.1/3.3.1), in addition to `aria-invalid` and `role="alert"`.
+- **Backend guard breadth (round-2 decision):** Task 1's `!IsSuccessStatusCode` guard is intentionally broad (any non-2xx → `CiStatus.None`), NOT narrowed to 403. Narrowing would re-open the whole-tick abort for transient 5xx — the exact failure Task 1 removes — because `InboxPoller` already swallows/retries tick errors, so a fine-grained token that 403s every tick would otherwise leave the inbox permanently stale. Accepted tradeoff (transient 5xx → CI badge briefly absent + one spurious "updated" event, recovers next tick) is documented in the code comment and locked by the `ServerError…degrades_to_none` test. The 429 branch still throws (backoff preserved).
 - **Visual B1 gate:** the look matches the approved mockup (`classic-primary-v5` / `error-states`); a human visual-assert + dark-theme `--warning` contrast check happen at the B1 gate before merge.
