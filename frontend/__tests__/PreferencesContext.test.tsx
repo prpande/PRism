@@ -117,4 +117,22 @@ describe('PreferencesProvider', () => {
     expect(result.current.preferences?.ui.theme).toBe('dark');
     expect(get.mock.calls.filter(([p]) => p === '/api/preferences')).toHaveLength(1);
   });
+
+  it('a failed GET sets the shared error and leaves preferences null; a later success clears it', async () => {
+    // The shared-store topology means one failed fetch leaves every consumer in
+    // error/null at once. A subsequent successful refetch must clear the error.
+    vi.spyOn(apiClient, 'get')
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValue(prefs({ theme: 'dark' }));
+    const { result } = renderHook(() => usePreferences());
+
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.preferences).toBeNull();
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+    await waitFor(() => expect(result.current.error).toBeNull());
+    expect(result.current.preferences?.ui.theme).toBe('dark');
+  });
 });

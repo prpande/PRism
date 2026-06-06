@@ -70,7 +70,9 @@ export interface PreferencesContextValue {
   preferences: PreferencesResponse | null;
   error: Error | null;
   refetch(): Promise<void>;
-  set(key: PreferenceKey, value: unknown): Promise<PreferencesResponse | undefined>;
+  // Resolves with the updated snapshot, or throws on POST failure (after the
+  // optimistic rollback + error toast) — never resolves `undefined`.
+  set(key: PreferenceKey, value: unknown): Promise<PreferencesResponse>;
 }
 
 // Exported as a test seam so a unit test can supply a stub context value without
@@ -96,8 +98,11 @@ function usePreferencesStore(enabled: boolean): PreferencesContextValue {
   const refetch = useCallback(async () => {
     try {
       setPreferences(await apiClient.get<PreferencesResponse>('/api/preferences'));
+      // Clear any error from a prior failed attempt so `error` reflects the
+      // latest fetch (it is now shared across all consumers).
+      setError(null);
     } catch (e) {
-      setError(e as Error);
+      setError(e instanceof Error ? e : new Error(String(e)));
     }
   }, []);
 
