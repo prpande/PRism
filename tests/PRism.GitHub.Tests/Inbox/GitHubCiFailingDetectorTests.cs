@@ -201,6 +201,38 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
+    public async Task Definitive_failing_is_cached_even_when_other_source_degraded()
+    {
+        // #213 follow-up: a Failing observed from check-runs is definitive — a transient 5xx
+        // on the combined-status endpoint can't un-fail it. So the result must be (a) Failing
+        // and (b) cached, NOT flagged degraded and re-probed. Marking a definitive Failing as
+        // degraded (because the OTHER source degraded) contradicts ProbeAsync's contract
+        // ("A definitively-observed Failing is never degraded") and causes needless GitHub
+        // API load by re-probing a stable failing status every tick.
+        var requestCount = 0;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            Interlocked.Increment(ref requestCount);
+            return req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, FailingCheckRun)
+                : Respond(HttpStatusCode.ServiceUnavailable, "{}");
+        });
+        var sut = BuildSut(handler);
+
+        var candidate = Raw(1, "sha-A");
+        var first = await sut.DetectAsync([candidate], default);
+        first[0].Ci.Should().Be(CiStatus.Failing,
+            "a failing check-run is definitive regardless of the combined-status endpoint's health");
+        var countAfterFirst = requestCount;
+
+        await sut.DetectAsync([candidate], default);
+
+        countAfterFirst.Should().Be(2);
+        requestCount.Should().Be(2,
+            "a definitive Failing must be cached, not flagged degraded and re-probed, even when combined-status 5xx'd");
+    }
+
+    [Fact]
     public async Task Concurrency_capped_at_eight()
     {
         var inFlight = 0;
