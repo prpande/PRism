@@ -11,6 +11,11 @@ namespace PRism.Core.Tests.Ai;
 
 public sealed class AiSeamSelectorTests
 {
+    // A distinct instance placed in the real bag so a test can assert real-bag selection by IDENTITY
+    // (BeSameAs). The placeholder bag holds a DIFFERENT instance of the same type, so a type-only
+    // assertion could not tell the real bag from the placeholder bag apart.
+    private static readonly PlaceholderPrSummarizer RealSummarizerStandIn = new();
+
     private static AiSeamSelector BuildSelector(AiModeState state, bool liveAvailable = false, bool withRealSummarizer = false)
     {
         var noop = new Dictionary<Type, object>
@@ -24,7 +29,7 @@ public sealed class AiSeamSelectorTests
             [typeof(IInboxRanker)] = new PlaceholderInboxRanker(),
         };
         var real = new Dictionary<Type, object>();
-        if (withRealSummarizer) real[typeof(IPrSummarizer)] = new PlaceholderPrSummarizer(); // stand-in "real" for the test
+        if (withRealSummarizer) real[typeof(IPrSummarizer)] = RealSummarizerStandIn; // distinct real-bag instance (see field comment)
         return new AiSeamSelector(state, noop, placeholder, real, () => liveAvailable);
     }
 
@@ -60,7 +65,9 @@ public sealed class AiSeamSelectorTests
     public void Live_with_real_impl_and_available_resolves_real()
     {
         var sut = BuildSelector(new AiModeState { Mode = AiMode.Live }, liveAvailable: true, withRealSummarizer: true);
-        sut.Resolve<IPrSummarizer>().Should().BeOfType<PlaceholderPrSummarizer>();
+        // Assert by IDENTITY, not type: the placeholder bag holds a different PlaceholderPrSummarizer
+        // instance, so BeSameAs proves the REAL bag was selected (a type-only check could not).
+        sut.Resolve<IPrSummarizer>().Should().BeSameAs(RealSummarizerStandIn);
     }
 
     [Fact]

@@ -38,7 +38,7 @@ public sealed class AiSeamSelector : IAiSeamSelector
             AiMode.Off => _noop,
             AiMode.Preview => _placeholder,
             AiMode.Live => _real.ContainsKey(typeof(T)) && _liveAvailable() ? _real : _noop,
-            _ => _noop,
+            _ => _noop, // unknown/corrupt AiMode (e.g. (AiMode)99 from a malformed config deserialize) → safe Noop, never throw
         };
         if (!bag.TryGetValue(typeof(T), out var impl))
             throw new InvalidOperationException(
