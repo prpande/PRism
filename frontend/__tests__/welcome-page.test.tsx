@@ -45,5 +45,6 @@ describe('WelcomePage', () => {
     expect(screen.queryByRole('link', { name: /^help$/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /send feedback/i })).toBeNull();
     expect(screen.getByText('Help').tagName).toBe('SPAN');
+    expect(screen.getByText('Send feedback').tagName).toBe('SPAN');
   });
 });

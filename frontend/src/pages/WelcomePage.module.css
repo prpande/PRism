@@ -75,12 +75,13 @@
 .benefitEmoji {
   flex: none;
 }
-/* The CTA is a <Link> styled as the primary button. Kill the global `a:hover`
-   underline so it reads as a button, not an underlined link. */
 .cta {
   width: 100%;
-  text-decoration: none;
 }
+/* The CTA is a <Link> styled as the primary button; only the :hover override is
+   load-bearing — it kills the global `a:hover` underline (tokens.css) so the CTA
+   reads as a button, not an underlined link. (The base `a` rule already removes
+   the non-hover underline.) */
 .cta:hover {
   text-decoration: none;
 }
