@@ -414,6 +414,71 @@ describe('openEventStream — onerror probe via /api/events/ping', () => {
   });
 });
 
+describe('openEventStream — dwell-gated reset (D2)', () => {
+  it('resets attempt only after the stream survives the 10s dwell', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      // first outage: attempt 0 → delay 1000
+      vi.advanceTimersByTime(35_001);
+      vi.advanceTimersByTime(1_000);
+      expect(FakeEventSource.instances).toHaveLength(2);
+      // new stream handshakes and SURVIVES the dwell → attempt resets to 0
+      FakeEventSource.instances[1].dispatch('subscriber-assigned', { subscriberId: 's' });
+      vi.advanceTimersByTime(10_000); // dwell elapses → attempt = 0
+      // next outage should again use delay 1000 (attempt 0), not 2000.
+      // Land the watchdog exactly — overshooting would let the small reset
+      // backoff fire inside the same advance.
+      vi.advanceTimersByTime(25_000); // watchdog fires → backoff(1000) armed
+      expect(FakeEventSource.instances).toHaveLength(2);
+      vi.advanceTimersByTime(999);
+      expect(FakeEventSource.instances).toHaveLength(2); // not yet
+      vi.advanceTimersByTime(1);
+      expect(FakeEventSource.instances).toHaveLength(3); // delay 1000 → attempt was 0
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a stale dwell from a dropped connection does NOT reset attempt (D8)', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 503 })) as unknown as typeof fetch;
+      const stream = openEventStream({ random: () => 0.5 });
+      try {
+        // Climb attempt to 2 via two silence outages (delays 1000, then 2000).
+        vi.advanceTimersByTime(35_001);
+        await vi.advanceTimersByTimeAsync(1_000); // attempt 0→1, instance 2
+        vi.advanceTimersByTime(35_001);
+        await vi.advanceTimersByTimeAsync(2_000); // attempt 1→2, instance 3
+        expect(FakeEventSource.instances).toHaveLength(3);
+        // instance 3 handshakes (arms dwell_A, would fire in 10s) then DROPS at +1s.
+        FakeEventSource.instances[2].dispatch('subscriber-assigned', { subscriberId: 's' });
+        vi.advanceTimersByTime(1_000);
+        FakeEventSource.instances[2].fireError();
+        await vi.advanceTimersByTimeAsync(0); // ping 503 → scheduleReconnect: clears dwell_A; computeDelay(2)=4000, attempt→3
+        await vi.advanceTimersByTimeAsync(4_000); // instance 4 opens; do NOT handshake it
+        expect(FakeEventSource.instances).toHaveLength(4);
+        // Pass the moment dwell_A WOULD have fired (10s after instance-3 handshake).
+        await vi.advanceTimersByTimeAsync(10_000);
+        // Drop instance 4. Next reconnect delay reveals attempt: FIX computeDelay(3)=8000; BUG computeDelay(0)=1000.
+        FakeEventSource.instances[3].fireError();
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(FakeEventSource.instances).toHaveLength(4); // FIX still waiting (8000); BUG would be 5
+        await vi.advanceTimersByTimeAsync(7_000);
+        expect(FakeEventSource.instances).toHaveLength(5);
+      } finally {
+        stream.close();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('openEventStream — malformed handshake (D4)', () => {
   it('reconnects when subscriber-assigned payload is not valid JSON', () => {
     vi.useFakeTimers();

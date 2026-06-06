@@ -97,7 +97,6 @@ const MAX_DELAY_MS = 30_000; // D2
 // markers come off as each one gains its first reference.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- used Task 6 (D5)
 const UNHEALTHY_AFTER_MS = 30_000;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used Task 5 (D2 dwell)
 const STABLE_AFTER_MS = 10_000;
 const PING_TIMEOUT_MS = 5_000;
 
@@ -239,6 +238,13 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
       } else {
         hasEverConnected = true;
       }
+      // D2: only a stream that SURVIVES the dwell resets the backoff attempt counter.
+      // A drop before the dwell elapses → scheduleReconnect() clears this timer (D8),
+      // so accept-then-drop keeps backoff growing.
+      if (dwellTimer) clearTimeout(dwellTimer);
+      dwellTimer = setTimeout(() => {
+        attempt = 0;
+      }, STABLE_AFTER_MS);
       resetWatchdog();
     });
 
