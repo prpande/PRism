@@ -16,6 +16,7 @@ import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
 import { OpenTabsProvider } from './contexts/OpenTabsContext';
+import { PreferencesProvider } from './contexts/PreferencesContext';
 import { AskAiDrawerProvider } from './contexts/AskAiDrawerContext';
 import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
 import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
@@ -152,7 +153,16 @@ export function App() {
         <CheatsheetProvider>
           <OpenTabsProvider>
             <AskAiDrawerProvider>
-              {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+              {/* #143: one shared preferences store for the whole app. Mounted
+                  OUTSIDE the isAuthed?EventStreamProvider conditional so it
+                  covers both branches — AppearanceSync (inside `tree`) is the
+                  sole unauthed consumer. Consequence: it can't call
+                  useEventSource() directly (it's above EventStreamProvider); a
+                  future SSE-driven invalidation would use a window-event bridge,
+                  cf. OpenTabsContext. */}
+              <PreferencesProvider>
+                {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+              </PreferencesProvider>
             </AskAiDrawerProvider>
           </OpenTabsProvider>
         </CheatsheetProvider>

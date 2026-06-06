@@ -21,14 +21,15 @@ export function AppearanceSection() {
   const { refetch: refetchCapabilities } = useCapabilities();
   if (!preferences) return null;
 
-  // usePreferences() in HeaderControls and here are independent useState
-  // instances — updating one won't notify the other until the next focus
-  // refetch. Apply directly to documentElement so the chosen theme/accent is
-  // visible immediately regardless of which picker the user touched. If the
-  // POST rejects, usePreferences rolls back its state and shows an error
-  // toast; we ALSO re-apply the original theme/accent to the DOM so the
-  // visible UI matches the rolled-back state (otherwise the toast says
-  // "reverted" but dark mode stays on).
+  // theme/accent now live in the shared PreferencesContext (#143), and the
+  // headless AppearanceSync applies them to <html> on change. We STILL apply
+  // directly to documentElement here so the chosen value is visible the instant
+  // the user clicks, without waiting on the context update → AppearanceSync
+  // effect round-trip (the apply is idempotent, so the redundant write is
+  // harmless). If the POST rejects, the provider's set() rolls back the shared
+  // state and shows an error toast; we ALSO re-apply the original theme/accent
+  // to the DOM so the visible UI matches the rolled-back state (otherwise the
+  // toast says "reverted" but dark mode stays on).
   const onTheme = (value: Theme) => {
     const priorTheme = preferences.ui.theme;
     const priorAccent = preferences.ui.accent;
