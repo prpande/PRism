@@ -113,6 +113,33 @@ describe('PrTabStrip', () => {
     expect(tab).toHaveAttribute('aria-selected', 'true');
   });
 
+  it('keeps the PR tab active when the Settings modal is open over it (#134 keep-alive)', () => {
+    function Seed() {
+      const { addTab } = useOpenTabs();
+      useEffect(() => {
+        addTab({ owner: 'acme', repo: 'api', number: 1 }, 'Behind modal');
+      }, [addTab]);
+      return null;
+    }
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/settings/appearance',
+            state: { backgroundLocation: { pathname: '/pr/acme/api/1' } },
+          },
+        ]}
+      >
+        <OpenTabsProvider>
+          <Seed />
+          <PrTabStrip />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    const tab = screen.getByRole('tab', { name: /Behind modal/i });
+    expect(tab).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('applies the unread modifier class when a tab is in unreadKeys', () => {
     function Seed() {
       const { addTab, markUnread } = useOpenTabs();

@@ -139,10 +139,27 @@ describe('usePreferences', () => {
 });
 
 describe('useCapabilities', () => {
-  it('fetches capabilities on mount', async () => {
+  // #221: capabilities are now DERIVED from the shared aiPreview preference, not
+  // fetched from /api/capabilities. AllOff when aiPreview is false.
+  it('derives AllOff from the shared preference when aiPreview is off', async () => {
     const { result } = renderHook(() => useCapabilities());
     await waitFor(() => expect(result.current.capabilities).not.toBeNull());
     expect(result.current.capabilities?.summary).toBe(false);
+  });
+
+  it('derives AllOn when aiPreview is on', async () => {
+    server.use(
+      http.get('/api/preferences', () =>
+        HttpResponse.json({
+          ui: { theme: 'system', accent: 'indigo', aiPreview: true, density: 'comfortable' },
+          inbox: { sections: {} },
+          github: { host: 'https://github.com', configPath: '/c', logsPath: '/l' },
+        }),
+      ),
+    );
+    const { result } = renderHook(() => useCapabilities());
+    await waitFor(() => expect(result.current.capabilities?.summary).toBe(true));
+    expect(result.current.capabilities?.inboxRanking).toBe(true);
   });
 });
 
