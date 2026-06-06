@@ -330,21 +330,27 @@ describe('openEventStream — onerror probe via /api/events/ping', () => {
     await new Promise((r) => setTimeout(r, 0));
   }
 
-  it('forces window.location.reload when ping returns 401', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(new Response('', { status: 401 })) as unknown as typeof fetch;
-    const stream = openEventStream();
+  it('dispatches prism-auth-rejected and tombstones the stream on a 401 ping (no reload)', async () => {
+    vi.useFakeTimers();
     try {
+      const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 401 })) as unknown as typeof fetch;
+      const stream = openEventStream({ random: () => 0.5 });
       FakeEventSource.instances[0].fireError();
-      await flushPromises();
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        '/api/events/ping',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
-      expect(reloadSpy).toHaveBeenCalledTimes(1);
-    } finally {
+      await vi.advanceTimersByTimeAsync(0); // ping resolves
+      expect(reloadSpy).not.toHaveBeenCalled();
+      expect(
+        dispatchSpy.mock.calls.some(([e]) => (e as Event).type === 'prism-auth-rejected'),
+      ).toBe(true);
+      expect(FakeEventSource.instances[0].closed).toBe(true);
+      // tombstoned: no further reconnects ever
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(FakeEventSource.instances).toHaveLength(1);
       stream.close();
+    } finally {
+      vi.useRealTimers();
     }
   });
 

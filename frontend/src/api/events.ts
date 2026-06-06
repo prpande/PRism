@@ -197,7 +197,12 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
           clearTimeout(t);
           if (closed || myEs !== es) return;
           if (resp.status === 401) {
-            window.location.reload();
+            window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+            closed = true; // tombstone: no further reconnects
+            if (watchdog) clearTimeout(watchdog);
+            if (backoffTimer) clearTimeout(backoffTimer);
+            if (dwellTimer) clearTimeout(dwellTimer);
+            es.close();
             return;
           }
           scheduleReconnect();
