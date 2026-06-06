@@ -122,13 +122,12 @@ describe('openEventStream — silence watcher (35s = 25s heartbeat + 10s grace)'
   it('reconnects after 35s of silence with no events', () => {
     vi.useFakeTimers();
     try {
-      const stream = openEventStream();
+      const stream = openEventStream({ random: () => 0.5 });
       expect(FakeEventSource.instances).toHaveLength(1);
-      vi.advanceTimersByTime(34_999);
-      expect(FakeEventSource.instances[0].closed).toBe(false);
-      expect(FakeEventSource.instances).toHaveLength(1);
-      vi.advanceTimersByTime(2);
+      vi.advanceTimersByTime(35_001); // watchdog fires: old closed, backoff armed
       expect(FakeEventSource.instances[0].closed).toBe(true);
+      expect(FakeEventSource.instances).toHaveLength(1);
+      vi.advanceTimersByTime(1_000); // backoff (BASE) elapses → new ES
       expect(FakeEventSource.instances).toHaveLength(2);
       stream.close();
     } finally {
@@ -139,14 +138,15 @@ describe('openEventStream — silence watcher (35s = 25s heartbeat + 10s grace)'
   it('heartbeat resets the silence watcher', () => {
     vi.useFakeTimers();
     try {
-      const stream = openEventStream();
+      const stream = openEventStream({ random: () => 0.5 });
       vi.advanceTimersByTime(25_000);
-      FakeEventSource.instances[0].dispatch('heartbeat', { ts: Date.now() });
+      FakeEventSource.instances[0].dispatch('heartbeat', { ts: 0 });
       vi.advanceTimersByTime(25_000);
       expect(FakeEventSource.instances).toHaveLength(1);
       expect(FakeEventSource.instances[0].closed).toBe(false);
-      vi.advanceTimersByTime(10_001);
+      vi.advanceTimersByTime(10_001); // 35s after heartbeat → watchdog fires
       expect(FakeEventSource.instances[0].closed).toBe(true);
+      vi.advanceTimersByTime(1_000); // backoff
       expect(FakeEventSource.instances).toHaveLength(2);
       stream.close();
     } finally {
@@ -157,18 +157,16 @@ describe('openEventStream — silence watcher (35s = 25s heartbeat + 10s grace)'
   it('inbox-updated event also resets the silence watcher', () => {
     vi.useFakeTimers();
     try {
-      const stream = openEventStream();
+      const stream = openEventStream({ random: () => 0.5 });
       vi.advanceTimersByTime(20_000);
       FakeEventSource.instances[0].dispatch('inbox-updated', {
         changedSectionIds: [],
         newOrUpdatedPrCount: 1,
       });
-      // Without the dispatch, reconnect would fire at 35s; with the dispatch,
-      // the watcher resets so 34s later (54s total) we should still have 1 instance.
       vi.advanceTimersByTime(34_999);
       expect(FakeEventSource.instances).toHaveLength(1);
-      // 35s after the dispatch — reconnect now fires.
-      vi.advanceTimersByTime(2);
+      vi.advanceTimersByTime(2); // watchdog fires
+      vi.advanceTimersByTime(1_000); // backoff
       expect(FakeEventSource.instances).toHaveLength(2);
       stream.close();
     } finally {
@@ -228,15 +226,37 @@ describe('openEventStream — reconnect signal (AbortController per Promise gene
   it('subscriberId() returns a fresh promise after reconnect', async () => {
     vi.useFakeTimers();
     try {
-      const stream = openEventStream();
+      const stream = openEventStream({ random: () => 0.5 });
       FakeEventSource.instances[0].dispatch('subscriber-assigned', { subscriberId: 'sub-1' });
       const idBefore = await stream.subscriberId();
       expect(idBefore).toBe('sub-1');
       vi.advanceTimersByTime(35_001);
+      vi.advanceTimersByTime(1_000); // backoff → instances[1] now exists
       // After reconnect, new EventSource exists; new handshake event lands.
       FakeEventSource.instances[1].dispatch('subscriber-assigned', { subscriberId: 'sub-2' });
       const idAfter = await stream.subscriberId();
       expect(idAfter).toBe('sub-2');
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('openEventStream — backoff', () => {
+  it('grows the delay across consecutive reconnects (no liveness)', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      vi.advanceTimersByTime(35_001); // watchdog → attempt 0 → delay 1000
+      vi.advanceTimersByTime(1_000);
+      expect(FakeEventSource.instances).toHaveLength(2);
+      vi.advanceTimersByTime(34_999); // land instance-2 watchdog exactly → attempt 1 → delay 2000
+      expect(FakeEventSource.instances).toHaveLength(2);
+      vi.advanceTimersByTime(1_999);
+      expect(FakeEventSource.instances).toHaveLength(2); // not yet
+      vi.advanceTimersByTime(1);
+      expect(FakeEventSource.instances).toHaveLength(3);
       stream.close();
     } finally {
       vi.useRealTimers();

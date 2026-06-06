@@ -91,13 +91,26 @@ export type EventStreamHandle = {
 };
 
 const SILENCE_WATCHER_MS = 35_000;
+const BASE_DELAY_MS = 1_000; // D2
+const MAX_DELAY_MS = 30_000; // D2
+// Pre-staged constants consumed by later tasks in this PR. The eslint-disable
+// markers come off as each one gains its first reference.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used Task 6 (D5)
+const UNHEALTHY_AFTER_MS = 30_000;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used Task 5 (D2 dwell)
+const STABLE_AFTER_MS = 10_000;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used Task 2 (D3)
+const PING_TIMEOUT_MS = 5_000;
 
-export function openEventStream(): EventStreamHandle {
+export function openEventStream(opts?: { random?: () => number }): EventStreamHandle {
+  const random = opts?.random ?? Math.random;
   let es: EventSource;
   let idPromise: Promise<string>;
   let resolveId: (id: string) => void;
   let abortController: AbortController;
   let watchdog: ReturnType<typeof setTimeout> | null = null;
+  let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+  let dwellTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
   // Tracks whether the first SSE connection has ever fully established (defined
   // as receiving the subscriber-assigned handshake). The cross-provider
@@ -105,6 +118,8 @@ export function openEventStream(): EventStreamHandle {
   // that come AFTER the first one — i.e., signaling an actual reconnect that
   // the new stream has confirmed alive, not a still-pending HTTP open.
   let hasEverConnected = false;
+  let attempt = 0;
+  let reconnectPending = false;
 
   const listeners: { [K in keyof EventPayloadByType]?: Set<(p: EventPayloadByType[K]) => void> } =
     {};
@@ -122,21 +137,38 @@ export function openEventStream(): EventStreamHandle {
   function resetWatchdog() {
     if (watchdog) clearTimeout(watchdog);
     if (closed) return;
-    watchdog = setTimeout(reconnect, SILENCE_WATCHER_MS);
+    watchdog = setTimeout(() => scheduleReconnect(), SILENCE_WATCHER_MS);
   }
 
-  function reconnect() {
-    if (closed) return;
+  function computeDelay(n: number) {
+    const base = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** n);
+    return base * (0.75 + 0.5 * random()); // ±25% jitter
+  }
+
+  // Replaces the old reconnect(). Re-entrancy guard (reconnectPending) collapses
+  // rapid triggers (watchdog firing + onerror probe) into a single scheduled
+  // reconnect. Backoff delay grows per consecutive attempt (D2/D8).
+  // immediate=true is a dead branch until Task 7.
+  function scheduleReconnect(options?: { immediate?: boolean }) {
+    if (closed || reconnectPending) return;
+    reconnectPending = true;
     abortController.abort();
     es.close();
+    if (watchdog) clearTimeout(watchdog);
+    if (dwellTimer) clearTimeout(dwellTimer);
     newIdPromise();
     newAbortController();
-    connect();
+    const delay = options?.immediate ? 0 : computeDelay(attempt++);
+    backoffTimer = setTimeout(() => {
+      backoffTimer = null;
+      reconnectPending = false;
+      if (!closed) connect();
+    }, delay);
     // S6 PR4 (spec § 3.2.1) — reconnect-replay defense is signaled INSIDE the
     // subscriber-assigned handler in connect(), not here. Dispatching at this
     // point would fire before the new EventSource has actually opened (the
-    // browser may still be doing the HTTP handshake), and reconnect() can be
-    // re-invoked rapidly via es.onerror probing — every retry would emit a
+    // browser may still be doing the HTTP handshake), and scheduleReconnect can
+    // be re-invoked rapidly via es.onerror probing — every retry would emit a
     // spurious "reconnected" signal even while the stream is still down.
     // See connect()'s subscriber-assigned handler for the actual dispatch.
   }
@@ -161,7 +193,7 @@ export function openEventStream(): EventStreamHandle {
             window.location.reload();
             return;
           }
-          reconnect();
+          scheduleReconnect();
         })
         .catch(() => {
           // Network error probing — leave EventSource native retry to handle.
@@ -260,6 +292,8 @@ export function openEventStream(): EventStreamHandle {
     close() {
       closed = true;
       if (watchdog) clearTimeout(watchdog);
+      if (backoffTimer) clearTimeout(backoffTimer);
+      if (dwellTimer) clearTimeout(dwellTimer);
       abortController.abort();
       es.close();
     },
