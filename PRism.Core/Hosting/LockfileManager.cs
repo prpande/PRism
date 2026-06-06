@@ -135,11 +135,16 @@ public static class LockfileManager
         {
             try
             {
+                // An exited process is dead, not "unreadable" — take over rather than
+                // refuse, so a recycled PID whose process dies mid-probe can't re-trigger
+                // the false "already running" crash (#107).
+                if (process.HasExited)
+                    return null;
                 return new RunningProcessInfo(process.MainModule?.FileName);
             }
-            catch (Win32Exception) { return new RunningProcessInfo(null); }            // access denied / restricted (e.g. other-user, elevated, cross-bitness)
-            catch (InvalidOperationException) { return new RunningProcessInfo(null); } // exited between lookup and read, or no main module
-            catch (NotSupportedException) { return new RunningProcessInfo(null); }     // module info unavailable on this platform/process
+            catch (Win32Exception) { return new RunningProcessInfo(null); }        // access denied / restricted (other-user, elevated, cross-bitness) — alive but unreadable
+            catch (InvalidOperationException) { return null; }                     // process exited between lookup and read — dead, take over
+            catch (NotSupportedException) { return new RunningProcessInfo(null); } // module info unavailable on this platform/process — alive but unreadable
         }
     }
 }

@@ -106,10 +106,14 @@ catch set exactly (it solves the same recycle-resistant-liveness problem):
 
 - `Process.GetProcessById(pid)` throws `ArgumentException` when no such process
   exists → return `null` (dead PID).
-- Reading `MainModule?.FileName` may throw `Win32Exception` (access denied,
-  other-user/elevated, cross-bitness), `InvalidOperationException` (process exited
-  mid-read, or no main module), or `NotSupportedException` (unavailable on this
-  platform/process) → return `RunningProcessInfo(null)` (alive but unreadable).
+- The process **exited** between lookup and probe (`process.HasExited`, or a
+  `InvalidOperationException` raised while reading `MainModule`) → return `null`
+  (dead PID — take over). Classifying an exited process as "unreadable → refuse"
+  would narrowly reintroduce #107 if a recycled PID's process dies mid-probe.
+- Reading `MainModule?.FileName` throws `Win32Exception` (access denied,
+  other-user/elevated, cross-bitness) or `NotSupportedException` (unavailable on
+  this platform/process) → return `RunningProcessInfo(null)` (alive but
+  unreadable → conservative refuse).
 
 > `Win32Exception` lives in `System.ComponentModel`, which `LockfileManager.cs`
 > does **not** currently import — add `using System.ComponentModel;` (as
@@ -179,11 +183,11 @@ lean opens a double-run window the readable-path fix doesn't need.)
   already covered).
 - [ ] Torn/unreadable lock JSON → `Acquire` **takes over** (regression guard;
   already covered).
-- [ ] The default probe swallows `ArgumentException` (→ dead) and
-  `Win32Exception` / `InvalidOperationException` / `NotSupportedException`
-  (→ unreadable) — an uncaught probe exception must never crash `Acquire`
-  (that would reintroduce the very "backend exited before reporting a port"
-  failure this fixes).
+- [ ] The default probe swallows `ArgumentException` and `InvalidOperationException`
+  (→ dead, take over) and `Win32Exception` / `NotSupportedException`
+  (→ unreadable, refuse); an exited process (`HasExited`) is treated as dead — an
+  uncaught probe exception must never crash `Acquire` (that would reintroduce the
+  very "backend exited before reporting a port" failure this fixes).
 - [ ] `Program.cs` call site compiles unchanged (probe parameter defaulted);
   `started-at` value semantics unchanged (no migration).
 
