@@ -17,7 +17,7 @@ export function PrDetailSkeleton() {
     >
       <span className="sr-only">Loading PR…</span>
       <Skeleton className={styles.summary} height={84} />
-      <SkeletonText lines={6} className={styles.description} />
+      <SkeletonText lines={6} />
       <div className={styles.tiles}>
         <Skeleton height={64} />
         <Skeleton height={64} />
