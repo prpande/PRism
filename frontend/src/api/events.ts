@@ -214,7 +214,11 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
         const data = JSON.parse((raw as MessageEvent).data) as { subscriberId: string };
         resolveId(data.subscriberId);
       } catch {
-        // Malformed handshake — leave promise pending; next reconnect retries.
+        // Malformed handshake — schedule a reconnect so idPromise is not left
+        // pending until the 35s watchdog. Return early to skip replay-dispatch
+        // and resetWatchdog: a garbled frame is not a valid liveness signal.
+        scheduleReconnect();
+        return;
       }
       // Reconnect-replay defense (spec § 3.2.1): fire prism-events-reconnected
       // only on subscriber-assigned events that come AFTER the initial connect.

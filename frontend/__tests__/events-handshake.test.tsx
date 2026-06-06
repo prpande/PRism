@@ -407,3 +407,21 @@ describe('openEventStream — onerror probe via /api/events/ping', () => {
     }
   });
 });
+
+describe('openEventStream — malformed handshake (D4)', () => {
+  it('reconnects when subscriber-assigned payload is not valid JSON', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      // dispatch a raw frame whose .data is not JSON
+      FakeEventSource.instances[0].listeners['subscriber-assigned']?.forEach((cb) =>
+        cb({ data: 'not-json{' } as MessageEvent),
+      );
+      vi.advanceTimersByTime(1_000); // immediate scheduleReconnect (attempt 0 → delay 1000)
+      expect(FakeEventSource.instances).toHaveLength(2);
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
