@@ -19,6 +19,8 @@ import { apiClient } from './api/client';
 import { OpenTabsProvider } from './contexts/OpenTabsContext';
 import { PreferencesProvider } from './contexts/PreferencesContext';
 import { AskAiDrawerProvider } from './contexts/AskAiDrawerContext';
+import { LoadingBarProvider } from './contexts/LoadingBarContext';
+import { TopProgressBar } from './components/TopProgressBar';
 import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
 import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
 import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
@@ -100,6 +102,7 @@ export function App() {
 
   const tree: ReactNode = (
     <>
+      <TopProgressBar />
       <AppearanceSync />
       {/* data-app-shell + data-app-scroll let the desktop shell scroll page
           content in a region BELOW the navbar (so the scrollbar starts under the
@@ -172,7 +175,9 @@ export function App() {
                   future SSE-driven invalidation would use a window-event bridge,
                   cf. OpenTabsContext. */}
               <PreferencesProvider>
-                {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+                <LoadingBarProvider>
+                  {isAuthed ? <EventStreamProvider>{tree}</EventStreamProvider> : tree}
+                </LoadingBarProvider>
               </PreferencesProvider>
             </AskAiDrawerProvider>
           </OpenTabsProvider>
