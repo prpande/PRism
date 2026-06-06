@@ -115,11 +115,12 @@ example):
   never `navigate(-1)`.
 - `/settings` (no section) redirects to `/settings/appearance` (preserving any
   `backgroundLocation` state through the redirect).
-- **Auth guard:** the guard lives on the **parent `/settings` route element**
-  (so child `/settings/:section` matches are gated before they evaluate), reusing
-  the same `isAuthed` predicate as `/` and `/pr/*`; an unauthenticated cold
-  deep-link redirects to `/setup` synchronously (modal does not flash), preserving
-  the #130 first-run gate. The intended section is **not** preserved through the
+- **Auth guard:** an `isAuthed`-prop branch at the **top of `SettingsModalRoutes`**
+  short-circuits `/settings/*` to `<Navigate to="/setup">` before any pane or the
+  modal renders (so the modal never flashes for an unauthed user), reusing the
+  same `isAuthed` predicate as `/` and `/pr/*`. `SettingsModalRoutes` is rendered
+  unconditionally by `App` (so the guard runs and is unit-testable). This
+  preserves the #130 first-run gate. The intended section is **not** preserved through the
   auth redirect (the user lands on Inbox after Setup) — acceptable because the
   AI-connection consumer constructs deep-links from within an already-authed
   session.
@@ -337,7 +338,8 @@ read-only host and the existing Replace-token link only.
 **Pre-PR re-check checklist** (`issue-resolution-workflow.md` step 7) — the diff
 must show:
 1. No changes to `useSubmitInFlight`, `useAuth`, or token-storage hooks.
-2. `/settings/*` covered by the existing `isAuthed` guard (parent route element).
+2. `/settings/*` covered by the `isAuthed`-prop guard at the top of
+   `SettingsModalRoutes` (unauthed → `<Navigate to="/setup">`).
 3. No new API calls originating from the panes.
 4. The four outside-`<Routes>` consumers' only change is switching to
    `useEffectiveLocation()`; no change to tab open/close, SSE, or drawer logic

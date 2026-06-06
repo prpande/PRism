@@ -1745,7 +1745,7 @@ export function SettingsModalRoutes({ isAuthed }: SettingsModalRoutesProps) {
       <Route
         path="/settings/*"
         element={
-          <SettingsModal onClose={close} restoreFocusFallbackSelector="[data-app-shell] main h1">
+          <SettingsModal onClose={close} restoreFocusFallbackSelector='[data-testid="inbox-page"]'>
             <SettingsLayout />
           </SettingsModal>
         }
@@ -1763,9 +1763,13 @@ export function SettingsModalRoutes({ isAuthed }: SettingsModalRoutesProps) {
 }
 ```
 
+- [ ] **Step 3b: Make the cold-link focus target focusable**
+
+The `restoreFocusFallbackSelector='[data-testid="inbox-page"]'` targets InboxPage's `<main>` (the synthesized cold-link background is always `/`). A `<main>` is not focusable by default, so add `tabIndex={-1}` to it in `frontend/src/pages/InboxPage.tsx` (the element already carries `data-testid="inbox-page"`). This is the standard skip-target pattern; it adds no tab stop (only programmatic focus). Without it, `.focus()` is a no-op and cold-link close leaves focus on `<body>` (the spec §6 gap). Add a vitest case to `SettingsModal.test.tsx` that renders a body-focused modal with `restoreFocusFallbackSelector` pointing at a `tabIndex={-1}` element and asserts `document.activeElement` is that element after close.
+
 - [ ] **Step 4: Wire into `App.tsx`**
 
-In `frontend/src/App.tsx`:
+In `frontend/src/App.tsx` (preserve the existing `<div data-app-shell><Header/><PrTabStrip/><div data-app-scroll>…</div></div>` structure — change only what's listed; do **not** flatten the shell):
 1. Add imports:
 ```tsx
 import { useLocation, type Location } from 'react-router-dom';
@@ -1788,8 +1792,8 @@ const backgroundLocation =
   <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
 </Routes>
 {isAuthed && <PrTabHost />}
-<SettingsModalRoutes isAuthed={isAuthed} />
 ```
+   The primary `<Routes location={backgroundLocation}>` and `<PrTabHost/>` stay **inside** `data-app-scroll`, exactly as today. Mount `<SettingsModalRoutes isAuthed={isAuthed} />` as a **sibling of `data-app-shell`** (alongside `<AskAiDrawer/>`, `<DrawerEffects/>`, `<TabSignals/>`, `<ToastContainer/>` in the `tree` JSX) — it renders the modal via a portal, so its position in the tree is for routing only and it must not sit inside `data-app-scroll`.
    (Remove the `import { SettingsPage }` line and its `<Route path="/settings" …>`.) `SettingsModalRoutes` is rendered unconditionally and owns its own auth guard internally (spec §3.4): when `isAuthed` is false it redirects `/settings/*` → `/setup` before the modal renders, so the dialog never flashes for an unauthenticated user. Rendering it unconditionally (rather than behind `{isAuthed && …}`) is what lets that guard run and be unit-tested in isolation.
 
 - [ ] **Step 5: Run tests**
@@ -1874,9 +1878,9 @@ describe('keep-alive while the Settings modal is open over a PR', () => {
 });
 ```
 
-Additionally, add one assertion each to the existing consumer test files (these already have OpenTabsProvider/SSE harnesses to seed a tab):
-- `PrTabStrip` test: with an open tab for `o/r/1` and the router at `MODAL_OVER_PR`, assert the tab still renders its active treatment (`aria-selected="true"` / `tabActive` class). RED before migration (live `/settings/*` → `isActiveTab` false), GREEN after.
-- `useTabUnreadSignal` test: at `MODAL_OVER_PR`, dispatch a `pr-updated` for `o/r/1` and assert `markUnread` is **not** called (the backgrounded PR is "seen"). RED before migration, GREEN after.
+Additionally, add a **new standalone test case** (do not mutate the shared harness `initialEntries`, which would regress sibling assertions) to each existing consumer test file. Use a prRef the harness actually opens — the existing harnesses seed `acme/api/1` — and point the modal background at that same PR so the assertion discriminates:
+- `PrTabStrip` test: seed an open tab for `acme/api/1`, render at `[{ pathname: '/settings/appearance', state: { backgroundLocation: { pathname: '/pr/acme/api/1' } } }]`, and assert the `acme/api/1` tab still renders its active treatment (`aria-selected="true"` / `tabActive`). RED before migration (live `/settings/*` → `isActiveTab` false), GREEN after.
+- `useTabUnreadSignal` test: with `acme/api/1` open, render at the same modal-over-`/pr/acme/api/1` location, dispatch a `pr-updated` for `acme/api/1`, and assert `markUnread` is **not** called. (Using a non-open prRef would short-circuit in `markUnread` and pass even before migration — the prRef must match a seeded open tab to discriminate.) RED before migration, GREEN after.
 
 - [ ] **Step 2: Run to verify it FAILS (consumers still read the live location)**
 
