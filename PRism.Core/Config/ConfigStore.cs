@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using PRism.Core.Ai;
 using PRism.Core.Json;
 using PRism.Core.State;
 using PRism.Core.Storage;
@@ -33,7 +34,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         {
             ["theme"]                            = ConfigFieldType.String,
             ["accent"]                           = ConfigFieldType.String,
-            ["aiPreview"]                        = ConfigFieldType.Bool,
+            ["aiPreview"]                        = ConfigFieldType.Bool,    // legacy FE toggle — translated to ui.ai.mode below
+            ["ui.ai.mode"]                       = ConfigFieldType.String,  // tri-state (off|preview|live)
             ["density"]                          = ConfigFieldType.String,
             ["inbox.sections.review-requested"]  = ConfigFieldType.Bool,
             ["inbox.sections.awaiting-author"]   = ConfigFieldType.Bool,
@@ -136,7 +138,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             {
                 "theme"     => _current with { Ui = ui with { Theme  = (string)value! } },
                 "accent"    => _current with { Ui = ui with { Accent = (string)value! } },
-                "aiPreview" => _current with { Ui = ui with { AiPreview = (bool)value! } },
+                "aiPreview" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = value is bool on ? (on ? AiMode.Preview : AiMode.Off) : throw new ConfigPatchException("aiPreview must be a boolean.") } } },
+                "ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = value is string modeStr ? ParseAiMode(modeStr) : throw new ConfigPatchException("ui.ai.mode must be a string (off|preview|live).") } } },
                 "density"   => _current with { Ui = ui with { Density = (string)value! } },
                 "inbox.sections.review-requested" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = (bool)value! } } },
@@ -172,6 +175,24 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         bool      => "bool",
         var other => other.GetType().Name,
     };
+
+    // Parse the `ui.ai.mode` string patch value into AiMode. An unknown value throws
+    // ConfigPatchException (→ 400 via the endpoint mapping). Deliberately does NOT echo the
+    // user-supplied `value` in the message — matches DescribeValue's redaction discipline.
+    // Uses OrdinalIgnoreCase comparison rather than `value.ToLowerInvariant() switch` because
+    // CA1308 (analyzers AllEnabledByDefault + TWAE) rejects ToLowerInvariant for normalization;
+    // OrdinalIgnoreCase is the codebase idiom (see ActivePrPoller / SubmitPipeline) and is
+    // case-insensitive without allocating a lowercased string.
+    private static AiMode ParseAiMode(string value)
+    {
+        if (string.Equals(value, "off", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Off;
+        if (string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Preview;
+        if (string.Equals(value, "live", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Live;
+        throw new ConfigPatchException("ui.ai.mode must be one of: off, preview, live.");  // do NOT echo `value`
+    }
 
     private async Task ReadFromDiskAsync(CancellationToken ct)
     {
@@ -256,6 +277,15 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             if (parsed.Github.Accounts is null || parsed.Github.Accounts.Count == 0)
             {
                 parsed = parsed with { Github = AppConfig.Default.Github };
+            }
+
+            // Nested backfill: an old config with `ui` present but no `ai` key deserializes
+            // Ui.Ai to null. The AiPreviewState DI seed reads Ui.Ai.Mode, so without this
+            // guard a legacy config would NRE at startup. Symmetric to the Inbox.Sections
+            // backfill above; the check is on a nested property, not the sub-record itself.
+            if (parsed.Ui.Ai is null)
+            {
+                parsed = parsed with { Ui = parsed.Ui with { Ai = AppConfig.Default.Ui.Ai } };
             }
 
             _current = parsed;

@@ -54,8 +54,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<AiPreviewState>(sp =>
         {
             var config = sp.GetRequiredService<IConfigStore>();
-            var state = new AiPreviewState { IsOn = config.Current.Ui.AiPreview };
-            config.Changed += (_, args) => state.IsOn = args.Config.Ui.AiPreview;
+            var state = new AiPreviewState { IsOn = config.Current.Ui.Ai.Mode != AiMode.Off };
+            config.Changed += (_, args) => state.IsOn = args.Config.Ui.Ai.Mode != AiMode.Off;
             return state;
         });
         services.AddSingleton<IAppStateStore>(_ => new AppStateStore(dataDir));

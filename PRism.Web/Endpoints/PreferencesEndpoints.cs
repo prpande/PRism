@@ -44,7 +44,7 @@ internal static class PreferencesEndpoints
 
             // Mirror ui.aiPreview into the AiPreviewState holder (also handled by the Changed
             // subscription, but doing it here makes the response synchronous with the change).
-            aiState.IsOn = config.Current.Ui.AiPreview;
+            aiState.IsOn = config.Current.Ui.Ai.Mode != AiMode.Off;
 
             return Results.Ok(BuildResponse(config, logsPath));
         });
@@ -60,7 +60,14 @@ internal static class PreferencesEndpoints
         var ui = config.Current.Ui;
         var sections = config.Current.Inbox.Sections;
         return new PreferencesResponse(
-            Ui: new UiPreferencesDto(ui.Theme, ui.Accent, ui.AiPreview, ui.Density),
+            Ui: new UiPreferencesDto(
+                    ui.Theme,
+                    ui.Accent,
+                    AiPreview: ui.Ai.Mode != AiMode.Off,
+#pragma warning disable CA1308 // lowercase mode names (off|preview|live) are part of the wire contract surfaced to the renderer
+                    AiMode: ui.Ai.Mode.ToString().ToLowerInvariant(),
+#pragma warning restore CA1308
+                    ui.Density),
             Inbox: new InboxPreferencesDto(new InboxSectionsDto(
                 ReviewRequested: sections.ReviewRequested,
                 AwaitingAuthor:  sections.AwaitingAuthor,

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PRism.Core.Ai;
 using PRism.Core.Config;
 using PRism.Core.Json;
 using PRism.Core.Tests.TestHelpers;
@@ -18,7 +19,7 @@ public class ConfigStoreTests
 
         store.Current.Ui.Theme.Should().Be("system");
         store.Current.Ui.Accent.Should().Be("indigo");
-        store.Current.Ui.AiPreview.Should().BeFalse();
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Off);
         store.Current.Github.Host.Should().Be("https://github.com");
         File.Exists(Path.Combine(dir.Path, "config.json")).Should().BeTrue();
     }
@@ -52,6 +53,56 @@ public class ConfigStoreTests
         using var roundTrip = new ConfigStore(dir.Path);
         await roundTrip.InitAsync(CancellationToken.None);
         roundTrip.Current.Ui.Theme.Should().Be("dark");
+    }
+
+    [Fact]
+    public async Task PatchAsync_ui_ai_mode_persists_and_round_trips()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(new Dictionary<string, object?> { ["ui.ai.mode"] = "live" }, CancellationToken.None);
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Live);
+
+        using var roundTrip = new ConfigStore(dir.Path);
+        await roundTrip.InitAsync(CancellationToken.None);
+        roundTrip.Current.Ui.Ai.Mode.Should().Be(AiMode.Live);
+    }
+
+    [Fact]
+    public async Task PatchAsync_legacy_aiPreview_true_maps_to_Preview_mode()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(new Dictionary<string, object?> { ["aiPreview"] = true }, CancellationToken.None);
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview);
+    }
+
+    [Fact]
+    public async Task PatchAsync_ui_ai_mode_rejects_unknown_value()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["ui.ai.mode"] = "bogus" }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>();
+    }
+
+    [Fact]
+    public async Task PatchAsync_ui_ai_mode_rejects_non_string_value()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["ui.ai.mode"] = 42 }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>();   // rejected by PatchAsync's pre-switch type gate
     }
 
     [Fact]
@@ -167,7 +218,7 @@ public class ConfigStoreTests
 
         store.Current.Github.Host.Should().Be("https://ghe.acme.com"); // user value preserved
         store.Current.Ui.Should().NotBeNull();
-        store.Current.Ui.AiPreview.Should().BeFalse();              // from default
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Off);          // from default
         store.Current.Polling.Should().NotBeNull();
         store.Current.Polling.InboxSeconds.Should().Be(120);        // from default
         store.Current.Review.Should().NotBeNull();
