@@ -1,0 +1,22 @@
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 16px 0;
+}
+.summary {
+  border-radius: 10px;
+}
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.conversation {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.conversation > :last-child {
+  flex: 1;
+}

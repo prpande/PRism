@@ -234,6 +234,16 @@ beforeEach(() => {
   fileDiffResult.current = { data: null, isLoading: false, showSkeleton: false, error: null };
 });
 
+describe('PrDetailView — cold load shows the Overview-shaped skeleton (#181)', () => {
+  test('renders the pr-detail-skeleton when data is null and isLoading is true', () => {
+    // Genuine first load / PR-navigation: no data yet, fetch in flight. The
+    // `!data && isLoading` gate must show the body skeleton.
+    prDetailResult.current = { data: null, isLoading: true, error: null };
+    renderPrDetailView({ active: true });
+    expect(screen.getByTestId('pr-detail-skeleton')).toBeInTheDocument();
+  });
+});
+
 describe('PrDetailView — freshness on activation (Task 8)', () => {
   test('activation refetches and clears unread; first mount does not refetch', () => {
     const view = renderPrDetailView({ active: true });
@@ -488,6 +498,6 @@ describe('PrDetailView — background reload preserves kept-alive Files state (#
     expect(screen.queryByTestId('files-tab-root')).toBeInTheDocument();
     expect(selectedPathOf()).toBe('beta.ts');
     // The page-level skeleton must not blank present content.
-    expect(document.querySelector('.pr-detail-skeleton')).toBeNull();
+    expect(screen.queryByTestId('pr-detail-skeleton')).toBeNull();
   });
 });
