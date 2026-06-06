@@ -12,35 +12,9 @@
 
 ## Plan deviations from the spec (documented per behavioral guidelines)
 
-1. **`IFeedbackSubmitter` interface is kept** (spec §6 round-2 said "no `PRism.Core` interface, internal class"). Rationale: the endpoint integration test substitutes the submitter via the repo's universal `services.RemoveAll<IInterface>(); services.AddSingleton<IInterface>(fake)` pattern (used for `IReviewSubmitter`, `IReviewEventBus`, `IActivePrCache`). A concrete-class dependency can't be substituted that way without an awkward HttpClient-handler injection. The interface is the established testability seam, single-method, mirroring `IReviewAuth`. This is a convention-alignment win over the YAGNI suggestion, not gratuitous abstraction.
-2. **The api.github.com header block is inlined in the submitter** (spec §4.1 allowed "extracted helper, or inlined"). Inlining 4 header lines avoids refactoring `GitHubReviewService`'s private `SendGitHubAsync` on a B2 surface — lower blast radius.
-3. **The cross-tier slug "drift guard" is a pinned-literal assertion in both suites** (spec §4.5 allowed "duplicated literal + test, or codegen"). A C#/TS runtime cross-check isn't feasible without a shared artifact; instead each tier's test pins its constant to `"prpande/PRism-feedback"`, so a rename fails both suites loudly. Honest weak guard, as the spec acknowledged.
-
-## File structure
-
-**PR1 — Help surface (#210), frontend-only:**
-- Create `frontend/src/components/Header/HelpIcon.tsx` — inline `?` SVG icon.
-- Create `frontend/src/pages/HelpPage.tsx` + `HelpPage.module.css` — static guide.
-- Create `frontend/src/pages/HelpPage.test.tsx`.
-- Modify `frontend/src/components/Header/Header.tsx` (+ `Header.module.css`) — add the `?` link.
-- Modify `frontend/src/components/Header/Header.test.tsx`.
-- Modify `frontend/src/App.tsx` — add `/help` route; `frontend/src/App.test.tsx` (route test) if present, else a new `HelpRoute.test.tsx`.
-- Modify `frontend/src/pages/WelcomePage.tsx` (+ `WelcomePage.module.css`, `WelcomePage.test.tsx`) — `Help` stub → link.
-- Modify `frontend/e2e/` — a Playwright spec for `/help` reachability.
-
-**PR2 — Feedback pipeline (#211):**
-- Create `frontend/src/feedback/feedbackRepo.ts` (+ test) — repo slug constant + prefilled-link builder.
-- Create `frontend/src/feedback/feedbackRepo.test.ts`.
-- Create `frontend/src/api/feedback.ts` (+ test) — `postFeedback` wrapper + types.
-- Create `frontend/src/components/Feedback/FeedbackDialog.tsx` (+ `.module.css`, `.test.tsx`).
-- Modify `frontend/src/pages/HelpPage.tsx` + `frontend/src/pages/WelcomePage.tsx` — wire the `Send feedback` trigger.
-- Create `PRism.Core/Feedback/IFeedbackSubmitter.cs` (interface + `FeedbackContent`/`FeedbackCreateResult` types).
-- Create `PRism.GitHub/Feedback/GitHubFeedbackSubmitter.cs` + `FeedbackRepo.cs`.
-- Modify `PRism.GitHub/ServiceCollectionExtensions.cs` — register the `github.com` client + the submitter.
-- Create `PRism.Web/Endpoints/FeedbackEndpoints.cs` + `FeedbackDtos.cs`.
-- Modify `PRism.Web/Program.cs` — `app.MapFeedback()`.
-- Modify `PRism.Web/PRism.Web.csproj` (or add `Directory.Build.props`) — set a real `<InformationalVersion>`.
-- Create tests under `tests/PRism.GitHub.Tests/` and `tests/PRism.Web.Tests/`.
+1. **`IFeedbackSubmitter` interface is kept, in `PRism.Core`** (spec §6 round-2 said "no interface, internal class"). Rationale: the endpoint integration test substitutes the submitter via the repo's universal `services.RemoveAll<IInterface>(); services.AddSingleton(fake)` pattern (used for `IReviewSubmitter`, `IReviewEventBus`, `IActivePrCache`); a concrete dependency can't be substituted that way. Placed in `PRism.Core` for consistency with the four sibling capability interfaces (`IReviewAuth`/`IReviewSubmitter`/…), all of which live there — a conscious choice over `PRism.GitHub`-internal placement. The submitter's *own* unit test uses the constructor seam directly (no interface needed there); the interface earns its keep only at the endpoint layer.
+2. **The api.github.com header block is inlined in the submitter** (spec §4.1 allowed "extracted helper, or inlined"). Inlining 4 header lines avoids refactoring `GitHubReviewService`'s private `SendGitHubAsync` on a B2 surface.
+3. **The cross-tier slug guard is a per-suite pinned-literal assertion** (spec §4.5 allowed "duplicated literal + test, or codegen"). Honest scope, corrected after review: this **detects a single-side accidental edit** (one constant changed, its test left pinned → that suite reds). It does **not** catch a deliberate repo *rename* (both constants + both test literals updated in one commit stay green while the tiers could still diverge from each other). No C#/TS runtime cross-check exists without a shared artifact, which a PoC doesn't warrant. Labelled accordingly in Tasks 8/13.
 
 ---
 
@@ -52,10 +26,9 @@
 
 **Files:**
 - Create: `frontend/src/components/Header/HelpIcon.tsx`
+- Test: `frontend/src/components/Header/HelpIcon.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
-
-Create `frontend/src/components/Header/HelpIcon.test.tsx`:
 
 ```tsx
 import { render } from '@testing-library/react';
@@ -80,10 +53,9 @@ Expected: FAIL — cannot resolve `./HelpIcon`.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Create `frontend/src/components/Header/HelpIcon.tsx` (mirrors `diffIcons.tsx` `SVG_PROPS` + `currentColor` convention):
+Create `frontend/src/components/Header/HelpIcon.tsx` (mirrors `diffIcons.tsx` `SVG_PROPS` + `currentColor`):
 
 ```tsx
-// Inline "?" help glyph. Monochrome currentColor so theme/hover is driven by CSS.
 const SVG_PROPS = {
   width: 16,
   height: 16,
@@ -129,9 +101,14 @@ git commit -m "feat(#210): add HelpIcon glyph"
 - Create: `frontend/src/pages/HelpPage.module.css`
 - Test: `frontend/src/pages/HelpPage.test.tsx`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 0: Verify the real cheatsheet keybinding**
 
-Create `frontend/src/pages/HelpPage.test.tsx`:
+The guide names the shortcut. Confirm the actual binding before writing the copy:
+
+Run: `cd frontend && git grep -nE "metaKey|ctrlKey|'k'|\"k\"" src/hooks/useCheatsheetShortcut.ts`
+Use whatever modifier+key the hook actually registers in the copy (the plan assumes `⌘K`/`Ctrl+K` — correct only if the grep confirms it). If it differs, write the real binding.
+
+- [ ] **Step 1: Write the failing test**
 
 ```tsx
 import { render, screen } from '@testing-library/react';
@@ -168,7 +145,7 @@ describe('HelpPage', () => {
     expect(screen.getByTestId('help-page').textContent).not.toMatch(/Azure DevOps/i);
   });
 
-  it('links token guidance to the GitHub-connection settings and #213', () => {
+  it('links token guidance to the GitHub-connection settings', () => {
     renderHelp();
     expect(screen.getByRole('link', { name: /github connection/i })).toHaveAttribute(
       'href',
@@ -215,17 +192,19 @@ Create `frontend/src/pages/HelpPage.module.css`:
   color: var(--text-2);
   margin: 0 0 var(--s-2);
 }
+/* Page-scoped action so the trigger doesn't inherit an app-wide oversized
+   primary button; left-aligned with the text column. (PR2 renders the button.) */
+.feedbackAction {
+  margin-top: var(--s-6);
+}
 ```
 
-Create `frontend/src/pages/HelpPage.tsx`. Copy follows the anti-AI-slop constraints: task-first openers, exact in-app labels, no emoji in headings.
+Create `frontend/src/pages/HelpPage.tsx`. Copy is task-first, names the real in-app labels, no emoji in headings. (PR2 adds the `Send feedback` button + dialog; PR1 ships the guide alone.)
 
 ```tsx
 import { Link } from 'react-router-dom';
 import styles from './HelpPage.module.css';
 
-// Static, scannable guide (#210). No data fetch → no loading/empty state; all
-// content is bundled and renders synchronously. Copy is task-first and names
-// the real in-app surfaces (Inbox, Files, Submit) verbatim.
 export function HelpPage() {
   return (
     <main className={styles.page} data-testid="help-page" tabIndex={-1}>
@@ -283,15 +262,13 @@ export function HelpPage() {
         </h2>
         <p>
           Press <kbd>⌘K</kbd> (or <kbd>Ctrl+K</kbd>) anywhere to open the keyboard-shortcut
-          cheatsheet.
+          cheatsheet. {/* Step 0: replace with the verified binding if it differs. */}
         </p>
       </section>
     </main>
   );
 }
 ```
-
-> Note: the "Send feedback" button is intentionally **not** here yet — it is added in PR2 Task 16 together with the dialog it opens, so PR1 ships no dead control.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -308,28 +285,43 @@ git commit -m "feat(#210): add static /help guide page"
 ### Task 3: Register the `/help` route (auth-agnostic)
 
 **Files:**
-- Modify: `frontend/src/App.tsx` (route table, ~lines 116–148)
-- Test: `frontend/src/pages/HelpPage.route.test.tsx` (new — self-contained route test)
+- Modify: `frontend/src/App.tsx` (route table)
+- Test: `frontend/src/pages/HelpPage.route.test.tsx` (new)
+
+> The authed `App` tree mounts `EventStreamProvider`, which calls `new EventSource('/api/events')` on mount. jsdom has no `EventSource`, and `PreferencesProvider`/`InboxPage` fire `apiClient` fetches. The route test must stub these or it throws. We stub `EventSource` and mock `apiClient` so the mount is clean.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `frontend/src/pages/HelpPage.route.test.tsx`. It asserts `/help` resolves in both unauthed and authed states by rendering the real `App` route table is heavy; instead assert the route element is present by mounting a minimal Routes mirror is brittle. Use the app's existing auth mock convention (see `InboxPage.test.tsx`) to render `App` at `/help`:
+Create `frontend/src/pages/HelpPage.route.test.tsx`:
 
 ```tsx
 import { render, screen } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Mock auth so we control hasToken/authInvalidated. Shape mirrors useAuth().
-const authState = vi.hoisted(() => ({ value: { hasToken: false, host: 'https://github.com' } as Record<string, unknown> }));
+const authState = vi.hoisted(() => ({
+  value: { hasToken: false, host: 'https://github.com' } as Record<string, unknown>,
+}));
 vi.mock('../hooks/useAuth', () => ({
   useAuth: () => ({ authState: authState.value, error: null, refetch: vi.fn() }),
 }));
+// Neutralize network-touching dependencies the App tree mounts.
+vi.mock('../api/client', () => ({
+  apiClient: { get: vi.fn().mockResolvedValue({}), post: vi.fn().mockResolvedValue({}) },
+  ApiError: class extends Error {},
+}));
 
-import { MemoryRouter } from 'react-router-dom';
 import { App } from '../App';
 
+class FakeEventSource {
+  close() {}
+  addEventListener() {}
+  removeEventListener() {}
+  onmessage = null;
+  onerror = null;
+}
+
 function renderAppAt(path: string) {
-  // App uses useLocation/Routes internally; wrap in MemoryRouter at `path`.
   return render(
     <MemoryRouter initialEntries={[path]}>
       <App />
@@ -338,6 +330,10 @@ function renderAppAt(path: string) {
 }
 
 describe('/help route', () => {
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+  });
+
   it('renders the Help page for a first-run (no token) user', () => {
     authState.value = { hasToken: false, host: 'https://github.com' };
     renderAppAt('/help');
@@ -352,16 +348,16 @@ describe('/help route', () => {
 });
 ```
 
-> If `App` is not exported or cannot mount under a test `MemoryRouter` because it renders its own `BrowserRouter`, check `frontend/src/main.tsx`: the router wraps `<App/>` there, so `App` itself contains `Routes` (confirmed in `App.tsx`). Mounting `<App/>` inside `MemoryRouter` is valid.
+> `App` contains `Routes` (not its own Router — `main.tsx` supplies `BrowserRouter`), so mounting it inside `MemoryRouter` is valid (verified). If the authed mount still errors on an unmocked dependency, mock that hook too (mirror `InboxPage.test.tsx`'s mock set).
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/HelpPage.route.test.tsx`
-Expected: FAIL — `/help` falls through to the `*` redirect, so `help-page` is not in the document.
+Expected: FAIL — `/help` falls through to the `*` redirect; `help-page` absent.
 
 - [ ] **Step 3: Add the route**
 
-In `frontend/src/App.tsx`, import `HelpPage` and add a `/help` route **outside** the `isAuthed` gates (alongside `/welcome`/`/setup`, before the `*` catch-all):
+In `frontend/src/App.tsx`, import `HelpPage` and add the route **outside** the `isAuthed` gates, immediately after the `<Route path="/setup" .../>` line:
 
 ```tsx
 import { HelpPage } from './pages/HelpPage';
@@ -373,8 +369,6 @@ import { HelpPage } from './pages/HelpPage';
                 /welcome. No auth redirect. */}
             <Route path="/help" element={<HelpPage />} />
 ```
-
-Place this line immediately after the `<Route path="/setup" .../>` line.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -392,7 +386,6 @@ git commit -m "feat(#210): mount auth-agnostic /help route"
 
 **Files:**
 - Modify: `frontend/src/components/Header/Header.tsx`
-- Modify: `frontend/src/components/Header/Header.module.css`
 - Test: `frontend/src/components/Header/Header.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
@@ -425,7 +418,7 @@ Expected: FAIL — no Help link.
 
 - [ ] **Step 3: Add the `?` link**
 
-In `frontend/src/components/Header/Header.tsx`, import the icon and add `helpActive`, then render the link beside the gear (inside the existing `{isAuthed && (…)}` region, before the gear `<Link>`):
+In `frontend/src/components/Header/Header.tsx`, import the icon and add `helpActive`, render the link inside the existing `{isAuthed && (…)}` region, before the gear `<Link>`:
 
 ```tsx
 import { HelpIcon } from './HelpIcon';
@@ -448,7 +441,7 @@ import { HelpIcon } from './HelpIcon';
       )}
 ```
 
-This reuses the `.gear`/`.gearOn` icon-button classes — no new CSS needed. (If a distinct hit-area is desired later, add a `.help` class composing `.gear`; not required now.)
+Reuses the `.gear`/`.gearOn` classes — no new CSS.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -465,7 +458,8 @@ git commit -m "feat(#210): add header ? link to /help with active state"
 ### Task 5: Wire the `/welcome` "Help" footer stub to a link
 
 **Files:**
-- Modify: `frontend/src/pages/WelcomePage.tsx` (lines ~41–47)
+- Modify: `frontend/src/pages/WelcomePage.tsx`
+- Modify: `frontend/src/pages/WelcomePage.module.css`
 - Test: `frontend/src/pages/WelcomePage.test.tsx`
 
 - [ ] **Step 1: Write the failing test**
@@ -486,11 +480,11 @@ it('renders Help as a link to /help', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npx vitest run src/pages/WelcomePage.test.tsx`
-Expected: FAIL — `Help` is a `<span>`, not a link.
+Expected: FAIL — `Help` is a `<span>`.
 
 - [ ] **Step 3: Convert the Help stub to a link**
 
-In `frontend/src/pages/WelcomePage.tsx`, change the Help stub. Keep `Send feedback` a stub for now (PR2 wires it):
+In `frontend/src/pages/WelcomePage.tsx`, change the Help stub (keep `Send feedback` a stub — PR2 wires it). Ensure `import { Link } from 'react-router-dom';`:
 
 ```tsx
         <div className={styles.footer}>
@@ -504,8 +498,6 @@ In `frontend/src/pages/WelcomePage.tsx`, change the Help stub. Keep `Send feedba
         </div>
 ```
 
-Ensure `import { Link } from 'react-router-dom';` is present at the top.
-
 Add to `frontend/src/pages/WelcomePage.module.css`:
 
 ```css
@@ -517,6 +509,12 @@ Add to `frontend/src/pages/WelcomePage.module.css`:
 .footerLink:focus-visible {
   color: var(--accent-hover);
   text-decoration: underline;
+}
+button.footerLink {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
 }
 ```
 
@@ -535,7 +533,7 @@ git commit -m "feat(#210): wire /welcome Help stub to /help"
 ### Task 6: Playwright e2e — `/help` reachability
 
 **Files:**
-- Create: `frontend/e2e/help.spec.ts` (match the existing e2e dir/naming — verify with `git ls-files frontend/e2e`)
+- Create: `frontend/e2e/help.spec.ts`
 
 - [ ] **Step 1: Write the e2e test**
 
@@ -557,7 +555,7 @@ test.describe('Help page', () => {
 });
 ```
 
-> Match the project's e2e auth bootstrap: inspect a sibling spec in `frontend/e2e/` for how an authed session is seeded (test PAT / storage state) and mirror it. If the suite has a "first-run" fixture, add a case asserting the `/welcome` `Help` link reaches `/help`.
+> Mirror the project's e2e auth bootstrap (inspect a sibling spec in `frontend/e2e/` for how an authed session is seeded). If the suite has a first-run fixture, add a case asserting the `/welcome` `Help` link reaches `/help`.
 
 - [ ] **Step 2: Run the e2e spec**
 
@@ -573,7 +571,7 @@ git commit -m "test(#210): e2e for /help reachability"
 
 ### Task 7: PR1 pre-push checklist + open PR
 
-- [ ] **Step 1: Full local gate** (per `.ai/docs/development-process.md`; run prettier directly, not via rtk — see project conventions):
+- [ ] **Step 1: Full local gate** (per `.ai/docs/development-process.md`; run prettier directly, not via rtk):
 
 ```bash
 cd D:/src/PRism-wt/210-211-help-feedback/frontend
@@ -586,15 +584,15 @@ Expected: all green.
 
 - [ ] **Step 2: Sync main, then ship via pr-autopilot**
 
-Fetch + merge `origin/main` into the branch, then use the `pr-autopilot` skill to open PR1. PR body must include the `## Proof` section (non-bug work: new tests authored test-first + AC checklist + secrets scan). This is a **B1-gated** PR — pr-autopilot drives to green-and-ready, then pause for the human visual assert (screenshots of `/help` on the PR per the visual-verification convention).
+Fetch + merge `origin/main`, then use `pr-autopilot`. PR body includes `## Proof` (non-bug work: tests authored test-first + AC checklist + secrets scan). **B1-gated** — drive to green-and-ready, then pause for the human visual assert (screenshots of `/help` on the PR).
 
 ---
 
 # PR2 — Feedback pipeline (#211)
 
-> Carries the B2 risk surface (GitHub write with the user's PAT). Branch from main **after PR1 merges** (or stack on the same branch if shipping together — decide at execution).
+> Carries the B2 risk surface (GitHub write with the user's PAT). Branch from main **after PR1 merges** (or stack — decide at execution).
 
-### Task 8: Backend feedback-repo constant + pinned-literal test
+### Task 8: Backend feedback-repo constant + pinned-literal guard
 
 **Files:**
 - Create: `PRism.GitHub/Feedback/FeedbackRepo.cs`
@@ -611,8 +609,10 @@ namespace PRism.GitHub.Tests.Feedback;
 
 public class FeedbackRepoTests
 {
-    // Pinned-literal drift guard (plan deviation #3). The frontend pins the same
-    // literal in feedbackRepo.test.ts; a repo rename fails BOTH suites.
+    // Single-side-edit guard (plan deviation #3): pins this tier's literal.
+    // The frontend pins the same value in feedbackRepo.test.ts. NOTE: this does
+    // NOT catch a deliberate rename (both sides updated together stay green) —
+    // it catches an accidental one-sided change to this constant.
     [Fact]
     public void Slug_is_the_public_feedback_repo()
     {
@@ -634,8 +634,7 @@ Expected: FAIL — `FeedbackRepo` not found.
 namespace PRism.GitHub.Feedback;
 
 // The public feedback repo (#211). Compile-time constant — not user-configurable,
-// not in state.json. Mirrored by the frontend FEEDBACK_REPO_SLUG; both pin the
-// same literal so a rename fails both test suites (plan deviation #3).
+// not in state.json. Mirrored by the frontend FEEDBACK_REPO_SLUG.
 public static class FeedbackRepo
 {
     public const string Owner = "prpande";
@@ -660,10 +659,9 @@ git commit -m "feat(#211): add backend feedback-repo constant"
 
 **Files:**
 - Create: `PRism.Core/Feedback/IFeedbackSubmitter.cs`
+- Test: `tests/PRism.Core.Tests/Feedback/FeedbackTypesTests.cs`
 
 - [ ] **Step 1: Write the failing test**
-
-Create `tests/PRism.Core.Tests/Feedback/FeedbackTypesTests.cs`:
 
 ```csharp
 using FluentAssertions;
@@ -675,11 +673,14 @@ namespace PRism.Core.Tests.Feedback;
 public class FeedbackTypesTests
 {
     [Fact]
-    public void FeedbackContent_carries_the_allowlisted_fields()
+    public void FeedbackContent_carries_the_allowlisted_fields_including_timestamp()
     {
-        var c = new FeedbackContent("Bug", "Summary", "Details", "/pr/:owner/:repo/:number", "desktop");
+        var ts = DateTimeOffset.Parse("2026-06-06T12:00:00Z");
+        var c = new FeedbackContent("Bug", "Summary", "Details", "/pr/:owner/:repo/:number", "desktop", "0.2.0", ts);
         c.Category.Should().Be("Bug");
         c.RoutePattern.Should().Be("/pr/:owner/:repo/:number");
+        c.Version.Should().Be("0.2.0");
+        c.SubmittedAt.Should().Be(ts);
     }
 
     [Fact]
@@ -703,19 +704,21 @@ Expected: FAIL — types not found.
 namespace PRism.Core.Feedback;
 
 // Allowlisted feedback fields (spec §4.2). Category/Summary/Details are user input;
-// RoutePattern/Platform are machine context. Version + timestamp are stamped by
-// the endpoint, not carried here.
+// RoutePattern/Platform are machine context; Version + SubmittedAt are stamped by
+// the endpoint (not trusted from the client).
 public sealed record FeedbackContent(
     string Category,
     string Summary,
     string Details,
     string RoutePattern,
-    string Platform);
+    string Platform,
+    string Version,
+    DateTimeOffset SubmittedAt);
 
 public enum FeedbackOutcome
 {
     Created,
-    // GitHub returned 403/404/422 — the user's token can't create the issue.
+    // GitHub returned 401/403/404/422 — the user's token can't create the issue.
     // The frontend falls back to the prefilled issues/new link.
     CannotCreate,
 }
@@ -729,12 +732,12 @@ public sealed record FeedbackCreateResult(FeedbackOutcome Outcome, int? IssueNum
         new(FeedbackOutcome.CannotCreate, null, null);
 }
 
-// Single-method seam. Kept as an interface (not a concrete class) so endpoint
-// tests substitute a fake via services.RemoveAll/AddSingleton — the repo's
-// universal pattern for GitHub-touching services (cf. IReviewSubmitter).
+// Single-method seam. Kept as an interface (plan deviation #1) so endpoint tests
+// substitute a fake via services.RemoveAll/AddSingleton — the repo's pattern for
+// GitHub-touching services (cf. IReviewAuth/IReviewSubmitter, also in PRism.Core).
 public interface IFeedbackSubmitter
 {
-    // Returns Created on 201, CannotCreate on 403/404/422. Throws HttpRequestException
+    // Created on 201; CannotCreate on 401/403/404/422; throws HttpRequestException
     // on genuine transport/5xx so the endpoint maps it to 500.
     Task<FeedbackCreateResult> CreateFeedbackIssueAsync(FeedbackContent content, CancellationToken ct);
 }
@@ -775,14 +778,15 @@ namespace PRism.GitHub.Tests.Feedback;
 public class GitHubFeedbackSubmitterTests
 {
     private static readonly FeedbackContent Content =
-        new("Bug", "It broke", "Steps: do X", "/pr/:owner/:repo/:number", "desktop");
+        new("Bug", "It broke", "Steps: do X", "/pr/:owner/:repo/:number", "desktop", "0.2.0",
+            DateTimeOffset.Parse("2026-06-06T12:00:00Z"));
 
     private static GitHubFeedbackSubmitter NewSubmitter(HttpMessageHandler handler) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
             () => Task.FromResult<string?>("ghp_test"));
 
     [Fact]
-    public async Task Posts_to_api_github_com_issues_with_title_and_body()
+    public async Task Posts_to_api_github_com_issues_with_title_body_and_context()
     {
         var handler = new RecordingHttpMessageHandler(
             HttpStatusCode.Created,
@@ -795,18 +799,22 @@ public class GitHubFeedbackSubmitterTests
         handler.RequestPaths[0].Should().Be("/repos/prpande/PRism-feedback/issues");
         using var doc = JsonDocument.Parse(handler.RequestBodies[0]!);
         doc.RootElement.GetProperty("title").GetString().Should().StartWith("[Bug] It broke");
-        doc.RootElement.GetProperty("body").GetString().Should().Contain("Steps: do X");
-        // Labels omitted on the first cut (D3): no labels field.
-        doc.RootElement.TryGetProperty("labels", out _).Should().BeFalse();
+        var body = doc.RootElement.GetProperty("body").GetString()!;
+        body.Should().Contain("Steps: do X");
+        body.Should().Contain("route: /pr/:owner/:repo/:number");
+        body.Should().Contain("version: 0.2.0");
+        body.Should().Contain("submitted: 2026-06-06T12:00:00");
+        doc.RootElement.TryGetProperty("labels", out _).Should().BeFalse(); // labels omitted (D3)
         result.Outcome.Should().Be(FeedbackOutcome.Created);
         result.IssueNumber.Should().Be(12);
     }
 
     [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
     [InlineData(HttpStatusCode.NotFound)]
     [InlineData(HttpStatusCode.UnprocessableEntity)]
-    public async Task Maps_403_404_422_to_CannotCreate(HttpStatusCode status)
+    public async Task Maps_401_403_404_422_to_CannotCreate(HttpStatusCode status)
     {
         var sut = NewSubmitter(new RecordingHttpMessageHandler(status, """{"message":"no"}"""));
         var result = await sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
@@ -820,6 +828,15 @@ public class GitHubFeedbackSubmitterTests
         var act = () => sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
         await act.Should().ThrowAsync<HttpRequestException>();
     }
+
+    [Fact]
+    public async Task Drops_non_https_html_url_defensively()
+    {
+        var sut = NewSubmitter(new RecordingHttpMessageHandler(
+            HttpStatusCode.Created, """{"number":5,"html_url":"javascript:alert(1)"}"""));
+        var result = await sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
+        result.HtmlUrl.Should().BeEmpty(); // frontend will hide the Open-in-GitHub link
+    }
 }
 ```
 
@@ -829,8 +846,6 @@ Run: `dotnet test tests/PRism.GitHub.Tests --filter GitHubFeedbackSubmitterTests
 Expected: FAIL — `GitHubFeedbackSubmitter` not found.
 
 - [ ] **Step 3: Implement the submitter**
-
-Create `PRism.GitHub/Feedback/GitHubFeedbackSubmitter.cs`:
 
 ```csharp
 using System.Net;
@@ -843,8 +858,9 @@ namespace PRism.GitHub.Feedback;
 
 // Creates a feedback issue in the public prpande/PRism-feedback repo using the
 // user's PAT. Targets api.github.com via its own named client (NOT the host-scoped
-// "github" client) — the feedback repo lives on github.com unconditionally (spec
-// §4.1). Headers are inlined (plan deviation #2) to avoid touching GitHubReviewService.
+// "github" client) — the feedback repo lives on github.com unconditionally (§4.1).
+// Headers inlined (plan deviation #2). No logging of PAT or GitHub bodies (Octokit
+// source-hygiene): error bodies are not read on the CannotCreate path.
 public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
 {
     public const string ClientName = "github.com";
@@ -880,9 +896,13 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
 
         using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
 
-        // 403 (scope/permission/rate-limit), 404 (fine-grained can't see repo),
-        // 422 (validation/missing-label) all degrade to the prefilled-link fallback.
-        if (resp.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.UnprocessableEntity)
+        // 401 (expired/revoked PAT), 403 (scope/permission/rate-limit), 404
+        // (fine-grained can't see repo), 422 (validation/missing-label) all degrade
+        // to the prefilled-link fallback rather than a retry-forever 5xx.
+        if (resp.StatusCode is HttpStatusCode.Unauthorized
+            or HttpStatusCode.Forbidden
+            or HttpStatusCode.NotFound
+            or HttpStatusCode.UnprocessableEntity)
             return FeedbackCreateResult.CannotCreate();
 
         resp.EnsureSuccessStatusCode(); // genuine transport/5xx → throw → endpoint 500
@@ -892,6 +912,9 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
         var root = doc.RootElement;
         var number = root.TryGetProperty("number", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetInt32() : 0;
         var htmlUrl = root.TryGetProperty("html_url", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() ?? "" : "";
+        // Defense-in-depth: never propagate a non-https html_url to the client
+        // (the frontend openExternal also guards, but don't rely on a single layer).
+        if (!htmlUrl.StartsWith("https://", StringComparison.Ordinal)) htmlUrl = "";
         return FeedbackCreateResult.Created(number, htmlUrl);
     }
 
@@ -904,6 +927,8 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
         sb.AppendLine("```");
         sb.AppendLine($"route: {c.RoutePattern}");
         sb.AppendLine($"platform: {c.Platform}");
+        sb.AppendLine($"version: {c.Version}");
+        sb.AppendLine($"submitted: {c.SubmittedAt:O}");
         sb.AppendLine("```");
         return sb.ToString();
     }
@@ -912,11 +937,11 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
 
 - [ ] **Step 4: Register the client + the submitter in DI**
 
-In `PRism.GitHub/ServiceCollectionExtensions.cs`, after the existing `services.AddHttpClient("github", …)` block, add:
+In `PRism.GitHub/ServiceCollectionExtensions.cs`, after the existing `services.AddHttpClient("github", …)` block:
 
 ```csharp
         // Feedback always targets github.com (the feedback repo lives there),
-        // independent of the user's configured host (spec §4.1).
+        // independent of the user's configured host (§4.1).
         services.AddHttpClient(PRism.GitHub.Feedback.GitHubFeedbackSubmitter.ClientName, client =>
         {
             client.BaseAddress = new Uri("https://api.github.com/");
@@ -932,12 +957,12 @@ In `PRism.GitHub/ServiceCollectionExtensions.cs`, after the existing `services.A
         });
 ```
 
-(Match the namespaces already imported at the top of the file; add `using` for `PRism.Core.Feedback;` / `PRism.GitHub.Feedback;` if the file uses usings rather than fully-qualified names.)
+(Add `using` for the namespaces if the file uses usings rather than fully-qualified names.)
 
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `dotnet test tests/PRism.GitHub.Tests --filter GitHubFeedbackSubmitterTests`
-Expected: PASS (all 5 cases).
+Expected: PASS (all cases).
 
 - [ ] **Step 6: Commit**
 
@@ -950,7 +975,7 @@ git commit -m "feat(#211): GitHubFeedbackSubmitter posts issue to api.github.com
 
 **Files:**
 - Modify: `PRism.Web/PRism.Web.csproj`
-- Create: `PRism.Web/Endpoints/AppVersion.cs` (helper)
+- Create: `PRism.Web/Endpoints/AppVersion.cs`
 - Test: `tests/PRism.Web.Tests/AppVersionTests.cs`
 
 - [ ] **Step 1: Write the failing test**
@@ -965,10 +990,11 @@ namespace PRism.Web.Tests;
 public class AppVersionTests
 {
     [Fact]
-    public void Current_is_a_real_non_default_version()
+    public void Current_starts_with_the_csproj_informational_version()
     {
-        AppVersion.Current.Should().NotBe("1.0.0.0");
-        AppVersion.Current.Should().NotBeNullOrWhiteSpace();
+        // Pins that the <InformationalVersion> propagates; tolerates the SDK's
+        // optional +<git-sha> suffix.
+        AppVersion.Current.Should().StartWith("0.2.0");
     }
 }
 ```
@@ -976,11 +1002,11 @@ public class AppVersionTests
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter AppVersionTests`
-Expected: FAIL — `AppVersion` not found (and version would be `1.0.0.0`).
+Expected: FAIL — `AppVersion` not found / version defaults to `1.0.0.0`.
 
 - [ ] **Step 3: Set the version + add the helper**
 
-In `PRism.Web/PRism.Web.csproj`, inside the first `<PropertyGroup>`, add (match the desktop shell's `0.2.0`):
+In `PRism.Web/PRism.Web.csproj`, inside the first `<PropertyGroup>` (match desktop's `0.2.0`):
 
 ```xml
     <InformationalVersion>0.2.0</InformationalVersion>
@@ -993,9 +1019,8 @@ using System.Reflection;
 
 namespace PRism.Web.Endpoints;
 
-// Authoritative build version for the feedback context (spec §4.2). Reads the
-// assembly InformationalVersion set in PRism.Web.csproj. Falls back to the
-// assembly version only if the attribute is somehow absent.
+// Authoritative build version for the feedback context (§4.2). Reads the
+// InformationalVersion set in PRism.Web.csproj. SDK may append "+<git-sha>".
 internal static class AppVersion
 {
     public static string Current { get; } =
@@ -1005,8 +1030,6 @@ internal static class AppVersion
         ?? "unknown";
 }
 ```
-
-> Note: SDK builds may append a `+<git-sha>` suffix to `InformationalVersion`. That's fine for triage (and still `!= "1.0.0.0"`); the test only asserts it's non-default.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1025,7 +1048,7 @@ git commit -m "feat(#211): wire real build version for feedback context"
 **Files:**
 - Create: `PRism.Web/Endpoints/FeedbackDtos.cs`
 - Create: `PRism.Web/Endpoints/FeedbackEndpoints.cs`
-- Modify: `PRism.Web/Program.cs` (registration list, ~line 318)
+- Modify: `PRism.Web/Program.cs` (registration list)
 - Test: `tests/PRism.Web.Tests/Endpoints/FeedbackEndpointTests.cs`
 
 - [ ] **Step 1: Write the failing tests**
@@ -1047,11 +1070,12 @@ public class FeedbackEndpointTests
     {
         public FeedbackContent? Last { get; private set; }
         public FeedbackCreateResult Result { get; set; } = FeedbackCreateResult.Created(7, "https://x/7");
-        public Func<FeedbackContent, FeedbackCreateResult>? Responder { get; set; }
+        public bool Throw { get; set; }
         public Task<FeedbackCreateResult> CreateFeedbackIssueAsync(FeedbackContent content, CancellationToken ct)
         {
             Last = content;
-            return Task.FromResult(Responder?.Invoke(content) ?? Result);
+            if (Throw) throw new HttpRequestException("boom", null, HttpStatusCode.InternalServerError);
+            return Task.FromResult(Result);
         }
     }
 
@@ -1070,7 +1094,7 @@ public class FeedbackEndpointTests
         new { category = "Bug", summary = "It broke", details = "Steps", routePattern = "/inbox", platform = "browser" };
 
     [Fact]
-    public async Task Created_returns_201_with_issue_number()
+    public async Task Created_returns_201_with_issue_number_and_stamps_version_and_timestamp()
     {
         var (f, sub) = NewApp();
         sub.Result = FeedbackCreateResult.Created(42, "https://github.com/prpande/PRism-feedback/issues/42");
@@ -1080,6 +1104,8 @@ public class FeedbackEndpointTests
         var dto = await resp.Content.ReadFromJsonAsync<FeedbackResponseDto>();
         dto!.IssueNumber.Should().Be(42);
         sub.Last!.Category.Should().Be("Bug");
+        sub.Last!.Version.Should().StartWith("0.2.0");          // stamped server-side
+        sub.Last!.SubmittedAt.Should().BeAfter(DateTimeOffset.MinValue); // stamped server-side
     }
 
     [Fact]
@@ -1093,23 +1119,43 @@ public class FeedbackEndpointTests
     }
 
     [Fact]
-    public async Task Missing_summary_returns_400()
+    public async Task Submitter_throw_surfaces_as_500()
+    {
+        var (f, sub) = NewApp();
+        sub.Throw = true;
+        using var client = f.CreateClient();
+        var resp = await client.PostAsJsonAsync("/api/feedback", ValidBody());
+        resp.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+    }
+
+    [Theory]
+    [InlineData("Bug", "  ", "x", "/", "browser")]                                  // blank summary
+    [InlineData("Banana", "ok", "x", "/", "browser")]                              // bad category
+    public async Task Invalid_input_returns_400(string cat, string sum, string det, string route, string plat)
     {
         var (f, _) = NewApp();
         using var client = f.CreateClient();
         var resp = await client.PostAsJsonAsync("/api/feedback",
-            new { category = "Bug", summary = "  ", details = "x", routePattern = "/", platform = "browser" });
+            new { category = cat, summary = sum, details = det, routePattern = route, platform = plat });
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
-    public async Task Oversize_details_returns_400()
+    public async Task Oversize_fields_return_400()
     {
         var (f, _) = NewApp();
         using var client = f.CreateClient();
-        var resp = await client.PostAsJsonAsync("/api/feedback",
-            new { category = "Bug", summary = "ok", details = new string('x', 4001), routePattern = "/", platform = "browser" });
-        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        foreach (var body in new[]
+        {
+            new { category = "Bug", summary = new string('x', 121), details = "d", routePattern = "/", platform = "b" },
+            new { category = "Bug", summary = "ok", details = new string('x', 4001), routePattern = "/", platform = "b" },
+            new { category = "Bug", summary = "ok", details = "d", routePattern = new string('x', 257), platform = "b" },
+            new { category = "Bug", summary = "ok", details = "d", routePattern = "/", platform = new string('x', 129) },
+        })
+        {
+            var resp = await client.PostAsJsonAsync("/api/feedback", body);
+            resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        }
     }
 }
 ```
@@ -1117,7 +1163,7 @@ public class FeedbackEndpointTests
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter FeedbackEndpointTests`
-Expected: FAIL — endpoint + `FeedbackResponseDto` not found (404s).
+Expected: FAIL — endpoint + `FeedbackResponseDto` not found.
 
 - [ ] **Step 3: Implement DTOs**
 
@@ -1152,6 +1198,8 @@ internal static class FeedbackEndpoints
 {
     private const int MaxSummary = 120;
     private const int MaxDetails = 4000;
+    private const int MaxRoutePattern = 256;
+    private const int MaxPlatform = 128;
     private static readonly string[] Categories = ["Bug", "Idea", "Other"];
 
     public static IEndpointRouteBuilder MapFeedback(this IEndpointRouteBuilder app)
@@ -1164,6 +1212,7 @@ internal static class FeedbackEndpoints
     private static async Task<IResult> SubmitAsync(
         FeedbackRequestDto? request,
         IFeedbackSubmitter submitter,
+        TimeProvider time,
         CancellationToken ct)
     {
         if (request is null
@@ -1175,33 +1224,37 @@ internal static class FeedbackEndpoints
         if (!Categories.Contains(request.Category))
             return Results.BadRequest(new FeedbackErrorDto("invalid-category"));
 
-        if (request.Summary!.Length > MaxSummary || request.Details!.Length > MaxDetails)
+        if (request.Summary!.Length > MaxSummary
+            || request.Details!.Length > MaxDetails
+            || (request.RoutePattern?.Length ?? 0) > MaxRoutePattern
+            || (request.Platform?.Length ?? 0) > MaxPlatform)
             return Results.BadRequest(new FeedbackErrorDto("field-too-long"));
 
-        // Append the authoritative version + timestamp to the platform context so
-        // the user can't forge them. RoutePattern/Platform are passed through as the
-        // allowlisted machine context (no arbitrary client object is forwarded).
-        var platform = $"{request.Platform ?? "unknown"} · PRism {AppVersion.Current}";
+        // Version + timestamp are stamped server-side (not trusted from the client).
+        // RoutePattern/Platform pass through as the allowlisted machine context;
+        // no arbitrary client object is forwarded into the issue body.
         var content = new FeedbackContent(
             request.Category!,
             request.Summary!.Trim(),
             request.Details!.Trim(),
             request.RoutePattern ?? "unknown",
-            platform);
+            request.Platform ?? "unknown",
+            AppVersion.Current,
+            time.GetUtcNow());
 
         var result = await submitter.CreateFeedbackIssueAsync(content, ct).ConfigureAwait(false);
         return result.Outcome == FeedbackOutcome.Created
-            ? Results.Created(result.HtmlUrl!, new FeedbackResponseDto(result.IssueNumber!.Value, result.HtmlUrl!))
+            ? Results.Created(result.HtmlUrl ?? string.Empty, new FeedbackResponseDto(result.IssueNumber!.Value, result.HtmlUrl ?? string.Empty))
             : Results.Json(new FeedbackErrorDto("cannot-create"), statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 }
 ```
 
-> A thrown `HttpRequestException` from the submitter (genuine 5xx) is **not** caught here, so it surfaces as the framework's 500 — which is the spec's "transport/5xx → 500 → frontend retry" contract. (If the repo has global exception middleware that rewrites 500s, confirm it still yields a 5xx status; mirror the `PrRootCommentEndpoints` try/catch returning `Results.Json(..., 500)` if explicit mapping is preferred.)
+> `TimeProvider` is registered by default in .NET 10 hosting (`TimeProvider.System`); if the app doesn't already register it, add `builder.Services.AddSingleton(TimeProvider.System);` in `Program.cs`. A thrown `HttpRequestException` from the submitter is **not** caught here — `Program.cs`'s `app.UseExceptionHandler()` (verified at line ~202) turns it into a 500, matching the spec's "transport/5xx → 500 → frontend retry" contract (asserted by `Submitter_throw_surfaces_as_500`).
 
 - [ ] **Step 5: Register in Program.cs**
 
-In `PRism.Web/Program.cs`, add to the `app.Map…()` block (near line 318):
+In `PRism.Web/Program.cs`, add to the `app.Map…()` block:
 
 ```csharp
 app.MapFeedback();
@@ -1210,7 +1263,7 @@ app.MapFeedback();
 - [ ] **Step 6: Run to verify it passes**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter FeedbackEndpointTests`
-Expected: PASS (all 4 cases).
+Expected: PASS (all cases).
 
 - [ ] **Step 7: Commit**
 
@@ -1232,22 +1285,32 @@ import { describe, it, expect } from 'vitest';
 import { FEEDBACK_REPO_SLUG, buildFeedbackIssueUrl } from './feedbackRepo';
 
 describe('feedbackRepo', () => {
-  it('pins the public feedback repo slug (drift guard — matches backend FeedbackRepo.Slug)', () => {
+  it('pins the public feedback repo slug (single-side-edit guard; matches backend FeedbackRepo.Slug)', () => {
     expect(FEEDBACK_REPO_SLUG).toBe('prpande/PRism-feedback');
   });
 
   it('builds an https issues/new URL with encoded title and body', () => {
-    const url = buildFeedbackIssueUrl({ title: '[Bug] a b', body: 'line1\nline2' });
+    const url = buildFeedbackIssueUrl({ title: '[Bug] a b', details: 'line1\nline2', context: 'route: /inbox' });
     const u = new URL(url);
     expect(u.protocol).toBe('https:');
     expect(u.host).toBe('github.com');
     expect(u.pathname).toBe('/prpande/PRism-feedback/issues/new');
     expect(u.searchParams.get('title')).toBe('[Bug] a b');
-    expect(u.searchParams.get('body')).toBe('line1\nline2');
+    expect(u.searchParams.get('body')).toContain('line1\nline2');
+    expect(u.searchParams.get('body')).toContain('route: /inbox');
   });
 
-  it('truncates the body when the encoded URL would exceed the cap', () => {
-    const url = buildFeedbackIssueUrl({ title: 'x', body: 'y'.repeat(10000) });
+  it('drops the context block first when over the cap, preserving details', () => {
+    const details = 'D'.repeat(3000);
+    const url = buildFeedbackIssueUrl({ title: 'x', details, context: 'C'.repeat(5000) });
+    const body = new URL(url).searchParams.get('body')!;
+    expect(url.length).toBeLessThanOrEqual(6144);
+    expect(body).toContain('D'.repeat(2000)); // details substantially preserved
+    expect(body).not.toContain('C'.repeat(100)); // context dropped
+  });
+
+  it('truncates details with a marker only when details alone still exceed the cap', () => {
+    const url = buildFeedbackIssueUrl({ title: 'x', details: 'y'.repeat(10000), context: '' });
     expect(url.length).toBeLessThanOrEqual(6144);
     expect(new URL(url).searchParams.get('body')).toContain('(truncated');
   });
@@ -1259,40 +1322,50 @@ describe('feedbackRepo', () => {
 Run: `cd frontend && npx vitest run src/feedback/feedbackRepo.test.ts`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Implement (two-stage truncation, Context-first — no binary search)**
 
 ```ts
-// The public feedback repo (#211). Pinned literal — mirrors backend FeedbackRepo.Slug;
-// both suites assert this exact value so a rename fails loudly on both sides.
+// The public feedback repo (#211). Pinned literal — mirrors backend FeedbackRepo.Slug.
 export const FEEDBACK_REPO_SLUG = 'prpande/PRism-feedback';
 
 const MAX_URL = 6144; // conservative cap; GitHub's issues/new tolerance is undocumented.
 
-// Builds a github.com issues/new prefill URL. Always https. Truncates the body
-// (never the title) on the encoded length so the URL stays under MAX_URL.
-export function buildFeedbackIssueUrl({ title, body }: { title: string; body: string }): string {
-  const base = `https://github.com/${FEEDBACK_REPO_SLUG}/issues/new`;
-  const make = (b: string) => {
-    const u = new URL(base);
-    u.searchParams.set('title', title);
-    u.searchParams.set('body', b);
-    return u;
-  };
-  let u = make(body);
+function makeUrl(title: string, body: string): URL {
+  const u = new URL(`https://github.com/${FEEDBACK_REPO_SLUG}/issues/new`);
+  u.searchParams.set('title', title);
+  u.searchParams.set('body', body);
+  return u;
+}
+
+// Builds a github.com issues/new prefill URL. Always https. Two-stage truncation
+// (spec §4.4): drop the auto-appended context block first (preserve user details);
+// only if details alone still exceed the cap, truncate details with a marker.
+export function buildFeedbackIssueUrl({
+  title,
+  details,
+  context,
+}: {
+  title: string;
+  details: string;
+  context: string;
+}): string {
+  const full = context ? `${details}\n\n---\n${context}` : details;
+  let u = makeUrl(title, full);
+
   if (u.toString().length > MAX_URL) {
-    const marker = '\n\n…(truncated — finish your report here)';
-    // Binary-trim the body until under the cap.
-    let lo = 0;
-    let hi = body.length;
-    while (lo < hi) {
-      const mid = Math.ceil((lo + hi) / 2);
-      if (make(body.slice(0, mid) + marker).toString().length <= MAX_URL) lo = mid;
-      else hi = mid - 1;
+    // Stage 1: drop the context block.
+    u = makeUrl(title, details);
+    if (u.toString().length > MAX_URL) {
+      // Stage 2: truncate details. Compute a safe char budget from the headroom
+      // left after the base+title (worst-case 3 bytes per char under encoding).
+      const marker = '\n\n…(truncated — finish your report in the issue)';
+      const overhead = makeUrl(title, marker).toString().length;
+      const budget = Math.max(0, Math.floor((MAX_URL - overhead) / 3));
+      u = makeUrl(title, details.slice(0, budget) + marker);
     }
-    u = make(body.slice(0, lo) + marker);
   }
+
   const out = u.toString();
-  // Defensive: never hand a non-https URL to openExternal (spec §4.4).
   if (new URL(out).protocol !== 'https:') throw new Error('feedback URL must be https');
   return out;
 }
@@ -1331,25 +1404,24 @@ vi.mock('./client', () => ({ apiClient: { post }, ApiError: FakeApiError }));
 
 import { submitFeedback } from './feedback';
 
+const req = { category: 'Bug' as const, summary: 's', details: 'd', routePattern: '/', platform: 'browser' };
+
 describe('submitFeedback', () => {
   beforeEach(() => post.mockReset());
 
   it('returns created on 201', async () => {
     post.mockResolvedValue({ issueNumber: 9, htmlUrl: 'https://x/9' });
-    await expect(submitFeedback({ category: 'Bug', summary: 's', details: 'd', routePattern: '/', platform: 'browser' }))
-      .resolves.toEqual({ outcome: 'created', issueNumber: 9, htmlUrl: 'https://x/9' });
+    await expect(submitFeedback(req)).resolves.toEqual({ outcome: 'created', issueNumber: 9, htmlUrl: 'https://x/9' });
   });
 
   it('maps a 422 to cannot-create', async () => {
     post.mockRejectedValue(new FakeApiError(422));
-    await expect(submitFeedback({ category: 'Bug', summary: 's', details: 'd', routePattern: '/', platform: 'browser' }))
-      .resolves.toEqual({ outcome: 'cannot-create' });
+    await expect(submitFeedback(req)).resolves.toEqual({ outcome: 'cannot-create' });
   });
 
   it('rethrows other errors (5xx/network)', async () => {
     post.mockRejectedValue(new FakeApiError(500));
-    await expect(submitFeedback({ category: 'Bug', summary: 's', details: 'd', routePattern: '/', platform: 'browser' }))
-      .rejects.toBeInstanceOf(FakeApiError);
+    await expect(submitFeedback(req)).rejects.toBeInstanceOf(FakeApiError);
   });
 });
 ```
@@ -1376,8 +1448,8 @@ export type FeedbackResult =
   | { outcome: 'created'; issueNumber: number; htmlUrl: string }
   | { outcome: 'cannot-create' };
 
-// POSTs to /api/feedback. 201 → created; 422 (CannotCreate) → caller falls back to
-// the prefilled link; anything else (5xx/network) rethrows for the retry path.
+// 201 → created; 422 (CannotCreate) → caller falls back to the prefilled link;
+// anything else (5xx/network) rethrows for the retry path.
 export async function submitFeedback(req: FeedbackRequest): Promise<FeedbackResult> {
   try {
     const res = await apiClient.post<{ issueNumber: number; htmlUrl: string }>('/api/feedback', req);
@@ -1389,7 +1461,7 @@ export async function submitFeedback(req: FeedbackRequest): Promise<FeedbackResu
 }
 ```
 
-> Verify the exact `ApiError` export name/shape in `frontend/src/api/client.ts` and adjust if it differs (e.g. a `status` vs `statusCode` field).
+> Verify the exact `ApiError` export + field (`status` vs `statusCode`) in `frontend/src/api/client.ts`; adjust if it differs.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -1410,9 +1482,9 @@ git commit -m "feat(#211): frontend submitFeedback api wrapper"
 - Create: `frontend/src/components/Feedback/FeedbackDialog.module.css`
 - Test: `frontend/src/components/Feedback/FeedbackDialog.test.tsx`
 
-This is the largest task; build it in TDD slices.
+> Implements all spec §5 behaviors: the 5 states, the `host`-gate (security §4.1), reset-on-reopen, initial focus, Esc-when-dirty → Cancel, and focus-on-transition. Build in TDD; the test block below covers each.
 
-- [ ] **Step 1: Write failing tests (validation + states)**
+- [ ] **Step 1: Write the failing tests**
 
 ```tsx
 import { render, screen } from '@testing-library/react';
@@ -1420,21 +1492,33 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const submitFeedback = vi.hoisted(() => vi.fn());
-const openExternalSpy = vi.hoisted(() => vi.fn());
+const openExternalSpy = vi.hoisted(() => vi.fn().mockResolvedValue(true));
 vi.mock('../../api/feedback', () => ({ submitFeedback }));
 
 import { FeedbackDialog } from './FeedbackDialog';
 
-function open(props: Partial<React.ComponentProps<typeof FeedbackDialog>> = {}) {
-  return render(
-    <FeedbackDialog open onClose={() => {}} authed routePattern="/inbox" {...props} />,
-  );
+type Props = React.ComponentProps<typeof FeedbackDialog>;
+function open(props: Partial<Props> = {}) {
+  const merged: Props = {
+    open: true,
+    onClose: () => {},
+    authed: true,
+    host: 'https://github.com',
+    routePattern: '/inbox',
+    ...props,
+  };
+  return render(<FeedbackDialog {...merged} />);
+}
+
+async function fill() {
+  await userEvent.type(screen.getByLabelText(/summary/i), 'It broke');
+  await userEvent.type(screen.getByLabelText(/details/i), 'steps');
 }
 
 describe('FeedbackDialog', () => {
   beforeEach(() => {
     submitFeedback.mockReset();
-    openExternalSpy.mockReset();
+    openExternalSpy.mockReset().mockResolvedValue(true);
     (window as unknown as { prism?: unknown }).prism = { openExternal: openExternalSpy };
   });
 
@@ -1442,36 +1526,50 @@ describe('FeedbackDialog', () => {
     open();
     const submit = screen.getByRole('button', { name: /send feedback/i });
     expect(submit).toBeDisabled();
-    await userEvent.type(screen.getByLabelText(/summary/i), 'It broke');
-    await userEvent.type(screen.getByLabelText(/details/i), 'steps');
+    await fill();
     expect(submit).toBeEnabled();
   });
 
-  it('shows "Filed as #N" on a 201', async () => {
-    submitFeedback.mockResolvedValue({ outcome: 'created', issueNumber: 12, htmlUrl: 'https://x/12' });
+  it('focuses the first category option on open', () => {
     open();
-    await userEvent.type(screen.getByLabelText(/summary/i), 's');
-    await userEvent.type(screen.getByLabelText(/details/i), 'd');
-    await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
-    expect(await screen.findByText(/filed as #12/i)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Bug' })).toHaveFocus();
   });
 
-  it('offers the prefilled link on cannot-create and opens an https url', async () => {
+  it('warns not to paste secrets or sensitive details', () => {
+    open();
+    expect(screen.getByText(/don't include tokens, secrets, or sensitive details/i)).toBeInTheDocument();
+  });
+
+  it('shows "Filed as #N" on a 201 and opens htmlUrl via the bridge', async () => {
+    submitFeedback.mockResolvedValue({ outcome: 'created', issueNumber: 12, htmlUrl: 'https://x/12' });
+    open();
+    await fill();
+    await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
+    expect(await screen.findByText(/filed as #12/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /open in github/i }));
+    expect(openExternalSpy).toHaveBeenCalledWith('https://x/12');
+  });
+
+  it('offers the prefilled https link on cannot-create', async () => {
     submitFeedback.mockResolvedValue({ outcome: 'cannot-create' });
     open();
-    await userEvent.type(screen.getByLabelText(/summary/i), 's');
-    await userEvent.type(screen.getByLabelText(/details/i), 'd');
+    await fill();
     await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
-    const openBtn = await screen.findByRole('button', { name: /open on github/i });
-    await userEvent.click(openBtn);
-    expect(openExternalSpy).toHaveBeenCalledTimes(1);
+    await userEvent.click(await screen.findByRole('button', { name: /open on github/i }));
     expect(openExternalSpy.mock.calls[0][0]).toMatch(/^https:\/\/github\.com\/prpande\/PRism-feedback\/issues\/new/);
   });
 
-  it('first-run (not authed) skips the API and opens the prefilled link directly', async () => {
+  it('first-run (not authed) skips the API and opens the link directly', async () => {
     open({ authed: false });
-    await userEvent.type(screen.getByLabelText(/summary/i), 's');
-    await userEvent.type(screen.getByLabelText(/details/i), 'd');
+    await fill();
+    await userEvent.click(screen.getByRole('button', { name: /open on github/i }));
+    expect(submitFeedback).not.toHaveBeenCalled();
+    expect(openExternalSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('GHES (authed, non-github.com host) skips the API — PAT never sent to api.github.com', async () => {
+    open({ authed: true, host: 'https://ghe.corp.example' });
+    await fill();
     await userEvent.click(screen.getByRole('button', { name: /open on github/i }));
     expect(submitFeedback).not.toHaveBeenCalled();
     expect(openExternalSpy).toHaveBeenCalledTimes(1);
@@ -1480,16 +1578,32 @@ describe('FeedbackDialog', () => {
   it('shows an error with Retry on a thrown (5xx) error', async () => {
     submitFeedback.mockRejectedValue(new Error('boom'));
     open();
-    await userEvent.type(screen.getByLabelText(/summary/i), 's');
-    await userEvent.type(screen.getByLabelText(/details/i), 'd');
+    await fill();
     await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
     expect(await screen.findByRole('alert')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
   });
 
-  it('warns not to paste secrets', () => {
-    open();
-    expect(screen.getByText(/don't include tokens, secrets/i)).toBeInTheDocument();
+  it('Esc keeps the dialog open and focuses Cancel when a field is dirty', async () => {
+    const onClose = vi.fn();
+    open({ onClose });
+    await userEvent.type(screen.getByLabelText(/summary/i), 'typed');
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /cancel/i })).toHaveFocus();
+  });
+
+  it('resets to a blank idle form when reopened after success', async () => {
+    submitFeedback.mockResolvedValue({ outcome: 'created', issueNumber: 1, htmlUrl: 'https://x/1' });
+    const { rerender } = open();
+    await fill();
+    await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
+    await screen.findByText(/filed as #1/i);
+    // Close then reopen.
+    rerender(<FeedbackDialog open={false} onClose={() => {}} authed host="https://github.com" routePattern="/inbox" />);
+    rerender(<FeedbackDialog open onClose={() => {}} authed host="https://github.com" routePattern="/inbox" />);
+    expect(screen.getByLabelText(/summary/i)).toHaveValue('');
+    expect(screen.getByRole('button', { name: /send feedback/i })).toBeDisabled();
   });
 });
 ```
@@ -1499,7 +1613,7 @@ describe('FeedbackDialog', () => {
 Run: `cd frontend && npx vitest run src/components/Feedback/FeedbackDialog.test.tsx`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement the dialog**
+- [ ] **Step 3: Implement the CSS**
 
 Create `frontend/src/components/Feedback/FeedbackDialog.module.css`:
 
@@ -1547,12 +1661,21 @@ Create `frontend/src/components/Feedback/FeedbackDialog.module.css`:
   gap: var(--s-2);
   margin-top: var(--s-3);
 }
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
 ```
+
+- [ ] **Step 4: Implement the dialog**
 
 Create `frontend/src/components/Feedback/FeedbackDialog.tsx`:
 
 ```tsx
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal } from '../Modal/Modal';
 import { SegmentedControl } from '../controls/SegmentedControl';
 import { submitFeedback, type FeedbackRequest } from '../../api/feedback';
@@ -1564,7 +1687,7 @@ type State =
   | { kind: 'idle' }
   | { kind: 'in-flight' }
   | { kind: 'success'; issueNumber: number; htmlUrl: string }
-  | { kind: 'offer-link' } // CannotCreate or first-run
+  | { kind: 'offer-link' }
   | { kind: 'opened' }
   | { kind: 'error' };
 
@@ -1578,16 +1701,17 @@ export interface FeedbackDialogProps {
   open: boolean;
   onClose: () => void;
   authed: boolean;
+  // The user's configured GitHub host (authState.host). The API path is used only
+  // for github.com; any other host (GHES) goes link-only so an enterprise PAT is
+  // never sent to public api.github.com (§4.1).
+  host: string;
   routePattern: string;
 }
 
-function platform(): string {
-  return typeof window.prism?.openExternal === 'function' ? 'desktop' : 'browser';
+function isDesktop(): boolean {
+  return typeof window.prism?.openExternal === 'function';
 }
 
-// Opens a URL externally: openExternal bridge when present, window.open fallback,
-// error surfaced to the caller's catch (spec §4.4 — diverges from the anchor-based
-// OpenInGitHubButton: this is imperative, so it implements both itself).
 async function openExternal(url: string): Promise<void> {
   if (new URL(url).protocol !== 'https:') throw new Error('refusing non-https url');
   if (typeof window.prism?.openExternal === 'function') {
@@ -1598,20 +1722,55 @@ async function openExternal(url: string): Promise<void> {
   window.open(url, '_blank', 'noreferrer');
 }
 
-export function FeedbackDialog({ open, onClose, authed, routePattern }: FeedbackDialogProps) {
+export function FeedbackDialog({ open, onClose, authed, host, routePattern }: FeedbackDialogProps) {
   const [category, setCategory] = useState<Category>('Bug');
   const [summary, setSummary] = useState('');
   const [details, setDetails] = useState('');
   const [state, setState] = useState<State>({ kind: 'idle' });
+  const liveRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const firstCategoryRef = useRef<HTMLDivElement>(null);
 
-  const canSubmit = category && summary.trim() && details.trim() && state.kind === 'idle';
-  const linkOnly = !authed;
+  // Reset to a blank idle form on each open (the component stays mounted while the
+  // parent toggles `open`, so without this a second open shows stale success text).
+  useEffect(() => {
+    if (open) {
+      setCategory('Bug');
+      setSummary('');
+      setDetails('');
+      setState({ kind: 'idle' });
+    }
+  }, [open]);
+
+  // Initial focus: first category option (form-dialog APG convention).
+  useEffect(() => {
+    if (open && state.kind === 'idle') {
+      firstCategoryRef.current?.querySelector<HTMLElement>('[role="radio"]')?.focus();
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Move focus to the post-submit primary action / alert so SR users hear the change.
+  useEffect(() => {
+    if (state.kind === 'success' || state.kind === 'offer-link' || state.kind === 'opened') {
+      // The branch's primary button carries data-modal-role="primary".
+      document
+        .querySelector<HTMLElement>('[data-feedback-active] [data-modal-role="primary"], [data-feedback-active] [data-feedback-close]')
+        ?.focus();
+    } else if (state.kind === 'error') {
+      liveRef.current?.focus();
+    }
+  }, [state.kind]);
+
+  const linkOnly = !authed || host !== 'https://github.com';
+  const canSubmit = Boolean(category && summary.trim() && details.trim()) && state.kind === 'idle';
   const submitLabel = linkOnly ? 'Open on GitHub' : 'Send feedback';
+  const dirty = Boolean(summary || details);
 
   const prefilledUrl = () =>
     buildFeedbackIssueUrl({
       title: `[${category}] ${summary.trim()}`,
-      body: `${details.trim()}\n\n---\nroute: ${routePattern}\nplatform: ${platform()}`,
+      details: details.trim(),
+      context: `route: ${routePattern}\nplatform: ${isDesktop() ? 'desktop' : 'browser'}`,
     });
 
   async function goToLink() {
@@ -1632,13 +1791,23 @@ export function FeedbackDialog({ open, onClose, authed, routePattern }: Feedback
         summary: summary.trim(),
         details: details.trim(),
         routePattern,
-        platform: platform(),
+        platform: isDesktop() ? 'desktop' : 'browser',
       };
       const res = await submitFeedback(req);
       if (res.outcome === 'created') setState({ kind: 'success', issueNumber: res.issueNumber, htmlUrl: res.htmlUrl });
       else setState({ kind: 'offer-link' });
     } catch {
       setState({ kind: 'error' });
+    }
+  }
+
+  // Esc when dirty focuses Cancel instead of dismissing (mirrors SubmitDialog).
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Escape' && dirty && state.kind !== 'in-flight') {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelRef.current?.focus();
+      if (liveRef.current) liveRef.current.textContent = 'Press Cancel to discard, or keep editing.';
     }
   }
 
@@ -1649,126 +1818,142 @@ export function FeedbackDialog({ open, onClose, authed, routePattern }: Feedback
         ? 'Open on GitHub'
         : 'Send feedback';
 
+  // disableEscDismiss while in-flight, and while dirty (we handle Esc ourselves above).
   return (
-    <Modal open={open} title={title} onClose={onClose} disableEscDismiss={state.kind === 'in-flight'}>
-      {state.kind === 'success' ? (
-        <div>
-          <p>
-            Filed as #{state.issueNumber}.{' '}
-            <button type="button" className="btn btn-secondary" onClick={() => void openExternal(state.htmlUrl)}>
-              Open in GitHub
-            </button>
-          </p>
-          <div className={styles.footer}>
-            <button type="button" className="btn btn-primary" data-modal-role="primary" onClick={onClose}>
-              Close
-            </button>
-          </div>
-        </div>
-      ) : state.kind === 'offer-link' || state.kind === 'opened' ? (
-        <div>
-          <p>
-            {state.kind === 'opened'
-              ? 'A prefilled issue page was opened. Submit it there, then return here.'
-              : "Couldn't file it directly. Open a prefilled issue on GitHub instead?"}
-          </p>
-          <div className={styles.footer}>
-            {state.kind === 'offer-link' && (
-              <button type="button" className="btn btn-primary" data-modal-role="primary" onClick={() => void goToLink()}>
-                Open on GitHub
-              </button>
-            )}
-            <button type="button" className="btn btn-secondary" onClick={onClose}>
-              Close
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div className={styles.form}>
-          <SegmentedControl
-            label="Feedback category"
-            options={CATEGORIES}
-            value={category}
-            onChange={(v) => setCategory(v)}
-            disabled={state.kind === 'in-flight'}
-          />
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="fb-summary">
-              Summary
-            </label>
-            <input
-              id="fb-summary"
-              className={styles.input}
-              maxLength={120}
-              value={summary}
-              disabled={state.kind === 'in-flight'}
-              onChange={(e) => setSummary(e.target.value)}
-            />
-          </div>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="fb-details">
-              Details
-            </label>
-            <textarea
-              id="fb-details"
-              className={styles.textarea}
-              maxLength={4000}
-              placeholder="What happened, and what did you expect? Describe the steps — please don't paste raw logs."
-              value={details}
-              disabled={state.kind === 'in-flight'}
-              onChange={(e) => setDetails(e.target.value)}
-            />
-          </div>
-          <p className={styles.notice}>
-            Posted as a public GitHub issue under your account — don't include tokens, secrets, or
-            sensitive details (internal project names, PR content).
-          </p>
-          {state.kind === 'error' && (
-            <p className={styles.error} role="alert">
-              Couldn't send your feedback. Try again, or open a prefilled issue on GitHub.
+    <Modal open={open} title={title} onClose={onClose} disableEscDismiss={state.kind === 'in-flight' || dirty}>
+      <div data-feedback-active onKeyDown={onKeyDown}>
+        <div ref={liveRef} className={styles.srOnly} role="status" aria-live="polite" tabIndex={-1} />
+        {state.kind === 'success' ? (
+          <div>
+            <p>
+              Filed as #{state.issueNumber}.{' '}
+              {state.htmlUrl && (
+                <button type="button" className="btn btn-secondary" onClick={() => void openExternal(state.htmlUrl)}>
+                  Open in GitHub
+                </button>
+              )}
             </p>
-          )}
-          <div className={styles.footer}>
-            {state.kind === 'error' ? (
-              <>
-                <button type="button" className="btn btn-primary" data-modal-role="primary" onClick={() => void onSubmit()}>
-                  Retry
-                </button>
-                <button type="button" className="btn btn-secondary" onClick={() => void goToLink()}>
-                  Open on GitHub instead
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-primary"
-                data-modal-role="primary"
-                disabled={!canSubmit}
-                onClick={() => void onSubmit()}
-              >
-                {state.kind === 'in-flight' ? 'Sending…' : submitLabel}
+            <div className={styles.footer}>
+              <button type="button" className="btn btn-primary" data-modal-role="primary" data-feedback-close onClick={onClose}>
+                Close
               </button>
-            )}
+            </div>
           </div>
-        </div>
-      )}
+        ) : state.kind === 'offer-link' || state.kind === 'opened' ? (
+          <div>
+            <p>
+              {state.kind === 'opened'
+                ? 'A prefilled issue page was opened. Submit it there, then return here.'
+                : "Couldn't file it directly. Open a prefilled issue on GitHub instead?"}
+            </p>
+            <div className={styles.footer}>
+              {state.kind === 'offer-link' && (
+                <button type="button" className="btn btn-primary" data-modal-role="primary" onClick={() => void goToLink()}>
+                  Open on GitHub
+                </button>
+              )}
+              <button type="button" className="btn btn-secondary" data-feedback-close onClick={onClose}>
+                Close
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className={styles.form}>
+            <div ref={firstCategoryRef}>
+              <SegmentedControl
+                label="Feedback category"
+                options={CATEGORIES}
+                value={category}
+                onChange={(v) => setCategory(v)}
+                disabled={state.kind === 'in-flight'}
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="fb-summary">
+                Summary
+              </label>
+              <input
+                id="fb-summary"
+                className={styles.input}
+                maxLength={120}
+                value={summary}
+                disabled={state.kind === 'in-flight'}
+                onChange={(e) => setSummary(e.target.value)}
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label} htmlFor="fb-details">
+                Details
+              </label>
+              <textarea
+                id="fb-details"
+                className={styles.textarea}
+                maxLength={4000}
+                placeholder="What happened, and what did you expect? Describe the steps — please don't paste raw logs."
+                value={details}
+                disabled={state.kind === 'in-flight'}
+                onChange={(e) => setDetails(e.target.value)}
+              />
+            </div>
+            <p className={styles.notice}>
+              Posted as a public GitHub issue under your account — don't include tokens, secrets, or
+              sensitive details (internal project names, PR content).
+            </p>
+            {state.kind === 'error' && (
+              <p className={styles.error} role="alert">
+                Couldn't send your feedback. Try again, or open a prefilled issue on GitHub.
+              </p>
+            )}
+            <div className={styles.footer}>
+              {state.kind === 'error' ? (
+                <>
+                  <button type="button" className="btn btn-primary" data-modal-role="primary" onClick={() => void onSubmit()}>
+                    Retry
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={() => void goToLink()}>
+                    Open on GitHub instead
+                  </button>
+                  <button ref={cancelRef} type="button" className="btn btn-ghost" onClick={onClose}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    data-modal-role="primary"
+                    disabled={!canSubmit}
+                    onClick={() => void onSubmit()}
+                  >
+                    {state.kind === 'in-flight' ? 'Sending…' : submitLabel}
+                  </button>
+                  <button ref={cancelRef} type="button" className="btn btn-ghost" disabled={state.kind === 'in-flight'} onClick={onClose}>
+                    Cancel
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </Modal>
   );
 }
 ```
 
-> Confirm the real `Modal` import path/props from `frontend/src/components/Modal/Modal.tsx` and `SegmentedControl` from `frontend/src/components/controls/SegmentedControl.tsx` (both verified to exist). Adjust prop names (`disableEscDismiss`, `data-modal-role="primary"`) if they differ. The `.btn`/`.btn-primary` classes are the app's existing global button classes (used by SubmitDialog/ErrorModal).
+> Confirm `Modal` (`disableEscDismiss`, `data-modal-role` focus selector) and `SegmentedControl` (`onChange: (value) => void`, renders `role="radio"` options) against their real implementations; adjust prop names if they differ. `.btn`/`.btn-primary`/`.btn-secondary`/`.btn-ghost` are the app's global button classes — use whichever ghost/tertiary class exists (check `SubmitDialog`/`ErrorModal`). If `Modal` keeps focus trapped such that the initial-focus effect fights it, set the category control via the Modal's own initial-focus mechanism instead (check whether Modal honors `data-modal-role` or a `defaultFocus` prop for a non-button target).
 
-- [ ] **Step 4: Run to verify it passes**
+- [ ] **Step 5: Run to verify it passes**
 
 Run: `cd frontend && npx vitest run src/components/Feedback/FeedbackDialog.test.tsx`
-Expected: PASS (all cases).
+Expected: PASS (all cases). If the initial-focus or Esc test fails due to Modal internals, adjust the focus mechanism per the note above until green — do not weaken the assertions.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add frontend/src/components/Feedback/
-git commit -m "feat(#211): FeedbackDialog with API + prefilled-link fallback"
+git commit -m "feat(#211): FeedbackDialog with API path, host gate, link fallback, a11y states"
 ```
 
 ### Task 16: Wire the "Send feedback" triggers (HelpPage + welcome footer)
@@ -1779,7 +1964,14 @@ git commit -m "feat(#211): FeedbackDialog with API + prefilled-link fallback"
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `frontend/src/pages/HelpPage.test.tsx`:
+Add to `frontend/src/pages/HelpPage.test.tsx` (the existing `renderHelp` wraps in `MemoryRouter`; the dialog reads `useAuth`, so mock it at the top of the file):
+
+```tsx
+// top of HelpPage.test.tsx
+vi.mock('../hooks/useAuth', () => ({
+  useAuth: () => ({ authState: { hasToken: true, host: 'https://github.com' }, error: null, refetch: vi.fn() }),
+}));
+```
 
 ```tsx
 it('opens the feedback dialog from the Send feedback button', async () => {
@@ -1812,7 +2004,7 @@ Expected: FAIL — no Send feedback button / dialog.
 
 - [ ] **Step 3: Add the trigger to HelpPage**
 
-In `frontend/src/pages/HelpPage.tsx`, add dialog state and a button after the last section. The Help page is reached in authed and unauthed states, so derive `authed` from `useAuth`:
+In `frontend/src/pages/HelpPage.tsx`, add imports + state, derive `authed`/`host` from `useAuth`, and render the button + dialog. The Help page reaches all auth states, so source both props from auth:
 
 ```tsx
 import { useState } from 'react';
@@ -1821,11 +2013,10 @@ import { useLocation } from 'react-router-dom';
 import { FeedbackDialog } from '../components/Feedback/FeedbackDialog';
 ```
 
-Inside the component:
-
 ```tsx
   const { authState } = useAuth();
   const authed = Boolean(authState?.hasToken);
+  const host = authState?.host ?? 'https://github.com';
   const location = useLocation();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 ```
@@ -1833,22 +2024,23 @@ Inside the component:
 After the shortcuts `<section>`, before `</main>`:
 
 ```tsx
-      <button type="button" className="btn btn-primary" onClick={() => setFeedbackOpen(true)}>
+      <button type="button" className={`btn btn-primary ${styles.feedbackAction}`} onClick={() => setFeedbackOpen(true)}>
         Send feedback
       </button>
       <FeedbackDialog
         open={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
         authed={authed}
+        host={host}
         routePattern={location.pathname}
       />
 ```
 
-> `routePattern` on the Help/Welcome pages is just the static path (`/help`, `/welcome`) — there's no `:param` route here, so passing `location.pathname` is already pattern-safe. (The `/pr/:owner/:repo/:number` concretization only matters when the dialog is opened from a PR-detail context, which is out of scope for this slice; if a future trigger lives there, pass the matched pattern.)
+> `routePattern={location.pathname}` is pattern-safe here because `/help` and `/welcome` are static routes with no `:param`. A future trigger inside PR-detail MUST pass the matched route pattern (e.g. `/pr/:owner/:repo/:number`), not the concrete path, to avoid leaking repo/PR identifiers into a public issue.
 
 - [ ] **Step 4: Add the trigger to WelcomePage**
 
-In `frontend/src/pages/WelcomePage.tsx`, replace the `Send feedback` stub `<span>` with a button + dialog (mirror the HelpPage wiring; `authed={false}` since `/welcome` is first-run by definition):
+In `frontend/src/pages/WelcomePage.tsx`, replace the `Send feedback` stub `<span>` with a button + dialog. `/welcome` is first-run, so `authed={false}` and `host` defaults to github.com:
 
 ```tsx
 import { useState } from 'react';
@@ -1865,26 +2057,16 @@ import { FeedbackDialog } from '../components/Feedback/FeedbackDialog';
           </button>
 ```
 
-And before the closing element of the card, render:
+Before the card's closing element:
 
 ```tsx
       <FeedbackDialog
         open={feedbackOpen}
         onClose={() => setFeedbackOpen(false)}
         authed={false}
+        host="https://github.com"
         routePattern="/welcome"
       />
-```
-
-Add a `.footerLink` button reset so it matches the link styling (it's already defined as a class; ensure `button.footerLink` has `border:none;background:none;cursor:pointer;font:inherit`):
-
-```css
-button.footerLink {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font: inherit;
-}
 ```
 
 - [ ] **Step 5: Run to verify they pass**
@@ -1909,22 +2091,26 @@ git commit -m "feat(#211): wire Send feedback trigger on Help + Welcome"
 ```ts
 import { test, expect } from '@playwright/test';
 
-test('feedback dialog opens, validates, and offers a prefilled link', async ({ page }) => {
+test('feedback dialog opens, validates, and offers a prefilled link on cannot-create', async ({ page }) => {
+  // Stub the backend so CI doesn't hit real GitHub.
+  await page.route('**/api/feedback', (route) => route.fulfill({ status: 422, body: '{"error":"cannot-create"}' }));
+
   await page.goto('/help');
   await page.getByRole('button', { name: 'Send feedback' }).click();
   const dialog = page.getByRole('dialog', { name: /send feedback/i });
   await expect(dialog).toBeVisible();
 
-  // Submit disabled until filled.
   const submit = dialog.getByRole('button', { name: /send feedback|open on github/i });
   await expect(submit).toBeDisabled();
   await dialog.getByLabel(/summary/i).fill('e2e summary');
   await dialog.getByLabel(/details/i).fill('e2e details');
   await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(dialog.getByRole('button', { name: /open on github/i })).toBeVisible();
 });
 ```
 
-> If the e2e environment cannot reach real GitHub, stub `/api/feedback` (route interception) to return 422 and assert the offered-link button appears; mirror how sibling specs stub backend routes.
+> Mirror sibling specs' auth bootstrap + route-stub style.
 
 - [ ] **Step 2: Run the e2e spec**
 
@@ -1952,13 +2138,13 @@ npm run lint
 npm run build
 npx vitest run
 ```
-Expected: all green. (Run the .NET build/test from the repo root; run only one long build/test at a time.)
+Expected: all green. (Run one long build/test at a time.)
 
-- [ ] **Step 2: Secrets scan** over the diff (no hardcoded tokens — the design ships none; the repo slug is public). Record the result in `## Proof`.
+- [ ] **Step 2: Secrets scan** over the diff (the design ships no token; the repo slug is public). Record in `## Proof`.
 
 - [ ] **Step 3: Sync main, then ship via pr-autopilot**
 
-Fetch + merge `origin/main`, then use `pr-autopilot`. This PR is **B2-gated** (GitHub write surface) *and* B1 (the dialog UI). Per the issue-resolution workflow, the B2 surface means the human gate is on the **approach** — but the approach was already gated at the spec/plan stage; the pre-PR re-check (re-read the diff vs the risk table) confirms no *additional* risk surface was touched. Drive to green-and-ready, then notify the human with the PR link, the `## Proof` section, and the B1 screenshots (the dialog states + `/help`). Human merges.
+Fetch + merge `origin/main`, then `pr-autopilot`. **B2-gated** (GitHub write surface) + B1 (dialog UI). The pre-PR-open re-check (re-read the diff vs the risk table) confirms no *additional* risk surface was touched beyond what the spec/plan gated. Drive to green-and-ready, then notify the human with the PR link, `## Proof`, and B1 screenshots (dialog states + `/help`). Human merges.
 
 ---
 
@@ -1966,21 +2152,21 @@ Fetch + merge `origin/main`, then use `pr-autopilot`. This PR is **B2-gated** (G
 
 **Spec coverage** (each spec section → task):
 - §3 `/help` route + entry points → Tasks 3, 4, 5.
-- §4.1 host resolution / api.github.com client → Task 10 (named `github.com` client) + Task 15 (frontend `authed`/host gating: the dialog attempts the API only when `authed`; the host==github.com refinement is enforced by the backend always targeting api.github.com and a non-github.com PAT 401/404→CannotCreate→link, plus the frontend `authed` gate). **Coverage note:** the spec's explicit "skip API when `authState.host !== 'github.com'`" frontend guard is *partially* deferred — Task 15 gates on `authed` only. A GHES *authed* user would attempt the API (PAT 401/404 → CannotCreate → link), which is correct behavior but does send the GHES PAT to api.github.com once. **Fix during execution:** in Task 15, extend `linkOnly` to `!authed || host !== 'github.com'`, passing `host` from `useAuth()` into the dialog. Add this to the FeedbackDialog props + a test case. (Flagged here rather than silently — see also the deviation log.)
-- §4.2 issue construction (title prefix, allowlisted body, version) → Tasks 9, 10, 11, 12.
-- §4.3 user-PAT rationale → no code (design rationale).
-- §4.4 prefilled-link (https-validated, truncation, openExternal divergence) → Tasks 13, 15.
-- §4.5 slug constant + drift guard → Tasks 8, 13 (pinned-literal in both suites).
-- §5 HelpPage + Header `?` + welcome wiring + FeedbackDialog states → Tasks 2, 4, 5, 15, 16.
+- §4.1 host resolution / api.github.com client / **host gate** → Task 10 (named `github.com` client; 401/403/404/422→CannotCreate) + Task 15 (`linkOnly = !authed || host !== 'https://github.com'`, with a GHES test asserting the PAT is never sent). **Now fully coded, not deferred.**
+- §4.2 issue construction (title prefix, allowlisted body, version + timestamp) → Tasks 9, 10, 12.
+- §4.3 user-PAT rationale → design rationale (no code).
+- §4.4 prefilled-link (https-validated, two-stage Context-first truncation, openExternal divergence) → Tasks 13, 15.
+- §4.5 slug constant + single-side guard → Tasks 8, 13.
+- §5 HelpPage + Header `?` + welcome wiring + FeedbackDialog (5 states, initial focus, Esc-dirty→Cancel, focus-on-transition, reset-on-reopen) → Tasks 2, 4, 5, 15, 16.
 - §6 endpoint + submitter + status mapping → Tasks 9, 10, 12.
-- §8 error handling (403/404/422→CannotCreate, https guard) → Tasks 10, 12, 13, 15.
+- §8 error handling (401/403/404/422→CannotCreate, https guard, field caps) → Tasks 10, 12, 13, 15.
 - §9 testing → tests in every task + Tasks 6, 17 (e2e).
 - §10 phasing → PR1 / PR2 split.
-- §11 deferrals → not implemented by design (D1/D2); D3 (no labels) honored in Task 10; D4 (build constant) in Tasks 8, 13.
-- §12 ACs → covered; the cross-tier slug AC is the pinned-literal guard (deviation #3).
+- §11 deferrals → D1/D2 not implemented by design; D3 (no labels) in Task 10; D4 (build constant) in Tasks 8, 13.
+- §12 ACs → covered; slug AC is the single-side guard (deviation #3, honestly scoped).
 
-**Action item folded in:** Task 15 must add the `host !== 'github.com'` gate + prop + test (noted above) to fully satisfy §4.1. Add it as Step 6 of Task 15 during execution.
+**Placeholder scan:** none — every step has concrete code/commands. The one external-verification hooks (Task 2 Step 0 keybinding; Modal/SegmentedControl/ApiError prop confirmation) are explicit verify-steps, not placeholders.
 
-**Placeholder scan:** none — every step has concrete code/commands.
+**Type consistency:** `FeedbackContent` (now 7 fields incl. Version + SubmittedAt) consistent across Tasks 9/10/12; `IFeedbackSubmitter.CreateFeedbackIssueAsync` identical in interface (9), impl (10), endpoint (12), and fakes; `FeedbackOutcome` Created/CannotCreate consistent; frontend `FeedbackResult` (`'created'`/`'cannot-create'`) consistent across Tasks 14/15; `FeedbackDialogProps` (`open/onClose/authed/host/routePattern`) consistent between Task 15 def and Task 16 call sites; `buildFeedbackIssueUrl({title, details, context})` consistent between Tasks 13 and 15; `FEEDBACK_REPO_SLUG`/`FeedbackRepo.Slug` both `"prpande/PRism-feedback"`.
 
-**Type consistency:** `FeedbackContent`/`FeedbackCreateResult`/`FeedbackOutcome` (Tasks 9, 10, 12) consistent; `IFeedbackSubmitter.CreateFeedbackIssueAsync` signature identical across interface (Task 9), impl (Task 10), and endpoint call (Task 12); frontend `FeedbackResult` (`'created'`/`'cannot-create'`) consistent across Tasks 14, 15; `FEEDBACK_REPO_SLUG`/`FeedbackRepo.Slug` both `"prpande/PRism-feedback"`.
+**Open verification items for the executor** (mechanical, flagged not hidden): the real ⌘K binding (Task 2 Step 0); `ApiError` field name `status` vs `statusCode` (Task 14); `Modal`/`SegmentedControl` exact prop + focus-trap behavior (Task 15 Step 4 note); whether `TimeProvider` is DI-registered (Task 12 note).
