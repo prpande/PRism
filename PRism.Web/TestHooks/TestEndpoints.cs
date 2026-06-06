@@ -34,6 +34,10 @@ internal static class TestEndpoints
         string NewHeadSha,
         IReadOnlyList<FakeReviewBackingStore.FileContentChange> FileChanges);
 
+    // #214 e2e-only: extra long file paths appended to the diff's file list so the
+    // file-tree overflows horizontally.
+    internal sealed record SeedTreeFilesRequest(IReadOnlyList<string> Paths);
+
     internal sealed record SetCommitReachableRequest(string Sha, bool Reachable);
 
     internal sealed record SetPrStateRequest(string State);
@@ -129,6 +133,17 @@ internal static class TestEndpoints
             sp.GetService<PRism.Core.PrDetail.IActivePrCache>()?.Update(
                 FakeReviewBackingStore.Scenario,
                 new PRism.Core.PrDetail.ActivePrSnapshot(store.CurrentHeadSha, null, DateTimeOffset.UtcNow));
+            return Results.Ok(new { ok = true });
+        });
+
+        // #214 e2e-only. Seeds extra long file paths so the file-tree overflows
+        // horizontally (the canonical single short path `src/Calc.cs` never does), letting
+        // the tree-scroll regression spec exercise the synthetic horizontal scrollbar.
+        app.MapPost("/test/seed-tree-files", (SeedTreeFilesRequest req, IServiceProvider sp) =>
+        {
+            var store = sp.GetService<FakeReviewBackingStore>();
+            if (store is null) return StoreMissing("/test/seed-tree-files");
+            store.SetExtraTreeFiles(req.Paths ?? Array.Empty<string>());
             return Results.Ok(new { ok = true });
         });
 
