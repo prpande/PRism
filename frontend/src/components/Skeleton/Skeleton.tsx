@@ -11,12 +11,21 @@ interface SkeletonProps {
   'data-testid'?: string;
 }
 
+const DEFAULT_LINE_WIDTHS = ['100%', '92%', '96%', '85%', '90%', '70%'];
+
 function toCss(v: number | string | undefined): string | undefined {
   if (v === undefined) return undefined;
   return typeof v === 'number' ? `${v}px` : v;
 }
 
-export function Skeleton({ width, height, radius, circle, className, ...rest }: SkeletonProps) {
+export function Skeleton({
+  width,
+  height,
+  radius,
+  circle,
+  className,
+  'data-testid': testId,
+}: SkeletonProps) {
   const style: CSSProperties = {
     width: toCss(width),
     height: toCss(height),
@@ -27,7 +36,7 @@ export function Skeleton({ width, height, radius, circle, className, ...rest }: 
       className={className ? `${styles.block} ${className}` : styles.block}
       style={style}
       aria-hidden="true"
-      data-testid={rest['data-testid']}
+      data-testid={testId}
     />
   );
 }
@@ -40,19 +49,17 @@ interface SkeletonTextProps {
   'data-testid'?: string;
 }
 
-export function SkeletonText({ lines, widths, className, ...rest }: SkeletonTextProps) {
-  const defaults = ['100%', '92%', '96%', '85%', '90%', '70%'];
+export function SkeletonText({
+  lines,
+  widths,
+  className,
+  'data-testid': testId,
+}: SkeletonTextProps) {
+  const lineWidths = widths ?? DEFAULT_LINE_WIDTHS;
   return (
-    <span
-      className={className ? `${styles.text} ${className}` : styles.text}
-      data-testid={rest['data-testid']}
-    >
+    <span className={className ? `${styles.text} ${className}` : styles.text} data-testid={testId}>
       {Array.from({ length: lines }, (_, i) => (
-        <Skeleton
-          key={i}
-          height={12}
-          width={(widths ?? defaults)[i % (widths ?? defaults).length]}
-        />
+        <Skeleton key={i} height={12} width={lineWidths[i % lineWidths.length]} />
       ))}
     </span>
   );
