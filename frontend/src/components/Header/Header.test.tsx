@@ -35,3 +35,20 @@ describe('Header gear', () => {
     expect(screen.queryByRole('link', { name: /settings/i })).not.toBeInTheDocument();
   });
 });
+
+describe('Header help', () => {
+  it('renders a Help link to /help when authed', () => {
+    at('/');
+    expect(screen.getByRole('link', { name: 'Help' })).toHaveAttribute('href', '/help');
+  });
+
+  it('marks the Help link active on /help', () => {
+    at('/help');
+    expect(screen.getByRole('link', { name: 'Help' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('hides the Help link when not authed', () => {
+    at('/', false);
+    expect(screen.queryByRole('link', { name: 'Help' })).toBeNull();
+  });
+});
