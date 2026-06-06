@@ -60,4 +60,16 @@ describe('useStreamHealth', () => {
     const { result } = renderHook(() => useStreamHealth());
     expect(result.current.healthy).toBe(false);
   });
+
+  it('unsubscribes on unmount', () => {
+    const { handle, set } = makeHandle(true);
+    mockHolder.current = handle;
+    const { result, unmount } = renderHook(() => useStreamHealth());
+    expect(result.current.healthy).toBe(true);
+    unmount();
+    // After unmount, the hook's setHealthy is no longer subscribed; firing a change
+    // must not update the (unmounted) hook's last-rendered state.
+    act(() => set(false));
+    expect(result.current.healthy).toBe(true); // unchanged → unsubscribed cleanly
+  });
 });

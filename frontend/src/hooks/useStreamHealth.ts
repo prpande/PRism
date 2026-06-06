@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useEventSource } from './useEventSource';
 
 export function useStreamHealth(): { healthy: boolean; retry: () => void } {
@@ -14,5 +14,6 @@ export function useStreamHealth(): { healthy: boolean; retry: () => void } {
     return stream.onHealthChange(setHealthy);
   }, [stream]);
 
-  return { healthy, retry: () => stream?.forceReconnect() };
+  const retry = useCallback(() => stream?.forceReconnect(), [stream]);
+  return { healthy, retry };
 }
