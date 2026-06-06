@@ -14,7 +14,7 @@ internal static class PreferencesEndpoints
         app.MapGet("/api/preferences", (IConfigStore config, LogsPathInfo logsPath) =>
             Results.Ok(BuildResponse(config, logsPath)));
 
-        app.MapPost("/api/preferences", async (HttpContext ctx, IConfigStore config, LogsPathInfo logsPath, AiPreviewState aiState) =>
+        app.MapPost("/api/preferences", async (HttpContext ctx, IConfigStore config, LogsPathInfo logsPath, AiModeState aiState) =>
         {
             using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ctx.RequestAborted).ConfigureAwait(false);
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
@@ -42,9 +42,9 @@ internal static class PreferencesEndpoints
                 return Results.BadRequest(new PreferencesError(Error: ex.Message));
             }
 
-            // Mirror ui.aiPreview into the AiPreviewState holder (also handled by the Changed
+            // Mirror ui.ai.mode into the AiModeState holder (also handled by the Changed
             // subscription, but doing it here makes the response synchronous with the change).
-            aiState.IsOn = config.Current.Ui.Ai.Mode != AiMode.Off;
+            aiState.Mode = config.Current.Ui.Ai.Mode;
 
             return Results.Ok(BuildResponse(config, logsPath));
         });

@@ -12,7 +12,7 @@ internal static class AiEndpoints
 
         // Spec § 7.3. The Overview tab's AiSummaryCard fetches its content here.
         // The seam selector returns NoopPrSummarizer (→ null → 204) or
-        // PlaceholderPrSummarizer (→ canned PrSummary → 200) based on AiPreviewState.
+        // PlaceholderPrSummarizer (→ canned PrSummary → 200) based on AiModeState.
         // v2 swaps in a real summarizer at the same selector slot — this endpoint is
         // unchanged.
         app.MapGet("/api/pr/{owner}/{repo}/{number:int}/ai/summary",

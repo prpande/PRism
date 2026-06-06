@@ -284,7 +284,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             }
 
             // Nested backfill: an old config with `ui` present but no `ai` key deserializes
-            // Ui.Ai to null. The AiPreviewState DI seed reads Ui.Ai.Mode, so without this
+            // Ui.Ai to null. The AiModeState DI seed reads Ui.Ai.Mode, so without this
             // guard a legacy config would NRE at startup. Symmetric to the Inbox.Sections
             // backfill above; the check is on a nested property, not the sub-record itself.
             if (parsed.Ui.Ai is null)
