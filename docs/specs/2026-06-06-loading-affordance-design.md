@@ -1,7 +1,7 @@
 # Loading affordance: high-fidelity skeletons + global top progress bar
 
 - **Status:** Design — awaiting human review
-- **Issues:** #181 (PR-detail: no clear loading affordance on open), #147 (PrHeader empty title/author on cold-load — folded in), plus a sibling inbox issue to be filed (inbox cold-load shows a generic spinner)
+- **Issues:** #181 (PR-detail: no clear loading affordance on open), #147 (PrHeader empty title/author on cold-load — folded in), #244 (inbox cold-load shows a generic spinner — sibling, PR2)
 - **Worktree / branch:** `feature/181-loading-affordance`
 - **Date:** 2026-06-06
 
@@ -180,7 +180,7 @@ Header and body share the `!data && isLoading` predicate, so on error both stop 
 
 - **#181** — PR-detail loading affordance (PR1).
 - **#147** — empty header title/author on cold-load: a strict subset of PR1's `PrHeader` skeleton; **closed by PR1**, no separate diff.
-- **New sibling issue** — inbox content-shaped skeleton (PR2).
+- **#244** — inbox content-shaped skeleton (PR2).
 - The **global top bar is app-level infrastructure broader than #181's title implies.** It is introduced under PR1 because PR-detail is its first feeder; this scope expansion is documented here deliberately rather than smuggled in. PR2 adds the inbox feeder.
 
 Two PRs (not one) for reviewability: PR1 establishes the primitives + closes #181/#147; PR2 reuses them for the inbox.
