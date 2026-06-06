@@ -91,6 +91,19 @@ public sealed class InboxRefreshOrchestratorTests
             => Task.FromResult(items);
     }
 
+    // PR enricher that simulates a dropped enrichment (e.g. GitHub 404): it omits
+    // the given PR numbers from its output, so those refs fall back to the raw
+    // Search item (null close timestamps + empty headSha).
+    private sealed class DropEnricher : IPrEnricher
+    {
+        private readonly HashSet<int> _drop;
+        public DropEnricher(params int[] drop) => _drop = drop.ToHashSet();
+        public Task<IReadOnlyList<RawPrInboxItem>> EnrichAsync(
+            IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<RawPrInboxItem>>(
+                items.Where(i => !_drop.Contains(i.Reference.Number)).ToList());
+    }
+
     // Awaiting-author filter: returns all candidates unchanged
     private sealed class PassthroughAwaitingAuthorFilter : IAwaitingAuthorFilter
     {
@@ -591,6 +604,33 @@ public sealed class InboxRefreshOrchestratorTests
 
         var sec = sut.Current!.Sections[InboxHistoryConstants.SectionId];
         sec.Select(i => i.Reference.Number).Should().Contain(7);
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_UnenrichedRow_SynthesizesTerminalClosedAtFromUpdatedAt()
+    {
+        // The raw Search item carries null close timestamps (refined only in the
+        // fan-out enrichment). Simulate a dropped enrichment so the row falls back
+        // to raw — without the fallback fix it would render badge-less + unread.
+        var updated = DateTimeOffset.Parse("2026-05-20T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var rawClosed = RawClosed(7, merged: null, closed: null) with { UpdatedAt = updated };
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
+            closed: new[] { rawClosed });
+
+        using var sut = Build(
+            config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object,
+            sections: sections,
+            enricher: new DropEnricher(7)); // #7 enrichment drops → fallback to raw
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var row = sut.Current!.Sections[InboxHistoryConstants.SectionId]
+            .Single(i => i.Reference.Number == 7);
+        // Fallback marks the row terminal (ClosedAt == UpdatedAt) so the FE treats
+        // it as done + read rather than non-terminal + falsely-unread.
+        row.ClosedAt.Should().Be(updated);
+        row.MergedAt.Should().BeNull();
     }
 
     [Fact]
