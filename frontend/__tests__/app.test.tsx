@@ -144,10 +144,28 @@ describe('App routing', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByRole('heading', { level: 1, name: 'PRism' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /get started/i })).toBeInTheDocument();
     expect(screen.queryByText(/connect to github/i)).toBeNull();
   });
 
-  it('re-auth user at /welcome ends on /setup, never the welcome hero or Inbox', async () => {
+  it('unknown route redirects a first-run user to /welcome (catch-all site)', async () => {
+    // #212: the `*` catch-all is the fourth modified redirect site; an unknown
+    // path in a no-token state must also land on /welcome, not /setup.
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/does-not-exist']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { level: 1, name: 'PRism' })).toBeInTheDocument();
+    expect(screen.queryByText(/connect to github/i)).toBeNull();
+  });
+
+  it('re-auth session starting at /welcome redirects to /setup (hasToken arm, not /welcome or Inbox)', async () => {
     // #212: pins the /welcome ternary's `hasToken && !isAuthed` arm. A token-bearing
     // session whose token is rejected must never rest on /welcome or the Inbox — it
     // routes to /setup (unauthedTarget resolves to /setup because hasToken is true).

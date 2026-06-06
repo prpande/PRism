@@ -106,7 +106,10 @@ export function App() {
               path="/welcome"
               element={
                 authState.hasToken ? (
-                  <Navigate to={isAuthed ? '/' : '/setup'} replace />
+                  // hasToken is true in this arm, so unauthedTarget === '/setup' —
+                  // referencing it (not a literal) keeps every redirect target
+                  // sourced from the one `unauthedTarget` definition.
+                  <Navigate to={isAuthed ? '/' : unauthedTarget} replace />
                 ) : (
                   <WelcomePage />
                 )
