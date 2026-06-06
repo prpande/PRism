@@ -1,0 +1,32 @@
+.page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--s-6) var(--s-4) var(--s-7);
+  color: var(--text-1);
+}
+.title {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  margin: 0 0 var(--s-2);
+}
+.lede {
+  color: var(--text-2);
+  margin: 0 0 var(--s-5);
+}
+.section {
+  margin-bottom: var(--s-5);
+}
+.sectionHeading {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  margin: 0 0 var(--s-2);
+}
+.section p {
+  color: var(--text-2);
+  margin: 0 0 var(--s-2);
+}
+/* Page-scoped action so the trigger doesn't inherit an app-wide oversized
+   primary button; left-aligned with the text column. (PR2 renders the button.) */
+.feedbackAction {
+  margin-top: var(--s-6);
+}
