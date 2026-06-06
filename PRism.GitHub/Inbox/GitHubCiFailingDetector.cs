@@ -66,7 +66,13 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var (checks, checksDegraded) = results[0];
         var (statuses, statusesDegraded) = results[1];
         var degraded = checksDegraded || statusesDegraded;
-        if (checks == CiStatus.Failing || statuses == CiStatus.Failing) return (CiStatus.Failing, degraded);
+        // A Failing observed from EITHER source is definitive: a transient 5xx / fine-grained
+        // 403 on the OTHER source can't un-fail it, and a later page can't either. So Failing
+        // is always returned non-degraded (cacheable) even when `degraded` is set — honoring
+        // this method's contract and sparing a re-probe of a stable failing status every tick.
+        // Pending/None stay degraded-flagged: their true state may be Failing hidden behind
+        // the incomplete read, so they must re-probe rather than cache an untrustworthy result.
+        if (checks == CiStatus.Failing || statuses == CiStatus.Failing) return (CiStatus.Failing, false);
         if (checks == CiStatus.Pending || statuses == CiStatus.Pending) return (CiStatus.Pending, degraded);
         return (CiStatus.None, degraded);
     }
