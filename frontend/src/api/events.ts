@@ -83,6 +83,7 @@ const WINDOW_EVENT_BRIDGE: Partial<Record<keyof EventPayloadByType, string>> = {
 export type StreamHealthHandle = {
   streamHealthy(): boolean;
   onHealthChange(cb: (healthy: boolean) => void): () => void; // returns unsubscribe
+  forceReconnect(): void;
 };
 
 export type EventStreamHandle = {
@@ -358,6 +359,9 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
       return () => {
         healthSubs.delete(cb);
       };
+    },
+    forceReconnect() {
+      scheduleReconnect({ immediate: true });
     },
     close() {
       closed = true;
