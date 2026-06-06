@@ -32,6 +32,11 @@
   background: var(--surface-3);
 }
 
+.repoIcon {
+  flex: none;
+  color: var(--text-2);
+}
+
 .repo {
   font-family: var(--font-mono);
 }
