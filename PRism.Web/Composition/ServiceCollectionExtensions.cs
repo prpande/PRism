@@ -1,3 +1,4 @@
+using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using PRism.AI.Contracts;
 using PRism.AI.Contracts.Noop;
@@ -35,6 +36,8 @@ internal static class ServiceCollectionExtensions
         services.AddNoopSeams();
         services.AddPlaceholderSeams();
 
+        var realSeams = new Dictionary<Type, object>();   // P0: empty; P1 adds the first real impl here
+        services.AddSingleton(new AiCapabilityResolver(realSeams.Keys.ToHashSet()));
         services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
             sp.GetRequiredService<AiModeState>(),
             noop: new Dictionary<Type, object>
@@ -61,7 +64,7 @@ internal static class ServiceCollectionExtensions
                 [typeof(IInboxItemEnricher)] = sp.GetRequiredService<PlaceholderInboxItemEnricher>(),
                 [typeof(IInboxRanker)] = sp.GetRequiredService<PlaceholderInboxRanker>(),
             },
-            real: new Dictionary<Type, object>(),    // P0: no real seam impls yet (Live → Noop everywhere)
+            real: realSeams,
             liveAvailable: () => false));            // P0: no live features; P1 wires the cached probe-availability
 
         return services;
