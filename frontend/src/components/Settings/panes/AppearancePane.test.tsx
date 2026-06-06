@@ -14,10 +14,6 @@ vi.mock('../../../hooks/usePreferences', () => ({
     set,
   }),
 }));
-vi.mock('../../../hooks/useCapabilities', () => ({
-  useCapabilities: () => ({ refetch: vi.fn() }),
-}));
-
 beforeEach(() => set.mockClear());
 
 describe('AppearancePane', () => {
