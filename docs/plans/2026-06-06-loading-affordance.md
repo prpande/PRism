@@ -602,11 +602,11 @@ to:
 
 - [ ] **Step 4: Verify the app builds, no test-id collisions, existing App tests pass**
 
-The bar now renders on **every** authed App render (inert, `data-active="false"`). Before running, grep for any existing test that asserts the *absence* of `top-progress-bar`, and confirm the six new test-ids don't collide with existing ones:
+The bar now renders on **every** authed App render (inert, `data-active="false"`). Check the *genuinely new* test-ids for collisions (omit `pr-detail-skeleton` — it already exists as the inline skeleton's class + the #180 selector, which Task 7 intentionally migrates):
 
-Run: `cd frontend && grep -rn "top-progress-bar\|pr-detail-skeleton\|inbox-skeleton\|pr-header-title-skeleton" src --include=*.tsx | grep -v "Skeleton\|TopProgressBar"` (expect: no pre-existing references)
+Run: `cd frontend && grep -rn "top-progress-bar\|inbox-skeleton\|pr-header-title-skeleton" src --include=*.tsx` (expect: **no** hits — none of these exist yet)
 Run: `cd frontend && npx vitest run src/App.test.tsx 2>/dev/null; npm run build`
-Expected: no collisions; build succeeds; existing App tests pass (the inert bar changes no asserted behavior).
+Expected: no collisions for the new ids; build succeeds; existing App tests pass (the inert bar changes no asserted behavior — if an App test asserted absence of `top-progress-bar`, update it).
 
 - [ ] **Step 5: Commit**
 
@@ -671,10 +671,11 @@ This is **not optional** and **not just a removal**: after Task 7's gate becomes
   - Holder type/init (~lines 73–78): declare the holder as `{ data: PrDetailDto | null; isLoading: boolean; error: Error | null }` (replace the `showSkeleton` field with `isLoading`).
   - Mock body (~line 94): `showSkeleton: prDetailResult.current.showSkeleton` → `isLoading: prDetailResult.current.isLoading`.
   - `beforeEach` reset (~line 232) and the OQ6 holder writes (~lines 289, 293): replace `showSkeleton:` with `isLoading:` (loaded states use `isLoading: false`).
-  - The #180 background-reload injection (~line 485): `{ data: PR_DETAIL, showSkeleton: true, error: null }` → `{ data: PR_DETAIL, isLoading: true, error: null }`.
-  - The mock that already supplies `isLoading` (e.g. `{ data: null, isLoading: false, showSkeleton: false, error: null }`): drop the now-removed `showSkeleton` field.
+  - The #180 test has **two** holder writes — convert both: the initial loaded state (~line 472) `{ data: PR_DETAIL, showSkeleton: false, error: null }` → `{ ..., isLoading: false, ... }`, and the background-reload injection (~line 485) `{ data: PR_DETAIL, showSkeleton: true, error: null }` → `{ ..., isLoading: true, ... }`.
 
-After editing, `npx tsc --noEmit` must be clean — `UsePrDetailResult` no longer has `showSkeleton`, so any leftover site is a compile error (a useful backstop that the reshape is complete).
+**Do not touch `useFileDiff` / `useUnionDiff` mocks.** Those hooks have their *own* unrelated `showSkeleton` field (lines like `useUnionDiff: () => ({ data: null, isLoading: false, showSkeleton: false, error: null })`). Task 5 only removes `showSkeleton` from `UsePrDetailResult` — the diff hooks keep theirs. There is **no** `usePrDetail` mock that already supplies `isLoading`; the holder + the two static literals above are every `usePrDetail` site.
+
+After editing, `npx tsc --noEmit` must be clean — `UsePrDetailResult` no longer has `showSkeleton`, so any leftover `usePrDetail` site is a compile error (a useful backstop that the reshape is complete).
 
 - [ ] **Step 3: Run the affected suites + typecheck**
 
