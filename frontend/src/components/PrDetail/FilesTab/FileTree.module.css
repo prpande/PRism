@@ -34,9 +34,12 @@
 .fileTreeScroll {
   flex: 1 1 auto;
   min-width: 0;
-  /* Horizontal scroll only — height grows to content, so vertical space is handled
-     by the outer pane, not an inner vertical scrollbar. */
-  overflow-x: auto;
+  /* #214: clipped (was overflow-x: auto). The synthetic bottom-pinned bar
+     (.fileTreeHScroll) drives horizontal scroll via translateX on .fileTreeInner, so the
+     scrollbar is reachable without scrolling the tree to its end. scrollWidth still
+     reports the full content width here, which useTreeHScroll measures. Height grows to
+     content; the outer pane owns vertical scrolling. */
+  overflow-x: hidden;
   overflow-y: hidden;
 }
 .fileTreeInner {
@@ -46,6 +49,46 @@
   min-width: 100%;
   display: flex;
   flex-direction: column;
+  /* #214: shifted in lockstep by the synthetic scrollbar's scrollLeft. Paint-time only —
+     does not affect scrollWidth or row height, so checkbox-column alignment holds. */
+  transform: translateX(calc(var(--file-tree-hscroll, 0px) * -1));
+}
+
+/* #214 — synthetic horizontal scrollbar, mirroring DiffPane's .diffHScroll. A sticky
+   footer row OUTSIDE the content-height tree body so it pins to the bottom of the visible
+   .filesTabTree pane (which owns vertical scroll). It mirrors .fileTreeBody's two-column
+   layout so the bar aligns under .fileTreeScroll and its thumb proportion honestly
+   reflects the tree column's overflow. */
+.fileTreeHScrollRow {
+  /* `display` is toggled by useTreeHScroll: `flex` when the tree overflows horizontally,
+     `none` otherwise — so when the tree fits, NOTHING (not even this row's 1px top border)
+     is left pinned at the pane bottom. Default `none` also avoids a one-frame empty-footer
+     flash before the hook's first measure. The border lives on the ROW (toggled with it),
+     not on the bar/spacer, so the footer line spans both columns when shown and vanishes
+     entirely when hidden. */
+  display: none;
+  position: sticky;
+  bottom: 0;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-1);
+}
+.fileTreeHScroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.fileTreeHScrollSpacer {
+  /* useTreeHScroll sizes width to overflow + viewport width; this only needs a height so
+     the bar gets a scrollable track. */
+  height: 1px;
+}
+/* Reserves the static-checkbox-column width (.fileTreeCheckSlot = 14px box + var(--s-3)
+   padding each side) so the bar spans only the tree column. */
+.fileTreeHScrollSpacerCol {
+  flex: 0 0 auto;
+  width: calc(14px + 2 * var(--s-3));
 }
 .fileTreeCheckCol {
   flex: 0 0 auto;
