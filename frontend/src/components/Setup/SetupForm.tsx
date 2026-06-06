@@ -75,7 +75,7 @@ export function SetupForm({
   const [pat, setPat] = useState('');
   const [tokenType, setTokenType] = useState<TokenType>('classic');
   const errorId = useId();
-  const base = host.replace(/\/$/, '');
+  const base = host.replace(/\/+$/, '');
   const classicUrl = `${base}/settings/tokens/new`;
   const fineGrainedUrl = `${base}/settings/personal-access-tokens/new`;
   const placeholder = tokenType === 'classic' ? 'ghp_…' : 'github_pat_…';
