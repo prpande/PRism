@@ -99,7 +99,6 @@ const MAX_DELAY_MS = 30_000; // D2
 const UNHEALTHY_AFTER_MS = 30_000;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars -- used Task 5 (D2 dwell)
 const STABLE_AFTER_MS = 10_000;
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used Task 2 (D3)
 const PING_TIMEOUT_MS = 5_000;
 
 export function openEventStream(opts?: { random?: () => number }): EventStreamHandle {
@@ -186,8 +185,16 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
       // belongs to a stale EventSource and must not trigger another reconnect.
       if (myEs !== es) return;
       probed = true;
-      void fetch('/api/events/ping')
+      // D3: bound the ping with an explicit abort timer. AbortSignal.timeout's
+      // internal timer is not driven by vitest fake timers, so use a manual
+      // setTimeout/AbortController pair instead. A ping that times out OR rejects
+      // (network error) now schedules a reconnect rather than relying on
+      // EventSource native retry — which a closed-socket onerror won't perform.
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), PING_TIMEOUT_MS);
+      void fetch('/api/events/ping', { signal: ctrl.signal })
         .then((resp) => {
+          clearTimeout(t);
           if (closed || myEs !== es) return;
           if (resp.status === 401) {
             window.location.reload();
@@ -196,7 +203,9 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
           scheduleReconnect();
         })
         .catch(() => {
-          // Network error probing — leave EventSource native retry to handle.
+          clearTimeout(t);
+          if (closed || myEs !== es) return;
+          scheduleReconnect();
         });
     };
 

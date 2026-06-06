@@ -264,6 +264,47 @@ describe('openEventStream — backoff', () => {
   });
 });
 
+describe('openEventStream — ping timeout (D3)', () => {
+  it('reconnects when the ping never resolves (timeout aborts at 5s)', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = vi.fn(
+        (_url, init?: RequestInit) =>
+          new Promise((_res, rej) => {
+            init?.signal?.addEventListener('abort', () =>
+              rej(new DOMException('aborted', 'AbortError')),
+            );
+          }),
+      ) as unknown as typeof fetch;
+      const stream = openEventStream({ random: () => 0.5 });
+      FakeEventSource.instances[0].fireError();
+      await vi.advanceTimersByTimeAsync(5_000); // ping timeout fires → .catch → scheduleReconnect
+      await vi.advanceTimersByTimeAsync(1_000); // backoff
+      expect(FakeEventSource.instances).toHaveLength(2);
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reconnects on a network-error ping (no longer a silent no-op)', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = vi
+        .fn()
+        .mockRejectedValue(new TypeError('network')) as unknown as typeof fetch;
+      const stream = openEventStream({ random: () => 0.5 });
+      FakeEventSource.instances[0].fireError();
+      await vi.advanceTimersByTimeAsync(0); // microtask: .catch runs → scheduleReconnect
+      await vi.advanceTimersByTimeAsync(1_000); // backoff
+      expect(FakeEventSource.instances).toHaveLength(2);
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('openEventStream — onerror probe via /api/events/ping', () => {
   let originalLocation: Location;
   let reloadSpy: ReturnType<typeof vi.fn>;
@@ -297,7 +338,10 @@ describe('openEventStream — onerror probe via /api/events/ping', () => {
     try {
       FakeEventSource.instances[0].fireError();
       await flushPromises();
-      expect(globalThis.fetch).toHaveBeenCalledWith('/api/events/ping');
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        '/api/events/ping',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
       expect(reloadSpy).toHaveBeenCalledTimes(1);
     } finally {
       stream.close();
@@ -305,37 +349,40 @@ describe('openEventStream — onerror probe via /api/events/ping', () => {
   });
 
   it('reconnects (no reload) when ping returns 5xx', async () => {
-    globalThis.fetch = vi
-      .fn()
-      .mockResolvedValue(new Response('', { status: 503 })) as unknown as typeof fetch;
-    const stream = openEventStream();
+    vi.useFakeTimers();
     try {
-      FakeEventSource.instances[0].fireError();
-      await flushPromises();
-      expect(reloadSpy).not.toHaveBeenCalled();
-      expect(FakeEventSource.instances).toHaveLength(2);
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 503 })) as unknown as typeof fetch;
+      const stream = openEventStream({ random: () => 0.5 });
+      try {
+        FakeEventSource.instances[0].fireError();
+        await vi.advanceTimersByTimeAsync(0); // ping resolves → scheduleReconnect
+        await vi.advanceTimersByTimeAsync(1_000); // backoff → instance 2
+        expect(reloadSpy).not.toHaveBeenCalled();
+        expect(FakeEventSource.instances).toHaveLength(2);
+      } finally {
+        stream.close();
+      }
     } finally {
-      stream.close();
+      vi.useRealTimers();
     }
   });
 
   it('OLD EventSource onerror fired after a watchdog reconnect does NOT trigger another reconnect (captured-self guard)', async () => {
     vi.useFakeTimers();
     try {
-      const fetchMock = vi
-        .fn()
-        .mockImplementation(() => Promise.resolve(new Response('', { status: 503 })));
+      const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 503 }));
       globalThis.fetch = fetchMock as unknown as typeof fetch;
-      const stream = openEventStream();
+      const stream = openEventStream({ random: () => 0.5 });
       try {
-        vi.advanceTimersByTime(35_001);
+        vi.advanceTimersByTime(35_001); // watchdog → scheduleReconnect (old closed)
+        await vi.advanceTimersByTimeAsync(1_000); // backoff → instance 2
         expect(FakeEventSource.instances).toHaveLength(2);
-
-        FakeEventSource.instances[0].fireError();
+        FakeEventSource.instances[0].fireError(); // buffered error on the superseded ES
         for (let i = 0; i < 10; i++) await Promise.resolve();
-
         expect(FakeEventSource.instances).toHaveLength(2);
-        expect(fetchMock).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled(); // captured-self guard suppressed the probe
       } finally {
         stream.close();
       }
