@@ -47,7 +47,7 @@ test('first-run /setup also hides the top nav tabs (#212)', async ({ page }) => 
   // this, a regression that rendered the nav on /setup first-run would slip past
   // the /welcome-only nav assertion.
   await page.goto('/setup');
-  await expect(page.getByRole('heading', { name: /connect to github/i })).toBeVisible({
+  await expect(page.getByRole('heading', { level: 1, name: /connect to github/i })).toBeVisible({
     timeout: 30_000,
   });
   await expect(page.getByRole('navigation')).toHaveCount(0);
