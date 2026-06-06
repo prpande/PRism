@@ -32,6 +32,14 @@ describe('SegmentedControl', () => {
     expect(onChange).toHaveBeenCalledWith('system');
   });
 
+  it('arrow-left from the first option wraps to the last', async () => {
+    const onChange = vi.fn();
+    render(<SegmentedControl label="Theme" options={OPTS} value="system" onChange={onChange} />);
+    screen.getByRole('radio', { name: 'System' }).focus();
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(onChange).toHaveBeenCalledWith('light');
+  });
+
   it('only the selected option is in the tab order', () => {
     render(<SegmentedControl label="Theme" options={OPTS} value="dark" onChange={() => {}} />);
     expect(screen.getByRole('radio', { name: 'Dark' })).toHaveAttribute('tabindex', '0');

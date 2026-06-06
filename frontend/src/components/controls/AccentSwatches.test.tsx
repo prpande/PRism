@@ -18,8 +18,22 @@ describe('AccentSwatches', () => {
     expect(onChange).toHaveBeenCalledWith('amber');
   });
 
+  it('arrow keys move selection and wrap', async () => {
+    const onChange = vi.fn();
+    render(<AccentSwatches value="teal" onChange={onChange} />);
+    screen.getByRole('radio', { name: 'Teal' }).focus();
+    await userEvent.keyboard('{ArrowRight}'); // teal is last → wraps to indigo
+    expect(onChange).toHaveBeenCalledWith('indigo');
+  });
+
   it('falls back to indigo selected when the value is not a known accent', () => {
     render(<AccentSwatches value={'bogus' as never} onChange={() => {}} />);
     expect(screen.getByRole('radio', { name: 'Indigo' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('does not call onChange when rendering with an unknown value (display-only fallback)', () => {
+    const onChange = vi.fn();
+    render(<AccentSwatches value={'bogus' as never} onChange={onChange} />);
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
