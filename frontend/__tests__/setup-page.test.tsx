@@ -350,7 +350,7 @@ describe('SetupPage', () => {
       await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_x');
       await userEvent.click(screen.getByRole('button', { name: /continue/i }));
       const toast = await screen.findByRole('status');
-      expect(toast).toHaveTextContent(/Couldn’t reach GitHub/i);
+      expect(toast).toHaveTextContent(/Couldn't reach GitHub/i);
     });
 
     it('replace flow: an unknown error code shows the static fallback, never the raw code', async () => {

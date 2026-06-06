@@ -4,17 +4,11 @@
 // GitHubReviewService only emits it for ghp_ tokens — so it names the classic
 // scopes; there is no fine-grained variant. The fallback is STATIC: it never
 // echoes the raw `code` into the UI. (#213)
-//
-// NOTE: the apostrophe in NETWORK is a curly U+2019 ('), not an ASCII '. Inside a
-// single-quoted literal that is valid and prettier-stable (prettier keeps single
-// quotes because U+2019 is not a string delimiter). If you retype this line, do NOT
-// use an ASCII apostrophe — it would terminate the string. Easiest safe path: copy
-// the line verbatim.
 const REJECTED =
   'GitHub rejected this token. Check that you copied the whole token, then try again.';
 const CLASSIC_SCOPES =
   'This token is missing required scopes. A classic token needs repo and read:org.';
-const NETWORK = 'Couldn’t reach GitHub. Check your connection, then try again.';
+const NETWORK = "Couldn't reach GitHub. Check your connection, then try again.";
 const SERVER = 'GitHub returned a server error. Try again in a moment.';
 const GENERIC = 'Validation failed. Check your token and try again.';
 

@@ -82,8 +82,11 @@ export function SetupForm({
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (pat.trim().length === 0) return;
-    void onSubmit(pat);
+    const trimmed = pat.trim();
+    // Submit the trimmed token: pasting from a terminal/password manager often
+    // appends a trailing newline/space, which the backend would otherwise reject. (#213)
+    if (trimmed.length === 0) return;
+    void onSubmit(trimmed);
   };
 
   return (

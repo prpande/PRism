@@ -105,7 +105,10 @@
   font-size: var(--text-sm);
   background: var(--surface-2);
   border: 1px solid var(--border-1);
-  color: var(--accent);
+  /* --accent-hover (darker than --accent) clears WCAG AA on --surface-2 in both
+     themes: 4.98:1 light / 8.40:1 dark. Plain --accent was 3.85:1 in light (axe
+     serious, caught by the a11y-audit e2e). (#213) */
+  color: var(--accent-hover);
   padding: 2px 9px;
   border-radius: var(--radius-2);
 }
