@@ -15,6 +15,11 @@ interface Props {
   // coupling SetupForm to react-router state and keeps the component testable
   // without a Router wrapper in existing tests (SetupForm tests render bare).
   isReplaceMode?: boolean;
+  // #212 — on a true first run (!hasToken), SetupPage passes this so the user can
+  // return to the /welcome landing. Absent (not disabled) otherwise, so re-auth
+  // and replace users see no phantom back-link. Kept as a boolean prop (mirroring
+  // isReplaceMode) so SetupForm stays router-agnostic and unit-testable bare.
+  showBackToWelcome?: boolean;
 }
 
 const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
@@ -24,7 +29,14 @@ const PERMISSIONS: ReadonlyArray<{ name: string; level: string }> = [
   { name: 'Commit statuses', level: 'Read' },
 ];
 
-export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props) {
+export function SetupForm({
+  host,
+  onSubmit,
+  error,
+  busy,
+  isReplaceMode,
+  showBackToWelcome,
+}: Props) {
   const [pat, setPat] = useState('');
   const patPageUrl = `${host.replace(/\/$/, '')}/settings/personal-access-tokens/new`;
 
@@ -36,6 +48,11 @@ export function SetupForm({ host, onSubmit, error, busy, isReplaceMode }: Props)
 
   return (
     <form onSubmit={handleSubmit} className={styles.form}>
+      {showBackToWelcome && (
+        <Link to="/welcome" className={styles.back}>
+          ← Back
+        </Link>
+      )}
       {/* <div> not <header> — the App-level <Header /> already exposes a
           banner landmark, and <header> inside <form> is NOT excluded from
           the banner-role mapping per the HTML AAM (the exclusion list is

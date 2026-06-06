@@ -76,6 +76,21 @@ describe('SetupForm', () => {
     expect(cancel).toHaveAttribute('href', '/settings');
   });
 
+  it('does NOT render a Back-to-welcome link by default', () => {
+    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
+    expect(screen.queryByRole('link', { name: /back/i })).not.toBeInTheDocument();
+  });
+
+  it('renders a Back link to /welcome when showBackToWelcome is true', () => {
+    render(
+      <MemoryRouter>
+        <SetupForm host="https://github.com" onSubmit={vi.fn()} showBackToWelcome />
+      </MemoryRouter>,
+    );
+    const back = screen.getByRole('link', { name: /back/i });
+    expect(back).toHaveAttribute('href', '/welcome');
+  });
+
   it('disables Cancel (renders as aria-disabled span with role=link, not a navigable link) while busy=true', () => {
     // Regression for code-review #1: a clickable Cancel during the in-flight
     // /api/auth/replace would navigate to /settings without aborting the fetch,

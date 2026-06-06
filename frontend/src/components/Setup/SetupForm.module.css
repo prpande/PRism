@@ -123,3 +123,11 @@
   cursor: not-allowed;
   text-decoration: none;
 }
+/* #212 first-run "← Back" to the /welcome landing. Mirrors the muted `.cancel`
+   link treatment but sits at the TOP of the card (above the brand heading). */
+.back {
+  align-self: flex-start;
+  margin-bottom: var(--s-4);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+}
