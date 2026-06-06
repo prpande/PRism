@@ -31,7 +31,10 @@ export function SettingsModalRoutes({ isAuthed, unauthedTarget }: SettingsModalR
   const location = useLocation();
   const close = () => {
     const bg = (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation;
-    navigate(bg ?? '/'); // cold deep-link → Inbox; never navigate(-1)
+    // replace:true drops the /settings/* entry from history so Back doesn't
+    // reopen the modal. Still never navigate(-1) — a cold deep-link has no
+    // in-app entry to go back to, so we resolve to bg (or Inbox) explicitly.
+    navigate(bg ?? '/', { replace: true });
   };
 
   // Spec §3.4 auth guard, on the /settings parent: an unauthenticated cold

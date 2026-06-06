@@ -52,7 +52,11 @@ export function SegmentedControl<T extends string>({
             type="button"
             role="radio"
             aria-checked={selected}
-            tabIndex={selected ? 0 : -1}
+            // Roving tabindex follows selectedIdx (which falls back to 0 when
+            // `value` isn't in options), NOT `selected`. If it keyed off
+            // `selected`, an out-of-set value would leave every button at -1 and
+            // the radiogroup unreachable by keyboard. Mirrors AccentSwatches.
+            tabIndex={i === selectedIdx ? 0 : -1}
             disabled={disabled}
             className={`${styles.seg}${selected ? ` ${styles.segOn}` : ''}`}
             onClick={() => onChange(o.value)}

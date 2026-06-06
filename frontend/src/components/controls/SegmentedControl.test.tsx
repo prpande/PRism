@@ -45,4 +45,20 @@ describe('SegmentedControl', () => {
     expect(screen.getByRole('radio', { name: 'Dark' })).toHaveAttribute('tabindex', '0');
     expect(screen.getByRole('radio', { name: 'System' })).toHaveAttribute('tabindex', '-1');
   });
+
+  it('stays keyboard-reachable when value is not in options (roving index falls back to first)', () => {
+    // Guards the roving-tabindex contract: an out-of-set value must NOT leave
+    // every radio at tabindex=-1 (which would make the group untabbable).
+    render(
+      <SegmentedControl
+        label="Theme"
+        options={OPTS}
+        value={'sepia' as (typeof OPTS)[number]['value']}
+        onChange={() => {}}
+      />,
+    );
+    expect(screen.getByRole('radio', { name: 'System' })).toHaveAttribute('tabindex', '0');
+    // No option is checked, since the value matches none of them.
+    expect(screen.queryByRole('radio', { checked: true })).toBeNull();
+  });
 });

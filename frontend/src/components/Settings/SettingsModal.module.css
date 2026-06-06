@@ -126,7 +126,12 @@
   margin: 8px 6px;
 }
 .navGroup {
-  display: contents;
+  /* A real layout box (not display:contents) so role="group"/aria-label="System"
+     is reliably exposed in the accessibility tree across browsers/AT. Column with
+     no padding/margin/gap, so desktop layout is identical to the items flowing
+     directly in the .nav column. */
+  display: flex;
+  flex-direction: column;
 }
 .navGroupLabel {
   font-size: var(--text-2xs);
@@ -159,5 +164,10 @@
   .navDivider,
   .navGroupLabel {
     display: none;
+  }
+  /* Now that .navGroup is a real box, lay it out as a row at mobile so its item
+     sits inline with the rest of the horizontal nav instead of in a column. */
+  .navGroup {
+    flex-direction: row;
   }
 }
