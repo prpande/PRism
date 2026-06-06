@@ -89,7 +89,31 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 throw new RateLimitExceededException(
                     "GitHub rate-limited (429); orchestrator should skip this tick.",
                     resp.Headers.RetryAfter?.Delta);
-            resp.EnsureSuccessStatusCode();
+            // Fine-grained PATs can't call the Checks API (GitHub returns 403). Degrade
+            // to "no CI signal" rather than throwing. A throw propagates through
+            // DetectAsync into InboxRefreshOrchestrator.RefreshAsync (no catch) and out to
+            // InboxPoller, whose tick-level catch (InboxPoller.cs:69) skips the WHOLE
+            // snapshot and retries next tick. For a fine-grained token that 403s on EVERY
+            // tick, that means the inbox NEVER refreshes — permanently stale. This guard
+            // fixes that. (#213)
+            //
+            // Why a 401 (revoked token) cannot produce a misleading CI signal here: a 401
+            // on the section search is SWALLOWED into an empty section by
+            // GitHubSectionQueryRunner.QueryAllAsync's per-section catch
+            // (GitHubSectionQueryRunner.cs:66) — it does NOT throw. With empty sections,
+            // GitHubPrEnricher.EnrichAsync early-returns without any HTTP call, and
+            // DetectAsync receives an empty authored-by-me list and returns before issuing
+            // any Checks call. So a dead token never reaches this line.
+            //
+            // The guard is intentionally BROAD (any non-2xx, not just 403): CI status is a
+            // non-critical enrichment that must never block the inbox. Accepted tradeoff
+            // (see spec Decision 1, Rejected alternatives): a transient GitHub 5xx on
+            // /check-runs degrades that PR's CI to None (badge briefly absent + one spurious
+            // "updated" event) and recovers next tick, rather than aborting the whole tick.
+            // Narrowing to 403-only would re-open the whole-tick abort for 5xx — the exact
+            // failure this task removes. The 429 branch above still throws
+            // RateLimitExceededException, so rate-limit backoff is preserved.
+            if (!resp.IsSuccessStatusCode) return CiStatus.None;
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(body);
             if (!doc.RootElement.TryGetProperty("check_runs", out var runs))
@@ -160,7 +184,8 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             throw new RateLimitExceededException(
                 "GitHub rate-limited (429); orchestrator should skip this tick.",
                 resp.Headers.RetryAfter?.Delta);
-        resp.EnsureSuccessStatusCode();
+        // Same graceful degradation as FetchChecksAsync (#213).
+        if (!resp.IsSuccessStatusCode) return CiStatus.None;
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);
         var state = doc.RootElement.TryGetProperty("state", out var s) ? s.GetString() : "success";

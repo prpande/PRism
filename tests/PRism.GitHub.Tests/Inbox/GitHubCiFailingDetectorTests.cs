@@ -323,4 +323,55 @@ public sealed class GitHubCiFailingDetectorTests
         var ex = (await act.Should().ThrowAsync<RateLimitExceededException>()).Which;
         ex.RetryAfter.Should().Be(TimeSpan.FromSeconds(45));
     }
+
+    [Fact]
+    public async Task Forbidden_check_runs_degrades_to_none_not_throw()
+    {
+        // Fine-grained PATs cannot call the Checks API; GitHub returns a non-2xx.
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.Forbidden, "{}")
+                : Respond(HttpStatusCode.OK, AllPassingStatus));
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Should().HaveCount(1);
+        result[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task Forbidden_combined_status_degrades_to_none_not_throw()
+    {
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, AllPassingCheckRuns)
+                : Respond(HttpStatusCode.Forbidden, "{}"));
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Should().HaveCount(1);
+        result[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task ServerError_check_runs_degrades_to_none_not_throw()
+    {
+        // Intentional breadth (#213, spec Decision 1): the guard swallows ANY non-2xx,
+        // not just 403. A transient 5xx degrades this PR's CI to None for the tick rather
+        // than aborting the whole inbox refresh — locking in the deliberate tradeoff so a
+        // future "narrow this to 403" change has to delete this test on purpose. The 429
+        // rate-limit branch is tested separately and still throws RateLimitExceededException.
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.ServiceUnavailable, "{}")
+                : Respond(HttpStatusCode.OK, AllPassingStatus));
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Should().HaveCount(1);
+        result[0].Ci.Should().Be(CiStatus.None);
+    }
 }
