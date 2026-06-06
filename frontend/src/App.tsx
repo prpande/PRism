@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, type Location } from 'react-router-dom';
 import { Header } from './components/Header/Header';
 import { AppearanceSync } from './components/AppearanceSync';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -9,8 +9,9 @@ import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
-import { SettingsPage } from './pages/SettingsPage';
 import { PrTabHost } from './components/PrDetail/PrTabHost';
+import { isSettingsPath } from './hooks/useEffectiveLocation';
+import { SettingsModalRoutes } from './components/Settings/SettingsModalRoutes';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
@@ -30,6 +31,15 @@ function TabSignals() {
 export function App() {
   const { authState, error, refetch } = useAuth();
   const [authInvalidated, setAuthInvalidated] = useState(false);
+  const location = useLocation();
+  // The chrome (Routes, PrTabHost, strip) renders against this location. When a
+  // Settings modal is open the live URL is /settings/*, but we keep the chrome
+  // pinned to the underlying PR/inbox behind the scrim — backgroundLocation if
+  // the gear/SettingsLink supplied one, else a synthetic Inbox for a cold
+  // deep-link. Non-settings paths render against the live location unchanged.
+  const backgroundLocation =
+    (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation ??
+    (isSettingsPath(location.pathname) ? ({ pathname: '/' } as Location) : location);
 
   useEffect(() => {
     const onRejected = () => setAuthInvalidated(true);
@@ -93,12 +103,8 @@ export function App() {
         <Header isAuthed={isAuthed} />
         <PrTabStrip />
         <div data-app-scroll>
-          <Routes>
+          <Routes location={backgroundLocation}>
             <Route path="/setup" element={<SetupPage />} />
-            <Route
-              path="/settings"
-              element={isAuthed ? <SettingsPage /> : <Navigate to="/setup" replace />}
-            />
             <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
             {/* PR-detail views no longer live in the route table. The /pr route
                 renders null; the persistent PrTabHost below renders one
@@ -114,6 +120,7 @@ export function App() {
           {isAuthed && <PrTabHost />}
         </div>
       </div>
+      <SettingsModalRoutes isAuthed={isAuthed} />
       <AskAiDrawer />
       <DrawerEffects />
       <TabSignals />
