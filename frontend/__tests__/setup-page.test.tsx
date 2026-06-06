@@ -93,10 +93,13 @@ describe('SetupPage', () => {
       ),
     );
     renderRouted();
-    const link = await screen.findByRole('link', { name: /generate a token/i });
-    expect(link.getAttribute('href')).toBe(
-      'https://github.acme.com/settings/personal-access-tokens/new',
-    );
+    expect(
+      (await screen.findByRole('link', { name: /generate a classic token/i })).getAttribute('href'),
+    ).toBe('https://github.acme.com/settings/tokens/new');
+    await userEvent.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    expect(
+      screen.getByRole('link', { name: /generate a fine-grained token/i }).getAttribute('href'),
+    ).toBe('https://github.acme.com/settings/personal-access-tokens/new');
   });
 
   it('renders a warning modal when connect returns no-repos-selected', async () => {

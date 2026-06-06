@@ -27,39 +27,6 @@ describe('SetupForm', () => {
     expect(input.type).toBe('text');
   });
 
-  it('renders the four fine-grained permission rows', () => {
-    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
-    expect(screen.getByText('Pull requests')).toBeInTheDocument();
-    expect(screen.getByText(/^Read and write$/)).toBeInTheDocument();
-    expect(screen.getByText('Contents')).toBeInTheDocument();
-    expect(screen.getByText('Checks')).toBeInTheDocument();
-    expect(screen.getByText('Commit statuses')).toBeInTheDocument();
-  });
-
-  it('mentions Metadata: Read as auto-included', () => {
-    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
-    expect(screen.getByText(/Metadata: Read is auto-included/i)).toBeInTheDocument();
-  });
-
-  it('shows a classic-PAT footnote', () => {
-    render(<SetupForm host="https://github.com" onSubmit={vi.fn()} />);
-    expect(screen.getByText(/Already have a classic PAT/i)).toBeInTheDocument();
-    // The `repo` scope is referenced in inline code.
-    const codeNodes = screen.getAllByText('repo');
-    expect(codeNodes.some((n) => n.tagName === 'CODE')).toBe(true);
-  });
-
-  it('renders error pill when error prop is set', () => {
-    render(
-      <SetupForm
-        host="https://github.com"
-        onSubmit={vi.fn()}
-        error="GitHub rejected this token."
-      />,
-    );
-    expect(screen.getByText(/rejected/i)).toBeInTheDocument();
-  });
-
   it('calls onSubmit with the typed PAT when submit is clicked', async () => {
     const onSubmit = vi.fn();
     render(<SetupForm host="https://github.com" onSubmit={onSubmit} />);
@@ -117,5 +84,75 @@ describe('SetupForm', () => {
     expect(link.tagName).toBe('SPAN');
     expect(link).toHaveAttribute('aria-disabled', 'true');
     expect(link).not.toHaveAttribute('href');
+  });
+
+  const host = 'https://github.com';
+
+  it('defaults to Classic: scopes, classic link, SSO callout, ghp_ placeholder', () => {
+    render(<SetupForm host={host} onSubmit={vi.fn()} />);
+    expect(screen.getByRole('radio', { name: 'Classic' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('link', { name: /generate a classic token/i })).toHaveAttribute(
+      'href',
+      'https://github.com/settings/tokens/new',
+    );
+    expect(screen.getByText('repo')).toBeInTheDocument();
+    expect(screen.getByText('read:org')).toBeInTheDocument();
+    expect(screen.getByText(/Configure SSO/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Personal access token')).toHaveAttribute('placeholder', 'ghp_…');
+    // Inactive (fine-grained) panel must not be in the DOM / a11y tree.
+    expect(screen.queryByText('Pull requests')).not.toBeInTheDocument();
+  });
+
+  it('switching to Fine-grained shows permissions, warning, fg link, github_pat_ placeholder', async () => {
+    const user = userEvent.setup();
+    render(<SetupForm host={host} onSubmit={vi.fn()} />);
+    await user.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    expect(screen.getByRole('link', { name: /generate a fine-grained token/i })).toHaveAttribute(
+      'href',
+      'https://github.com/settings/personal-access-tokens/new',
+    );
+    expect(screen.getByText('Pull requests')).toBeInTheDocument();
+    expect(screen.getByText('Commit statuses')).toBeInTheDocument();
+    expect(screen.getByText(/Actions CI status won/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Personal access token')).toHaveAttribute(
+      'placeholder',
+      'github_pat_…',
+    );
+    // Inactive (classic) panel must not be in the DOM / a11y tree.
+    expect(screen.queryByText('repo')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Configure SSO/i)).not.toBeInTheDocument();
+  });
+
+  it('never mentions "Checks" and drops the local-first tagline', () => {
+    render(<SetupForm host={host} onSubmit={vi.fn()} />);
+    expect(screen.queryByText('Checks')).not.toBeInTheDocument();
+    expect(screen.queryByText(/local-first/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the error pill, marks the input invalid, and links them via aria-describedby', () => {
+    render(<SetupForm host={host} onSubmit={vi.fn()} error="GitHub rejected this token." />);
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('GitHub rejected this token.');
+    const input = screen.getByLabelText('Personal access token');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    // The field points at the pill so assistive tech can retrieve the message on focus.
+    expect(input.getAttribute('aria-describedby')).toBe(alert.id);
+    expect(alert.id).toBeTruthy();
+  });
+
+  it('clears a stale error when the token type is switched', async () => {
+    const user = userEvent.setup();
+    const onErrorClear = vi.fn();
+    render(
+      <SetupForm
+        host={host}
+        onSubmit={vi.fn()}
+        error="This token is missing required scopes."
+        onErrorClear={onErrorClear}
+      />,
+    );
+    await user.click(screen.getByRole('radio', { name: 'Fine-grained' }));
+    // A classic-scopes error must not persist against the fine-grained panel.
+    expect(onErrorClear).toHaveBeenCalledTimes(1);
   });
 });

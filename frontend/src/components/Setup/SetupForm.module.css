@@ -16,14 +16,8 @@
   letter-spacing: -0.02em;
   margin: 0 0 var(--s-2);
 }
-.sub {
-  margin: 0 0 var(--s-6);
-  color: var(--text-2);
-  font-size: var(--text-sm);
-  line-height: 1.55;
-}
 .section {
-  padding: var(--s-4) 0;
+  padding: var(--s-3) 0;
   border-top: 1px solid var(--border-1);
 }
 .section:first-of-type {
@@ -87,20 +81,66 @@
   font-size: var(--text-xs);
   color: var(--text-2);
 }
-.footnote {
-  margin-top: var(--s-2);
-  font-size: var(--text-xs);
-  color: var(--text-2);
+.panel {
+  /* breathing room between the SegmentedControl and the panel body */
+  margin-top: var(--s-3);
 }
-.footnote code {
+.sectionLast {
+  padding-bottom: 0;
+}
+.lbl {
+  margin: var(--s-3) 0 var(--s-2);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.scopes {
+  display: flex;
+  gap: var(--s-2);
+}
+.chip {
+  font-family: ui-monospace, monospace;
+  font-size: var(--text-sm);
   background: var(--surface-2);
-  padding: 0 4px;
+  border: 1px solid var(--border-1);
+  color: var(--accent);
+  padding: 2px 9px;
   border-radius: var(--radius-2);
-  /* Match the surrounding .footnote font-size (var(--text-xs) = 12px); the
-     prior var(--text-sm) (13px) rendered code tokens 1px LARGER than the
-     enclosing text — handoff doesn't specify footnote-code styling, so the
-     consistent choice is the parent size. */
+}
+.callout,
+.warn {
+  display: flex;
+  gap: var(--s-2);
+  align-items: flex-start;
+  margin-top: var(--s-4);
+  padding: 11px var(--s-3);
+  border-radius: var(--radius-2);
   font-size: var(--text-xs);
+  line-height: 1.5;
+}
+.callout {
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in oklch, var(--accent) 22%, transparent);
+  color: var(--text-1);
+}
+.calloutIco {
+  display: flex;
+  margin-top: 1px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.warn {
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  color: var(--warning-fg);
+}
+.warnIco {
+  display: flex;
+  margin-top: 1px;
+  flex: 0 0 auto;
+  color: var(--warning);
 }
 .error {
   display: flex;
