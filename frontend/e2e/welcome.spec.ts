@@ -30,6 +30,7 @@ test('/welcome hides the top nav and keeps the logo (first run, #130)', async ({
   });
   await expect(page.getByRole('navigation')).toHaveCount(0);
   await expect(page.getByRole('link', { name: /^inbox$/i })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /^settings$/i })).toHaveCount(0);
   // The header logo (alt="PRism") is still present.
   await expect(page.getByAltText('PRism')).toBeVisible();
 });
@@ -51,5 +52,8 @@ test('/welcome has no serious or critical a11y violations', async ({ page }) => 
   const blocking = results.violations.filter(
     (v) => v.impact === 'serious' || v.impact === 'critical',
   );
-  expect(blocking).toEqual([]);
+  // Stringify ALL violations as the failure message so a red run shows the
+  // rule id / help URL / nodes, not just an empty-array mismatch (matches the
+  // a11y-audit.spec.ts idiom).
+  expect(blocking, JSON.stringify(results.violations, null, 2)).toEqual([]);
 });
