@@ -29,6 +29,19 @@ public sealed class InboxRefreshOrchestratorTests
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, headSha, 1,
             MergedAt: merged, ClosedAt: closed);
 
+    private static RawPrInboxItem RawClosedRepo(int n, string repo, DateTimeOffset closed)
+    {
+        var slash = repo.IndexOf('/', StringComparison.Ordinal);
+        var owner = repo[..slash];
+        var name = repo[(slash + 1)..];
+        // Closed-but-not-merged fixture: only ClosedAt is set so the helper
+        // matches its name and doesn't conflate merged vs closed. The recency
+        // sort uses MergedAt ?? ClosedAt ?? UpdatedAt, so ClosedAt drives order.
+        return new(Ref(n, owner, name), $"PR #{n}", "author", repo,
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "", 1,
+            MergedAt: null, ClosedAt: closed);
+    }
+
     // A bus that captures every published event for assertion
     private sealed class RecordingEventBus : IReviewEventBus
     {
@@ -61,8 +74,13 @@ public sealed class InboxRefreshOrchestratorTests
             { _factory = factory; _closed = closed ?? Array.Empty<RawPrInboxItem>(); _onClosedQueried = onClosedQueried; }
         public Task<IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> QueryAllAsync(
             IReadOnlySet<string> v, CancellationToken ct) => Task.FromResult(_factory(v));
+        public int? LastClosedWindowDays { get; private set; }
         public Task<IReadOnlyList<RawPrInboxItem>> QueryClosedHistoryAsync(int windowDays, CancellationToken ct)
-            { _onClosedQueried?.Invoke(); return Task.FromResult(_closed); }
+        {
+            LastClosedWindowDays = windowDays;
+            _onClosedQueried?.Invoke();
+            return Task.FromResult(_closed);
+        }
     }
 
     // PR enricher: identity (returns the same items unchanged)
@@ -71,6 +89,19 @@ public sealed class InboxRefreshOrchestratorTests
         public Task<IReadOnlyList<RawPrInboxItem>> EnrichAsync(
             IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
             => Task.FromResult(items);
+    }
+
+    // PR enricher that simulates a dropped enrichment (e.g. GitHub 404): it omits
+    // the given PR numbers from its output, so those refs fall back to the raw
+    // Search item (null close timestamps + empty headSha).
+    private sealed class DropEnricher : IPrEnricher
+    {
+        private readonly HashSet<int> _drop;
+        public DropEnricher(params int[] drop) => _drop = drop.ToHashSet();
+        public Task<IReadOnlyList<RawPrInboxItem>> EnrichAsync(
+            IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<RawPrInboxItem>>(
+                items.Where(i => !_drop.Contains(i.Reference.Number)).ToList());
     }
 
     // Awaiting-author filter: returns all candidates unchanged
@@ -98,14 +129,16 @@ public sealed class InboxRefreshOrchestratorTests
         bool authoredByMe = true,
         bool mentioned = true,
         bool ciFailing = true,
-        bool recentlyClosed = false)
+        bool recentlyClosed = false,
+        int recentlyClosedWindowDays = 14)
         => AppConfig.Default with
         {
             Inbox = new InboxConfig(
                 Deduplicate: false,
                 Sections: new InboxSectionsConfig(
                     reviewRequested, awaitingAuthor, authoredByMe, mentioned, ciFailing, recentlyClosed),
-                ShowHiddenScopeFooter: true)
+                ShowHiddenScopeFooter: true,
+                RecentlyClosedWindowDays: recentlyClosedWindowDays)
         };
 
     private static Mock<IConfigStore> ConfigStoreMock(AppConfig? config = null)
@@ -574,26 +607,93 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
-    public async Task RecentlyClosed_CapsAtMaxRows_KeepingNewest()
+    public async Task RecentlyClosed_UnenrichedRow_SynthesizesTerminalClosedAtFromUpdatedAt()
     {
-        var baseTime = DateTimeOffset.Parse("2026-05-01T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
-        var count = InboxHistoryConstants.MaxHistoryRows + 5;
-        // Ascending merged times: higher index → newer.
-        var closed = Enumerable.Range(1, count)
-            .Select(i => RawClosed(i, baseTime.AddMinutes(i), baseTime.AddMinutes(i)))
-            .ToArray();
+        // The raw Search item carries null close timestamps (refined only in the
+        // fan-out enrichment). Simulate a dropped enrichment so the row falls back
+        // to raw — without the fallback fix it would render badge-less + unread.
+        var updated = DateTimeOffset.Parse("2026-05-20T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var rawClosed = RawClosed(7, merged: null, closed: null) with { UpdatedAt = updated };
         var sections = new FakeSectionQueryRunner(
             _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
-            closed: closed);
+            closed: new[] { rawClosed });
 
-        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true));
-        using var sut = Build(config: configMock.Object, sections: sections);
+        using var sut = Build(
+            config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object,
+            sections: sections,
+            enricher: new DropEnricher(7)); // #7 enrichment drops → fallback to raw
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var row = sut.Current!.Sections[InboxHistoryConstants.SectionId]
+            .Single(i => i.Reference.Number == 7);
+        // Fallback marks the row terminal (ClosedAt == UpdatedAt) so the FE treats
+        // it as done + read rather than non-terminal + falsely-unread.
+        row.ClosedAt.Should().Be(updated);
+        row.MergedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_CapsAtMaxRepos_KeepingMostRecentlyClosedRepos()
+    {
+        var baseTime = DateTimeOffset.Parse("2026-05-01T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var repoCount = InboxHistoryConstants.MaxHistoryRepos + 5;
+        var closed = Enumerable.Range(1, repoCount)
+            .Select(i => RawClosedRepo(i, $"acme/repo{i:D2}", baseTime.AddMinutes(i)))
+            .ToArray();
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(), closed: closed);
+        using var sut = Build(config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
         var sec = sut.Current!.Sections[InboxHistoryConstants.SectionId];
-        sec.Should().HaveCount(InboxHistoryConstants.MaxHistoryRows);
-        sec[0].Reference.Number.Should().Be(count); // the newest (highest index) survives
+        var repos = sec.Select(i => i.Repo).Distinct().ToList();
+        repos.Should().HaveCount(InboxHistoryConstants.MaxHistoryRepos);
+        repos.Should().NotContain("acme/repo01");
+        repos.First().Should().Be($"acme/repo{repoCount:D2}");
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_CapIsOnRepos_NotPrs_RetainsAllPrsOfKeptRepos()
+    {
+        var t = DateTimeOffset.Parse("2026-05-01T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var closed = new[]
+        {
+            RawClosedRepo(1, "acme/api", t.AddMinutes(50)),
+            RawClosedRepo(2, "acme/api", t.AddMinutes(40)),
+            RawClosedRepo(3, "acme/api", t.AddMinutes(30)),
+            RawClosedRepo(4, "acme/web", t.AddMinutes(45)),
+            RawClosedRepo(5, "acme/web", t.AddMinutes(35)),
+        };
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(), closed: closed);
+        using var sut = Build(config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var sec = sut.Current!.Sections[InboxHistoryConstants.SectionId];
+        sec.Should().HaveCount(5);
+        sec.Select(i => i.Repo).Distinct().Should().Equal("acme/api", "acme/web");
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_TieOnNewestClose_IsDeterministic()
+    {
+        var t = DateTimeOffset.Parse("2026-05-01T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var closed = new[]
+        {
+            RawClosedRepo(10, "acme/aaa", t),
+            RawClosedRepo(20, "acme/bbb", t),
+        };
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(), closed: closed);
+        using var sut = Build(config: ConfigStoreMock(ConfigWithSections(recentlyClosed: true)).Object, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        var sec = sut.Current!.Sections[InboxHistoryConstants.SectionId];
+        sec.Select(i => i.Repo).Should().Equal("acme/bbb", "acme/aaa"); // PR #20 > #10 → bbb first
     }
 
     [Fact]
@@ -613,5 +713,19 @@ public sealed class InboxRefreshOrchestratorTests
 
         sut.Current!.Sections.Should().NotContainKey(InboxHistoryConstants.SectionId);
         queried.Should().BeFalse("QueryClosedHistoryAsync must not be called when the section is disabled");
+    }
+
+    [Fact]
+    public async Task RecentlyClosed_QueriesWithConfiguredWindow()
+    {
+        var sections = new FakeSectionQueryRunner(
+            _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>(),
+            closed: Array.Empty<RawPrInboxItem>());
+        var configMock = ConfigStoreMock(ConfigWithSections(recentlyClosed: true, recentlyClosedWindowDays: 30));
+        using var sut = Build(config: configMock.Object, sections: sections);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        sections.LastClosedWindowDays.Should().Be(30);
     }
 }

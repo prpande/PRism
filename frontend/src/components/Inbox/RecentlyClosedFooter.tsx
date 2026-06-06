@@ -1,10 +1,9 @@
 import styles from './RecentlyClosedFooter.module.css';
 
-export function RecentlyClosedFooter({ count }: { count: number }) {
+export function RecentlyClosedFooter() {
   return (
-    <div className={styles.truncationHint}>
-      Showing the {count} most recent — older closed PRs aren't listed. Paste a URL above to open
-      one.
+    <div className={styles.caption}>
+      Repositories with PRs you&apos;ve closed recently — most recent first.
     </div>
   );
 }

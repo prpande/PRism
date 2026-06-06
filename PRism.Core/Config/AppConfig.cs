@@ -17,7 +17,7 @@ public sealed record AppConfig(
 {
     public static AppConfig Default => new(
         new PollingConfig(30, 120),
-        new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true, true), true),
+        new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true, true), true, 14),
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
@@ -37,7 +37,8 @@ public sealed record PollingConfig(int ActivePrSeconds, int InboxSeconds);
 public sealed record InboxConfig(
     bool Deduplicate,
     InboxSectionsConfig Sections,
-    bool ShowHiddenScopeFooter);
+    bool ShowHiddenScopeFooter,
+    int RecentlyClosedWindowDays = 14);
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,

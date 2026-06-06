@@ -70,6 +70,12 @@ internal sealed class FakeReviewBackingStore
     public List<IterationDto> Iterations { get; } = new();
     public List<CommitDto> Commits { get; } = new();
 
+    // #214 e2e-only: extra file PATHS appended to the diff's file list so the file-TREE
+    // overflows horizontally (the canonical single short path `src/Calc.cs` never does).
+    // GetDiffAsync emits a trivial single-line FileChange per path. Set via
+    // POST /test/seed-tree-files; cleared by Reset. Touches no production surface.
+    public List<string> ExtraTreeFiles { get; } = new();
+
     public FakeReviewBackingStore()
     {
         // Initial-state assignments happen inside Reset(); ctor stays a thin delegate.
@@ -121,6 +127,8 @@ internal sealed class FakeReviewBackingStore
             Iterations.Add(new IterationDto(1, BaseSha, Sha1, new List<CommitDto> { Commits[0] }, true));
             Iterations.Add(new IterationDto(2, Sha1, Sha2, new List<CommitDto> { Commits[1] }, true));
             Iterations.Add(new IterationDto(3, Sha2, Sha3, new List<CommitDto> { Commits[2] }, true));
+
+            ExtraTreeFiles.Clear();
         }
     }
 
@@ -146,6 +154,17 @@ internal sealed class FakeReviewBackingStore
             Commits.Add(commit);
             Iterations.Add(new IterationDto(
                 Iterations.Count + 1, oldHead, newHeadSha, new List<CommitDto> { commit }, true));
+        }
+    }
+
+    // #214 e2e-only. Replaces the extra-tree-files list emitted by GetDiffAsync.
+    public void SetExtraTreeFiles(IReadOnlyList<string> paths)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        lock (Gate)
+        {
+            ExtraTreeFiles.Clear();
+            ExtraTreeFiles.AddRange(paths);
         }
     }
 

@@ -15,6 +15,7 @@ This file is the **Claude Code** entry point for this repository. Shared guidanc
 | [`frontend-conventions.md`](.ai/docs/frontend-conventions.md) | React + Vite + TS notes |
 | [`operating-context.md`](.ai/docs/operating-context.md) | Current cadence, spec/plan paths |
 | [`issue-resolution-workflow.md`](.ai/docs/issue-resolution-workflow.md) | Workflow any agent follows for an assigned GitHub issue |
+| [`parallel-agent-testing.md`](.ai/docs/parallel-agent-testing.md) | Run app + Playwright solo with a private `(port, dataDir)`; no cross-session collisions |
 
 Index and wiring instructions: [`.ai/README.md`](.ai/README.md). Cursor loads the same docs via [`.cursor/rules/`](.cursor/rules/).
 

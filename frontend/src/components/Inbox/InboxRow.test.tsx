@@ -77,3 +77,27 @@ describe('InboxRow avatar', () => {
     expect(group!.querySelector('[data-testid="avatar"]')).not.toBeNull();
   });
 });
+
+describe('InboxRow showRepo', () => {
+  function renderRow(showRepo?: boolean) {
+    return render(
+      <MemoryRouter>
+        <OpenTabsProvider>
+          <InboxRow pr={PR} showCategoryChip={false} maxDiff={100} showRepo={showRepo} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('shows the repo by default', () => {
+    renderRow();
+    expect(screen.getByText('acme/api')).toBeInTheDocument();
+  });
+
+  it('hides the repo and its separator when showRepo=false', () => {
+    const { container } = renderRow(false);
+    expect(screen.queryByText('acme/api')).not.toBeInTheDocument();
+    const meta = container.querySelector('[class*="meta"]')!;
+    expect(meta.textContent!.trimStart().startsWith('·')).toBe(false);
+  });
+});

@@ -5,11 +5,29 @@ import * as path from 'node:path';
 
 // A per-run DataDir keeps E2E hermetic: no leakage from a developer's local
 // %LOCALAPPDATA%/PRism token cache or state.json into the test backend, and
-// no leakage from one test run into the next. The directory is created fresh
-// at config-load time and passed to the backend via --DataDir. Placed under
-// the OS temp dir so it cleans up via standard temp-folder eviction.
-const e2eDataDir = path.join(os.tmpdir(), `PRism-e2e-${Date.now()}`);
-fs.mkdirSync(e2eDataDir, { recursive: true });
+// no leakage from one test run into the next. mkdtempSync (NOT a Date.now()
+// suffix) guarantees a unique dir even when two suites start in the same
+// millisecond — load-bearing for #217 parallel agents, where two e2e runs on
+// distinct ports must not share a backend store. Placed under the OS temp dir so
+// it cleans up via standard temp-folder eviction.
+const e2eDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'PRism-e2e-'));
+
+// Port is parameterized (#217) so multiple agents/worktrees can run the suite in
+// parallel without colliding on 5180. Default 5180 keeps single-agent + CI flows
+// unchanged. Pick a band outside the app's auto-port range (5180–5199) and the
+// reserved 5181 real-flow port — see .ai/docs/parallel-agent-testing.md.
+//
+// Require an integer in the valid TCP range; anything else (negative, fractional,
+// non-numeric, out-of-range) falls back to 5180 rather than templating an invalid
+// URL like http://localhost:-1 or http://localhost:5180.5. A plain
+// `Number(x) || 5180` would let truthy-but-invalid values like -1 through.
+const DEFAULT_E2E_PORT = 5180;
+function parseE2ePort(raw: string | undefined): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : DEFAULT_E2E_PORT;
+}
+const e2ePort = parseE2ePort(process.env.PRISM_E2E_PORT);
+const isDefaultPort = e2ePort === DEFAULT_E2E_PORT;
 
 // Single uniform test profile: the `prod` project (single-binary path —
 // Kestrel serves /api/* AND the React bundle from wwwroot on :5180) runs
@@ -27,8 +45,9 @@ fs.mkdirSync(e2eDataDir, { recursive: true });
 // only surface made /test/* calls 404 under dev. One profile removes both
 // failure modes and the relative-vs-absolute /test URL footgun.
 //
-// `isCI` still gates reuseExistingServer (reuse a running server locally;
-// always boot fresh in CI).
+// `isCI` gates reuseExistingServer together with isDefaultPort (reuse a running
+// server locally only on the default port; always boot fresh in CI or on a
+// parallel-agent's non-default port).
 const isCI = !!process.env.CI;
 
 const backendWebServer = {
@@ -51,9 +70,13 @@ const backendWebServer = {
   // forces ASPNETCORE_ENVIRONMENT=Development) doesn't override the Test env
   // var Playwright passes via `env` below. Without this flag, the
   // FakeReviewService swap never engages.
-  command: `npm run build && cd .. && dotnet build PRism.Web --nologo --verbosity minimal && dotnet run --project PRism.Web --no-launch-profile --urls http://localhost:5180 -- --no-browser`,
-  url: 'http://localhost:5180/api/health',
-  reuseExistingServer: !isCI,
+  command: `npm run build && cd .. && dotnet build PRism.Web --nologo --verbosity minimal && dotnet run --project PRism.Web --no-launch-profile --urls http://localhost:${e2ePort} -- --no-browser`,
+  url: `http://localhost:${e2ePort}/api/health`,
+  // Reuse a running server locally ONLY on the default port. A non-default port
+  // means a parallel agent explicitly asked for an isolated server — reusing
+  // whatever is already on that port would cross-talk with another agent's
+  // backend (possibly a different dataDir). Always boot fresh in CI.
+  reuseExistingServer: !isCI && isDefaultPort,
   // Headroom for the folded build (npm build + dotnet build) on a cold CI
   // container before Kestrel binds the health URL.
   timeout: 180_000,
@@ -84,7 +107,7 @@ const backendWebServer = {
 
 const prodProject = {
   name: 'prod',
-  use: { browserName: 'chromium' as const, baseURL: 'http://localhost:5180' },
+  use: { browserName: 'chromium' as const, baseURL: `http://localhost:${e2ePort}` },
 };
 
 export default defineConfig({
