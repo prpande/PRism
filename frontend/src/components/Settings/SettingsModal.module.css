@@ -112,8 +112,11 @@
   outline-offset: -2px;
 }
 .navItemOn {
+  /* Active cue = accent-soft fill + accent left border. Text stays --text-1 (not
+     --accent) so it clears WCAG 1.4.3 AA: accent-on-accent-soft fails the 4.5:1
+     contrast bar (axe "serious") in both themes; text-1 on accent-soft passes. */
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--text-1);
   border-left-color: var(--accent);
   font-weight: 500;
 }

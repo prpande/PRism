@@ -122,16 +122,19 @@ test('Settings modal renders all four section headings across its panes', async 
   // #134: Settings is now a modal with routed panes — each section heading lives
   // on its own pane, reached by navigating the modal nav. Assert each in turn.
   await page.goto('/settings/appearance');
-  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible({ timeout: 30_000 });
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('heading', { name: /appearance/i, level: 2 })).toBeVisible();
 
-  await page.getByRole('link', { name: 'Inbox' }).click();
+  // Scope nav clicks to the dialog: the Header also has an "Inbox" link, so an
+  // unscoped getByRole('link', { name: 'Inbox' }) is a strict-mode violation.
+  await dialog.getByRole('link', { name: 'Inbox' }).click();
   await expect(page.getByRole('heading', { name: /^inbox$/i, level: 2 })).toBeVisible();
 
-  await page.getByRole('link', { name: 'GitHub Connection' }).click();
+  await dialog.getByRole('link', { name: 'GitHub Connection' }).click();
   await expect(page.getByRole('heading', { name: /github connection/i, level: 2 })).toBeVisible();
 
-  await page.getByRole('link', { name: 'Files & logs' }).click();
+  await dialog.getByRole('link', { name: 'Files & logs' }).click();
   await expect(page.getByRole('heading', { name: /files & logs/i, level: 2 })).toBeVisible();
 });
 
