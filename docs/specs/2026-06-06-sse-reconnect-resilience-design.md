@@ -297,9 +297,16 @@ events.ts: openEventStream()
   when authed), alongside `ToastContainer` (App.tsx:120). A health signal only
   makes sense when authed.
 
-**Deferred to the B1 visual gate (real screenshots):** bottom-center vs
-top-center placement (lean bottom-center — top collides with `Header` +
-`PrTabStrip`) and final copy/iconography.
+**Resolved at the B1 visual gate (real screenshots, 2026-06-06):**
+- **Placement:** **top-center**, pinned at `top: 100px`. The spec's earlier lean
+  was bottom-center because a naive top placement collides with `Header` (0–48px)
+  and `PrTabStrip` (48–89px); the gate confirmed that collision on screenshots,
+  so top-center is anchored at `top: 100px` to clear the tab strip (≈11px gap).
+- **Background:** **amber "warning" treatment** — `var(--warning-soft)` fill,
+  `var(--warning)` border, `var(--warning-fg)` text (design-system warning tokens,
+  hue 75, theme-aware). The earlier neutral `surface-1` made it blend with the
+  cards/toasts; the warning palette makes "connection lost" read as a warning.
+- **Copy:** "Connection lost — reconnecting" confirmed; no icon added.
 
 ## Error handling
 
