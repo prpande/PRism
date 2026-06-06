@@ -50,7 +50,10 @@ export function SetupForm({
     <form onSubmit={handleSubmit} className={styles.form}>
       {showBackToWelcome && (
         <Link to="/welcome" className={styles.back}>
-          ← Back
+          {/* Decorative arrow: aria-hidden so the link's accessible name is just
+              "Back", not "left arrow Back" (matches the WelcomePage emoji /
+              chevron aria-hidden pattern). */}
+          <span aria-hidden="true">← </span>Back
         </Link>
       )}
       {/* <div> not <header> — the App-level <Header /> already exposes a
