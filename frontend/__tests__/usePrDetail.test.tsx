@@ -275,23 +275,9 @@ describe('usePrDetail', () => {
     expect(result.current.error).toBeNull();
   });
 
-  it('skeleton timing: showSkeleton=false within first 100ms of loading', () => {
-    vi.useFakeTimers();
-    try {
-      vi.spyOn(document, 'cookie', 'get').mockReturnValue('');
-      globalThis.fetch = vi.fn().mockImplementation(() => new Promise(() => {})) as typeof fetch;
-      const { result } = renderHook(() => usePrDetail(ref));
-      expect(result.current.showSkeleton).toBe(false);
-      act(() => {
-        vi.advanceTimersByTime(99);
-      });
-      expect(result.current.showSkeleton).toBe(false);
-      act(() => {
-        vi.advanceTimersByTime(2);
-      });
-      expect(result.current.showSkeleton).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+  // The former 'skeleton timing: showSkeleton=false within first 100ms' test was
+  // removed with usePrDetail.showSkeleton (#181): the 100ms anti-flash delay no
+  // longer lives here. PrDetailView now gates its body on `!data && isLoading`
+  // (skeleton shown immediately on cold open); that behavior is covered by
+  // PrDetailView's own tests.
 });

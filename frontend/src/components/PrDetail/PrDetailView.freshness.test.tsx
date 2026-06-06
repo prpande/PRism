@@ -73,7 +73,7 @@ const { reloadSpy, clearUnreadSpy, updatesClearSpy, prDetailResult, updatesResul
     prDetailResult: {
       current: {
         data: null as PrDetailDto | null,
-        showSkeleton: false,
+        isLoading: false,
         error: null as Error | null,
       },
     },
@@ -91,7 +91,7 @@ const { reloadSpy, clearUnreadSpy, updatesClearSpy, prDetailResult, updatesResul
 vi.mock('../../hooks/usePrDetail', () => ({
   usePrDetail: () => ({
     data: prDetailResult.current.data,
-    showSkeleton: prDetailResult.current.showSkeleton,
+    isLoading: prDetailResult.current.isLoading,
     error: prDetailResult.current.error,
     reload: reloadSpy,
   }),
@@ -229,7 +229,7 @@ beforeEach(() => {
   reloadSpy.mockClear();
   clearUnreadSpy.mockClear();
   updatesClearSpy.mockClear();
-  prDetailResult.current = { data: PR_DETAIL, showSkeleton: false, error: null };
+  prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
   updatesResult.current = { hasUpdate: false };
   fileDiffResult.current = { data: null, isLoading: false, showSkeleton: false, error: null };
 });
@@ -286,13 +286,13 @@ describe('PrDetailView — freshness on activation (Task 8)', () => {
   // test would fail.
   test('refetch failure preserves kept-alive content and shows the error banner', async () => {
     // Mount with data present so the Files sub-tab can be rendered.
-    prDetailResult.current = { data: PR_DETAIL, showSkeleton: false, error: null };
+    prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
     const view = renderPrDetailView({ active: true });
 
     // Simulate a rejected focus-refetch that kept last-known data but set error.
     prDetailResult.current = {
       data: PR_DETAIL,
-      showSkeleton: false,
+      isLoading: false,
       error: new Error('network down'),
     };
     view.rerender({ active: true });
@@ -469,7 +469,7 @@ describe('PrDetailView — background reload preserves kept-alive Files state (#
       showSkeleton: false,
       error: null,
     };
-    prDetailResult.current = { data: PR_DETAIL, showSkeleton: false, error: null };
+    prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
     const view = renderFilesActive();
 
     // Files tab mounted; auto-select chose the first file. Select the second so
@@ -482,7 +482,7 @@ describe('PrDetailView — background reload preserves kept-alive Files state (#
     // delayed-loading skeleton has flipped on. The kept-alive subtree MUST stay
     // mounted (the keep-alive contract) — the skeleton must NOT replace present
     // data, and the user's selected file must survive.
-    prDetailResult.current = { data: PR_DETAIL, showSkeleton: true, error: null };
+    prDetailResult.current = { data: PR_DETAIL, isLoading: true, error: null };
     view.rerender(true);
 
     expect(screen.queryByTestId('files-tab-root')).toBeInTheDocument();
