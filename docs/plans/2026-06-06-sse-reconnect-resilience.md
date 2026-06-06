@@ -222,7 +222,7 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
 - Modify: `frontend/src/api/events.ts`
 - Test: `frontend/__tests__/events-handshake.test.tsx`
 
-- [ ] **Step 1: Add the `random` seam + constants + scheduler.** In `events.ts`, add the constants `UNHEALTHY_AFTER_MS`, `BASE_DELAY_MS`, `MAX_DELAY_MS`, `STABLE_AFTER_MS`, `PING_TIMEOUT_MS` (values from the reference block). Change the signature to `openEventStream(opts?: { random?: () => number })` and add `const random = opts?.random ?? Math.random;`. Add outer-scope handles `backoffTimer`, `dwellTimer` (null), and `attempt = 0`, `reconnectPending = false`. Add `computeDelay()` and replace the body of `reconnect()` with the `scheduleReconnect()` from the reference block (without `immediate` yet is fine, but include it now). Change the watchdog arm site and the `onerror`→ping success path to call `scheduleReconnect()` instead of `reconnect()`. Have `scheduleReconnect()` clear `watchdog`/`dwellTimer`, and have `close()` also clear `backoffTimer`/`dwellTimer`.
+- [ ] **Step 1: Add the `random` seam + constants + scheduler.** In `events.ts`, add **all** constants from the reference block at once: `UNHEALTHY_AFTER_MS`, `BASE_DELAY_MS`, `MAX_DELAY_MS`, `STABLE_AFTER_MS`, `PING_TIMEOUT_MS` (existing `SILENCE_WATCHER_MS` stays). `BASE_DELAY_MS`/`MAX_DELAY_MS` are used now; `STABLE_AFTER_MS` (Task 5), `PING_TIMEOUT_MS` (Task 2), and `UNHEALTHY_AFTER_MS` (Task 6) are intentionally declared upfront and unused until those tasks — defining them together matches the reference block and avoids re-touching the constant header. Change the signature to `openEventStream(opts?: { random?: () => number })` and add `const random = opts?.random ?? Math.random;`. Add outer-scope handles `backoffTimer`, `dwellTimer` (null), and `attempt = 0`, `reconnectPending = false`. Add `computeDelay()` and replace the body of `reconnect()` with the **complete** `scheduleReconnect(options?: { immediate?: boolean })` from the reference block — including the `immediate` branch now even though no caller passes `immediate: true` until `forceReconnect()` (Task 7); it is harmless dead-branch until then. Change the watchdog arm site and the `onerror`→ping success path to call `scheduleReconnect()` instead of `reconnect()`. Have `scheduleReconnect()` clear `watchdog`/`dwellTimer`, and have `close()` also clear `backoffTimer`/`dwellTimer`.
 
 - [ ] **Step 2: Migrate the four affected timing tests.** Backoff inserts a delay between the watchdog firing (old ES closed) and the new ES being created. Update `events-handshake.test.tsx`:
 
@@ -372,13 +372,50 @@ describe('openEventStream — ping timeout (D3)', () => {
 
 - [ ] **Step 3: Implement D3.** In `connect()`'s `es.onerror`, wrap the probe per the reference block: create an `AbortController`, `const t = setTimeout(() => ctrl.abort(), PING_TIMEOUT_MS)`, pass `{ signal: ctrl.signal }` to `fetch`, `clearTimeout(t)` in both `.then` and `.catch`, and call `scheduleReconnect()` from the `.catch` (guarded by `closed`/`myEs !== es`).
 
-- [ ] **Step 4: Run → pass.** Also re-run the whole file to confirm the existing `probes at most once per instance` and `5xx reconnect` tests still pass (the 5xx test needs migration in Task 4's batch if it goes red from backoff — if it fails now, migrate it here to use fake timers + `advanceTimersByTimeAsync(1_000)` like the network-error test).
+- [ ] **Step 4: Migrate the two existing ping tests that backoff broke.** Backoff (Task 1) delays the new EventSource after a ping-triggered reconnect, so the `5xx reconnect` test (asserted length 2 immediately) and the `captured-self guard` test (asserted length 2 right after `35_001`) both need a backoff advance. Replace them:
 
-- [ ] **Step 5: Commit.**
+```ts
+it('reconnects (no reload) when ping returns 5xx', async () => {
+  vi.useFakeTimers();
+  try {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 503 })) as unknown as typeof fetch;
+    const stream = openEventStream({ random: () => 0.5 });
+    try {
+      FakeEventSource.instances[0].fireError();
+      await vi.advanceTimersByTimeAsync(0);     // ping resolves → scheduleReconnect
+      await vi.advanceTimersByTimeAsync(1_000); // backoff → instance 2
+      expect(reloadSpy).not.toHaveBeenCalled();
+      expect(FakeEventSource.instances).toHaveLength(2);
+    } finally { stream.close(); }
+  } finally { vi.useRealTimers(); }
+});
+
+it('OLD EventSource onerror fired after a watchdog reconnect does NOT trigger another reconnect (captured-self guard)', async () => {
+  vi.useFakeTimers();
+  try {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 503 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const stream = openEventStream({ random: () => 0.5 });
+    try {
+      vi.advanceTimersByTime(35_001);           // watchdog → scheduleReconnect (old closed)
+      await vi.advanceTimersByTimeAsync(1_000);  // backoff → instance 2
+      expect(FakeEventSource.instances).toHaveLength(2);
+      FakeEventSource.instances[0].fireError();  // buffered error on the superseded ES
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(FakeEventSource.instances).toHaveLength(2);
+      expect(fetchMock).not.toHaveBeenCalled();  // captured-self guard suppressed the probe
+    } finally { stream.close(); }
+  } finally { vi.useRealTimers(); }
+});
+```
+
+  The `probes /api/events/ping at most once per instance` test (200 response) still passes unchanged — it only asserts `fetch` was called once; the post-200 `scheduleReconnect` arms a backoff timer that `stream.close()` clears.
+
+- [ ] **Step 5: Run whole file → green, then commit.**
 
 ```bash
 git add frontend/src/api/events.ts frontend/__tests__/events-handshake.test.tsx
-git commit -m "feat(#141): ping probe timeout + network-error reconnect (D3)"
+git commit -m "feat(#141): ping probe timeout + network-error reconnect (D3); migrate 5xx + captured-self tests"
 ```
 
 ---
@@ -498,29 +535,40 @@ describe('openEventStream — dwell-gated reset (D2)', () => {
     } finally { vi.useRealTimers(); }
   });
 
-  it('a stale dwell from a dropped connection does NOT reset attempt (D8)', () => {
+  it('a stale dwell from a dropped connection does NOT reset attempt (D8)', async () => {
     vi.useFakeTimers();
     try {
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response('', { status: 503 })) as unknown as typeof fetch;
       const stream = openEventStream({ random: () => 0.5 });
-      vi.advanceTimersByTime(35_001); vi.advanceTimersByTime(1_000); // attempt 0→1, instance 2
-      // instance 2 handshakes (arms dwell) then DROPS before dwell elapses
-      FakeEventSource.instances[1].dispatch('subscriber-assigned', { subscriberId: 's' });
-      vi.advanceTimersByTime(3_000);          // 3s < 10s dwell
-      vi.advanceTimersByTime(35_001 - 3_000); // silence watchdog fires → scheduleReconnect (clears stale dwell)
-      // attempt should be 1 here (not reset). delay for attempt 1 = 2000.
-      vi.advanceTimersByTime(7_000);          // original dwell would have fired ~now — must NOT reset attempt
-      vi.advanceTimersByTime(1_999);
-      // if the stale dwell wrongly reset attempt to 0, instance 3 would already exist (delay 1000)
-      // with correct behavior (attempt 1, delay 2000) it does not yet
-      vi.advanceTimersByTime(2_000);
-      expect(FakeEventSource.instances).toHaveLength(3);
-      stream.close();
+      try {
+        // Climb attempt to 2 via two silence outages (delays 1000, then 2000).
+        vi.advanceTimersByTime(35_001); await vi.advanceTimersByTimeAsync(1_000); // attempt 0→1, instance 2
+        vi.advanceTimersByTime(35_001); await vi.advanceTimersByTimeAsync(2_000); // attempt 1→2, instance 3
+        expect(FakeEventSource.instances).toHaveLength(3);
+        // instance 3 handshakes (arms dwell_A, would fire in 10s) then DROPS at +1s.
+        FakeEventSource.instances[2].dispatch('subscriber-assigned', { subscriberId: 's' });
+        vi.advanceTimersByTime(1_000);
+        FakeEventSource.instances[2].fireError();
+        await vi.advanceTimersByTimeAsync(0);     // ping 503 → scheduleReconnect: clears dwell_A; computeDelay(2)=4000, attempt→3
+        await vi.advanceTimersByTimeAsync(4_000); // instance 4 opens; do NOT handshake it
+        expect(FakeEventSource.instances).toHaveLength(4);
+        // Pass the moment dwell_A WOULD have fired (10s after instance-3 handshake).
+        // FIX: dwell_A was cleared → nothing. BUG: dwell_A fires → attempt reset to 0.
+        await vi.advanceTimersByTimeAsync(10_000);
+        // Drop instance 4. Next reconnect delay reveals attempt:
+        // FIX computeDelay(3)=8000; BUG computeDelay(0)=1000.
+        FakeEventSource.instances[3].fireError();
+        await vi.advanceTimersByTimeAsync(1_001);
+        expect(FakeEventSource.instances).toHaveLength(4); // FIX still waiting (8000); BUG would be 5
+        await vi.advanceTimersByTimeAsync(7_000);
+        expect(FakeEventSource.instances).toHaveLength(5);
+      } finally { stream.close(); }
     } finally { vi.useRealTimers(); }
   });
 });
 ```
 
-  > Note: the stale-dwell test is timing-fiddly. The essential assertion is that after an accept-then-drop, the next reconnect uses the **grown** backoff (attempt ≥ 1), proving the dropped stream's dwell did not reset `attempt`. If the exact `advanceTimersByTime` sequencing is awkward against the implementation, simplify by exposing nothing new — instead assert relative timing: capture instance count right after the attempt-1 delay (2000) vs the attempt-0 delay (1000) window.
+  > This test is genuinely discriminating: the `length 4` assertion at `+1001` after the final drop fails if a stale `dwell_A` reset `attempt` to 0 (which would have produced instance 5 at the 1000ms mark). It requires the post-increment `computeDelay(attempt++)` semantics from the reference block; if the implementation differs, re-derive the delays (1000 / 2000 / 4000 / 8000 for attempts 0–3) but keep the discriminating shape — assert no reconnect before the *grown* delay elapses.
 
 - [ ] **Step 2: Run → fail.**
 
@@ -608,6 +656,8 @@ describe('openEventStream — health (D5/D6)', () => {
 - [ ] **Step 3: Implement D5/D6.** Add `healthTimer`, `healthy = true`, `healthSubs`, `notifyHealth()`, `armLiveness()`, `onLiveness()` per the reference block. Replace every `resetWatchdog()` call: the **connect() tail** calls `armLiveness()` (no notify); the **handshake/heartbeat/typed-data** handlers call `onLiveness()`. Add `streamHealthy` and `onHealthChange` to the returned handle; extend the `EventStreamHandle` type (and add the `StreamHealthHandle` type). Ensure `close()` and the D1 tombstone clear `healthTimer`.
 
   > Remove the old `resetWatchdog` function once all call sites use `armLiveness`/`onLiveness`. Do a grep for `resetWatchdog` to confirm none remain.
+  >
+  > In the typed-data `EVENT_TYPES.forEach` handler, place `onLiveness()` **outside/after** the `if (parsed !== null)` block (where the old `resetWatchdog()` ran unconditionally at events.ts:233). A malformed-but-arriving frame is still transport liveness — moving `onLiveness()` inside the `parsed !== null` guard would wrongly let a stream that only emits garbage frames flip to unhealthy.
 
 - [ ] **Step 4: Run → pass**; whole file green.
 
@@ -695,12 +745,19 @@ git commit -m "feat(#141): guarded forceReconnect (D6)"
 
 - [ ] **Step 1: Write the failing test.**
 
+  Inject the handle by mocking `useEventSource` (no provider wrapper, no new exports needed):
+
 ```tsx
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { createElement, type ReactNode } from 'react';
-import { useStreamHealth } from './useStreamHealth';
 import type { EventStreamHandle } from '../api/events';
+
+let currentHandle: EventStreamHandle | null = null;
+vi.mock('./useEventSource', () => ({
+  useEventSource: () => currentHandle,
+}));
+// Import AFTER vi.mock so the hook picks up the mocked useEventSource.
+import { useStreamHealth } from './useStreamHealth';
 
 function makeHandle(initial: boolean) {
   let healthy = initial;
@@ -718,11 +775,11 @@ function makeHandle(initial: boolean) {
   return { handle, set };
 }
 
-// A tiny provider wrapper mirroring useEventSource's context is needed;
-// import the real EventStreamContext if exported, else wrap via useEventSource mock.
+beforeEach(() => { currentHandle = null; });
 
 describe('useStreamHealth', () => {
   it('returns healthy:true and a no-op retry when no provider is present', () => {
+    currentHandle = null;
     const { result } = renderHook(() => useStreamHealth());
     expect(result.current.healthy).toBe(true);
     expect(typeof result.current.retry).toBe('function');
@@ -731,9 +788,8 @@ describe('useStreamHealth', () => {
 
   it('tracks the handle health and exposes retry → forceReconnect', () => {
     const { handle, set } = makeHandle(true);
-    const wrapper = ({ children }: { children: ReactNode }) =>
-      createElement(EventStreamTestProvider, { handle, children });
-    const { result } = renderHook(() => useStreamHealth(), { wrapper });
+    currentHandle = handle;
+    const { result } = renderHook(() => useStreamHealth());
     expect(result.current.healthy).toBe(true);
     act(() => set(false));
     expect(result.current.healthy).toBe(false);
@@ -742,8 +798,6 @@ describe('useStreamHealth', () => {
   });
 });
 ```
-
-  > To inject a handle in tests, export a test provider from `useEventSource.tsx` or have `useStreamHealth` accept the handle from `useEventSource()`. Simplest: `useStreamHealth` calls `useEventSource()` internally; in the test, mock `useEventSource` with `vi.mock('../hooks/useEventSource', ...)` returning the fake handle. Replace `EventStreamTestProvider` usage with that mock if cleaner.
 
 - [ ] **Step 2: Run → fail** (hook missing).
 
@@ -908,7 +962,7 @@ export function StreamHealthSnackbar() {
   bottom: 24px;                 /* B1 gate may move to top-center */
   left: 50%;
   transform: translateX(-50%);
-  z-index: var(--z-snackbar, 200); /* above Header (100), below modal-backdrop (1000) */
+  z-index: 200; /* literal per repo convention; above Header (100), below modal-backdrop (1000), below Cheatsheet (1500) */
   display: flex;
   align-items: center;
   gap: 12px;
@@ -965,7 +1019,7 @@ git commit -m "feat(#141): StreamHealthSnackbar — connection-lost indicator (D
 
 - [ ] **Step 2: Confirm Escape is untouched.** Verify no document-level Escape handler is added (the snackbar relies on the × button; Escape belongs to the Modal layer). No code needed — just confirm.
 
-- [ ] **Step 3: Add the z-index token if absent.** Grep `--z-snackbar` and the design-token CSS. If a token convention exists (e.g. in a `:root` block), add `--z-snackbar: 200;`. Otherwise the CSS fallback `var(--z-snackbar, 200)` suffices — no change needed.
+- [ ] **Step 3: Confirm the z-index literal.** The repo uses hardcoded z-index literals (no `--z-*` token convention): `.modal-backdrop` is `1000` (`tokens.css`), `Header` `100`, `Cheatsheet` `1500`. The snackbar's `z-index: 200` (Task 10 CSS) is correct — above Header, below modals. No token to add; no change needed.
 
 - [ ] **Step 4: Run the suite + build.** `npx vitest run` and `npm run build` → green.
 
