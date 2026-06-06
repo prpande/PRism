@@ -45,6 +45,7 @@ export function SystemPane() {
         />
         <button
           type="button"
+          className="btn btn-secondary"
           onClick={() => copy(configPath, 'Path copied — paste into your editor.')}
         >
           Copy config.json path
@@ -57,6 +58,7 @@ export function SystemPane() {
         <input id="system-logs-path" type="text" readOnly value={logsPath} className={pane.field} />
         <button
           type="button"
+          className="btn btn-secondary"
           onClick={() =>
             copy(logsPath, 'Logs path copied — paste into a terminal or file browser.')
           }

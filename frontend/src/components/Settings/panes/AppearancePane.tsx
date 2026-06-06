@@ -41,6 +41,10 @@ export function AppearancePane() {
     applyDensityToDocument(value);
     void set('density', value).catch(() => applyDensityToDocument(density));
   };
+  // No extra rollback needed (unlike theme/accent/density): those re-apply to
+  // documentElement on failure because they wrote a DOM side-effect optimistically.
+  // aiPreview has no such DOM write — usePreferences.set reverts its own state on a
+  // failed POST (+ error toast), so the controlled Switch reflects the revert.
   const onAiToggle = (next: boolean) => {
     set('aiPreview', next)
       .then(() => refetchCapabilities())
@@ -96,7 +100,9 @@ export function AppearancePane() {
       </div>
       <div className={pane.row}>
         <div>
-          <div className={pane.label}>AI preview</div>
+          <label className={pane.label} htmlFor="appearance-ai-preview">
+            AI preview
+          </label>
           <div id="ai-help" className={pane.help}>
             Show AI-generated PR summaries and hotspots
           </div>

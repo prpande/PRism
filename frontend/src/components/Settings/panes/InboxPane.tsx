@@ -33,7 +33,9 @@ export function InboxPane() {
       </p>
       {ROWS.map(({ id, label }) => (
         <div key={id} className={pane.row}>
-          <div className={pane.label}>{label}</div>
+          <label className={pane.label} htmlFor={`inbox-section-${id}`}>
+            {label}
+          </label>
           <div className={pane.spring}>
             <Switch
               id={`inbox-section-${id}`}

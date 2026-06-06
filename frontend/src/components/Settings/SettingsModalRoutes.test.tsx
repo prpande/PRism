@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { describe, it, expect, vi } from 'vitest';
 import { SettingsModalRoutes } from './SettingsModalRoutes';
 
@@ -9,6 +9,11 @@ vi.mock('./panes/GitHubConnectionPane', () => ({
   GitHubConnectionPane: () => <div>ghc-pane</div>,
 }));
 vi.mock('./panes/SystemPane', () => ({ SystemPane: () => <div>system-pane</div> }));
+
+function StateProbe() {
+  const loc = useLocation();
+  return <pre data-testid="probe-state">{JSON.stringify(loc.state)}</pre>;
+}
 
 describe('SettingsModalRoutes', () => {
   it('renders nothing for non-settings paths', () => {
@@ -37,9 +42,11 @@ describe('SettingsModalRoutes', () => {
         ]}
       >
         <SettingsModalRoutes isAuthed />
+        <StateProbe />
       </MemoryRouter>,
     );
     expect(screen.getByText('appearance-pane')).toBeInTheDocument();
+    expect(screen.getByTestId('probe-state').textContent).toContain('/pr/o/r/1');
   });
 
   it('renders the requested section pane inside the dialog', () => {

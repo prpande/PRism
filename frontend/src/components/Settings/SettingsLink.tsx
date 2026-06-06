@@ -8,6 +8,12 @@ import { useEffectiveLocation } from '../../hooks/useEffectiveLocation';
 export function SettingsLink({ state, ...rest }: LinkProps) {
   const background = useEffectiveLocation();
   return (
-    <Link state={{ ...(state as object | undefined), backgroundLocation: background }} {...rest} />
+    <Link
+      state={{
+        ...(typeof state === 'object' && state !== null ? state : {}),
+        backgroundLocation: background,
+      }}
+      {...rest}
+    />
   );
 }
