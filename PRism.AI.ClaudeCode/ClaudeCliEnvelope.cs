@@ -12,7 +12,9 @@ public sealed record ClaudeCliEnvelope(
     [property: JsonPropertyName("total_cost_usd")] decimal TotalCostUsd,
     [property: JsonPropertyName("usage")] ClaudeCliUsage? Usage)
 {
-    /// <summary>Shared Web-defaults options (camelCase-insensitive matching for the snake_case attrs).</summary>
+    /// <summary>Shared options. The snake_case JSON mapping comes from the per-property
+    /// <see cref="JsonPropertyName"/> attributes; <see cref="JsonSerializerDefaults.Web"/> only supplies
+    /// case-insensitive property matching plus the standard web defaults.</summary>
     public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
 }
 

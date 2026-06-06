@@ -5,16 +5,17 @@ using PRism.AI.Contracts.Provider;
 
 namespace PRism.AI.ClaudeCode.Tests;
 
-public sealed class ServiceRegistrationTests
+public sealed class ServiceRegistrationTests : IDisposable
 {
+    private readonly string _usageDir = Path.Combine(Path.GetTempPath(), "prism-reg-" + Guid.NewGuid().ToString("N"));
+
     [Fact]
     public void Resolves_provider_probe_and_tracker_as_singletons()
     {
-        var usageDir = Path.Combine(Path.GetTempPath(), "prism-reg-test-usage");
         var services = new ServiceCollection();
         services.AddPrismClaudeCode(
             new ClaudeCodeProviderOptions { WorkingDirectory = @"C:\tmp\cwd" },
-            usageDir: usageDir);
+            usageDir: _usageDir);
         using var sp = services.BuildServiceProvider(validateScopes: true);
 
         sp.GetService<ILlmProvider>().Should().BeOfType<ClaudeCodeLlmProvider>();
@@ -43,5 +44,11 @@ public sealed class ServiceRegistrationTests
         // The real delegate must evaluate on any supported OS without throwing (host-independent smoke).
         var act = () => ClaudeIdentity.SameOsUserAsCredentialStore();
         act.Should().NotThrow();
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_usageDir)) Directory.Delete(_usageDir, recursive: true);
+        GC.SuppressFinalize(this);
     }
 }

@@ -47,6 +47,17 @@ public sealed class PromptSanitizerTests
         act.Should().Throw<ArgumentException>().WithMessage("*exceeds*");
     }
 
+    [Theory]
+    [InlineData("pr diff")]
+    [InlineData("pr<diff")]
+    [InlineData("pr/diff")]
+    [InlineData("pr>diff")]
+    public void Rejects_a_malformed_tag(string tag)
+    {
+        var act = () => PromptSanitizer.WrapAsData("x", tag);
+        act.Should().Throw<ArgumentException>();
+    }
+
     private static int CountOccurrences(string haystack, string needle)
     {
         int count = 0, i = 0;

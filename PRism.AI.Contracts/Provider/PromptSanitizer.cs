@@ -25,6 +25,8 @@ public static class PromptSanitizer
     {
         ArgumentNullException.ThrowIfNull(content);
         ArgumentException.ThrowIfNullOrEmpty(tag);
+        if (!tag.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'))
+            throw new ArgumentException($"Tag must contain only ASCII letters, digits, and underscores; got '{tag}'.", nameof(tag));
         if (content.Length > maxChars)
             throw new ArgumentException($"Content length {content.Length} exceeds max {maxChars}.", nameof(content));
 

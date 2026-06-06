@@ -72,9 +72,9 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
             throw new LlmProviderException($"claude -p failed (exit {result.ExitCode}).", result.Stderr, result.ExitCode);
 
         var envelope = JsonSerializer.Deserialize<ClaudeCliEnvelope>(result.Stdout, ClaudeCliEnvelope.Options)
-            ?? throw new LlmProviderException("claude -p returned unparseable JSON.", result.Stdout, 0);
+            ?? throw new LlmProviderException("claude -p returned unparseable JSON.", stderr: string.Empty, exitCode: 0);
         if (envelope.Result is null)
-            throw new LlmProviderException("claude -p returned JSON without a result field.", result.Stdout, 0);
+            throw new LlmProviderException("claude -p returned JSON without a result field.", stderr: string.Empty, exitCode: 0);
 
         var usage = envelope.Usage;
         return new LlmResult(
