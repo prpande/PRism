@@ -32,7 +32,8 @@ public sealed class JsonlTokenUsageTracker : ITokenUsageTracker, IDisposable
     public async Task RecordAsync(TokenUsageRecord record, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(record);
-        var line = JsonSerializer.Serialize(record, Options);
+        var stamped = record.RecordedAt == default ? record with { RecordedAt = DateTimeOffset.UtcNow } : record;
+        var line = JsonSerializer.Serialize(stamped, Options);
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {

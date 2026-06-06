@@ -27,7 +27,7 @@ public sealed class ClaudeCodeAvailabilityProbe(
             Environment: ClaudeCliEnvironment.BuildAllowlisted(),
             WorkingDirectory: options.WorkingDirectory,
             StdinText: null,
-            Timeout: TimeSpan.FromSeconds(10));
+            Timeout: options.ProbeTimeout);
 
         ProcessResult result;
         try
@@ -43,10 +43,12 @@ public sealed class ClaudeCodeAvailabilityProbe(
         if (result.ExitCode == 0 && !result.TimedOut)
             return LlmAvailability.Ok;
 
-        // Map known stderr signatures; everything else is the safe Unknown bucket.
-        if (result.Stderr.Contains("Not logged in", StringComparison.OrdinalIgnoreCase))
+        // Map known failure signatures; everything else is the safe Unknown bucket.
+        // Some CLI versions may write these signatures to stdout instead of stderr — check both.
+        var output = result.Stderr + "\n" + result.Stdout;
+        if (output.Contains("Not logged in", StringComparison.OrdinalIgnoreCase))
             return LlmAvailability.Unavailable(ClaudeReasonCodes.NotLoggedIn);
-        if (result.Stderr.Contains("cannot find the file", StringComparison.OrdinalIgnoreCase))
+        if (output.Contains("cannot find the file", StringComparison.OrdinalIgnoreCase))
             return LlmAvailability.Unavailable(ClaudeReasonCodes.CliNotInstalled);
         return LlmAvailability.Unavailable(ClaudeReasonCodes.Unknown);
     }

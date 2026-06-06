@@ -17,4 +17,8 @@ public sealed class ClaudeCodeProviderOptions
 
     /// <summary>Hard wall-clock ceiling per call.</summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>Wall-clock ceiling for the `claude --version` availability probe (separate from
+    /// <see cref="Timeout"/>, which bounds full completions).</summary>
+    public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(10);
 }

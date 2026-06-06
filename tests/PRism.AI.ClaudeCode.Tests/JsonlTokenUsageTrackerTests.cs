@@ -24,6 +24,7 @@ public sealed class JsonlTokenUsageTrackerTests : IDisposable
         first!.Feature.Should().Be("summary");
         first.CacheReadInputTokens.Should().Be(80);
         first.IsRetry.Should().BeFalse();
+        first.RecordedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromMinutes(5));
     }
 
     [Fact]

@@ -54,6 +54,14 @@ public sealed class ClaudeCodeAvailabilityProbeTests
     }
 
     [Fact]
+    public async Task Reports_not_logged_in_when_signature_is_on_stdout()
+    {
+        var probe = Build(new ProcessResult(1, "Not logged in · Please run /login", "", false));
+        var result = await probe.ProbeAsync(CancellationToken.None);
+        result.ReasonCode.Should().Be(ClaudeReasonCodes.NotLoggedIn);
+    }
+
+    [Fact]
     public async Task Reports_identity_mismatch_and_does_not_probe_version()
     {
         var probe = Build(new ProcessResult(0, "2.1.150", "", false), identityMatches: false);
