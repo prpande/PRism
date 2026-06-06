@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation, type Location } from 'react-router-dom';
 import { Header } from './components/Header/Header';
 import { AppearanceSync } from './components/AppearanceSync';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -10,8 +10,9 @@ import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
 import { WelcomePage } from './pages/WelcomePage';
 import { InboxPage } from './pages/InboxPage';
-import { SettingsPage } from './pages/SettingsPage';
 import { PrTabHost } from './components/PrDetail/PrTabHost';
+import { isSettingsPath } from './hooks/useEffectiveLocation';
+import { SettingsModalRoutes } from './components/Settings/SettingsModalRoutes';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
@@ -32,6 +33,15 @@ function TabSignals() {
 export function App() {
   const { authState, error, refetch } = useAuth();
   const [authInvalidated, setAuthInvalidated] = useState(false);
+  const location = useLocation();
+  // The chrome (Routes, PrTabHost, strip) renders against this location. When a
+  // Settings modal is open the live URL is /settings/*, but we keep the chrome
+  // pinned to the underlying PR/inbox behind the scrim — backgroundLocation if
+  // the gear/SettingsLink supplied one, else a synthetic Inbox for a cold
+  // deep-link. Non-settings paths render against the live location unchanged.
+  const backgroundLocation =
+    (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation ??
+    (isSettingsPath(location.pathname) ? ({ pathname: '/' } as Location) : location);
 
   useEffect(() => {
     const onRejected = () => setAuthInvalidated(true);
@@ -99,7 +109,11 @@ export function App() {
         <Header isAuthed={isAuthed} />
         <PrTabStrip />
         <div data-app-scroll>
-          <Routes>
+          {/* #134: the chrome Routes render against backgroundLocation so an open
+              Settings modal (live URL /settings/*) doesn't tear down the PR/inbox
+              behind the scrim. The /settings PAGE route is gone — Settings is now
+              the SettingsModalRoutes modal rendered below the shell. */}
+          <Routes location={backgroundLocation}>
             {/* #212: the welcome screen renders ONLY for a true first run
                 (!hasToken). A token-bearing user who somehow lands here is sent
                 onward — authed → Inbox, rejected-token re-auth → /setup. */}
@@ -118,10 +132,6 @@ export function App() {
             />
             <Route path="/setup" element={<SetupPage />} />
             <Route
-              path="/settings"
-              element={isAuthed ? <SettingsPage /> : <Navigate to={unauthedTarget} replace />}
-            />
-            <Route
               path="/"
               element={isAuthed ? <InboxPage /> : <Navigate to={unauthedTarget} replace />}
             />
@@ -139,6 +149,7 @@ export function App() {
           {isAuthed && <PrTabHost />}
         </div>
       </div>
+      <SettingsModalRoutes isAuthed={isAuthed} unauthedTarget={unauthedTarget} />
       <AskAiDrawer />
       <DrawerEffects />
       <TabSignals />

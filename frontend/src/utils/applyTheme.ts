@@ -28,7 +28,7 @@ export function applyThemeToDocument(theme: Theme, accent: Accent): void {
   document.documentElement.style.setProperty('--accent-c', String(hue.c));
 }
 
-// AppearanceSection's density picker and HeaderControls' mount-effect each
+// AppearancePane's density picker and AppearanceSync's effect each
 // call this so the visible `data-density` attribute on <html> updates without
 // waiting for a focus refetch. Mirrors applyThemeToDocument's
 // independent-effect pattern: each ui.* key has a key-scoped DOM applier so

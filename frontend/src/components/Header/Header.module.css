@@ -80,6 +80,26 @@
   cursor: not-allowed;
 }
 
+.gear {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-2);
+  color: var(--text-2);
+}
+.gear:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.gear:focus-visible {
+  outline: 2px solid var(--accent-ring);
+}
+.gearOn {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ----------------------------------------------------------------------------
    Desktop shell (Electron) only — frameless custom title bar.
 

@@ -66,10 +66,11 @@ test('Replace token link is aria-disabled while a submit lock is held', async ({
   // 2) Acquire the SubmitLockRegistry slot synthetically (no real submit running).
   await holdSubmitLock(request);
 
-  // 3) Navigate to Settings; AuthSection's useSubmitInFlight hook fetches
-  //    /api/submit/in-flight on mount and renders the disabled state.
-  await page.goto('/settings');
-  await expect(page.getByRole('heading', { name: /^auth$/i, level: 2 })).toBeVisible({
+  // 3) Navigate to Settings; the GitHub Connection pane's useSubmitInFlight hook
+  //    fetches /api/submit/in-flight on mount and renders the disabled state.
+  //    #134: Replace-token + submit-lock state live on /settings/github-connection.
+  await page.goto('/settings/github-connection');
+  await expect(page.getByRole('heading', { name: /github connection/i, level: 2 })).toBeVisible({
     timeout: 30_000,
   });
 
@@ -93,7 +94,8 @@ test('Replace link re-enables after the submit lock is released (state-changed n
   // hook releases via HTTP (not via the SSE channel), so the page-level event
   // doesn't fire. A fresh navigation triggers the hook's mount-time fetch.
   await holdSubmitLock(request);
-  await page.goto('/settings');
+  // #134: Replace-token lives on the GitHub Connection pane of the Settings modal.
+  await page.goto('/settings/github-connection');
   await expect(page.getByRole('link', { name: /^replace token$/i })).toHaveAttribute(
     'aria-disabled',
     'true',
