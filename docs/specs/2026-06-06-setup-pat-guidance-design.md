@@ -57,15 +57,15 @@ A token-type selector ("Choose a token type") drives a two-option body, keeping 
 3. **Step 2 — "Paste it below":** the existing `MaskedInput`, whose **placeholder follows the selected type** — Classic → `ghp_…`, Fine-grained → `github_pat_…`.
 4. **Continue** button; existing replace-mode Cancel/Back affordances unchanged.
 
-### Token-type selector — styled radiogroup (not an ARIA tabs widget)
+### Token-type selector — reuse `SegmentedControl` with a `variant="nav"`
 
-Visually it reuses the top-nav pill treatment (`Header.module.css` `.tab` / `.tabActive`: muted resting text, accent-glow hover, accent-tint selected, `--t-fast` `--ease-out`, `prefers-reduced-motion` guard). **Semantically it is a radiogroup, not a tablist** — two mutually-exclusive options, not navigation between equal content views.
+Reuse the existing, tested `frontend/src/components/controls/SegmentedControl.tsx` (#134) rather than hand-rolling. It already provides `role="radiogroup"` + `role="radio"` buttons, `aria-checked`, roving tabindex, Arrow-key selection, and `type="button"` (no in-`<form>` Enter-submit hazard) — exactly the a11y the review asked for.
 
-- Implement as a `<fieldset>` with a visually-hidden `<legend>` ("Choose a token type") containing two `<input type="radio" name="token-type">` styled as the pills (or `role="radiogroup"` + two `role="radio"` buttons if radios can't be styled cleanly). Native radios give Left/Right/Up/Down selection, `aria-checked`, and keyboard activation **for free** — no roving-tabindex code, and no `type="button"` form-submit trap.
-- Default checked = **Classic**.
-- The unselected panel is removed from layout and the a11y tree with `hidden` / `display:none` (also collapses it so only the active panel contributes height).
+Its default visual is a track/pill style that does **not** match the approved look, so add a backward-compatible **`variant?: 'segmented' | 'nav'`** prop (default `'segmented'`, so the existing `AppearancePane` consumer is untouched). The `'nav'` variant renders the top-nav pill treatment in `SegmentedControl.module.css` (muted resting text, accent-glow hover via `--accent`/`--accent-ring`, accent-tint selected, `--t-fast` `--ease-out`, `prefers-reduced-motion` guard) — mirroring `Header.module.css` `.tab`/`.tabActive`. SetupForm passes `variant="nav"`, `label="Choose a token type"`, and the two options; default value = **Classic**.
 
-*(Rejected the full WAI-ARIA Tabs pattern with roving tabindex: disproportionate for two static options and it introduced an Enter-submits-the-form hazard inside `<form>`.)*
+The unselected panel is simply not rendered (conditional render on the selected value), so only the active panel contributes height and nothing hidden leaks into the a11y tree.
+
+*(Rejected: hand-rolling a fieldset/radio group — duplicates a11y logic `SegmentedControl` already implements and tests. Rejected: reusing `SegmentedControl` as-is — its track/pill visual is the look the user moved away from. Rejected the full WAI-ARIA Tabs pattern — disproportionate and Enter-submits-the-form inside `<form>`.)*
 
 ### Classic panel (default)
 
@@ -107,8 +107,9 @@ In `GitHubCiFailingDetector.FetchChecksAsync`, treat **any non-success status** 
 
 ## Component breakdown
 
-- **`SetupForm.tsx`** — `useState` for token-type (`'classic' | 'fine-grained'`, default `'classic'`); per-type content (link, requirements, callout); compute `MaskedInput` placeholder from the type; derive both creation URLs from `host`; render the radiogroup + two panels (unselected `hidden`). Replace-mode Cancel logic untouched.
-- **`SetupForm.module.css`** — radiogroup pill styles (ported from nav `.tab`/`.tabActive`), accent org callout, amber warning callout, tightened section rhythm. **Remove** the obsolete `.footnote`/classic-footnote **and `.sub`** (tagline) styles.
+- **`SegmentedControl.tsx` (+ `.module.css`)** — add a backward-compatible `variant?: 'segmented' | 'nav'` prop (default `'segmented'`); the `'nav'` variant applies nav-styled classes (no track; accent-glow hover; accent-tint selected). `AppearancePane` (existing consumer) is unchanged.
+- **`SetupForm.tsx`** — `useState` for token-type (`'classic' | 'fine-grained'`, default `'classic'`); render `<SegmentedControl variant="nav" label="Choose a token type" …>`; conditionally render the selected type's panel (per-type link, requirements, callout); compute `MaskedInput` placeholder from the type and pass `hasError={!!error}`; derive both creation URLs from `host`. **Remove** the `PERMISSIONS` "Checks" entry, the `.sub` tagline `<p>`, and the classic `.footnote`. Keep GitHubMark, `showBackToWelcome` Back link, and replace-mode Cancel logic untouched.
+- **`SetupForm.module.css`** — accent org callout, amber warning callout, scope-chip row, "Required scopes"/"Fine-grained permissions" label, tightened section rhythm + `sectionLast` (no bottom padding), error-pill leading-icon. **Remove** the obsolete `.footnote` and `.sub` styles.
 - **`MaskedInput.tsx` (+ `.module.css`)** — add an optional `hasError` boolean prop that sets `aria-invalid="true"` on the inner `<input>` and applies a danger-ring class (`--danger` border + soft box-shadow) gated on `[aria-invalid='true']`.
 - **`SetupPage.tsx`** — route connect-flow errors through `connectErrorMessage(code)`; pass `hasError` to `MaskedInput` when an error is present.
 - **Error-copy helpers** — `connectErrorMessage(code)` (connect codes) + existing `replaceErrorMessage` (replace codes), sharing a private classic-scopes-copy helper; static fallback.
