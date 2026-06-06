@@ -1,8 +1,21 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-// #212: the first-run welcome/landing screen. The e2e backend starts with no
-// token (fresh dataDir), so a no-token user is a genuine first run.
+// #212: the first-run welcome/landing screen, which depends on the no-token
+// (!hasToken) state. The CI `prod` project runs the FULL suite serially against
+// ONE shared backend, and a PAT connected by an earlier spec survives /test/reset
+// (it lives in the TokenStore cache, not state.json). Clear it before each test so
+// the first-run state is deterministic regardless of spec ordering — exactly what
+// /test/clear-tokens exists for (PR8 Task 13).
+test.beforeEach(async ({ request, baseURL }) => {
+  // Full URL + Origin header: the backend's host/origin CSRF guard rejects a
+  // state-changing POST whose Origin doesn't match the bind host. baseURL is the
+  // project's configured origin, so this stays correct under the #217 port param.
+  const res = await request.post(`${baseURL}/test/clear-tokens`, {
+    headers: { Origin: baseURL ?? '' },
+  });
+  expect(res.ok(), `clear-tokens failed: ${res.status()}`).toBeTruthy();
+});
 
 test('first run lands on /welcome', async ({ page }) => {
   await page.goto('/');

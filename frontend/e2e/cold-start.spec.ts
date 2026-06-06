@@ -1,5 +1,19 @@
 import { test, expect } from '@playwright/test';
 
+// The first-run tests below depend on the no-token state. In the shared-backend CI
+// suite a PAT from an earlier spec can survive /test/reset (it lives in the
+// TokenStore cache), so clear it before each test rather than relying on this
+// spec running before any token-seeding spec. See /test/clear-tokens (PR8 Task 13).
+test.beforeEach(async ({ request, baseURL }) => {
+  // Full URL + Origin header: the backend's host/origin CSRF guard rejects a
+  // state-changing POST whose Origin doesn't match the bind host. baseURL is the
+  // project's configured origin, so this stays correct under the #217 port param.
+  const res = await request.post(`${baseURL}/test/clear-tokens`, {
+    headers: { Origin: baseURL ?? '' },
+  });
+  expect(res.ok(), `clear-tokens failed: ${res.status()}`).toBeTruthy();
+});
+
 test('cold start lands on the /welcome landing when no token', async ({ page }) => {
   await page.goto('/');
   await expect(page).toHaveURL(/\/welcome$/);
