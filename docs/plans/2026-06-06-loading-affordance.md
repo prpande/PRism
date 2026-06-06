@@ -234,7 +234,7 @@ git commit -m "feat(#181): shared <Skeleton>/<SkeletonText> primitive"
 ```tsx
 // frontend/src/contexts/LoadingBarContext.test.tsx
 import { StrictMode } from 'react';
-import { render, renderHook } from '@testing-library/react';
+import { act, render, renderHook } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { LoadingBarProvider, useLoadingBar, useTopProgress } from './LoadingBarContext';
 
@@ -244,66 +244,73 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 describe('LoadingBarContext', () => {
   it('active is true when any key is true (OR across keys)', () => {
+    // Every mutator runs inside act() — React 19 errors (not warns) on a state
+    // update outside act, and result.current would otherwise read the stale
+    // pre-update render. Mirrors OpenTabsContext.test.tsx.
     const { result } = renderHook(() => useLoadingBar(), { wrapper });
     expect(result.current.active).toBe(false);
-    result.current.setLoading('a', true);
+    act(() => result.current.setLoading('a', true));
     expect(result.current.active).toBe(true);
-    result.current.setLoading('b', true);
-    result.current.setLoading('a', false);
+    act(() => {
+      result.current.setLoading('b', true);
+      result.current.setLoading('a', false);
+    });
     expect(result.current.active).toBe(true); // b still true
-    result.current.setLoading('b', false);
+    act(() => result.current.setLoading('b', false));
     expect(result.current.active).toBe(false);
   });
 
-  it('useTopProgress sets its key from active and clears on unmount', () => {
-    let active = false;
+  it('useTopProgress sets its key from active and clears when active flips false', () => {
     const probe = { value: false };
     function Bar() {
       probe.value = useLoadingBar().active;
       return null;
     }
-    function Feeder() {
+    function Feeder({ active }: { active: boolean }) {
       useTopProgress('feeder', active);
       return null;
     }
-    const { rerender, unmount } = render(
+    const view = (active: boolean) => (
       <LoadingBarProvider>
-        <Feeder />
+        <Feeder active={active} />
         <Bar />
-      </LoadingBarProvider>,
+      </LoadingBarProvider>
     );
+    const { rerender, unmount } = render(view(false));
     expect(probe.value).toBe(false);
-    active = true;
-    rerender(
-      <LoadingBarProvider>
-        <Feeder />
-        <Bar />
-      </LoadingBarProvider>,
-    );
+    rerender(view(true));
     expect(probe.value).toBe(true);
+    // The on-change clear path (not unmount) is what keep-alive relies on.
+    rerender(view(false));
+    expect(probe.value).toBe(false);
     unmount();
-    // After unmount the provider is gone; re-mount fresh to confirm no leak across instances.
   });
 
-  it('survives StrictMode double-invoke without drift', () => {
+  it('StrictMode: a key that flips true→false clears, no stuck-true drift', () => {
+    // Drives an actual true->false transition under StrictMode's
+    // setup->cleanup->setup double-invoke — the stuck-true case the keyed-boolean
+    // design exists to prevent. A constant-true feeder would not exercise it.
     const probe = { value: false };
     function Bar() {
       probe.value = useLoadingBar().active;
       return null;
     }
-    function Feeder() {
-      useTopProgress('feeder', true);
+    function Feeder({ active }: { active: boolean }) {
+      useTopProgress('feeder', active);
       return null;
     }
-    render(
+    const view = (active: boolean) => (
       <StrictMode>
         <LoadingBarProvider>
-          <Feeder />
+          <Feeder active={active} />
           <Bar />
         </LoadingBarProvider>
-      </StrictMode>,
+      </StrictMode>
     );
+    const { rerender } = render(view(true));
     expect(probe.value).toBe(true);
+    rerender(view(false));
+    expect(probe.value).toBe(false);
   });
 });
 ```
@@ -326,6 +333,13 @@ export interface LoadingBarStore {
 }
 
 const LoadingBarContext = createContext<LoadingBarStore | null>(null);
+
+// Module-level no-op store for the no-provider fallback. Hoisted (not built per
+// call) so its `setLoading` identity is STABLE across renders — otherwise a
+// feeder rendered outside the provider (e.g. PrDetailView in unit tests) would
+// re-run useTopProgress's effect every render because `setLoading` is in its
+// deps.
+const NOOP_STORE: LoadingBarStore = { setLoading: () => {}, active: false };
 
 export function LoadingBarProvider({ children }: { children: ReactNode }) {
   // A keyed boolean map. Boolean-per-source (not a counter) is idempotent, so a
@@ -354,7 +368,8 @@ export function useLoadingBar(): LoadingBarStore {
   if (!ctx) {
     // Lenient fallback mirrors useEventSource: a consumer outside the provider
     // (e.g. an isolated unit test of a feeder) gets a no-op store, not a throw.
-    return { setLoading: () => {}, active: false };
+    // Return the hoisted singleton so the identity is stable (see NOOP_STORE).
+    return NOOP_STORE;
   }
   return ctx;
 }
@@ -585,10 +600,13 @@ to:
               </PreferencesProvider>
 ```
 
-- [ ] **Step 4: Verify the app builds and existing App tests pass**
+- [ ] **Step 4: Verify the app builds, no test-id collisions, existing App tests pass**
 
+The bar now renders on **every** authed App render (inert, `data-active="false"`). Before running, grep for any existing test that asserts the *absence* of `top-progress-bar`, and confirm the six new test-ids don't collide with existing ones:
+
+Run: `cd frontend && grep -rn "top-progress-bar\|pr-detail-skeleton\|inbox-skeleton\|pr-header-title-skeleton" src --include=*.tsx | grep -v "Skeleton\|TopProgressBar"` (expect: no pre-existing references)
 Run: `cd frontend && npx vitest run src/App.test.tsx 2>/dev/null; npm run build`
-Expected: build succeeds; any existing App tests pass (the bar is inert with no feeders).
+Expected: no collisions; build succeeds; existing App tests pass (the inert bar changes no asserted behavior).
 
 - [ ] **Step 5: Commit**
 
@@ -643,14 +661,20 @@ export interface UsePrDetailResult {
   return { data, isLoading, error, reload };
 ```
 
-- [ ] **Step 2: Update every `usePrDetail` mock to drop `showSkeleton` and ensure `isLoading`**
+- [ ] **Step 2: Update every `usePrDetail` mock to drop `showSkeleton` and ADD `isLoading`**
 
-In `PrDetailView.test.tsx`, `PrDetailView.freshness.test.tsx`, and `PrTabHost.test.tsx`, find each `usePrDetail` mock return object. Remove `showSkeleton` and ensure `isLoading` is present (true while loading, false otherwise). Example transform:
+This is **not optional** and **not just a removal**: after Task 7's gate becomes `!data && isLoading`, a mock that omits `isLoading` makes the gate read `undefined` → falsy, so a cold-load skeleton assertion passes *vacuously*. Add `isLoading` everywhere, don't merely delete `showSkeleton`. Concrete sites (verify exact line numbers; they may drift):
 
-Before: `() => ({ data: PR_DETAIL, showSkeleton: false, error: null, reload: vi.fn() })`
-After: `() => ({ data: PR_DETAIL, isLoading: false, error: null, reload: vi.fn() })`
+- **`PrDetailView.test.tsx` (~line 51, static literal):** `() => ({ data: PR_DETAIL, showSkeleton: false, error: null, reload: vi.fn() })` → `() => ({ data: PR_DETAIL, isLoading: false, error: null, reload: vi.fn() })`.
+- **`PrTabHost.test.tsx` (~line 80, static literal):** same transform.
+- **`PrDetailView.freshness.test.tsx` (holder-based — there are several sites):**
+  - Holder type/init (~lines 73–78): declare the holder as `{ data: PrDetailDto | null; isLoading: boolean; error: Error | null }` (replace the `showSkeleton` field with `isLoading`).
+  - Mock body (~line 94): `showSkeleton: prDetailResult.current.showSkeleton` → `isLoading: prDetailResult.current.isLoading`.
+  - `beforeEach` reset (~line 232) and the OQ6 holder writes (~lines 289, 293): replace `showSkeleton:` with `isLoading:` (loaded states use `isLoading: false`).
+  - The #180 background-reload injection (~line 485): `{ data: PR_DETAIL, showSkeleton: true, error: null }` → `{ data: PR_DETAIL, isLoading: true, error: null }`.
+  - The mock that already supplies `isLoading` (e.g. `{ data: null, isLoading: false, showSkeleton: false, error: null }`): drop the now-removed `showSkeleton` field.
 
-For the freshness test's mutable holder, change the cold-load state `{ data: null, showSkeleton: false, error: null }` → `{ data: null, isLoading: true, error: null }` and the background-reload injection `{ data: PR_DETAIL, showSkeleton: true, error: null }` → `{ data: PR_DETAIL, isLoading: true, error: null }`.
+After editing, `npx tsc --noEmit` must be clean — `UsePrDetailResult` no longer has `showSkeleton`, so any leftover site is a compile error (a useful backstop that the reshape is complete).
 
 - [ ] **Step 3: Run the affected suites + typecheck**
 
@@ -852,13 +876,16 @@ export function PrDetailSkeleton() {
 }
 ```
 
-- [ ] **Step 2: Update the freshness test selector first (red)**
+- [ ] **Step 2: Update the freshness test selectors first (red)**
 
-In `PrDetailView.freshness.test.tsx`, the #180 assertion currently uses `document.querySelector('.pr-detail-skeleton')`. Change it to:
+In `PrDetailView.freshness.test.tsx`, the #180 guard currently queries the **global** class `.pr-detail-skeleton` via `document.querySelector` (~line 491). The new `PrDetailSkeleton` roots on a hashed CSS-module class and carries its identity only via `data-testid="pr-detail-skeleton"`, so that `querySelector` would return `null` **unconditionally** — the assertion would pass whether or not a skeleton is wrongly present, silently neutering the #180 guard. Replace it:
+
 ```ts
+// ~line 491 — was: expect(document.querySelector('.pr-detail-skeleton')).toBeNull();
 expect(screen.queryByTestId('pr-detail-skeleton')).toBeNull();
 ```
-(and ensure the corresponding cold-load assertion uses `getByTestId('pr-detail-skeleton')`). Confirm the mutable mock holder supplies `isLoading` per Task 5 Step 2.
+
+Convert any other `.pr-detail-skeleton` `querySelector` references in this file the same way, and ensure the cold-load assertion uses `screen.getByTestId('pr-detail-skeleton')`. This step depends on the Task 5 Step 2 holder reshape (the holder must drive `isLoading`, not `showSkeleton`).
 
 - [ ] **Step 3: Wire the gate, the header `loading` prop, the new skeleton, and the bar feeder in `PrDetailView.tsx`**
 
