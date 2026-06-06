@@ -11,9 +11,10 @@ interface Props {
   enrichment?: InboxItemEnrichment;
   showCategoryChip: boolean;
   maxDiff: number;
+  showRepo?: boolean;
 }
 
-export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
+export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo = true }: Props) {
   const navigate = useNavigate();
   const { addTab } = useOpenTabs();
   const doneState: 'merged' | 'closed' | null =
@@ -56,8 +57,12 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
       <span className={styles.main}>
         <span className={styles.title}>{pr.title}</span>
         <span className={styles.meta}>
-          <span className={styles.mono}>{pr.repo}</span>
-          <span className={styles.dotsep}>·</span>
+          {showRepo && (
+            <>
+              <span className={styles.mono}>{pr.repo}</span>
+              <span className={styles.dotsep}>·</span>
+            </>
+          )}
           <span className={styles.author} data-testid="inbox-author">
             <Avatar src={pr.avatarUrl} login={pr.author} size="sm" />
             <span>{pr.author}</span>
