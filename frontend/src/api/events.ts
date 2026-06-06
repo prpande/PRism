@@ -80,6 +80,11 @@ const WINDOW_EVENT_BRIDGE: Partial<Record<keyof EventPayloadByType, string>> = {
   'state-changed': 'prism-state-changed',
 };
 
+export type StreamHealthHandle = {
+  streamHealthy(): boolean;
+  onHealthChange(cb: (healthy: boolean) => void): () => void; // returns unsubscribe
+};
+
 export type EventStreamHandle = {
   subscriberId(): Promise<string>;
   reconnectSignal(): AbortSignal;
@@ -88,14 +93,13 @@ export type EventStreamHandle = {
     callback: (payload: EventPayloadByType[T]) => void,
   ): () => void;
   close(): void;
-};
+} & StreamHealthHandle;
 
 const SILENCE_WATCHER_MS = 35_000;
 const BASE_DELAY_MS = 1_000; // D2
 const MAX_DELAY_MS = 30_000; // D2
 // Pre-staged constants consumed by later tasks in this PR. The eslint-disable
 // markers come off as each one gains its first reference.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used Task 6 (D5)
 const UNHEALTHY_AFTER_MS = 30_000;
 const STABLE_AFTER_MS = 10_000;
 const PING_TIMEOUT_MS = 5_000;
@@ -109,6 +113,9 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
   let watchdog: ReturnType<typeof setTimeout> | null = null;
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
   let dwellTimer: ReturnType<typeof setTimeout> | null = null;
+  let healthTimer: ReturnType<typeof setTimeout> | null = null;
+  let healthy = true; // optimistic
+  const healthSubs = new Set<(h: boolean) => void>();
   let closed = false;
   // Tracks whether the first SSE connection has ever fully established (defined
   // as receiving the subscriber-assigned handshake). The cross-provider
@@ -132,10 +139,37 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
     abortController = new AbortController();
   }
 
-  function resetWatchdog() {
+  function notifyHealth(next: boolean) {
+    if (healthy === next) return;
+    healthy = next;
+    healthSubs.forEach((cb) => {
+      try {
+        cb(next);
+      } catch {
+        /* per-subscriber isolation */
+      }
+    });
+  }
+
+  function armWatchdog() {
+    // watchdog ONLY (was resetWatchdog)
     if (watchdog) clearTimeout(watchdog);
     if (closed) return;
     watchdog = setTimeout(() => scheduleReconnect(), SILENCE_WATCHER_MS);
+  }
+
+  function armHealthTimer() {
+    // (re)arm the 30s health countdown
+    if (healthTimer) clearTimeout(healthTimer);
+    if (closed) return;
+    healthTimer = setTimeout(() => notifyHealth(false), UNHEALTHY_AFTER_MS);
+  }
+
+  function onLiveness() {
+    // a confirmed liveness signal arrived
+    notifyHealth(true);
+    armHealthTimer();
+    armWatchdog();
   }
 
   function computeDelay(n: number) {
@@ -201,7 +235,8 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
             if (watchdog) clearTimeout(watchdog);
             if (backoffTimer) clearTimeout(backoffTimer);
             if (dwellTimer) clearTimeout(dwellTimer);
-            es.close();
+            if (healthTimer) clearTimeout(healthTimer);
+            myEs.close();
             return;
           }
           scheduleReconnect();
@@ -243,13 +278,13 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
       // so accept-then-drop keeps backoff growing.
       if (dwellTimer) clearTimeout(dwellTimer);
       dwellTimer = setTimeout(() => {
-        attempt = 0;
+        if (!closed) attempt = 0;
       }, STABLE_AFTER_MS);
-      resetWatchdog();
+      onLiveness();
     });
 
     es.addEventListener('heartbeat', () => {
-      resetWatchdog();
+      onLiveness();
     });
 
     EVENT_TYPES.forEach((type) => {
@@ -286,16 +321,17 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
             }
           });
         }
-        resetWatchdog();
+        onLiveness();
       });
     });
 
-    resetWatchdog();
+    armWatchdog();
   }
 
   newIdPromise();
   newAbortController();
   connect();
+  armHealthTimer();
 
   return {
     subscriberId: () => idPromise,
@@ -313,11 +349,19 @@ export function openEventStream(opts?: { random?: () => number }): EventStreamHa
         set.delete(callback);
       };
     },
+    streamHealthy: () => healthy,
+    onHealthChange(cb) {
+      healthSubs.add(cb);
+      return () => {
+        healthSubs.delete(cb);
+      };
+    },
     close() {
       closed = true;
       if (watchdog) clearTimeout(watchdog);
       if (backoffTimer) clearTimeout(backoffTimer);
       if (dwellTimer) clearTimeout(dwellTimer);
+      if (healthTimer) clearTimeout(healthTimer);
       abortController.abort();
       es.close();
     },

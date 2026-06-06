@@ -479,6 +479,91 @@ describe('openEventStream — dwell-gated reset (D2)', () => {
   });
 });
 
+describe('openEventStream — health (D5/D6)', () => {
+  it('starts healthy and stays healthy while heartbeats arrive', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      expect(stream.streamHealthy()).toBe(true);
+      vi.advanceTimersByTime(20_000);
+      FakeEventSource.instances[0].dispatch('heartbeat', { ts: 0 });
+      vi.advanceTimersByTime(29_000); // <30s since last heartbeat
+      expect(stream.streamHealthy()).toBe(true);
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flips unhealthy after 30s with no liveness and notifies subscribers', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      const onChange = vi.fn();
+      stream.onHealthChange(onChange);
+      vi.advanceTimersByTime(30_001);
+      expect(stream.streamHealthy()).toBe(false);
+      expect(onChange).toHaveBeenCalledWith(false);
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers to healthy on the next liveness signal', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      const onChange = vi.fn();
+      stream.onHealthChange(onChange);
+      vi.advanceTimersByTime(30_001);
+      expect(stream.streamHealthy()).toBe(false);
+      FakeEventSource.instance.dispatch('heartbeat', { ts: 0 }); // liveness on the current instance
+      expect(stream.streamHealthy()).toBe(true);
+      expect(onChange).toHaveBeenLastCalledWith(true);
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('onHealthChange returns an unsubscribe', () => {
+    vi.useFakeTimers();
+    try {
+      const stream = openEventStream({ random: () => 0.5 });
+      const cb = vi.fn();
+      const unsub = stream.onHealthChange(cb);
+      unsub();
+      vi.advanceTimersByTime(31_000);
+      expect(cb).not.toHaveBeenCalled();
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // DEVIATION-PROOF: connect()-tail (reconnect) must NOT reset the health countdown.
+  it('a reconnect does NOT reset the health countdown (anchored to liveness, not connect attempts)', async () => {
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValue(new Response('', { status: 503 })) as unknown as typeof fetch;
+      const stream = openEventStream({ random: () => 0.5 });
+      // No liveness ever. Force a reconnect at t=20s (its connect()-tail re-runs).
+      await vi.advanceTimersByTimeAsync(20_000);
+      FakeEventSource.instance.fireError(); // → ping 503 → scheduleReconnect → backoff → new connect()
+      await vi.advanceTimersByTimeAsync(2_000); // reconnect completes; connect()-tail ran
+      expect(stream.streamHealthy()).toBe(true); // still within 30s of t=0
+      await vi.advanceTimersByTimeAsync(8_001); // cross 30s from t=0
+      expect(stream.streamHealthy()).toBe(false); // FIX: fires at 30s anchored to init; BUG: would still be true
+      stream.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('openEventStream — malformed handshake (D4)', () => {
   it('reconnects when subscriber-assigned payload is not valid JSON', () => {
     vi.useFakeTimers();
