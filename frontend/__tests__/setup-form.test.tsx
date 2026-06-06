@@ -155,4 +155,21 @@ describe('SetupForm', () => {
     // A classic-scopes error must not persist against the fine-grained panel.
     expect(onErrorClear).toHaveBeenCalledTimes(1);
   });
+
+  it('does NOT clear the error when the already-selected token type is clicked', async () => {
+    const user = userEvent.setup();
+    const onErrorClear = vi.fn();
+    render(
+      <SetupForm
+        host={host}
+        onSubmit={vi.fn()}
+        error="This token is missing required scopes."
+        onErrorClear={onErrorClear}
+      />,
+    );
+    // Classic is already selected; clicking it again is a no-op and must not clear
+    // a still-relevant error (SegmentedControl fires onChange on every click).
+    await user.click(screen.getByRole('radio', { name: 'Classic' }));
+    expect(onErrorClear).not.toHaveBeenCalled();
+  });
 });

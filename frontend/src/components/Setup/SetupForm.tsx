@@ -117,10 +117,14 @@ export function SetupForm({
           ]}
           value={tokenType}
           onChange={(t) => {
+            // SegmentedControl fires onChange on every click, including the already-
+            // selected option — guard so clicking the current tab doesn't clear a
+            // still-relevant error without an actual switch. (#213)
+            if (t === tokenType) return;
             setTokenType(t);
             // Clear any stale connect error so a classic-scopes message can't persist
             // against the fine-grained panel (and vice versa). The parent owns `error`;
-            // this asks it to drop it. (#213)
+            // this asks it to drop it.
             onErrorClear?.();
           }}
         />

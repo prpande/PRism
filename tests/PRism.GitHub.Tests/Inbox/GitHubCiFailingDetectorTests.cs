@@ -176,6 +176,31 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
+    public async Task Degraded_result_is_not_cached_and_reprobes_next_call()
+    {
+        // #213: a transient non-2xx degrades to None but must NOT be cached — otherwise
+        // the None is pinned for the same (prRef, headSha) until the head SHA changes,
+        // contradicting the "recovers next tick" contract. The next call must re-probe
+        // and reflect the recovered status (here: Failing).
+        var recovered = false;
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? (recovered
+                    ? Respond(HttpStatusCode.OK, FailingCheckRun)
+                    : Respond(HttpStatusCode.ServiceUnavailable, "{}"))
+                : Respond(HttpStatusCode.OK, AllPassingStatus));
+        var sut = BuildSut(handler);
+
+        var first = await sut.DetectAsync([Raw(1)], default);
+        first[0].Ci.Should().Be(CiStatus.None, "the 5xx tick degrades to None");
+
+        recovered = true;
+        var second = await sut.DetectAsync([Raw(1)], default);
+        second[0].Ci.Should().Be(CiStatus.Failing,
+            "the degraded None must not have been cached — the recovered tick re-probes");
+    }
+
+    [Fact]
     public async Task Concurrency_capped_at_eight()
     {
         var inFlight = 0;
