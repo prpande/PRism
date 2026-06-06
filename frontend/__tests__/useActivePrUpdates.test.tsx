@@ -348,4 +348,42 @@ describe('useActivePrUpdates', () => {
     // The POST resolved strictly before the DELETE was issued.
     expect(order).toEqual(['post-resolved', 'delete-called']);
   });
+
+  // #142 — the cleanup chains the DELETE off `lastSubscribePost.catch(...)`, so a
+  // failed subscribe POST must NOT swallow the unsubscribe. Without the `.catch()`
+  // before `.then(delete)`, a rejected POST would short-circuit the chain and the
+  // server would keep the (never-confirmed) subscription. (claude[bot] coverage gap.)
+  it('still issues the unsubscribe DELETE when the subscribe POST fails', async () => {
+    let deleteCalled = false;
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (url === '/api/events/subscriptions' && init?.method === 'POST') {
+        // Non-2xx → apiClient.post rejects with ApiError.
+        return Promise.resolve(new Response('{"detail":"boom"}', { status: 500 }));
+      }
+      if ((init as RequestInit)?.method === 'DELETE') {
+        deleteCalled = true;
+        return Promise.resolve(jsonOk());
+      }
+      return Promise.resolve(jsonOk());
+    });
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    const { unmount } = renderHook(() => useActivePrUpdates(ref), { wrapper });
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => FakeEventSource.instance.dispatch('subscriber-assigned', { subscriberId: 'sub-1' }));
+
+    // Wait until the (failing) POST has been attempted.
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (c: unknown[]) =>
+          c[0] === '/api/events/subscriptions' && (c[1] as RequestInit)?.method === 'POST',
+      );
+      expect(post).toBeDefined();
+    });
+
+    unmount();
+
+    // DELETE fires despite the POST rejection.
+    await waitFor(() => expect(deleteCalled).toBe(true));
+  });
 });

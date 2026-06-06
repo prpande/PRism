@@ -33,14 +33,10 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
     // banner until a new event arrives or clear() is called.
     setState(initial);
     let cancelled = false;
-    // Tracks the most recent in-flight subscribe POST so the cleanup DELETE can
-    // be chained to fire only AFTER it settles (#142). Without this, an unmount
-    // during an in-flight POST fires the DELETE concurrently; if the DELETE
-    // reaches the server first it is an idempotent no-op, and the later POST then
-    // lands a dangling (subscriberId, prRef) subscription the ActivePrPoller keeps
-    // servicing until the SSE connection itself drops. Initialized to a resolved
-    // promise so an unmount before any POST issues still cleans up immediately
-    // (the loop's `if (cancelled) return` guarantees no POST follows that DELETE).
+    // Most recent in-flight subscribe POST, so cleanup can chain the DELETE
+    // behind it and the server never sees DELETE→POST (which would leave a
+    // dangling subscription, #142). Resolved-init = a pre-handshake unmount
+    // cleans up immediately (no POST issued, so the DELETE is a server no-op).
     let lastSubscribePost: Promise<unknown> = Promise.resolve();
 
     const unsubscribe = stream.on('pr-updated', (event) => {
