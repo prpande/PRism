@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { InboxSection as InboxSectionDto, InboxItemEnrichment } from '../../api/types';
 import { groupByRepo, prId } from './groupByRepo';
 import { InboxRow } from './InboxRow';
+import { InboxCaret } from './InboxCaret';
 import { RepoGroupAccordion } from './RepoGroupAccordion';
 import { RecentlyClosedFooter } from './RecentlyClosedFooter';
 import styles from './InboxSection.module.css';
@@ -40,7 +41,7 @@ export function InboxSection({
   return (
     <section className={styles.section}>
       <button className={styles.header} onClick={() => setOpen(!open)} aria-expanded={open}>
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <InboxCaret open={open} />
         <span className={styles.label}>{section.label}</span>
         <span className={styles.count}>{section.items.length}</span>
       </button>

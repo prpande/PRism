@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { InboxItemEnrichment } from '../../api/types';
 import { type RepoGroup, prId } from './groupByRepo';
 import { InboxRow } from './InboxRow';
+import { InboxCaret } from './InboxCaret';
 import styles from './RepoGroupAccordion.module.css';
 
 interface Props {
@@ -29,7 +30,7 @@ export function RepoGroupAccordion({
         aria-expanded={open}
         aria-label={`${group.repo}, ${count} pull request${count === 1 ? '' : 's'}`}
       >
-        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+        <InboxCaret open={open} />
         <span className={styles.repo}>{group.repo}</span>
         <span className={styles.count}>{count}</span>
       </button>
