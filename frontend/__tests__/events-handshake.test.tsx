@@ -612,7 +612,9 @@ describe('openEventStream — forceReconnect (D6)', () => {
       vi.advanceTimersByTime(0); // immediate (delay 0)
       expect(FakeEventSource.instances).toHaveLength(2);
       stream.close();
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not reset the backoff curve (attempt unchanged)', () => {
@@ -620,17 +622,21 @@ describe('openEventStream — forceReconnect (D6)', () => {
     try {
       const stream = openEventStream({ random: () => 0.5 });
       // climb to attempt 1 (one silence outage), then force an immediate reconnect.
-      vi.advanceTimersByTime(35_001); vi.advanceTimersByTime(1_000); // attempt 0→1, instance 2
-      stream.forceReconnect(); vi.advanceTimersByTime(0);            // immediate, instance 3, attempt stays 1
+      vi.advanceTimersByTime(35_001);
+      vi.advanceTimersByTime(1_000); // attempt 0→1, instance 2
+      stream.forceReconnect();
+      vi.advanceTimersByTime(0); // immediate, instance 3, attempt stays 1
       // instance 3 has no handshake; land its watchdog exactly (35_000 from t=36_001).
-      vi.advanceTimersByTime(35_000);  // watchdog → attempt 1 → delay 2000 armed
+      vi.advanceTimersByTime(35_000); // watchdog → attempt 1 → delay 2000 armed
       expect(FakeEventSource.instances).toHaveLength(3);
       vi.advanceTimersByTime(1_999);
       expect(FakeEventSource.instances).toHaveLength(3); // not yet (delay 2000 ⇒ attempt was NOT reset to 0)
       vi.advanceTimersByTime(1);
       expect(FakeEventSource.instances).toHaveLength(4);
       stream.close();
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('is a no-op while a reconnect is already pending (mashing → one EventSource)', () => {
@@ -643,7 +649,9 @@ describe('openEventStream — forceReconnect (D6)', () => {
       vi.advanceTimersByTime(0);
       expect(FakeEventSource.instances).toHaveLength(2); // only one new stream
       stream.close();
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
