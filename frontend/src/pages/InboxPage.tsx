@@ -8,6 +8,8 @@ import { InboxSection } from '../components/Inbox/InboxSection';
 import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
 import { ActivityRail } from '../components/ActivityRail/ActivityRail';
+import { Spinner } from '../components/Spinner';
+import { ErrorModal } from '../components/ErrorModal';
 import styles from './InboxPage.module.css';
 
 export function InboxPage() {
@@ -30,13 +32,29 @@ export function InboxPage() {
     return m;
   }, [sections]);
 
-  if (isLoading && !data) return <main aria-busy="true">Loading…</main>;
+  if (isLoading && !data)
+    return (
+      <main className={styles.loading}>
+        <Spinner size="lg" />
+      </main>
+    );
   if (error && !data)
     return (
-      <main role="alert">
-        <p>Couldn't load inbox.</p>
-        <button onClick={() => void reload()}>Try again</button>
-      </main>
+      <ErrorModal
+        open
+        title="Couldn't load inbox"
+        actions={
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-modal-role="primary"
+            onClick={() => void reload()}
+          >
+            Try again
+          </button>
+        }
+        onClose={() => {}}
+      />
     );
   if (!data) return null;
 
@@ -46,7 +64,7 @@ export function InboxPage() {
   };
 
   return (
-    <main className={styles.page}>
+    <main className={styles.page} data-testid="inbox-page">
       {updates.hasUpdate && (
         <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
       )}

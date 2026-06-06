@@ -24,6 +24,13 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           htmlLabels: false,
           flowchart: { htmlLabels: false },
           startOnLoad: false,
+          // #191: on a parse/render failure Mermaid otherwise injects its "Syntax
+          // error" bomb SVG into a temp container on document.body before throwing,
+          // and our catch never removes it — so leaked error graphics pile up at
+          // the bottom of every page. With this flag Mermaid calls
+          // removeTempElements() and re-throws instead, leaving nothing behind; our
+          // catch + .mermaid-error fallback still handle the throw.
+          suppressErrorRendering: true,
         });
         mermaidInitialized = true;
       }

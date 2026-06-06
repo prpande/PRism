@@ -92,6 +92,7 @@ export interface PrInboxItem {
   reference: PrReference;
   title: string;
   author: string;
+  avatarUrl?: string | null;
   repo: string;
   updatedAt: string;
   pushedAt: string;
@@ -144,6 +145,8 @@ export interface PrDetailPr {
   title: string;
   body: string;
   author: string;
+  avatarUrl?: string | null;
+  htmlUrl?: string | null;
   state: string;
   headSha: string;
   baseSha: string;
@@ -179,6 +182,7 @@ export interface IterationDto {
 export interface IssueCommentDto {
   id: number;
   author: string;
+  avatarUrl?: string | null;
   createdAt: string;
   body: string;
 }
@@ -186,6 +190,7 @@ export interface IssueCommentDto {
 export interface ReviewCommentDto {
   commentId: string;
   author: string;
+  avatarUrl?: string | null;
   createdAt: string;
   body: string;
   editedAt: string | null;

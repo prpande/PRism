@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DiffPane } from '../src/components/PrDetail/FilesTab/DiffPane/DiffPane';
 import type { FileChange, ReviewThreadDto, PrReference } from '../src/api/types';
@@ -86,6 +86,72 @@ describe('DiffPane', () => {
     expect(screen.getByText(/select a file/i)).toBeInTheDocument();
   });
 
+  it('renders the loading spinner in the header while the file fetch is in flight', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={null}
+        isLoading
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const status = screen.getByRole('status');
+    expect(within(status).getByText(/loading/i)).toBeInTheDocument();
+  });
+
+  it('renders the loading spinner with a distinct label in the whole-file overlay', () => {
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'loading',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        wholeFileEnabled
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    const status = screen.getByRole('status');
+    expect(within(status).getByText(/loading whole file/i)).toBeInTheDocument();
+  });
+
+  it('suppresses the header spinner while the whole-file overlay is active (single live region)', () => {
+    vi.mocked(useWholeFileContent).mockReturnValue({
+      fetchStatus: 'loading',
+      headContent: null,
+      baseContent: null,
+      failureReason: null,
+    });
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        isLoading
+        wholeFileEnabled
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    // Header spinner is gated off, so only the overlay's live region announces.
+    const statuses = screen.getAllByRole('status');
+    expect(statuses).toHaveLength(1);
+    expect(within(statuses[0]).getByText(/loading whole file/i)).toBeInTheDocument();
+  });
+
   it('renders file path in header when file selected', () => {
     render(
       <DiffPane
@@ -131,8 +197,8 @@ describe('DiffPane', () => {
         prUrl="https://github.com/octocat/hello/pull/42"
       />,
     );
-    expect(screen.getByText(/open on github\.com/i)).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: /open on github\.com/i });
+    expect(screen.getByText(/open on github/i)).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /open on github/i });
     expect(link.getAttribute('href')).toBe('https://github.com/octocat/hello/pull/42');
   });
 
@@ -148,7 +214,7 @@ describe('DiffPane', () => {
         prUrl=""
       />,
     );
-    expect(screen.queryByText(/open on github\.com/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/open on github/i)).not.toBeInTheDocument();
   });
 
   it('renders comment widget for matching thread', () => {
@@ -212,6 +278,83 @@ describe('DiffPane', () => {
       />,
     );
     expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--unified');
+  });
+
+  it('omits the diff-pane--wrap class by default (scroll-within is the default)', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    expect(screen.getByTestId('diff-pane')).not.toHaveClass('diff-pane--wrap');
+  });
+
+  it('applies the diff-pane--wrap class when lineWrap is true', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        lineWrap
+      />,
+    );
+    expect(screen.getByTestId('diff-pane')).toHaveClass('diff-pane--wrap');
+  });
+
+  it('renders the locked-pane synthetic scrollbar in split scroll mode', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    expect(screen.getByTestId('diff-hscroll')).toBeInTheDocument();
+  });
+
+  it('omits the locked-pane scrollbar in unified mode', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="unified"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+      />,
+    );
+    expect(screen.queryByTestId('diff-hscroll')).not.toBeInTheDocument();
+  });
+
+  it('omits the locked-pane scrollbar in split + wrap mode (wrap does not scroll)', () => {
+    render(
+      <DiffPane
+        prRef={samplePrRef}
+        selectedPath="src/main.ts"
+        file={sampleFile}
+        diffMode="side-by-side"
+        truncated={false}
+        reviewThreads={[]}
+        prUrl=""
+        lineWrap
+      />,
+    );
+    expect(screen.queryByTestId('diff-hscroll')).not.toBeInTheDocument();
   });
 
   it('uses colSpan=4 for full-width rows in split mode', () => {
@@ -636,7 +779,8 @@ describe('DiffPane whole-file mode', () => {
     expect(await screen.findByTestId('whole-file-failure-banner')).toBeInTheDocument();
     expect(onFailed).toHaveBeenCalledTimes(1);
 
-    // Simulate FilesTab removing the path from wholeFilePaths: rerender with
+    // Simulate FilesTab marking the path failed (markFailed → failedPaths),
+    // so the derived wholeFileEnabled goes false: rerender with
     // wholeFileEnabled=false and the hook now returning 'idle'.
     vi.mocked(useWholeFileContent).mockReturnValue({
       fetchStatus: 'idle',

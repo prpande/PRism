@@ -9,11 +9,8 @@ import { HostChangeModal } from './components/HostChangeModal/HostChangeModal';
 import { LoadingScreen } from './components/LoadingScreen';
 import { SetupPage } from './pages/SetupPage';
 import { InboxPage } from './pages/InboxPage';
-import { PrDetailPage } from './pages/PrDetailPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { OverviewTab } from './components/PrDetail/OverviewTab/OverviewTab';
-import { FilesTab } from './components/PrDetail/FilesTab/FilesTab';
-import { DraftsTabRoute } from './components/PrDetail/DraftsTab/DraftsTabRoute';
+import { PrTabHost } from './components/PrDetail/PrTabHost';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
@@ -23,6 +20,7 @@ import { AskAiDrawer } from './components/AskAiDrawer/AskAiDrawer';
 import { DrawerEffects } from './components/AskAiDrawer/DrawerEffects';
 import { PrTabStrip } from './components/PrTabStrip/PrTabStrip';
 import { useTabUnreadSignal } from './hooks/useTabUnreadSignal';
+import { ErrorModal } from './components/ErrorModal';
 
 function TabSignals() {
   useTabUnreadSignal();
@@ -45,7 +43,24 @@ export function App() {
   }, []);
 
   if (authState === null && error) {
-    return <div role="alert">Failed to load auth state: {error.message}</div>;
+    return (
+      <ErrorModal
+        open
+        title="Couldn't load auth state"
+        message={error.message}
+        actions={
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-modal-role="primary"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        }
+        onClose={() => {}}
+      />
+    );
   }
   if (authState === null) return <LoadingScreen />;
 
@@ -75,7 +90,7 @@ export function App() {
           navbar, not beside it). In the browser these are unstyled passthrough
           divs and the document scrolls as before. */}
       <div data-app-shell>
-        <Header hasToken={authState.hasToken} />
+        <Header isAuthed={isAuthed} />
         <PrTabStrip />
         <div data-app-scroll>
           <Routes>
@@ -85,16 +100,18 @@ export function App() {
               element={isAuthed ? <SettingsPage /> : <Navigate to="/setup" replace />}
             />
             <Route path="/" element={isAuthed ? <InboxPage /> : <Navigate to="/setup" replace />} />
+            {/* PR-detail views no longer live in the route table. The /pr route
+                renders null; the persistent PrTabHost below renders one
+                keep-alive PrDetailView per open tab and shows the one matching
+                the current /pr path. This is what lets a PR view survive
+                navigating away and back with its sub-tab + scroll state intact. */}
             <Route
-              path="/pr/:owner/:repo/:number"
-              element={isAuthed ? <PrDetailPage /> : <Navigate to="/setup" replace />}
-            >
-              <Route index element={<OverviewTab />} />
-              <Route path="files/*" element={<FilesTab />} />
-              <Route path="drafts" element={<DraftsTabRoute />} />
-            </Route>
+              path="/pr/:owner/:repo/:number/*"
+              element={isAuthed ? null : <Navigate to="/setup" replace />}
+            />
             <Route path="*" element={<Navigate to={isAuthed ? '/' : '/setup'} replace />} />
           </Routes>
+          {isAuthed && <PrTabHost />}
         </div>
       </div>
       <AskAiDrawer />

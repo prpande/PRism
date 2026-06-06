@@ -7,7 +7,10 @@
 .tabbar {
   background: var(--surface-0);
   border-bottom: 1px solid var(--border-1);
-  padding: 0 var(--s-3);
+  /* 4px top gap (#126) so the tabs hang below the nav bar instead of butting
+     against its bottom edge — reinforces the "tabs under the bar" read. The gap
+     matches the inter-tab gap's family of small spacings. */
+  padding: 4px var(--s-3) 0;
   /* Subtle gradient bottom-shadow to anchor tabs to the page below */
   position: relative;
   z-index: 2;
@@ -31,15 +34,20 @@
   min-width: 0;
   font-size: var(--text-xs);
   color: var(--text-2);
-  background: transparent;
-  border: 1px solid transparent;
+  /* Option B — filled browser-style chip (#126). Inactive tabs get a recessive
+     fill + side borders so they always read as tabs instead of plain floating
+     text. Fill/border are tokens, so they swap per theme automatically. The
+     2px transparent top reserves the slot the active tab paints with --accent. */
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
   border-bottom: none;
   border-top: 2px solid transparent;
   border-radius: 6px 6px 0 0;
   position: relative;
   transition:
     background var(--t-fast),
-    color var(--t-fast);
+    color var(--t-fast),
+    border-color var(--t-fast);
   user-select: none;
 }
 
@@ -63,9 +71,27 @@
   border-radius: 4px;
 }
 
-.tab:hover {
+/* :not(.tabActive) so hover never repaints the ACTIVE tab — the active tab's
+   appearance is owned solely by .tabActive. The dark rule below is more specific
+   than .tabActive, so without the guard it would lighten the active tab on hover
+   (surface-1 → surface-3); the light rule out-specifies .tabActive too. */
+.tab:not(.tabActive):hover {
   background: var(--surface-1);
   color: var(--text-1);
+  border-color: var(--border-1);
+  /* border-color shorthand also paints the top slot; restore the reserved 2px
+     transparent top (the accent-only slot) — same pattern as .tabActive. */
+  border-top-color: transparent;
+}
+
+/* Theme-aware hover (#126). Hover must LIGHTEN the chip ("lift") in both themes,
+   but no single token is lighter than the inactive --surface-2 in both: in light
+   --surface-1 (0.99) is lighter, but in dark --surface-1 (0.21) is DARKER than
+   --surface-2 (0.235). In dark, lift to --surface-3 (0.27) instead — otherwise
+   hover would darken the chip and collide with the active fill (also 0.21).
+   [data-theme] is a global attr on documentElement; .tab is the scoped class. */
+[data-theme='dark'] .tab:not(.tabActive):hover {
+  background: var(--surface-3);
 }
 
 .tabActive {
@@ -140,6 +166,13 @@
   color: var(--text-1);
 }
 
+/* Inset focus ring (#126) so the keyboard ring sits inside the 18px button
+   rather than overflowing the chip via the global +2px :focus-visible rule. */
+.close:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -1px;
+}
+
 /*
  * Disabled-state override per ce-doc-review D1: the standard
  * `.tab:hover .close` (specificity 0,2,0) ties with `.close:disabled`
@@ -181,6 +214,12 @@
   background: var(--surface-3);
   color: var(--text-1);
   border-style: solid;
+}
+
+/* Inset focus ring (#126) consistent with .close. */
+.more:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -1px;
 }
 
 .menu {

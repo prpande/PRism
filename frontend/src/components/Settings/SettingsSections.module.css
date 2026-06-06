@@ -42,7 +42,12 @@
    defeat the very interactions the tooltip needs (internal spec inconsistency,
    resolved in favor of the tooltip being reachable). */
 .srOnly {
+  /* `top: 0; left: 0` pins the box to its containing block's origin so it can
+     never extend the document from a deep static position — same hardening as
+     the global `.sr-only` utility (issue #197). */
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   padding: 0;

@@ -233,4 +233,28 @@ public sealed class GitHubPrEnricherTests
 
         result[0].PushedAt.Should().Be(DateTimeOffset.Parse("2026-05-06T10:30:00Z", CultureInfo.InvariantCulture));
     }
+
+    [Fact]
+    public async Task Preserves_avatar_url_through_enrichment()
+    {
+        // The enricher returns `raw with { ... }` overriding only HeadSha / diff-stat /
+        // timestamp fields. AvatarUrl is NOT in the override list, so the `with`
+        // expression must carry it through unchanged. This locks the inbox avatar path
+        // (#127) against a future refactor that reconstructs the record positionally and
+        // silently drops the trailing AvatarUrl.
+        var handler = new FakeHttpMessageHandler(_ => Respond(HttpStatusCode.OK, PullsResponse));
+        var sut = BuildSut(handler);
+        var raw = new RawPrInboxItem(
+            new PrReference("acme", "api", 1),
+            "PR #1", "author", "acme/api",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
+            0, 0, 0, "", 1,
+            AvatarUrl: "https://avatars.githubusercontent.com/u/1?v=4");
+
+        var result = await sut.EnrichAsync([raw], default);
+
+        result.Should().ContainSingle();
+        result[0].AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
+        result[0].HeadSha.Should().Be("abc123"); // enrichment still applied alongside
+    }
 }

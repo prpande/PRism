@@ -19,10 +19,88 @@ import { AiHunkAnnotation } from './AiHunkAnnotation';
 import { useAiGate } from '../../../../hooks/useAiGate';
 import { useAiHunkAnnotations } from '../../../../hooks/useAiHunkAnnotations';
 import { useWholeFileContent } from '../../../../hooks/useWholeFileContent';
+import { useLockedPaneScroll } from '../../../../hooks/useLockedPaneScroll';
+import {
+  useSyntaxTokens,
+  normalizeEol,
+  type SyntaxTokenMaps,
+} from '../../../../hooks/useSyntaxTokens';
+import { HighlightedLine } from '../../../Markdown/HighlightedLine';
+import { type LineToken, pathToLang } from '../../../Markdown/shikiInstance';
+import { mergeWordDiffWithTokens } from './mergeWordDiff';
+import { diffWordsWithSpace } from 'diff';
 import { WholeFileFailureBanner } from './WholeFileFailureBanner';
+import { Spinner } from '../../../Spinner';
 import styles from './DiffPane.module.css';
 
 export type DiffMode = 'side-by-side' | 'unified';
+
+// Look up the syntax tokens for a single diff line, keyed by 1-based line
+// number on the requested side. Returns [] when the line has no number on
+// that side (e.g. a delete line has no new-side number) or the map has no
+// entry — HighlightedLine then renders its plaintext fallback.
+function tokensFor(
+  maps: SyntaxTokenMaps,
+  side: 'old' | 'new',
+  lineNum: number | null | undefined,
+): LineToken[] {
+  if (lineNum == null) return [];
+  return (side === 'old' ? maps.oldLineTokens : maps.newLineTokens).get(lineNum) ?? [];
+}
+
+// Renders one side of a paired (modified) line: shiki syntax color layered with
+// background-only word-diff. When tokens are not yet available (highlighter
+// warming, or large-file suppression), falls back to the legacy WordDiffOverlay
+// so the changed-region emphasis never regresses to plaintext.
+function MergedPairedContent({
+  syntax,
+  side,
+  lineNum,
+  oldText,
+  newText,
+}: {
+  syntax: SyntaxTokenMaps;
+  side: 'old' | 'new';
+  lineNum: number | null | undefined;
+  oldText: string;
+  newText: string;
+}) {
+  const toks = tokensFor(syntax, side, lineNum);
+  if (toks.length === 0) {
+    // No tokens yet (highlighter warming / large file) → existing word-diff fallback.
+    return (
+      <WordDiffOverlay
+        oldText={oldText}
+        newText={newText}
+        type={side === 'old' ? 'delete' : 'insert'}
+      />
+    );
+  }
+  // sideText is the token concatenation, NOT pair.content — guarantees
+  // sum(token.length) === sideText.length so the merge's index walk is always in-bounds.
+  const sideText = toks.map((t) => t.text).join('');
+  // Defense-in-depth: the word-diff indexes sideText's coordinate space, so the
+  // tokens for this line MUST equal this side's content. In whole-file mode a
+  // line-number/blob disagreement would silently mis-highlight; fall back to the
+  // always-correct overlay instead.
+  const expected = normalizeEol(side === 'old' ? oldText : newText);
+  if (sideText !== expected) {
+    return (
+      <WordDiffOverlay
+        oldText={oldText}
+        newText={newText}
+        type={side === 'old' ? 'delete' : 'insert'}
+      />
+    );
+  }
+  // PERF (PoC-deferred): diffWordsWithSpace runs once per paired line per render
+  // (e.g. on theme toggle). Paired lines are a small subset, so this is fine at
+  // PoC scale; if large modify-heavy diffs become a hot path, memoize parts /
+  // wrap MergedPairedContent in React.memo. Tracked as a future optimization.
+  const parts = diffWordsWithSpace(normalizeEol(oldText), normalizeEol(newText));
+  const spans = mergeWordDiffWithTokens(sideText, toks, parts, side);
+  return <HighlightedLine spans={spans} fallback={sideText} />;
+}
 
 export interface DiffPaneProps {
   prRef: PrReference;
@@ -31,7 +109,7 @@ export interface DiffPaneProps {
   diffMode: DiffMode;
   truncated: boolean;
   reviewThreads: ReviewThreadDto[];
-  prUrl: string;
+  prUrl?: string;
   // Spec § 5.3a: clicking an "Add comment" affordance on a diff line opens
   // an InlineCommentComposer at that line. The handler is owned by FilesTab
   // because the composer's lifecycle (and the A2 click-another-line modal)
@@ -46,8 +124,9 @@ export interface DiffPaneProps {
   // `<ReplyComposer>`. Absent → DiffPane test harnesses render threads
   // read-only.
   replyContext?: ExistingCommentWidgetReplyContext;
-  // D36 — when true, renders a Loading… span in the diff-pane header. JSX
-  // (not CSS ::after) so screen readers announce it (WCAG 2.1 F87).
+  // D36 / #125 — when true, renders a <Spinner> in the diff-pane header. A real
+  // element with an sr-only label (not CSS ::after) so screen readers announce
+  // it (WCAG 2.1 F87).
   isLoading?: boolean;
 
   // Slice 2 additions (all optional with defaults — see destructuring below):
@@ -55,6 +134,13 @@ export interface DiffPaneProps {
   onWholeFileFailed?: (reason: string) => void;
   headSha?: string;
   baseSha?: string;
+
+  // #115 — when true, long diff lines soft-wrap within their pane instead of
+  // scrolling. Default (false) = scroll: a single synthetic scrollbar
+  // (`diffHScroll`) shifts all split-mode content cells in lockstep via
+  // useLockedPaneScroll, so a too-wide line scrolls without the two panes
+  // drifting out of column-alignment. Owned by FilesTab's toolbar toggle.
+  lineWrap?: boolean;
 }
 
 function findAdjacentPair(lines: DiffLine[], idx: number): DiffLine | null {
@@ -86,6 +172,7 @@ export function DiffPane({
   onWholeFileFailed,
   headSha = '',
   baseSha = '',
+  lineWrap = false,
 }: DiffPaneProps) {
   const annotationsEnabled = useAiGate('hunkAnnotations');
   const allAnnotations = useAiHunkAnnotations(prRef, annotationsEnabled);
@@ -114,6 +201,16 @@ export function DiffPane({
     baseSha,
     enabled: wholeFileEnabled,
     isSplit,
+  });
+
+  const syntax = useSyntaxTokens({
+    path: selectedPath,
+    file,
+    wholeFileEnabled,
+    wholeFile,
+    isSplit,
+    headSha,
+    baseSha,
   });
 
   // Failure latch: fires onWholeFileFailed once per transition to 'failed'.
@@ -199,6 +296,19 @@ export function DiffPane({
     if (diffBodyRef.current) diffBodyRef.current.scrollTop = 0;
   }, [wholeFileEnabled, selectedPath]);
 
+  // #115 — locked side-by-side horizontal scroll. Active only in split
+  // scroll-mode (not wrap, not unified): a single synthetic scrollbar drives
+  // both content panes' scrollLeft in lockstep so old/new of the same line stay
+  // column-aligned. Re-measures when the rendered diff content changes.
+  const hScrollRef = useRef<HTMLDivElement>(null);
+  const hScrollSpacerRef = useRef<HTMLDivElement>(null);
+  const lockedScrollEnabled = isSplit && !lineWrap;
+  useLockedPaneScroll(diffBodyRef, hScrollRef, hScrollSpacerRef, lockedScrollEnabled, [
+    selectedPath,
+    wholeFileEnabled,
+    allLines.length,
+  ]);
+
   // ---- Early-return guards (all hooks must be above here) ----
 
   if (!selectedPath) {
@@ -220,13 +330,7 @@ export function DiffPane({
       <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
         <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
           <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
-          <span
-            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
-            role="status"
-            aria-live="polite"
-          >
-            Loading…
-          </span>
+          <Spinner size="sm" className={styles.diffPaneLoading} />
         </div>
       </div>
     );
@@ -255,6 +359,21 @@ export function DiffPane({
 
   const colSpan = isSplit ? 4 : 3;
   const modeClass = isSplit ? 'diff-pane--split' : 'diff-pane--unified';
+  const wrapClass = lineWrap ? ' diff-pane--wrap' : '';
+
+  // Large-file indicator: when the file is a highlightable language and has
+  // hunks, but the syntax hook produced no tokens, highlighting was suppressed
+  // (over the large-file budget). Gated on syntax.ready, which only flips true
+  // after the highlighter has warmed up, so this never shows during warm-up —
+  // an empty token map with ready === true means the size guard genuinely fired.
+  const highlightSuppressed =
+    syntax.ready &&
+    selectedPath != null &&
+    pathToLang(selectedPath) !== null &&
+    file != null &&
+    file.hunks.length > 0 &&
+    syntax.oldLineTokens.size === 0 &&
+    syntax.newLineTokens.size === 0;
 
   function renderDiffRows(): React.ReactNode[] {
     if (isSplit) return renderSplitRows();
@@ -283,6 +402,7 @@ export function DiffPane({
               threadsAtLine={threadsAtLine}
               filePath={path}
               colSpan={colSpan}
+              syntax={syntax}
               onLineClick={onLineClick}
               renderComposerForLine={renderComposerForLine}
               replyContext={replyContext}
@@ -333,6 +453,7 @@ export function DiffPane({
           threadsAtLine={threadsAtLine}
           filePath={path}
           colSpan={colSpan}
+          syntax={syntax}
           isFilled={line.isFilled}
           onLineClick={onLineClick}
           renderComposerForLine={renderComposerForLine}
@@ -385,7 +506,13 @@ export function DiffPane({
         hunkCounter += 1;
         if (!wholeFileEnabled || wholeFile.fetchStatus !== 'ok') {
           rows.push(
-            <SplitDiffLineRow key={idx} kind="header" content={line.content} filePath={path} />,
+            <SplitDiffLineRow
+              key={idx}
+              kind="header"
+              content={line.content}
+              filePath={path}
+              syntax={syntax}
+            />,
           );
           const annotations = annotationsForFile?.get(hunkCounter);
           if (annotations) {
@@ -428,6 +555,7 @@ export function DiffPane({
             newLineNum={line.newLineNum}
             content={line.content}
             filePath={path}
+            syntax={syntax}
             isFilled={line.isFilled}
             onLineClick={onLineClick}
           />,
@@ -448,6 +576,7 @@ export function DiffPane({
               oldText={line.content}
               newText={next.content}
               filePath={path}
+              syntax={syntax}
               onLineClick={onLineClick}
             />,
           );
@@ -462,6 +591,7 @@ export function DiffPane({
             oldLineNum={line.oldLineNum}
             content={line.content}
             filePath={path}
+            syntax={syntax}
           />,
         );
         continue;
@@ -475,6 +605,7 @@ export function DiffPane({
             newLineNum={line.newLineNum}
             content={line.content}
             filePath={path}
+            syntax={syntax}
             onLineClick={onLineClick}
           />,
         );
@@ -486,16 +617,20 @@ export function DiffPane({
   }
 
   return (
-    <div className={`diff-pane ${modeClass} ${styles.diffPane}`} data-testid="diff-pane">
+    <div
+      className={`diff-pane ${modeClass}${wrapClass} ${styles.diffPane}`}
+      data-testid="diff-pane"
+    >
       <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
-        {isLoading && (
-          <span
-            className={`diff-pane-loading muted ${styles.diffPaneLoading}`}
-            role="status"
-            aria-live="polite"
-          >
-            Loading…
+        {/* Suppress the header spinner while the whole-file overlay spinner is
+            active so only one role=status live region announces at a time. */}
+        {isLoading && !(wholeFileEnabled && wholeFile.fetchStatus === 'loading') && (
+          <Spinner size="sm" className={styles.diffPaneLoading} />
+        )}
+        {!isLoading && highlightSuppressed && (
+          <span className={`diff-pane-loading muted ${styles.diffPaneLoading}`}>
+            Syntax highlighting off (large file)
           </span>
         )}
       </div>
@@ -509,8 +644,8 @@ export function DiffPane({
         }`}
       >
         {wholeFileEnabled && wholeFile.fetchStatus === 'loading' && (
-          <div role="status" aria-live="polite" className={styles.diffPaneLoadingOverlay}>
-            Loading whole file…
+          <div className={styles.diffPaneLoadingOverlay}>
+            <Spinner size="md" label="Loading whole file…" />
           </div>
         )}
         <table className={`diff-table ${styles.diffTable}`}>
@@ -525,6 +660,19 @@ export function DiffPane({
           <tbody>{renderDiffRows()}</tbody>
         </table>
       </div>
+      {/* Outside the vertically-scrolling body, as a flex sibling — so the
+          horizontal scrollbar is always pinned at the bottom of the diff pane
+          and the user never has to scroll to the end of the file to reach it. */}
+      {lockedScrollEnabled && (
+        <div
+          ref={hScrollRef}
+          className={styles.diffHScroll}
+          data-testid="diff-hscroll"
+          aria-hidden="true"
+        >
+          <div ref={hScrollSpacerRef} className={styles.diffHScrollSpacer} />
+        </div>
+      )}
       {truncated && <DiffTruncationBanner prUrl={prUrl} />}
     </div>
   );
@@ -536,6 +684,7 @@ interface DiffLineRowProps {
   threadsAtLine: ReviewThreadDto[] | undefined;
   filePath: string;
   colSpan: number;
+  syntax: SyntaxTokenMaps;
   isFilled?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
   renderComposerForLine?: (filePath: string, lineNumber: number) => React.ReactNode;
@@ -548,6 +697,7 @@ function DiffLineRow({
   threadsAtLine,
   filePath,
   colSpan,
+  syntax,
   isFilled,
   onLineClick,
   renderComposerForLine,
@@ -563,10 +713,25 @@ function DiffLineRow({
     if ((line.type === 'insert' || line.type === 'delete') && pair) {
       const oldText = line.type === 'delete' ? line.content : pair.content;
       const newText = line.type === 'insert' ? line.content : pair.content;
-      return <WordDiffOverlay oldText={oldText} newText={newText} type={line.type} />;
+      const side = line.type === 'delete' ? 'old' : 'new';
+      return (
+        <MergedPairedContent
+          syntax={syntax}
+          side={side}
+          lineNum={line.type === 'delete' ? line.oldLineNum : line.newLineNum}
+          oldText={oldText}
+          newText={newText}
+        />
+      );
     }
 
-    return <span>{line.content}</span>;
+    // Side-aware: a unified delete line has no newLineNum — its tokens live on
+    // the old side (mapHunks('old') keys delete lines by oldLineNum). Context &
+    // insert lines use the new side. (The plan used 'new' only; that left
+    // unified solo-delete lines as plaintext.)
+    const side = line.type === 'delete' ? 'old' : 'new';
+    const toks = tokensFor(syntax, side, side === 'old' ? line.oldLineNum : line.newLineNum);
+    return <HighlightedLine spans={toks} fallback={normalizeEol(line.content)} />;
   };
 
   // PoC scope: only right-side (insert/context) clicks open the composer.
@@ -647,6 +812,7 @@ interface SplitDiffLineRowProps {
   newText?: string;
   content?: string;
   filePath: string;
+  syntax: SyntaxTokenMaps;
   isFilled?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
 }
@@ -659,6 +825,7 @@ function SplitDiffLineRow({
   newText,
   content,
   filePath,
+  syntax,
   isFilled,
   onLineClick,
 }: SplitDiffLineRowProps) {
@@ -691,7 +858,10 @@ function SplitDiffLineRow({
           {oldLineNum ?? ''}
         </td>
         <td data-side="old" className={`diff-content ${styles.diffContent}`}>
-          <span>{content}</span>
+          <HighlightedLine
+            spans={tokensFor(syntax, 'old', oldLineNum)}
+            fallback={normalizeEol(content ?? '')}
+          />
         </td>
         <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
           {newLineNum != null && onLineClick ? (
@@ -708,7 +878,10 @@ function SplitDiffLineRow({
           )}
         </td>
         <td data-side="new" className={`diff-content ${styles.diffContent}`}>
-          <span>{content}</span>
+          <HighlightedLine
+            spans={tokensFor(syntax, 'new', newLineNum)}
+            fallback={normalizeEol(content ?? '')}
+          />
         </td>
       </tr>
     );
@@ -721,7 +894,10 @@ function SplitDiffLineRow({
           {oldLineNum ?? ''}
         </td>
         <td data-side="old" className={`diff-content ${styles.diffContent}`}>
-          <span>{content}</span>
+          <HighlightedLine
+            spans={tokensFor(syntax, 'old', oldLineNum)}
+            fallback={normalizeEol(content ?? '')}
+          />
         </td>
         <td
           aria-hidden="true"
@@ -773,7 +949,10 @@ function SplitDiffLineRow({
           )}
         </td>
         <td data-side="new" className={`diff-content ${styles.diffContent}`}>
-          <span>{content}</span>
+          <HighlightedLine
+            spans={tokensFor(syntax, 'new', newLineNum)}
+            fallback={normalizeEol(content ?? '')}
+          />
         </td>
       </tr>
     );
@@ -796,7 +975,13 @@ function SplitDiffLineRow({
           {oldLineNum ?? ''}
         </td>
         <td data-side="old" className={`diff-content ${styles.diffContent}`}>
-          <WordDiffOverlay oldText={oldText ?? ''} newText={newText ?? ''} type="delete" />
+          <MergedPairedContent
+            syntax={syntax}
+            side="old"
+            lineNum={oldLineNum}
+            oldText={oldText ?? ''}
+            newText={newText ?? ''}
+          />
         </td>
         <td className={`diff-gutter diff-gutter--new ${styles.diffGutter} ${styles.diffGutterNew}`}>
           {newLineNum != null && onLineClick ? (
@@ -813,7 +998,13 @@ function SplitDiffLineRow({
           )}
         </td>
         <td data-side="new" className={`diff-content ${styles.diffContent}`}>
-          <WordDiffOverlay oldText={oldText ?? ''} newText={newText ?? ''} type="insert" />
+          <MergedPairedContent
+            syntax={syntax}
+            side="new"
+            lineNum={newLineNum}
+            oldText={oldText ?? ''}
+            newText={newText ?? ''}
+          />
         </td>
       </tr>
     );

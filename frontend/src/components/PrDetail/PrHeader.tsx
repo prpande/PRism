@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import type { DraftVerdict, PrReference, ReviewSessionDto, ValidatorResult } from '../../api/types';
+import { prRefKey } from '../../api/types';
+import { usePrHeaderCollapsed } from '../../hooks/usePrHeaderCollapsed';
 import type { ComposerOwnerKey } from '../../hooks/useDraftSession';
 import { formatAge } from '../../utils/relativeTime';
 import { sendPatch } from '../../api/draft';
@@ -23,8 +25,33 @@ import { DiscardPendingReviewConfirmationModal } from './DiscardPendingReviewCon
 import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDraftsBanner';
 import styles from './PrHeader.module.css';
 import { AskAiButton } from './AskAiButton';
+import { Avatar } from '../Avatar/Avatar';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
+import { OpenInGitHubButton } from './OpenInGitHubButton';
+
+// #128/#203 — double-chevron, authored pointing UP (the expanded state, where
+// content folds toward when collapsed). The collapsed state rotates it 180° to
+// point DOWN via CSS (.prHeader[data-collapsed] .collapseToggle svg), so the
+// glyph always points toward the action (#203 point-toward-action convention).
+function CollapseChevron() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 7l4-4 4 4" />
+      <path d="M4 12l4-4 4 4" />
+    </svg>
+  );
+}
 
 // Closed/merged PRs can't accept a review submit; the verdict picker is hidden
 // and the bulk-discard button surfaces (spec § 13.1). PrDetailPage derives this
@@ -58,6 +85,7 @@ interface PrHeaderProps {
   reference: PrReference;
   title: string;
   author: string;
+  avatarUrl?: string | null;
   branchInfo?: { headBranch: string; baseBranch: string };
   mergeability?: string;
   ciSummary?: string;
@@ -92,12 +120,15 @@ interface PrHeaderProps {
   // Merged/closed timestamp for the header status label (Task 13).
   mergedAt?: string | null;
   closedAt?: string | null;
+  // #131 — authoritative PR web URL (PrDetailPr.htmlUrl). Absent → no button.
+  htmlUrl?: string | null;
 }
 
 export function PrHeader({
   reference,
   title,
   author,
+  avatarUrl,
   branchInfo,
   mergeability,
   ciSummary,
@@ -116,12 +147,19 @@ export function PrHeader({
   onSessionRefetch,
   mergedAt,
   closedAt,
+  htmlUrl,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
     : [];
 
   const submit = useSubmit(reference);
+  const [collapsed, toggleCollapsed] = usePrHeaderCollapsed(prRefKey(reference));
+  // Per-instance id for aria-controls. PrTabHost keeps one PrDetailView (hence
+  // one PrHeader) mounted PER OPEN TAB simultaneously (inactive ones hidden), so
+  // a hardcoded id would duplicate across tabs — invalid HTML and aria-controls
+  // would resolve to the first tab's region. useId() guarantees uniqueness.
+  const metaId = useId();
   const { show } = useToast();
   // Cross-cutting submit toasts: submit-duplicate-marker-detected /
   // submit-orphan-cleanup-failed (spec § 11.4 / § 13.2).
@@ -170,6 +208,19 @@ export function PrHeader({
     // by PrDetailPage; including it would re-run the refetch every render while
     // in `success`. `submit.clearLastResume` is stable (useCallback([])).
   }, [submit.state.kind, submit.clearLastResume]);
+
+  // Dev-only signal: if a loaded PR (title present) has no htmlUrl, the escape-
+  // hatch links silently disappear — surface that so a ParsePr/GraphQL-shape
+  // regression is detectable. PrHeader is the always-rendered common ancestor of
+  // all three link sites on the detail page.
+  useEffect(() => {
+    if (import.meta.env.DEV && title && !htmlUrl) {
+      console.warn(
+        'PrHeader: PR detail rendered without htmlUrl — Open-in-GitHub links hidden',
+        reference,
+      );
+    }
+  }, [title, htmlUrl, reference]);
 
   const patchVerdict = (verdict: DraftVerdict | null) => {
     void sendPatch(reference, { kind: 'draftVerdict', payload: verdict }).then(() => {
@@ -322,9 +373,13 @@ export function PrHeader({
   };
 
   return (
-    <div className={styles.prHeader} data-testid="pr-header">
+    <div
+      className={styles.prHeader}
+      data-testid="pr-header"
+      data-collapsed={collapsed ? 'true' : undefined}
+    >
       <div className={styles.prHeaderTop}>
-        <div className="pr-meta col gap-1">
+        <div className="pr-meta col gap-1" id={metaId}>
           <div className="row gap-2 muted-2 pr-meta-repo">
             <span>
               {reference.owner}/{reference.repo}
@@ -342,7 +397,10 @@ export function PrHeader({
             <span className={styles.statusClosed}>Closed {formatAge(closedAt)}</span>
           )}
           <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
-            <span className="pr-subtitle-author">{author}</span>
+            <span className={`pr-subtitle-author ${styles.subtitleAuthor}`}>
+              <Avatar src={avatarUrl} login={author} size="sm" />
+              {author}
+            </span>
             {branchInfo && (
               <span className="pr-subtitle-branch">
                 {branchInfo.headBranch} → {branchInfo.baseBranch}
@@ -404,14 +462,29 @@ export function PrHeader({
             onSubmit={() => setDialogOpen(true)}
           />
           <AskAiButton onClick={toggleAskAi} />
+          <OpenInGitHubButton href={htmlUrl} />
         </div>
       </div>
-      <PrSubTabStrip
-        activeTab={activeTab}
-        onTabChange={onTabChange}
-        fileCount={fileCount}
-        draftsCount={draftsCount}
-      />
+      <div className={styles.subTabRow}>
+        <PrSubTabStrip
+          activeTab={activeTab}
+          onTabChange={onTabChange}
+          fileCount={fileCount}
+          draftsCount={draftsCount}
+        />
+        <button
+          type="button"
+          className={styles.collapseToggle}
+          data-testid="pr-header-collapse-toggle"
+          aria-expanded={!collapsed}
+          aria-controls={metaId}
+          aria-label={collapsed ? 'Expand PR details' : 'Collapse PR details'}
+          title={collapsed ? 'Expand PR details' : 'Collapse PR details'}
+          onClick={toggleCollapsed}
+        >
+          <CollapseChevron />
+        </button>
+      </div>
       {submit.lastResume && (
         <ImportedDraftsBanner
           snapshotA={submit.lastResume.snapshotA}
@@ -423,6 +496,7 @@ export function PrHeader({
         <SubmitDialog
           open
           reference={reference}
+          htmlUrl={htmlUrl}
           session={session}
           prState={prState}
           readOnly={readOnly}

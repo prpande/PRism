@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { ErrorModal } from './ErrorModal';
 
 interface Props {
   children: ReactNode;
@@ -24,12 +25,22 @@ export class ErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <div role="alert">
-          <p>Something went wrong. The error has been logged.</p>
-          <button type="button" onClick={() => window.location.reload()}>
-            Reload
-          </button>
-        </div>
+        <ErrorModal
+          open
+          title="Something went wrong"
+          message="The error has been logged."
+          actions={
+            <button
+              type="button"
+              className="btn btn-primary"
+              data-modal-role="primary"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          }
+          onClose={() => {}}
+        />
       );
     }
     return this.props.children;

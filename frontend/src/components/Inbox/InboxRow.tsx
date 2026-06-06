@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import type { PrInboxItem, InboxItemEnrichment } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { formatAge } from '../../utils/relativeTime';
+import { Avatar } from '../Avatar/Avatar';
 import { DiffBar } from './DiffBar';
 import styles from './InboxRow.module.css';
 
@@ -12,41 +13,42 @@ interface Props {
   maxDiff: number;
 }
 
-function freshness(updatedAt: string): 'fresh' | 'today' | 'older' {
-  const ageMs = Date.now() - new Date(updatedAt).getTime();
-  if (ageMs < 30 * 60 * 1000) return 'fresh';
-  if (ageMs < 24 * 60 * 60 * 1000) return 'today';
-  return 'older';
-}
-
 export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
   const navigate = useNavigate();
   const { addTab } = useOpenTabs();
   const doneState: 'merged' | 'closed' | null =
     pr.mergedAt != null ? 'merged' : pr.closedAt != null ? 'closed' : null;
   const isDone = doneState != null;
-  // Done PRs are not urgent — neutralise freshness highlighting.
-  const fr = isDone ? 'older' : freshness(pr.updatedAt);
-  const isFirstVisit = pr.lastViewedHeadSha == null;
+  // "Unread" = the PR's current head differs from the head the user last saw
+  // (#121/#122). This covers both a never-opened PR (lastViewedHeadSha == null,
+  // so it can't equal headSha → unread) and one whose head moved since it was
+  // last viewed. Seen + unchanged → not unread. Done PRs are terminal, never
+  // flagged. Commits-only: the inbox payload has no latest-comment id, so
+  // comment-unread isn't derivable here.
+  const hasUnseenActivity = !isDone && pr.lastViewedHeadSha !== pr.headSha;
   const onClick = () => {
     addTab(pr.reference, pr.title);
     navigate(`/pr/${pr.reference.owner}/${pr.reference.repo}/${pr.reference.number}`);
   };
 
-  const frClass =
-    fr === 'fresh' ? styles.rowFresh : fr === 'today' ? styles.rowToday : styles.rowOlder;
-
+  // The accent bar is a purely visual ::before (invisible to AT); carry the same
+  // cue in the label so screen readers get it (replaces the removed "New" text).
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}`
-    : `${pr.title} · ${pr.repo} · iteration ${pr.iterationNumber}`;
+    : `${pr.title} · ${pr.repo} · iteration ${pr.iterationNumber}${
+        hasUnseenActivity ? ' · unread' : ''
+      }`;
 
   return (
-    <button className={`${styles.row} ${frClass}`} onClick={onClick} aria-label={ariaLabel}>
+    <button
+      className={styles.row}
+      data-unread={hasUnseenActivity ? 'true' : 'false'}
+      onClick={onClick}
+      aria-label={ariaLabel}
+    >
       <span className={styles.status}>
         {!isDone && pr.ci === 'failing' ? (
           <span className={`${styles.dot} ${styles.dotDanger}`} title="CI failing" />
-        ) : !isDone && isFirstVisit ? (
-          <span className={styles.newChip}>New</span>
         ) : (
           <span className={styles.dot} style={{ opacity: 0 }} aria-hidden="true" />
         )}
@@ -56,7 +58,10 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff }: Props) {
         <span className={styles.meta}>
           <span className={styles.mono}>{pr.repo}</span>
           <span className={styles.dotsep}>·</span>
-          <span>{pr.author}</span>
+          <span className={styles.author} data-testid="inbox-author">
+            <Avatar src={pr.avatarUrl} login={pr.author} size="sm" />
+            <span>{pr.author}</span>
+          </span>
           <span className={styles.dotsep}>·</span>
           <span className={styles.mono}>iter {pr.iterationNumber}</span>
           <span className={styles.dotsep}>·</span>

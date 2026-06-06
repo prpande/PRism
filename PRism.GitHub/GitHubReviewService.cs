@@ -37,10 +37,10 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         "repository(owner:$owner,name:$repo){pullRequest(number:$number){" +
         "title body url state isDraft mergeable mergeStateStatus " +
         "headRefName baseRefName headRefOid baseRefOid " +
-        "author{login} createdAt closedAt mergedAt changedFiles " +
-        "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login} createdAt body}}" +
+        "author{login avatarUrl} createdAt closedAt mergedAt changedFiles " +
+        "comments(first:100){pageInfo{hasNextPage endCursor} nodes{databaseId author{login avatarUrl} createdAt body}}" +
         "reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{id path line isResolved " +
-        "comments(first:100){nodes{id author{login} createdAt body lastEditedAt}}}}" +
+        "comments(first:100){nodes{id author{login avatarUrl} createdAt body lastEditedAt}}}}" +
         "timelineItems(first:100,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,PULL_REQUEST_REVIEW]){" +
         "pageInfo{hasNextPage endCursor} nodes{__typename " +
         "... on PullRequestCommit{commit{oid committedDate message additions deletions}} " +
@@ -1011,6 +1011,16 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             if (!pull.TryGetProperty("author", out var a) || a.ValueKind != JsonValueKind.Object) return "";
             return a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "";
         }
+        string? AvatarUrl()
+        {
+            if (!pull.TryGetProperty("author", out var a) || a.ValueKind != JsonValueKind.Object) return null;
+            return a.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String ? av.GetString() : null;
+        }
+        string? HtmlUrl()
+        {
+            var url = GetStr("url");
+            return string.IsNullOrEmpty(url) ? null : url;
+        }
 
         // GitHub returns "MERGEABLE" | "CONFLICTING" | "UNKNOWN" — pass through as-is.
         // mergeStateStatus is a finer-grained signal ("BEHIND", "DIRTY", etc.); we collapse
@@ -1047,7 +1057,9 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             IsClosed: isClosed,
             OpenedAt: GetDate("createdAt"),
             MergedAt: mergedAt,
-            ClosedAt: closedAt);
+            ClosedAt: closedAt,
+            AvatarUrl: AvatarUrl(),
+            HtmlUrl: HtmlUrl());
     }
 
     private static List<IssueCommentDto> ParseRootComments(JsonElement pull)
@@ -1061,12 +1073,15 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         foreach (var node in nodes.EnumerateArray())
         {
             var id = node.TryGetProperty("databaseId", out var db) ? db.GetInt64() : 0L;
-            var author = node.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object
+            var hasAuthor = node.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object;
+            var author = hasAuthor
                 ? (a.TryGetProperty("login", out var l) ? l.GetString() ?? "" : "")
                 : "";
+            var avatar = hasAuthor && a.TryGetProperty("avatarUrl", out var av) && av.ValueKind == JsonValueKind.String
+                ? av.GetString() : null;
             var ts = node.TryGetProperty("createdAt", out var ca) ? ca.GetDateTimeOffset() : default;
             var body = node.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
-            result.Add(new IssueCommentDto(id, author, ts, body));
+            result.Add(new IssueCommentDto(id, author, ts, body, avatar));
         }
         return result;
     }
@@ -1093,15 +1108,18 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
                 foreach (var cn in cnodes.EnumerateArray())
                 {
                     var cid = cn.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
-                    var cauthor = cn.TryGetProperty("author", out var ca) && ca.ValueKind == JsonValueKind.Object
+                    var hasCauthor = cn.TryGetProperty("author", out var ca) && ca.ValueKind == JsonValueKind.Object;
+                    var cauthor = hasCauthor
                         ? (ca.TryGetProperty("login", out var cl) ? cl.GetString() ?? "" : "")
                         : "";
+                    var cavatar = hasCauthor && ca.TryGetProperty("avatarUrl", out var cav) && cav.ValueKind == JsonValueKind.String
+                        ? cav.GetString() : null;
                     var cts = cn.TryGetProperty("createdAt", out var cca) ? cca.GetDateTimeOffset() : default;
                     var cbody = cn.TryGetProperty("body", out var cb) ? cb.GetString() ?? "" : "";
                     DateTimeOffset? edited = null;
                     if (cn.TryGetProperty("lastEditedAt", out var le) && le.ValueKind != JsonValueKind.Null)
                         edited = le.GetDateTimeOffset();
-                    comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited));
+                    comments.Add(new ReviewCommentDto(cid, cauthor, cts, cbody, edited, cavatar));
                 }
             }
             // AnchorSha is intentionally empty here. The reviewThreads GraphQL connection

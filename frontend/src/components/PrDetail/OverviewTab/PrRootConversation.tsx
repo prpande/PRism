@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { DraftCommentDto, IssueCommentDto, PrReference } from '../../../api/types';
+import { Avatar } from '../../Avatar/Avatar';
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
@@ -30,27 +31,39 @@ interface PrRootConversationProps {
 export function PrRootConversation({ comments, replyContext }: PrRootConversationProps) {
   return (
     <section className={`overview-card ${styles.prRootConversation}`}>
-      {comments.map((comment) => (
-        <article key={comment.id} className={styles.prRootComment} data-testid="pr-root-comment">
-          <header className={styles.prRootCommentMeta}>
-            <span className={styles.prRootCommentAuthor}>{comment.author}</span>
-            <time className={styles.prRootCommentTime} dateTime={comment.createdAt}>
-              {new Date(comment.createdAt).toLocaleDateString()}
-            </time>
-          </header>
-          <div className={styles.prRootCommentBody}>
-            <MarkdownRenderer source={comment.body} />
-          </div>
-        </article>
-      ))}
+      {comments.length > 0 && (
+        <ol className={styles.timeline} aria-label="PR comments">
+          {comments.map((comment) => (
+            <li key={comment.id} className={styles.item}>
+              <span className={styles.rail} aria-hidden="true">
+                <span className={styles.node} />
+              </span>
+              <article
+                className={styles.card}
+                data-testid="pr-root-comment"
+                aria-label={`Comment by ${comment.author}`}
+              >
+                <header className={styles.band}>
+                  <Avatar src={comment.avatarUrl} login={comment.author} size="md" />
+                  <span className={styles.author}>{comment.author}</span>
+                  <time className={styles.time} dateTime={comment.createdAt}>
+                    {new Date(comment.createdAt).toLocaleDateString()}
+                  </time>
+                </header>
+                <div className={styles.body}>
+                  <MarkdownRenderer source={comment.body} />
+                </div>
+              </article>
+            </li>
+          ))}
+        </ol>
+      )}
 
       {replyContext ? (
         <PrRootConversationActions replyContext={replyContext} />
       ) : (
         // Rendered when the conversation is mounted in a read-only context
-        // (e.g., a future Drafts-tab preview slot). The S3-shipped message
-        // ("Reply lands when…S4") was retired with PR5; the new fallback
-        // is stable across slices.
+        // (e.g., a future Drafts-tab preview slot).
         <p className={`${styles.prRootConversationFooter} muted`}>
           Composer not available in this context.
         </p>

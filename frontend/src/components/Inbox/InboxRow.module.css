@@ -22,8 +22,11 @@
   background: var(--surface-2);
 }
 
-/* Freshness — left-edge accent on truly-fresh rows */
-.rowFresh::before {
+/* Unread activity — left-edge accent bar on rows with commits the user hasn't
+   seen since they last viewed the PR (#121/#122). Driven by data-unread (set in
+   InboxRow.tsx), now the single new-activity indicator with the "New" badge gone.
+   Was previously gated on 30-min wall-clock recency of updatedAt. */
+.row[data-unread='true']::before {
   content: '';
   position: absolute;
   left: 0;
@@ -32,14 +35,6 @@
   width: 2px;
   background: var(--accent);
   border-radius: 0 2px 2px 0;
-}
-
-.rowToday {
-  /* no additional decoration */
-}
-
-.rowOlder {
-  /* no additional decoration */
 }
 
 /* Status column (16px wide) */
@@ -59,20 +54,6 @@
 
 .dotDanger {
   background: var(--danger-fg);
-}
-
-.newChip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 5px;
-  background: var(--accent);
-  color: var(--accent-text);
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
 }
 
 /* Main column */
@@ -107,6 +88,13 @@
 
 .dotsep {
   color: var(--border-strong);
+}
+
+.author {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 
 /* Tail column */

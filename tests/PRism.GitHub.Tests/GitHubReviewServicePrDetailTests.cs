@@ -31,7 +31,7 @@ public class GitHubReviewServicePrDetailTests
             "baseRefName": "main",
             "headRefOid": "head-sha-42",
             "baseRefOid": "base-sha-42",
-            "author": { "login": "alice" },
+            "author": { "login": "alice", "avatarUrl": "https://avatars.githubusercontent.com/u/1?v=4" },
             "createdAt": "2026-01-01T00:00:00Z",
             "closedAt": null,
             "mergedAt": null,
@@ -39,7 +39,7 @@ public class GitHubReviewServicePrDetailTests
             "comments": {
               "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
-                { "databaseId": 1001, "author": { "login": "bob" }, "createdAt": "2026-01-02T00:00:00Z", "body": "looks good" }
+                { "databaseId": 1001, "author": { "login": "bob", "avatarUrl": "https://avatars.githubusercontent.com/u/2?v=4" }, "createdAt": "2026-01-02T00:00:00Z", "body": "looks good" }
               ]
             },
             "reviewThreads": {
@@ -52,7 +52,7 @@ public class GitHubReviewServicePrDetailTests
                   "isResolved": false,
                   "comments": {
                     "nodes": [
-                      { "id": "PRC_c1", "author": { "login": "bob" }, "createdAt": "2026-01-02T00:01:00Z", "body": "nit", "lastEditedAt": null }
+                      { "id": "PRC_c1", "author": { "login": "bob", "avatarUrl": "https://avatars.githubusercontent.com/u/2?v=4" }, "createdAt": "2026-01-02T00:01:00Z", "body": "nit", "lastEditedAt": null }
                     ]
                   }
                 }
@@ -97,6 +97,76 @@ public class GitHubReviewServicePrDetailTests
       }
     }
     """;
+
+    // Same shape as PrDetailGraphQLBody but with NO "url" field — exercises the
+    // empty→null normalization in ParsePr.
+    private const string PrDetailNoUrlBody = """
+    {
+      "data": {
+        "repository": {
+          "pullRequest": {
+            "title": "No url here",
+            "body": "",
+            "state": "OPEN",
+            "isDraft": false,
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "headRefName": "h",
+            "baseRefName": "main",
+            "headRefOid": "h",
+            "baseRefOid": "b",
+            "author": { "login": "alice" },
+            "createdAt": "2026-01-01T00:00:00Z",
+            "closedAt": null,
+            "mergedAt": null,
+            "changedFiles": 0,
+            "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+          }
+        }
+      }
+    }
+    """;
+
+    [Fact]
+    public async Task GetPrDetailAsync_maps_url_to_HtmlUrl()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailGraphQLBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 42), CancellationToken.None);
+
+        dto!.Pr.HtmlUrl.Should().Be("https://github.com/o/r/pull/42");
+    }
+
+    // Explicit empty-string url ("url": "") — the OTHER branch of the empty→null
+    // normalization (vs the absent-field PrDetailNoUrlBody). GetStr returns "" for
+    // both an absent field and a present-but-empty value; both must map to null.
+    private static readonly string PrDetailEmptyUrlBody =
+        PrDetailNoUrlBody.Replace(
+            "\"title\": \"No url here\",",
+            "\"title\": \"No url here\",\n            \"url\": \"\",",
+            StringComparison.Ordinal);
+
+    [Fact]
+    public async Task GetPrDetailAsync_maps_absent_url_to_null_HtmlUrl()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailNoUrlBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto!.Pr.HtmlUrl.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_maps_empty_url_to_null_HtmlUrl()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailEmptyUrlBody };
+
+        var dto = await NewService(handler).GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto!.Pr.HtmlUrl.Should().BeNull();
+    }
 
     [Fact]
     public async Task GetPrDetailAsync_parses_pr_meta_root_comments_and_review_threads()
@@ -312,5 +382,50 @@ public class GitHubReviewServicePrDetailTests
         dto.Should().NotBeNull();
         dto!.Pr.MergedAt.Should().BeNull();
         dto.Pr.ClosedAt.Should().Be(DateTimeOffset.Parse("2026-04-15T09:30:00Z", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_carries_avatar_urls_for_author_and_comments()
+    {
+        var handler = new GraphQLPlusRestHandler { GraphQLBody = PrDetailGraphQLBody };
+        var svc = NewService(handler);
+
+        var dto = await svc.GetPrDetailAsync(new PrReference("o", "r", 42), CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        dto!.Pr.AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
+        dto.RootComments.Single().AvatarUrl.Should().Be("https://avatars.githubusercontent.com/u/2?v=4");
+        dto.ReviewComments.Single().Comments.Single().AvatarUrl
+            .Should().Be("https://avatars.githubusercontent.com/u/2?v=4");
+    }
+
+    [Fact]
+    public async Task GetPrDetailAsync_carries_bot_avatar_and_tolerates_missing_avatar()
+    {
+        // Bot author keeps its avatarUrl (the case client-side github.com/{login}.png would 404);
+        // a missing avatarUrl maps to null, not an exception.
+        const string body = """
+        {
+          "data": { "repository": { "pullRequest": {
+            "title": "t", "body": "", "url": "u", "state": "OPEN", "isDraft": false,
+            "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+            "headRefName": "h", "baseRefName": "main", "headRefOid": "h", "baseRefOid": "b",
+            "author": { "login": "dependabot[bot]", "avatarUrl": "https://avatars.githubusercontent.com/in/29110?v=4" },
+            "createdAt": "2026-01-01T00:00:00Z", "closedAt": null, "mergedAt": null, "changedFiles": 0,
+            "comments": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [
+              { "databaseId": 1, "author": { "login": "ghost" }, "createdAt": "2026-01-02T00:00:00Z", "body": "x" }
+            ] },
+            "reviewThreads": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] },
+            "timelineItems": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+          } } }
+        }
+        """;
+        var svc = NewService(new GraphQLPlusRestHandler { GraphQLBody = body });
+
+        var dto = await svc.GetPrDetailAsync(new PrReference("o", "r", 1), CancellationToken.None);
+
+        dto.Should().NotBeNull();
+        dto!.Pr.AvatarUrl.Should().Be("https://avatars.githubusercontent.com/in/29110?v=4");
+        dto.RootComments.Single().AvatarUrl.Should().BeNull();
     }
 }
