@@ -236,6 +236,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             // let the strongly-typed Deserialize below surface the shape through the
             // existing JsonException catch. Caught by Copilot post-open code review (PR #53).
             bool rewritten = TryRewriteLegacyGithubShape(rootNode);
+            rewritten |= TryRewriteLegacyAiPreviewShape(rootNode);
             if (rewritten)
             {
                 raw = rootNode!.ToJsonString();
@@ -376,6 +377,29 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         github.Remove("host");
         github.Remove("local-workspace");
         github["accounts"] = new JsonArray(account);
+        return true;
+    }
+
+    /// <summary>
+    /// Migrates the pre-v2 <c>ui.ai-preview</c> (bool) into the v2 <c>ui.ai.mode</c> nested shape
+    /// (true → "preview", false → "off"). Defensive per PR #53: a non-bool value is left untouched
+    /// so Deserialize/backfill handles it (never throws InvalidOperationException out of the catch).
+    /// Returns true if it rewrote the node (caller persists back).
+    /// </summary>
+    private static bool TryRewriteLegacyAiPreviewShape(JsonNode? rootNode)
+    {
+        if (rootNode is not JsonObject root) return false;
+        if (root["ui"] is not JsonObject ui) return false;
+        if (ui["ai-preview"] is not JsonValue legacy) return false;
+        if (ui["ai"] is JsonObject already && already["mode"] is JsonValue) { ui.Remove("ai-preview"); return true; } // already migrated (has a real mode); drop the stale key
+        if (!legacy.TryGetValue<bool>(out var on)) return false;             // non-bool → leave for the Default fallback
+        // A present-but-incomplete ui["ai"] — a malformed non-object (e.g. a JSON string) OR an empty/mode-less object
+        // ({}) — is NOT short-circuited above; it falls through to the overwrite below and is rebuilt from the legacy
+        // bool, so a corrupt OR empty `ai` value cannot silently discard the user's ai-preview intent
+        // (ce-doc-review rounds 1+2, adversarial edge cases). The round-1 `is JsonObject` check missed the empty-{} case.
+
+        ui["ai"] = new JsonObject { ["mode"] = on ? "preview" : "off" };
+        ui.Remove("ai-preview");
         return true;
     }
 
