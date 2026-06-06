@@ -33,6 +33,11 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
     // banner until a new event arrives or clear() is called.
     setState(initial);
     let cancelled = false;
+    // Most recent in-flight subscribe POST, so cleanup can chain the DELETE
+    // behind it and the server never sees DELETE→POST (which would leave a
+    // dangling subscription, #142). Resolved-init = a pre-handshake unmount
+    // cleans up immediately (no POST issued, so the DELETE is a server no-op).
+    let lastSubscribePost: Promise<unknown> = Promise.resolve();
 
     const unsubscribe = stream.on('pr-updated', (event) => {
       if (event.prRef !== refStr) return;
@@ -55,7 +60,11 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
         try {
           await stream.subscriberId();
           if (cancelled) return;
-          await apiClient.post('/api/events/subscriptions', { prRef: refStr });
+          // Capture the POST promise synchronously (no await between the
+          // cancelled-check and this assignment) so the cleanup closure always
+          // sees the live POST it must order the DELETE behind.
+          lastSubscribePost = apiClient.post('/api/events/subscriptions', { prRef: refStr });
+          await lastSubscribePost;
         } catch {
           // Subscribe failure is non-fatal: cookie-keyed routing on the server still
           // delivers events. Silent — no observable impact in PoC scope.
@@ -73,8 +82,17 @@ export function useActivePrUpdates(prRef: PrReference): ActivePrUpdates {
     return () => {
       cancelled = true;
       unsubscribe();
-      void apiClient
-        .delete(`/api/events/subscriptions?prRef=${encodeURIComponent(refStr)}`)
+      // Order-guard (#142): chain the DELETE after the in-flight subscribe POST
+      // settles so the server always observes POST→DELETE, never DELETE→POST.
+      // A failed POST registered nothing, but we still issue the (idempotent)
+      // DELETE to keep one cleanup path.
+      void lastSubscribePost
+        .catch(() => {
+          // Swallow the POST rejection here; the DELETE below runs regardless.
+        })
+        .then(() =>
+          apiClient.delete(`/api/events/subscriptions?prRef=${encodeURIComponent(refStr)}`),
+        )
         .catch(() => {
           // Idempotent on the server; failure means nothing to clean up.
         });
