@@ -68,6 +68,9 @@ export function useTreeHScroll(
       // Only hijack predominantly-horizontal intent; let vertical scroll pass through to
       // the outer tree pane (.filesTabTree owns vertical scrolling).
       if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      // deltaX is assumed to be in pixels (deltaMode === DOM_DELTA_PIXEL) — true for the
+      // platforms that matter here (macOS trackpad, modern Windows). This matches the
+      // same assumption in useLockedPaneScroll; line/page deltaMode is not normalized.
       bar.scrollLeft += e.deltaX;
       e.preventDefault();
     };
@@ -89,9 +92,13 @@ export function useTreeHScroll(
       viewport.removeEventListener('wheel', onWheel);
       ro?.disconnect();
       if (raf) cancelAnimationFrame(raf);
-      // Clear the offset so a stale value can't briefly shift content if the hook
-      // re-enables before the next measure() resets it.
+      // Reset every inline style the effect set, so that if the hook is disabled while
+      // the footer is still mounted (enabled → false), nothing stays stuck: the offset
+      // var is cleared, the row falls back to its CSS default (display:none), and the
+      // spacer width collapses. On a deps re-run the next measure() re-establishes them.
       viewport.style.removeProperty('--file-tree-hscroll');
+      row.style.removeProperty('display');
+      spacer.style.removeProperty('width');
     };
     // `deps` lets the caller re-measure when the rendered row set changes.
   }, [enabled, viewportRef, rowRef, scrollbarRef, spacerRef, ...deps]);

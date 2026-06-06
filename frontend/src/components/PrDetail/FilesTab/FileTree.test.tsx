@@ -41,10 +41,14 @@ describe('FileTree synthetic horizontal scrollbar (#214)', () => {
   it('renders the bar inside a two-column footer so it aligns under the tree column', () => {
     const { getByTestId } = renderTree([file('a.cs')]);
     const bar = getByTestId('file-tree-hscroll');
-    const row = bar.parentElement!;
+    // Name the footer row explicitly (the hScrollRowRef div) rather than relying on an
+    // unnamed parentElement, so the assertion doesn't silently test the wrong node if the
+    // JSX ever adds a wrapper.
+    const row = bar.closest('.file-tree-hscroll-row');
+    expect(row).not.toBeNull();
     // Footer mirrors .fileTreeBody: [bar cell][checkbox-column spacer].
-    expect(row.children.length).toBe(2);
-    expect(row.children[0]).toBe(bar);
+    expect(row!.children.length).toBe(2);
+    expect(row!.children[0]).toBe(bar);
   });
 
   it('omits the scrollbar entirely on the empty state', () => {
