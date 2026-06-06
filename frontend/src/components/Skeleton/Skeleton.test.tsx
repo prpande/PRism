@@ -17,6 +17,22 @@ describe('Skeleton', () => {
     expect(el.style.borderRadius).toBe('50%');
   });
 
+  it('circle with only width falls back to a square (height = width) so it does not collapse to 0px', () => {
+    // Regression: `.block` is display:block, so a circle given width but no
+    // height collapses to 0px tall and renders invisible (avatar stubs).
+    render(<Skeleton circle width={20} data-testid="sk" />);
+    const el = screen.getByTestId('sk');
+    expect(el.style.width).toBe('20px');
+    expect(el.style.height).toBe('20px');
+  });
+
+  it('circle with only height falls back to a square (width = height)', () => {
+    render(<Skeleton circle height={20} data-testid="sk" />);
+    const el = screen.getByTestId('sk');
+    expect(el.style.width).toBe('20px');
+    expect(el.style.height).toBe('20px');
+  });
+
   it('SkeletonText renders the requested number of lines', () => {
     render(<SkeletonText lines={3} data-testid="lines" />);
     const root = screen.getByTestId('lines');

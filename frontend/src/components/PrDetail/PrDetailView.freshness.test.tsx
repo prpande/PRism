@@ -472,7 +472,7 @@ describe('PrDetailView — background reload preserves kept-alive Files state (#
     return selected?.getAttribute('data-path') ?? null;
   }
 
-  test('showSkeleton while data is present keeps FilesTab mounted and its selected file', async () => {
+  test('isLoading while data is present keeps FilesTab mounted and its selected file', async () => {
     fileDiffResult.current = {
       data: { range: 'all', files: [file('alpha.ts'), file('beta.ts')], truncated: false },
       isLoading: false,

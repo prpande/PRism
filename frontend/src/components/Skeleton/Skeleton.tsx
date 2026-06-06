@@ -26,9 +26,14 @@ export function Skeleton({
   className,
   'data-testid': testId,
 }: SkeletonProps) {
+  // A circle is equal-sided: `.block` is display:block, so a circle given only
+  // one dimension collapses to 0px on the other axis and renders invisible.
+  // Fall each axis back to the other when only one is supplied.
+  const resolvedWidth = width ?? (circle ? height : undefined);
+  const resolvedHeight = height ?? (circle ? width : undefined);
   const style: CSSProperties = {
-    width: toCss(width),
-    height: toCss(height),
+    width: toCss(resolvedWidth),
+    height: toCss(resolvedHeight),
     borderRadius: circle ? '50%' : toCss(radius),
   };
   return (
