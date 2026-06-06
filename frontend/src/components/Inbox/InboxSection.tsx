@@ -14,7 +14,7 @@ const EmptyCopy: Record<string, string> = {
   'authored-by-me': "You haven't opened any PRs.",
   mentioned: "You aren't @-mentioned on any open PRs.",
   'ci-failing': 'No CI failures on your PRs — nice.',
-  'recently-closed': 'No PRs closed in the last 14 days.',
+  'recently-closed': 'No PRs closed recently.',
 };
 
 interface Props {
