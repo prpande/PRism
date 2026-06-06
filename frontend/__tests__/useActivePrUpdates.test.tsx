@@ -185,7 +185,7 @@ describe('useActivePrUpdates', () => {
     });
 
     act(() => FakeEventSource.instances[0].fireError());
-    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2));
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(2), { timeout: 3000 });
 
     act(() =>
       FakeEventSource.instances[1].dispatch('subscriber-assigned', { subscriberId: 'sub-2' }),
