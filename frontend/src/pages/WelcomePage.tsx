@@ -36,10 +36,11 @@ export function WelcomePage() {
         <Link to="/setup" className={`${styles.cta} btn btn-primary btn-lg`}>
           Get started
         </Link>
-        {/* Footer stubs — plain non-interactive text (NOT links). #210 wires Help,
-            #211 wires Send feedback. A stub must not render or announce as a link. */}
+        {/* Footer: Help is now a real link (#210). Send feedback remains a stub until #211. */}
         <div className={styles.footer}>
-          <span className={styles.footerStub}>Help</span>
+          <Link to="/help" className={styles.footerLink}>
+            Help
+          </Link>
           <span className={styles.footerDivider} aria-hidden="true">
             ·
           </span>
