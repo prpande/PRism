@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using PRism.Core.Json;
@@ -14,11 +15,31 @@ public sealed class LockfileHandle : IDisposable
     }
 }
 
+// StartedAt is the lockfile's *creation* time (DateTime.UtcNow at write), NOT the
+// process's real start time — liveness uses the executable path, not this field, so
+// it is informational only. (See #107 design: Approach A deliberately leaves the
+// started-at semantics unchanged.)
 public sealed record LockfileRecord(int Pid, string BinaryPath, DateTime StartedAt);
+
+/// <summary>
+/// Identity of the live process behind a PID, as resolved by the liveness probe.
+/// A <c>null</c> probe result means no live process owns that PID (dead / recycled
+/// away). A non-null record with a <c>null</c> <see cref="ExecutablePath"/> means the
+/// process is alive but its real executable path could not be read (access denied,
+/// cross-bitness, or unsupported platform).
+/// </summary>
+internal sealed record RunningProcessInfo(string? ExecutablePath);
 
 public static class LockfileManager
 {
     public static LockfileHandle Acquire(string dataDir, string currentBinaryPath, int currentPid)
+        => Acquire(dataDir, currentBinaryPath, currentPid, DefaultProbe);
+
+    // Test seam: PRism.Core.Tests injects a fake probe (InternalsVisibleTo). Kept
+    // internal so the unit-test hook doesn't widen PRism.Core's public API surface.
+    internal static LockfileHandle Acquire(
+        string dataDir, string currentBinaryPath, int currentPid,
+        Func<int, RunningProcessInfo?> probeProcess)
     {
         var path = Path.Combine(dataDir, "state.json.lock");
 
@@ -38,11 +59,11 @@ public static class LockfileManager
             return new LockfileHandle(path);
         }
 
-        if (IsAlive(existing.Pid, existing.BinaryPath, currentBinaryPath))
+        if (IsAlive(existing.Pid, existing.BinaryPath, probeProcess))
             throw new LockfileException(LockfileFailure.AnotherInstanceRunning,
                 $"PRism is already running (PID {existing.Pid}). Use that instance, or stop it first.");
 
-        // Stale lockfile (dead PID, recycled PID, or different binary). Take over.
+        // Stale lockfile (dead PID, or PID recycled to a different process). Take over.
         File.Delete(path);
         if (!TryAtomicCreate(path, currentBinaryPath, currentPid))
             throw new LockfileException(LockfileFailure.AnotherInstanceRunning, "PRism is already running.");
@@ -77,22 +98,61 @@ public static class LockfileManager
         catch (UnauthorizedAccessException) { return null; }
     }
 
-    private static bool IsAlive(int pid, string lockedBinaryPath, string currentBinaryPath)
+    // Decides whether the process recorded in the lockfile is still a live PRism.
+    // We must inspect the ACTUAL process at the PID, not lockfile-vs-current metadata:
+    // when the same binary is relaunched those two are always equal, so the old check
+    // treated any process that recycled the dead PID (e.g. an MSBuild dotnet node) as a
+    // live PRism — a false "already running" startup crash (#107).
+    private static bool IsAlive(int pid, string lockedBinaryPath, Func<int, RunningProcessInfo?> probe)
     {
+        var info = probe(pid);
+        if (info is null)
+            return false; // No live process owns this PID — stale lock, take over.
+
+        if (info.ExecutablePath is null)
+            // Alive but its identity is unreadable (access denied / unsupported). Be
+            // conservative and treat it as a live PRism: this matches the pre-fix
+            // behavior for a live same-PID process, so it opens no new double-run
+            // window. The single-instance guard is UX/safety, and two backends writing
+            // state.json is the exact thing it exists to prevent — never trade that for
+            // a process we cannot even attribute. (#107 ambiguous-case policy.)
+            return true;
+
+        // Identity is readable: it's the locked PRism only if the real executable path
+        // matches the one recorded in the lockfile. A different path means the PID was
+        // recycled to an unrelated process — stale, take over.
+        return string.Equals(info.ExecutablePath, lockedBinaryPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Real-process probe used in production. Mirrors ParentLivenessProbe's catch set so
+    // an unreadable process never escapes as an exception out of Acquire (which would
+    // reintroduce the "backend exited before reporting a port" startup crash).
+    private static RunningProcessInfo? DefaultProbe(int pid)
+    {
+        Process process;
         try
         {
-            using var p = Process.GetProcessById(pid);
-            // Process exists; require matching binary path to claim "another live PRism".
-            // If the binary differs, the PID was recycled — treat as stale.
-            return string.Equals(lockedBinaryPath, currentBinaryPath, StringComparison.OrdinalIgnoreCase);
+            process = Process.GetProcessById(pid);
         }
         catch (ArgumentException)
         {
-            return false;
+            return null; // No such process — dead/expired PID.
         }
-        catch (InvalidOperationException)
+
+        using (process)
         {
-            return false;
+            try
+            {
+                // An exited process is dead, not "unreadable" — take over rather than
+                // refuse, so a recycled PID whose process dies mid-probe can't re-trigger
+                // the false "already running" crash (#107).
+                if (process.HasExited)
+                    return null;
+                return new RunningProcessInfo(process.MainModule?.FileName);
+            }
+            catch (Win32Exception) { return new RunningProcessInfo(null); }        // access denied / restricted (other-user, elevated, cross-bitness) — alive but unreadable
+            catch (InvalidOperationException) { return null; }                     // process exited between lookup and read — dead, take over
+            catch (NotSupportedException) { return new RunningProcessInfo(null); } // module info unavailable on this platform/process — alive but unreadable
         }
     }
 }
