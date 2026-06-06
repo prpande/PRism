@@ -25,8 +25,10 @@ Key PR1 types PR2 consumes (do **not** modify their contracts):
 ### The FE-compat invariant (non-negotiable — PR2 is backend-only)
 
 The frontend (PR3 owns its rewrite) reads two shapes PR2 **must not break**:
-1. **`GET /api/capabilities`** — `frontend/src/hooks/useCapabilities.ts` reads `resp.ai`; `frontend/src/hooks/useAiGate.ts` reads `capabilities?.[key]` for the 9 camelCase keys (`summary, fileFocus, hunkAnnotations, preSubmitValidators, composerAssist, draftSuggestions, draftReconciliation, inboxEnrichment, inboxRanking`). **PR2 keeps the `ai` envelope key and all 9 keys; new fields (`mode`, `disabledReason`, `disabledStates`) are ADDED alongside — the FE ignores unknown JSON.** Playwright fixtures (`frontend/e2e/ai-gating-sweep.spec.ts`, `a11y-audit.spec.ts`) hardcode `{ ai: { ...9 bools } }` — additive fields keep them green; renaming/nesting breaks them.
+1. **`GET /api/capabilities`** — `frontend/src/hooks/useCapabilities.ts` reads `resp.ai`; `frontend/src/hooks/useAiGate.ts` reads `capabilities?.[key]` for the 9 camelCase keys (`summary, fileFocus, hunkAnnotations, preSubmitValidators, composerAssist, draftSuggestions, draftReconciliation, inboxEnrichment, inboxRanking`). **PR2 keeps the `ai` envelope key and all 9 keys; new fields (`mode`, `disabledReason`) are ADDED alongside — the FE ignores unknown JSON.** Playwright fixtures (`frontend/e2e/ai-gating-sweep.spec.ts`, `a11y-audit.spec.ts`) hardcode `{ ai: { ...9 bools } }` — additive fields keep them green; renaming/nesting breaks them.
 2. **`GET/POST /api/preferences`** — `frontend/src/api/types.ts` `UiPreferences.aiPreview: boolean`; `useAiGate` ANDs `capabilities[key] && preferences.ui.aiPreview`; the Settings toggle POSTs `{ "aiPreview": bool }`. **PR2 keeps `aiPreview` working: GET derives it (`aiPreview = mode != Off`); POST translates it (`true→Preview`, `false→Off`).** A new `aiMode` field is added alongside for PR3. No frontend file changes in this PR.
+
+**Discharges the D112 reopener.** The codebase carries a D112 note that fires "when backend `AiCapabilities` decouples from `AiPreviewState.IsOn`" — which is exactly what Task 9's per-flag resolver does. D112 flags that `useAiGate('composerAssist')` (AskAi button) and `useAiGate('inboxRanking')` (activity rail) are coupled-by-name to imprecise keys. **PR2 discharges it without new keys:** because Preview still returns all-9-flags-true, the coupling-by-name stays valid (no dedicated `askAi`/`activityRail` capability keys are needed yet). PR3 revisits if it adds finer-grained surfaces. This confirmation is recorded so the reopener is explicitly closed, not silently inherited.
 
 ### Hard constraints from the codebase map
 - **Hot-reload:** `AiSeamSelector` reads the mode-state singleton **fresh on every `Resolve`** (asserted by `AiSeamSelectorTests.Resolve_observes_runtime_flips`). The new `AiModeState` must stay a mutable shared singleton.
@@ -47,16 +49,18 @@ The frontend (PR3 owns its rewrite) reads two shapes PR2 **must not break**:
 **KTD-2 — Keep the provider-supplied STRING `ReasonCode`; do NOT reintroduce an `AiDisabledReason` enum in Contracts.** Honors §2.3/D5 (disabled states are provider-supplied). The classifier passes the `ReasonCode` string through to the wire (`"none"` = not-disabled). **Alternative rejected:** a fixed enum — it would have dead branches (the Claude vocabulary lacks credit states) and re-couple Contracts to one provider.
 
 **KTD-3 — Nested `ui.ai.mode` via a new `AiConfig(AiMode Mode)` record under `UiConfig`** (matches the spec's `ui.ai.mode` path and the existing dotted-path patch convention, e.g. `inbox.sections.*`). `UiConfig.AiPreview` (bool) is **removed** from the record; `aiPreview` survives only as a wire projection/translation. **Alternative rejected:** a flat `ui.ai-mode` (doesn't match the spec path) or keeping both fields (dual source-of-truth desync risk).
+> **Known asymmetry (ce-doc-review, adversarial):** the legacy `aiPreview` toggle can only express Off/Preview (`true→Preview`), so a config already in **Live** that is touched by the legacy toggle silently **downgrades to Preview**. This is acceptable in P0 because Live is not reachable from any shipped FE surface (the toggle is the only AI control; `ui.ai.mode=live` requires a dotted-path POST or a config-file edit). PR3's mode selector replaces the toggle. A hard guard (reject the `aiPreview` patch when the current mode is `Live`) is **deferred to PR3** when the selector makes Live FE-reachable — flagged here so it is an informed deferral, not a silent gap.
 
 **KTD-4 — No probe caching in PR2 (probe-per-call, only in Live mode).** §6 says the two-tier cache is "built at first real consumer (P1)." In P0 the shipped FE never enters Live (the toggle only sends `aiPreview`→Preview/Off), so the probe path is cold; an unbounded-but-`ProbeTimeout`-bounded await on the rare Live `/api/capabilities` call is acceptable. A `// P1: cache per §6 (invalidate via event bus, not key)` note marks the seam. **Alternative considered:** a short-TTL memo now — deferred as premature (YAGNI) and flagged for the reviewer.
+> **Informed deferral (ce-doc-review, adversarial):** `frontend/src/hooks/useCapabilities.ts` refetches `/api/capabilities` on every window **focus** event. So if a config is ever in Live (config edit), each refocus is a fresh ~10s `claude --version` shell-out — not a one-time cost. This is accepted **only** because Live is not FE-reachable in PR2's window; **P1 MUST add the cache before shipping a Live selector**, or the focus-refetch becomes a per-refocus host hang.
 
 **KTD-5 — Wire `AddPrismClaudeCode` into the host now (mandated by the §7 P0 exit condition).** The exit requires `/api/capabilities` to report the correct disabled reason when the CLI is absent, which needs the probe registered. `Program.cs` constructs `ClaudeCodeProviderOptions { WorkingDirectory = <dataDir>/llm-cwd }` (a stable, **non-git** dir) + `usageDir = <dataDir>/llm-usage`.
 
-**KTD-6 — Minimal descriptor (disabled-states + a `SupportsStructuredOutput` stub).** Per §2.3 "minimal P0 descriptor (YAGNI)": only the disabled-states axis (P0 consumer = PR3 Settings→AI) and a structured-output stub (P2 consumer) are modeled; cost/auth/caching/model-id are documented-but-omitted. Provider-supplied display labels are surfaced **length-capped, plain-text** (§2.3 trust-boundary rule).
+**KTD-6 — Minimal descriptor (disabled-states + a `SupportsStructuredOutput` stub), built + registered but not wire-surfaced in PR2.** Per §2.3 "P0 builds the descriptor with those two [axes]": the disabled-states axis (P0 consumer = PR3 Settings→AI) and the structured-output stub (P2 consumer) are modeled; cost/auth/caching/model-id are documented-but-omitted. PR2 **builds + DI-registers** the descriptor so PR3 can project its `DisabledStates[]` list; PR2 does **not** put that list on the wire (no PR2 consumer — scope finding). The one provider-supplied string PR2 *does* surface, the active `disabledReason`, is **length-capped, plain-text** (§2.3 trust-boundary rule). *(Note: a scope reviewer flagged the structured-output stub as P2-only; kept because §2.3 explicitly says "P0 builds the descriptor with those two" — disabled-states AND structured-output.)*
 
 **KTD-7 — Wire-value strings are mapped explicitly** (`mode.ToString().ToLowerInvariant()` → `"off"/"preview"/"live"`), not left to the JSON enum converter, so the wire contract is deterministic regardless of how minimal-API anonymous objects pick up `JsonStringEnumConverter`. On disk, `AiConfig.Mode` relies on the **confirmed** kebab `JsonStringEnumConverter` (registered in both `Storage` and `Api` options) → `"off"/"preview"/"live"` — symmetric with the wire.
 
-**KTD-8 — PR2 is one PR but sequenced green-at-every-commit.** Tasks 2–3 (config + migration) keep `AiPreviewState` (binary, now sourced from the tri-state config) so the build stays green; Task 7 does the `AiPreviewState→AiModeState` rename cascade atomically; Tasks 8–12 are additive. If the reviewer prefers a split, the clean cut is after Task 6 (config landed) vs. Tasks 7–12 (selector + capabilities).
+**KTD-8 — PR2 is large (13 tasks); sequenced green-at-every-commit, split recommended.** Tasks 2–3 (config + migration) keep `AiPreviewState` (binary, now sourced from the tri-state config) so the build stays green; **Task 4** does the `AiPreviewState→AiModeState` rename cascade atomically; **Tasks 5–12** are additive. **Recommendation (ce-doc-review scope finding):** split into two `V2`-targeted PRs — **PR2a = Tasks 1–4** (AiMode, config + migration, selector tri-state — a coherent, independently-testable "capability-model core" that leaves `AllOn`/`AllOff` in place) and **PR2b = Tasks 5–12** (provider wiring, descriptor, resolver, `/api/capabilities` rewrite, preferences round-trip, gate). Each is green-at-every-commit and reviewable in one sitting. If kept as one PR, Task 4 Step 6's interim `CapabilitiesEndpoints` (still `AllOn`/`AllOff`, now off `mode`) is the only deliberately-transitional state.
 
 ---
 
@@ -157,7 +161,7 @@ Replace the binary config field with the nested tri-state. `AiPreviewState` (sti
 
 - [ ] **Step 1: Update the failing config test first (TDD)**
 
-In `tests/PRism.Core.Tests/Config/ConfigStoreTests.cs`, change the existing default assertion and add a patch round-trip. Find `store.Current.Ui.AiPreview.Should().BeFalse();` and replace with:
+In `tests/PRism.Core.Tests/Config/ConfigStoreTests.cs`, change the default assertion(s) and add a patch round-trip. **There are TWO `store.Current.Ui.AiPreview.Should().BeFalse();` occurrences** — the default-config fact (~line 21) and the partial-config-fills-from-defaults fact (~line 170, which exercises the nested-`Ai` backfill added in Task 2 Step 4). Replace **both** with:
 
 ```csharp
 store.Current.Ui.Ai.Mode.Should().Be(AiMode.Off);
@@ -243,9 +247,11 @@ In `PRism.Core/Config/ConfigStore.cs`, in `_allowedFields`, **replace** the `["a
 In `PatchAsync`'s switch, **replace** the `aiPreview` arm and **add** the mode arm:
 
 ```csharp
-"aiPreview" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = (bool)value! ? AiMode.Preview : AiMode.Off } } },
-"ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = ParseAiMode((string)value!) } } },
+"aiPreview" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = value is bool on ? (on ? AiMode.Preview : AiMode.Off) : throw new ConfigPatchException("aiPreview must be a boolean.") } } },
+"ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = value is string modeStr ? ParseAiMode(modeStr) : throw new ConfigPatchException("ui.ai.mode must be a string (off|preview|live).") } } },
 ```
+
+> **Defensive cast (ce-doc-review, security + feasibility).** `PreferencesEndpoints` maps any JSON value that is not a string/`true`/`false` to `null` (its `_ => null` arm). A bare `(string)value!` / `(bool)value!` on `null` throws `NullReferenceException`/`InvalidCastException` — an unhandled **500** instead of the controlled `ConfigPatchException` → **400**. The `value is …` pattern keeps the clean-400 path for `{ "ui.ai.mode": 42 }` / `{ "aiPreview": "yes" }`. Add a `PatchAsync_ui_ai_mode_rejects_non_string_value` fact to Step 1 alongside the unknown-value reject.
 
 Add the parser as a `private static` method on `ConfigStore` (throws `ConfigPatchException` per the `ConfigFieldType`-only-String/Bool gotcha):
 
@@ -417,8 +423,11 @@ private static bool TryRewriteLegacyAiPreviewShape(JsonNode? rootNode)
     if (rootNode is not JsonObject root) return false;
     if (root["ui"] is not JsonObject ui) return false;
     if (ui["ai-preview"] is not JsonValue legacy) return false;
-    if (ui["ai"] is not null) { ui.Remove("ai-preview"); return true; } // already migrated; just drop the stale key
-    if (!legacy.TryGetValue<bool>(out var on)) return false;            // non-bool → leave for the Default fallback
+    if (ui["ai"] is JsonObject) { ui.Remove("ai-preview"); return true; } // already migrated to the nested shape; drop the stale key
+    if (!legacy.TryGetValue<bool>(out var on)) return false;             // non-bool → leave for the Default fallback
+    // A present-but-malformed ui["ai"] (e.g. a JSON string, not an object) is NOT short-circuited above —
+    // it falls through to the overwrite below and is rebuilt from the legacy bool, so a corrupt `ai` value
+    // cannot silently discard the user's ai-preview intent (ce-doc-review, adversarial edge case).
 
     ui["ai"] = new JsonObject { ["mode"] = on ? "preview" : "off" };
     ui.Remove("ai-preview");
@@ -749,14 +758,17 @@ In `PRism.Web/Program.cs`, after `AddPrismCore` / before `AddPrismAi` (the probe
 ```csharp
 var llmCwd = Path.Combine(dataDir, "llm-cwd");      // stable, NON-git working dir (§2.1 inv. 4)
 var llmUsageDir = Path.Combine(dataDir, "llm-usage");
-Directory.CreateDirectory(llmCwd);
-Directory.CreateDirectory(llmUsageDir);
+Directory.CreateDirectory(llmCwd);                  // probe needs a stable cwd to exist before it can spawn; idempotent, owner-scoped
+// Do NOT eagerly create llmUsageDir — JsonlTokenUsageTracker creates it lazily (owner-only) on first RecordAsync,
+// which nothing calls in P0. Creating it here litters an empty dir for every user who never touches AI.
 builder.Services.AddPrismClaudeCode(
     new ClaudeCodeProviderOptions { WorkingDirectory = llmCwd },
     llmUsageDir);
 ```
 
-Add `using PRism.AI.ClaudeCode;` to `Program.cs`. (No code touches the real `claude` binary at startup — the probe shells out only when `ProbeAsync` is called.)
+Add `using PRism.AI.ClaudeCode;` to `Program.cs`.
+
+> **No egress reachable in PR2 (ce-doc-review, security + adversarial).** Nothing touches the real `claude` binary at startup — the probe shells out only when `ProbeAsync` is called (a Live-mode `/api/capabilities` request), and even then only `claude --version`. **No PR content can leave the device in PR2:** in Live mode the selector's `liveAvailable` is `false` over an empty real bag, so every seam still resolves to `Noop`. The §4 per-provider egress-consent gate is therefore **PR3's** responsibility (it ships the first egressing Live call + the consent UI); PR2 deliberately adds no server-side consent enforcement because no consent-requiring call is reachable. **Call this out in the PR body so PR3 owns the gate.**
 
 - [ ] **Step 2: Verify the host still starts (build + the existing capabilities test)**
 
@@ -1098,7 +1110,7 @@ public sealed class StubAvailabilityProbe : ILlmAvailabilityProbe
 
 - [ ] **Step 2: Write the failing endpoint tests**
 
-In `tests/PRism.Web.Tests/Endpoints/CapabilitiesEndpointsTests.cs`, expand the local response record and add per-mode facts. **Use a per-test `using var factory` (these mutate `AiModeState` / set the probe override — do NOT share the class fixture):**
+In `tests/PRism.Web.Tests/Endpoints/CapabilitiesEndpointsTests.cs`: **replace** the existing `public sealed record CapabilitiesResponse(AiCapabilities Ai);` with the expanded record below (do **not** declare a second — that is a CS0101 duplicate-type error), **remove the `IClassFixture<PRismWebApplicationFactory>` interface and the `_factory` field**, and **delete the old `Returns_AllOff_when_aiPreview_is_false` test** (its assertion is subsumed by the new `Off_mode_...` fact). Every new fact below uses a per-test `using var factory` — these mutate `AiModeState` / set the probe override, so a shared class fixture would leak state across tests:
 
 ```csharp
 public sealed record CapabilitiesResponse(AiCapabilities Ai, string Mode, string DisabledReason);
@@ -1129,8 +1141,8 @@ public async Task Preview_mode_reports_all_true_keeps_ai_envelope()
 
     raw.Should().Contain("\"ai\"").And.Contain("\"summary\"");          // FE-compat envelope intact
     raw.Should().Contain("\"mode\":\"preview\"");
-    var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
-    // re-fetch; (or parse `raw`) — assert a per-flag bool is true
+    using var doc = JsonDocument.Parse(raw);                             // System.Text.Json
+    doc.RootElement.GetProperty("ai").GetProperty("summary").GetBoolean().Should().BeTrue();
 }
 
 [Fact]
@@ -1162,7 +1174,6 @@ Expected: FAIL — endpoint still returns the interim `{ ai }` shape (no `mode`/
 
 ```csharp
 // PRism.Web/Endpoints/CapabilitiesEndpoints.cs
-using System.Linq;
 using PRism.AI.Contracts.Provider;
 using PRism.Core.Ai;
 
@@ -1171,7 +1182,6 @@ app.MapGet("/api/capabilities", async (
     AiModeState state,
     AiCapabilityResolver resolver,
     ILlmAvailabilityProbe probe,
-    ProviderCapabilityDescriptor descriptor,
     CancellationToken ct) =>
 {
     var mode = state.Mode;
@@ -1182,17 +1192,18 @@ app.MapGet("/api/capabilities", async (
     {
         ai = resolver.Resolve(mode, availability),                      // FE-compat: the `ai` envelope + 9 keys
         mode = mode.ToString().ToLowerInvariant(),                      // "off" | "preview" | "live"
-        disabledReason = AiCapabilityResolver.DisabledReason(mode, availability),
-        disabledStates = descriptor.DisabledStates
-            .Select(s => new { reasonCode = s.ReasonCode, label = Cap(s.DisplayLabel) })
-            .ToArray(),                                                  // for PR3's guidance rendering
+        // §2.3 trust boundary: the provider-supplied reason string is length-capped, plain text, never HTML.
+        disabledReason = Cap(AiCapabilityResolver.DisabledReason(mode, availability)),
     });
 
-    static string Cap(string s) => s.Length <= 200 ? s : s[..200];      // §2.3 plain-text length cap
+    static string Cap(string s) => s.Length <= 200 ? s : s[..200];
 });
+// NOTE (ce-doc-review scope finding): the descriptor's full DisabledStates[] list is intentionally NOT
+// surfaced on the wire in PR2 — its only consumer is PR3's Settings → AI guidance. ProviderCapabilityDescriptor
+// stays built + DI-registered (Task 6) so PR3 can project it then. PR2 surfaces only the ACTIVE disabledReason.
 ```
 
-(If the endpoint file uses a `MapCapabilities` extension wrapper, keep that wrapper signature; only the lambda body/registration changes. The endpoint is mapped at `Program.cs` via `app.MapCapabilities()`.)
+(If the endpoint file uses a `MapCapabilities` extension wrapper, keep that wrapper signature; only the lambda body/registration changes. The endpoint is mapped at `Program.cs` via `app.MapCapabilities()`. The `ProviderCapabilityDescriptor` is no longer injected here — it is still registered for PR3.)
 
 - [ ] **Step 4: Run to verify pass**
 
@@ -1350,14 +1361,17 @@ git commit -m "docs(ai): update AI-gating description to the tri-state capabilit
 - Disabled-state classifier (provider failures → reason; unknown safe bucket via `ClaudeReasonCodes.Unknown`) → **Tasks 7, 9** (consumes PR1's probe ReasonCode). ✅
 - `ui.aiPreview` → `ui.ai.mode` config + migration via the existing framework; `AiModeState` replacing `AiPreviewState`; synced in `AddPrismCore` → **Tasks 2, 3, 4**. ✅
 - `GET /api/capabilities` returns per-flag booleans + current mode + active disabled reason → **Task 9**. ✅
-- §7 P0 exit ("per-flag false + correct disabled-state reason when the CLI is absent; reasons via the provider-supplied-list mechanism + unknown safe bucket") → **Tasks 6, 9** (probe wired Task 5, descriptor list surfaced Task 9). ✅
+- §7 P0 exit ("per-flag false + correct disabled-state reason when the CLI is absent; reasons via the provider-supplied-list mechanism + unknown safe bucket") → **Tasks 6, 9** (probe wired Task 5; descriptor list **built + DI-registered** Task 6 for PR3; active `disabledReason` on the wire Task 9). ✅
 - Stays dark / backend-only (FE-compat invariant) → **Tasks 2, 9, 11** (derived `aiPreview`, preserved `ai` envelope). ✅
 
 **2. Placeholder scan:** every code step carries real code or exact commands. The two `// adjust to the real namespace` notes are concrete instructions (the implementer greps the existing test's `using` block — the namespaces are deterministic, not invented). No TBD/TODO.
 
-**3. Type consistency:** `AiMode {Off,Preview,Live}`, `AiModeState{Mode}`, `AiConfig(AiMode Mode)` under `UiConfig.Ai`, `AiSeamSelector(AiModeState, noop, placeholder, real, Func<bool>)`, `AiCapabilityResolver(IReadOnlySet<Type>)` with `Resolve(AiMode, LlmAvailability)` + static `DisabledReason(AiMode, LlmAvailability)`, `ProviderCapabilityDescriptor(IReadOnlyList<ProviderDisabledState>, bool)`, `ProviderDisabledState(string ReasonCode, string DisplayLabel)`, wire fields `{ ai, mode, disabledReason, disabledStates }`, preferences `{ aiPreview (derived), aiMode }` — all used consistently across tasks. `ParseAiMode` (ConfigStore) and the wire string mapping (`ToString().ToLowerInvariant()`) agree on `"off"/"preview"/"live"`.
+**3. Type consistency:** `AiMode {Off,Preview,Live}`, `AiModeState{Mode}`, `AiConfig(AiMode Mode)` under `UiConfig.Ai`, `AiSeamSelector(AiModeState, noop, placeholder, real, Func<bool>)`, `AiCapabilityResolver(IReadOnlySet<Type>)` with `Resolve(AiMode, LlmAvailability)` + static `DisabledReason(AiMode, LlmAvailability)`, `ProviderCapabilityDescriptor(IReadOnlyList<ProviderDisabledState>, bool)`, `ProviderDisabledState(string ReasonCode, string DisplayLabel)`, wire fields `{ ai, mode, disabledReason }`, preferences `{ aiPreview (derived), aiMode }` — all used consistently across tasks. `ParseAiMode` (ConfigStore) and the wire string mapping (`ToString().ToLowerInvariant()`) agree on `"off"/"preview"/"live"`.
 
-**4. Open risks flagged for the reviewer (KTD section):** KTD-4 (no probe cache in P0) and KTD-6 (descriptor scope) are the most debatable; KTD-8 offers the split point if PR2 is judged too large.
+**4. Open decisions for the human-review gate:**
+- **(a) Split (SC4):** KTD-8 recommends two `V2` PRs — PR2a = Tasks 1–4, PR2b = Tasks 5–12. Decide split vs. one PR.
+- **(b) Live-axis machinery (SC3):** a scope reviewer argued the selector's `real` bag + `liveAvailable` Func and the resolver's `liveCapableSeams` set are speculative in P0 (zero real impls) and could collapse to `Live→Noop` / `Live→all-false` until P1. **Kept** because the spec mandates per-feature Live resolution as a P0 deliverable and the unit tests validate the mechanism — but it is a legitimate build-now-vs-defer call worth your sign-off.
+- **(c) Accepted-for-P0 with documented deferrals:** KTD-4 (no probe cache; focus-refetch noted) and KTD-3 (legacy-toggle `Live→Preview` downgrade; hard guard deferred to PR3).
 
 ---
 
