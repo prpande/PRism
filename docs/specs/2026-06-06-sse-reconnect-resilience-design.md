@@ -120,6 +120,12 @@ triggers through it. Constants: `BASE = 1000ms`, `MAX = 30000ms`.
   `STABLE_AFTER_MS = 10000` dwell timer; **only if the stream survives that dwell**
   does `attempt` reset to 0. A drop before the dwell elapses keeps `attempt`
   growing, so accept-then-drop backs off correctly.
+- **The dwell timer is an outer-scope handle cleared at the start of every
+  `reconnect()`/`connect()`** (and on `close()`/tombstone/`forceReconnect()` — see
+  the Timer-lifecycle invariant). Without this, a stale dwell from a *dropped*
+  connection fires ~10s later and resets `attempt=0` based on a stream that already
+  died — silently defeating this whole reset rule. Only the **current** connection's
+  survival may reset `attempt`.
 
 Jitter uses `Math.random()` via the delay seam (overridable in tests).
 
@@ -152,9 +158,14 @@ watchdog.
 Track stream health inside the `openEventStream()` closure with **one** health
 timer, armed and reset off the **same liveness signals as the watchdog**:
 
-- The health timer is **armed at `connect()` start** and **reset on any
-  `subscriber-assigned`, data frame, OR `heartbeat`** — identical resets to the
-  existing watchdog (`resetWatchdog()`), so the two stay in lockstep.
+- The health timer is **armed at `connect()` start** and reset on the same liveness
+  signals as the watchdog. **Mechanism (not just property):** fold the health-timer
+  reset *into* the single `resetWatchdog()` chokepoint (called today from the
+  `subscriber-assigned`, `heartbeat`, every-typed-data-frame, and `connect()`-tail
+  sites). One reset path means lockstep is guaranteed *by construction* — a future
+  liveness signal that calls `resetWatchdog()` resets health automatically, with no
+  second call site to forget. (Equivalent alternative: a single `lastLivenessAt`
+  timestamp stamped by `resetWatchdog()` that one health check reads.)
 - If the timer reaches `UNHEALTHY_AFTER_MS = 30000` without a reset →
   `streamHealthy = false`, notify subscribers.
 - The next liveness signal → `streamHealthy = true`, notify. (A single >30s outage
@@ -178,8 +189,17 @@ Extend `EventStreamHandle`:
 ```ts
 streamHealthy(): boolean;
 onHealthChange(cb: (healthy: boolean) => void): () => void; // returns unsubscribe
-forceReconnect(): void; // reset attempt=0, cancel pending backoff, reconnect now
+forceReconnect(): void; // see semantics below
 ```
+
+**`forceReconnect()` semantics (guarded):** **no-op if a connect is already
+in-flight** (reuse the re-entrancy handle), otherwise cancel the pending backoff
+**and dwell** timers and fire **one** immediate `connect()`. It does **NOT** reset
+`attempt`: a manual press doesn't make the server healthier, so a *failed* retry
+resumes the existing backoff curve rather than restarting it at 1s; a *successful*
+retry resets `attempt` via the normal dwell path. The in-flight no-op makes
+mashing "Retry now" harmless — it cannot reproduce the hot loop the backoff exists
+to prevent.
 
 New hook `useStreamHealth(): { healthy: boolean; retry: () => void }` subscribes
 via `onHealthChange`, seeds from `streamHealthy()`, and exposes `forceReconnect`
@@ -200,6 +220,29 @@ reusing the snackbar visual tokens for consistency.
 
 *Rejected — sticky Toast kind:* would special-case "no auto-dismiss",
 "programmatic clear", and "re-show on edge" across the toast queue.
+
+### D8 — Timer-lifecycle invariant (closes the round-2 timer findings)
+
+This design introduces four timers in the `openEventStream()` closure: the
+existing **watchdog**, plus **backoff**, **dwell**, and **health**. To avoid
+hand-synchronized lifecycle bugs, all four are **outer-scope handles** governed by
+one rule, not per-call-site discipline:
+
+- **Per-stream timers cleared at the start of every `connect()`/`reconnect()`:** a
+  superseded stream's pending **dwell** must never fire (it would reset `attempt`
+  off a dead connection — the load-bearing failure that defeats D2). The
+  captured-self pattern (`myEs !== es`) or an explicit clear-on-entry both work;
+  the spec mandates clear-on-entry as the simpler guarantee.
+- **All pending timers cleared on `close()`, the D1 tombstone, and
+  `forceReconnect()`:** no timer may fire after teardown or fire a duplicate
+  reconnect.
+- **`scheduleReconnect()` and `forceReconnect()` are no-ops while a reconnect is
+  pending/in-flight** (shared re-entrancy handle), so neither the watchdog +
+  buffered `onerror` race nor manual "Retry now" mashing can create a second
+  EventSource.
+
+Stating this once converts three "remember to also clear X" requirements into a
+single structural rule an implementer can't silently violate.
 
 ## Components & data flow
 
@@ -222,10 +265,11 @@ events.ts: openEventStream()
 - Renders **iff** `!healthy && !dismissedThisOutage`.
 - Single line: **"Connection lost — reconnecting"** · **Retry now** button · **×**
   dismiss. Final copy/iconography confirmed at the B1 visual gate.
-- **Retry now** → `retry()` (`forceReconnect()`): resets `attempt`, cancels pending
-  backoff, reconnects immediately. **State-preserving** — does not reload, so
-  keep-alive tab cache, scroll, and unsaved composer drafts are retained. (This
-  replaces the earlier `window.location.reload()` direction.)
+- **Retry now** → `retry()` (`forceReconnect()`, guarded — see D6): cancels the
+  pending backoff/dwell wait and fires one immediate reconnect (no-op if already
+  connecting). **State-preserving** — does not reload, so keep-alive tab cache,
+  scroll, and unsaved composer drafts are retained. (This replaces the earlier
+  `window.location.reload()` direction.)
 - **Dismiss (×)** sets `dismissedThisOutage = true`, hiding it for the current
   outage only. The flag resets on any `healthy → unhealthy` transition. If the
   user dismisses and the stream stays continuously down (no intervening
@@ -269,7 +313,10 @@ extend it. Pin jitter via the D2 delay seam for deterministic timing.
 - Backoff (D2): nth retry waits the seam-pinned `min(MAX, BASE·2^n)`; jitter range
   bound test; **`attempt` resets only after the 10s dwell** — an accept-then-drop
   cycle (handshake then immediate drop) keeps `attempt` growing.
-- Re-entrancy (D2): watchdog + a buffered `onerror` within the backoff gap →
+- Dwell cancellation (D2/D8): accept → drop at <10s → reconnect → new accept; when
+  the *original* 10s elapses, `attempt` is **not** reset to 0 (the stale dwell was
+  cleared at reconnect entry).
+- Re-entrancy (D2/D8): watchdog + a buffered `onerror` within the backoff gap →
   exactly **one** new EventSource.
 - Ping (D3): explicit 5s abort routes to a scheduled reconnect; network-error
   `.catch` schedules a reconnect (no longer a silent no-op).
@@ -279,7 +326,9 @@ extend it. Pin jitter via the D2 delay seam for deterministic timing.
 - Health (D5): flips `false` after 30s with no liveness signal (armed at connect
   start); **`heartbeat` keeps it healthy**; flips `true` on the next signal;
   `onHealthChange` fires on each edge; `close()`/tombstone cancel pending timers.
-- `forceReconnect()` (D6): resets attempt, cancels pending backoff, reconnects.
+- `forceReconnect()` (D6): cancels pending backoff/dwell and reconnects once;
+  **does not reset `attempt`**; N rapid calls against a failing connect → at most
+  **one** EventSource in flight (in-flight no-op).
 
 **PR2 (Section 3, B1):**
 - Snackbar renders only when unhealthy; hides on recovery; `useStreamHealth`
