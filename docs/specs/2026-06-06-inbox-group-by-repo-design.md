@@ -83,6 +83,8 @@ interface Props {
 
 Two frontend rendering choices drive the logic. `InboxSection.tsx` replaces its flat `section.items.map(InboxRow)` with:
 
+> **Single-call-site gateability (for #219).** Grouping is shipped **unconditionally default-on** in this slice. It is deliberately kept to one call site so the follow-up Settings toggle ([#219](https://github.com/prpande/PRism/issues/219)) wraps exactly this in `if (groupingEnabled) … else <flat rows>` — no inert preference field is added now (the gate + pref + UI are one coherent unit built in #219, where `ConfigFieldType.Bool` already suffices).
+
 1. `const groups = groupByRepo(section.items);`
 2. **Single-repo flatten (Choice 1):** if `groups.length <= 1`, render `InboxRow`s directly (today's flat behavior, rows show the repo) — no nested accordion for a single repo (avoids a pointless one-child accordion).
 3. Otherwise render `groups.map(g => <RepoGroupAccordion ... defaultOpen={repoDefaultOpen} />)`.
@@ -171,3 +173,4 @@ Visual (B1 gate): Playwright screenshots of the inbox with multiple repos per se
 - **Perf follow-up (optional)** — recently-closed runs 2 search calls every tick and the enrichment cache is unbounded in-memory; neither blocks this slice (closed PRs are enrichment cache-hits steady-state). Can be filed separately if desired.
 - **Settings control + `ConfigFieldType.Int`** (`area:settings`) — this slice lands only the config-record seam. A user-facing window control additionally needs an `Int` field type added to `ConfigStore.PatchAsync`'s `_allowedFields` (currently String/Bool only — the prior deferral's unmet trigger) plus the UI. File as the prerequisite follow-up before any Settings binding.
 - **Backend `truncated` signal** — if a real "older history exists" indicator is wanted on recently-closed, surface a boolean from the backend (the FE can't infer it from a pre-clamped list); naturally pairs with Option B.
+- **[#219](https://github.com/prpande/PRism/issues/219) — Settings toggle to turn grouping off** (flat-list fallback). This slice ships grouping default-on and gateable at one call site; #219 adds the `inbox.groupByRepo` Bool preference + the gate + the Settings control as one unit.
