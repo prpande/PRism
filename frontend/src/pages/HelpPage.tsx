@@ -35,8 +35,8 @@ export function HelpPage() {
           The main surfaces
         </h2>
         <p>
-          The <strong>Inbox</strong> lists the PRs awaiting you. Opening one shows the PR detail with
-          an <strong>Overview</strong> and a <strong>Files</strong> tab. The gear opens{' '}
+          The <strong>Inbox</strong> lists the PRs awaiting you. Opening one shows the PR detail
+          with an <strong>Overview</strong> and a <strong>Files</strong> tab. The gear opens{' '}
           <strong>Settings</strong> (appearance, inbox, GitHub connection).
         </p>
       </section>

@@ -21,7 +21,6 @@ describe('HelpPage', () => {
   it('has scannable h2 sections with stable ids', () => {
     renderHelp();
     for (const id of ['what-is-prism', 'core-workflow', 'surfaces', 'connect-token', 'shortcuts']) {
-      // eslint-disable-next-line testing-library/no-node-access
       expect(document.getElementById(id)).not.toBeNull();
     }
   });

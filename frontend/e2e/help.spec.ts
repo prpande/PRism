@@ -91,7 +91,12 @@ test.describe('Help page (#210)', () => {
       route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ sections: [], enrichments: {}, lastRefreshedAt: new Date().toISOString(), tokenScopeFooterEnabled: false }),
+        body: JSON.stringify({
+          sections: [],
+          enrichments: {},
+          lastRefreshedAt: new Date().toISOString(),
+          tokenScopeFooterEnabled: false,
+        }),
       }),
     );
 
