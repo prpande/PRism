@@ -40,7 +40,7 @@ export function InboxSection({
 
   return (
     <section className={styles.section}>
-      <button className={styles.header} onClick={() => setOpen(!open)} aria-expanded={open}>
+      <button className={styles.header} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <InboxCaret open={open} />
         <span className={styles.label}>{section.label}</span>
         <span className={styles.count}>{section.items.length}</span>
@@ -50,15 +50,18 @@ export function InboxSection({
           {section.items.length === 0 ? (
             <div className={styles.empty}>{EmptyCopy[section.id] ?? 'Nothing here.'}</div>
           ) : groups.length <= 1 ? (
-            section.items.map((pr) => (
-              <InboxRow
-                key={prId(pr)}
-                pr={pr}
-                enrichment={enrichments[prId(pr)]}
-                showCategoryChip={showCategoryChip}
-                maxDiff={maxDiff}
-              />
-            ))
+            section.items.map((pr) => {
+              const id = prId(pr);
+              return (
+                <InboxRow
+                  key={id}
+                  pr={pr}
+                  enrichment={enrichments[id]}
+                  showCategoryChip={showCategoryChip}
+                  maxDiff={maxDiff}
+                />
+              );
+            })
           ) : (
             groups.map((g) => (
               <RepoGroupAccordion

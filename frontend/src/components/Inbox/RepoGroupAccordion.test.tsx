@@ -50,6 +50,24 @@ describe('RepoGroupAccordion', () => {
     expect(screen.getByRole('button', { name: /acme\/api, 2 pull requests/i })).toBeInTheDocument();
   });
 
+  it('uses the singular "1 pull request" (no trailing s) for a single-PR group', () => {
+    render(
+      <MemoryRouter>
+        <OpenTabsProvider>
+          <RepoGroupAccordion
+            group={{ repo: 'acme/api', items: [pr(1)] }}
+            enrichments={{}}
+            showCategoryChip={false}
+            maxDiff={100}
+            defaultOpen={false}
+          />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('button', { name: 'acme/api, 1 pull request' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /1 pull requests/i })).not.toBeInTheDocument();
+  });
+
   it('renders rows only when open', async () => {
     renderAcc(false);
     expect(screen.queryByText('PR 1')).not.toBeInTheDocument();

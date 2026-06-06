@@ -109,7 +109,7 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
     private async Task<List<RawPrInboxItem>> SearchAsync(string q, string? token, CancellationToken ct, string? sort = null)
     {
         var url = $"search/issues?q={Uri.EscapeDataString(q)}&per_page=50"
-            + (sort is null ? "" : $"&sort={sort}&order=desc");
+            + (sort is null ? "" : $"&sort={Uri.EscapeDataString(sort)}&order=desc");
         using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         if (!string.IsNullOrEmpty(token))

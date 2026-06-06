@@ -34,9 +34,12 @@ public sealed class InboxRefreshOrchestratorTests
         var slash = repo.IndexOf('/', StringComparison.Ordinal);
         var owner = repo[..slash];
         var name = repo[(slash + 1)..];
+        // Closed-but-not-merged fixture: only ClosedAt is set so the helper
+        // matches its name and doesn't conflate merged vs closed. The recency
+        // sort uses MergedAt ?? ClosedAt ?? UpdatedAt, so ClosedAt drives order.
         return new(Ref(n, owner, name), $"PR #{n}", "author", repo,
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0, 0, 0, "", 1,
-            MergedAt: closed, ClosedAt: closed);
+            MergedAt: null, ClosedAt: closed);
     }
 
     // A bus that captures every published event for assertion

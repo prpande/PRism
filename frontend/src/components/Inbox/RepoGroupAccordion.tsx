@@ -20,13 +20,16 @@ export function RepoGroupAccordion({
   maxDiff,
   defaultOpen,
 }: Props) {
+  // defaultOpen seeds the initial state only — it derives from a static
+  // !isRecentlyClosed flag that can't change at runtime, so the snapshot
+  // semantics of useState (later parent changes ignored) are intentional.
   const [open, setOpen] = useState(defaultOpen);
   const count = group.items.length;
   return (
     <div className={styles.group}>
       <button
         className={styles.header}
-        onClick={() => setOpen(!open)}
+        onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-label={`${group.repo}, ${count} pull request${count === 1 ? '' : 's'}`}
       >
@@ -50,16 +53,19 @@ export function RepoGroupAccordion({
       </button>
       {open && (
         <div className={styles.body}>
-          {group.items.map((pr) => (
-            <InboxRow
-              key={prId(pr)}
-              pr={pr}
-              enrichment={enrichments[prId(pr)]}
-              showCategoryChip={showCategoryChip}
-              maxDiff={maxDiff}
-              showRepo={false}
-            />
-          ))}
+          {group.items.map((pr) => {
+            const id = prId(pr);
+            return (
+              <InboxRow
+                key={id}
+                pr={pr}
+                enrichment={enrichments[id]}
+                showCategoryChip={showCategoryChip}
+                maxDiff={maxDiff}
+                showRepo={false}
+              />
+            );
+          })}
         </div>
       )}
     </div>
