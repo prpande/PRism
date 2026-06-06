@@ -85,4 +85,22 @@ public sealed class SystemCliProcessRunnerTests
         result.ExitCode.Should().Be(0);
         result.Stdout.Should().Contain("round-trip-token");
     }
+
+    [Fact]
+    public async Task Caller_cancellation_throws_OperationCanceledException()
+    {
+        var runner = new SystemCliProcessRunner();
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var spec = new ProcessSpec(
+            FileName: OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
+            Arguments: OperatingSystem.IsWindows() ? new[] { "/c", "echo hi" } : new[] { "-c", "echo hi" },
+            Environment: new Dictionary<string, string> { ["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? "" },
+            WorkingDirectory: Path.GetTempPath(),
+            StdinText: null,
+            Timeout: TimeSpan.FromSeconds(10));
+
+        var act = async () => await runner.RunAsync(spec, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
 }

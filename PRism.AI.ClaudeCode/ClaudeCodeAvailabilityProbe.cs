@@ -24,10 +24,7 @@ public sealed class ClaudeCodeAvailabilityProbe(
         var spec = new ProcessSpec(
             FileName: options.ClaudeExecutable,
             Arguments: ["--version"],
-            Environment: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["PATH"] = Environment.GetEnvironmentVariable("PATH") ?? "",
-            },
+            Environment: ClaudeCliEnvironment.BuildAllowlisted(),
             WorkingDirectory: options.WorkingDirectory,
             StdinText: null,
             Timeout: TimeSpan.FromSeconds(10));

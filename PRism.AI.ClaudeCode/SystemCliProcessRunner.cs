@@ -74,6 +74,13 @@ public sealed class SystemCliProcessRunner : ICliProcessRunner
                 try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* already exited */ }
                 return new ProcessResult(-1, stdout.ToString(), stderr.ToString(), TimedOut: true);
             }
+            catch (OperationCanceledException)
+            {
+                // Caller cancelled (ct, not the timeout). Kill the child so an abandoned `claude`
+                // call doesn't keep running and consuming credit until a broken pipe, then propagate.
+                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { /* already exited */ }
+                throw;
+            }
 
             // Ensure the async stdout/stderr readers have flushed their final lines before we read the
             // builders. The synchronous WaitForExit() returns immediately (the process already exited)

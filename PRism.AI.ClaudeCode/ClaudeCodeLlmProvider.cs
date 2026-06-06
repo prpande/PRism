@@ -25,14 +25,6 @@ namespace PRism.AI.ClaudeCode;
 public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodeProviderOptions options)
     : ILlmProvider
 {
-    // Only what the CLI needs to find itself + the user profile that holds the /login credential.
-    // Omits ANTHROPIC_* and proxy vars (HTTP(S)_PROXY/ALL_PROXY/NO_PROXY are simply not on the list)
-    // and CLAUDE_CONFIG_DIR, so an inherited value can neither override the subscription nor redirect
-    // egress/credentials. (The Node CLI may additionally need APPDATA/LOCALAPPDATA — to be verified
-    // empirically in P1 against the real binary; add them then if `claude --version` fails in-child.)
-    private static readonly string[] EnvAllowlist =
-        ["PATH", "HOME", "USERPROFILE", "SystemRoot", "TEMP", "TMP", "LANG", "LC_ALL"];
-
     public async Task<LlmResult> CompleteAsync(LlmRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -55,7 +47,7 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
         var spec = new ProcessSpec(
             FileName: options.ClaudeExecutable,
             Arguments: args,
-            Environment: BuildAllowlistedEnv(),
+            Environment: ClaudeCliEnvironment.BuildAllowlisted(),
             WorkingDirectory: options.WorkingDirectory,
             StdinText: request.UserContent,
             Timeout: options.Timeout);
@@ -67,8 +59,11 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
         }
         catch (Win32Exception ex)
         {
-            // Process.Start throws this when the executable is absent / not on PATH.
-            throw new LlmProviderException("claude executable not found.", ex.Message, -1);
+            // Process.Start failed — executable not found / not on PATH (or an invalid working dir).
+            // Empty stderr (no process ran); the native cause is preserved as InnerException.
+            throw new LlmProviderException(
+                "Failed to start the claude process (executable not found or not on PATH).",
+                stderr: string.Empty, exitCode: -1, innerException: ex);
         }
 
         if (result.TimedOut)
@@ -88,16 +83,5 @@ public sealed class ClaudeCodeLlmProvider(ICliProcessRunner runner, ClaudeCodePr
             OutputTokens: usage?.OutputTokens ?? 0,
             CacheReadInputTokens: usage?.CacheReadInputTokens ?? 0,
             EstimatedCostUsd: envelope.TotalCostUsd);
-    }
-
-    private static Dictionary<string, string> BuildAllowlistedEnv()
-    {
-        var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var key in EnvAllowlist)
-        {
-            var value = Environment.GetEnvironmentVariable(key);
-            if (value is not null) env[key] = value;
-        }
-        return env;
     }
 }

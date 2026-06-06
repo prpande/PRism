@@ -17,7 +17,8 @@ public sealed partial class LlmProviderException : Exception
     /// <summary>Process exit code (-1 for timeout / spawn failure).</summary>
     public int ExitCode { get; }
 
-    public LlmProviderException(string message, string stderr, int exitCode) : base(message)
+    public LlmProviderException(string message, string stderr, int exitCode, Exception? innerException = null)
+        : base(message, innerException)
     {
         Stderr = Redact(stderr);
         ExitCode = exitCode;
