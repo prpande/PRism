@@ -6,13 +6,11 @@ const ACCENT_HUES: Record<Accent, { h: number; c: number }> = {
   teal: { h: 195, c: 0.075 },
 };
 
-// HeaderControls and the Settings page each render a theme/accent picker, and
-// each calls usePreferences() (independent useState instance). When one writes,
-// the other's local state doesn't update until window-focus triggers refetch.
-// So whichever picker the user touches must apply the chosen theme/accent to
-// documentElement directly — otherwise the chosen value persists server-side
-// but the visible UI doesn't change until the next focus. Centralizing the
-// effect here keeps both call sites in sync.
+// theme/accent state is shared via PreferencesContext (#143): the headless
+// AppearanceSync applies it to <html> on every change, and the Settings picker
+// applies it directly on click for instant feedback. Centralizing the actual
+// DOM write here keeps both apply sites (boot-time sync + interactive picker)
+// in agreement on exactly how a theme/accent maps to documentElement.
 export function applyThemeToDocument(theme: Theme, accent: Accent): void {
   if (typeof document === 'undefined') return;
   // matchMedia exists in every modern browser, but defensively guard for
@@ -30,7 +28,7 @@ export function applyThemeToDocument(theme: Theme, accent: Accent): void {
   document.documentElement.style.setProperty('--accent-c', String(hue.c));
 }
 
-// AppearanceSection's density picker and HeaderControls' mount-effect each
+// AppearancePane's density picker and AppearanceSync's effect each
 // call this so the visible `data-density` attribute on <html> updates without
 // waiting for a focus refetch. Mirrors applyThemeToDocument's
 // independent-effect pattern: each ui.* key has a key-scoped DOM applier so

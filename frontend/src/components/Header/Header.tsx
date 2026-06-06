@@ -1,6 +1,7 @@
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Logo } from './Logo';
 import { WindowControls } from './WindowControls';
+import { GearIcon } from '../PrDetail/FilesTab/diffIcons';
 import styles from './Header.module.css';
 
 interface HeaderProps {
@@ -28,7 +29,8 @@ interface HeaderProps {
 const SEARCH_PALETTE_ENABLED = false;
 
 export function Header({ isAuthed }: HeaderProps) {
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
   const [searchParams] = useSearchParams();
   const isReplaceMode = searchParams.has('replace');
 
@@ -57,13 +59,6 @@ export function Header({ isAuthed }: HeaderProps) {
           >
             Inbox
           </Link>
-          <Link
-            to="/settings"
-            className={classFor(settingsActive)}
-            aria-current={settingsActive ? 'page' : undefined}
-          >
-            Settings
-          </Link>
         </nav>
       )}
       {/* Unconditional — owns the middle so the Logo stays left-flush in the
@@ -77,6 +72,17 @@ export function Header({ isAuthed }: HeaderProps) {
           disabled
           aria-label="Global search (placeholder)"
         />
+      )}
+      {isAuthed && (
+        <Link
+          to="/settings/appearance"
+          state={{ backgroundLocation: location }}
+          className={settingsActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+          aria-label="Settings"
+          aria-current={settingsActive ? 'page' : undefined}
+        >
+          <GearIcon />
+        </Link>
       )}
       {/* Desktop shell only — renders nothing in the browser. The theme/accent/AI
           quick toggles that used to live here were removed (they're in Settings);
