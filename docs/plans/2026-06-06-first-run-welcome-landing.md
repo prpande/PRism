@@ -376,6 +376,63 @@ with:
     expect(await screen.findByPlaceholderText(/paste a pr url/i)).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /get started/i })).toBeNull();
   });
+
+  it('first-run /settings redirects to /welcome (all four guard sites change together)', async () => {
+    // #212: the spec warns "all four redirect sites change together — missing one
+    // leaks a first-run user back to /setup". This guards the /settings site.
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { level: 1, name: 'PRism' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /get started/i })).toBeInTheDocument();
+    expect(screen.queryByText(/connect to github/i)).toBeNull();
+  });
+
+  it('first-run /pr/* deep link redirects to /welcome (PR ref dropped)', async () => {
+    // #212: a never-connected user hitting a PR deep link lands on /welcome
+    // (consistent with the catch-all); the PR ref is intentionally dropped.
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/pr/acme/api/123']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { level: 1, name: 'PRism' })).toBeInTheDocument();
+    expect(screen.queryByText(/connect to github/i)).toBeNull();
+  });
+
+  it('re-auth user at /welcome ends on /setup, never the welcome hero or Inbox', async () => {
+    // #212: pins the /welcome ternary's `hasToken && !isAuthed` arm. A token-bearing
+    // session whose token is rejected must never rest on /welcome or the Inbox — it
+    // routes to /setup (unauthedTarget resolves to /setup because hasToken is true).
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/welcome']}>
+        <App />
+      </MemoryRouter>,
+    );
+    // Authed first → Inbox (the /welcome authed arm redirects to /).
+    expect(await screen.findByPlaceholderText(/paste a pr url/i)).toBeInTheDocument();
+    // Token rejected mid-session → must land on /setup, not /welcome, not Inbox.
+    window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+    expect(await screen.findByText(/connect to github/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /get started/i })).toBeNull();
+  });
 ```
 
 Then, in the existing test `hides the header nav when a token exists but auth is rejected, and restores it on recovery`, add one assertion right after the `findByText(/connect to github/i)` line (the re-auth user must land on `/setup`, **never** `/welcome`):
@@ -388,7 +445,7 @@ Then, in the existing test `hides the header nav when a token exists but auth is
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run __tests__/app.test.tsx`
-Expected: FAIL — the new `routes to /welcome on first run` and `authed → /welcome → /` cases fail because `/welcome` is not yet a route (the catch-all redirects it).
+Expected: FAIL — the new first-run cases (`routes to /welcome on first run`, `first-run /settings → /welcome`, `first-run /pr/* → /welcome`) fail because today every unauthed guard routes to `/setup` (so they render "Connect to GitHub", not the "PRism" wordmark), and `/welcome` is not yet a route.
 
 - [ ] **Step 3: Implement the routing change in `App.tsx`**
 
@@ -472,7 +529,7 @@ with:
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run __tests__/app.test.tsx`
-Expected: PASS (all cases, including the migrated + 3 new ones).
+Expected: PASS (all cases — the migrated first-run case + the 6 new routing cases: `/welcome` first run, `/setup` reachable unauthed, authed `/welcome`→`/`, first-run `/settings`→`/welcome`, first-run `/pr/*`→`/welcome`, re-auth-at-`/welcome`→`/setup` — plus the augmented re-auth nav test).
 
 - [ ] **Step 5: Commit**
 
@@ -490,6 +547,7 @@ git -C D:/src/PRism-212-welcome commit -m "feat(#212): route first-run users to 
 - Modify: `frontend/src/components/Setup/SetupForm.module.css`
 - Modify: `frontend/src/pages/SetupPage.tsx`
 - Test: `frontend/__tests__/setup-form.test.tsx`
+- Test: `frontend/__tests__/setup-page.test.tsx`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -830,7 +888,7 @@ Per `feedback_sync_main_before_dod_push` and `feedback_use_pr_autopilot`: fetch 
 
 ## Self-Review (completed during plan authoring)
 
-**Spec coverage:** Every spec section maps to a task — Routing §1 → Task 2; WelcomePage §2 → Task 1; `/setup` Back §3 → Task 3; Accessibility → Tasks 1 (alt/emoji/stub assertions) + 4 (axe); Testing → Tasks 1-4; B1 visual → Task 5; deferrals (#222/#210/#211/#213) are out of scope by design and carried as stubs/placeholder copy.
+**Spec coverage:** Every spec section maps to a task — Routing §1 → Task 2 (the spec's "all four redirect sites change together" warning is guarded by dedicated first-run `/`, `/settings`, and `/pr/*` → `/welcome` cases, plus the re-auth-at-`/welcome`→`/setup` arm); WelcomePage §2 → Task 1; `/setup` Back §3 → Task 3; Accessibility → Tasks 1 (alt/emoji/stub assertions) + 4 (axe); Testing → Tasks 1-4; B1 visual → Task 5; deferrals (#222/#210/#211/#213) are out of scope by design and carried as stubs/placeholder copy.
 
 **Placeholder scan:** No "TBD/TODO/handle edge cases" — every code step shows the actual code. The only intentional "placeholder" is the spec-mandated draft *copy* (owned by #222), which is real, shippable text, not a plan gap.
 
