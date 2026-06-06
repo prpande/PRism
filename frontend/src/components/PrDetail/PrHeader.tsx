@@ -26,6 +26,7 @@ import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDrafts
 import styles from './PrHeader.module.css';
 import { AskAiButton } from './AskAiButton';
 import { Avatar } from '../Avatar/Avatar';
+import { Skeleton } from '../Skeleton';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 import { OpenInGitHubButton } from './OpenInGitHubButton';
@@ -122,6 +123,8 @@ interface PrHeaderProps {
   closedAt?: string | null;
   // #131 — authoritative PR web URL (PrDetailPr.htmlUrl). Absent → no button.
   htmlUrl?: string | null;
+  /** True while the PR detail is cold-loading (!data && isLoading). Swaps title/author/chip slots for skeletons. */
+  loading?: boolean;
 }
 
 export function PrHeader({
@@ -148,6 +151,7 @@ export function PrHeader({
   mergedAt,
   closedAt,
   htmlUrl,
+  loading = false,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
@@ -388,7 +392,11 @@ export function PrHeader({
             <span>#{reference.number}</span>
           </div>
           <h1 className={styles.prTitle} data-testid="pr-title">
-            {title}
+            {loading ? (
+              <Skeleton width="60%" height={22} data-testid="pr-header-title-skeleton" />
+            ) : (
+              title
+            )}
           </h1>
           {prState === 'merged' && mergedAt && (
             <span className={styles.statusMerged}>Merged {formatAge(mergedAt)}</span>
@@ -398,9 +406,24 @@ export function PrHeader({
           )}
           <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
             <span className={`pr-subtitle-author ${styles.subtitleAuthor}`}>
-              <Avatar src={avatarUrl} login={author} size="sm" />
-              {author}
+              {loading ? (
+                <>
+                  <Skeleton circle width={20} />
+                  <Skeleton width={110} height={12} />
+                </>
+              ) : (
+                <>
+                  <Avatar src={avatarUrl} login={author} size="sm" />
+                  {author}
+                </>
+              )}
             </span>
+            {loading && (
+              <>
+                <Skeleton width={90} height={18} radius={9} />
+                <Skeleton width={60} height={18} radius={9} />
+              </>
+            )}
             {branchInfo && (
               <span className="pr-subtitle-branch">
                 {branchInfo.headBranch} → {branchInfo.baseBranch}

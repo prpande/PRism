@@ -261,6 +261,7 @@ export function PrDetailView({
     <div className={pageClassName} data-prref={refKey} hidden={!active}>
       <PrHeader
         reference={prRef}
+        loading={!data && isLoading}
         title={data?.pr.title ?? ''}
         author={data?.pr.author ?? ''}
         avatarUrl={data?.pr.avatarUrl}
