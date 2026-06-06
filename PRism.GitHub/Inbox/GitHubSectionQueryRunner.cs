@@ -90,7 +90,7 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
 
         var lists = await Task.WhenAll(queries.Select(async q =>
         {
-            try { return (IReadOnlyList<RawPrInboxItem>)await SearchAsync(q.Item2, token, ct).ConfigureAwait(false); }
+            try { return (IReadOnlyList<RawPrInboxItem>)await SearchAsync(q.Item2, token, ct, sort: "updated").ConfigureAwait(false); }
 #pragma warning disable CA1031 // generic catch — per-sub-query failure isolates, consistent with QueryAllAsync. Cancellation and rate-limit propagate.
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not RateLimitExceededException)
 #pragma warning restore CA1031
@@ -106,9 +106,10 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
             .ToList();
     }
 
-    private async Task<List<RawPrInboxItem>> SearchAsync(string q, string? token, CancellationToken ct)
+    private async Task<List<RawPrInboxItem>> SearchAsync(string q, string? token, CancellationToken ct, string? sort = null)
     {
-        var url = $"search/issues?q={Uri.EscapeDataString(q)}&per_page=50";
+        var url = $"search/issues?q={Uri.EscapeDataString(q)}&per_page=50"
+            + (sort is null ? "" : $"&sort={Uri.EscapeDataString(sort)}&order=desc");
         using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         if (!string.IsNullOrEmpty(token))

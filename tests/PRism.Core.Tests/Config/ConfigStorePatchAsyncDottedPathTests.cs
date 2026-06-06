@@ -1,5 +1,7 @@
+using System.Text.Json;
 using FluentAssertions;
 using PRism.Core.Config;
+using PRism.Core.Json;
 using PRism.Core.Tests.TestHelpers;
 using Xunit;
 
@@ -273,5 +275,25 @@ public class ConfigStorePatchAsyncDottedPathTests
         store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
         store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
+    }
+
+    // #133 inbox group-by-repo: RecentlyClosedWindowDays is a new trailing-defaulted
+    // parameter on InboxConfig (default 14). An existing config.json without this field
+    // must deserialize with the default so existing users are unaffected.
+    [Fact]
+    public void LegacyConfig_WithoutRecentlyClosedWindowDays_DefaultsTo14()
+    {
+        const string json = """
+        {
+          "inbox": {
+            "deduplicate": true,
+            "sections": { "review-requested": true },
+            "show-hidden-scope-footer": true
+          }
+        }
+        """;
+        var options = JsonSerializerOptionsFactory.Storage;
+        var cfg = JsonSerializer.Deserialize<AppConfig>(json, options);
+        cfg!.Inbox.RecentlyClosedWindowDays.Should().Be(14);
     }
 }

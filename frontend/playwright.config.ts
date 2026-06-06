@@ -16,8 +16,18 @@ const e2eDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'PRism-e2e-'));
 // parallel without colliding on 5180. Default 5180 keeps single-agent + CI flows
 // unchanged. Pick a band outside the app's auto-port range (5180–5199) and the
 // reserved 5181 real-flow port — see .ai/docs/parallel-agent-testing.md.
-const e2ePort = Number(process.env.PRISM_E2E_PORT) || 5180;
-const isDefaultPort = e2ePort === 5180;
+//
+// Require an integer in the valid TCP range; anything else (negative, fractional,
+// non-numeric, out-of-range) falls back to 5180 rather than templating an invalid
+// URL like http://localhost:-1 or http://localhost:5180.5. A plain
+// `Number(x) || 5180` would let truthy-but-invalid values like -1 through.
+const DEFAULT_E2E_PORT = 5180;
+function parseE2ePort(raw: string | undefined): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : DEFAULT_E2E_PORT;
+}
+const e2ePort = parseE2ePort(process.env.PRISM_E2E_PORT);
+const isDefaultPort = e2ePort === DEFAULT_E2E_PORT;
 
 // Single uniform test profile: the `prod` project (single-binary path —
 // Kestrel serves /api/* AND the React bundle from wwwroot on :5180) runs
