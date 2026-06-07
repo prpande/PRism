@@ -72,8 +72,15 @@
   color: var(--text-1);
   line-height: 1.45;
 }
-.benefitEmoji {
+/* Monochrome benefit icon (welcomeIcons.tsx). Muted secondary tone so the icons
+   read as quiet, refined accents next to the text rather than competing with the
+   accent CTA. line-height:0 keeps the inline SVG from adding row height; the small
+   top offset optically aligns the 18px glyph with the first line of text. */
+.benefitIcon {
   flex: none;
+  color: var(--text-2);
+  line-height: 0;
+  margin-top: 1px;
 }
 .cta {
   width: 100%;
