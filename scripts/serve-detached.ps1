@@ -125,6 +125,42 @@ function Get-PortOwnerPid {
     return $owner
 }
 
+function Stop-ProcessIfMatches {
+    # PID-recycle guard (spec section 4.5; history: #107 LockfileManager recycled-PID
+    # crash). A 32-bit PID space recycles fast, so a recorded PID may now belong
+    # to an unrelated process. Only tree-kill if the PID is alive AND its process
+    # name still matches what we expect. Returns $true if a kill was issued.
+    param(
+        [int]$ProcessId,
+        [string[]]$ExpectedNames,   # e.g. @('pwsh') for the wrapper, @('dotnet','PRism.Web') for the server
+        [switch]$Tree               # /T to kill the whole tree (wrapper -> dotnet run -> app)
+    )
+    if (-not $ProcessId) { return $false }
+    $p = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $p) { return $false }                       # already gone
+    if ($ExpectedNames -notcontains $p.Name) { return $false }  # recycled to a different process
+    if ($Tree) { taskkill /PID $ProcessId /T /F | Out-Null }
+    else       { taskkill /PID $ProcessId /F | Out-Null }
+    return $true
+}
+
+function Invoke-ForcePortReclaim {
+    # -Force occupant kill (spec section 4.5/section 5). The occupant is FOREIGN, so
+    # there is no name we recorded to compare. Defend against the recycle TOCTOU by
+    # re-reading the owner immediately before killing: surface the name, then kill
+    # THAT pid. If the port freed on its own -> nothing to do. If a NEW occupant
+    # appeared -> re-probe (caller loops), don't fire at a stale pid.
+    param([int]$Port)
+    $owner = Get-PortOwnerPid -Port $Port
+    if (-not $owner) { return $true }   # already free
+    $p = Get-Process -Id $owner -ErrorAction SilentlyContinue
+    $name = if ($p) { $p.Name } else { '<exited>' }
+    Write-Host "  -Force: killing port $Port occupant PID $owner ($name)" -ForegroundColor Yellow
+    if (-not $p) { return $true }       # exited between read and kill -> port should be free
+    taskkill /PID $owner /F | Out-Null
+    return $true
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
