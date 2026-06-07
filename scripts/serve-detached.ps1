@@ -359,6 +359,34 @@ function Invoke-Launch {
     return [pscustomobject]@{ Pid = $serverPid; Url = $url; Log = $paths.Log; DataDir = $canonical; Version = $version }
 }
 
+function Invoke-Stop {
+    # Teardown (spec section 4.5). Read the per-store pidfile, tree-kill the wrapper
+    # root behind the recycle guard, fall back to ServerPid if the wrapper is already
+    # gone but the app still listens (re-parented case), remove the pidfile.
+    # Idempotent: a missing/stale pidfile reports "not running" and exits 0.
+    param([string]$RawDataDir)
+    $canonical = Get-CanonicalDataDir -DataDir $RawDataDir
+    $paths = Get-ServeDetachedPaths -CanonicalDataDir $canonical
+    $pf = Read-Pidfile -Path $paths.Pidfile
+    if ($null -eq $pf) {
+        Write-Host "No pidfile at '$($paths.Pidfile)' -- nothing to stop." -ForegroundColor DarkGray
+        return
+    }
+
+    $killed = $false
+    if ($pf.wrapperPid) {
+        $killed = Stop-ProcessIfMatches -ProcessId ([int]$pf.wrapperPid) -ExpectedNames @('pwsh') -Tree
+    }
+    if (-not $killed -and $pf.serverPid) {
+        # Re-parented: wrapper gone, app still listening. Kill the server directly.
+        $killed = Stop-ProcessIfMatches -ProcessId ([int]$pf.serverPid) -ExpectedNames @('dotnet', 'PRism.Web') -Tree
+    }
+
+    Remove-Item -LiteralPath $paths.Pidfile -Force -ErrorAction SilentlyContinue
+    if ($killed) { Write-Host "Stopped PRism server for store '$canonical'." -ForegroundColor Green }
+    else         { Write-Host "Server for store '$canonical' was not running (stale pidfile cleaned up)." -ForegroundColor DarkGray }
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
