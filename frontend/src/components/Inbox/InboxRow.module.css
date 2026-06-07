@@ -232,3 +232,25 @@
 .row[data-grouped='true'] {
   padding-left: calc(var(--s-4) + var(--s-4));
 }
+
+/* Pane-relative responsive: the row responds to the named `inbox-sections`
+   container's width (set on .sections in InboxPage.module.css), NOT the viewport
+   — the right rail flips the sections-column width independent of viewport. The
+   name guards against a future ancestor container hijacking these breakpoints.
+   Alignment is a within-regime invariant — the metrics column shifts once at
+   the breakpoint (tail width changes), by design. Thresholds tuned in B1. */
+@container inbox-sections (max-width: 560px) {
+  /* Override --inbox-tail-w declared on .row itself; the grid template re-resolves. */
+  .row {
+    --inbox-tail-w: 136px;
+  }
+  .diffSlot {
+    display: none;
+  }
+}
+
+@container inbox-sections (max-width: 460px) {
+  .chip {
+    display: none;
+  }
+}
