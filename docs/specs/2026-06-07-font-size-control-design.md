@@ -124,22 +124,27 @@ All other elements keep the bare token and stay fixed.
 .markdown-body { font-size: calc(1em * var(--content-scale)); }
 ```
 
-The non-markdown data surfaces each get a one-line multiply on their existing hook
-(module CSS), using `calc(<their-current-token> * var(--content-scale))` so scale 1 is
-a no-op:
+The non-markdown data surfaces each get a one-line multiply, `calc(<token> *
+var(--content-scale))`, so scale 1 is a no-op. **The hook must be the element that
+actually carries the `font-size` today** — several of these pin on a container whose
+children inherit, so hook the container (children scale for free). Exact targets,
+verified against the module CSS:
 
-| Surface | Hook (module CSS) | Current pin → scaled |
-|---------|-------------------|----------------------|
-| Diff code (lines + gutter) | `DiffPane.module.css` `.diffTable` | `var(--text-sm)` → `calc(var(--text-sm) * var(--content-scale))` |
-| AI summary body | `AiSummaryCard.module.css` `.aiSummaryBody` | `var(--text-sm)` → scaled |
-| Stats tiles (value + label) | `StatsTiles.module.css` tile text | token → scaled |
-| AI hunk annotation | `AiHunkAnnotation.module.css` body text | token → scaled |
-| PR title (in-tab) | `PrDescription.module.css` title | token → scaled |
+| Surface | Element to hook (carries the pin) | Token → scaled | Notes |
+|---------|-----------------------------------|----------------|-------|
+| Diff code (lines + gutter) | `DiffPane.module.css` `.diffTable` | `var(--text-sm)` | `.diffContent`/`.diffGutter` inherit → code + line numbers scale together |
+| AI summary block | `AiSummaryCard.module.css` `.aiSummaryCard` | `var(--text-sm)` | hook the **card** (the body/category/chip carry no own font-size and inherit); scales the whole AI block |
+| Stats tile value | `StatsTiles.module.css` `.statsTileValue` | `var(--text-2xl)` | two separate pins → two edits |
+| Stats tile label | `StatsTiles.module.css` `.statsTileLabel` | `var(--text-xs)` | |
+| AI hunk annotation | `AiHunkAnnotation.module.css` `.aiHunk` (root) | `var(--text-xs)` | body `<div>` is classless and inherits from `.aiHunk`; hook the root |
+| In-tab PR title | `PrDescription.module.css` `.prDescriptionTitle` | `var(--text-md)` | **renders only when `aiPreview=false`** — see Per-surface contract |
+| Raw markdown file view | `MarkdownFileView.module.css` `.markdownRaw` | `var(--text-sm)` | the Rendered path uses `.markdown-body`; the Raw `<pre>` is a separate pin (raw source = file data, scales like code) |
+| Root-comment metadata (author/time) | `PrRootConversation.module.css` `.band` | `var(--text-xs)` | metadata is a **sibling** of `.body`, not under `.markdown-body`; hook it so it scales with its comment |
+| Inline-comment metadata (author/time) | `ExistingCommentWidget.module.css` `.commentMeta` | `var(--text-xs)` | sibling of `.commentBody`; same reason |
 
-`.diffTable` is the only one needing care: `.diffContent` cells and `.diffGutter`
-inherit its font-size, so one multiply scales code + line numbers together; the diff
-chrome (`.diffPaneHeader`, `.diffPanePath`, `.diffHunkHeader`) pins its own
-`var(--text-xs)` independently and stays fixed.
+Chrome (`.diffPaneHeader`, `.diffPanePath`, `.diffHunkHeader`, tab strip, toolbars,
+file-tree controls, `PrHeader`) pins its own tokens and is **not** in this list, so it
+stays fixed with zero extra work.
 
 **Steps (5, Default centered):** `xs 0.8× · s 0.9× · m 1.0× (Default) · l 1.2× · xl 1.4×`.
 The down-steps (0.1 apart) are gentler than the up-steps (0.2 apart) **intentionally**:
@@ -154,8 +159,8 @@ this to a uniform spread.
 no-op at scale 1 depends on **where** each consumer pins its font-size:
 
 - **Parent-pinned (correct as-is):** `PrRootConversation` (`.body` 13px),
-  `ExistingCommentWidget` (`.commentBody var(--text-sm)`), `MarkdownFileView`,
-  drafts/composer all set font-size on a **parent** of the markdown-body element.
+  `ExistingCommentWidget` (`.commentBody var(--text-sm)`), `MarkdownFileView` (rendered
+  path), drafts/composer set font-size on a **parent** of the markdown-body element.
   `1em` resolves against that parent base → scale 1 reproduces today's size and the
   multiply scales correctly. **The parent re-pin is load-bearing**: e.g.
   `.commentBody { font-size: var(--text-sm) }` resets the cascade (these comments sit
@@ -166,16 +171,31 @@ no-op at scale 1 depends on **where** each consumer pins its font-size:
   `className={styles.prDescriptionBody}`, and `.prDescriptionBody` pins
   `font-size: var(--text-sm)` on the **same element** as `.markdown-body`. Equal
   specificity (0,1,0); the CSS-module rule is injected after `tokens.css` (documented
-  in `AiSummaryCard.module.css:6-7`) so it **wins** and the description would not scale.
-  **Fix:** move `font-size: var(--text-sm)` off `.prDescriptionBody` onto PrDescription's
-  parent wrapper, so the element carries only `.markdown-body` and `1em` resolves
-  against the wrapper's `var(--text-sm)` (scale-1 no-op preserved, scaling restored).
-  This makes PrDescription match the parent-pinned pattern the other five already use.
+  in `AiSummaryCard.module.css:6-7`) so it **wins** and `.markdown-body`'s multiply is
+  overridden — the description would not scale.
+  **Fix (revised):** rather than relocating the pin to a parent (PrDescription's only
+  wrapper is a `<section class="overview-card pr-description">` with no module class and
+  a sibling title — awkward), make the **winning** rule itself scale:
+  `.prDescriptionBody { font-size: calc(var(--text-sm) * var(--content-scale)); }`.
+  It already wins on that element, so it carries the scale directly — no parent-move, no
+  new wrapper class, scale-1 no-op preserved (`var(--text-sm)`). **Apply this same
+  "scale the winning consumer class" recipe to any other same-element collision**, e.g.
+  verify `ComposerMarkdownPreview` (`.composerMarkdownPreview var(--text-sm)`, M-B): if
+  its class is composed onto the markdown-body element, scale that class; if it wraps a
+  separate `<MarkdownRenderer>`, it's parent-pinned and needs nothing.
 
-- **Inline `code` inside prose (must fix — I1):** `.prDescriptionBody code` and
-  `.body code` pin a literal `font-size: 12px`, so inline code would stay fixed while
-  surrounding prose scales. Change these to a **relative** `font-size: 0.92em` so inline
-  code tracks the scaled prose. (Corrects the earlier "no pinned px" assumption.)
+- **In-tab PR title (must hook — I-D):** `.prDescriptionTitle` pins `var(--text-md)` and
+  is a **sibling** of the body (not under `.markdown-body`), so it needs its own multiply:
+  `calc(var(--text-md) * var(--content-scale))`. It renders **only when
+  `aiPreview=false`** (`PrDescription.tsx:27`); when AI preview is on, the title shows
+  only in `PrHeader` (out of scope, fixed). The B1 title assertion must use an
+  `aiPreview=false` fixture.
+
+- **Inline `code` inside prose (must fix — I1):** `.prDescriptionBody code` (literal
+  `12px`), `.body code` (literal `12px`), and `.draftListItemPreview code`
+  (`var(--text-xs)`, M-A) all pin an absolute size, so inline code would stay fixed while
+  surrounding prose scales. Change all three to a **relative** `font-size: 0.92em` so
+  inline code tracks the scaled prose. (Corrects the earlier "no pinned px" assumption.)
 
 ### Persistence (mirrors `density`)
 
@@ -303,8 +323,11 @@ CSS: data-content-scale → --content-scale → content hooks (.markdown-body, .
 - **Playwright B1 visual proof (all three tabs):** at XS / Default / XL, assert each
   in-scope data surface's computed font-size actually changes, *per surface* (a single
   "content scaled" eyeball would hide a missed hook like C1):
-  - Overview: PR title + description (C1 site), AI summary, a stats tile, a root comment
-  - Files: diff code, an inline comment, AI hunk annotation
+  - Overview: PR title (use an `aiPreview=false` fixture — title only renders then) +
+    description (C1 site), AI summary block, a stats tile (value **and** label), a root
+    comment **including its author/timestamp metadata** (`.band`)
+  - Files: diff code, an inline comment **incl. its `.commentMeta`**, AI hunk annotation,
+    a markdown file in **both Rendered and Raw** views
   - Drafts: a draft body
   And assert chrome stays **fixed**: tab strip, Files toolbar, file-tree names (boundary
   default = fixed), diff-pane header/path, `@@` hunk markers, `PrHeader` title/metadata.
@@ -315,17 +338,17 @@ CSS: data-content-scale → --content-scale → content hooks (.markdown-body, .
 
 ## Risks / open verification
 
-1. **Overview description same-element collision (C1)** — `.prDescriptionBody` pins
-   font-size on the same element as `.markdown-body` and wins the equal-specificity
-   cascade. Fixed by moving the pin to the parent wrapper (see Per-surface contract).
-   The B1 proof asserts the description's computed size changes, so a silent regression
-   here can't ship.
+1. **Overview description same-element collision (C1)** — `.prDescriptionBody` wins the
+   equal-specificity cascade over `.markdown-body`, so the fix scales *that* class
+   directly (see Per-surface contract). The B1 proof asserts the description's computed
+   size changes, so a silent regression here can't ship.
 2. **Diff h-scroll at scale ≠ 1** — `useLockedPaneScroll` measures real `scrollWidth`,
    so it *should* adapt; flagged as an explicit B1 check rather than assumed.
-3. **Inline `code` is pinned to literal 12px** in `.prDescriptionBody code` / `.body code`
-   — converted to relative `0.92em` so it tracks scaled prose (see Per-surface contract).
-   Markdown headings carry no pinned px (confirmed: no `.markdown-body h1{font-size:…}`
-   in tokens.css), so they scale via the `1em` multiply already.
+3. **Inline `code` is pinned** in `.prDescriptionBody code` / `.body code` (literal 12px)
+   and `.draftListItemPreview code` (`var(--text-xs)`) — all converted to relative
+   `0.92em` so code tracks scaled prose (see Per-surface contract). Markdown headings
+   carry no pinned px (confirmed: no `.markdown-body h1{font-size:…}` in tokens.css), so
+   they scale via the `1em` multiply already.
 4. **Slider thumb ↔ glyph alignment** — native range UA end-padding means the thumb
    center doesn't reach the track's pixel edges; the five glyphs are a legend beneath
    the track, so alignment is approximate. B1 polish item — pad the glyph row to the
