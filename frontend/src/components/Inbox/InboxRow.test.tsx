@@ -107,6 +107,38 @@ describe('InboxRow meta', () => {
   });
 });
 
+describe('InboxRow CI dot', () => {
+  it('renders a solid failing dot and names it in the aria-label for open PRs', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'failing' });
+    expect(container.querySelector('[class*="dotFailing"]')).not.toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('CI failing');
+  });
+
+  it('renders a hollow-ring pending dot and names it in the aria-label for open PRs', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'pending' });
+    expect(container.querySelector('[class*="dotPending"]')).not.toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('CI pending');
+  });
+
+  it('shows no CI dot and no CI suffix when ci is none', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'none' });
+    expect(container.querySelector('[class*="dotFailing"]')).toBeNull();
+    expect(container.querySelector('[class*="dotPending"]')).toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).not.toContain('CI ');
+    // the status slot is still reserved (an invisible placeholder dot), so the
+    // column doesn't reflow when CI state changes
+    expect(container.querySelector('[class*="status"]')!.children).toHaveLength(1);
+  });
+
+  it('never shows a CI dot or CI suffix on a done (merged) PR even when ci=failing', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'failing', mergedAt: new Date().toISOString() });
+    expect(container.querySelector('[class*="dotFailing"]')).toBeNull();
+    expect(container.querySelector('[class*="dotPending"]')).toBeNull();
+    // AT parity: the hidden dot means no "CI failing" in the label either
+    expect(screen.getByRole('button').getAttribute('aria-label')).not.toContain('CI ');
+  });
+});
+
 describe('InboxRow showRepo', () => {
   function renderRow(showRepo?: boolean) {
     return render(

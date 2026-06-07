@@ -34,11 +34,18 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo =
 
   // The accent bar is a purely visual ::before (invisible to AT); carry the same
   // cue in the label so screen readers get it (replaces the removed "New" text).
+  const ciSuffix =
+    !isDone && pr.ci === 'failing'
+      ? ' · CI failing'
+      : !isDone && pr.ci === 'pending'
+        ? ' · CI pending'
+        : '';
+
   const ariaLabel = isDone
     ? `${pr.title} · ${pr.repo} · ${doneState}`
     : `${pr.title} · ${pr.repo} · iteration ${pr.iterationNumber}${
         hasUnseenActivity ? ' · unread' : ''
-      }`;
+      }${ciSuffix}`;
 
   return (
     <button
@@ -49,7 +56,9 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo =
     >
       <span className={styles.status}>
         {!isDone && pr.ci === 'failing' ? (
-          <span className={`${styles.dot} ${styles.dotDanger}`} title="CI failing" />
+          <span className={`${styles.dot} ${styles.dotFailing}`} title="CI failing" aria-hidden="true" />
+        ) : !isDone && pr.ci === 'pending' ? (
+          <span className={`${styles.dot} ${styles.dotPending}`} title="CI pending" aria-hidden="true" />
         ) : (
           <span className={styles.dot} style={{ opacity: 0 }} aria-hidden="true" />
         )}

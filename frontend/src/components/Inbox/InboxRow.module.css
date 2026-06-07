@@ -52,8 +52,16 @@
   border-radius: 50%;
 }
 
-.dotDanger {
+.dotFailing {
   background: var(--danger-fg);
+}
+
+/* Hollow ring — shape distinguishes pending from failing without relying on
+   hue, so CI state reads in greyscale / for colour-blind users / against any
+   user-chosen accent. box-sizing:border-box keeps the ring an 8px dot. */
+.dotPending {
+  background: transparent;
+  border: 1.5px solid var(--warning-fg);
 }
 
 /* Main column */
