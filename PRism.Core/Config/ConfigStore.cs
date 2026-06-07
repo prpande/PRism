@@ -16,6 +16,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // / `density` keys are the legacy S0+S1 wire shape (under `ui.*` in config.json but flat
     // on the wire); preserved for back-compat with the existing POST /api/preferences
     // single-field contract. `density` was added in PR9b alongside the same UiConfig sub-record.
+    // `contentScale` was added in #135 alongside UiConfig.ContentScale, following the same bare-`ui.*`-key pattern.
     // The dotted-path `inbox.sections.*` keys (S6 PR1) map onto InboxSectionsConfig in
     // AppConfig.cs — canonical section set documented in docs/spec/03-poc-features.md § 11.
     //

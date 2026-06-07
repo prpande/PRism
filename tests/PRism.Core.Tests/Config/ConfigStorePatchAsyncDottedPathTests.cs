@@ -266,6 +266,8 @@ public class ConfigStorePatchAsyncDottedPathTests
 
         store.Current.Ui.ContentScale.Should().Be("m");
         store.Current.Ui.Density.Should().Be("compact");
+        store.Current.Ui.Theme.Should().Be("dark");
+        store.Current.Ui.AiPreview.Should().BeTrue();
     }
 
     [Fact]
