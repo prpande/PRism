@@ -9,7 +9,12 @@ vi.mock('../../../../hooks/usePreferences', () => ({
 
 import { AiHunkAnnotation } from './AiHunkAnnotation';
 
-const annotation = { body: 'Consider extracting this', tone: 'suggestion' } as unknown as HunkAnnotation;
+const annotation: HunkAnnotation = {
+  path: 'src/index.ts',
+  hunkIndex: 0,
+  body: 'Consider extracting this',
+  tone: 'calm',
+};
 
 beforeEach(() => { mock.aiMode = 'preview'; });
 
