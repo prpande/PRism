@@ -6,7 +6,13 @@ import type { PreferencesResponse } from '../api/types';
 
 function prefs(contentScale: PreferencesResponse['ui']['contentScale']): PreferencesResponse {
   return {
-    ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable', contentScale },
+    ui: {
+      theme: 'system',
+      accent: 'indigo',
+      aiPreview: false,
+      density: 'comfortable',
+      contentScale,
+    },
     inbox: {
       sections: {
         'review-requested': true,
@@ -27,7 +33,12 @@ describe('AppearanceSync', () => {
   it('applies the saved contentScale to <html> on load', () => {
     render(
       <PreferencesContext.Provider
-        value={{ preferences: prefs('xl'), error: null, refetch: async () => {}, set: async () => prefs('xl') }}
+        value={{
+          preferences: prefs('xl'),
+          error: null,
+          refetch: async () => {},
+          set: async () => prefs('xl'),
+        }}
       >
         <AppearanceSync />
       </PreferencesContext.Provider>,

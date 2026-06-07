@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 async function fontPx(loc: Locator): Promise<number> {
@@ -57,8 +58,8 @@ test.describe('#135 content font-size scaling', () => {
   });
 
   test('Overview AI surfaces scale when AI preview is on', async ({ page, request }) => {
-    await request.post('http://localhost:5180/api/preferences', {
-      headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5180' },
+    await request.post(`${BACKEND_ORIGIN}/api/preferences`, {
+      headers: { 'Content-Type': 'application/json', Origin: BACKEND_ORIGIN },
       data: JSON.stringify({ aiPreview: true }),
     });
     await setupAndOpenScenarioPr(page);
