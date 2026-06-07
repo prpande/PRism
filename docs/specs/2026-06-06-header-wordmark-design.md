@@ -3,7 +3,7 @@
 **Status:** Design — awaiting human gate (B1 visual)
 **Issue:** [#215](https://github.com/prpande/PRism/issues/215)
 **Tier / Risk:** T2 / gated (B1 UI — `design` / `needs-design`)
-**Scope:** Frontend only — `frontend/src/components/Header/Logo.tsx` (+ `Logo.module.css`), `frontend/src/components/Header/Header.tsx`, plus migrating two existing assertions that encode the old alt-only behavior (`__tests__/header.test.tsx`, `e2e/cold-start.spec.ts` — see Testing). No backend, no routing, no data changes. Adds `.superpowers/` to `.gitignore` (brainstorm scratch dir).
+**Scope:** Frontend only — `frontend/src/components/Header/Logo.tsx` (+ `Logo.module.css`), `frontend/src/components/Header/Header.tsx`, plus migrating two existing assertions that encode the old alt-only behavior (`__tests__/header.test.tsx`, `e2e/cold-start.spec.ts` — see Testing). No backend, no routing, no data changes. (`.superpowers/`, the brainstorming scratch dir, is already in `.gitignore` — no change needed.)
 
 ## Problem
 
@@ -149,9 +149,9 @@ Manual / visual (B1 gate): `/setup` and `/welcome` in both light and dark themes
 
 ## Acceptance criteria
 
-- [ ] Wordmark visible in the header on `/setup` (first-run and re-auth).
-- [ ] Wordmark suppressed on `/welcome` (no duplicate visible “PRism”).
-- [ ] Wordmark absent in the authed header (Inbox/PR/Settings unchanged).
-- [ ] `alt=""` when the visible wordmark shows; `alt="PRism"` when it doesn’t; coupling encapsulated in `Logo`.
-- [ ] No empty `<nav>` landmark reintroduced (#130).
-- [ ] Verified in light and dark themes in the running app.
+- [x] Wordmark visible in the header on `/setup` (first-run and re-auth).
+- [x] Wordmark suppressed on `/welcome` (no duplicate visible “PRism”).
+- [x] Wordmark absent in the authed header (Inbox/PR/Settings unchanged).
+- [x] `alt=""` when the visible wordmark shows; `alt="PRism"` when it doesn’t; coupling encapsulated in `Logo`.
+- [x] No empty `<nav>` landmark reintroduced (#130).
+- [x] Verified in light and dark themes in the running app.
