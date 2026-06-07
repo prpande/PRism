@@ -1,4 +1,5 @@
 import { test, expect, request, type Page } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 import {
   setupAndOpenHandoffParityFixture,
@@ -17,7 +18,7 @@ import {
 async function resetAiPreview(page: Page): Promise<void> {
   const resp = await page.request.post('/api/preferences', {
     data: { aiPreview: false },
-    headers: { Origin: 'http://localhost:5180' },
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok()) {
     throw new Error(
@@ -139,7 +140,7 @@ test.describe('parity baselines — Inbox', () => {
     // used in helpers/s4-setup.ts (OriginCheckMiddleware requires it on POST).
     const prefResp = await page.request.post('/api/preferences', {
       data: { aiPreview: true },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!prefResp.ok()) {
       throw new Error(
@@ -372,7 +373,7 @@ test.describe('parity baselines — app chrome', () => {
     // helpers/s4-setup.ts).
     const subResp = await page.request.post('/api/events/subscriptions', {
       data: { PrRef: 'acme/api/123' },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!subResp.ok()) {
       throw new Error(
@@ -396,7 +397,7 @@ test.describe('parity baselines — app chrome', () => {
         NewHeadSha: null,
         CommentCountDelta: 1,
       },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!emitResp.ok()) {
       throw new Error(
@@ -425,7 +426,7 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // Hard-reload to /files so React state (including AskAiDrawer isOpen) is
     // reset to initial values. SPA navigation keeps prior isOpen=true state
     // if the drawer was opened during fixture setup; a full page load clears it.
-    await page.goto('http://localhost:5180/pr/acme/api/123/files');
+    await page.goto(`${BACKEND_ORIGIN}/pr/acme/api/123/files`);
 
     await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
     const diff = page.locator('[data-testid="files-tab-diff"]');
@@ -500,9 +501,9 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // Canonical scenario's headSha is a known stable value.
     const headSha = '3333333333333333333333333333333333333333';
 
-    const forceResp = await page.request.post('http://localhost:5180/test/file/force-failure', {
+    const forceResp = await page.request.post(`${BACKEND_ORIGIN}/test/file/force-failure`, {
       data: { path: 'src/Calc.cs', sha: headSha, problemType: '/file/too-large' },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     expect(forceResp.ok()).toBe(true);
 
@@ -546,7 +547,7 @@ test.describe('parity baselines — Ask AI', () => {
     // inbox-activity-rail test above (flat dotted-path field, loopback Origin).
     const prefResp = await page.request.post('/api/preferences', {
       data: { aiPreview: true },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!prefResp.ok()) {
       throw new Error(

@@ -1,4 +1,5 @@
 import { test, expect, request } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { setupAndOpenScenarioPr, resetBackendState } from './helpers/s4-setup';
 
 // Spec § 8 ("no layout shift when a PR with new commits arrives") + plan PR9
@@ -86,7 +87,7 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   // relative `/test/emit-pr-updated` POST hits Vite's 404 fallback under `dev`.
   // Pinning to 5180 lets the spec run cleanly under both `dev` and `prod`
   // projects. Mirrors the resetBackendState helper's pattern.
-  const emitResp = await page.request.post('http://localhost:5180/test/emit-pr-updated', {
+  const emitResp = await page.request.post(`${BACKEND_ORIGIN}/test/emit-pr-updated`, {
     data: {
       owner: 'acme',
       repo: 'api',
@@ -96,7 +97,7 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
       newHeadSha: '5555555555555555555555555555555555555555',
       commentCountDelta: 0,
     },
-    headers: { Origin: 'http://localhost:5180' },
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!emitResp.ok()) {
     throw new Error(`/test/emit-pr-updated failed: ${emitResp.status()} ${await emitResp.text()}`);

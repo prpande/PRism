@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 // Regression guard for the file-tree's synthetic horizontal scrollbar — #214. The tree
@@ -35,7 +36,7 @@ const WIDE_FILES = Array.from(
 async function seedTreeFiles(page: Page, paths: string[]): Promise<void> {
   const resp = await page.request.post('/test/seed-tree-files', {
     data: { paths },
-    headers: { Origin: 'http://localhost:5180' },
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok()) {
     throw new Error(`/test/seed-tree-files failed: ${resp.status()} ${await resp.text()}`);

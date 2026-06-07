@@ -1,14 +1,16 @@
 import type { APIRequestContext, Page } from '@playwright/test';
+import { BACKEND_ORIGIN } from './backend-origin';
 
 // Submit-pipeline E2E helpers (S5 PR7). Builds on the s4 setup helpers; adds drivers for the
 // /test/submit/* hooks landed in PR7 Task 61 (FakeReviewSubmitter introspection + knobs).
 //
-// All /test/* calls use the ABSOLUTE backend origin (http://localhost:5180) — the Vite dev server
-// (the `dev` Playwright project) only proxies /api, not /test, so a relative URL would 404 there.
-// OriginCheckMiddleware requires an Origin header on every mutating verb, so each POST supplies it.
+// All /test/* calls use the ABSOLUTE backend origin (BACKEND_ORIGIN, default :5180) — the Vite dev
+// server (the `dev` Playwright project) only proxies /api, not /test, so a relative URL would 404
+// there. OriginCheckMiddleware requires an Origin header on every mutating verb, so each POST
+// supplies it.
 export { resetBackendState, setupAndOpenScenarioPr, openScenarioFilesTab } from './s4-setup';
 
-const BACKEND = 'http://localhost:5180';
+const BACKEND = BACKEND_ORIGIN;
 const ORIGIN_HEADER = { Origin: BACKEND } as const;
 
 async function postTest(

@@ -40,8 +40,8 @@ import {
 // Reuses ONLY the existing /test/submit/inject-failure + /test/submit/set-begin-
 // delay hooks (spec § 7.2 — no net-new test endpoints). All /test/* drivers go
 // through the helpers in ./helpers/s5-submit, which target the absolute backend
-// origin (http://localhost:5180) because the Vite `dev` project only proxies
-// /api, not /test.
+// origin (BACKEND_ORIGIN, default :5180) because the Vite `dev` project only
+// proxies /api, not /test.
 
 const PR = { owner: 'acme', repo: 'api', number: 123 };
 

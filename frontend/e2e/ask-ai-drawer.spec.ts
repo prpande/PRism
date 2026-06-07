@@ -22,12 +22,13 @@
 // (per the windows-fixed-delay flake memo).
 
 import { test, expect } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 async function enableAiPreview(page: import('@playwright/test').Page): Promise<void> {
-  const resp = await page.request.post('http://localhost:5180/api/preferences', {
+  const resp = await page.request.post(`${BACKEND_ORIGIN}/api/preferences`, {
     data: { aiPreview: true },
-    headers: { Origin: 'http://localhost:5180' },
+    headers: { Origin: BACKEND_ORIGIN },
   });
   expect(resp.ok()).toBe(true);
 }
@@ -53,9 +54,9 @@ test.describe('Ask AI drawer', () => {
     //      leaked token and times out waiting for the Setup heading.
     // Order matters: preferences POST is auth-gated by SessionTokenMiddleware,
     // so it must run BEFORE /test/clear-tokens invalidates the session.
-    const prefResp = await page.request.post('http://localhost:5180/api/preferences', {
+    const prefResp = await page.request.post(`${BACKEND_ORIGIN}/api/preferences`, {
       data: { aiPreview: false },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!prefResp.ok()) {
       throw new Error(
@@ -63,8 +64,8 @@ test.describe('Ask AI drawer', () => {
       );
     }
     await resetBackendState(request);
-    const tokensResp = await request.post('http://localhost:5180/test/clear-tokens', {
-      headers: { Origin: 'http://localhost:5180' },
+    const tokensResp = await request.post(`${BACKEND_ORIGIN}/test/clear-tokens`, {
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!tokensResp.ok()) {
       throw new Error(
