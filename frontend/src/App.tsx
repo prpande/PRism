@@ -14,6 +14,7 @@ import { InboxPage } from './pages/InboxPage';
 import { PrTabHost } from './components/PrDetail/PrTabHost';
 import { isSettingsPath } from './hooks/useEffectiveLocation';
 import { SettingsModalRoutes } from './components/Settings/SettingsModalRoutes';
+import { HelpModalRoutes } from './components/Help/HelpModalRoutes';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
@@ -35,14 +36,6 @@ export function App() {
   const { authState, error, refetch } = useAuth();
   const [authInvalidated, setAuthInvalidated] = useState(false);
   const location = useLocation();
-  // The chrome (Routes, PrTabHost, strip) renders against this location. When a
-  // Settings modal is open the live URL is /settings/*, but we keep the chrome
-  // pinned to the underlying PR/inbox behind the scrim — backgroundLocation if
-  // the gear/SettingsLink supplied one, else a synthetic Inbox for a cold
-  // deep-link. Non-settings paths render against the live location unchanged.
-  const backgroundLocation =
-    (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation ??
-    (isSettingsPath(location.pathname) ? ({ pathname: '/' } as Location) : location);
 
   useEffect(() => {
     const onRejected = () => setAuthInvalidated(true);
@@ -99,6 +92,21 @@ export function App() {
   // (hasToken true) goes straight to the /setup token form — never re-onboarded.
   const unauthedTarget = authState.hasToken ? '/setup' : '/welcome';
 
+  // The chrome (Routes, PrTabHost, strip) renders against this location. When a
+  // Settings or Help modal is open the live URL is /settings/* or /help, but we
+  // keep the chrome pinned to the underlying page behind the scrim —
+  // backgroundLocation if the trigger supplied one, else a synthetic background
+  // for a cold deep-link. Non-modal paths render against the live location.
+  // NOTE: this const must live AFTER unauthedTarget because the /help synthetic
+  // is auth-aware (first-run → unauthedTarget, authed → Inbox).
+  const backgroundLocation =
+    (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation ??
+    (isSettingsPath(location.pathname)
+      ? ({ pathname: '/' } as Location)
+      : location.pathname === '/help'
+        ? ({ pathname: isAuthed ? '/' : unauthedTarget } as Location)
+        : location);
+
   const tree: ReactNode = (
     <>
       <AppearanceSync />
@@ -151,6 +159,7 @@ export function App() {
         </div>
       </div>
       <SettingsModalRoutes isAuthed={isAuthed} unauthedTarget={unauthedTarget} />
+      <HelpModalRoutes isAuthed={isAuthed} unauthedTarget={unauthedTarget} />
       <AskAiDrawer />
       <DrawerEffects />
       <TabSignals />

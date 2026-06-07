@@ -2,6 +2,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Logo } from './Logo';
 import { WindowControls } from './WindowControls';
 import { GearIcon } from '../PrDetail/FilesTab/diffIcons';
+import { HelpIcon } from './HelpIcon';
 import styles from './Header.module.css';
 
 interface HeaderProps {
@@ -39,6 +40,7 @@ export function Header({ isAuthed }: HeaderProps) {
     pathname === '/settings' ||
     pathname.startsWith('/settings/') ||
     (pathname === '/setup' && isReplaceMode);
+  const helpActive = pathname === '/help';
 
   const classFor = (active: boolean) => (active ? styles.tabActive : styles.tab);
 
@@ -77,6 +79,17 @@ export function Header({ isAuthed }: HeaderProps) {
           disabled
           aria-label="Global search (placeholder)"
         />
+      )}
+      {isAuthed && (
+        <Link
+          to="/help"
+          state={{ backgroundLocation: location }}
+          className={helpActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+          aria-label="Help"
+          aria-current={helpActive ? 'page' : undefined}
+        >
+          <HelpIcon />
+        </Link>
       )}
       {isAuthed && (
         <Link
