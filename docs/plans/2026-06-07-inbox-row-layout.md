@@ -6,7 +6,7 @@
 
 **Architecture:** Keep the title-over-meta row shape (bounded-rhythm list, not a table). Align by making the tail a **fixed-width grid track** (`--inbox-tail-w`) holding a right-pinned metrics cluster with reserve-and-collapse slots, and by **moving the repo-group indent off the row box** onto a leading `--row-indent` grid track so flat and grouped rows share one right edge. CI state reads via **shape + semantic colour + label**, independent of the user-chosen accent. Responsive via a `@container` query on the inbox `.sections` column.
 
-**Tech Stack:** React 18 + TypeScript + Vite, CSS Modules, Vitest + Testing Library. Runtime is Chromium/Electron + modern browsers.
+**Tech Stack:** React 19 + TypeScript + Vite, CSS Modules, Vitest + Testing Library. Runtime is Chromium/Electron + modern browsers (container queries are native — Chromium 105+; no polyfill).
 
 **Spec:** `docs/specs/2026-06-07-inbox-row-layout-design.md`
 
@@ -39,7 +39,7 @@
 Add this helper near the top of `InboxRow.test.tsx` (after the existing `PR` constant), and a new `describe` block. The helper is reused by later tasks.
 
 ```tsx
-function renderInboxRow(pr: PrInboxItem = PR, props: Partial<React.ComponentProps<typeof InboxRow>> = {}) {
+function renderInboxRow(pr: PrInboxItem = PR, props: Partial<Parameters<typeof InboxRow>[0]> = {}) {
   return render(
     <MemoryRouter>
       <OpenTabsProvider>
@@ -50,16 +50,18 @@ function renderInboxRow(pr: PrInboxItem = PR, props: Partial<React.ComponentProp
 }
 
 describe('InboxRow title', () => {
-  it('exposes the full title via the title attribute so a clamped title is recoverable', () => {
+  it('exposes the full title via the title attribute and aria-label so a clamped title is recoverable', () => {
     const long = { ...PR, title: 'Refactor the pagination cursor encoder to be stable across reorders and deletes' };
     const { container } = renderInboxRow(long);
     const titleEl = container.querySelector('[class*="title"]')!;
     expect(titleEl.getAttribute('title')).toBe(long.title);
+    // truncation hides nothing from AT: the untruncated title stays in the aria-label
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain(long.title);
   });
 });
 ```
 
-Add `import React from 'react';` at the top if not already present (it is not — add it).
+(No `import React` needed — `Parameters<typeof InboxRow>[0]` is the Props type via a built-in TS utility, matching the no-React-import pattern in the other test files.)
 
 - [ ] **Step 2: Run the test, verify it fails**
 
@@ -226,10 +228,12 @@ describe('InboxRow CI dot', () => {
     expect(screen.getByRole('button').getAttribute('aria-label')).not.toContain('CI ');
   });
 
-  it('never shows a CI dot on a done (merged) PR even when ci=failing', () => {
+  it('never shows a CI dot or CI suffix on a done (merged) PR even when ci=failing', () => {
     const { container } = renderInboxRow({ ...PR, ci: 'failing', mergedAt: new Date().toISOString() });
     expect(container.querySelector('[class*="dotFailing"]')).toBeNull();
     expect(container.querySelector('[class*="dotPending"]')).toBeNull();
+    // AT parity: the hidden dot means no "CI failing" in the label either
+    expect(screen.getByRole('button').getAttribute('aria-label')).not.toContain('CI ');
   });
 });
 ```
@@ -392,12 +396,12 @@ Expected: PASS
 
 In `InboxRow.module.css`:
 
-(a) Change the `.row` grid template (currently line 4) to the final 4-track form — leading indent track (0 by default), status, elastic title, fixed tail — and seed `--inbox-tail-w`:
+(a) Change only the **third** track of the `.row` grid (currently line 4) from `auto` to the fixed `var(--inbox-tail-w)`, and seed the token. Keep it a 3-track grid — the three child spans auto-place into the three tracks exactly as today, so **no `grid-column` placement is needed**. (The repo-group indent is applied via `padding-left` in Task 5, NOT a leading grid track — a zero-width leading track would still take a `gap` and push flat-row content right.)
 
 ```css
 .row {
   display: grid;
-  grid-template-columns: var(--row-indent, 0) 16px minmax(0, 1fr) var(--inbox-tail-w);
+  grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
   --inbox-tail-w: 200px; /* ~140px metrics + ~60px badge/chip zone; tuned in B1 */
   gap: var(--s-3);
   width: 100%;
@@ -412,32 +416,12 @@ In `InboxRow.module.css`:
 }
 ```
 
-(b) Pin the three children to their tracks (the leading track 1 stays empty for the indent). Add to `.status`, `.main`, and `.tail`:
+(`.status` and `.main` are unchanged — leave their existing rules as-is.)
 
-```css
-.status {
-  grid-column: 2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-}
-```
-
-```css
-.main {
-  grid-column: 3;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-```
-
-(c) Replace the `.tail` rule (currently lines 101-105) and add the leading zone + metrics + slots:
+(b) Replace the `.tail` rule (currently lines 101-105) and add the leading zone + metrics + slots:
 
 ```css
 .tail {
-  grid-column: 4;
   display: flex;
   align-items: center;
   gap: var(--s-3);
@@ -488,7 +472,9 @@ In `InboxRow.module.css`:
 }
 ```
 
-(d) Constrain the AI chip so a long category can't blow the lead zone (add `max-width` + ellipsis to the existing `.chip` rule, lines 107-116):
+The existing `.counts` rule (`display: flex; gap: 6px; font-mono; font-size: 11px`, lines 135-140) **stays as-is** — the counts span carries both classes (`${styles.counts} ${styles.countsSlot}`): `.counts` keeps its existing flex/mono styling, `.countsSlot` adds the fixed width + right-justify + tabular-nums. Do not delete `.counts`. (Note: the deletions render uses a U+2212 `−`, not an ASCII hyphen — any future `toContain` assertion on the minus must use `−`.)
+
+(c) Constrain the AI chip so a long category can't blow the lead zone (add `max-width` + ellipsis to the existing `.chip` rule, lines 107-116):
 
 ```css
 .chip {
@@ -519,7 +505,9 @@ git commit -m "feat(#227): fixed-width tail with right-pinned reserve-and-collap
 
 ---
 
-## Task 5: Move the repo-group indent onto a leading row track
+## Task 5: Move the repo-group indent off the accordion body onto the row
+
+**Depends on:** Task 4 (the row's `--inbox-tail-w` tail track must exist first; this task adds the leading indent via `padding-left` so the fixed tail stays flush across flat + grouped rows).
 
 **Files:**
 - Modify: `frontend/src/components/Inbox/InboxRow.tsx`
@@ -546,37 +534,13 @@ describe('InboxRow grouped indent', () => {
 });
 ```
 
-Add to `RepoGroupAccordion.test.tsx` (self-contained block; reuses the file's existing imports — if `MemoryRouter`/`OpenTabsProvider` aren't imported there, add them):
+Add to `RepoGroupAccordion.test.tsx` — **reuse the file's existing `renderAcc(defaultOpen)` helper and `group` const** (already defined at lines 29-45; all imports — `render`, `MemoryRouter`, `OpenTabsProvider` — are already present). Add this `it` inside the existing `describe('RepoGroupAccordion', …)` block. Do **not** add new imports or a new fixture:
 
 ```tsx
-import { MemoryRouter } from 'react-router-dom';
-import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
-import type { RepoGroup } from './groupByRepo';
-
 it('renders its nested rows as grouped (data-grouped=true)', () => {
-  const group: RepoGroup = {
-    repo: 'acme/api',
-    items: [
-      {
-        reference: { owner: 'acme', repo: 'api', number: 1 },
-        title: 'First', author: 'alice', repo: 'acme/api',
-        updatedAt: new Date().toISOString(), pushedAt: new Date().toISOString(),
-        iterationNumber: 1, commentCount: 0, additions: 1, deletions: 0,
-        headSha: 'a', ci: 'none', lastViewedHeadSha: null, lastSeenCommentId: null,
-        mergedAt: null, closedAt: null, avatarUrl: null,
-      },
-    ],
-  };
-  const { container } = render(
-    <MemoryRouter>
-      <OpenTabsProvider>
-        <RepoGroupAccordion group={group} enrichments={{}} showCategoryChip={false} maxDiff={100} defaultOpen={true} />
-      </OpenTabsProvider>
-    </MemoryRouter>,
-  );
-  const rows = container.querySelectorAll('button[data-grouped]');
-  expect(rows.length).toBe(1);
-  expect(rows[0].getAttribute('data-grouped')).toBe('true');
+  const { container } = renderAcc(true);
+  const rows = container.querySelectorAll('button[data-grouped="true"]');
+  expect(rows.length).toBe(2); // the shared `group` const has 2 items
 });
 ```
 
@@ -637,36 +601,30 @@ Expected: PASS
 
 - [ ] **Step 6: Move the indent (CSS)**
 
-In `InboxRow.module.css`, add the grouped indent (sets the leading track introduced in Task 4):
+In `InboxRow.module.css`, apply the grouped indent as **extra left padding** on the row (NOT a leading grid track — a zero-width track still takes a `gap`). With `box-sizing: border-box` (global), padding eats into the `width: 100%` content box, so the tail's right edge stays flush with flat rows while the leading content indents:
 
 ```css
-/* Indent is applied to the leading grid track, NOT the accordion body, so the
-   tail's right edge stays flush with flat rows and the metrics align across
-   flat + grouped rows. */
+/* Indent grouped rows via left padding, not the accordion body, so the tail's
+   right edge stays flush with flat rows and the metrics align across flat +
+   grouped rows (border-box keeps width:100% honest). */
 .row[data-grouped='true'] {
-  --row-indent: var(--s-4);
+  padding-left: calc(var(--s-4) + var(--s-4));
 }
 ```
 
-In `RepoGroupAccordion.module.css`, remove the now-redundant body indent (currently lines 60-63). Replace:
+(The base `.row` already has `padding: var(--s-3) var(--s-4)`; this override adds one more `--s-4` of left padding for grouped rows only. The unread `::before` accent bar stays at `left: 0`, consistent for flat and grouped.)
+
+In `RepoGroupAccordion.module.css`, **delete** the now-redundant body indent rule (currently lines 60-63):
 
 ```css
+/* DELETE these lines — the indent now lives on the row (see InboxRow.module.css). */
 /* Rows indent under the band so the group reads as nested. */
 .body {
   padding-left: var(--s-4);
 }
 ```
 
-with:
-
-```css
-/* Row indent now lives on the row's leading grid track (--row-indent), so the
-   tail stays flush across flat + grouped rows. See InboxRow.module.css. */
-.body {
-}
-```
-
-(Or delete the `.body` rule entirely if no other property is added. Leaving an empty rule is fine and documents the intent; if the linter rejects empty rules, delete the rule.)
+(Delete the whole rule, not just the property — `.body` has no other declarations, and nothing else references it. Prettier/eslint don't gate `.css`, but an empty rule is dead weight.)
 
 - [ ] **Step 7: Run both files + commit**
 
@@ -675,7 +633,7 @@ Expected: PASS
 
 ```bash
 git add frontend/src/components/Inbox/InboxRow.tsx frontend/src/components/Inbox/InboxRow.module.css frontend/src/components/Inbox/RepoGroupAccordion.tsx frontend/src/components/Inbox/RepoGroupAccordion.module.css frontend/src/components/Inbox/InboxRow.test.tsx frontend/src/components/Inbox/RepoGroupAccordion.test.tsx
-git commit -m "feat(#227): move repo-group indent onto a leading row track for flush tail alignment"
+git commit -m "feat(#227): move repo-group indent onto the row (padding) for flush tail alignment"
 ```
 
 ---
@@ -700,6 +658,8 @@ In `InboxPage.module.css`, add `container-type` to `.sections` (currently lines 
   container-type: inline-size;
 }
 ```
+
+(Container queries are native in all supported targets — Chromium/Electron 105+, modern browsers — so no polyfill is needed. `container-type: inline-size` adds inline-axis containment only; `.sections` is width-driven, so there is no height/layout side effect.)
 
 - [ ] **Step 2: Add the `@container` rules**
 
@@ -797,4 +757,4 @@ This is a B1 (UI-visual) gate: after green-and-ready, **post a comment @-mention
 
 **Placeholder scan:** No TBD/TODO. `--inbox-tail-w` (200px) and the container thresholds (560/460px) are concrete starting values explicitly flagged for B1 tuning, not placeholders.
 
-**Type/name consistency:** `grouped` prop + `data-grouped` attr consistent (Tasks 5). Class names `diffSlot`/`countsSlot`/`commentSlot`/`tailLead`/`metrics`/`dotFailing`/`dotPending`/`authorName` defined in the CSS task that introduces each and matched in tests. `--row-indent` (Task 4 default 0 / Task 5 grouped) and `--inbox-tail-w` (Task 4 / Task 6 override) consistent.
+**Type/name consistency:** `grouped` prop + `data-grouped` attr consistent (Task 5). Class names `diffSlot`/`countsSlot`/`commentSlot`/`tailLead`/`metrics`/`dotFailing`/`dotPending`/`authorName` defined in the CSS task that introduces each and matched in tests (verified no `[class*=...]` selector collisions: `comments`≠`commentSlot`, `counts`+`countsSlot` both intended on one span). `.counts` is pre-existing and retained. `--inbox-tail-w` consistent (Task 4 default 200px / Task 6 narrow override). Grouped indent is `padding-left` on the row (Task 5), not a grid track — a zero-width leading track would take a `gap` (ce-doc-review C1).

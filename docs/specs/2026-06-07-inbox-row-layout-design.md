@@ -34,7 +34,7 @@ Stop letting the tail be `auto`-width; drive it from a CSS variable:
 
 ```css
 .row {
-  grid-template-columns: var(--row-indent, 0) 16px minmax(0, 1fr) var(--inbox-tail-w);
+  grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
 }
 ```
 
@@ -46,7 +46,7 @@ With a constant tail width, the main↔tail boundary — and the metrics column 
 
 Today `RepoGroupAccordion.module.css:61-63` indents nested rows with `.body { padding-left: var(--s-4) }`. That shifts the *entire* grouped row — tail included — right by `--s-4`, so its right edge (and metrics column) lands `--s-4` short of a flat row's. A fixed tail width anchors the tail to *each row's own* right edge, not the list's, so this indent breaks cross-group alignment on its own.
 
-Fix: **remove `.body`'s `padding-left` and apply the indent as the leading grid track on the row** — `--row-indent`, set to `var(--s-4)` for grouped rows (via a `data-grouped` attribute / prop) and `0` for flat rows. The row stays `width: 100%` of the *un-indented* `.sections` column, so its right edge — and the right-pinned metrics — stays flush with flat rows. The group still reads as nested because the status dot + title indent under the band; only the leading content moves, the metrics hold their global column.
+Fix: **remove `.body`'s `padding-left` and apply the indent as extra `padding-left` on the row itself** for grouped rows (via a `data-grouped` attribute / prop). Because `box-sizing: border-box` is global, padding eats into the `width: 100%` content box, so the row's right edge — and the right-pinned metrics — stays flush with flat rows while the leading content indents. (A *leading grid track* was rejected: a zero-width track on flat rows still takes a `gap`, injecting phantom spacing before the status dot.) The group still reads as nested because the status dot + title indent under the band; only the leading content moves, the metrics hold their global column.
 
 With both changes, every row (flat or grouped, in any section) resolves to the same right edge inside the same-width `.sections` column, so the metrics align **across rows, across separate `<section>` grids, and across repo groups** — with **no subgrid required**.
 
@@ -122,7 +122,7 @@ Below the narrow threshold, drop tail content in **priority order** and shrink `
   - Diff bar absent (`additions + deletions === 0`): diff-bar slot renders empty; `+/−` and comment slots still render and stay positioned.
   - Comment count absent (`commentCount === 0`): comment slot renders empty; `+/−` stay positioned (don't slide to the right edge).
 - Badge/chip presence does not change which metrics render (alignment invariant at the unit level).
-- Grouped vs. flat row: a `data-grouped` row carries `--row-indent` on its leading track; its tail/metrics slot renders at the same structure as a flat row (the right edge is not indented).
+- Grouped vs. flat row: a `data-grouped` row carries extra `padding-left`; its tail/metrics slot renders at the same structure as a flat row (the right edge is not indented).
 
 **B1 visual proof (the real assertion):** screenshots against a real account (BFF repo — has long titles and varied diffs), **light + dark**, at a normal and a narrow pane width, showing: bounded row heights, numbers lining up down the column across sections, no horizontal overflow, pending/failing dots. Hosted on a throwaway `review-assets/pr-N` branch and embedded in the PR.
 
