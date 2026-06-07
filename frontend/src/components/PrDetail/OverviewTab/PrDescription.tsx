@@ -32,9 +32,11 @@ export function PrDescription({ title, body, aiPreview }: PrDescriptionProps) {
       {isEmptyBody ? (
         <p className={`${styles.prDescriptionEmpty} muted`}>No description provided</p>
       ) : (
-        <div data-testid="pr-description-body">
-          <MarkdownRenderer source={body} className={styles.prDescriptionBody} />
-        </div>
+        <MarkdownRenderer
+          source={body}
+          className={styles.prDescriptionBody}
+          dataTestId="pr-description-body"
+        />
       )}
     </section>
   );
