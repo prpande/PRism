@@ -859,7 +859,11 @@ function SplitDiffLineRow({
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
-        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="old"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <HighlightedLine
             spans={tokensFor(syntax, 'old', oldLineNum)}
             fallback={normalizeEol(content ?? '')}
@@ -879,7 +883,11 @@ function SplitDiffLineRow({
             (newLineNum ?? '')
           )}
         </td>
-        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="new"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <HighlightedLine
             spans={tokensFor(syntax, 'new', newLineNum)}
             fallback={normalizeEol(content ?? '')}
@@ -895,7 +903,11 @@ function SplitDiffLineRow({
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
-        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="old"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <HighlightedLine
             spans={tokensFor(syntax, 'old', oldLineNum)}
             fallback={normalizeEol(content ?? '')}
@@ -950,7 +962,11 @@ function SplitDiffLineRow({
             (newLineNum ?? '')
           )}
         </td>
-        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="new"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <HighlightedLine
             spans={tokensFor(syntax, 'new', newLineNum)}
             fallback={normalizeEol(content ?? '')}
@@ -976,7 +992,11 @@ function SplitDiffLineRow({
         <td className={`diff-gutter diff-gutter--old ${styles.diffGutter} ${styles.diffGutterOld}`}>
           {oldLineNum ?? ''}
         </td>
-        <td data-side="old" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="old"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <MergedPairedContent
             syntax={syntax}
             side="old"
@@ -999,7 +1019,11 @@ function SplitDiffLineRow({
             (newLineNum ?? '')
           )}
         </td>
-        <td data-side="new" className={`diff-content ${styles.diffContent}`}>
+        <td
+          data-side="new"
+          className={`diff-content ${styles.diffContent}`}
+          data-testid="diff-code-line"
+        >
           <MergedPairedContent
             syntax={syntax}
             side="new"

@@ -74,14 +74,15 @@ test.describe('#135 content font-size scaling', () => {
     await setupAndOpenScenarioPr(page);
     await page.goto('/pr/acme/api/123/files');
     await expect(page.getByTestId('files-tab-diff')).toBeVisible();
-    // The diff pane (and its header) renders only once a file is selected and the
-    // diff has loaded. Wait for a code line before capturing baselines — otherwise
-    // the header-fixed assertion races (baseline captured at 0 while the header is
-    // still absent, then compared against the rendered size).
-    await page.getByTestId('diff-code-line').first().waitFor({ state: 'visible' });
-
+    // The diff pane renders only once a file is selected and the diff has loaded.
+    // Wait for the always-visible pane header (the file-path label) before capturing
+    // baselines — otherwise the header-fixed assertion races (baseline captured at 0
+    // while the header is still absent, then compared against the rendered size).
+    // (diff-code-line can't be the wait target: a pure-insert file's first content
+    // cell may be the empty old-side cell, which is never "visible".)
     const header = page.getByTestId('diff-pane-header').first();
-    const headerBase = (await header.count()) ? await fontPx(header) : 0;
+    await header.waitFor({ state: 'visible' });
+    const headerBase = await fontPx(header);
     const scroller = page.getByTestId('diff-hscroll');
     const widthBefore = (await scroller.count())
       ? await scroller.evaluate((el) => el.scrollWidth)
