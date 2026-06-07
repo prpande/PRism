@@ -1,4 +1,5 @@
 import { test, expect, request } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { setupAndOpenScenarioPr, resetBackendState } from './helpers/s4-setup';
 
 // Spec § 8 ("no layout shift when a PR with new commits arrives") + plan PR9
@@ -80,13 +81,10 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
   // The new hook publishes directly via IReviewEventBus so SseChannel fans out
   // `event: pr-updated` to the subscribed page, and BannerRefresh renders.
   //
-  // Absolute backend URL — page.request.post resolves relative paths against the
-  // page's baseURL, which is http://localhost:5173 under the `dev` Playwright
-  // project. Vite proxies `/api/*` but NOT `/test/*` (see vite.config.ts), so a
-  // relative `/test/emit-pr-updated` POST hits Vite's 404 fallback under `dev`.
-  // Pinning to 5180 lets the spec run cleanly under both `dev` and `prod`
-  // projects. Mirrors the resetBackendState helper's pattern.
-  const emitResp = await page.request.post('http://localhost:5180/test/emit-pr-updated', {
+  // Absolute backend URL via BACKEND_ORIGIN (honors PRISM_E2E_PORT, #239) with a
+  // matching Origin header, so the /test/* POST reaches the served backend on
+  // whatever port the run booted. Mirrors the resetBackendState helper's pattern.
+  const emitResp = await page.request.post(`${BACKEND_ORIGIN}/test/emit-pr-updated`, {
     data: {
       owner: 'acme',
       repo: 'api',
@@ -96,7 +94,7 @@ test('PR-header zone layout invariant before and after reload banner arrives', a
       newHeadSha: '5555555555555555555555555555555555555555',
       commentCountDelta: 0,
     },
-    headers: { Origin: 'http://localhost:5180' },
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!emitResp.ok()) {
     throw new Error(`/test/emit-pr-updated failed: ${emitResp.status()} ${await emitResp.text()}`);

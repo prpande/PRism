@@ -1,13 +1,24 @@
+import type { FC } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import styles from './WelcomePage.module.css';
+import { LockIcon, PanelsIcon, SparkIcon } from './welcomeIcons';
 
-// Placeholder copy (tagline + benefits) — the human rewrite is owned by #222.
-// Keep it plain and honest, not faux-marketing. The leading emoji are decorative
-// (aria-hidden); only the text is announced.
-const BENEFITS: ReadonlyArray<{ emoji: string; text: string }> = [
-  { emoji: '🔒', text: 'Local-first — your PAT never leaves this device.' },
-  { emoji: '⚡', text: 'A focused PR-review workspace, not the GitHub web tab.' },
-  { emoji: '🤖', text: 'AI hotspots surface the hunks worth a close look.' },
+// Welcome copy (#222) — the human rewrite of #212's placeholder. Plain and warm,
+// not faux-marketing. The leading icons are monochrome and decorative (aria-hidden,
+// defined in welcomeIcons.tsx); only the text is announced.
+const BENEFITS: ReadonlyArray<{ Icon: FC; text: string }> = [
+  {
+    Icon: LockIcon,
+    text: 'Local-first by design. Your token is stored encrypted on this machine, never on someone else’s server.',
+  },
+  {
+    Icon: PanelsIcon,
+    text: 'A workspace made for reviewing: the diff, the file tree, and your comments in one focused place.',
+  },
+  {
+    Icon: SparkIcon,
+    text: 'AI that surfaces the hunks worth a closer look, still in active development.',
+  },
 ];
 
 export function WelcomePage() {
@@ -23,12 +34,14 @@ export function WelcomePage() {
             the h1's accessible name is exactly "PRism". A nested span or sibling
             text node would silently break the exact-name match across suites. */}
         <h1 className={styles.wordmark}>PRism</h1>
-        <p className={styles.tagline}>Review pull requests without leaving your machine.</p>
+        <p className={styles.tagline}>
+          A calmer place to review pull requests, right on your machine.
+        </p>
         <ul className={styles.benefits}>
           {BENEFITS.map((b) => (
             <li key={b.text} className={styles.benefit}>
-              <span className={styles.benefitEmoji} aria-hidden="true">
-                {b.emoji}
+              <span className={styles.benefitIcon}>
+                <b.Icon />
               </span>
               <span>{b.text}</span>
             </li>
