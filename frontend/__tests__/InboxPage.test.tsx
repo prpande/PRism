@@ -148,11 +148,15 @@ function renderPage() {
 describe('InboxPage', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('shows the loading spinner while fetching first snapshot', () => {
+  it('shows the content-shaped skeleton (not a spinner) while fetching first snapshot', () => {
     setHooks({ data: null, isLoading: true });
     renderPage();
-    const status = screen.getByRole('status');
-    expect(within(status).getByText(/loading/i)).toBeInTheDocument();
+    const skeleton = screen.getByTestId('inbox-skeleton');
+    expect(skeleton).toBeInTheDocument();
+    expect(skeleton).toHaveAttribute('aria-busy', 'true');
+    expect(within(skeleton).getByText(/loading inbox/i)).toBeInTheDocument();
+    // The per-surface loading bar shows alongside the skeleton.
+    expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true');
   });
 
   it('shows error state with retry button when initial fetch fails', () => {

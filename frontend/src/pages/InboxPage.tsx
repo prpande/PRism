@@ -8,7 +8,8 @@ import { InboxSection } from '../components/Inbox/InboxSection';
 import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
 import { ActivityRail } from '../components/ActivityRail/ActivityRail';
-import { Spinner } from '../components/Spinner';
+import { InboxSkeleton } from '../components/Inbox/InboxSkeleton';
+import { LoadingBar } from '../components/LoadingBar';
 import { ErrorModal } from '../components/ErrorModal';
 import styles from './InboxPage.module.css';
 
@@ -34,9 +35,12 @@ export function InboxPage() {
 
   if (isLoading && !data)
     return (
-      <main className={styles.loading}>
-        <Spinner size="lg" />
-      </main>
+      <>
+        {/* Per-surface loading bar pinned to the inbox content top (self-contained,
+            no layout shift) + the content-shaped skeleton. */}
+        <LoadingBar active data-testid="inbox-loading-bar" />
+        <InboxSkeleton showRail={showActivityRail} />
+      </>
     );
   if (error && !data)
     return (
@@ -65,6 +69,10 @@ export function InboxPage() {
 
   return (
     <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
+      {/* Background reload (data present, isLoading): the bar is the non-intrusive
+          "refreshing" signal at the inbox content top — no skeleton flashes over
+          good data. */}
+      <LoadingBar active={isLoading} data-testid="inbox-loading-bar" />
       {updates.hasUpdate && (
         <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
       )}
