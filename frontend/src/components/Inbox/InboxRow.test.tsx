@@ -204,9 +204,12 @@ describe('InboxRow tail reserve-and-collapse', () => {
     ).toBeNull();
   });
 
-  it('renders the comment count when commentCount > 0', () => {
+  it('renders the comment count with an accent comment glyph when commentCount > 0', () => {
     const { container } = renderInboxRow({ ...PR, commentCount: 5 });
-    expect(container.querySelector('[class*="commentSlot"]')!.textContent).toContain('5');
+    const slot = container.querySelector('[class*="commentSlot"]')!;
+    expect(slot.textContent).toContain('5');
+    // an SVG glyph (not an emoji) labels the number as a comment count
+    expect(slot.querySelector('svg')).not.toBeNull();
   });
 });
 

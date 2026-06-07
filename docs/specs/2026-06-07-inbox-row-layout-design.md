@@ -75,7 +75,7 @@ The two slots that collapse today (mirrors the file-tree `fileTreeAi[data-on='0'
 No field is removed; this change is layout, not amputation. The deliberate pass concludes:
 
 - **Kept (earn their place):** status dot, title, repo (when not repo-grouped), author + avatar, iteration, age, diff bar, +/− counts, comment count, merged/closed badge, AI category chip, unread accent bar.
-- **Promoted:** CI `pending` is now visible (amber dot) alongside `failing` (red dot).
+- **Promoted:** CI `pending` is now visible (amber dot) alongside `failing` (red dot). The comment count gains a small **accent-coloured comment glyph** (octicon SVG, not an emoji) so a bare number reads unambiguously as a comment count (B1 follow-up).
 - **Deferred (need backend):** review/approval state, draft status → **#259**. Mergeability/conflicts, base branch, labels were judged lower-value / clutter-risk and are not pursued.
 
 ### Status dot states

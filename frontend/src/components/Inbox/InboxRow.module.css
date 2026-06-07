@@ -2,7 +2,7 @@
 .row {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
-  --inbox-tail-w: 200px; /* ~140px metrics + ~60px badge/chip zone; tuned in B1 */
+  --inbox-tail-w: 216px; /* metrics only: 64 diff + 72 counts + 44 comments + gaps; tuned in B1 */
   gap: var(--s-3);
   width: 100%;
   padding: var(--s-3) var(--s-4);
@@ -154,7 +154,7 @@
 
 .commentSlot {
   flex: none;
-  width: 28px;
+  width: 44px;
   display: flex;
   justify-content: flex-end;
 }
@@ -207,10 +207,20 @@
 }
 
 .comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 2px 6px;
   border-radius: var(--radius-2);
   font-size: var(--text-xs);
   color: var(--text-3);
+}
+
+/* Accent-tinted comment glyph (not an emoji) so the count reads as comments
+   while staying inside the theme's colour scheme. */
+.commentIcon {
+  flex: none;
+  color: var(--accent);
 }
 
 .row:hover .comments {
