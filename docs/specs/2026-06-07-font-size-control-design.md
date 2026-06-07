@@ -3,7 +3,7 @@
 - **Issue:** [#135](https://github.com/prpande/PRism/issues/135) — Settings: font-size control for PR-detail content (comments, description, overview, diffs)
 - **Date:** 2026-06-07
 - **Tier / Risk:** T3 (cross-cutting backend + frontend + CSS vertical slice) / **B1** (UI-visual — human visual sign-off before merge)
-- **Status:** Design — approved by owner (scope = all data, Option 2: chrome fixed; comment metadata fixed per I-A); 3× ce-doc-review applied; pending human spec review gate
+- **Status:** Implemented (pending human B1 visual sign-off + merge). Scope = all data, Option 2 (chrome fixed; comment metadata fixed per I-A); 3× ce-doc-review applied; built via subagent-driven-development (15 commits, per-task spec+quality review + final whole-branch review). PR link added at merge.
 
 ## Problem
 
