@@ -27,13 +27,18 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
   if (body.sessions !== 0) {
     throw new Error(`/test/reset did not clear state — sessions=${body.sessions} after reset`);
   }
-  // Reset AI preview preference so parity-baselines and layout-sensitive specs
-  // don't render AI content from a prior session's config.json. Best-effort:
-  // if it fails (e.g., server not yet in auth-accepting state), silently skip
-  // rather than failing the beforeEach — the test will fail for its own reason.
+  // Reset AI preview + content-scale preferences so parity-baselines and
+  // layout-sensitive specs don't inherit a prior session's config.json. The
+  // reused server (reuseExistingServer: !isCI) persists config across runs, so
+  // a prior font-size spec that left contentScale='xl' would otherwise scale
+  // content in every later spec's screenshots (and break #135's own baseline
+  // capture). 'm' is the default and removes the data-content-scale attribute.
+  // Best-effort: if it fails (e.g., server not yet in auth-accepting state),
+  // silently skip rather than failing the beforeEach — the test will fail for
+  // its own reason.
   const aiResp = await request.post(`${BACKEND_ORIGIN}/api/preferences`, {
     headers: { 'Content-Type': 'application/json', Origin: BACKEND_ORIGIN },
-    data: JSON.stringify({ aiPreview: false }),
+    data: JSON.stringify({ aiPreview: false, contentScale: 'm' }),
   });
   // Non-200 is acceptable here (e.g., 400 if config is already default).
   void aiResp;

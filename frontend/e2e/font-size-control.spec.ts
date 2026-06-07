@@ -19,6 +19,11 @@ async function expectScales(loc: Locator, label: string) {
     });
     return;
   }
+  // Normalize to the Default scale before capturing the baseline so the
+  // assertion is hermetic: if the app loaded with a persisted non-default
+  // contentScale (reused server config.json), `before` would otherwise be
+  // pre-scaled and the Default→XL comparison would be wrong or fail.
+  await setScale(loc.page(), null);
   const before = await fontPx(loc.first());
   await setScale(loc.page(), 'xl');
   expect(await fontPx(loc.first()), label).toBeGreaterThan(before);

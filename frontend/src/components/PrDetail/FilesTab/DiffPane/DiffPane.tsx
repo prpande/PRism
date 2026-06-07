@@ -781,7 +781,15 @@ function DiffLineRow({
             (line.newLineNum ?? '')
           )}
         </td>
-        <td className={`diff-content ${styles.diffContent}`} data-testid="diff-code-line">
+        {/* The hunk-header row's <td> inherits the scaled font-size from the
+            row, but its visible content is a fixed-size `.diffHunkHeader` span —
+            so a font-size assertion against this cell would pass for the wrong
+            reason. Skip the testid on hunk-header so e2e only measures real
+            code cells (#135 review). */}
+        <td
+          className={`diff-content ${styles.diffContent}`}
+          {...(line.type !== 'hunk-header' ? { 'data-testid': 'diff-code-line' } : {})}
+        >
           {renderContent()}
         </td>
       </tr>
