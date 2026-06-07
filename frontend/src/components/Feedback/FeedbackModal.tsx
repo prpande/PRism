@@ -51,7 +51,7 @@ async function openExternal(url: string): Promise<void> {
     if (!ok) throw new Error('openExternal rejected the url');
     return;
   }
-  window.open(url, '_blank', 'noreferrer');
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 export function FeedbackModal({
@@ -91,6 +91,19 @@ export function FeedbackModal({
   const canSubmit =
     Boolean(category && summary.trim() && details.trim()) && modalState.kind === 'idle';
   const submitLabel = linkOnly ? 'Open on GitHub' : 'Send feedback';
+
+  function requestClose() {
+    if (modalState.kind === 'in-flight') return; // suppress mid-submit
+    const editable = modalState.kind === 'idle' || modalState.kind === 'error';
+    if (editable && dirty) {
+      // Accidental-close guard: focus Cancel and announce instead of discarding.
+      cancelRef.current?.focus();
+      if (liveRef.current)
+        liveRef.current.textContent = 'Press Cancel to discard, or keep editing.';
+      return;
+    }
+    onClose();
+  }
 
   const prefilledUrl = () =>
     buildFeedbackIssueUrl({
@@ -179,17 +192,7 @@ export function FeedbackModal({
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        // In-flight: suppress Esc entirely — closing mid-submit is not allowed (spec §5 state-2).
-        if (modalState.kind === 'in-flight') return;
-        // Dirty guard: when form has unsaved input, Esc must NOT close;
-        // focus Cancel and announce.
-        if (dirty) {
-          cancelRef.current?.focus();
-          if (liveRef.current)
-            liveRef.current.textContent = 'Press Cancel to discard, or keep editing.';
-          return;
-        }
-        onClose();
+        requestClose();
         return;
       }
       if (e.key === 'Tab' && dialogRef.current) {
@@ -215,7 +218,7 @@ export function FeedbackModal({
     scrimDownTarget.current = e.target;
   };
   const onScrimPointerUp = (e: PointerEvent) => {
-    if (e.target === e.currentTarget && scrimDownTarget.current === e.currentTarget) onClose();
+    if (e.target === e.currentTarget && scrimDownTarget.current === e.currentTarget) requestClose();
     scrimDownTarget.current = null;
   };
 
@@ -251,7 +254,8 @@ export function FeedbackModal({
             type="button"
             className={styles.close}
             aria-label="Close feedback"
-            onClick={onClose}
+            disabled={modalState.kind === 'in-flight'}
+            onClick={requestClose}
           >
             ✕
           </button>

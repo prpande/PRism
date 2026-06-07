@@ -53,10 +53,14 @@ internal static class FeedbackEndpoints
             DateTimeOffset.UtcNow);
 
         var result = await submitter.CreateFeedbackIssueAsync(content, ct).ConfigureAwait(false);
-        return result.Outcome == FeedbackOutcome.Created
-            ? Results.Created(result.HtmlUrl ?? string.Empty,
-                new FeedbackResponseDto(result.IssueNumber!.Value, result.HtmlUrl ?? string.Empty))
-            : Results.Json(new FeedbackErrorDto("cannot-create"),
-                statusCode: StatusCodes.Status422UnprocessableEntity);
+        if (result.Outcome == FeedbackOutcome.Created)
+        {
+            var dto = new FeedbackResponseDto(result.IssueNumber!.Value, result.HtmlUrl ?? string.Empty);
+            return string.IsNullOrEmpty(result.HtmlUrl)
+                ? Results.Json(dto, statusCode: StatusCodes.Status201Created)
+                : Results.Created(result.HtmlUrl, dto);
+        }
+        return Results.Json(new FeedbackErrorDto("cannot-create"),
+            statusCode: StatusCodes.Status422UnprocessableEntity);
     }
 }

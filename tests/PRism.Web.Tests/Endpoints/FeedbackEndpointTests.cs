@@ -124,6 +124,23 @@ public class FeedbackEndpointTests
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
+    // Comment 4: empty htmlUrl must NOT emit a Location header — Results.Created("", …)
+    // produces an invalid Location: "" which clients trip on.
+    [Fact]
+    public async Task Created_with_empty_htmlUrl_returns_201_with_no_Location_header()
+    {
+        var (f, sub) = NewApp();
+        sub.Result = FeedbackCreateResult.Created(99, ""); // htmlUrl intentionally empty
+        using var client = AuthedClient(f);
+        var resp = await client.PostAsJsonAsync("/api/feedback", ValidBody());
+        resp.StatusCode.Should().Be(HttpStatusCode.Created);
+        var dto = await resp.Content.ReadFromJsonAsync<FeedbackResponseDto>();
+        dto!.IssueNumber.Should().Be(99);
+        // No Location header (or null/empty) — invalid empty Location must not be emitted.
+        var location = resp.Headers.Location;
+        location.Should().BeNull();
+    }
+
     [Fact]
     public async Task Oversize_fields_return_400()
     {

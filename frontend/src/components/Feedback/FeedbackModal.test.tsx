@@ -204,4 +204,54 @@ describe('FeedbackModal', () => {
     expect(submitFeedback).not.toHaveBeenCalled();
     expect(openExternalSpy).toHaveBeenCalledTimes(1);
   });
+
+  // Comments 1+2: requestClose() guards scrim and ✕ the same way Esc does.
+
+  it('scrim click while in-flight: onClose NOT called, dialog still present', async () => {
+    const onClose = vi.fn();
+    submitFeedback.mockReturnValue(new Promise(() => {})); // never resolves
+    renderModal({ onClose });
+    await fill();
+    await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
+    // Confirm in-flight state.
+    expect(screen.getByRole('button', { name: /sending/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId('feedback-scrim'));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('scrim click when dirty (idle): onClose NOT called, Cancel focused', async () => {
+    const onClose = vi.fn();
+    renderModal({ onClose });
+    await userEvent.type(screen.getByLabelText(/summary/i), 'dirty');
+    await userEvent.click(screen.getByTestId('feedback-scrim'));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /cancel/i })).toHaveFocus();
+  });
+
+  it('✕ click when dirty (idle): onClose NOT called, Cancel focused', async () => {
+    const onClose = vi.fn();
+    renderModal({ onClose });
+    await userEvent.type(screen.getByLabelText(/summary/i), 'dirty');
+    await userEvent.click(screen.getByRole('button', { name: /close feedback/i }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /cancel/i })).toHaveFocus();
+  });
+
+  it('✕ is disabled while in-flight', async () => {
+    submitFeedback.mockReturnValue(new Promise(() => {})); // never resolves
+    renderModal();
+    await fill();
+    await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
+    expect(screen.getByRole('button', { name: /sending/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /close feedback/i })).toBeDisabled();
+  });
+
+  it('Cancel closes directly when dirty (onClose called)', async () => {
+    const onClose = vi.fn();
+    renderModal({ onClose });
+    await userEvent.type(screen.getByLabelText(/summary/i), 'dirty');
+    await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });
