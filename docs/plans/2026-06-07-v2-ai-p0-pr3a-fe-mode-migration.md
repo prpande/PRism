@@ -213,12 +213,10 @@ function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
 }
 ```
 
-Add the matching arm to `writeKey` (before the `inbox.sections.` slice):
+Add the matching arm to `writeKey` — insert **only this single line** immediately after the existing `aiPreview` arm and before the `if (key === 'density')` arm (leave every other arm untouched):
 
 ```ts
-  if (key === 'aiPreview') return { ...prefs, ui: { ...prefs.ui, aiPreview: value as boolean } };
   if (key === 'ui.ai.mode') return { ...prefs, ui: { ...prefs.ui, aiMode: value as AiMode } };
-  if (key === 'density')
 ```
 
 (The generic `inbox.sections.*` fallthrough does **not** cover `ui.*` keys — `'ui.ai.mode'.slice(15)` is `''`, which would read/write `inbox.sections['']`. The explicit arms above are required.)
@@ -433,7 +431,7 @@ In `frontend/src/hooks/useCapabilities.ts`, change the derivation line (the comm
 
 - [ ] **Step 5: Migrate `useAiGate.ts` and add `useIsSampleMode`**
 
-Replace the body of `frontend/src/hooks/useAiGate.ts` (keep the header comment) with:
+Keep the three `import` lines and the header comment at the top of `frontend/src/hooks/useAiGate.ts` (the functions below consume `AiCapabilities`, `useCapabilities`, and `usePreferences` — do **not** delete the imports). Replace only the existing `useAiGate` function with the two functions below:
 
 ```ts
 export function useAiGate(key: keyof AiCapabilities): boolean {
@@ -477,7 +475,7 @@ git commit -m "feat(ai): derive capabilities + gate from ui.aiMode; add useIsSam
 
 - [ ] **Step 1: Rewrite the test**
 
-Replace `frontend/src/components/Settings/panes/AppearancePane.test.tsx` with:
+Replace the **entire contents** of `frontend/src/components/Settings/panes/AppearancePane.test.tsx` with the following (this fully supersedes the old file — in particular it removes the old `getByRole('switch')` assertion; a targeted edit that leaves it would fail):
 
 ```tsx
 import { render, screen, waitFor } from '@testing-library/react';
@@ -749,12 +747,16 @@ vi.mock('../../hooks/useAiGate', async (orig) => {
 
 import { AiSummaryCard } from '../PrDetail/OverviewTab/AiSummaryCard';
 import { AiComposerAssistant } from './AiComposerAssistant';
+import { PreSubmitValidatorCard } from '../PrDetail/SubmitDialog/PreSubmitValidatorCard';
+import type { ValidatorResult } from '../../api/types';
 
 beforeEach(() => { mock.aiMode = 'preview'; mock.composerOn = true; });
 
 describe('card sample surfaces carry SampleBadge (not the old hardcoded string)', () => {
   it('AiSummaryCard shows the badge and no legacy string', () => {
-    render(<AiSummaryCard summary={null} />);
+    // Non-null summary is required: AiSummaryCard early-returns null when summary
+    // is falsy (the badge lives in the non-null branch). PrSummary = { body, category }.
+    render(<AiSummaryCard summary={{ body: 'Sample summary', category: 'Refactor' }} />);
     expect(screen.getByTestId('sample-badge')).toBeInTheDocument();
     expect(screen.queryByText(/AI preview — sample content/i)).toBeNull();
   });
@@ -764,10 +766,16 @@ describe('card sample surfaces carry SampleBadge (not the old hardcoded string)'
     expect(screen.getByText(/composer suggestions appear here/i)).toBeInTheDocument();
     expect(screen.queryByText(/AI preview — composer/i)).toBeNull();
   });
+  it('PreSubmitValidatorCard shows the badge and no legacy string', () => {
+    const results: ValidatorResult[] = [{ severity: 'suggestion', message: 'Sample check' }];
+    render(<PreSubmitValidatorCard results={results} />);
+    expect(screen.getByTestId('sample-badge')).toBeInTheDocument();
+    expect(screen.queryByText(/AI preview — sample content/i)).toBeNull();
+  });
 });
 ```
 
-(`PreSubmitValidatorCard` needs `ValidatorResult[]` props; its badge is asserted via the e2e sweep in Task 11. The edit below is still required.)
+(All three card surfaces are unit-tested above. `PreSubmitValidatorCard` **must** be tested here, not deferred to the e2e sweep: the sweep never opens the `SubmitDialog` that hosts the validator card, so this unit test is its only coverage. If `ValidatorResult`'s shape differs from `{ severity, message }`, mirror the shape from `PrHeader.tsx`'s `CANNED_PRESUBMIT_VALIDATOR_RESULTS`.)
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -865,48 +873,14 @@ git commit -m "feat(ai): replace hardcoded sample strings with SampleBadge"
 - Modify: `frontend/src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.tsx`
 - Modify: `frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.tsx`
 
-- [ ] **Step 1: Edit `AiHunkAnnotation.tsx` (solid variant, inside the dashed container)**
-
-Add the import:
-
-```tsx
-import { SampleBadge } from '../../../Ai/SampleBadge';
-```
-
-In the `ai-hunk-meta` row (current lines 30-33), add the badge after the `AI` label:
-
-```tsx
-        <div className={`ai-hunk-meta ${styles.aiHunkMeta}`}>
-          <span>AI</span>
-          <SampleBadge solid />
-          <span className={`chip chip-${chip.variant}`}>{chip.label}</span>
-        </div>
-```
-
-- [ ] **Step 2: Edit `StaleDraftRow.tsx` (inside the `{aiSuggestion && (…)}` block)**
-
-Add the import:
-
-```tsx
-import { SampleBadge } from '../../Ai/SampleBadge';
-```
-
-In the AI-suggestion block (current line 134), add the badge after the label text:
-
-```tsx
-            <div className={`ai-summary-label ${styles.staleAiLabel}`}>
-              AI suggestion <SampleBadge />
-            </div>
-```
-
-- [ ] **Step 3: Write the test**
+- [ ] **Step 1: Write the failing test**
 
 Create `frontend/src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.sample.test.tsx`:
 
 ```tsx
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { HunkAnnotation } from '../../../../../api/types';
+import type { HunkAnnotation } from '../../../../api/types';
 
 const mock = vi.hoisted(() => ({ aiMode: 'preview' as 'off' | 'preview' | 'live' }));
 vi.mock('../../../../hooks/usePreferences', () => ({
@@ -932,19 +906,60 @@ describe('AiHunkAnnotation sample badge', () => {
 });
 ```
 
-(If `AiHunkAnnotation` needs a more specific `annotation` shape to render the chip, mirror the shape used by the file's existing test/fixtures; the badge sits in the always-rendered `ai-hunk-meta` row.)
+(If `AiHunkAnnotation` needs a more specific `annotation` shape to render, mirror the shape used by the file's existing test/fixtures; the badge sits in the always-rendered `ai-hunk-meta` row.)
 
-- [ ] **Step 4: Run the test to verify it passes (after the edits)**
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.sample.test.tsx`
+Expected: FAIL — `AiHunkAnnotation` renders no `sample-badge` yet.
+
+- [ ] **Step 3: Edit `AiHunkAnnotation.tsx` (solid variant, inside the dashed container)**
+
+Add the import:
+
+```tsx
+import { SampleBadge } from '../../../Ai/SampleBadge';
+```
+
+In the `ai-hunk-meta` row (current lines 30-33), add the badge after the `AI` label:
+
+```tsx
+        <div className={`ai-hunk-meta ${styles.aiHunkMeta}`}>
+          <span>AI</span>
+          <SampleBadge solid />
+          <span className={`chip chip-${chip.variant}`}>{chip.label}</span>
+        </div>
+```
+
+- [ ] **Step 4: Edit `StaleDraftRow.tsx` (inside the `{aiSuggestion && (…)}` block)**
+
+Add the import:
+
+```tsx
+import { SampleBadge } from '../../Ai/SampleBadge';
+```
+
+In the AI-suggestion block (current line 134), add the badge after the label text:
+
+```tsx
+            <div className={`ai-summary-label ${styles.staleAiLabel}`}>
+              AI suggestion <SampleBadge />
+            </div>
+```
+
+(No separate unit test for `StaleDraftRow`: the e2e sweep in Task 11 visits the stale-draft surface in the ON state and asserts `sample-badge` count drops to 0 after toggling Off — that off-state assertion catches a badge wrongly placed outside the `{aiSuggestion && …}` guard.)
+
+- [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npx vitest run src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.sample.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Verify build + full suite**
+- [ ] **Step 6: Verify build + full suite**
 
 Run: `npm run build && npm test`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add frontend/src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.tsx frontend/src/components/PrDetail/FilesTab/DiffPane/AiHunkAnnotation.sample.test.tsx frontend/src/components/PrDetail/Reconciliation/StaleDraftRow.tsx
@@ -1012,6 +1027,8 @@ In the tree header (current lines 173-175), add the region marker when `aiPrevie
         {aiPreview && <SampleBadge variant="region" />}
       </div>
 ```
+
+(The outer `aiPreview &&` is load-bearing, not redundant: `aiPreview` here is the `useAiGate('fileFocus')` value passed in from `FilesTab`, so the marker shows only when focus content actually renders. `SampleBadge` *additionally* self-gates on Preview via `useIsSampleMode()`, so in a future Live config the focus dots show real data and the badge correctly hides.)
 
 - [ ] **Step 4: Write the test**
 
@@ -1113,6 +1130,7 @@ git commit -m "refactor(ai): source PrDescription AI-layout from useAiGate('summ
 **Files:**
 - Modify: `frontend/src/api/types.ts`
 - Modify: `frontend/src/contexts/PreferencesContext.tsx`
+- Modify (drop the `aiPreview` mock key kept during Tasks 2-4): `frontend/src/hooks/useAiGate.reactivity.test.tsx`, `frontend/src/contexts/PreferencesContext.aimode.test.tsx`, `frontend/src/components/Settings/panes/AppearancePane.test.tsx`
 
 - [ ] **Step 1: Remove the type field**
 
@@ -1126,20 +1144,27 @@ In `frontend/src/contexts/PreferencesContext.tsx`:
 - Delete the `if (key === 'aiPreview') return prefs.ui.aiPreview;` arm in `readKey`.
 - Delete the `if (key === 'aiPreview') return { ...prefs, ui: { ...prefs.ui, aiPreview: value as boolean } };` arm in `writeKey`.
 
-- [ ] **Step 3: Run the build to find any stragglers**
+- [ ] **Step 3: Remove the `aiPreview` key from the three unit mocks that carry it**
+
+Tasks 2-4 deliberately kept `aiPreview` in three mock factories so each interim commit compiled. Now delete the `aiPreview: …` key from the `ui` block in each:
+- `frontend/src/hooks/useAiGate.reactivity.test.tsx` (`aiPreview: state.aiMode !== 'off'`)
+- `frontend/src/contexts/PreferencesContext.aimode.test.tsx` (`aiPreview: false`)
+- `frontend/src/components/Settings/panes/AppearancePane.test.tsx` (`aiPreview: false`)
+
+- [ ] **Step 4: Run the build to find any remaining stragglers**
 
 Run: `npm run build`
-Expected: PASS. If a `src/` test/mock still constructs `aiPreview`, the compiler flags it — remove the `aiPreview` key from that literal (the unit fixtures were already migrated in Tasks 1/3/4; this should be clean).
+Expected: PASS. If any other `src/` literal still constructs `aiPreview`, the compiler flags it — remove the key.
 
-- [ ] **Step 4: Verify the full unit suite**
+- [ ] **Step 5: Verify the full unit suite**
 
 Run: `npm test`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add frontend/src/api/types.ts frontend/src/contexts/PreferencesContext.tsx
+git add frontend/src/api/types.ts frontend/src/contexts/PreferencesContext.tsx frontend/src/hooks/useAiGate.reactivity.test.tsx frontend/src/contexts/PreferencesContext.aimode.test.tsx frontend/src/components/Settings/panes/AppearancePane.test.tsx
 git commit -m "refactor(ai): remove legacy aiPreview from the FE (mode is source of truth)"
 ```
 
@@ -1153,8 +1178,8 @@ git commit -m "refactor(ai): remove legacy aiPreview from the FE (mode is source
 
 - [ ] **Step 1: Discover the footprint**
 
-Run: `rg -l "aiPreview" frontend/e2e/` and `rg -n "getByRole\('switch'" frontend/e2e/`
-Expected: the file lists above. Confirm no mock-driven spec is missed.
+Run: `rg -l "aiPreview" frontend/e2e/` then `rg -n "getByRole" frontend/e2e/`
+Expected: the known-set files for the first; the second lists every role locator so you can spot each `'switch'` (AI-toggle) usage. Confirm no mock-driven spec is missed. Note: `density-toggle.spec.ts` / `density-cross-tab.spec.ts` import `makeDefaultPreferences` from the fixture migrated in Step 2 — they inherit the change with no direct edit (verify they carry no inline `aiPreview`).
 
 - [ ] **Step 2: Migrate the shared/static GET fixtures (`aiPreview: false` → `aiMode: 'off'`)**
 
@@ -1170,7 +1195,7 @@ to:
     ui: { theme: 'system', accent: 'indigo', aiMode: 'off' as const, density: 'comfortable' },
 ```
 
-(For `fixtures/preferences.ts` and `settings-flow.spec.ts` which use per-field `as const`, write `aiMode: 'off' as const`.)
+(For `fixtures/preferences.ts` and `settings-flow.spec.ts` which use per-field `as const`, write `aiMode: 'off' as const`.) Change **only the `ui` block** in each — the surrounding object literals differ between files (e.g. `helpers/replace-mocks.ts` omits the `recently-closed` inbox section), so do not replace the whole literal.
 
 - [ ] **Step 3: Migrate the mock POST handlers (recognize `ui.ai.mode`)**
 
@@ -1182,7 +1207,9 @@ In `settings-flow.spec.ts` and `settings-modal-visual.spec.ts`, in the `for (con
         }
 ```
 
-In `inbox.spec.ts` (current lines 284-305) and `ai-gating-sweep.spec.ts` (current lines 195-212), replace the `body.aiPreview` keying with `ui.ai.mode` and emit `aiMode` in the GET response. For `inbox.spec.ts`:
+In `inbox.spec.ts` and `ai-gating-sweep.spec.ts` the migration is **more than the GET/POST spread** — each holds a stateful `let aiPreview = false` that ALSO gates a `/api/capabilities` mock. Converting that variable to a string without fixing the capability gate silently false-greens (a non-empty string like `'off'` is truthy).
+
+**`inbox.spec.ts`:** delete the existing `let aiPreview = false;` (≈L275) and its `body.aiPreview` POST handler, and replace with:
 
 ```ts
   let aiMode: 'off' | 'preview' | 'live' = 'off';
@@ -1201,7 +1228,28 @@ In `inbox.spec.ts` (current lines 284-305) and `ai-gating-sweep.spec.ts` (curren
   });
 ```
 
-Apply the equivalent change to `ai-gating-sweep.spec.ts` (it uses `makeDefaultPreferences()` per request — spread `ui: { ...prefs.ui, aiMode }`).
+Then update the **same file's capabilities mock** (≈L312-321) to key on `aiMode` (it previously read the now-deleted `aiPreview`):
+
+```ts
+  await page.route('**/api/capabilities', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        aiMode !== 'off'
+          ? { ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true } }
+          : allOffCapabilities,
+      ),
+    }),
+  );
+```
+
+**`ai-gating-sweep.spec.ts`:** the same variable powers the prefs handler AND the capabilities mock AND helper closures — migrate all of them:
+- `let aiPreview = false;` (≈L185) → `let aiMode: 'off' | 'preview' | 'live' = 'off';`
+- POST handler (≈L195-212): read `body['ui.ai.mode']` (string) and assign `aiMode` (as in inbox above); GET response spreads `ui: { ...prefs.ui, aiMode }`.
+- Capabilities mock (≈L217): `const caps = aiPreview ? allOnCapabilities : allOffCapabilities;` → `const caps = aiMode !== 'off' ? allOnCapabilities : allOffCapabilities;` (**critical** — `aiMode ? …` would be always-truthy).
+- `setupMocks` **return-type annotation** (≈L181-184): change `Promise<{ getAiPreview: () => boolean; setAiPreview: (v: boolean) => void; }>` → `Promise<{ getAiMode: () => 'off' | 'preview' | 'live'; setAiMode: (v: 'off' | 'preview' | 'live') => void; }>` (e2e is outside tsconfig, so a stale annotation is NOT caught by `npm run build` — fix it explicitly).
+- The returned object (≈L329-331) `{ getAiPreview, setAiPreview }` → `{ getAiMode, setAiMode }`. Note the test body does **not** store `setupMocks`'s return value, so there are **no external call sites** to update — the rename is for the closure variable + signature + return only.
 
 - [ ] **Step 4: Migrate the toggle locators (switch → radio)**
 
@@ -1209,17 +1257,28 @@ Replace each `page.getByRole('switch', { name: /ai preview/i })` usage:
 - To turn AI on: `await page.getByRole('radio', { name: 'Preview' }).click();`
 - To turn AI off: `await page.getByRole('radio', { name: 'Off' }).click();`
 
-In `inbox.spec.ts` (line ~358) the toggle reveals the rail — click the `Preview` radio. In `ai-gating-sweep.spec.ts` (lines ~375 on, ~436 off) — click `Preview` then later `Off`. Update any pre-click assertion that relied on the switch's checked state to read `aria-checked` on the corresponding radio.
+Only `inbox.spec.ts` and `ai-gating-sweep.spec.ts` have an AI-mode toggle locator — `settings-flow.spec.ts` / `settings-modal-visual.spec.ts` have **no** AI switch (their `role=switch` locators target inbox-section toggles), so they need only the Step 2 fixture + Step 3 POST-handler changes, not a locator change.
+
+In `inbox.spec.ts` (≈L357-358): change the navigation from `await page.goto('/settings');` to `await page.goto('/settings/appearance');` (the migrated control lives on the Appearance pane; `ai-gating-sweep.spec.ts` already uses the explicit pane path), then click the `Preview` radio to reveal the rail. In `ai-gating-sweep.spec.ts` (≈L375 on, ≈L436 off) — click `Preview` then later `Off`. Replace any pre-click assertion on the switch's checked state with `aria-checked` on the corresponding radio.
 
 - [ ] **Step 5: Add cross-surface badge assertions to the sweep**
 
-In `ai-gating-sweep.spec.ts`, after toggling to Preview and on each AI surface the sweep already visits, assert the sample marker is visible (this realizes the spec §8 coverage guard in the running app). Example, at each visited surface:
+In `ai-gating-sweep.spec.ts`, after toggling to Preview, this realizes the spec §8 coverage guard in the running app. **Guard against a silent false-green** (a missed POST-handler migration leaves the app in Off, making "badge absent" assertions pass vacuously) — the two checks live on **different pages**, so place each at the right navigation point:
+
+```ts
+    // (1) while STILL on /settings/appearance, immediately after clicking the Preview radio:
+    await expect(page.getByRole('radio', { name: 'Preview' })).toHaveAttribute('aria-checked', 'true');
+    // (2) AFTER the sweep's page.goto('/pr/...') — a real AI surface is now on (NOT available on the settings page):
+    await expect(page.getByTestId('ai-summary-card')).toBeVisible();
+```
+
+Then, on each AI surface the sweep visits, assert the marker is visible:
 
 ```ts
     await expect(page.getByTestId('sample-badge').first()).toBeVisible();
 ```
 
-and after toggling Off, assert it is gone on those surfaces:
+and after toggling Off, assert it is gone:
 
 ```ts
     await expect(page.getByTestId('sample-badge')).toHaveCount(0);
@@ -1227,8 +1286,12 @@ and after toggling Off, assert it is gone on those surfaces:
 
 - [ ] **Step 6: Run the migrated e2e specs**
 
-Run: `npx playwright test inbox ai-gating-sweep settings-flow settings-modal-visual a11y-audit`
-Expected: PASS. (If a spec false-greens — passes without actually flipping mode — re-check that its mock POST handler reads `ui.ai.mode` and the GET emits `aiMode`.)
+Run, in order:
+1. `npm run lint` — e2e **is** linted (eslint covers `**/*.{ts,tsx}`), so an orphaned `aiPreview` unused-var from the migration fails here; catch it now, not at the Task 13 gate.
+2. `npx playwright test inbox ai-gating-sweep settings-flow settings-modal-visual a11y-audit`.
+
+**Visual baselines change in more than one spec.** The Switch→SegmentedControl swap repixels the Appearance pane (`settings-modal-visual`), and the SampleBadge additions repixel any pixel-parity baseline that captures an AI surface in Preview — notably `parity-baselines.spec.ts`'s activity-rail shot (it enables AI on the real backend) and any PR-detail overview/files baseline captured with AI on. **CI compares the `linux` baselines, not `win32`** (`playwright.config.ts` uses a `{platform}` path template; CI runs in the Linux container), so a local `npx playwright test --update-snapshots` only refreshes the `win32` copies and the CI gate still fails. Use the project's documented linux-baseline loop: push the branch → the CI Linux runner fails the changed pixel specs and writes new PNGs under `e2e/__screenshots__/linux/` → download the `e2e-results` artifact → eyeball each changed image → commit the regenerated `__screenshots__/linux/` PNGs.
+Expected: PASS. (If a spec false-greens — passes without actually flipping mode — re-check that its mock POST handler reads `ui.ai.mode` AND its capabilities mock keys on `aiMode`.)
 
 - [ ] **Step 7: Commit**
 
@@ -1287,7 +1350,11 @@ Run, from `frontend/`, one at a time:
 
 Verify each: Off|Preview selector replaces the switch; Preview renders sample content with badges everywhere (inline + region) and Off hides them; FE reads/writes `ui.aiMode`/`ui.ai.mode` and no `aiPreview`; no `/api/capabilities` request; a live config displays as Preview with no POST on render; no hardcoded "AI preview — sample content…" strings remain (`rg -n "AI preview — sample content" frontend/src` → no matches); the invariant doc is updated; the full suite is green; backend is untouched (`git diff --stat origin/V2 -- PRism.* PRism.Web` → empty).
 
-- [ ] **Step 3: Final review pass**
+- [ ] **Step 3: Call out the egress-consent dependency in the PR body**
+
+PR3a ships no server-side consent guard (spec §2). State in the PR description that **PR3b's egress-consent gate must land before any P1 work registers a real Live seam** (a hand-edited `ui.ai.mode=live` config could otherwise egress PR content with no consent). Filing the dedicated GitHub tracking issue is **deferred to PR3b planning** (maintainer decision) — do **not** file it from this PR; the PR-body callout is the interim record.
+
+- [ ] **Step 4: Final review pass**
 
 Dispatch a final code-review pass over the whole branch diff vs `V2` (per superpowers:subagent-driven-development's final-review step), then use superpowers:finishing-a-development-branch to open the PR → `V2`.
 
