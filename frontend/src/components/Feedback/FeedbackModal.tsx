@@ -371,11 +371,13 @@ export function FeedbackModal({
               <div className={styles.footer}>
                 {modalState.kind === 'error' ? (
                   <>
+                    {/* Retry only renders in the error state (never in-flight), so
+                        no disabled guard is needed here — onSubmit() also early-returns
+                        if a submit is already in flight. */}
                     <button
                       type="button"
                       className="btn btn-primary"
                       data-modal-role="primary"
-                      disabled={modalState.kind === 'in-flight'}
                       onClick={() => void onSubmit()}
                     >
                       Retry
