@@ -1,0 +1,25 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+.range {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.ticks {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  /* Pad to the thumb's reachable range so glyphs line up under each stop
+     (native range thumbs don't reach the track's pixel edges). Tuned at B1. */
+  padding: 0 6px;
+  color: var(--text-3);
+  line-height: 1;
+}
+.tick {
+  font-family: var(--font-sans);
+  user-select: none;
+}
