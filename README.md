@@ -96,7 +96,7 @@ The Settings panel has a **Replace token** action. It validates a new PAT before
 
 ### Where your data lives
 
-PRism stores your drafts and view state under your operating system's application-data folder; the desktop and browser-tab builds share the same folder. Your GitHub token is kept in an OS-protected token cache, never in plaintext — the system Keychain on macOS and the libsecret keyring on Linux, and a DPAPI-encrypted cache file (`PRism.tokens.cache`) in your data folder on Windows. See [`TESTING.md`](TESTING.md) for the exact per-platform paths.
+PRism stores your drafts and view state under your operating system's application-data folder; the desktop app and browser-tab mode share the same folder. Your GitHub token is kept in an OS-protected token cache, never in plaintext — a DPAPI-encrypted cache file (`PRism.tokens.cache`) in your data folder on Windows, and the system Keychain on macOS (and the libsecret keyring on Linux, if you run from source). See [`TESTING.md`](TESTING.md) for the exact per-platform paths.
 
 ---
 
@@ -135,4 +135,6 @@ All production code is written test-first. Contributor guidance — the full dev
 
 ---
 
-PRism began as a single-user proof of concept and is now in its fit-and-finish stage — the core review experience is feature-complete and available as an unsigned preview build, with AI augmentation planned for a future release.
+## Status
+
+PRism began as a single-user proof of concept and is now in its fit-and-finish stage — the core review experience is feature-complete and available as an unsigned preview build, with AI augmentation planned for a future release. The [Releases page](https://github.com/prpande/PRism/releases) is the source of truth for what's downloadable.
