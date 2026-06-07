@@ -3,46 +3,63 @@
 - **Issue:** [#135](https://github.com/prpande/PRism/issues/135) — Settings: font-size control for PR-detail content (comments, description, overview, diffs)
 - **Date:** 2026-06-07
 - **Tier / Risk:** T3 (cross-cutting backend + frontend + CSS vertical slice) / **B1** (UI-visual — human visual sign-off before merge)
-- **Status:** Design — approved by owner, pending spec review gate
+- **Status:** Design — approved by owner (scope = all data, Option 2: chrome fixed), pending spec review gate
 
 ## Problem
 
-PR-detail content (the Overview description, root comments, inline comments, draft
-bodies, and the diff code text) renders at one fixed size. Readers who want larger
-or denser text have no control. The ask: a Settings control that scales **only the
-PR-detail content text**, leaving every other surface (Inbox, Settings itself,
-navigation, and all chrome) untouched.
+PR-detail data renders at one fixed size. Readers who want larger or denser text have
+no control. The ask: a Settings control that scales **all the data displayed across
+the PR-detail tabs** (Overview / Files / Drafts), while the interactive and
+navigational **chrome stays fixed** (owner decision — "Option 2"). Everything outside
+PR-detail (Inbox, Settings, welcome/setup, app header/nav) is untouched.
 
 ## Scope
 
-In scope — these surfaces scale:
+The rule: **content/data text inside the PR-detail tab panels scales; chrome does
+not.** "Chrome" = interactive or navigational UI *around* the data (tab strips,
+toolbars, pickers, menus, buttons, file-tree controls, the PR header, banners).
 
-- Overview description (`PrDescription`)
-- Root / conversation comments (`PrRootConversation`)
-- Inline diff comments (`ExistingCommentWidget`)
-- Draft bodies and composer preview (`DraftListItem`, `ComposerMarkdownPreview`)
-- Markdown file view (`MarkdownFileView`)
-- **Diff code text** (the `.diffTable` body — code lines + gutter line numbers)
+In scope — these data surfaces scale, per tab:
 
-Also scales (content authored/previewed in the Submit flow, all via `MarkdownRenderer`):
+**Overview tab** (`OverviewTab`)
+- PR title + description (`PrDescription`)
+- AI summary text (`AiSummaryCard` / `.aiSummaryBody`)
+- Stats-tile values + labels (`StatsTiles`)
+- Root / conversation comments incl. author + timestamp metadata (`PrRootConversation`)
 
-- Submit-dialog PR-root body preview (`SubmitDialog` → `MarkdownRenderer`, no className)
-- Pre-submit validator messages (`PreSubmitValidatorCard`, renders `.markdown-body`)
+**Files tab** (`FilesTab`)
+- Diff code text (the `.diffTable` body — code lines + gutter line numbers)
+- Inline diff comments incl. metadata (`ExistingCommentWidget`)
+- AI hunk annotations (`AiHunkAnnotation`)
+- Rendered markdown file view (`MarkdownFileView`)
 
-These live in the Submit modal but are PR *content*, not chrome — the B1 reviewer
-should expect them to scale and not flag a scaled Submit preview as a regression.
+**Drafts tab** (`DraftsTab`)
+- Draft bodies + composer preview (`DraftListItem`, `ComposerMarkdownPreview`)
 
-Explicitly **out** of scope — these stay fixed at all settings:
+**Submit flow** (modal, but PR content authored via `MarkdownRenderer`)
+- Submit-dialog PR-root body preview (`SubmitDialog`)
+- Pre-submit validator messages (`PreSubmitValidatorCard`)
 
-- Inbox, Settings, the welcome/setup flows, the app header/nav
-- All chrome *inside* PR-detail: file tree, compare picker, diff-settings menu,
-  iteration tab strip, commit multi-select, drafts-tab headers/buttons, toolbars,
-  the diff-pane header/path label, and `@@` hunk-header markers
-- **AI summary / hotspot text** (`AiSummaryCard`) — renders plain text (not
-  `MarkdownRenderer`) and inherits `var(--text-sm)` with no `--content-scale` hook.
-  This is an AI-preview feature on a parallel track, outside the owner's enumerated
-  scope (overview/comments/diffs). Left fixed deliberately; can be folded in later
-  with a one-line hook on `.aiSummaryBody` if desired. **(Open question — see below.)**
+Explicitly **out** of scope — chrome stays fixed at all settings:
+
+- Inbox, Settings, the welcome/setup flows, the app header/nav (outside PR-detail)
+- **`PrHeader`** (the PR-detail title bar / metadata strip above the tabs) — it is the
+  view's header chrome, not tab data. (Note: the PR *title* also appears in-tab via
+  `PrDescription`; the in-tab copy scales, the header copy does not.)
+- All chrome *inside* the tab panels: `PrSubTabStrip`, file tree (`FileTree`),
+  `ComparePicker`, `DiffSettingsMenu`, `DiffViewToggle`, `IterationTabStrip`,
+  `CommitMultiSelectPicker`, the Files toolbar, drafts-tab headers/buttons
+  (`DiscardAllStaleButton`, `MarkAllReadButton`, `ReviewFilesCta`), the diff-pane
+  header/path label, and `@@` hunk-header markers
+
+**Boundary cases flagged for the review + B1 sign-off** (defaults below; reviewer to
+pressure-test, owner to confirm at the visual gate):
+- *File-tree file names* — data, but live in a navigation pane. **Default: fixed**
+  (treated as chrome, like a sidebar).
+- *Comment author / timestamp metadata* — **Default: scales** with its comment (it's
+  part of the comment's data block, not a global control).
+- *Stats-tile labels* (e.g. "Files", "Threads") vs values — **Default: both scale**
+  (the whole tile is overview data).
 
 > **Note — issue body has stale paths.** #135 references
 > `frontend/src/components/Settings/AppearanceSection.tsx` and
@@ -50,14 +67,29 @@ Explicitly **out** of scope — these stay fixed at all settings:
 > `frontend/src/components/Settings/panes/AppearancePane.tsx` and
 > `frontend/src/utils/applyTheme.ts`. The plan must use the real paths.
 
-## Why surgical scaling (not a region-wide token override)
+## Why a surgical multiplier (not a region-wide token override)
 
-The obvious-but-wrong approach is to redefine the `--text-*` size tokens on a
-PR-detail wrapper (`[data-content-scale] { --text-sm: …; }`). That fails because
-**chrome inside PR-detail consumes the same `--text-*` tokens as content** — the
-file tree, toolbars, pickers, and tab strip would all grow/shrink with the content.
-The scaling must therefore be **surgical**: a dedicated multiplier variable consumed
-*only* by the enumerated content text hooks, never by chrome.
+Two mechanisms could deliver Option 2 ("data scales, chrome fixed"):
+
+1. **Region token override + freeze chrome** — redefine the `--text-*` size tokens on
+   the PR-detail tab-panel container so everything under it scales, then *reset* the
+   tokens back to base on every chrome component. Rejected: chrome and content share
+   the `--text-*` tokens, and CSS custom-property inheritance computes a var's value at
+   the element that *sets* it — so "un-scaling" chrome means re-declaring the full
+   `--text-*` set on each chrome root, not just flipping the multiplier. That is
+   verbose, and any chrome added to a tab later silently scales until someone freezes it.
+
+2. **Surgical multiplier (chosen)** — a dedicated `--content-scale` variable consumed
+   *only* by the enumerated content text hooks. Chrome uses the bare `--text-*` tokens
+   and therefore **stays fixed for free** — there is nothing to freeze, and new chrome
+   never accidentally scales. The maintenance cost (a content surface must opt in via a
+   hook) is small because `.markdown-body` is a single universal hook covering *all*
+   rendered prose across every tab; only a handful of non-markdown data surfaces
+   (AI summary, stats tiles, AI hunk annotations, diff code) need their own hook.
+
+The residual risk of mechanism 2 is **missing a data surface** (it won't scale until
+hooked) — which is exactly what the adversarial doc-review pass and the per-surface B1
+assertions are charged with catching.
 
 ## Architecture
 
@@ -71,10 +103,13 @@ This mirrors the existing `density` mechanism end-to-end (`data-density` attribu
 `<html>`, applied by `applyDensityToDocument`, synced by `AppearanceSync`, persisted
 as a `ui.*` string), so every layer has a proven sibling to copy.
 
-### CSS (tokens.css + DiffPane.module.css)
+### CSS content hooks
+
+The multiplier var is global; each content surface multiplies its own font-size by it.
+All other elements keep the bare token and stay fixed.
 
 ```css
-/* tokens.css */
+/* tokens.css — selector + multiplier mapping (single source of truth) */
 :root { --content-scale: 1; }
 [data-content-scale="xs"] { --content-scale: 0.8; }
 [data-content-scale="s"]  { --content-scale: 0.9; }
@@ -82,18 +117,29 @@ as a `ui.*` string), so every layer has a proven sibling to copy.
 [data-content-scale="xl"] { --content-scale: 1.4; }
 /* "m" (Default) → no attribute → falls through to :root → 1 (no-op) */
 
-/* Prose hook — single global class wrapping ALL rendered prose. It carries no
-   font-size today (inherits), so 1em == today's inherited size: scale 1 is a
-   true no-op, and each context (comment card, overview, draft) keeps its base. */
+/* Prose hook — single global class wrapping ALL rendered prose (description,
+   comments, drafts, file view, submit preview, validator). It carries no font-size
+   today (inherits), so 1em == today's inherited size: scale 1 is a true no-op, and
+   each context keeps its base. Covers the majority of in-scope surfaces in one rule. */
 .markdown-body { font-size: calc(1em * var(--content-scale)); }
 ```
 
-```css
-/* DiffPane.module.css — .diffTable already pins font-size: var(--text-sm) and
-   every code cell (.diffContent) + gutter inherits from it. One multiply scales
-   the whole diff body; chrome (header/path/hunk-header) keeps its own tokens. */
-.diffTable { font-size: calc(var(--text-sm) * var(--content-scale)); }
-```
+The non-markdown data surfaces each get a one-line multiply on their existing hook
+(module CSS), using `calc(<their-current-token> * var(--content-scale))` so scale 1 is
+a no-op:
+
+| Surface | Hook (module CSS) | Current pin → scaled |
+|---------|-------------------|----------------------|
+| Diff code (lines + gutter) | `DiffPane.module.css` `.diffTable` | `var(--text-sm)` → `calc(var(--text-sm) * var(--content-scale))` |
+| AI summary body | `AiSummaryCard.module.css` `.aiSummaryBody` | `var(--text-sm)` → scaled |
+| Stats tiles (value + label) | `StatsTiles.module.css` tile text | token → scaled |
+| AI hunk annotation | `AiHunkAnnotation.module.css` body text | token → scaled |
+| PR title (in-tab) | `PrDescription.module.css` title | token → scaled |
+
+`.diffTable` is the only one needing care: `.diffContent` cells and `.diffGutter`
+inherit its font-size, so one multiply scales code + line numbers together; the diff
+chrome (`.diffPaneHeader`, `.diffPanePath`, `.diffHunkHeader`) pins its own
+`var(--text-xs)` independently and stays fixed.
 
 **Steps (5, Default centered):** `xs 0.8× · s 0.9× · m 1.0× (Default) · l 1.2× · xl 1.4×`.
 The down-steps (0.1 apart) are gentler than the up-steps (0.2 apart) **intentionally**:
@@ -227,7 +273,9 @@ User drags slider (AppearancePane)
 On load / any preference change:
   AppearanceSync effect → applyContentScaleToDocument(preferences.ui.contentScale)
 
-CSS: data-content-scale → --content-scale → .markdown-body / .diffTable multiply font-size
+CSS: data-content-scale → --content-scale → content hooks (.markdown-body, .diffTable,
+     .aiSummaryBody, StatsTiles, AiHunkAnnotation, PR title) multiply font-size; chrome
+     uses bare --text-* tokens and stays fixed
 ```
 
 ## Error handling
@@ -252,15 +300,18 @@ CSS: data-content-scale → --content-scale → .markdown-body / .diffTable mult
   `aria-valuetext` present.
 - **`AppearancePane` test:** slider row present and bound to `preferences.ui.contentScale`;
   change calls `set('contentScale', …)`; optimistic apply + rollback on rejected set.
-- **Playwright B1 visual proof:** PR-detail at XS / Default / XL — assert content scales
-  while chrome (file tree, toolbars, tab strip, diff header, `@@` hunk markers) stays
-  fixed. Cover each in-scope surface *individually* so a same-element collision can't
-  hide: **assert the Overview description's computed font-size actually changes** (the C1
-  regression site) — not just the comments — plus a comment, a draft, and the diff code.
+- **Playwright B1 visual proof (all three tabs):** at XS / Default / XL, assert each
+  in-scope data surface's computed font-size actually changes, *per surface* (a single
+  "content scaled" eyeball would hide a missed hook like C1):
+  - Overview: PR title + description (C1 site), AI summary, a stats tile, a root comment
+  - Files: diff code, an inline comment, AI hunk annotation
+  - Drafts: a draft body
+  And assert chrome stays **fixed**: tab strip, Files toolbar, file-tree names (boundary
+  default = fixed), diff-pane header/path, `@@` hunk markers, `PrHeader` title/metadata.
   **Verify the split-diff synthetic h-scrollbar (`useLockedPaneScroll`) still tracks
   correctly at non-default scales** — font-size changes line widths, and the scrollbar
-  spacer must recompute. Screenshot the slider at all five steps and confirm the thumb
-  visually sits over each "a" glyph.
+  spacer must recompute. Screenshot the slider at all five steps; confirm the thumb sits
+  over each "a" glyph.
 
 ## Risks / open verification
 
@@ -282,15 +333,9 @@ CSS: data-content-scale → --content-scale → .markdown-body / .diffTable mult
 5. **Line-height** — `.diffTable` line-height is unitless (`1.55`), so it scales with
    font-size automatically; no separate adjustment needed.
 
-## Open question for owner
-
-- **Should AI summary / hotspot text scale too?** It's PR-detail content but renders via
-  `AiSummaryCard` (plain text, not `MarkdownRenderer`) and was not in the enumerated scope.
-  Current design leaves it fixed. Including it is a one-line CSS hook on `.aiSummaryBody`
-  if the owner wants it in. **Default: leave fixed unless told otherwise.**
-
 ## Out of scope (YAGNI)
 
 - Per-surface independent sizing (one global content scale only).
 - A reset button (Default is the centered step — drag back to it).
 - Syncing scale across devices/accounts (config.json is local, like all `ui.*`).
+- Scaling chrome (tab strip, toolbars, header) — owner chose Option 2 (data only).
