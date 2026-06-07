@@ -44,7 +44,12 @@ export function Header({ isAuthed }: HeaderProps) {
 
   return (
     <header className={styles.header}>
-      <Logo />
+      {/* #215: show the "PRism" wordmark in the empty no-nav header (first-run
+          /setup and rejected-token re-auth), but NOT on /welcome, whose hero
+          already names the product (avoids a double "PRism" on one screen). When
+          authed the nav owns the space, so the mark stands alone. The visible-
+          text ⇄ alt coupling lives inside Logo. */}
+      <Logo showName={!isAuthed && pathname !== '/welcome'} />
       {/* #130: the nav tab strip renders only when authed. During first-run and
           rejected-token re-auth the tabs would only bounce back to /setup, so the
           <nav> element is omitted entirely (an empty navigation landmark is an a11y

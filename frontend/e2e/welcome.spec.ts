@@ -46,6 +46,9 @@ test('/welcome hides the top nav and keeps the logo (first run, #130)', async ({
   await expect(page.getByRole('link', { name: /^settings$/i })).toHaveCount(0);
   // The header logo (alt="PRism") is still present.
   await expect(page.getByAltText('PRism')).toBeVisible();
+  // #215: the header wordmark is SUPPRESSED on /welcome (the hero <h1> already
+  // names the product) — the header must not double-paint "PRism".
+  await expect(page.locator('header').getByText('PRism', { exact: true })).toHaveCount(0);
 });
 
 test('footer Help / Send feedback are non-interactive stubs', async ({ page }) => {
