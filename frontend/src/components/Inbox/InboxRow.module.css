@@ -2,7 +2,7 @@
 .row {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
-  --inbox-tail-w: 216px; /* metrics only: 64 diff + 72 counts + 44 comments + gaps; tuned in B1 */
+  --inbox-tail-w: 224px; /* metrics only: 64 diff + 72 counts + 52 comments + 2×12 gaps = 212, +12 slack; tuned in B1 */
   gap: var(--s-3);
   width: 100%;
   padding: var(--s-3) var(--s-4);
@@ -144,6 +144,10 @@
   justify-content: flex-end;
 }
 
+/* 72px fits up to 4-digit +adds / −dels (the realistic inbox ceiling); a PR
+   with BOTH counts at 5 digits (~20k-line churn) overflows ~7px into the gap.
+   That tail case is accepted rather than widening every row's tail — the right
+   edge stays pinned so column alignment holds either way (#227 B1). */
 .countsSlot {
   flex: none;
   width: 72px;
@@ -152,9 +156,12 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 52px fits a 3-digit comment count (~48px pill) without the pill bleeding into
+   the adjacent gap; 2-digit is the common case. Right-pinned so the glyph+count
+   right edge aligns across rows regardless of digit count. */
 .commentSlot {
   flex: none;
-  width: 44px;
+  width: 52px;
   display: flex;
   justify-content: flex-end;
 }
@@ -249,9 +256,10 @@
    Alignment is a within-regime invariant — the metrics column shifts once at
    the breakpoint (tail width changes), by design. Thresholds tuned in B1. */
 @container inbox-sections (max-width: 560px) {
-  /* Override --inbox-tail-w declared on .row itself; the grid template re-resolves. */
+  /* Override --inbox-tail-w declared on .row itself; the grid template re-resolves.
+     144 = 72 counts + 52 comments + 12 gap (diff bar is hidden below). */
   .row {
-    --inbox-tail-w: 136px;
+    --inbox-tail-w: 144px;
   }
   /* Drop the diff bar AND the AI category chip together: at this width the chip
      would otherwise clamp to a cryptic ~1-char stub rather than read as a label.
