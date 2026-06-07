@@ -161,6 +161,48 @@ function Invoke-ForcePortReclaim {
     return $true
 }
 
+function Write-Utf8NoBom {
+    # Same helper run.ps1 uses (UTF-8, no BOM), so artifacts are byte-consistent.
+    param([string]$Path, [string]$Text)
+    [System.IO.File]::WriteAllText($Path, $Text, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Write-Pidfile {
+    # Per-store JSON pidfile (spec section 4.7). serverPid is filled after the health gate.
+    param(
+        [string]$Path, [int]$WrapperPid, [Nullable[int]]$ServerPid,
+        [int]$Port, [string]$Url, [string]$DataDir, [string]$Log, [string]$StartedUtc
+    )
+    $obj = [ordered]@{
+        wrapperPid = $WrapperPid
+        serverPid  = $ServerPid
+        port       = $Port
+        url        = $Url
+        dataDir    = $DataDir
+        log        = $Log
+        startedUtc = $StartedUtc
+    }
+    Write-Utf8NoBom -Path $Path -Text ($obj | ConvertTo-Json -Depth 5)
+}
+
+function Read-Pidfile {
+    # Returns the parsed pidfile object, or $null if absent/corrupt.
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try { return (Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json) }
+    catch { return $null }
+}
+
+function Limit-LogSize {
+    # The log is APPENDED per launch (so crash-loop evidence survives a relaunch),
+    # so cap it: when it exceeds the threshold, keep the tail. Bounds append growth.
+    param([string]$Log, [int]$MaxBytes = 5MB, [int]$KeepLines = 2000)
+    if (-not (Test-Path -LiteralPath $Log)) { return }
+    if ((Get-Item -LiteralPath $Log).Length -le $MaxBytes) { return }
+    $tail = Get-Content -LiteralPath $Log -Tail $KeepLines
+    Write-Utf8NoBom -Path $Log -Text (($tail -join [Environment]::NewLine) + [Environment]::NewLine)
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
