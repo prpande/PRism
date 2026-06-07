@@ -80,7 +80,8 @@ export function FeedbackModal({
   // 'https://GitHub.com' as GHES, forcing link-only.
   const isGitHubCom = (() => {
     try {
-      return new URL(host).hostname.toLowerCase() === 'github.com';
+      const u = new URL(host);
+      return u.protocol === 'https:' && u.hostname.toLowerCase() === 'github.com';
     } catch {
       return false;
     }
@@ -98,6 +99,14 @@ export function FeedbackModal({
       context: `route: ${routePattern}\nplatform: ${isDesktop() ? 'desktop' : 'browser'}`,
     });
 
+  async function handleOpenExternal(url: string) {
+    try {
+      await openExternal(url);
+    } catch {
+      setModalState({ kind: 'error' });
+    }
+  }
+
   async function goToLink() {
     try {
       await openExternal(prefilledUrl());
@@ -108,6 +117,7 @@ export function FeedbackModal({
   }
 
   async function onSubmit() {
+    if (modalState.kind === 'in-flight') return;
     if (linkOnly) {
       return goToLink();
     }
@@ -169,9 +179,11 @@ export function FeedbackModal({
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        // Dirty guard: when form has unsaved input and is not in-flight,
-        // Esc must NOT close; focus Cancel and announce.
-        if (dirty && modalState.kind !== 'in-flight') {
+        // In-flight: suppress Esc entirely — closing mid-submit is not allowed (spec §5 state-2).
+        if (modalState.kind === 'in-flight') return;
+        // Dirty guard: when form has unsaved input, Esc must NOT close;
+        // focus Cancel and announce.
+        if (dirty) {
           cancelRef.current?.focus();
           if (liveRef.current)
             liveRef.current.textContent = 'Press Cancel to discard, or keep editing.';
@@ -255,7 +267,7 @@ export function FeedbackModal({
                     type="button"
                     className="btn btn-secondary"
                     data-modal-role="primary"
-                    onClick={() => void openExternal(modalState.htmlUrl)}
+                    onClick={() => void handleOpenExternal(modalState.htmlUrl)}
                   >
                     Open in GitHub
                   </button>
@@ -363,6 +375,7 @@ export function FeedbackModal({
                       type="button"
                       className="btn btn-primary"
                       data-modal-role="primary"
+                      disabled={modalState.kind === 'in-flight'}
                       onClick={() => void onSubmit()}
                     >
                       Retry

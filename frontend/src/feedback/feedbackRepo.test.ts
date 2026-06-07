@@ -35,4 +35,15 @@ describe('feedbackRepo', () => {
     expect(url.length).toBeLessThanOrEqual(6144);
     expect(new URL(url).searchParams.get('body')).toContain('(truncated');
   });
+
+  it('URL cap holds for emoji-heavy details (multibyte codepoints)', () => {
+    const url = buildFeedbackIssueUrl({
+      title: 'x',
+      details: '😀'.repeat(5000),
+      context: '',
+    });
+    expect(url.length).toBeLessThanOrEqual(6144);
+    const u = new URL(url);
+    expect(u.protocol).toBe('https:');
+  });
 });

@@ -161,4 +161,47 @@ describe('FeedbackModal', () => {
     await userEvent.click(screen.getByRole('button', { name: /close feedback/i }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  // Fix 1: Esc during in-flight must NOT close the modal
+  it('Esc during in-flight: does NOT call onClose and dialog remains', async () => {
+    const onClose = vi.fn();
+    // Never-resolving promise keeps the modal in the in-flight state.
+    submitFeedback.mockReturnValue(new Promise(() => {}));
+    renderModal({ onClose });
+    await fill();
+    await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
+    // Button text changes to "Sending…" confirming in-flight state.
+    expect(screen.getByRole('button', { name: /sending/i })).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  // Fix 2: success-state "Open in GitHub" surfaces openExternal failure as error state
+  it('success state: openExternal rejection → error state (role=alert)', async () => {
+    const openExternalSpy = vi.fn().mockRejectedValue(new Error('shell blocked'));
+    (window as unknown as { prism: unknown }).prism = { openExternal: openExternalSpy };
+    submitFeedback.mockResolvedValue({
+      outcome: 'created',
+      issueNumber: 99,
+      htmlUrl: 'https://github.com/prpande/PRism-feedback/issues/99',
+    });
+    renderModal();
+    await fill();
+    await userEvent.click(screen.getByRole('button', { name: /send feedback/i }));
+    await screen.findByText(/filed as #99/i);
+    await userEvent.click(screen.getByRole('button', { name: /open in github/i }));
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+  });
+
+  // Fix 5: http://github.com (authed) must be treated as link-only, not API path
+  it('http://github.com (authed): skips submitFeedback — http is not github.com API-eligible', async () => {
+    const openExternalSpy = vi.fn().mockResolvedValue(true);
+    (window as unknown as { prism: unknown }).prism = { openExternal: openExternalSpy };
+    renderModal({ authed: true, host: 'http://github.com' });
+    await fill();
+    await userEvent.click(screen.getByRole('button', { name: /open on github/i }));
+    expect(submitFeedback).not.toHaveBeenCalled();
+    expect(openExternalSpy).toHaveBeenCalledTimes(1);
+  });
 });
