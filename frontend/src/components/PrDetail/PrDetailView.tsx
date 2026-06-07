@@ -10,6 +10,7 @@ import { UnresolvedPanel } from './Reconciliation/UnresolvedPanel';
 import { OverviewTab } from './OverviewTab/OverviewTab';
 import { FilesTab } from './FilesTab/FilesTab';
 import { DraftsTabRoute } from './DraftsTab/DraftsTabRoute';
+import { PrDetailSkeleton } from './PrDetailSkeleton';
 import type { PrTabId } from './PrSubTabStrip';
 import { usePrDetail } from '../../hooks/usePrDetail';
 import { useActivePrUpdates } from '../../hooks/useActivePrUpdates';
@@ -22,6 +23,7 @@ import type { PrReference } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
+import { LoadingBar } from '../LoadingBar';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
 import { ErrorModal } from '../ErrorModal';
 import bannerReconcileStyles from './BannerReconcile.module.css';
@@ -52,7 +54,7 @@ export function PrDetailView({
   const refKey = prRefKey(prRef);
   const navigate = useNavigate();
 
-  const { data, showSkeleton, error, reload } = usePrDetail(prRef);
+  const { data, isLoading, error, reload } = usePrDetail(prRef);
   const updates = useActivePrUpdates(prRef);
   const draftSession = useDraftSession(prRef);
   // Refetch draft session when other tabs / the reload pipeline mutate
@@ -262,8 +264,13 @@ export function PrDetailView({
 
   return (
     <div className={pageClassName} data-prref={refKey} hidden={!active}>
+      {/* Per-tab loading bar pinned to THIS tab's content boundary (not a global
+          screen-top bar) — each open PR tab owns its own. Shows on cold load and
+          background reload; self-contained, so no layout shift. */}
+      <LoadingBar active={active && isLoading} data-testid={`pr-loading-bar:${refKey}`} />
       <PrHeader
         reference={prRef}
+        loading={!data && isLoading}
         title={data?.pr.title ?? ''}
         author={data?.pr.author ?? ''}
         avatarUrl={data?.pr.avatarUrl}
@@ -349,15 +356,15 @@ export function PrDetailView({
       )}
       {/* #180 — gate the page skeleton on the ABSENCE of data. On a same-PR
           background reload (re-activation freshness or the manual Reload
-          button) usePrDetail keeps `data` present but flips isLoading; the
-          GET routinely exceeds useDelayedLoading's 100ms threshold so
-          showSkeleton goes true. The old `showSkeleton ? skeleton : data ?...`
-          gate let the skeleton WIN over present data, unmounting this whole
-          subtree (Overview/Files/Drafts) and destroying each tab's local state
-          + inner scroll — defeating keep-alive. Gating on `!data` keeps content
-          mounted during a background refresh (it updates in place); the skeleton
-          shows only on a genuine first load / PR-navigation, where data is null. */}
-      {!data && showSkeleton ? (
+          button) usePrDetail keeps `data` present but flips `isLoading` true.
+          Gating the skeleton on `isLoading` alone would let it WIN over present
+          data, unmounting this whole subtree (Overview/Files/Drafts) and
+          destroying each tab's local state + inner scroll — defeating
+          keep-alive. The `!data &&` guard keeps content mounted during a
+          background refresh (it updates in place); the skeleton shows only on a
+          genuine first load / PR-navigation, where data is null. (The bar above
+          covers the background-reload case visually.) */}
+      {!data && isLoading ? (
         <PrDetailSkeleton />
       ) : data ? (
         // Direct keep-alive sub-tab rendering. Each visited sub-tab stays
@@ -381,16 +388,6 @@ export function PrDetailView({
           )}
         </PrDetailContextProvider>
       ) : null}
-    </div>
-  );
-}
-
-function PrDetailSkeleton() {
-  return (
-    <div className="pr-detail-skeleton" aria-busy="true" aria-live="polite">
-      <div className="skeleton-row" />
-      <div className="skeleton-row" />
-      <div className="skeleton-row skeleton-row-tall" />
     </div>
   );
 }
