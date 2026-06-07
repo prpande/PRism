@@ -4,7 +4,7 @@
 }
 
 .prDescriptionTitle {
-  font-size: var(--text-md);
+  font-size: calc(var(--text-md) * var(--content-scale));
   font-weight: 600;
   color: var(--text-1);
   margin: 0 0 var(--s-3);
