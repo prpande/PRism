@@ -236,6 +236,23 @@ function Write-WrapperScript {
     Write-Utf8NoBom -Path $WrapperPath -Text $content
 }
 
+function Start-DetachedWrapper {
+    # Spawn the wrapper via WMI so it lands OUTSIDE the harness job object and
+    # survives the tool call returning (spec cause 2 + section 4.4). CRITICAL: the
+    # CommandLine carries NO redirection operators -- the wrapper owns those.
+    # -ExecutionPolicy Bypass: the wrapper is an unsigned ephemeral file.
+    # Returns the wrapper PID. Note ReturnValue==0 only means the OS CREATED the
+    # process -- it does NOT prove the wrapper ran or wrote (see the gate diagnostics).
+    param([string]$WrapperPath, [string]$RepoRoot)
+    $cmd = "pwsh -NoProfile -ExecutionPolicy Bypass -File `"$WrapperPath`""
+    $res = Invoke-CimMethod -ClassName Win32_Process -MethodName Create `
+        -Arguments @{ CommandLine = $cmd; CurrentDirectory = $RepoRoot }
+    if ($res.ReturnValue -ne 0) {
+        throw "WMI Win32_Process.Create refused to spawn the wrapper (ReturnValue=$($res.ReturnValue)). The server was not launched."
+    }
+    return [int]$res.ProcessId
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
