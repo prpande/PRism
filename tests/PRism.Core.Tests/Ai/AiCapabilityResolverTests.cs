@@ -10,7 +10,7 @@ namespace PRism.Core.Tests.Ai;
 
 public sealed class AiCapabilityResolverTests
 {
-    private static readonly AiCapabilityResolver EmptyP0 = new(new HashSet<Type>());
+    private static readonly AiCapabilityResolver EmptyP0 = new(new Dictionary<Type, object>());
 
     [Fact]
     public void Off_all_flags_false_reason_none()
@@ -43,10 +43,28 @@ public sealed class AiCapabilityResolverTests
     [Fact]
     public void Live_with_a_registered_live_seam_and_available_lights_only_that_flag()
     {
-        var resolver = new AiCapabilityResolver(new HashSet<Type> { typeof(IPrSummarizer) });
+        var resolver = new AiCapabilityResolver(new Dictionary<Type, object> { [typeof(IPrSummarizer)] = new object() });
         var caps = resolver.Resolve(AiMode.Live, LlmAvailability.Ok);
         caps.Summary.Should().BeTrue();
         caps.FileFocus.Should().BeFalse();
         AiCapabilityResolver.DisabledReason(AiMode.Live, LlmAvailability.Ok).Should().Be("none");
+    }
+
+    [Fact]
+    public void Resolve_reflects_live_seams_added_after_construction()
+    {
+        // Guards against snapshotting the live-seam set at construction (PR #250 review): the resolver
+        // must read the SAME live dictionary the AiSeamSelector holds (shared by reference in
+        // composition), so when P1 registers the first real impl, the capability flag and the resolved
+        // seam light up together. A snapshot (e.g. realSeams.Keys.ToHashSet()) would freeze P0's empty
+        // set and this test's post-construction addition would never be observed.
+        var realSeams = new Dictionary<Type, object>();
+        var resolver = new AiCapabilityResolver(realSeams);
+
+        resolver.Resolve(AiMode.Live, LlmAvailability.Ok).Summary.Should().BeFalse(); // empty: nothing live yet
+
+        realSeams[typeof(IPrSummarizer)] = new object(); // P1 registers a real impl into the shared dict
+
+        resolver.Resolve(AiMode.Live, LlmAvailability.Ok).Summary.Should().BeTrue(); // resolver reflects it live
     }
 }

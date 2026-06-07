@@ -1,4 +1,3 @@
-using System.Linq;
 using Microsoft.Extensions.DependencyInjection;
 using PRism.AI.Contracts;
 using PRism.AI.Contracts.Noop;
@@ -37,7 +36,10 @@ internal static class ServiceCollectionExtensions
         services.AddPlaceholderSeams();
 
         var realSeams = new Dictionary<Type, object>();   // P0: empty; P1 adds the first real impl here
-        services.AddSingleton(new AiCapabilityResolver(realSeams.Keys.ToHashSet()));
+        // Pass the live dictionary BY REFERENCE (not a .Keys snapshot) — the resolver and the selector
+        // (real: realSeams below) must read the same instance so P1's first real impl lights up both
+        // the capability flag and the resolved seam together (PR #250 review).
+        services.AddSingleton(new AiCapabilityResolver(realSeams));
         services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
             sp.GetRequiredService<AiModeState>(),
             noop: new Dictionary<Type, object>

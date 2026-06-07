@@ -10,13 +10,21 @@ namespace PRism.Core.Ai;
 /// Projects (mode, availability) → the 9 per-flag <see cref="AiCapabilities"/> (replacing the
 /// AllOn/AllOff binary). Off → all false; Preview → all true (Placeholder covers every seam);
 /// Live → a flag is true only when a real impl is registered for that seam AND the provider is
-/// available. In P0 the live-seam set is empty, so Live yields all-false + the probe's reason.
+/// available. In P0 the live-seam dictionary is empty, so Live yields all-false + the probe's reason.
 /// </summary>
+/// <remarks>
+/// Holds the SAME live-seam dictionary instance that <see cref="AiSeamSelector"/> resolves against
+/// (shared by reference in composition), and reads it at call time — NOT a construction-time snapshot.
+/// This keeps the resolver and selector in lockstep: when P1 registers the first real impl into the
+/// shared dictionary, both the capability flag and the resolved seam light up together. A snapshot
+/// (e.g. <c>realSeams.Keys.ToHashSet()</c>) would freeze P0's empty set and silently desync from the
+/// selector (PR #250 review).
+/// </remarks>
 public sealed class AiCapabilityResolver
 {
-    private readonly IReadOnlySet<Type> _liveCapableSeams;
+    private readonly IReadOnlyDictionary<Type, object> _liveSeams;
 
-    public AiCapabilityResolver(IReadOnlySet<Type> liveCapableSeams) => _liveCapableSeams = liveCapableSeams;
+    public AiCapabilityResolver(IReadOnlyDictionary<Type, object> liveSeams) => _liveSeams = liveSeams;
 
     public AiCapabilities Resolve(AiMode mode, LlmAvailability liveAvailability)
     {
@@ -26,7 +34,7 @@ public sealed class AiCapabilityResolver
         {
             AiMode.Off => false,
             AiMode.Preview => true,
-            AiMode.Live => _liveCapableSeams.Contains(seam) && liveAvailability.Available,
+            AiMode.Live => _liveSeams.ContainsKey(seam) && liveAvailability.Available,
             _ => false,
         };
 
