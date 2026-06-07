@@ -203,6 +203,39 @@ function Limit-LogSize {
     Write-Utf8NoBom -Path $Log -Text (($tail -join [Environment]::NewLine) + [Environment]::NewLine)
 }
 
+function Write-WrapperScript {
+    # Write the disposable wrapper that owns its own redirection (spec section 4.3).
+    # This is the whole cause-3 fix: *>> $log is parsed as a redirection INSIDE this
+    # real pwsh process, instead of becoming a literal arg on the WMI command line.
+    # APPEND (*>>) with a per-launch banner so a relaunch never erases the prior
+    # run's diagnostics (a failed launch emits no handle -> the log is the only record).
+    param(
+        [string]$WrapperPath, [string]$Log, [string]$RepoRoot,
+        [int]$Port, [string]$DataDir, [string[]]$DotnetArgs, [string]$StartedUtc
+    )
+    $runPs1 = Join-Path $RepoRoot 'run.ps1'
+    # Build the pass-through arg tail. --no-browser is ALWAYS injected first (a
+    # detached WMI session must never open a browser); caller args follow it.
+    # Strip embedded CR/LF from each element before single-quoting: a newline inside
+    # an arg would split the authored call line into multiple lines (a malformed
+    # wrapper that fails to parse and surfaces as an empty-log launch failure).
+    $argTail = @('--no-browser') + @($DotnetArgs | Where-Object { $_ } | ForEach-Object { $_ -replace '[\r\n]+', ' ' })
+    $argLiteral = ($argTail | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '
+
+    # run.ps1's $Reset is the position-0 ValidateSet param; a bare leading
+    # --no-browser with no named -Reset binds positionally to $Reset and fails its
+    # ValidateSet. Name -Reset None so pass-through args reach ValueFromRemainingArguments.
+    $content = @"
+# serve-detached.wrapper.ps1 -- AUTHORED AT RUNTIME, disposable, overwritten each launch.
+# Owns its own redirection so the WMI command line carries none (spec cause 3).
+`$ErrorActionPreference = 'Stop'
+`$log = '$($Log.Replace("'", "''"))'
+"=== serve-detached launch @ $StartedUtc port $Port ===" *>> `$log
+& '$($runPs1.Replace("'", "''"))' -Reset None -SkipBuild -Port $Port -DataDir '$($DataDir.Replace("'", "''"))' $argLiteral *>> `$log
+"@
+    Write-Utf8NoBom -Path $WrapperPath -Text $content
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
