@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type PointerEvent, type ReactElemen
 import { createPortal } from 'react-dom';
 import { Link, type Location } from 'react-router-dom';
 import { InboxCaret } from '../Inbox/InboxCaret';
+import { HelpIcon } from '../Header/HelpIcon';
 import {
   InfoSparkIcon,
   RefreshIcon,
@@ -142,6 +143,9 @@ export function HelpModal({
         className={styles.modal}
       >
         <header className={styles.head}>
+          <span className={styles.titleIcon}>
+            <HelpIcon />
+          </span>
           <h2 id={titleId} className={styles.title}>
             Help
           </h2>
