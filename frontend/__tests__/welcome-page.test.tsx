@@ -38,13 +38,13 @@ describe('WelcomePage', () => {
     expect(cta).toHaveAttribute('href', '/setup');
   });
 
-  it('renders Help and Send feedback as plain text stubs, not links', () => {
+  // #210 wired the Help footer entry to the /help route. Send feedback stays an
+  // inert stub until #211 (PR2) wires it.
+  it('renders Help as a /help link and Send feedback as a plain text stub', () => {
     renderWelcome();
-    expect(screen.getByText('Help')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /^help$/i })).toHaveAttribute('href', '/help');
     expect(screen.getByText('Send feedback')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /^help$/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /send feedback/i })).toBeNull();
-    expect(screen.getByText('Help').tagName).toBe('SPAN');
     expect(screen.getByText('Send feedback').tagName).toBe('SPAN');
   });
 });
