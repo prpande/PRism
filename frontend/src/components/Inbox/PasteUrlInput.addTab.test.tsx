@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { OpenTabsProvider, useOpenTabs } from '../../contexts/OpenTabsContext';
@@ -49,8 +49,13 @@ describe('PasteUrlInput adds a tab when the URL parses', () => {
       'https://github.com/acme/api/pull/7{enter}',
     );
 
-    // openTabs has the parsed ref, and we navigated to the detail route.
-    expect(await screen.findByTestId('tab-count')).toHaveTextContent('1');
-    expect(screen.getByTestId('path')).toHaveTextContent('/pr/acme/api/7');
+    // openTabs has the parsed ref, and we navigated to the detail route. Both the
+    // tab append and the navigation happen asynchronously after parsePrUrl resolves;
+    // a sync getByTestId('path') here raced the navigation and saw '/' under
+    // parallel-suite CPU load (#234). Wait for both to settle.
+    await waitFor(() => {
+      expect(screen.getByTestId('tab-count')).toHaveTextContent('1');
+      expect(screen.getByTestId('path')).toHaveTextContent('/pr/acme/api/7');
+    });
   });
 });
