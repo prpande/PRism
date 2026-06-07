@@ -51,7 +51,7 @@ const PR_DETAIL: PrDetailDto = {
 vi.mock('../../hooks/usePrDetail', () => ({
   usePrDetail: () => ({
     data: PR_DETAIL,
-    showSkeleton: false,
+    isLoading: false,
     error: null,
     reload: vi.fn(),
   }),

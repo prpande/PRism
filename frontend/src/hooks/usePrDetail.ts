@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getPrDetail } from '../api/prDetail';
 import { postMarkViewed } from '../api/markViewed';
 import type { PrDetailDto, PrReference } from '../api/types';
-import { useDelayedLoading } from './useDelayedLoading';
 
 // Highest IssueComment.id across the PR's root conversation, stringified.
 // Mirrors the markAllRead patch's HighestIssueCommentId semantics so the
@@ -19,7 +18,6 @@ function maxRootCommentId(detail: PrDetailDto): string | null {
 export interface UsePrDetailResult {
   data: PrDetailDto | null;
   isLoading: boolean;
-  showSkeleton: boolean;
   error: Error | null;
   reload: () => void;
 }
@@ -89,7 +87,6 @@ export function usePrDetail(prRef: PrReference): UsePrDetailResult {
     };
   }, [prRef.owner, prRef.repo, prRef.number, reloadCounter]);
 
-  const showSkeleton = useDelayedLoading(isLoading);
   const reload = useCallback(() => setReloadCounter((c) => c + 1), []);
-  return { data, isLoading, showSkeleton, error, reload };
+  return { data, isLoading, error, reload };
 }
