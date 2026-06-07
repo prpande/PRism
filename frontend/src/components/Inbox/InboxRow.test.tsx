@@ -36,6 +36,16 @@ function LocationProbe() {
   return <div data-testid="path">{loc.pathname}</div>;
 }
 
+function renderInboxRow(pr: PrInboxItem = PR, props: Partial<Parameters<typeof InboxRow>[0]> = {}) {
+  return render(
+    <MemoryRouter>
+      <OpenTabsProvider>
+        <InboxRow pr={pr} showCategoryChip={false} maxDiff={100} {...props} />
+      </OpenTabsProvider>
+    </MemoryRouter>,
+  );
+}
+
 describe('InboxRow click → opens tab', () => {
   it('adds the PR to openTabs and navigates to /pr/owner/repo/number', async () => {
     render(
@@ -75,6 +85,17 @@ describe('InboxRow avatar', () => {
     const group = author.closest('[data-testid="inbox-author"]');
     expect(group).not.toBeNull();
     expect(group!.querySelector('[data-testid="avatar"]')).not.toBeNull();
+  });
+});
+
+describe('InboxRow title', () => {
+  it('exposes the full title via the title attribute and aria-label so a clamped title is recoverable', () => {
+    const long = { ...PR, title: 'Refactor the pagination cursor encoder to be stable across reorders and deletes' };
+    const { container } = renderInboxRow(long);
+    const titleEl = container.querySelector('[class*="title"]')!;
+    expect(titleEl.getAttribute('title')).toBe(long.title);
+    // truncation hides nothing from AT: the untruncated title stays in the aria-label
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain(long.title);
   });
 });
 

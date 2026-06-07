@@ -55,7 +55,7 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo =
         )}
       </span>
       <span className={styles.main}>
-        <span className={styles.title}>{pr.title}</span>
+        <span className={styles.title} title={pr.title}>{pr.title}</span>
         <span className={styles.meta}>
           {showRepo && (
             <>

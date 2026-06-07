@@ -64,12 +64,15 @@
 }
 
 .title {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2; /* forward-compat alias; the -webkit-box trio above is the operative clamp */
+  overflow: hidden;
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-1);
   margin-bottom: 4px;
-  text-wrap: pretty;
 }
 
 .meta {
