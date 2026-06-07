@@ -9,15 +9,15 @@ import { LockIcon, PanelsIcon, SparkIcon } from './welcomeIcons';
 const BENEFITS: ReadonlyArray<{ Icon: FC; text: string }> = [
   {
     Icon: LockIcon,
-    text: 'Local-first by design — your token lives in your OS keychain, never on someone else’s server.',
+    text: 'Local-first by design. Your token lives in your OS keychain, never on someone else’s server.',
   },
   {
     Icon: PanelsIcon,
-    text: 'A workspace made for reviewing — the diff, the file tree, and your comments in one focused place.',
+    text: 'A workspace made for reviewing: the diff, the file tree, and your comments in one focused place.',
   },
   {
     Icon: SparkIcon,
-    text: 'AI that surfaces the hunks worth a closer look — in active development.',
+    text: 'AI that surfaces the hunks worth a closer look, still in active development.',
   },
 ];
 
@@ -35,7 +35,7 @@ export function WelcomePage() {
             text node would silently break the exact-name match across suites. */}
         <h1 className={styles.wordmark}>PRism</h1>
         <p className={styles.tagline}>
-          A calmer place to review pull requests — right on your machine.
+          A calmer place to review pull requests, right on your machine.
         </p>
         <ul className={styles.benefits}>
           {BENEFITS.map((b) => (
