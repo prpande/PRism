@@ -167,8 +167,8 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
     await backgroundViaInboxLink(page);
 
     // --- Fire the pr-updated event (deterministic /test/emit-pr-updated hook).
-    // Absolute URL pinned to 5180 with the Origin header — copied from
-    // no-layout-shift-on-banner.spec.ts (Vite proxies /api/* but NOT /test/*).
+    // Absolute URL via BACKEND_ORIGIN (honors PRISM_E2E_PORT, #239) with the Origin
+    // header — mirrors no-layout-shift-on-banner.spec.ts.
     const emitResp = await page.request.post(`${BACKEND_ORIGIN}/test/emit-pr-updated`, {
       data: {
         owner: 'acme',
