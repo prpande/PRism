@@ -14,9 +14,12 @@ public class GitHubFeedbackSubmitterTests
         new("Bug", "It broke", "Steps: do X", "/pr/:owner/:repo/:number", "desktop", "0.2.0",
             DateTimeOffset.Parse("2026-06-06T12:00:00Z", System.Globalization.CultureInfo.InvariantCulture));
 
-    private static GitHubFeedbackSubmitter NewSubmitter(HttpMessageHandler handler, string host = "https://github.com") =>
+    // Fix 1: NewSubmitter accepts Func<string?> for the host so it mirrors the
+    // late-binding pattern of the production DI registration.
+    private static GitHubFeedbackSubmitter NewSubmitter(HttpMessageHandler handler, Func<string?>? readHost = null) =>
         new(new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
-            () => Task.FromResult<string?>("ghp_test"), host);
+            () => Task.FromResult<string?>("ghp_test"),
+            readHost ?? (() => "https://github.com"));
 
     [Fact]
     public async Task Posts_to_api_github_com_issues_with_title_body_and_context()
@@ -75,9 +78,51 @@ public class GitHubFeedbackSubmitterTests
     public async Task Non_github_com_host_short_circuits_without_calling_github()
     {
         var handler = new RecordingHttpMessageHandler(HttpStatusCode.Created, "{}");
-        var sut = NewSubmitter(handler, host: "https://ghe.corp.example");
+        var sut = NewSubmitter(handler, readHost: () => "https://ghe.corp.example");
         var result = await sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
         result.Outcome.Should().Be(FeedbackOutcome.CannotCreate);
         handler.RequestCount.Should().Be(0); // PAT never sent to api.github.com
+    }
+
+    // Fix 5 — host-spoof Theory: each variant must yield CannotCreate with no HTTP
+    // call (PAT never leaves the process). http://github.com is now rejected by the
+    // https-scheme guard (Fix 2).
+    [Theory]
+    [InlineData("https://github.com.evil.com")]    // subdomain takeover look-alike
+    [InlineData("https://evil.github.com")]        // github.com is the TLD, not the host
+    [InlineData("https://github.com@evil.com")]    // userinfo trick — Uri.Host is evil.com
+    [InlineData("http://github.com")]              // http scheme rejected (Fix 2)
+    public async Task Host_spoof_short_circuits_without_calling_github(string spoofedHost)
+    {
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.Created, "{}");
+        var sut = NewSubmitter(handler, readHost: () => spoofedHost);
+        var result = await sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
+        result.Outcome.Should().Be(FeedbackOutcome.CannotCreate);
+        handler.RequestCount.Should().Be(0, "PAT must never be sent for spoofed host: {0}", spoofedHost);
+    }
+
+    // Fix 7a — non-JSON 2xx (proxy HTML page) must NOT throw; must return CannotCreate.
+    [Fact]
+    public async Task Non_json_2xx_body_returns_CannotCreate_without_throwing()
+    {
+        var handler = new RecordingHttpMessageHandler(
+            HttpStatusCode.Created,
+            "<html><body>Proxy error</body></html>");
+        var sut = NewSubmitter(handler);
+        var result = await sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
+        result.Outcome.Should().Be(FeedbackOutcome.CannotCreate);
+    }
+
+    // Fix 7b — 2xx JSON missing "number" (or number == 0) must return CannotCreate
+    // so the frontend falls back to the prefilled link rather than showing issue #0.
+    [Theory]
+    [InlineData("""{"html_url":"https://github.com/x/y/issues/1"}""")]  // number absent
+    [InlineData("""{"number":0,"html_url":"https://github.com/x/y/issues/0"}""")]  // number == 0
+    public async Task Missing_or_zero_issue_number_returns_CannotCreate(string responseJson)
+    {
+        var handler = new RecordingHttpMessageHandler(HttpStatusCode.Created, responseJson);
+        var sut = NewSubmitter(handler);
+        var result = await sut.CreateFeedbackIssueAsync(Content, CancellationToken.None);
+        result.Outcome.Should().Be(FeedbackOutcome.CannotCreate);
     }
 }

@@ -99,13 +99,14 @@ public static class ServiceCollectionExtensions
             var config = sp.GetRequiredService<IConfigStore>();
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
-            // Capture the configured host the same way GitHubReviewService does
-            // (early-bound). The submitter short-circuits to CannotCreate for any
-            // non-github.com host so a GHES PAT is never sent to api.github.com.
+            // Late-bind the configured host (Func<string?>) so a live config change
+            // (github.com → GHES) takes effect immediately without restart — matches
+            // the late-binding pattern used for the token reader. A stale early-bound
+            // host could let a GHES PAT reach api.github.com after a host change.
             return new GitHubFeedbackSubmitter(
                 factory,
                 () => tokens.ReadAsync(CancellationToken.None),
-                config.Current.Github.Host);
+                () => config.Current.Github.Host);
         });
 
         return services;

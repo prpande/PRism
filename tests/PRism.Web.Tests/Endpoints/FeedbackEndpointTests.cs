@@ -105,6 +105,25 @@ public class FeedbackEndpointTests
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
+    // Fix 6 — a POST to /api/feedback without a session token must return 401, pinning
+    // that the route is behind SessionTokenMiddleware.
+    [Fact]
+    public async Task Post_feedback_without_session_returns_401()
+    {
+        var (f, _) = NewApp();
+        // Use Server.CreateClient() directly: CreateClient() on the derived
+        // (WithWebHostBuilder) factory does NOT run PRismWebApplicationFactory.ConfigureClient,
+        // so it yields a plain client with no X-PRism-Session / prism-session cookie.
+        // Origin is required on POST by OriginCheckMiddleware; session header is absent.
+        var client = f.Server.CreateClient();
+        client.BaseAddress = f.ClientOptions.BaseAddress;
+        var origin = client.BaseAddress?.GetLeftPart(UriPartial.Authority);
+        if (!string.IsNullOrEmpty(origin))
+            client.DefaultRequestHeaders.Add("Origin", origin);
+        var resp = await client.PostAsJsonAsync("/api/feedback", ValidBody());
+        resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+    }
+
     [Fact]
     public async Task Oversize_fields_return_400()
     {

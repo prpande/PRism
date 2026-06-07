@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
@@ -19,23 +18,24 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly Func<Task<string?>> _readToken;
-    private readonly string _configuredHost;
+    private readonly Func<string?> _readConfiguredHost;
 
-    public GitHubFeedbackSubmitter(IHttpClientFactory httpFactory, Func<Task<string?>> readToken, string configuredHost)
+    public GitHubFeedbackSubmitter(IHttpClientFactory httpFactory, Func<Task<string?>> readToken, Func<string?> readConfiguredHost)
     {
         _httpFactory = httpFactory;
         _readToken = readToken;
-        _configuredHost = configuredHost;
+        _readConfiguredHost = readConfiguredHost;
     }
 
     // The configured GitHub host normalizes to github.com (case-insensitive,
     // trailing slash ignored) — mirrors HostUrlResolver's own github.com test.
-    private static bool IsGitHubCom(string host) =>
+    // Requires https scheme: http://github.com is rejected (HostUrlResolver.ApiBase
+    // requires https, and a downgraded scheme could route a PAT over plain HTTP).
+    private static bool IsGitHubCom(string? host) =>
         Uri.TryCreate(host, UriKind.Absolute, out var u)
+        && u.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase)
         && u.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
 
-    [SuppressMessage("Design", "CA1054:URI-like parameters should not be strings",
-        Justification = "configuredHost is the raw host string from config, not a URI parameter seam.")]
     public async Task<FeedbackCreateResult> CreateFeedbackIssueAsync(FeedbackContent content, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(content);
@@ -44,7 +44,10 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
         // user's PAT to public api.github.com when they're on a GHES host. The
         // feedback repo lives on github.com only, so a non-github.com session
         // short-circuits to CannotCreate → the frontend opens the prefilled link.
-        if (!IsGitHubCom(_configuredHost))
+        // Host is late-bound (read at call time, not DI construction) so a live
+        // config change (github.com → GHES) takes effect immediately without restart.
+        var host = _readConfiguredHost();
+        if (!IsGitHubCom(host))
             return FeedbackCreateResult.CannotCreate();
 
         var title = $"[{content.Category}] {content.Summary}";
@@ -77,14 +80,27 @@ public sealed class GitHubFeedbackSubmitter : IFeedbackSubmitter
         resp.EnsureSuccessStatusCode(); // genuine transport/5xx → throw → endpoint 500
 
         var responseBody = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        using var doc = JsonDocument.Parse(responseBody);
-        var root = doc.RootElement;
-        var number = root.TryGetProperty("number", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetInt32() : 0;
-        var htmlUrl = root.TryGetProperty("html_url", out var u2) && u2.ValueKind == JsonValueKind.String ? u2.GetString() ?? "" : "";
-        // Defense-in-depth: never propagate a non-https html_url to the client
-        // (the frontend openExternal also guards, but don't rely on a single layer).
-        if (!htmlUrl.StartsWith("https://", StringComparison.Ordinal)) htmlUrl = "";
-        return FeedbackCreateResult.Created(number, htmlUrl);
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            var root = doc.RootElement;
+            var number = root.TryGetProperty("number", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetInt32() : 0;
+            // A 2xx body without a positive issue number (proxy HTML page, empty object, etc.)
+            // degrades to CannotCreate so the frontend falls back to the prefilled link
+            // rather than showing a success with an unusable issue-0 URL.
+            if (number <= 0)
+                return FeedbackCreateResult.CannotCreate();
+            var htmlUrl = root.TryGetProperty("html_url", out var u2) && u2.ValueKind == JsonValueKind.String ? u2.GetString() ?? "" : "";
+            // Defense-in-depth: never propagate a non-https html_url to the client
+            // (the frontend openExternal also guards, but don't rely on a single layer).
+            if (!htmlUrl.StartsWith("https://", StringComparison.Ordinal)) htmlUrl = "";
+            return FeedbackCreateResult.Created(number, htmlUrl);
+        }
+        catch (JsonException)
+        {
+            // Non-JSON 2xx (e.g. a proxy HTML page) → fall back to prefilled link.
+            return FeedbackCreateResult.CannotCreate();
+        }
     }
 
     private static string BuildBody(FeedbackContent c)
