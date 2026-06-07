@@ -249,6 +249,11 @@ app.UseWhen(
         // predicate"). Legitimate payload uses ~0.25% of the cap.
         if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/auth/replace", StringComparison.Ordinal))
             return true;
+        // #211 — POST /api/feedback max valid payload is <5 KiB; cap at 16 KiB (same
+        // value as other POST endpoints) prevents oversized body amplification without
+        // rejecting any legitimate request.
+        if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/feedback", StringComparison.Ordinal))
+            return true;
         if (!path.StartsWithSegments("/api/pr", StringComparison.Ordinal)) return false;
         var value = path.Value!;
         if (HttpMethods.IsPut(method) && value.EndsWith("/draft", StringComparison.Ordinal)) return true;
@@ -316,6 +321,7 @@ app.MapPrRootCommentEndpoints();
 app.MapSubmitInFlight();
 app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();
+app.MapFeedback();
 
 if (builder.Environment.IsEnvironment("Test"))
     app.MapGet("/test/boom", () => { throw new InvalidOperationException("test boom"); });
