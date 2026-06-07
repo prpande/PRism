@@ -36,7 +36,7 @@ These ground the design.
 - No always-on wordmark in the authed header (rejected below). The wordmark is a no-nav-state affordance only.
 - No change to the logomark image, the hero on `/welcome`, or the pre-existing `/welcome` a11y double (fact 4).
 - No new shared “Brand” abstraction beyond what `Logo` already is.
-- No desktop-titlebar-specific treatment (the existing drag-region CSS already covers the header; plain text is a fine drag handle).
+- No desktop-titlebar-specific treatment. The existing drag-region CSS already covers the header; the non-interactive `.lockup` span sits inside the `-webkit-app-region: drag` region (like today's logomark image) and intentionally is *not* in the `no-drag` exemption list — plain text is a fine drag handle, and its text won't be selectable on desktop, which is expected for header chrome. (Caveat for future work: if the lockup is ever made a link, it must be added to the `no-drag` exemption in `Header.module.css` or it would be unclickable on desktop.)
 
 ## Design
 
@@ -50,6 +50,8 @@ Show the wordmark **iff `!isAuthed && pathname !== '/welcome'`**.
 - Authed (Inbox / PR / Settings) → `isAuthed` → **hidden**. ✅ (nav tabs own the space; wordmark would be redundant chrome)
 
 `Header` already reads `useLocation()` for active-tab logic, so the `pathname` check is local and consistent with existing code — no new prop threading from `App`.
+
+**The `/setup?replace=1` (Settings → Replace token) flow needs no special-casing.** It is normally entered by an *authed* user whose token is still valid while they paste a new one, so `isAuthed` is `true` there → wordmark **hidden** (and the nav treats it as Settings-active). The only way to reach `/setup?replace=1` with `isAuthed === false` is a token rejection landing mid-flow; showing the wordmark there is identical to any other re-auth and is fine. So the gating rule `!isAuthed && pathname !== '/welcome'` is correct as-is — no `&& !isReplaceMode` clause is needed.
 
 *(Rejected — Option A, gate on plain `!isAuthed`: prints a second visible “PRism” on `/welcome` competing with the hero. Rejected — Option C, always-on lockup: redundant once the user knows the product, competes with the Inbox tab + gear in the authed header, still double-paints `/welcome`, and is scope creep on a first-run issue.)*
 
@@ -93,12 +95,30 @@ The lockup wrapper (`<span class="lockup">`, `inline-flex`, `gap: 8px`, `align-i
 
 ### Visual treatment (V1, owner-approved)
 
-`.wordmark`: `font-size: 16px; font-weight: 600; letter-spacing: -0.01em; line-height: 1; color: var(--text-1);` — confirmed against a visual-companion mockup using the real logo asset and the real `oklch` surface/text tokens, in both themes. `var(--text-1)` auto-adapts light/dark (light `oklch(0.20 …)`, dark `oklch(0.96 …)`). No new color tokens.
+`Logo.module.css` gains **two new rule-sets** (the existing `.logo { display: block }` is unchanged — these are additive):
+
+```css
+.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.wordmark {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--text-1);
+}
+```
+
+Confirmed against a visual-companion mockup using the real logo asset and the real `oklch` surface/text tokens, in both themes. `var(--text-1)` auto-adapts light/dark (light `oklch(0.20 …)`, dark `oklch(0.96 …)`). No new color tokens. Rationale for the non-obvious properties:
 
 - **Font:** no `font-family` override — the wordmark inherits the body `var(--font-sans)` (Geist; `tokens.css:10`, applied at `tokens.css:333`), matching all other UI text. (If Geist hasn't loaded on first paint the fallback stack applies, identical to the rest of the chrome.)
-- **Alignment:** `.lockup` is `inline-flex; align-items: center; gap: 8px`. `line-height: 1` collapses the wordmark’s line-box to its cap-height so centering the ~16px text against the 28px mark is optically predictable (this is what the mockup rendered, against an unstyled `body` line-height); without it the default ~1.2 line-box would push the text’s visual midpoint above the mark’s.
-- **No overflow risk:** in the `!isAuthed` header the nav strip and the gear are *both* `isAuthed`-gated (`Header.tsx`), so neither renders; only `WindowControls` follows (desktop-only — nothing in the browser). The lockup is therefore the sole content child with the `.spacer` absorbing all slack, so it cannot be compressed. `white-space: nowrap` is set on `.wordmark` as a cheap guard so the name never wraps regardless.
-- **Compact density:** `[data-density='compact']` drops `--header-h` to 48px. This is reachable on the re-auth path (a returning user’s saved density persists into the token-rejected `/setup`), not just default first-run. The 28px mark + 16px/`line-height:1` wordmark fit comfortably within 48px; no compact-specific override needed.
+- **Alignment:** `line-height: 1` collapses the wordmark’s line-box to its cap-height so centering the ~16px text against the 28px mark is optically predictable (this is what the mockup rendered, against an unstyled `body` line-height); without it the default ~1.2 line-box would push the text’s visual midpoint above the mark’s. (Cap-height for Geist 600 sits a touch above geometric centre, so the result is a very subtle upward shift — confirmed acceptable in the mockup; the B1 gate re-confirms in both themes.)
+- **No overflow risk:** in the `!isAuthed` header the nav strip and the gear are *both* `isAuthed`-gated (`Header.tsx`), so neither renders; only `WindowControls` follows (desktop-only — nothing in the browser). The lockup is therefore the sole content child with the `.spacer` absorbing all slack, so it cannot be compressed. `white-space: nowrap` is the cheap guard so the name never wraps regardless.
+- **Compact density:** `[data-density='compact']` drops `--header-h` to 48px **in the browser only**. This is reachable on the re-auth path (a returning user’s saved density persists into the token-rejected `/setup`), not just default first-run; the 28px mark + 16px/`line-height:1` wordmark fit comfortably within 48px, so no compact-specific override is needed. On the **desktop shell** the header height is hard-pinned to 58px (`Header.module.css:133`, `:global([data-shell='desktop']) .header`) and never reads `--header-h`, so compact density has no effect there — more vertical room, not less.
 
 ## Accessibility
 
@@ -109,7 +129,7 @@ The lockup wrapper (`<span class="lockup">`, `inline-flex`, `gap: 8px`, `align-i
 
 ## Testing (TDD — red → green within the PR)
 
-Unit (Vitest + Testing Library), the proof for this non-bug change:
+Unit (Vitest + Testing Library), the proof for this non-bug change. **Two Header test files already exist** — `__tests__/header.test.tsx` (routing/nav suite; has the `renderAt('/setup', false)` no-nav test) and `src/components/Header/Header.test.tsx` (the "Header gear" suite). The new `Header` tests below (items 3–7) land in `__tests__/header.test.tsx` alongside the existing no-nav test; the new `Logo` tests (items 1–2) go in a new `__tests__/Logo.test.tsx` (no co-located `Logo.test` exists today). The co-located gear suite's `at('/setup', false)` test asserts only gear absence (`Header.test.tsx:34`), so it stays green untouched.
 
 1. **`Logo` — `showName` true:** renders visible text “PRism” **and** the image has empty alt (`getByText('PRism')` present; `img` accessible name is empty).
 2. **`Logo` — `showName` false (default):** no visible “PRism” text; the image’s accessible name is “PRism”.
@@ -123,7 +143,7 @@ Unit (Vitest + Testing Library), the proof for this non-bug change:
 
 - `__tests__/header.test.tsx:56` — the `!isAuthed` `/setup` case asserts `getByAltText('PRism')`. On `/setup` the mark now flips to `alt=""` and the name moves to the visible wordmark, so this must assert the visible wordmark (`getByText('PRism')`) instead. The authed case at `:48` (`getByAltText('PRism')` on `/`) stays — the mark keeps its alt when authed.
 - `e2e/cold-start.spec.ts:57` — the `/setup` first-run case asserts `getByAltText('PRism')` (and its line-56 comment “The header logo (alt="PRism") is still present”). Update the assertion to the visible wordmark and the comment to match. The `/welcome` cases (`cold-start.spec.ts:70`, `welcome.spec.ts:48`) keep `getByAltText('PRism')` unchanged — the wordmark is suppressed there, so the mark keeps its alt.
-- Any Playwright **parity baseline** that captures the `/setup` header changes (a wordmark now renders); regenerate it as part of this PR (per the repo’s Linux-baseline-via-CI-artifact process), since the e2e suite is a hard gate.
+- Any Playwright **parity baseline** that captures the `/setup` header changes (a wordmark now renders); regenerate it as part of this PR (per the repo’s Linux-baseline-via-CI-artifact process), since the e2e suite is a hard gate. **Sequencing:** the regenerated baseline must be committed *before* merge — a mismatched-but-not-absent baseline is not auto-written, so merging first would leave the e2e parity check red.
 
 Manual / visual (B1 gate): `/setup` and `/welcome` in both light and dark themes in the running app, plus the authed Inbox header unchanged.
 
