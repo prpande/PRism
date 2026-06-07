@@ -1,7 +1,7 @@
 // frontend/e2e/help.spec.ts
-// #210: /help page reachability — two entry points:
-//   (a) header ? icon, visible only when authed
-//   (b) direct navigation to /help (auth-agnostic route)
+// #210: /help modal reachability — two entry points:
+//   (a) header ? icon, visible only when authed → opens modal over inbox
+//   (b) direct navigation to /help (auth-agnostic) → shows dialog in every state
 //
 // Auth bootstrap mirrors inbox.spec.ts: page.route mocks for /api/auth/state,
 // /api/preferences, /api/capabilities, and /api/events. The backend runs in
@@ -82,11 +82,12 @@ async function setupBaseMocks(page: import('@playwright/test').Page): Promise<vo
 // Tests
 // ---------------------------------------------------------------------------
 
-test.describe('Help page (#210)', () => {
-  test('authed user reaches /help via the header ? icon', async ({ page }) => {
+test.describe('Help modal (#210)', () => {
+  test('authed user reaches /help via the header ? icon — modal opens over inbox', async ({
+    page,
+  }) => {
     await setupBaseMocks(page);
-    // Also stub /api/inbox so the inbox page doesn't hang on a real network call
-    // after auth completes and the app navigates to /.
+    // Also stub /api/inbox so the inbox page doesn't hang on a real network call.
     await page.route('**/api/inbox', (route: Route) =>
       route.fulfill({
         status: 200,
@@ -108,13 +109,31 @@ test.describe('Help page (#210)', () => {
     await helpLink.click();
 
     await expect(page).toHaveURL(/\/help$/);
-    await expect(page.getByRole('heading', { level: 1, name: 'Help' })).toBeVisible();
+    // The Help modal dialog is visible
+    await expect(page.getByRole('dialog', { name: /help/i })).toBeVisible();
   });
 
-  test('/help renders directly (auth-agnostic route)', async ({ page }) => {
+  test('/help renders as a dialog over the inbox background when navigated directly (authed)', async ({
+    page,
+  }) => {
     await setupBaseMocks(page);
+    await page.route('**/api/inbox', (route: Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          sections: [],
+          enrichments: {},
+          lastRefreshedAt: new Date().toISOString(),
+          tokenScopeFooterEnabled: false,
+        }),
+      }),
+    );
+
     await page.goto('/help');
-    await expect(page.getByTestId('help-page')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole('heading', { level: 1, name: 'Help' })).toBeVisible();
+    // Modal dialog is visible
+    await expect(page.getByRole('dialog', { name: /help/i })).toBeVisible({ timeout: 30_000 });
+    // Inbox is rendered behind it (the background)
+    await expect(page.getByTestId('inbox-page')).toBeVisible();
   });
 });
