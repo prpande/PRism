@@ -64,6 +64,39 @@ function Assert-Platform {
     }
 }
 
+function Get-CanonicalDataDir {
+    # Resolve -DataDir to ONE long-path absolute string and use that exact string
+    # everywhere (run.ps1 --dataDir -> /api/health body, the health compare, the
+    # pidfile, and transitively LockfileManager's lock path). Get-Item .FullName
+    # expands 8.3 short names (%TEMP% often expands to PRATY~1\...) AND normalizes
+    # casing; [IO.Path]::GetFullPath does NEITHER, which would make the health
+    # compare miss a healthy server and let two launches key different lock paths
+    # onto one store (spec section 4.6). Create the directory first so .FullName resolves.
+    param([string]$DataDir)
+
+    if ([string]::IsNullOrWhiteSpace($DataDir)) {
+        throw "-DataDir must be a non-empty path."
+    }
+    $abs = [System.IO.Path]::GetFullPath($DataDir)   # collapse . / .. / separators
+    if (-not (Test-Path -LiteralPath $abs -PathType Container)) {
+        New-Item -ItemType Directory -Force -Path $abs | Out-Null
+    }
+    # .FullName on an existing dir is the long-path, case-normalized form.
+    return (Get-Item -LiteralPath $abs).FullName.TrimEnd('\', '/')
+}
+
+function Get-ServeDetachedPaths {
+    # All per-store artifacts namespaced under the canonical DataDir so parallel
+    # agents (distinct stores) never collide and -Stop -DataDir <d> is unambiguous.
+    param([string]$CanonicalDataDir)
+    return [pscustomobject]@{
+        DataDir = $CanonicalDataDir
+        Pidfile = Join-Path $CanonicalDataDir 'serve-detached.pid'
+        Log     = Join-Path $CanonicalDataDir 'serve-detached.log'
+        Wrapper = Join-Path $CanonicalDataDir 'serve-detached.wrapper.ps1'
+    }
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
