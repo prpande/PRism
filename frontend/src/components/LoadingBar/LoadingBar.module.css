@@ -37,12 +37,16 @@
   animation: indeterminate 1.1s ease-in-out infinite;
 }
 
+/* Animate transform (compositor-only) rather than margin-left (layout/reflow).
+   The fill is 40% wide: translateX(-100%) parks it fully off the left edge,
+   translateX(250%) carries its left edge to the container's right edge (fully
+   off the right) — the same sweep the old margin-left −40%→100% produced. */
 @keyframes indeterminate {
   0% {
-    margin-left: -40%;
+    transform: translateX(-100%);
   }
   100% {
-    margin-left: 100%;
+    transform: translateX(250%);
   }
 }
 
@@ -52,7 +56,6 @@
   }
   .fill {
     width: 80%;
-    margin-left: 0;
   }
   /* Match the active rule's specificity (0,2,1) so this actually overrides the
      animation when the bar is active. */

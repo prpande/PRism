@@ -425,17 +425,16 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
 // ---------------------------------------------------------------------------
 // #180 — returning to a kept-alive Files tab must NOT reset the selected file
 // + scroll. Root cause: on re-activation, usePrDetail.reload() sets isLoading
-// true; once the GET exceeds useDelayedLoading's 100ms threshold, showSkeleton
-// flips true while `data` is still present. PrDetailView's render gate
-// (`showSkeleton ? <Skeleton/> : data ? <content/> : null`) then lets the
-// skeleton WIN over present data, unmounting the entire data-subtree
+// true while `data` is still present. A skeleton gate on `isLoading` alone
+// (`isLoading ? <Skeleton/> : data ? <content/> : null`) would let the skeleton
+// WIN over present data, unmounting the entire data-subtree
 // (Overview/Files/Drafts). FilesTab loses its selectedPath + inner scroll and
 // remounts fresh on data-return (auto-selecting the first file).
 //
-// The fix gates the skeleton on `!data`: a background refresh keeps content
-// mounted (the skeleton only shows on the genuine initial load, data still
-// null). This test locks "showSkeleton + data present → kept-alive subtree and
-// its selection survive". RED on main (skeleton unmounts FilesTab).
+// The fix gates the skeleton on `!data && isLoading`: a background refresh keeps
+// content mounted (the skeleton only shows on the genuine initial load, data
+// still null). This test locks "isLoading + data present → kept-alive subtree
+// and its selection survive". RED on main (skeleton unmounts FilesTab).
 // ---------------------------------------------------------------------------
 describe('PrDetailView — background reload preserves kept-alive Files state (#180)', () => {
   function file(path: string): FileChange {

@@ -30,12 +30,12 @@ The root cause for PR-detail is that `useDelayedLoading` conflates two cases tha
 
 **Goals**
 - Cold opens of PR-detail and Inbox show an **immediate, content-shaped** loading state that mirrors the real screen closely enough to read as polished, not generic.
-- A **global top progress bar** gives a single, app-level "something is happening" signal across navigations and background reloads.
+- A **per-tab loading bar** (Rev 2026-06-07; originally a global top bar) gives a "something is happening" signal at each surface's own content boundary, on cold open and background reload.
 - Fix #181 and #147; set up the inbox skeleton as a sibling.
 
 **Non-goals**
 - No change to fetch logic, caching, SSE, or keep-alive semantics. This is presentation only.
-- No real determinate progress percentage (we have no byte/step signal) — the top bar is indeterminate.
+- No real determinate progress percentage (we have no byte/step signal) — the loading bar is indeterminate.
 - No skeletons for the Files or Drafts sub-tabs in this effort (cold open always lands on Overview; those tabs already have their own load UX). Out of scope, not a regression.
 
 ## 3. Real-state grounding
@@ -188,7 +188,7 @@ Header and body share the `!data && isLoading` predicate, so on error both stop 
 - **#181** — PR-detail loading affordance (PR1).
 - **#147** — empty header title/author on cold-load: a strict subset of PR1's `PrHeader` skeleton; **closed by PR1**, no separate diff.
 - **#244** — inbox content-shaped skeleton (PR2).
-- The **global top bar is app-level infrastructure broader than #181's title implies.** It is introduced under PR1 because PR-detail is its first feeder; this scope expansion is documented here deliberately rather than smuggled in. PR2 adds the inbox feeder.
+- The **loading bar** (Rev 2026-06-07: a per-tab `LoadingBar`, originally a global app-root bar) ships under PR1 because PR-detail is its first user; PR2 reuses the same component at the inbox content top.
 
 Two PRs (not one) for reviewability: PR1 establishes the primitives + closes #181/#147; PR2 reuses them for the inbox.
 
@@ -205,7 +205,7 @@ Two PRs (not one) for reviewability: PR1 establishes the primitives + closes #18
 
 ## 8. Open decisions (resolved)
 
-- **Treatment:** C+Y — content-shaped skeletons on both surfaces **and** a global top bar. (User-selected with the footgun disclosed.)
+- **Treatment:** C+Y — content-shaped skeletons on both surfaces **and** a loading bar (Rev 2026-06-07: per-tab, originally a global top bar). (User-selected with the footgun disclosed.)
 - **Header action buttons during load:** ~~kept real~~ → **removed during load** (Rev 2026-06-07); the body CTA placeholder is dropped too.
 - **Bar store:** keyed-boolean signal map, **not** a ref-counted counter (StrictMode-safe by construction; no watchdog timer needed). PR-detail uses a **per-instance key** (`'pr-detail:'+prRefKey`) so two mounted keep-alive views never collide on one key. — revised from the first draft's ref-count (round 1) and single-key (round 2) after ce-doc-review.
 - **Timing fix:** gate `PrDetailView` body on `!data && isLoading`; derive `PrHeader loading` from the *same* predicate; trim `usePrDetail`'s now-orphaned `showSkeleton`. Leave `useDelayedLoading` itself untouched. — revised from the first draft's `immediate` option (round 1) and the header/body predicate split (round 2).
