@@ -69,17 +69,21 @@ public class EventsEndpointsTests
         subs.Current.Should().Be(0);
 
         var client = factory.CreateClient();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         using var resp = await client.GetAsync(
             new Uri("/api/events", UriKind.Relative),
             HttpCompletionOption.ResponseHeadersRead,
             cts.Token);
 
-        // Read the initial subscriber-assigned event to confirm the subscription is established.
-        using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        await reader.ReadLineAsync(cts.Token); // "event: subscriber-assigned"
+        // Registration is server-side (RunSubscriberAsync increments the count) and
+        // independent of the client reading the handshake frame. Poll the count rather
+        // than reading the stream — the handshake read is the same teardown-racy
+        // IOException surface hardened in #238 on the sibling close test.
+        await TestPoll.UntilAsync(
+            () => subs.Current == 1,
+            TimeSpan.FromSeconds(5),
+            "SSE subscriber count should reach 1 after the client connects");
 
         subs.Current.Should().Be(1);
     }
@@ -91,22 +95,26 @@ public class EventsEndpointsTests
         var subs = factory.Services.GetRequiredService<InboxSubscriberCount>();
 
         var client = factory.CreateClient();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         using var resp = await client.GetAsync(
             new Uri("/api/events", UriKind.Relative),
             HttpCompletionOption.ResponseHeadersRead,
             cts.Token);
 
-        using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        await reader.ReadLineAsync(cts.Token); // "event: subscriber-assigned" → subscription established
-
-        subs.Current.Should().Be(1);
+        // #238: the subscriber registers server-side when the request handler runs
+        // RunSubscriberAsync — independent of the client reading the handshake frame.
+        // Poll the count directly instead of reading the stream. The prior
+        // `reader.ReadLineAsync` raced the connection teardown and threw IOException
+        // ("client aborted") under load; removing that read eliminates the failure
+        // surface entirely while still proving the subscription was established.
+        await TestPoll.UntilAsync(
+            () => subs.Current == 1,
+            TimeSpan.FromSeconds(5),
+            "SSE subscriber count should reach 1 after the client connects");
 
         // Dispose the response to close the connection.
         resp.Dispose();
-        stream.Dispose();
 
         // The server decrements the subscriber count asynchronously once the
         // dropped connection is observed. Poll the observable condition rather
@@ -146,17 +154,74 @@ public class EventsEndpointsTests
         await reader.ReadLineAsync(cts.Token); // "data: { ... }"
         await reader.ReadLineAsync(cts.Token); // "" (blank line terminating the frame)
 
-        // Publish an event from the bus.
+        // #209: a background InboxRefreshOrchestrator full-refresh can interleave an
+        // all-sections inbox-updated frame (newOrUpdatedPrCount:0) ahead of the event
+        // we publish — under load it lands between subscriber-assigned and our publish.
+        // Publish a decoy modeling that interleave so the skip path is exercised
+        // deterministically on every run (not just under contention), then assert
+        // read-until-match still delivers our published event.
+        bus.Publish(new InboxUpdated(
+            new[] { "review-requested", "awaiting-author", "authored-by-me", "mentioned", "ci-failing", "recently-closed" },
+            0));
         bus.Publish(new InboxUpdated(new[] { "review-requested" }, 1));
 
-        // Read the event frame lines.
-        var eventLine = await reader.ReadLineAsync(cts.Token);
-        var dataLine = await reader.ReadLineAsync(cts.Token);
+        // Read inbox-updated frames until OUR event arrives, skipping interleaved
+        // frames (the decoy / any background full-refresh). Bounded by the 15s cts so
+        // a never-delivered event still fails the test via its deadline.
+        var dataLine = await ReadUntilInboxUpdatedDataAsync(
+            reader,
+            requiredFragments: new[]
+            {
+                "\"changedSectionIds\":[\"review-requested\"]",
+                "\"newOrUpdatedPrCount\":1",
+            },
+            cts.Token);
 
-        eventLine.Should().Be("event: inbox-updated");
-        dataLine.Should().Contain("\"changedSectionIds\":[\"review-requested\"]");
-        dataLine.Should().Contain("\"newOrUpdatedPrCount\":1");
+        // The helper only returns once both required fragments are present, so the
+        // changedSectionIds/count checks would be tautological here. Assert only what
+        // the helper does NOT guarantee — the SSE data-line prefix.
         dataLine.Should().StartWith("data: ");
+    }
+
+    /// <summary>
+    /// Reads SSE frames from <paramref name="reader"/> until an <c>inbox-updated</c>
+    /// event whose data line contains every fragment in <paramref name="requiredFragments"/>
+    /// arrives, and returns that data line. Interleaved frames — a background
+    /// full-refresh <c>inbox-updated</c> (all sections, count 0), or any other event
+    /// type — are skipped (#209). Honors <paramref name="ct"/> so a never-delivered
+    /// event fails the test via the caller's deadline rather than hanging.
+    /// </summary>
+    private static async Task<string> ReadUntilInboxUpdatedDataAsync(
+        StreamReader reader, string[] requiredFragments, CancellationToken ct)
+    {
+        while (true)
+        {
+            var line = await reader.ReadLineAsync(ct);
+            if (line is null)
+                throw new InvalidOperationException(
+                    "SSE stream ended before the expected inbox-updated event arrived");
+            if (line != "event: inbox-updated")
+                continue; // blank separator, subscriber-assigned, or another event type
+
+            var dataLine = await reader.ReadLineAsync(ct);
+            if (dataLine is null)
+                throw new InvalidOperationException(
+                    "SSE stream ended mid-frame: an 'event: inbox-updated' line was read " +
+                    "but no following data line arrived");
+
+            var allPresent = true;
+            foreach (var fragment in requiredFragments)
+            {
+                if (!dataLine.Contains(fragment, StringComparison.Ordinal))
+                {
+                    allPresent = false;
+                    break;
+                }
+            }
+
+            if (allPresent)
+                return dataLine; // our event; interleaved full-refresh frames were skipped
+        }
     }
 
     [Fact]

@@ -1,4 +1,5 @@
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
+import { BACKEND_ORIGIN } from './backend-origin';
 
 // Per-test state reset. The backend process is long-running across the whole
 // Playwright run; without this, FakeReviewService head-sha mutations and
@@ -13,8 +14,8 @@ import { expect, type APIRequestContext, type Page } from '@playwright/test';
 // they don't expect. /test/reset only resets state.json (sessions), not
 // config, so we patch aiPreview explicitly. No auth required on the endpoint.
 export async function resetBackendState(request: APIRequestContext): Promise<void> {
-  const resp = await request.post('http://localhost:5180/test/reset', {
-    headers: { Origin: 'http://localhost:5180' },
+  const resp = await request.post(`${BACKEND_ORIGIN}/test/reset`, {
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok()) {
     throw new Error(`/test/reset failed: ${resp.status()} ${await resp.text()}`);
@@ -30,8 +31,8 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
   // don't render AI content from a prior session's config.json. Best-effort:
   // if it fails (e.g., server not yet in auth-accepting state), silently skip
   // rather than failing the beforeEach — the test will fail for its own reason.
-  const aiResp = await request.post('http://localhost:5180/api/preferences', {
-    headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5180' },
+  const aiResp = await request.post(`${BACKEND_ORIGIN}/api/preferences`, {
+    headers: { 'Content-Type': 'application/json', Origin: BACKEND_ORIGIN },
     data: JSON.stringify({ aiPreview: false }),
   });
   // Non-200 is acceptable here (e.g., 400 if config is already default).
@@ -92,7 +93,7 @@ export async function reloadPr(
   return page.request.post(`/api/pr/${pr.owner}/${pr.repo}/${pr.number}/reload`, {
     data: { headSha },
     headers: {
-      Origin: 'http://localhost:5180',
+      Origin: BACKEND_ORIGIN,
       'X-PRism-Tab-Id': tabId,
     },
   });
@@ -109,7 +110,7 @@ export async function advanceHead(
 ): Promise<void> {
   const resp = await page.request.post('/test/advance-head', {
     data: { newHeadSha, fileChanges },
-    headers: { Origin: 'http://localhost:5180' },
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok()) {
     throw new Error(`/test/advance-head failed: ${resp.status()} ${await resp.text()}`);

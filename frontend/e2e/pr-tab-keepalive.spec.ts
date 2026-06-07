@@ -1,4 +1,5 @@
 import { test, expect, request } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 // ---------------------------------------------------------------------------
@@ -166,9 +167,9 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
     await backgroundViaInboxLink(page);
 
     // --- Fire the pr-updated event (deterministic /test/emit-pr-updated hook).
-    // Absolute URL pinned to 5180 with the Origin header — copied from
-    // no-layout-shift-on-banner.spec.ts (Vite proxies /api/* but NOT /test/*).
-    const emitResp = await page.request.post('http://localhost:5180/test/emit-pr-updated', {
+    // Absolute URL via BACKEND_ORIGIN (honors PRISM_E2E_PORT, #239) with the Origin
+    // header — mirrors no-layout-shift-on-banner.spec.ts.
+    const emitResp = await page.request.post(`${BACKEND_ORIGIN}/test/emit-pr-updated`, {
       data: {
         owner: 'acme',
         repo: 'api',
@@ -178,7 +179,7 @@ test.describe('keep-alive PR-detail tabs (e2e, real fake backend)', () => {
         newHeadSha: '5555555555555555555555555555555555555555',
         commentCountDelta: 0,
       },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     expect(emitResp.ok()).toBe(true);
 

@@ -2,6 +2,7 @@ import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Logo } from './Logo';
 import { WindowControls } from './WindowControls';
 import { GearIcon } from '../PrDetail/FilesTab/diffIcons';
+import { HelpIcon } from './HelpIcon';
 import styles from './Header.module.css';
 
 interface HeaderProps {
@@ -39,12 +40,18 @@ export function Header({ isAuthed }: HeaderProps) {
     pathname === '/settings' ||
     pathname.startsWith('/settings/') ||
     (pathname === '/setup' && isReplaceMode);
+  const helpActive = pathname === '/help';
 
   const classFor = (active: boolean) => (active ? styles.tabActive : styles.tab);
 
   return (
     <header className={styles.header}>
-      <Logo />
+      {/* #215: show the "PRism" wordmark in the empty no-nav header (first-run
+          /setup and rejected-token re-auth), but NOT on /welcome, whose hero
+          already names the product (avoids a double "PRism" on one screen). When
+          authed the nav owns the space, so the mark stands alone. The visible-
+          text ⇄ alt coupling lives inside Logo. */}
+      <Logo showName={!isAuthed && pathname !== '/welcome'} />
       {/* #130: the nav tab strip renders only when authed. During first-run and
           rejected-token re-auth the tabs would only bounce back to /setup, so the
           <nav> element is omitted entirely (an empty navigation landmark is an a11y
@@ -72,6 +79,17 @@ export function Header({ isAuthed }: HeaderProps) {
           disabled
           aria-label="Global search (placeholder)"
         />
+      )}
+      {isAuthed && (
+        <Link
+          to="/help"
+          state={{ backgroundLocation: location }}
+          className={helpActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+          aria-label="Help"
+          aria-current={helpActive ? 'page' : undefined}
+        >
+          <HelpIcon />
+        </Link>
       )}
       {isAuthed && (
         <Link

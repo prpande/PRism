@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState } from './helpers/s4-setup';
 
 // S6 PR4 / spec § 3.1 — Replace link is aria-disabled while a submit is in flight.
@@ -23,8 +24,8 @@ async function holdSubmitLock(request: import('@playwright/test').APIRequestCont
   // PropertyNameCaseInsensitive=true by default — but a future tightening that
   // copies the factory's CaseInsensitive=false would silently break PascalCase
   // bodies. The s4 /test/advance-head helper uses the same camelCase pattern.)
-  const resp = await request.post('http://localhost:5180/test/submit/hold', {
-    headers: { Origin: 'http://localhost:5180', 'Content-Type': 'application/json' },
+  const resp = await request.post(`${BACKEND_ORIGIN}/test/submit/hold`, {
+    headers: { Origin: BACKEND_ORIGIN, 'Content-Type': 'application/json' },
     data: { owner: 'octocat', repo: 'Hello-World', number: 42 },
   });
   if (!resp.ok()) {
@@ -33,8 +34,8 @@ async function holdSubmitLock(request: import('@playwright/test').APIRequestCont
 }
 
 async function releaseSubmitLock(request: import('@playwright/test').APIRequestContext) {
-  const resp = await request.post('http://localhost:5180/test/submit/release-hold', {
-    headers: { Origin: 'http://localhost:5180' },
+  const resp = await request.post(`${BACKEND_ORIGIN}/test/submit/release-hold`, {
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok() && resp.status() !== 204) {
     throw new Error(`/test/submit/release-hold failed: ${resp.status()} ${await resp.text()}`);
