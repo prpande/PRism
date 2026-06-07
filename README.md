@@ -4,7 +4,7 @@
 
 PRism reads your GitHub pull requests, lets you compose an entire review locally — line comments, replies, a verdict, and a summary — and finalizes everything together as a single GitHub *pending review*. Nothing you write is visible to anyone else until you click **Submit**, at which point the whole review lands at once, exactly as if you'd written it on github.com.
 
-It runs entirely on your computer. Your token, your drafts, and your view state never leave your machine.
+It runs entirely on your computer — there's no PRism server in the middle. The app talks directly to GitHub's API from your machine, and your drafts and view state stay local until you choose to submit a review.
 
 ![The PRism inbox — the PRs that involve you, grouped by repository across Review requested, Awaiting author, Authored by me, and CI failing sections](assets/screenshots/inbox.png)
 
@@ -75,7 +75,7 @@ A **classic PAT** is recommended — it can read GitHub Actions check-runs and c
 - Generate one at <https://github.com/settings/tokens/new>
 - Scopes: **`repo`** and **`read:org`**
 
-> **Heads-up on `repo`:** it grants read **and write** access to all repositories you can reach. PRism only ever reads — it never pushes code — but the classic-PAT format has no narrower option. If your organization restricts broadly-scoped tokens, use the fine-grained option below instead, despite its CI blind spot.
+> **Heads-up on `repo`:** it grants read **and write** access to all repositories you can reach. PRism doesn't push code or change your repositories — but it does post your review (comments and approvals) to GitHub when you submit. The classic-PAT format just has no narrower option; if your organization restricts broadly-scoped tokens, use the fine-grained option below instead, despite its CI blind spot.
 
 A **fine-grained PAT** also works, but it's scoped per-organization and can't read GitHub Actions checks, so the CI section will be blind to Actions-based pipelines. If you choose one, grant **Pull requests: Read and write**, **Contents: Read**, and **Commit statuses: Read**.
 
