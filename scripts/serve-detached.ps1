@@ -301,6 +301,64 @@ function Wait-ForHealth {
     throw (Get-LaunchFailureMessage -Log $Log -WrapperPid $WrapperPid -Reason 'timeout' -Port $Port)
 }
 
+function Invoke-Launch {
+    param(
+        [int]$Port, [string]$RawDataDir, [switch]$SkipBuild, [switch]$Force,
+        [int]$TimeoutSec, [string[]]$DotnetArgs
+    )
+    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    $canonical = Get-CanonicalDataDir -DataDir $RawDataDir
+    $paths = Get-ServeDetachedPaths -CanonicalDataDir $canonical
+    $url = "http://localhost:$Port"
+    $startedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+
+    # --- Step 3: port pre-check (spec section 5) ---
+    $ownerPid = Get-PortOwnerPid -Port $Port
+    if ($ownerPid) {
+        $body = Invoke-HealthProbe -Port $Port
+        $isPrism = $null -ne $body -and $null -ne $body.dataDir
+        $sameStore = $isPrism -and ($body.dataDir.TrimEnd('\', '/') -ieq $canonical)
+        if ($sameStore) {
+            # Idempotent reattach -- LOUD (spec section 5). No kill, no rebuild.
+            Write-Host "Reattached to a server already running for this store; no rebuild occurred -- it may predate your working tree. Run 'serve-detached.ps1 -Stop -DataDir `"$canonical`"' then relaunch to refresh." -ForegroundColor Yellow
+            Write-Pidfile -Path $paths.Pidfile -WrapperPid 0 -ServerPid $ownerPid -Port $Port -Url $url -DataDir $canonical -Log $paths.Log -StartedUtc $startedUtc
+            return [pscustomobject]@{ Pid = $ownerPid; Url = $url; Log = $paths.Log; DataDir = $canonical; Version = $body.version }
+        }
+        if (-not $Force) {
+            if ($isPrism) {
+                throw "Port $Port is serving a DIFFERENT PRism store ('$($body.dataDir)'); pick another port (5200 + N) or pass -Force to kill it."
+            }
+            $occ = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+            throw "Port $Port is held by PID $ownerPid ('$($occ.Name)', not a PRism health endpoint); free it or pass -Force."
+        }
+        # -Force: reclaim the port (re-read-before-kill window, section 4.5).
+        Invoke-ForcePortReclaim -Port $Port | Out-Null
+        Start-Sleep -Milliseconds 300
+        if (Get-PortOwnerPid -Port $Port) { throw "Port $Port still occupied after -Force; aborting." }
+    }
+
+    # --- Step 4: foreground build (unless -SkipBuild) ---
+    if (-not $SkipBuild) {
+        & (Join-Path $repoRoot 'run.ps1') -Reset None -BuildOnly -Port $Port -DataDir $canonical
+        if ($LASTEXITCODE -ne 0) {
+            throw "Foreground build (run.ps1 -BuildOnly) failed with exit code $LASTEXITCODE -- fix the npm/dotnet error above (or pass -SkipBuild if the build is known current). Nothing was detached."
+        }
+    }
+
+    # --- Steps 5-7: author wrapper, detach, write pidfile ---
+    Limit-LogSize -Log $paths.Log
+    Write-WrapperScript -WrapperPath $paths.Wrapper -Log $paths.Log -RepoRoot $repoRoot -Port $Port -DataDir $canonical -DotnetArgs $DotnetArgs -StartedUtc $startedUtc
+    $wrapperPid = Start-DetachedWrapper -WrapperPath $paths.Wrapper -RepoRoot $repoRoot
+    Write-Pidfile -Path $paths.Pidfile -WrapperPid $wrapperPid -ServerPid $null -Port $Port -Url $url -DataDir $canonical -Log $paths.Log -StartedUtc $startedUtc
+
+    # --- Step 8: health gate ---
+    $ready = Wait-ForHealth -Port $Port -CanonicalDataDir $canonical -TimeoutSec $TimeoutSec -WrapperPid $wrapperPid -Log $paths.Log
+    $serverPid = $ready.ServerPid
+    $version = $ready.Version    # from the same probe that proved READY -- no second round trip
+    Write-Pidfile -Path $paths.Pidfile -WrapperPid $wrapperPid -ServerPid $serverPid -Port $Port -Url $url -DataDir $canonical -Log $paths.Log -StartedUtc $startedUtc
+    return [pscustomobject]@{ Pid = $serverPid; Url = $url; Log = $paths.Log; DataDir = $canonical; Version = $version }
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
