@@ -1,16 +1,27 @@
+/* Mirror InboxPage.module.css so the skeleton occupies the same box as the real
+   inbox (no reflow when data lands): same padding / max-width / centering, and
+   the same 1fr auto grid that collapses the rail at <=1179px. */
 .page {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 16px;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  max-width: 1280px;
+  margin: 0 auto;
 }
 .grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 24px;
+  gap: var(--s-4);
+  margin-top: var(--s-3);
 }
 .grid[data-has-rail='true'] {
-  grid-template-columns: 1fr 280px;
+  grid-template-columns: 1fr auto;
+}
+@media (max-width: 1179px) {
+  .grid[data-has-rail='true'] {
+    grid-template-columns: 1fr;
+  }
 }
 .section {
   display: flex;
@@ -43,4 +54,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  /* The live ActivityRail is content-sized in the grid's `auto` column; give the
+     placeholder a representative width so the column isn't 0-wide. */
+  width: 280px;
 }
