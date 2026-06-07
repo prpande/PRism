@@ -96,7 +96,7 @@ The Settings panel has a **Replace token** action. It validates a new PAT before
 
 ### Where your data lives
 
-PRism stores your drafts and view state under your operating system's application-data folder; the desktop and browser-tab builds share the same folder. Your GitHub token is held by your OS credential store — DPAPI-encrypted on Windows, the Keychain on macOS, the libsecret keyring on Linux — never as plaintext. See [`TESTING.md`](TESTING.md) for the exact per-platform paths.
+PRism stores your drafts and view state under your operating system's application-data folder; the desktop and browser-tab builds share the same folder. Your GitHub token is kept in an OS-protected token cache, never in plaintext — the system Keychain on macOS and the libsecret keyring on Linux, and a DPAPI-encrypted cache file (`PRism.tokens.cache`) in your data folder on Windows. See [`TESTING.md`](TESTING.md) for the exact per-platform paths.
 
 ---
 
