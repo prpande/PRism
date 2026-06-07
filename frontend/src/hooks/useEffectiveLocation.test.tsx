@@ -45,4 +45,22 @@ describe('useEffectiveLocation', () => {
     });
     expect(result.current.pathname).toBe('/');
   });
+
+  it('synthesizes the inbox background on a cold /help deep-link (#210)', () => {
+    // Without this, a cold /help load would leak '/help' to PrTabStrip/PrTabHost
+    // and drop the active PR-tab highlight + close the AskAi drawer.
+    const { result } = renderHook(() => useEffectiveLocation(), {
+      wrapper: wrapper(['/help']),
+    });
+    expect(result.current.pathname).toBe('/');
+  });
+
+  it('returns backgroundLocation when Help is opened over a PR', () => {
+    const { result } = renderHook(() => useEffectiveLocation(), {
+      wrapper: wrapper([
+        { pathname: '/help', state: { backgroundLocation: { pathname: '/pr/o/r/1' } } },
+      ]),
+    });
+    expect(result.current.pathname).toBe('/pr/o/r/1');
+  });
 });

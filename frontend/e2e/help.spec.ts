@@ -136,4 +136,28 @@ test.describe('Help modal (#210)', () => {
     // Inbox is rendered behind it (the background)
     await expect(page.getByTestId('inbox-page')).toBeVisible();
   });
+
+  test('first-run user reaches the Help modal from the /welcome footer — opens over welcome', async ({
+    page,
+  }) => {
+    // No-token first run: the nav is hidden, so the welcome footer is the entry point.
+    await page.route('**/api/auth/state', (route: Route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      }),
+    );
+    await page.route('**/api/events', (route: Route) =>
+      route.fulfill({ status: 200, contentType: 'text/event-stream', body: ':heartbeat\n\n' }),
+    );
+
+    await page.goto('/welcome');
+    await page.getByRole('link', { name: /^help$/i }).click();
+
+    await expect(page).toHaveURL(/\/help$/);
+    await expect(page.getByRole('dialog', { name: /help/i })).toBeVisible();
+    // The welcome screen stays behind the scrim (modal opened over it, not a blank bg).
+    await expect(page.getByTestId('welcome-card')).toBeVisible();
+  });
 });

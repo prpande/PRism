@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type PointerEvent, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, type Location } from 'react-router-dom';
 import { InboxCaret } from '../Inbox/InboxCaret';
 import {
   InfoSparkIcon,
@@ -22,6 +22,11 @@ export interface HelpModalProps {
   // no opener (body had focus), so focus moves to this background landmark
   // selector instead of being left on bare <body>.
   restoreFocusFallbackSelector?: string;
+  // The effective page Help is open over (the opener's backgroundLocation, else a
+  // synthetic). The "Settings → GitHub connection" link forwards this so opening
+  // Settings from Help keeps the SAME page behind the scrim (e.g. a PR detail),
+  // rather than always snapping to the Inbox.
+  settingsBackground?: Location;
 }
 
 type SectionKey = 'what' | 'loop' | 'surfaces' | 'token' | 'shortcuts' | 'feedback';
@@ -41,13 +46,21 @@ const SECTIONS: Section[] = [
   { key: 'feedback', title: 'Send feedback', icon: <ChatIcon /> },
 ];
 
-export function HelpModal({ onClose, authed, restoreFocusFallbackSelector }: HelpModalProps) {
+export function HelpModal({
+  onClose,
+  authed,
+  restoreFocusFallbackSelector,
+  settingsBackground,
+}: HelpModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
   const scrimDownTarget = useRef<EventTarget | null>(null);
   const fallbackRef = useRef(restoreFocusFallbackSelector);
   fallbackRef.current = restoreFocusFallbackSelector;
   const titleId = useId();
+  // Stable per-instance prefix for accordion body ids (mirrors titleId's useId so
+  // two concurrent instances can't collide on a static literal).
+  const bodyIdBase = useId();
 
   // First section open by default; the rest collapsed.
   const [openSections, setOpenSections] = useState<Set<SectionKey>>(new Set(['what']));
@@ -139,14 +152,17 @@ export function HelpModal({ onClose, authed, restoreFocusFallbackSelector }: Hel
         <div className={styles.body}>
           {SECTIONS.map((section) => {
             const open = openSections.has(section.key);
-            const bodyId = `help-section-body-${section.key}`;
+            const bodyId = `${bodyIdBase}-${section.key}`;
             return (
               <div key={section.key} className={styles.section}>
                 <button
                   type="button"
                   className={styles.sectionHeader}
                   aria-expanded={open}
-                  aria-controls={bodyId}
+                  // Only reference the body while it's mounted — the region is
+                  // conditionally rendered, and aria-controls pointing at an absent
+                  // id fails axe's aria-valid-attr-value (cf. DiffSettingsMenu).
+                  aria-controls={open ? bodyId : undefined}
                   onClick={() => toggleSection(section.key)}
                 >
                   <span className={styles.sectionIcon}>{section.icon}</span>
@@ -160,7 +176,11 @@ export function HelpModal({ onClose, authed, restoreFocusFallbackSelector }: Hel
                     aria-label={section.title}
                     className={styles.sectionBody}
                   >
-                    <SectionContent sectionKey={section.key} authed={authed} onClose={onClose} />
+                    <SectionContent
+                      sectionKey={section.key}
+                      authed={authed}
+                      settingsBackground={settingsBackground}
+                    />
                   </div>
                 )}
               </div>
@@ -176,11 +196,11 @@ export function HelpModal({ onClose, authed, restoreFocusFallbackSelector }: Hel
 function SectionContent({
   sectionKey,
   authed,
-  onClose,
+  settingsBackground,
 }: {
   sectionKey: SectionKey;
   authed: boolean;
-  onClose: () => void;
+  settingsBackground?: Location;
 }) {
   switch (sectionKey) {
     case 'what':
@@ -219,10 +239,14 @@ function SectionContent({
           {authed ? (
             <p>
               When you need to connect or replace your GitHub token, open{' '}
+              {/* Navigating to /settings/* unmounts this modal on its own (the
+                  /help route stops matching), so no explicit onClose is needed —
+                  and adding one would fire a second, racing navigation. Forward
+                  the page Help was opened over so Settings keeps it behind the
+                  scrim instead of snapping to the Inbox. */}
               <Link
                 to="/settings/github-connection"
-                state={{ backgroundLocation: { pathname: '/' } }}
-                onClick={onClose}
+                state={{ backgroundLocation: settingsBackground ?? { pathname: '/' } }}
               >
                 Settings → GitHub connection
               </Link>

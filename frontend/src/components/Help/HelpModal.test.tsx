@@ -80,6 +80,18 @@ describe('HelpModal', () => {
     expect(btn).toHaveAttribute('aria-expanded', 'false');
   });
 
+  it('only sets aria-controls while the section body is mounted (axe aria-valid-attr-value)', async () => {
+    renderModal();
+    const btn = screen.getByRole('button', { name: /the review loop/i });
+    // Collapsed → no dangling aria-controls pointing at an absent id.
+    expect(btn).not.toHaveAttribute('aria-controls');
+
+    await userEvent.click(btn);
+    const controls = btn.getAttribute('aria-controls');
+    expect(controls).toBeTruthy();
+    expect(document.getElementById(controls!)).not.toBeNull();
+  });
+
   it('token section links to /settings/github-connection when authed', () => {
     renderModal(true);
     // Open the token section
