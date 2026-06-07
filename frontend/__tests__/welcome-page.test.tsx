@@ -26,9 +26,7 @@ describe('WelcomePage', () => {
 
   it('renders the tagline and three benefit rows', () => {
     renderWelcome();
-    expect(
-      screen.getByText(/review pull requests without leaving your machine/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/a calmer place to review pull requests/i)).toBeInTheDocument();
     expect(screen.getAllByRole('listitem')).toHaveLength(3);
   });
 
@@ -38,13 +36,11 @@ describe('WelcomePage', () => {
     expect(cta).toHaveAttribute('href', '/setup');
   });
 
-  it('renders Help and Send feedback as plain text stubs, not links', () => {
+  // #210 wired Help; #211 wired Send feedback.
+  it('renders Help as a /help link and Send feedback as a /feedback link', () => {
     renderWelcome();
-    expect(screen.getByText('Help')).toBeInTheDocument();
-    expect(screen.getByText('Send feedback')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /^help$/i })).toBeNull();
-    expect(screen.queryByRole('link', { name: /send feedback/i })).toBeNull();
-    expect(screen.getByText('Help').tagName).toBe('SPAN');
-    expect(screen.getByText('Send feedback').tagName).toBe('SPAN');
+    expect(screen.getByRole('link', { name: /^help$/i })).toHaveAttribute('href', '/help');
+    const feedbackLink = screen.getByRole('link', { name: /send feedback/i });
+    expect(feedbackLink).toHaveAttribute('href', '/feedback');
   });
 });

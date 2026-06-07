@@ -46,14 +46,19 @@ test('/welcome hides the top nav and keeps the logo (first run, #130)', async ({
   await expect(page.getByRole('link', { name: /^settings$/i })).toHaveCount(0);
   // The header logo (alt="PRism") is still present.
   await expect(page.getByAltText('PRism')).toBeVisible();
+  // #215: the header wordmark is SUPPRESSED on /welcome (the hero <h1> already
+  // names the product) — the header must not double-paint "PRism".
+  await expect(page.locator('header').getByText('PRism', { exact: true })).toHaveCount(0);
 });
 
-test('footer Help / Send feedback are non-interactive stubs', async ({ page }) => {
+test('footer Help links to /help; Send feedback links to /feedback', async ({ page }) => {
+  // #210 wired Help; #211 wired Send feedback.
   await page.goto('/welcome');
-  await expect(page.getByText('Help')).toBeVisible();
-  await expect(page.getByText('Send feedback')).toBeVisible();
-  await expect(page.getByRole('link', { name: /^help$/i })).toHaveCount(0);
-  await expect(page.getByRole('link', { name: /send feedback/i })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: /^help$/i })).toHaveAttribute('href', '/help');
+  await expect(page.getByRole('link', { name: /send feedback/i })).toHaveAttribute(
+    'href',
+    '/feedback',
+  );
 });
 
 test('/welcome has no serious or critical a11y violations', async ({ page }) => {
