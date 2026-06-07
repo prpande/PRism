@@ -150,6 +150,13 @@ function Remove-TokenCacheFiles {
     Write-Host "  removing $tokenPath" -ForegroundColor DarkGray
     Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $previousPath -Force -ErrorAction SilentlyContinue
+
+    # serve-detached.log is raw, unscrubbed dotnet/Kestrel stdout (it bypasses the
+    # structured FileLoggerProvider's scrubber). Clear it alongside the token cache
+    # so -Reset Token also drops any secret a console line may have printed.
+    $serveLog = Join-Path $DataDir 'serve-detached.log'
+    Write-Host "  removing $serveLog" -ForegroundColor DarkGray
+    Remove-Item -LiteralPath $serveLog -Force -ErrorAction SilentlyContinue
 }
 
 function Set-LastConfiguredGithubHostToSentinel {
