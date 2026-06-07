@@ -12,9 +12,10 @@ interface Props {
   showCategoryChip: boolean;
   maxDiff: number;
   showRepo?: boolean;
+  grouped?: boolean;
 }
 
-export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo = true }: Props) {
+export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo = true, grouped = false }: Props) {
   const navigate = useNavigate();
   const { addTab } = useOpenTabs();
   const doneState: 'merged' | 'closed' | null =
@@ -51,6 +52,7 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo =
     <button
       className={styles.row}
       data-unread={hasUnseenActivity ? 'true' : 'false'}
+      data-grouped={grouped ? 'true' : 'false'}
       onClick={onClick}
       aria-label={ariaLabel}
     >

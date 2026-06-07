@@ -163,6 +163,18 @@ describe('InboxRow showRepo', () => {
   });
 });
 
+describe('InboxRow grouped indent', () => {
+  it('marks grouped rows with data-grouped=true', () => {
+    renderInboxRow(PR, { grouped: true });
+    expect(screen.getByRole('button').getAttribute('data-grouped')).toBe('true');
+  });
+
+  it('flat rows are data-grouped=false', () => {
+    renderInboxRow(PR);
+    expect(screen.getByRole('button').getAttribute('data-grouped')).toBe('false');
+  });
+});
+
 describe('InboxRow tail reserve-and-collapse', () => {
   it('always reserves the diff, counts, and comment slots', () => {
     const { container } = renderInboxRow({ ...PR, additions: 0, deletions: 0, commentCount: 0 });

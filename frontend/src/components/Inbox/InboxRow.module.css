@@ -225,3 +225,10 @@
 .row:hover .comments {
   background: var(--surface-3);
 }
+
+/* Indent grouped rows via left padding, not the accordion body, so the tail's
+   right edge stays flush with flat rows and the metrics align across flat +
+   grouped rows (border-box keeps width:100% honest). */
+.row[data-grouped='true'] {
+  padding-left: calc(var(--s-4) + var(--s-4));
+}
