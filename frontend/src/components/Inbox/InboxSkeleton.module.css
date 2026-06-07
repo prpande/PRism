@@ -1,0 +1,46 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 24px;
+}
+.grid[data-has-rail='true'] {
+  grid-template-columns: 1fr 280px;
+}
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.rowMain {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rowTail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
