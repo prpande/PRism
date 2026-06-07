@@ -28,6 +28,12 @@
   width: 40%;
   background: var(--accent);
   border-radius: 0 2px 2px 0;
+}
+
+/* Animate only while active. Each open PR tab keeps its own (hidden) bar mounted
+   under keep-alive; gating on data-active stops idle bars from compositing a
+   forever-looping animation off-screen. */
+.bar[data-active='true'] .fill {
   animation: indeterminate 1.1s ease-in-out infinite;
 }
 
@@ -45,8 +51,12 @@
     transition: none;
   }
   .fill {
-    animation: none;
     width: 80%;
     margin-left: 0;
+  }
+  /* Match the active rule's specificity (0,2,1) so this actually overrides the
+     animation when the bar is active. */
+  .bar[data-active='true'] .fill {
+    animation: none;
   }
 }

@@ -62,7 +62,11 @@ export function SkeletonText({
 }: SkeletonTextProps) {
   const lineWidths = widths ?? DEFAULT_LINE_WIDTHS;
   return (
-    <span className={className ? `${styles.text} ${className}` : styles.text} data-testid={testId}>
+    <span
+      className={className ? `${styles.text} ${className}` : styles.text}
+      data-testid={testId}
+      aria-hidden="true"
+    >
       {Array.from({ length: lines }, (_, i) => (
         <Skeleton key={i} height={12} width={lineWidths[i % lineWidths.length]} />
       ))}

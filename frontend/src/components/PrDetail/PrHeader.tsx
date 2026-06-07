@@ -393,7 +393,13 @@ export function PrHeader({
           </div>
           <h1 className={styles.prTitle} data-testid="pr-title">
             {loading ? (
-              <Skeleton width="60%" height={22} data-testid="pr-header-title-skeleton" />
+              <>
+                {/* The skeleton is aria-hidden; without this the <h1> would be an
+                    empty/unnamed heading in the a11y tree (an AT user navigating
+                    by heading would land on a blank one). */}
+                <span className="sr-only">Loading pull request…</span>
+                <Skeleton width="60%" height={22} data-testid="pr-header-title-skeleton" />
+              </>
             ) : (
               title
             )}
@@ -405,10 +411,16 @@ export function PrHeader({
             <span className={styles.statusClosed}>Closed {formatAge(closedAt)}</span>
           )}
           <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
-            <span className={`pr-subtitle-author ${styles.subtitleAuthor}`}>
+            {/* While loading the author slot holds only aria-hidden skeletons;
+                hide the whole span from AT so it isn't an empty nameless slot
+                (the h1's sr-only "Loading pull request…" carries the signal). */}
+            <span
+              className={`pr-subtitle-author ${styles.subtitleAuthor}`}
+              aria-hidden={loading || undefined}
+            >
               {loading ? (
                 <>
-                  <Skeleton circle width={20} />
+                  <Skeleton circle width={20} data-testid="pr-header-author-skeleton" />
                   <Skeleton width={110} height={12} />
                 </>
               ) : (
@@ -420,8 +432,8 @@ export function PrHeader({
             </span>
             {loading && (
               <>
-                <Skeleton width={90} height={18} radius={9} />
-                <Skeleton width={60} height={18} radius={9} />
+                <Skeleton width={90} height={18} radius={9} data-testid="pr-header-chip-skeleton" />
+                <Skeleton width={60} height={18} radius={9} data-testid="pr-header-chip-skeleton" />
               </>
             )}
             {branchInfo && (

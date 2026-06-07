@@ -33,9 +33,10 @@ describe('Skeleton', () => {
     expect(el.style.height).toBe('20px');
   });
 
-  it('SkeletonText renders the requested number of lines', () => {
+  it('SkeletonText renders the requested number of lines and is aria-hidden', () => {
     render(<SkeletonText lines={3} data-testid="lines" />);
     const root = screen.getByTestId('lines');
     expect(root.children).toHaveLength(3);
+    expect(root).toHaveAttribute('aria-hidden', 'true');
   });
 });

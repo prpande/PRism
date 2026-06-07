@@ -22,10 +22,21 @@ function renderHeader(extra: Partial<React.ComponentProps<typeof PrHeader>> = {}
 }
 
 describe('PrHeader loading', () => {
-  it('shows skeletons for title/author while loading, but keeps the real breadcrumb', () => {
+  it('shows skeletons for title/author/chips while loading, but keeps the real breadcrumb', () => {
     renderHeader({ loading: true });
     expect(screen.getByText('acme/api')).toBeInTheDocument();
     expect(screen.getByTestId('pr-header-title-skeleton')).toBeInTheDocument();
+    // Author avatar + the two CI/mergeability chip placeholders also render.
+    expect(screen.getByTestId('pr-header-author-skeleton')).toBeInTheDocument();
+    expect(screen.getAllByTestId('pr-header-chip-skeleton')).toHaveLength(2);
+  });
+
+  it('gives the heading an accessible name while loading (no empty <h1> for AT)', () => {
+    renderHeader({ loading: true });
+    // The skeleton is aria-hidden, so the sr-only label is what names the heading.
+    expect(
+      screen.getByRole('heading', { level: 1, name: /loading pull request/i }),
+    ).toBeInTheDocument();
   });
 
   it('renders no action buttons or collapse toggle while loading (no clicks before load)', () => {
