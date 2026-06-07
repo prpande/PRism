@@ -37,7 +37,7 @@ export function WelcomePage() {
         <Link to="/setup" className={`${styles.cta} btn btn-primary btn-lg`}>
           Get started
         </Link>
-        {/* Footer: Help is now a real link (#210). Send feedback remains a stub until #211. */}
+        {/* Footer: Help is a real link (#210). Send feedback is a real link (#211). */}
         <div className={styles.footer}>
           <Link to="/help" state={{ backgroundLocation: location }} className={styles.footerLink}>
             Help
@@ -45,7 +45,13 @@ export function WelcomePage() {
           <span className={styles.footerDivider} aria-hidden="true">
             ·
           </span>
-          <span className={styles.footerStub}>Send feedback</span>
+          <Link
+            to="/feedback"
+            state={{ backgroundLocation: location }}
+            className={styles.footerLink}
+          >
+            Send feedback
+          </Link>
         </div>
       </div>
     </div>

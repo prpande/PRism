@@ -63,4 +63,22 @@ describe('useEffectiveLocation', () => {
     });
     expect(result.current.pathname).toBe('/pr/o/r/1');
   });
+
+  it('synthesizes the inbox background on a cold /feedback deep-link (#211)', () => {
+    // Without this, a cold /feedback load would leak '/feedback' to PrTabStrip/PrTabHost
+    // and drop the active PR-tab highlight + close the AskAi drawer.
+    const { result } = renderHook(() => useEffectiveLocation(), {
+      wrapper: wrapper(['/feedback']),
+    });
+    expect(result.current.pathname).toBe('/');
+  });
+
+  it('returns backgroundLocation when Feedback is opened over a PR', () => {
+    const { result } = renderHook(() => useEffectiveLocation(), {
+      wrapper: wrapper([
+        { pathname: '/feedback', state: { backgroundLocation: { pathname: '/pr/o/r/1' } } },
+      ]),
+    });
+    expect(result.current.pathname).toBe('/pr/o/r/1');
+  });
 });
