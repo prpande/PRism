@@ -85,6 +85,24 @@ export function InboxRow({
           {pr.title}
         </span>
         <span className={styles.meta}>
+          {doneState === 'merged' && (
+            <>
+              <span className={`${styles.stateBadge} ${styles.badgeMerged}`}>Merged</span>
+              <span className={styles.dotsep}>·</span>
+            </>
+          )}
+          {doneState === 'closed' && (
+            <>
+              <span className={`${styles.stateBadge} ${styles.badgeClosed}`}>Closed</span>
+              <span className={styles.dotsep}>·</span>
+            </>
+          )}
+          {showCategoryChip && enrichment?.categoryChip && (
+            <>
+              <span className={styles.chip}>{enrichment.categoryChip}</span>
+              <span className={styles.dotsep}>·</span>
+            </>
+          )}
           {showRepo && (
             <>
               <span className={styles.mono}>{pr.repo}</span>
@@ -102,17 +120,6 @@ export function InboxRow({
         </span>
       </span>
       <span className={styles.tail}>
-        <span className={styles.tailLead}>
-          {doneState === 'merged' && (
-            <span className={`${styles.stateBadge} ${styles.badgeMerged}`}>Merged</span>
-          )}
-          {doneState === 'closed' && (
-            <span className={`${styles.stateBadge} ${styles.badgeClosed}`}>Closed</span>
-          )}
-          {showCategoryChip && enrichment?.categoryChip && (
-            <span className={styles.chip}>{enrichment.categoryChip}</span>
-          )}
-        </span>
         <span className={styles.metrics}>
           <span className={styles.diffSlot}>
             <DiffBar additions={pr.additions} deletions={pr.deletions} max={maxDiff} />

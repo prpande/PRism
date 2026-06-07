@@ -116,24 +116,15 @@
   white-space: nowrap;
 }
 
-/* Tail column */
+/* Tail column — holds only the aligned metrics now; the AI chip + state badge
+   live on the meta line (they're labels, not metrics, and a variable-width pill
+   can't sit in a fixed-width aligned column without clipping). Right-align so
+   the metrics sit flush with the row's right edge. */
 .tail {
   display: flex;
   align-items: center;
-  gap: var(--s-3);
-  min-width: 0;
-}
-
-/* Badge + AI chip flow here, left of the metrics; takes the slack and
-   truncates so it never pushes the right-pinned metrics. */
-.tailLead {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
   justify-content: flex-end;
-  gap: var(--s-3);
-  overflow: hidden;
+  min-width: 0;
 }
 
 /* Right-pinned, fixed-width slots in fixed order — this is what makes the

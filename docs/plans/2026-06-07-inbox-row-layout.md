@@ -313,6 +313,8 @@ git commit -m "feat(#227): CI dot shows pending (ring) + failing (solid), accent
 
 ## Task 4: Fixed-width tail + right-pinned metrics with reserve-and-collapse slots
 
+> **B1 revision:** Task 4 originally placed the state badge + AI chip in a `tailLead` zone inside the fixed tail. The B1 visual pass found the metrics consume the whole fixed tail, clipping the chip/badge to invisibility. They were moved to the **leading edge of the meta line** (`.meta`), and `tailLead` was removed so the tail holds only metrics. See the spec's "B1 note (chip/badge placement)". The task text below reflects the original cut; the final code has the chip/badge on the meta line.
+
 **Files:**
 - Modify: `frontend/src/components/Inbox/InboxRow.tsx`
 - Modify: `frontend/src/components/Inbox/InboxRow.module.css`

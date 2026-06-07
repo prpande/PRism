@@ -209,3 +209,24 @@ describe('InboxRow tail reserve-and-collapse', () => {
     expect(container.querySelector('[class*="commentSlot"]')!.textContent).toContain('5');
   });
 });
+
+describe('InboxRow chip + badge placement (on the meta line, not the metrics tail)', () => {
+  it('renders the AI category chip on the meta line, not inside the metrics tail', () => {
+    renderInboxRow(PR, {
+      showCategoryChip: true,
+      enrichment: { prId: 'x', categoryChip: 'Refactor', hoverSummary: null },
+    });
+    const chip = screen.getByText('Refactor');
+    // chip lives in the elastic meta line so it's always visible, and is NOT in
+    // the fixed-width metrics tail (where it would be clipped — see #227 B1)
+    expect(chip.closest('[class*="meta"]')).not.toBeNull();
+    expect(chip.closest('[class*="tail"]')).toBeNull();
+  });
+
+  it('renders the Merged badge on the meta line for a merged PR', () => {
+    renderInboxRow({ ...PR, mergedAt: new Date().toISOString() });
+    const badge = screen.getByText('Merged');
+    expect(badge.closest('[class*="meta"]')).not.toBeNull();
+    expect(badge.closest('[class*="tail"]')).toBeNull();
+  });
+});

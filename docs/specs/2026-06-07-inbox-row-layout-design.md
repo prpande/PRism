@@ -38,7 +38,7 @@ Stop letting the tail be `auto`-width; drive it from a CSS variable:
 }
 ```
 
-Terminology: the **tail** is the fixed-width right *column*. Inside it, the **metrics cluster** (diff bar · `+adds −dels` · comment count) is right-pinned; the **state badge** (Merged/Closed) and **AI chip** flow to its *left*. The badge/chip's presence does not move the metrics (they're right-pinned), so no per-row badge slot needs reserving for alignment; a wide chip truncates within the tail rather than pushing the metrics.
+Terminology: the **tail** is the fixed-width right *column*, and it holds **only** the **metrics cluster** (diff bar · `+adds −dels` · comment count), right-pinned. The **state badge** (Merged/Closed) and **AI category chip** do **not** live in the tail — they're variable-width labels, not metrics, and a variable-width pill inside a fixed-width *aligned* column either clips or forces the tail wide enough to tax every row. They render instead on the **meta line** (leading, with `repo · author · iter · age`), in the elastic title column, where category/status tags conventionally sit and always have room. (This was corrected in the B1 pass — see B1 note below.) So the tail is purely metrics, and the metrics column alignment is unaffected by whether a chip/badge is present.
 
 With a constant tail width, the main↔tail boundary — and the metrics column — sits at the same x on every row **whose right edge is at the same x**. That caveat is change 2.
 
@@ -60,13 +60,15 @@ The two slots that collapse today (mirrors the file-tree `fileTreeAi[data-on='0'
 - **Diff bar** (leftmost) — `DiffBar` returns `null` when `additions + deletions === 0`. Its slot reserves width so the **diff-bar column itself** stays aligned across rows; with the cluster right-anchored this does *not* move +/− or comments — the `null`-render stays, the slot is what's fixed-width.
 - **+/− counts** always render (even `+0 −0`), so they need fixed width + tabular-nums, no presence guard.
 
-`--inbox-tail-w` is a single tunable token. Start it at **~200px** (≈ a 56px diff bar + two ~3-char tabular counts + a comment pill + gaps ≈ 140px of metrics, plus a ~60px badge/chip zone) and dial it in during the B1 visual pass; the *mechanism*, not the exact pixel count, is what this spec fixes.
+`--inbox-tail-w` is a single tunable token sized to the **metrics cluster only** (~190px: a 64px diff bar + a 72px tabular counts slot + a 28px comment slot + gaps; narrow regime drops the diff bar to ~136px). Since the chip/badge moved to the meta line (B1 note), the tail no longer reserves a badge/chip zone. The *mechanism*, not the exact pixel count, is what this spec fixes.
+
+**B1 note (chip/badge placement).** The first cut put the badge/chip in a `tailLead` zone left of the metrics inside the fixed tail. The B1 visual pass showed the metrics consume essentially the whole fixed tail (~188px of ~200px), squeezing `tailLead` to ~0 and clipping the chip/badge to invisibility (and to a 1-char stub at narrow widths). Fix: move them to the leading edge of the meta line. The tail holds only metrics; the chip/badge live with the row's other metadata and are always visible.
 
 ## Title + meta bounding
 
 - `.title`: replace `text-wrap: pretty` with a 2-line clamp. The **operative mechanism is the `-webkit-box` trio** — `display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;` — which all current targets honor (the app runs in Chromium/Electron and modern browsers all support `-webkit-line-clamp`). Include the standard `line-clamp: 2` as a forward-compat alias only; it is not yet the load-bearing declaration. Long titles cap at two lines + ellipsis; short titles render one line.
 - **Row height contract.** `.row` stays `align-items: center`; the tail vertical-centers against the title block. There is **no fixed row height** — a one-line-title row is ~1 line-height shorter than a two-line-title row, by design (bounded rhythm, not pixel-uniform; see Decisions). Do not reach for a fixed row height.
-- `.meta`: drop `flex-wrap: wrap`; set `flex-wrap: nowrap; overflow: hidden`. The **author** span (most variable) gets `min-width: 0` + `text-overflow: ellipsis` and truncates first; `repo`, `iter`, `age` are short and effectively fixed. The line never wraps to a second row.
+- `.meta`: drop `flex-wrap: wrap`; set `flex-wrap: nowrap; overflow: hidden`. The line, left→right: **state badge** (Merged/Closed, done PRs) · **AI chip** (when on) · `repo · author · iter · age`. The **author** span (most variable) gets `min-width: 0` + `text-overflow: ellipsis` and truncates first; the badge/chip and `repo`/`iter`/`age` are short/leading and effectively fixed. The line never wraps to a second row. (The AI chip still drops at the narrow container breakpoint.)
 
 ## Field set — conclusion
 
