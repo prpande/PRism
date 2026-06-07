@@ -253,6 +253,54 @@ function Start-DetachedWrapper {
     return [int]$res.ProcessId
 }
 
+function Get-LaunchFailureMessage {
+    # Empty-vs-populated log diagnostic (spec section 4.2 step 8, section 6). An
+    # empty/absent log means the wrapper never ran (launch-shell / execution-policy /
+    # unwritable-log); a populated log means the server started then exited (tail it).
+    param([string]$Log, [int]$WrapperPid, [string]$Reason, [int]$Port = 0)
+    $hasLog = (Test-Path -LiteralPath $Log) -and ((Get-Item -LiteralPath $Log).Length -gt 0)
+    $head = if ($Reason -eq 'timeout') {
+        "Health gate timed out waiting for http://localhost:$Port/api/health. The port may have been taken by another process after the pre-check."
+    } else {
+        "The launched wrapper (PID $WrapperPid) exited before the server answered."
+    }
+    if (-not $hasLog) {
+        return "$head`nThe log at '$Log' is EMPTY -- the wrapper never wrote, which points to a launch-shell / execution-policy / unwritable-log error rather than a server crash."
+    }
+    $tail = (Get-Content -LiteralPath $Log -Tail 30) -join [Environment]::NewLine
+    return "$head`nLog tail ($Log):`n$tail"
+}
+
+function Wait-ForHealth {
+    # Poll /api/health until 200 AND body.dataDir matches the canonical store, or
+    # the wrapper dies, or -TimeoutSec elapses (spec section 4.2 step 8 + section 4.6).
+    # On READY, returns { ServerPid; Version } from the SAME probe that proved
+    # readiness (so the caller needs no second /api/health round trip). On failure,
+    # throws a message that distinguishes an EMPTY log (wrapper never wrote) from a
+    # POPULATED log (server started but exited -- tail printed). No process-ancestry
+    # check: Acquire-before-bind guarantees any listener for this store is the sole
+    # legitimate instance.
+    param(
+        [int]$Port, [string]$CanonicalDataDir, [int]$TimeoutSec,
+        [int]$WrapperPid, [string]$Log
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $body = Invoke-HealthProbe -Port $Port
+        if ($null -ne $body -and ($body.dataDir.TrimEnd('\', '/') -ieq $CanonicalDataDir)) {
+            # Carry $body.version out from the SAME probe that proved READY -- avoids
+            # a redundant second probe (and the null-version race if the port flickers).
+            return [pscustomobject]@{ ServerPid = (Get-PortOwnerPid -Port $Port); Version = $body.version }
+        }
+        # Fail fast if the wrapper died before the server ever answered.
+        if (-not (Get-Process -Id $WrapperPid -ErrorAction SilentlyContinue)) {
+            throw (Get-LaunchFailureMessage -Log $Log -WrapperPid $WrapperPid -Reason 'died')
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    throw (Get-LaunchFailureMessage -Log $Log -WrapperPid $WrapperPid -Reason 'timeout' -Port $Port)
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
