@@ -26,34 +26,46 @@ These were settled with the owner before this spec; recorded here so the plan in
 
 ## The alignment mechanism (load-bearing)
 
-The fix for goal 2 is to **stop letting the tail be `auto`-width**. Give the tail a fixed width driven by a CSS variable:
+Cross-row, cross-section, cross-group alignment takes **two** changes together. A fixed tail width alone is *not* sufficient — the repo-group indent defeats it (see change 2).
+
+### (1) Fix the tail width
+
+Stop letting the tail be `auto`-width; drive it from a CSS variable:
 
 ```css
 .row {
-  grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
+  grid-template-columns: var(--row-indent, 0) 16px minmax(0, 1fr) var(--inbox-tail-w);
 }
 ```
 
-With a constant tail width, the main↔tail boundary sits at the same x on **every** row. Because rows are `width: 100%`, this alignment holds across separate `<section>` grids and inside `RepoGroupAccordion` with **no subgrid required** — every row independently resolves the same template to the same pixel positions.
+Terminology: the **tail** is the fixed-width right *column*. Inside it, the **metrics cluster** (diff bar · `+adds −dels` · comment count) is right-pinned; the **state badge** (Merged/Closed) and **AI chip** flow to its *left*. The badge/chip's presence does not move the metrics (they're right-pinned), so no per-row badge slot needs reserving for alignment; a wide chip truncates within the tail rather than pushing the metrics.
 
-Inside the fixed-width tail:
+With a constant tail width, the main↔tail boundary — and the metrics column — sits at the same x on every row **whose right edge is at the same x**. That caveat is change 2.
 
-- The **metrics cluster** — diff bar · `+adds −dels` · comment count — is **right-pinned** (flush to the row's right edge) with **fixed sub-widths** and `font-variant-numeric: tabular-nums` (reuse the `.tnum` utility / existing pattern). Because the cluster is right-anchored with fixed widths, the numbers line up column-for-column across all rows regardless of digit count *and regardless of what sits to their left*.
-- The **state badge** (Merged/Closed) and **AI category chip** flow in the leading space of the tail, to the *left* of the metrics. Their presence or absence does **not** move the metrics (which are right-pinned), so no per-row badge slot needs reserving for cross-row alignment. If a chip is wide it truncates within the tail rather than pushing the metrics.
+### (2) Move the repo-group indent off the row box
+
+Today `RepoGroupAccordion.module.css:61-63` indents nested rows with `.body { padding-left: var(--s-4) }`. That shifts the *entire* grouped row — tail included — right by `--s-4`, so its right edge (and metrics column) lands `--s-4` short of a flat row's. A fixed tail width anchors the tail to *each row's own* right edge, not the list's, so this indent breaks cross-group alignment on its own.
+
+Fix: **remove `.body`'s `padding-left` and apply the indent as the leading grid track on the row** — `--row-indent`, set to `var(--s-4)` for grouped rows (via a `data-grouped` attribute / prop) and `0` for flat rows. The row stays `width: 100%` of the *un-indented* `.sections` column, so its right edge — and the right-pinned metrics — stays flush with flat rows. The group still reads as nested because the status dot + title indent under the band; only the leading content moves, the metrics hold their global column.
+
+With both changes, every row (flat or grouped, in any section) resolves to the same right edge inside the same-width `.sections` column, so the metrics align **across rows, across separate `<section>` grids, and across repo groups** — with **no subgrid required**.
 
 ### Reserve-and-collapse within the metrics cluster
 
-Two metrics collapse today and would let their neighbours shift if left as-is. Each gets a **fixed-width slot that renders empty when the datum is absent** (mirrors the file-tree `fileTreeAi[data-on='0']` reserve-and-collapse):
+**Cluster invariant:** the metrics cluster is **fixed-width slots in a fixed order, right-anchored** (an inner `grid` with fixed tracks, or fixed `flex-basis` per slot — *not* `auto`), with `font-variant-numeric: tabular-nums` on the numbers (reuse the `.tnum` utility). Order left→right: diff bar · `+adds −dels` · comment count. Every slot reserves its width whether or not its datum renders. This is what makes the numbers line up column-for-column regardless of digit count.
 
-- **Diff bar** — `DiffBar` returns `null` when `additions + deletions === 0`. Wrap it in a fixed-width slot so a zero-diff row keeps the +/− and comment columns at the same x. (The `null`-render stays; the *slot* is what's fixed-width.)
-- **Comment count** — only rendered when `commentCount > 0`. Give it a fixed-width slot rendered empty at zero, so the diff/counts to its left stay put.
-- **+/− counts** always render (even `+0 −0`), so they need only fixed width + tabular-nums, not a presence guard.
+The two slots that collapse today (mirrors the file-tree `fileTreeAi[data-on='0']` reserve-and-collapse):
 
-`--inbox-tail-w` is a single tunable token. Its value is sized to `max(badge/chip zone) + metrics cluster` and dialed in during the B1 visual pass; the *mechanism*, not the exact pixel count, is what this spec fixes.
+- **Comment count** (rightmost) — only rendered when `commentCount > 0`. Because it's the right-anchored element, a zero-comment row would let `+/−` slide to the right edge unless this slot holds its width. **Load-bearing for the counts' position.**
+- **Diff bar** (leftmost) — `DiffBar` returns `null` when `additions + deletions === 0`. Its slot reserves width so the **diff-bar column itself** stays aligned across rows; with the cluster right-anchored this does *not* move +/− or comments — the `null`-render stays, the slot is what's fixed-width.
+- **+/− counts** always render (even `+0 −0`), so they need fixed width + tabular-nums, no presence guard.
+
+`--inbox-tail-w` is a single tunable token. Start it at **~200px** (≈ a 56px diff bar + two ~3-char tabular counts + a comment pill + gaps ≈ 140px of metrics, plus a ~60px badge/chip zone) and dial it in during the B1 visual pass; the *mechanism*, not the exact pixel count, is what this spec fixes.
 
 ## Title + meta bounding
 
-- `.title`: replace `text-wrap: pretty` with a 2-line clamp — `display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-clamp: 2; overflow: hidden;`. Long titles cap at two lines + ellipsis; short titles render one line.
+- `.title`: replace `text-wrap: pretty` with a 2-line clamp. The **operative mechanism is the `-webkit-box` trio** — `display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;` — which all current targets honor (the app runs in Chromium/Electron and modern browsers all support `-webkit-line-clamp`). Include the standard `line-clamp: 2` as a forward-compat alias only; it is not yet the load-bearing declaration. Long titles cap at two lines + ellipsis; short titles render one line.
+- **Row height contract.** `.row` stays `align-items: center`; the tail vertical-centers against the title block. There is **no fixed row height** — a one-line-title row is ~1 line-height shorter than a two-line-title row, by design (bounded rhythm, not pixel-uniform; see Decisions). Do not reach for a fixed row height.
 - `.meta`: drop `flex-wrap: wrap`; set `flex-wrap: nowrap; overflow: hidden`. The **author** span (most variable) gets `min-width: 0` + `text-overflow: ellipsis` and truncates first; `repo`, `iter`, `age` are short and effectively fixed. The line never wraps to a second row.
 
 ## Field set — conclusion
@@ -76,7 +88,9 @@ Done PRs (merged/closed) are terminal and never show a CI dot (unchanged). The d
 
 ## Responsive behavior
 
-The inbox pane can be narrowed (split layouts), so the breakpoint is **pane-relative**: a **container query** on the inbox list container (preferred over a viewport media query precisely because the pane width is independent of the viewport). If a container context isn't already established on the list, add one (`container-type: inline-size`) as part of this work.
+The row must respond to **its own width**, not the viewport. The inbox sections-column width is not a simple function of viewport width: `InboxPage.module.css:7-18` lays out `.grid` as `1fr auto` (sections + right rail) collapsing to `1fr` below 1179px — so the sections column is *narrower* when the rail is present (wide viewport) and *wider* when it collapses (narrow viewport). A viewport media query would therefore be a poor proxy for the row's actual width.
+
+So: establish a **container** on the `.sections` column — `container-type: inline-size` (inline-axis containment only; `.sections` is width-driven, not content-height-driven, so this is side-effect-free) — and drive the row with a `@container` query. This is new work (no container context exists today). The narrow threshold is a token, tuned in the B1 pass.
 
 Below the narrow threshold, drop tail content in **priority order** and shrink `--inbox-tail-w` so the title column reclaims the space:
 
@@ -84,12 +98,13 @@ Below the narrow threshold, drop tail content in **priority order** and shrink `
 2. Then the **AI chip**.
 3. **+/− counts** and **comment count** are last and effectively never drop.
 
-The meta line truncates (never wraps) at every width. No horizontal overflow at any width — verified in the B1 pass at a narrow pane.
+**Alignment is a within-regime invariant.** At the breakpoint `--inbox-tail-w` changes, so the metrics column x shifts *once* across the breakpoint — by design, not a defect. Within either regime, every row's metrics align. The meta line truncates (never wraps) at every width. No horizontal overflow at any width — verified in the B1 pass at a narrow pane.
 
 ## Accessibility
 
-- The row stays a single actionable `<button>` with a complete `aria-label`. The label already carries the **untruncated** title, repo, iteration, and unread cue (`InboxRow.tsx:37-41`); extend it to name the CI state when `pending`/`failing` so the dot's meaning reaches AT.
-- Add the full title to a **`title` attribute** on `.title` so the 2-line clamp is recoverable on hover. The `aria-label` already exposes the full title to AT, so truncation hides nothing.
+- The row stays a single actionable `<button>` with a complete `aria-label`. The label already carries the **untruncated** title, repo, iteration, and unread cue (`InboxRow.tsx:37-41`) — **no change needed there** (the title-in-label is pre-existing baseline, not work for this slice).
+- **CI state in the label (new).** The label has two branches today: done PRs (`title · repo · doneState`) and open PRs (`title · repo · iteration N [· unread]`). Done PRs have no CI dot, so they stay unchanged. For **open PRs only**, append the CI state to the open branch: ` · CI failing` when `ci === 'failing'`, ` · CI pending` when `ci === 'pending'`, nothing when `none`. This carries the dot's meaning to AT.
+- Add the full title to a **`title` attribute on the `.title` span** (not the button — the button already has its `aria-label`) so the 2-line clamp is recoverable on hover. The `aria-label` already exposes the full title to AT, so truncation hides nothing.
 - Tabular-nums and fixed slots are presentational only — no AT impact.
 
 ## Testing
@@ -97,9 +112,12 @@ The meta line truncates (never wraps) at every width. No horizontal overflow at 
 **Vitest (`InboxRow.test.tsx`, extend):**
 - Title clamp class applied; full title present in the `title` attribute and `aria-label` even when visually clamped.
 - Meta renders single-line (no wrap container class / `nowrap`); author truncation class applied.
-- Status dot: `failing` → danger class; `pending` → warning class; `none`/done → reserved-invisible. `aria-label` names `pending`/`failing`.
-- Tail: metrics cluster present and right-pinned; **reserve-and-collapse** — with `additions+deletions === 0` the diff-bar slot is empty but +/− and (reserved) comment slots still render; with `commentCount === 0` the comment slot renders empty and the +/− stay positioned.
+- Status dot: `failing` → danger class; `pending` → warning class; `none`/done → reserved-invisible. Open-PR `aria-label` names `pending`/`failing`; done-PR label unchanged (no CI state).
+- Tail reserve-and-collapse — **two distinct cases**:
+  - Diff bar absent (`additions + deletions === 0`): diff-bar slot renders empty; `+/−` and comment slots still render and stay positioned.
+  - Comment count absent (`commentCount === 0`): comment slot renders empty; `+/−` stay positioned (don't slide to the right edge).
 - Badge/chip presence does not change which metrics render (alignment invariant at the unit level).
+- Grouped vs. flat row: a `data-grouped` row carries `--row-indent` on its leading track; its tail/metrics slot renders at the same structure as a flat row (the right edge is not indented).
 
 **B1 visual proof (the real assertion):** screenshots against a real account (BFF repo — has long titles and varied diffs), **light + dark**, at a normal and a narrow pane width, showing: bounded row heights, numbers lining up down the column across sections, no horizontal overflow, pending/failing dots. Hosted on a throwaway `review-assets/pr-N` branch and embedded in the PR.
 
@@ -107,7 +125,7 @@ The meta line truncates (never wraps) at every width. No horizontal overflow at 
 
 - **(A) Full table — fixed columns for every field, single-line truncated title.** Rejected: a strict table fights variable-length PR titles (over-truncates or wastes width), is the biggest visual departure, and the card/list row is the standard, defensible pattern for PR inboxes. The "reads like a card stack, not a table" framing in the issue treats a legitimate pattern as a defect.
 - **(B2/B3) Fixed-height rows (every row identical height).** Rejected: pixel-uniform rhythm pads out the ~majority of rows whose titles fit one line. *Bounded* rhythm (max-clamp) kills the blowup without the whitespace tax.
-- **CSS subgrid for alignment.** Rejected: subgrid only aligns within one subgrid parent — it would not align across the separate `<section>` grids, and the `RepoGroupAccordion` nesting breaks the chain. The fixed-tail-width approach aligns everywhere with less machinery.
+- **CSS subgrid for alignment.** Rejected: subgrid only aligns within one subgrid parent — it would *not* align across the separate sibling `<section>` grids (they aren't children of one grid), even after the repo-group indent is moved off the row box. The fixed-tail-width approach (change 1) plus the indent move (change 2) aligns everywhere with less machinery. Note: a fixed tail width *alone* shares subgrid's nesting problem — the `RepoGroupAccordion` `.body` indent — which is exactly why change 2 is required, not optional.
 - **Drop the diff bar (numbers suffice).** Considered, rejected by the owner — the bar's glanceable magnitude earns its place alongside the precise numbers.
 - **Pull review/approval + draft into this slice.** Rejected: requires backend GraphQL/DTO/mapping work (per-viewer approval state widens the surface), which works against the "minimal disruption" intent of the bounded-rhythm choice. Split to #259, which inherits this row's column model and reserve-and-collapse slot pattern.
 
