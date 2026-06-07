@@ -390,6 +390,17 @@ function Invoke-Stop {
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
-    # Mode dispatch + mutual-exclusion are wired in Task 12.
-    throw "serve-detached.ps1 main body not yet implemented."
+
+    if ($Stop) {
+        # -Stop is teardown only: launch-mode params are meaningless with it.
+        if ($SkipBuild -or $Force -or ($DotnetArgs -and $DotnetArgs.Count -gt 0)) {
+            throw "-Stop is teardown mode and cannot be combined with -SkipBuild / -Force / pass-through args."
+        }
+        Invoke-Stop -RawDataDir $DataDir
+    }
+    else {
+        $handle = Invoke-Launch -Port $Port -RawDataDir $DataDir -SkipBuild:$SkipBuild -Force:$Force -TimeoutSec $TimeoutSec -DotnetArgs $DotnetArgs
+        $handle | Format-List | Out-String | Write-Host
+        $handle   # emit the object so a caller can capture { Pid; Url; Log; DataDir; Version }
+    }
 }
