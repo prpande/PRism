@@ -152,6 +152,14 @@ describe('HelpModal', () => {
     expect(document.activeElement).toBe(document.querySelector('[data-testid="bg"]'));
   });
 
+  it('feedback section renders a /feedback link (not "Coming soon")', () => {
+    renderModal();
+    fireEvent.click(screen.getByRole('button', { name: /send feedback/i }));
+    const link = screen.getByRole('link', { name: /send feedback/i });
+    expect(link).toHaveAttribute('href', '/feedback');
+    expect(screen.queryByText(/coming soon/i)).toBeNull();
+  });
+
   it('restores focus to the opener on close', () => {
     document.body.innerHTML = '<button data-testid="opener">open</button>';
     const opener = document.querySelector<HTMLButtonElement>('[data-testid="opener"]')!;

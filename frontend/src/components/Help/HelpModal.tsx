@@ -277,7 +277,18 @@ function SectionContent({
     case 'feedback':
       return (
         <>
-          <p>Found a bug or have an idea? (Coming soon.)</p>
+          <p>Found a bug or have an idea?</p>
+          {/* Navigating to /feedback unmounts this modal on its own (the /help route
+              stops matching), so no explicit onClose is needed — same pattern as the
+              Settings link above. Forward settingsBackground so /feedback opens over
+              the same page as /help did, not the Inbox. */}
+          <Link
+            to="/feedback"
+            state={{ backgroundLocation: settingsBackground ?? { pathname: '/' } }}
+            className="btn btn-primary"
+          >
+            Send feedback
+          </Link>
         </>
       );
   }

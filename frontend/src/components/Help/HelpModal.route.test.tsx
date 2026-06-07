@@ -1,6 +1,6 @@
 // Mirrors the mock pattern in __tests__/app.test.tsx.
-// Tests that /help renders the modal dialog over the correct background page
-// in both first-run (!hasToken) and authed (hasToken) states.
+// Tests that /help and /feedback render their modal dialogs over the correct
+// background page in both first-run (!hasToken) and authed (hasToken) states.
 
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -29,6 +29,7 @@ vi.mock('../../api/client', () => ({
   apiClient: { get: vi.fn().mockResolvedValue({}), post: vi.fn().mockResolvedValue({}) },
   ApiError: class extends Error {},
 }));
+vi.mock('../../api/feedback', () => ({ submitFeedback: vi.fn() }));
 vi.mock('../../hooks/useInbox', () => ({
   useInbox: vi.fn(() => ({
     data: { sections: [], enrichments: {}, lastRefreshedAt: '', tokenScopeFooterEnabled: false },
@@ -85,6 +86,30 @@ describe('/help route renders as modal', () => {
     renderAppAt('/help');
     // Modal dialog is present
     expect(screen.getByRole('dialog', { name: /help/i })).toBeInTheDocument();
+    // Inbox page renders behind the modal (background)
+    expect(screen.getByTestId('inbox-page')).toBeInTheDocument();
+  });
+});
+
+describe('/feedback route renders as modal', () => {
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+  });
+
+  it('first-run user: /feedback shows the "Send feedback" dialog AND the welcome-card background', () => {
+    authState.value = { hasToken: false, host: 'https://github.com' };
+    renderAppAt('/feedback');
+    // Modal dialog is present
+    expect(screen.getByRole('dialog', { name: /send feedback/i })).toBeInTheDocument();
+    // Welcome page renders behind the modal (background)
+    expect(screen.getByTestId('welcome-card')).toBeInTheDocument();
+  });
+
+  it('authed user: /feedback shows the "Send feedback" dialog AND the inbox background', () => {
+    authState.value = { hasToken: true, host: 'https://github.com' };
+    renderAppAt('/feedback');
+    // Modal dialog is present
+    expect(screen.getByRole('dialog', { name: /send feedback/i })).toBeInTheDocument();
     // Inbox page renders behind the modal (background)
     expect(screen.getByTestId('inbox-page')).toBeInTheDocument();
   });

@@ -15,6 +15,7 @@ import { PrTabHost } from './components/PrDetail/PrTabHost';
 import { isSettingsPath } from './hooks/useEffectiveLocation';
 import { SettingsModalRoutes } from './components/Settings/SettingsModalRoutes';
 import { HelpModalRoutes } from './components/Help/HelpModalRoutes';
+import { FeedbackModalRoutes } from './components/Feedback/FeedbackModalRoutes';
 import { useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
@@ -103,7 +104,7 @@ export function App() {
     (location.state as { backgroundLocation?: Location } | null)?.backgroundLocation ??
     (isSettingsPath(location.pathname)
       ? ({ pathname: '/' } as Location)
-      : location.pathname === '/help'
+      : location.pathname === '/help' || location.pathname === '/feedback'
         ? ({ pathname: isAuthed ? '/' : unauthedTarget } as Location)
         : location);
 
@@ -160,6 +161,11 @@ export function App() {
       </div>
       <SettingsModalRoutes isAuthed={isAuthed} unauthedTarget={unauthedTarget} />
       <HelpModalRoutes isAuthed={isAuthed} unauthedTarget={unauthedTarget} />
+      <FeedbackModalRoutes
+        isAuthed={isAuthed}
+        unauthedTarget={unauthedTarget}
+        host={authState.host}
+      />
       <AskAiDrawer />
       <DrawerEffects />
       <TabSignals />
