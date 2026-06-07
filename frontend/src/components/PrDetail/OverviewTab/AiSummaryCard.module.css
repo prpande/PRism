@@ -13,15 +13,6 @@
   font-size: var(--text-sm);
 }
 
-.aiSummaryChip {
-  font-size: var(--text-xs);
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--accent);
-  font-weight: 600;
-  margin-bottom: var(--s-3);
-}
-
 .aiSummaryBody {
   color: var(--text-1);
   margin-bottom: 6px;
