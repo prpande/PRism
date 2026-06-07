@@ -159,6 +159,14 @@
   justify-content: flex-end;
 }
 
+/* Chip + its trailing separator as one unit, so the narrow-width drop removes
+   both (otherwise the separator orphans to a leading "· " on the meta line). */
+.chipWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -251,7 +259,8 @@
   .diffSlot {
     display: none;
   }
-  .chip {
+  /* Hide the chip AND its trailing separator together (no orphan "· "). */
+  .chipWrap {
     display: none;
   }
 }

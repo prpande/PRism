@@ -98,10 +98,10 @@ export function InboxRow({
             </>
           )}
           {showCategoryChip && enrichment?.categoryChip && (
-            <>
+            <span className={styles.chipWrap}>
               <span className={styles.chip}>{enrichment.categoryChip}</span>
               <span className={styles.dotsep}>·</span>
-            </>
+            </span>
           )}
           {showRepo && (
             <>
