@@ -354,7 +354,21 @@ a:hover { text-decoration: underline; }
    instead of scrolling within the block. (Note: this addresses text/code
    overflow; intrinsically-wide GFM content like tables or images can still
    overflow and would need their own `overflow-x` wrapper.) */
-.markdown-body { overflow-wrap: anywhere; }
+/* #135 — content font-size scaling. A single multiplier var, selected by the
+   data-content-scale attribute on <html> (set by applyContentScaleToDocument).
+   No attribute / "m" → 1 → no-op (existing baselines unchanged). Consumed only by
+   the content hooks below + the enumerated module-CSS classes; chrome uses the bare
+   --text-* tokens and stays fixed. */
+:root { --content-scale: 1; }
+[data-content-scale='xs'] { --content-scale: 0.8; }
+[data-content-scale='s'] { --content-scale: 0.9; }
+[data-content-scale='l'] { --content-scale: 1.2; }
+[data-content-scale='xl'] { --content-scale: 1.4; }
+
+.markdown-body {
+  overflow-wrap: anywhere;
+  font-size: calc(1em * var(--content-scale));
+}
 .markdown-body pre {
   max-width: 100%;
   white-space: pre-wrap;
@@ -947,7 +961,12 @@ a:hover { text-decoration: underline; }
    (`.diff-line.diff-add` / `.diff-line.diff-rem` equivalents). */
 .diff-line {
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  /* #135: the diff <tr> is the EFFECTIVE font-size hook for diff code + gutter
+     line numbers — each <td> inherits from this nearer ancestor, so a font-size on
+     `.diffTable` alone is shadowed here. Scale on the row so code + line numbers
+     scale together. The `--hunk-header` row below re-pins var(--text-xs) (unscaled),
+     so the `@@ … @@` markers stay fixed. */
+  font-size: calc(var(--text-sm) * var(--content-scale));
 }
 .diff-line--insert {
   background: var(--diff-add-bg);

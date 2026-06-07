@@ -15,7 +15,7 @@
   background: color-mix(in oklch, var(--accent-soft) 50%, var(--surface-1));
   border: 1px dashed color-mix(in oklch, var(--accent) 40%, var(--border-1));
   font-family: var(--font-sans);
-  font-size: var(--text-xs);
+  font-size: calc(var(--text-xs) * var(--content-scale));
 }
 
 .aiHunkBody {

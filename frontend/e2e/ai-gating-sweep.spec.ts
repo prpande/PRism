@@ -406,8 +406,8 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
   await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
 
   // All three tone annotations must render in DiffPane.
-  await expect(page.getByTestId('ai-hunk-annotation').first()).toBeVisible({ timeout: 10_000 });
-  expect(await page.getByTestId('ai-hunk-annotation').count()).toBe(3);
+  await expect(page.getByTestId('ai-hunk').first()).toBeVisible({ timeout: 10_000 });
+  expect(await page.getByTestId('ai-hunk').count()).toBe(3);
 
   // TONE_CHIP labels — calm="Note" / heads-up="Behavior change" / concern="Concern".
   await expect(page.locator('.chip-info', { hasText: 'Note' })).toBeVisible();
