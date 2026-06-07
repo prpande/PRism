@@ -1,221 +1,138 @@
 # PRism
 
-Local-first PR review tool that runs on the reviewer's own machine. See [`docs/spec/`](docs/spec/) for the full specification and [`docs/roadmap.md`](docs/roadmap.md) for the implementation slice plan.
+**A local-first pull-request review tool that runs on your own machine.**
 
-## Status
+PRism reads your GitHub pull requests, lets you compose an entire review locally — line comments, replies, a verdict, and a summary — and finalizes everything together as a single GitHub *pending review*. Nothing you write is visible to anyone else until you click **Submit**, at which point the whole review lands at once, exactly as if you'd written it on github.com.
 
-**S6 complete; first binary publish pending.** All S6 PRs (#53, #69, #70, #71, #72, #73, #74, #75, #76, this PR) have landed. The [`publish.yml`](.github/workflows/publish.yml) `workflow_dispatch` has not yet run for the first real tag; once the maintainer dispatches `v0.1.0` and promotes the resulting draft, the binaries below resolve via [`releases/latest`](https://github.com/prpande/PRism/releases/latest):
+It runs entirely on your computer. Your token, your drafts, and your view state never leave your machine.
 
-- Windows x64: [`PRism-win-x64.exe`](https://github.com/prpande/PRism/releases/latest/download/PRism-win-x64.exe)
-- macOS Apple Silicon: [`PRism-osx-arm64`](https://github.com/prpande/PRism/releases/latest/download/PRism-osx-arm64)
+![The PRism inbox — the PRs that involve you, grouped by repository across Review requested, Awaiting author, Authored by me, and CI failing sections](assets/screenshots/inbox.png)
 
-Until the first dispatch, the links above return 404. See [`docs/roadmap.md`](docs/roadmap.md) for slice history and [`docs/specs/README.md`](docs/specs/README.md) for the spec status index.
+> Screens shown with sample data.
 
-**v0.2.0 adds an Electron desktop build.** Alongside the browser-tab binaries above, PRism now ships an optional desktop shell — its own window, single-instance, bundled Chromium — that wraps the same backend as a managed sidecar. It is an **unsigned preview**; tester install + first-run trust steps live in [`TESTING.md`](TESTING.md). See [Desktop preview build](#desktop-preview-build-v020) below.
+---
 
-## Download and first run
+## Why PRism
 
-Download the binary for your platform from the [Releases page](https://github.com/prpande/PRism/releases/latest) (live once the first `publish.yml` dispatch completes):
+You're three files into a careful review when the author force-pushes. On github.com the diff shifts under you, your half-written comments now point at code that moved, and you're context-switching between the **Files** and **Conversation** tabs and the checks panel the whole time. PRism is built around a few deliberate choices that keep a review session calm:
 
-- **Windows x64** — [`PRism-win-x64.exe`](https://github.com/prpande/PRism/releases/latest/download/PRism-win-x64.exe)
-- **macOS Apple Silicon** — [`PRism-osx-arm64`](https://github.com/prpande/PRism/releases/latest/download/PRism-osx-arm64)
+- **Compose the whole review, then submit atomically.** Drafts, replies, verdict, and summary stage in a GitHub pending review that's invisible to others. You finalize when *you* decide the review is done — not comment-by-comment.
+- **Banner, not mutation.** When the author pushes a new commit or someone comments, PRism shows a dismissible banner. The diff under your cursor never changes until you choose to reload. You're never reviewing a moving target.
+- **Your text is sacred.** Drafts survive app restarts, PR reloads, and even token swaps. When a new commit moves the line your comment anchored to, PRism re-anchors what it can and clearly flags what it couldn't — it never silently drops what you wrote.
+- **Truthful diffs.** Whitespace shown as-is, nothing filtered or hidden. What you review is what's there.
 
-PRism is unsigned for the PoC, so the OS surfaces a one-time trust prompt on first launch.
+PRism is single-user and local by design — no server, no team sync, no shared state. It's a tool for *your* review pass, not a replacement for GitHub as your team's source of truth.
+
+---
+
+## Features
+
+### Inbox
+The landing surface organizes every PR that involves you into sections — **Review requested**, **Awaiting author**, **Authored by me**, **Mentioned**, and **CI failing on my PRs** — grouped by repository. Each row shows the author, age, comment count, and unread badges for new commits and new comments since you last looked. A background poll surfaces changes as a banner you apply on your terms. Paste any PR URL to jump straight to a PR that isn't in your inbox.
+
+### PR review
+- **File tree** with smart-compacted directory paths, per-file *Viewed* checkboxes, and live per-directory rollups, plus `j`/`k` keyboard navigation.
+- **Diff viewer** with side-by-side and unified modes, syntax highlighting, word-level intra-line highlighting, and on-demand whole-file context expansion.
+- **Iteration tabs** that group the PR's commits into review rounds, so you can focus on *just what changed this round* — or compare any two rounds side by side — instead of re-reading the cumulative diff.
+- **Click-to-comment** drafting anchored to any line, with Markdown live-preview, auto-save on keystroke, and replies to existing threads.
+- **Overview tab** with the PR description, stats, and the PR-level conversation, plus rich Markdown rendering (code blocks, Mermaid diagrams).
+
+![PR detail — Overview tab with the description, change stats, and the verdict picker in the header](assets/screenshots/pr-overview.png)
+
+![PR detail — Files tab with the file tree, iteration tabs, and a syntax-highlighted side-by-side diff](assets/screenshots/pr-files.png)
+
+### Submitting a review
+Pick a verdict — **Approve**, **Request changes**, or **Comment** — add an optional summary, and submit. PRism stages everything as one GitHub pending review and reveals it all at once. The submit flow is resumable: if a network hiccup interrupts it, PRism picks up where it left off without duplicating the threads or replies in your review.
+
+### Theming and desktop
+Light and dark themes. Run PRism as a standalone **desktop app** with its own window, or as a tab in your default browser — both share the same data folder, so your token and drafts carry across.
+
+### AI augmentation (planned)
+The architecture is already in place — capability-gated seams throughout the inbox and review surfaces — for Claude-powered review summaries, file-focus hints, and review assistance. These features aren't built yet; they're planned for a future release.
+
+---
+
+## Install and first run
+
+Download the latest build from the [**Releases page**](https://github.com/prpande/PRism/releases). PRism currently ships as a desktop app — a Windows installer or portable executable, and a macOS (Apple Silicon) disk image. (A standalone browser-tab build that opens in your default browser is planned; for now you can run that mode from source — see [Development](#development).)
+
+The current build is an unsigned preview (`v0.2.0`). PRism is open source and unsigned because code-signing certificates require a paid developer account — so your OS shows a one-time trust prompt the first time you launch it. This is expected, and the steps below clear it. Download only from the official [Releases page](https://github.com/prpande/PRism/releases) so you know you have the genuine build.
 
 ### Windows
 
-Double-click the `.exe`. Windows SmartScreen shows **"Windows protected your PC"** because the binary isn't code-signed. Click **More info → Run anyway**. The backend starts on `http://localhost:5180` (or the next free port in the 5180–5199 range if 5180 is already in use) and your default browser launches into the PRism Setup screen.
+Run the installer, or launch the portable executable. Windows SmartScreen shows **"Windows protected your PC"** because the binary isn't code-signed. Click **More info → Run anyway**. PRism opens to the Setup screen, served on a local port in the `5180–5199` range.
 
 ### macOS
 
-The downloaded binary needs the executable bit before macOS will launch it:
+Open the downloaded `.dmg` and drag PRism into your Applications folder. On first launch, Gatekeeper blocks it because the app isn't notarized: right-click (or Control-click) PRism in Applications → **Open**, then **Open** again to confirm. On recent macOS versions you may instead need to approve it under **System Settings → Privacy & Security → Open Anyway** — [`TESTING.md`](TESTING.md) has the exact per-version steps. The first time PRism reads your token from the keychain, macOS asks **Allow / Always Allow / Deny** — choose **Always Allow** so it stops prompting on every launch.
 
-```sh
-chmod +x ~/Downloads/PRism-osx-arm64
-```
+### Connect your GitHub account
 
-Double-click the binary. Gatekeeper shows **"PRism cannot be opened because Apple cannot check it for malicious software"**. Right-click (or Control-click) → **Open**, then **Open** again in the confirmation dialog. The first time PRism reads your token from the keychain, macOS asks **Allow / Always Allow / Deny** — click **Always Allow** so PRism stops prompting on every launch.
+PRism authenticates with a GitHub Personal Access Token you paste into the Setup screen on first launch.
 
-### Generate a GitHub Personal Access Token
+A **classic PAT** is recommended — it can read GitHub Actions check-runs and commit statuses across all your organizations, which powers the inbox's *CI failing* section:
 
-PRism authenticates with a fine-grained Personal Access Token you generate at <https://github.com/settings/personal-access-tokens/new>. Required scopes:
+- Generate one at <https://github.com/settings/tokens/new>
+- Scopes: **`repo`** and **`read:org`**
 
-- **Pull requests** — Read and write
-- **Contents** — Read
-- **Checks** — Read
-- **Commit statuses** — Read
+> **Heads-up on `repo`:** it grants read **and write** access to all repositories you can reach. PRism only ever reads — it never pushes code — but the classic-PAT format has no narrower option. If your organization restricts broadly-scoped tokens, use the fine-grained option below instead, despite its CI blind spot.
 
-Paste the PAT into the Setup screen on first launch.
+A **fine-grained PAT** also works, but it's scoped per-organization and can't read GitHub Actions checks, so the CI section will be blind to Actions-based pipelines. If you choose one, grant **Pull requests: Read and write**, **Contents: Read**, and **Commit statuses: Read**.
 
-## Desktop preview build (v0.2.0)
+> **GitHub Enterprise Server?** Set your GHES host (e.g. `https://github.acmecorp.com`) on the Setup screen before pasting your token.
 
-The desktop build is an [Electron](https://www.electronjs.org/) shell that gives PRism its own window — no browser tab, single-instance, bundled Chromium. It does **not** reimplement the app: it spawns the same self-contained `PRism.Web` binary as a managed sidecar on a loopback port and loads it in a sandboxed window. Quitting the window cleanly stops the sidecar; a recycle-resistant watchdog stops it even if the shell is killed.
+---
 
-It shares the **same data folder** as the browser-tab build, so your PAT and drafts carry across both — see [`TESTING.md`](TESTING.md) for the exact paths.
+## Using PRism
 
-- **Unsigned preview.** Both platforms surface a one-time trust prompt on first launch (Windows SmartScreen / macOS Gatekeeper). The full bypass walkthrough is in [`TESTING.md`](TESTING.md).
-- **No auto-update.** To update, download the newer build and reinstall.
-- **Builds:** Windows `win-x64` (portable `.exe` + NSIS installer); macOS `osx-arm64` `.dmg` is opt-in and built only when a Mac tester is confirmed. Both are produced by the [`publish-desktop.yml`](.github/workflows/publish-desktop.yml) `workflow_dispatch` on a `v0.2.*` tag.
+- **Find a PR.** Open the app to your inbox, or paste a PR URL into the box at the top to jump directly to one.
+- **Review.** Open a PR, walk the file tree, mark files *Viewed* as you go, and click any line to leave a comment. Use the iteration tabs to focus on a single round of changes.
+- **Submit.** Choose a verdict, write a summary if you like, and click Submit — your whole review posts at once.
+- **Stay current.** When the banner says the PR changed, click Reload to pull in new commits and comments. PRism reconciles your in-progress drafts against the new code and flags any it couldn't confidently re-anchor.
 
-Architecture and rationale: [`docs/specs/2026-06-02-electron-desktop-shell-design.md`](docs/specs/2026-06-02-electron-desktop-shell-design.md). Building/running the shell locally: [Development workflow → Desktop shell](#desktop-shell).
+### Replacing your token
+
+The Settings panel has a **Replace token** action. It validates a new PAT before swapping it in. If the new token belongs to a different GitHub login than the old one, PRism keeps all your draft text, clears the identifiers the previous account owned, and — on your next submit to an affected PR — offers to resume or discard any pending review the old account left behind.
+
+### Where your data lives
+
+PRism stores your drafts and view state under your operating system's application-data folder; the desktop and browser-tab builds share the same folder. Your GitHub token is held by your OS credential store — DPAPI-encrypted on Windows, the Keychain on macOS, the libsecret keyring on Linux — never as plaintext. See [`TESTING.md`](TESTING.md) for the exact per-platform paths.
+
+---
 
 ## Troubleshooting
 
-### Recovering a lost draft
+**A token expired.** PRism detects the rejection on any GitHub call and sends you to Setup with a banner to paste a fresh token. Your drafts and view state are preserved.
 
-PRism's dedicated forensic event log (`state-events.jsonl`) is not yet implemented — the DI graph registers a no-op writer for the PoC. Identity-change events DO land in the structured logs at `<dataDir>/logs/` (with prior + new login + draft counts):
+**Some PRs are missing from my inbox.** A fine-grained PAT only reports PRs in the repositories and organizations it's scoped to, so a PR a colleague links you may not appear in search. Paste its URL into the inbox box to open it directly, or switch to a classic PAT for full coverage.
 
-```sh
-grep "Identity changed" "<dataDir>/logs/"*.log
-```
+**Recovering a draft.** Identity-change events are recorded in the structured logs under `<dataDir>/logs/`. These logs are scrubbed of your token and login, but review them before sharing anywhere. If you need to preserve specific draft text before a destructive action (Replace token, Discard), copy it out of the composer first.
 
-`DraftSaved` events are not currently written to any forensic log. If you need to recover a draft body in the PoC, copy it out of the composer **before** any destructive action (Replace token, Discard, foreign-pending-review Discard).
+---
 
-### Replace token
+## Development
 
-The Settings page has a **Replace token** link in the Auth section. Clicking it walks you through pasting a new PAT and validates it before swapping. If the new token authenticates as a different GitHub login than the previous one, PRism:
+PRism is an ASP.NET Core backend (`PRism.Web` and supporting `PRism.*` projects) serving a React + Vite + TypeScript frontend, with an optional Electron desktop shell under [`desktop/`](desktop/).
 
-- Preserves all draft text across every PR ("the reviewer's text is sacred").
-- Clears the GraphQL Node IDs that the prior login owned.
-- Surfaces the foreign-pending-review modal on the next submit on any affected PR, so the prior login's orphan pending reviews can be Resumed or Discarded.
-
-Drafts for PRs your new token cannot access remain in `state.json` invisibly. They re-surface if access is later restored.
-
-## Development workflow
-
-Two terminals.
+Run it locally with two terminals:
 
 ```
 # terminal 1 — backend with hot reload (pinned to 5180 in dev)
 dotnet watch run --project PRism.Web --urls http://localhost:5180
 
 # terminal 2 — frontend dev server (Vite proxies /api to localhost:5180)
-cd frontend
-npm install
-npm run dev
+cd frontend && npm install && npm run dev
 ```
 
-Run all tests:
+Run the test suites:
 
 ```
-dotnet test
+dotnet test --settings .runsettings
 cd frontend && npm test && npx playwright test
 ```
 
-Run a single backend test:
+All production code is written test-first. Contributor guidance — the full development process, pre-push checklist, architectural invariants, and desktop-shell build steps — lives under [`.ai/docs/`](.ai/docs/) (loaded by [`CLAUDE.md`](CLAUDE.md) and [`.cursor/rules/`](.cursor/rules/)). The product specification and design history live under [`docs/`](docs/README.md).
 
-```
-dotnet test --filter "FullyQualifiedName~AppStateStoreTests"
-```
+---
 
-Run a single frontend test:
-
-```
-cd frontend && npx vitest run __tests__/setup.test.tsx
-```
-
-Generate frontend coverage:
-
-```
-cd frontend
-npm test -- --coverage
-```
-
-Generate backend coverage and an HTML report:
-
-```
-dotnet tool install -g dotnet-reportgenerator-globaltool
-dotnet test --collect:"XPlat Code Coverage"
-reportgenerator -reports:"**/coverage.cobertura.xml" -targetdir:"coveragereport"
-```
-
-### Desktop shell
-
-The Electron shell lives in [`desktop/`](desktop/) and wraps the published `PRism.Web` binary as a sidecar (it never runs `dotnet`). To run it against a locally-built backend:
-
-```
-# 1. Build the SPA into the backend's wwwroot, then publish a self-contained sidecar.
-cd frontend && npm ci && npm run build
-cd .. && dotnet publish PRism.Web/PRism.Web.csproj --runtime win-x64 --self-contained -p:PublishProfile=ci --output desktop/dev-sidecar
-
-# 2. Point the shell at that binary and launch (PowerShell; bash uses $PWD/...).
-cd desktop && npm ci
-$env:PRISM_SIDECAR_BINARY="$PWD\dev-sidecar\PRism.Web.exe"; npm run start
-```
-
-Tests:
-
-```
-# Pure helpers (node:test) — fast, no Electron.
-cd desktop && npm run test:unit
-
-# Full-stack _electron smoke (Playwright) — needs a PUBLISHED, renamed sidecar
-# (Production env → session + Host-header middleware enforced) and Chromium installed.
-npx playwright install chromium
-# `sidecar/` is gitignored and absent on a clean checkout — create it, then copy +
-# rename the published binary to the per-RID name the e2e expects (copy, not move, so
-# the dev-launch binary above still works).
-New-Item -ItemType Directory -Force sidecar | Out-Null
-Copy-Item dev-sidecar/PRism.Web.exe sidecar/PRism-win-x64.exe
-$env:PRISM_SIDECAR_BINARY="$PWD\sidecar\PRism-win-x64.exe"; npm run test:e2e
-```
-
-The `_electron` e2e is **local/manual** — `publish-desktop.yml` packages only, it does not run the suite. Packaging an unsigned installer locally: `npm run dist` (output in `desktop/release/`). Full task-by-task detail: [`docs/plans/2026-06-02-electron-desktop-shell.md`](docs/plans/2026-06-02-electron-desktop-shell.md).
-
-### Integration tests (live GitHub)
-
-A separate suite at `tests/PRism.GitHub.Tests.Integration/` exercises `GitHubReviewService` against five locked PRs in this repo. Opt-in. The repo-root [`.runsettings`](.runsettings) excludes the integration + canonical-strict tests, but **`.runsettings` is only consulted when `dotnet test` is invoked with `--settings .runsettings`** — plain `dotnet test` (no flag) runs every test including the integration suite, which then needs a PAT to succeed. The pre-push checklist below and `.github/workflows/ci.yml` both pass `--settings .runsettings`.
-
-Explicit run command for the integration suite only:
-
-```
-dotnet test --filter "Category=Integration&Canonical!=Strict"
-```
-
-Requires `PRISM_INTEGRATION_PAT` env var or `gh auth login`. Full operator runbook: [`docs/contract-tests.md`](docs/contract-tests.md). Design: [`docs/specs/2026-05-18-frozen-pr-contract-tests-design.md`](docs/specs/2026-05-18-frozen-pr-contract-tests-design.md).
-
-### Pre-push checklist
-
-Run steps 1–4 locally before every `git push`. They mirror `.github/workflows/ci.yml` step-for-step so anything CI catches, you catch first. CI is fail-fast — a regression in a later step stays invisible until something earlier passes, so "the last CI was green" is not a substitute for running these steps. Step 5 (Playwright) is conditional — see the comment on that step for when it's required.
-
-```
-# 1. Frontend lint (eslint + prettier --check)
-cd frontend && npm run lint
-
-# 2. Frontend build (tsc -b is stricter than --noEmit; required, not --noEmit)
-npm run build
-
-# 3. Frontend unit tests (vitest)
-npm test
-
-# 4. Backend build + tests
-cd .. && dotnet build --configuration Release
-dotnet test --no-build --configuration Release --settings .runsettings
-
-# 5. Frontend e2e (Playwright) — required if you touched any of:
-#    - frontend/src/pages/, frontend/src/App.tsx, route bindings
-#    - any UI surface referenced by frontend/e2e/*.spec.ts
-#    - PRism.Web/Endpoints/, middleware, or response shapes the SPA reads
-#    Otherwise the prior CI signal is sufficient.
-cd frontend && npx playwright test
-```
-
-If `tsc -b` reports a generic-narrowing or project-reference error that `tsc --noEmit` would miss, fix it locally — CI runs `tsc -b` (via `npm run build`) and will fail on the same error.
-
-### Stable session token across `dotnet watch run` reloads (Development only)
-
-The backend rotates the per-launch session token on every startup (see [`docs/spec/02-architecture.md`](docs/spec/02-architecture.md) § "Cross-origin defense for the localhost API" — the token travels as the `prism-session` cookie and is echoed in the `X-PRism-Session` header). Under `dotnet watch run` this means every save-triggered restart issues a new token and forces a full SPA reload to pick it up. To keep one token alive across reloads while developing, export `PRISM_DEV_FIXED_TOKEN` as a real environment variable in the shell that runs `dotnet watch run`:
-
-```
-# PowerShell (set for the current shell session)
-$env:PRISM_DEV_FIXED_TOKEN = "any-base64-string-you-like"
-
-# bash / zsh
-export PRISM_DEV_FIXED_TOKEN="any-base64-string-you-like"
-```
-
-`SessionTokenProvider` reads the override via `Environment.GetEnvironmentVariable` **only** — deliberately not via `IConfiguration` / `dotnet user-secrets`, to eliminate any path where `appsettings.json` (or a stray user-secrets entry) could leak a fixed token into a non-Development host. The override is honored **only when `ASPNETCORE_ENVIRONMENT == "Development"`** — production hosts ignore the env var entirely (`tests/PRism.Web.Tests/Middleware/SessionTokenProviderTests.cs` enforces this). Without the override, every `dotnet watch run` restart rotates the token and the SPA reloads to refresh the cookie. With it, the SPA stays alive across save-triggered restarts.
-
-## Process
-
-All production code is written test-first (red → green → refactor). See [`.ai/docs/development-process.md`](.ai/docs/development-process.md).
+PRism began as a single-user proof of concept and is now in its fit-and-finish stage — the core review experience is feature-complete and available as an unsigned preview build, with AI augmentation planned for a future release.
