@@ -6,7 +6,7 @@ export interface SubmitInFlightState {
   prRef: string | null;
 }
 
-// Tracks GET /api/submit/in-flight to disable the AuthSection Replace link while a submit
+// Tracks GET /api/submit/in-flight to disable the GitHubConnectionPane Replace link while a submit
 // holds the SubmitLockRegistry (spec § 3.1). Event-driven, not interval-polled: fetches
 // once on mount and refetches on every `prism-state-changed` window event so the link
 // re-enables the instant the lock clears — no manual page refresh needed. The event is

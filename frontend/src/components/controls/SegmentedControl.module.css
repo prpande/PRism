@@ -1,0 +1,80 @@
+.group {
+  display: inline-flex;
+  background: var(--surface-inset);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  padding: 2px;
+}
+.seg {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  padding: 5px 13px;
+  border-radius: var(--radius-1);
+  cursor: pointer;
+}
+.seg:hover:not(:disabled):not(.segOn) {
+  color: var(--text-1);
+}
+.seg:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
+}
+.seg:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.segOn {
+  background: var(--surface-3);
+  color: var(--text-1);
+  box-shadow: var(--shadow-1);
+}
+
+/* nav variant (#213): mirrors Header.module.css .tab/.tabActive — no track,
+   accent-glow hover, accent-tint selected. */
+.groupNav {
+  display: inline-flex;
+  gap: var(--s-3);
+  align-items: center;
+}
+.segNav {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  padding: 6px 12px;
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  transition:
+    color var(--t-fast) var(--ease-out),
+    background var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out);
+}
+.segNav:hover:not(:disabled):not(.segNavOn) {
+  color: var(--accent-hover);
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+  box-shadow: 0 0 12px -2px var(--accent-ring);
+}
+.segNav:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+.segNavOn {
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  color: var(--text-1);
+  font-weight: 500;
+}
+.segNav:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@media (prefers-reduced-motion: reduce) {
+  .segNav {
+    transition: none;
+  }
+}

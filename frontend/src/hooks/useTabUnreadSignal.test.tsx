@@ -85,6 +85,28 @@ describe('useTabUnreadSignal', () => {
     expect(node.textContent).toBe('');
   });
 
+  it('does NOT mark the PR unread when the Settings modal is open over it (#134 keep-alive)', async () => {
+    const { findByTestId } = render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: '/settings/appearance',
+            state: { backgroundLocation: { pathname: '/pr/acme/api/1' } },
+          },
+        ]}
+      >
+        <OpenTabsProvider>
+          <Probe />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+    // acme/api/1 is the open PR behind the modal scrim — it is the effective
+    // active route, so a pr-updated for it must NOT mark it unread.
+    fireSse('pr-updated', { prRef: 'acme/api/1', headShaChanged: true, commentCountDelta: 0 });
+    const node = await findByTestId('unread');
+    expect(node.textContent).toBe('');
+  });
+
   it('matches nested PR route (/pr/o/r/N/files) as active', async () => {
     const { findByTestId } = render(
       <MemoryRouter initialEntries={['/pr/acme/api/1/files']}>

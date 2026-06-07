@@ -30,8 +30,9 @@ test('Replace token to a PAT with a DIFFERENT login surfaces an identity-changed
     }),
   );
 
-  await page.goto('/settings');
-  await expect(page.getByRole('heading', { name: /^auth$/i, level: 2 })).toBeVisible({
+  // #134: Replace-token lives on the GitHub Connection pane of the Settings modal.
+  await page.goto('/settings/github-connection');
+  await expect(page.getByRole('heading', { name: /github connection/i, level: 2 })).toBeVisible({
     timeout: 30_000,
   });
 
