@@ -173,6 +173,16 @@ describe('InboxPage', () => {
     expect(screen.getByText('Test PR')).toBeInTheDocument();
   });
 
+  it('shows the loading bar (not a skeleton) over present data during a background reload', () => {
+    // data present + isLoading: the bar signals the in-flight refresh at the
+    // content top; the content-shaped skeleton must NOT flash over good data.
+    setHooks({ data: sampleData, isLoading: true });
+    renderPage();
+    expect(screen.getByText('Test PR')).toBeInTheDocument();
+    expect(screen.queryByTestId('inbox-skeleton')).toBeNull();
+    expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true');
+  });
+
   it('shows empty hint when every section is empty', () => {
     setHooks({ data: emptyData });
     renderPage();

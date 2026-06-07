@@ -6,8 +6,9 @@ describe('InboxSkeleton', () => {
   it('renders the fixed number of section + row placeholders', () => {
     render(<InboxSkeleton showRail={false} />);
     expect(screen.getByTestId('inbox-skeleton')).toBeInTheDocument();
-    expect(screen.getAllByTestId('inbox-skeleton-section').length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByTestId('inbox-skeleton-row').length).toBeGreaterThanOrEqual(4);
+    // 3 sections × 3 rows — exact so a dropped section/row regresses loudly.
+    expect(screen.getAllByTestId('inbox-skeleton-section')).toHaveLength(3);
+    expect(screen.getAllByTestId('inbox-skeleton-row')).toHaveLength(9);
   });
 
   it('renders the rail only when showRail is true', () => {
