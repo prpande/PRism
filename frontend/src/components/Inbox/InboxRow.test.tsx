@@ -99,6 +99,14 @@ describe('InboxRow title', () => {
   });
 });
 
+describe('InboxRow meta', () => {
+  it('wraps the author name in a dedicated truncating span so the meta line stays single-line', () => {
+    renderInboxRow(PR);
+    const name = screen.getByText(PR.author);
+    expect(name.className).toMatch(/authorName/);
+  });
+});
+
 describe('InboxRow showRepo', () => {
   function renderRow(showRepo?: boolean) {
     return render(

@@ -65,7 +65,7 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo =
           )}
           <span className={styles.author} data-testid="inbox-author">
             <Avatar src={pr.avatarUrl} login={pr.author} size="sm" />
-            <span>{pr.author}</span>
+            <span className={styles.authorName}>{pr.author}</span>
           </span>
           <span className={styles.dotsep}>·</span>
           <span className={styles.mono}>iter {pr.iterationNumber}</span>

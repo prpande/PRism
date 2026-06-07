@@ -81,7 +81,8 @@
   gap: 6px;
   font-size: var(--text-xs);
   color: var(--text-3);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .mono {
@@ -98,6 +99,12 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
+}
+
+.authorName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Tail column */
