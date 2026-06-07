@@ -15,7 +15,14 @@ interface Props {
   grouped?: boolean;
 }
 
-export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo = true, grouped = false }: Props) {
+export function InboxRow({
+  pr,
+  enrichment,
+  showCategoryChip,
+  maxDiff,
+  showRepo = true,
+  grouped = false,
+}: Props) {
   const navigate = useNavigate();
   const { addTab } = useOpenTabs();
   const doneState: 'merged' | 'closed' | null =
@@ -58,15 +65,25 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo =
     >
       <span className={styles.status}>
         {!isDone && pr.ci === 'failing' ? (
-          <span className={`${styles.dot} ${styles.dotFailing}`} title="CI failing" aria-hidden="true" />
+          <span
+            className={`${styles.dot} ${styles.dotFailing}`}
+            title="CI failing"
+            aria-hidden="true"
+          />
         ) : !isDone && pr.ci === 'pending' ? (
-          <span className={`${styles.dot} ${styles.dotPending}`} title="CI pending" aria-hidden="true" />
+          <span
+            className={`${styles.dot} ${styles.dotPending}`}
+            title="CI pending"
+            aria-hidden="true"
+          />
         ) : (
           <span className={styles.dot} style={{ opacity: 0 }} aria-hidden="true" />
         )}
       </span>
       <span className={styles.main}>
-        <span className={styles.title} title={pr.title}>{pr.title}</span>
+        <span className={styles.title} title={pr.title}>
+          {pr.title}
+        </span>
         <span className={styles.meta}>
           {showRepo && (
             <>

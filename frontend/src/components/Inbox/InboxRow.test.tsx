@@ -90,7 +90,10 @@ describe('InboxRow avatar', () => {
 
 describe('InboxRow title', () => {
   it('exposes the full title via the title attribute and aria-label so a clamped title is recoverable', () => {
-    const long = { ...PR, title: 'Refactor the pagination cursor encoder to be stable across reorders and deletes' };
+    const long = {
+      ...PR,
+      title: 'Refactor the pagination cursor encoder to be stable across reorders and deletes',
+    };
     const { container } = renderInboxRow(long);
     const titleEl = container.querySelector('[class*="title"]')!;
     expect(titleEl.getAttribute('title')).toBe(long.title);
@@ -131,7 +134,11 @@ describe('InboxRow CI dot', () => {
   });
 
   it('never shows a CI dot or CI suffix on a done (merged) PR even when ci=failing', () => {
-    const { container } = renderInboxRow({ ...PR, ci: 'failing', mergedAt: new Date().toISOString() });
+    const { container } = renderInboxRow({
+      ...PR,
+      ci: 'failing',
+      mergedAt: new Date().toISOString(),
+    });
     expect(container.querySelector('[class*="dotFailing"]')).toBeNull();
     expect(container.querySelector('[class*="dotPending"]')).toBeNull();
     // AT parity: the hidden dot means no "CI failing" in the label either
@@ -192,7 +199,9 @@ describe('InboxRow tail reserve-and-collapse', () => {
 
   it('renders the comment slot empty when commentCount is 0', () => {
     const { container } = renderInboxRow({ ...PR, commentCount: 0 });
-    expect(container.querySelector('[class*="commentSlot"]')!.querySelector('[class*="comments"]')).toBeNull();
+    expect(
+      container.querySelector('[class*="commentSlot"]')!.querySelector('[class*="comments"]'),
+    ).toBeNull();
   });
 
   it('renders the comment count when commentCount > 0', () => {
