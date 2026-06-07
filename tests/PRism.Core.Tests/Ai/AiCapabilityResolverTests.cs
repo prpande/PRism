@@ -51,6 +51,15 @@ public sealed class AiCapabilityResolverTests
     }
 
     [Fact]
+    public void Ctor_throws_on_null_live_seams()
+    {
+        // Matches the codebase ThrowIfNull-in-ctor convention; a null from DI/misconfig must fail fast
+        // rather than NRE later inside Resolve (PR #250 review).
+        Action act = () => _ = new AiCapabilityResolver(null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
     public void Resolve_reflects_live_seams_added_after_construction()
     {
         // Guards against snapshotting the live-seam set at construction (PR #250 review): the resolver

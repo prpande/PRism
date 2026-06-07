@@ -24,7 +24,11 @@ public sealed class AiCapabilityResolver
 {
     private readonly IReadOnlyDictionary<Type, object> _liveSeams;
 
-    public AiCapabilityResolver(IReadOnlyDictionary<Type, object> liveSeams) => _liveSeams = liveSeams;
+    public AiCapabilityResolver(IReadOnlyDictionary<Type, object> liveSeams)
+    {
+        ArgumentNullException.ThrowIfNull(liveSeams);
+        _liveSeams = liveSeams;
+    }
 
     public AiCapabilities Resolve(AiMode mode, LlmAvailability liveAvailability)
     {

@@ -16,13 +16,29 @@ internal static class CapabilitiesEndpoints
         {
             var mode = state.Mode;
             // Probe ONLY in Live mode (Off/Preview never touch the provider). No cache in P0.
-            // P1 (before Live becomes FE-reachable): (1) add the two-tier cache per §6/KTD-4 — useCapabilities
-            // refetches on every window focus, so an uncached Live probe is a ~10s shell-out per refocus;
-            // (2) wrap ProbeAsync in try/catch mapping a spawn failure to LlmAvailability.Unavailable("probe-failed")
-            // so a Live /api/capabilities returns a disabled reason instead of a 500 (ce-doc-review Task 9 reliability).
-            var availability = mode == AiMode.Live
-                ? await probe.ProbeAsync(ct).ConfigureAwait(false)
-                : LlmAvailability.Ok;
+            // P1 (before Live becomes FE-reachable): add the two-tier cache per §6/KTD-4 — useCapabilities
+            // refetches on every window focus, so an uncached Live probe is a ~10s shell-out per refocus.
+            // Probe failures are mapped to a deterministic disabled reason HERE (not deferred): Live is
+            // reachable in P0 via a config edit (ui.ai.mode="live"), so an unguarded probe throw would
+            // 500 this public endpoint instead of returning a stable disabledReason (PR #250 review).
+            LlmAvailability availability;
+            if (mode == AiMode.Live)
+            {
+                try
+                {
+                    availability = await probe.ProbeAsync(ct).ConfigureAwait(false);
+                }
+#pragma warning disable CA1031 // deliberate broad catch at a public trust boundary: any probe failure (spawn, IO, runner) maps to a stable reason, never a 500. Cancellation is excluded so request aborts still propagate.
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    availability = LlmAvailability.Unavailable("probe-failed");
+                }
+#pragma warning restore CA1031
+            }
+            else
+            {
+                availability = LlmAvailability.Ok;
+            }
 
             return Results.Ok(new
             {

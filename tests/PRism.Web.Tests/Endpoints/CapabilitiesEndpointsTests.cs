@@ -59,5 +59,26 @@ public class CapabilitiesEndpointsTests
         resp.DisabledReason.Should().Be("cli-not-installed");
     }
 
+    [Fact]
+    public async Task Live_probe_failure_maps_to_probe_failed_reason_not_500()
+    {
+        // A probe throw (spawn/IO/runner error) on the public endpoint must degrade to a deterministic
+        // disabled reason, never a 500 — Live is reachable in P0 via a config edit (PR #250 review).
+        using var factory = new PRismWebApplicationFactory
+        {
+            AvailabilityProbeOverride = new ThrowingAvailabilityProbe(),
+        };
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Live;
+        var client = factory.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/api/capabilities", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(System.Net.HttpStatusCode.OK); // not 500
+        var body = await resp.Content.ReadFromJsonAsync<CapabilitiesResponse>();
+        body!.Ai.Summary.Should().BeFalse();
+        body.Mode.Should().Be("live");
+        body.DisabledReason.Should().Be("probe-failed");
+    }
+
     public sealed record CapabilitiesResponse(AiCapabilities Ai, string Mode, string DisabledReason);
 }

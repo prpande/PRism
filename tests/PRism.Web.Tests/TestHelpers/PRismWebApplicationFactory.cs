@@ -149,3 +149,11 @@ public sealed class StubAvailabilityProbe : ILlmAvailabilityProbe
     public StubAvailabilityProbe(LlmAvailability result) => _result = result;
     public Task<LlmAvailability> ProbeAsync(CancellationToken ct) => Task.FromResult(_result);
 }
+
+// Availability probe that throws — proves /api/capabilities maps a probe failure to a deterministic
+// disabled reason ("probe-failed") instead of surfacing a 500 (PR #250 review).
+public sealed class ThrowingAvailabilityProbe : ILlmAvailabilityProbe
+{
+    public Task<LlmAvailability> ProbeAsync(CancellationToken ct) =>
+        throw new InvalidOperationException("simulated probe spawn failure");
+}
