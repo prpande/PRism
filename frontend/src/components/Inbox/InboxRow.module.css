@@ -59,8 +59,10 @@
 
 /* Hollow ring — shape distinguishes pending from failing without relying on
    hue, so CI state reads in greyscale / for colour-blind users / against any
-   user-chosen accent. box-sizing:border-box keeps the ring an 8px dot. */
+   user-chosen accent. Explicit border-box (not just the global reset) keeps the
+   1.5px border inside the 8×8 dot rather than expanding it to ~11px. */
 .dotPending {
+  box-sizing: border-box;
   background: transparent;
   border: 1.5px solid var(--warning-fg);
 }
@@ -134,7 +136,6 @@
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  justify-content: flex-end;
 }
 
 .diffSlot {
@@ -257,7 +258,7 @@
    the breakpoint (tail width changes), by design. Thresholds tuned in B1. */
 @container inbox-sections (max-width: 560px) {
   /* Override --inbox-tail-w declared on .row itself; the grid template re-resolves.
-     144 = 72 counts + 52 comments + 12 gap (diff bar is hidden below). */
+     72 counts + 52 comments + 12 gap = 136, +8 slack (diff bar is hidden below). */
   .row {
     --inbox-tail-w: 144px;
   }

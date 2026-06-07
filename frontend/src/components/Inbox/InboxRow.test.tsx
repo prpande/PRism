@@ -211,6 +211,16 @@ describe('InboxRow tail reserve-and-collapse', () => {
     // an SVG glyph (not an emoji) labels the number as a comment count
     expect(slot.querySelector('svg')).not.toBeNull();
   });
+
+  it('renders a 3-digit comment count intact (the adversarial-finding case the 52px slot widening fixed)', () => {
+    // commentSlot was widened 44px → 52px so a 3-digit pill no longer overflows.
+    // The slot width is CSS (not unit-testable in jsdom), but assert the full
+    // count text renders without truncation so the regression stays closed.
+    const { container } = renderInboxRow({ ...PR, commentCount: 123 });
+    const slot = container.querySelector('[class*="commentSlot"]')!;
+    expect(slot.textContent).toContain('123');
+    expect(slot.querySelector('svg')).not.toBeNull();
+  });
 });
 
 describe('InboxRow chip + badge placement (on the meta line, not the metrics tail)', () => {

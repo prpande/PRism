@@ -4,7 +4,7 @@
 
 **Goal:** Bound inbox-row height (2-line title clamp + single-line meta) and column-align the right-rail metrics across rows, sections, and repo groups — frontend-only, per [#227](https://github.com/prpande/PRism/issues/227).
 
-**Architecture:** Keep the title-over-meta row shape (bounded-rhythm list, not a table). Align by making the tail a **fixed-width grid track** (`--inbox-tail-w`) holding a right-pinned metrics cluster with reserve-and-collapse slots, and by **moving the repo-group indent off the row box** onto a leading `--row-indent` grid track so flat and grouped rows share one right edge. CI state reads via **shape + semantic colour + label**, independent of the user-chosen accent. Responsive via a `@container` query on the inbox `.sections` column.
+**Architecture:** Keep the title-over-meta row shape (bounded-rhythm list, not a table). Align by making the tail a **fixed-width grid track** (`--inbox-tail-w`) holding a right-pinned metrics cluster with reserve-and-collapse slots, and by applying the repo-group indent as **extra `padding-left` on the row** (not a leading grid track — a zero-width track would still take a `gap` and push flat-row content right). With global `box-sizing: border-box`, padding eats the `width: 100%` content box so flat and grouped rows share one right edge. CI state reads via **shape + semantic colour + label**, independent of the user-chosen accent. Responsive via a named `@container` query on the inbox `.sections` column.
 
 **Tech Stack:** React 19 + TypeScript + Vite, CSS Modules, Vitest + Testing Library. Runtime is Chromium/Electron + modern browsers (container queries are native — Chromium 105+; no polyfill).
 
@@ -22,7 +22,7 @@
 | `frontend/src/components/Inbox/RepoGroupAccordion.tsx` | Pass `grouped` to nested rows | Modify |
 | `frontend/src/components/Inbox/RepoGroupAccordion.module.css` | Remove `.body` `padding-left` (indent now on the row) | Modify |
 | `frontend/src/components/Inbox/RepoGroupAccordion.test.tsx` | Assert nested rows are `data-grouped` | Modify |
-| `frontend/src/pages/InboxPage.module.css` | Establish `container-type: inline-size` on `.sections` | Modify |
+| `frontend/src/pages/InboxPage.module.css` | Establish a named query container (`container: inbox-sections / inline-size`) on `.sections` | Modify |
 
 **What unit tests can and can't prove here:** Vitest (jsdom) asserts DOM structure, classes, attributes, and `aria-label` text — the *hooks* the CSS hangs on. It cannot assert pixel alignment or computed CSS-module styles. Pixel alignment, the title clamp, dot shapes, and responsive drops are verified in the **B1 visual pass** (Task 7), which is the real assertion for those. Tasks below test every DOM hook; CSS-only behavior is called out as B1-verified rather than faked with a green-but-meaningless test.
 
@@ -650,18 +650,18 @@ This task is **CSS-only** (responsive drop behavior); there is no jsdom unit tes
 
 - [ ] **Step 1: Establish the container**
 
-In `InboxPage.module.css`, add `container-type` to `.sections` (currently lines 20-24) so the row can query *its own* column width (not the viewport — the rail flip makes viewport a bad proxy, see spec):
+In `InboxPage.module.css`, add a **named** query container to `.sections` (currently lines 20-24) so the row can query *its own* column width (not the viewport — the rail flip makes viewport a bad proxy, see spec). The container must be **named** (`inbox-sections`) because the `@container inbox-sections (...)` rules in Step 2 target it by name; a bare `container-type` with no name would leave those queries unmatched:
 
 ```css
 .sections {
   display: flex;
   flex-direction: column;
   gap: var(--s-3);
-  container-type: inline-size;
+  container: inbox-sections / inline-size;
 }
 ```
 
-(Container queries are native in all supported targets — Chromium/Electron 105+, modern browsers — so no polyfill is needed. `container-type: inline-size` adds inline-axis containment only; `.sections` is width-driven, so there is no height/layout side effect.)
+(Container queries are native in all supported targets — Chromium/Electron 105+, modern browsers — so no polyfill is needed. The `/ inline-size` adds inline-axis containment only; `.sections` is width-driven, so there is no height/layout side effect. The `container:` shorthand sets `container-name: inbox-sections` and `container-type: inline-size` in one declaration.)
 
 - [ ] **Step 2: Add the `@container` rules**
 
