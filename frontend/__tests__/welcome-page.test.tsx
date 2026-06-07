@@ -26,9 +26,7 @@ describe('WelcomePage', () => {
 
   it('renders the tagline and three benefit rows', () => {
     renderWelcome();
-    expect(
-      screen.getByText(/review pull requests without leaving your machine/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/a calmer place to review pull requests/i)).toBeInTheDocument();
     expect(screen.getAllByRole('listitem')).toHaveLength(3);
   });
 
