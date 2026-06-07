@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using FluentAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using PRism.Core.Ai;
 using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
@@ -142,5 +145,45 @@ public class PreferencesEndpointsTests
         req.Headers.Add("Origin", origin);
         var resp = await client.SendAsync(req);
         resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    // Task 11: lock the aiPreview ↔ ui.ai.mode round-trip (FE-compat contract).
+    // POST { "aiPreview": true } must drive mode=Preview; GET must expose both the
+    // legacy aiPreview bool and the new aiMode string; AiModeState must follow synchronously.
+    [Fact]
+    public async Task POST_legacy_aiPreview_true_sets_mode_preview_and_GET_reflects_both()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        var post = await client.PostAsync(new Uri("/api/preferences", UriKind.Relative),
+            JsonContent.Create(new { aiPreview = true }));
+        post.IsSuccessStatusCode.Should().BeTrue();
+
+        var prefs = await client.GetAsync(new Uri("/api/preferences", UriKind.Relative));
+        var body = await prefs.Content.ReadFromJsonAsync<JsonElement>();
+        var ui = body.GetProperty("ui");
+        ui.GetProperty("aiPreview").GetBoolean().Should().BeTrue();   // FE still reads this
+        ui.GetProperty("aiMode").GetString().Should().Be("preview");  // new field for PR3
+
+        // The runtime AiModeState followed the POST synchronously.
+        factory.Services.GetRequiredService<AiModeState>().Mode.Should().Be(AiMode.Preview);
+    }
+
+    [Fact]
+    public async Task POST_ui_ai_mode_live_sets_mode_and_derives_aiPreview_true()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+
+        // dotted/kebab key isn't a valid C# identifier → raw StringContent (existing idiom).
+        var post = await client.PostAsync(new Uri("/api/preferences", UriKind.Relative),
+            new StringContent("""{ "ui.ai.mode": "live" }""", Encoding.UTF8, "application/json"));
+        post.IsSuccessStatusCode.Should().BeTrue();
+
+        var prefs = await client.GetAsync(new Uri("/api/preferences", UriKind.Relative));
+        var body = await prefs.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("ui").GetProperty("aiMode").GetString().Should().Be("live");
+        body.GetProperty("ui").GetProperty("aiPreview").GetBoolean().Should().BeTrue();
     }
 }

@@ -24,6 +24,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ICliProcessRunner>(),
             sp.GetRequiredService<ClaudeCodeProviderOptions>(),
             identityMatches: ClaudeIdentity.SameOsUserAsCredentialStore));
+        services.AddSingleton(ClaudeProviderDescriptor.Create());
         return services;
     }
 }

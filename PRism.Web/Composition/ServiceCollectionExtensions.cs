@@ -35,6 +35,11 @@ internal static class ServiceCollectionExtensions
         services.AddNoopSeams();
         services.AddPlaceholderSeams();
 
+        var realSeams = new Dictionary<Type, object>();   // P0: empty; P1 adds the first real impl here
+        // Pass the live dictionary BY REFERENCE (not a .Keys snapshot) — the resolver and the selector
+        // (real: realSeams below) must read the same instance so P1's first real impl lights up both
+        // the capability flag and the resolved seam together (PR #250 review).
+        services.AddSingleton(new AiCapabilityResolver(realSeams));
         services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
             sp.GetRequiredService<AiModeState>(),
             noop: new Dictionary<Type, object>
@@ -61,7 +66,7 @@ internal static class ServiceCollectionExtensions
                 [typeof(IInboxItemEnricher)] = sp.GetRequiredService<PlaceholderInboxItemEnricher>(),
                 [typeof(IInboxRanker)] = sp.GetRequiredService<PlaceholderInboxRanker>(),
             },
-            real: new Dictionary<Type, object>(),    // P0: no real seam impls yet (Live → Noop everywhere)
+            real: realSeams,
             liveAvailable: () => false));            // P0: no live features; P1 wires the cached probe-availability
 
         return services;
