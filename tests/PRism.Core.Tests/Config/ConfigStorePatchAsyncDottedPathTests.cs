@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FluentAssertions;
+using PRism.Core.Ai;
 using PRism.Core.Config;
 using PRism.Core.Json;
 using PRism.Core.Tests.TestHelpers;
@@ -221,7 +222,7 @@ public class ConfigStorePatchAsyncDottedPathTests
         store.Current.Ui.Density.Should().Be("comfortable");
         store.Current.Ui.Theme.Should().Be("dark");
         store.Current.Ui.Accent.Should().Be("amber");
-        store.Current.Ui.AiPreview.Should().BeTrue();
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using PRism.Core.Ai;
 using PRism.Core.Json;
 using PRism.Core.State;
 using PRism.Core.Storage;
@@ -33,7 +34,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         {
             ["theme"]                            = ConfigFieldType.String,
             ["accent"]                           = ConfigFieldType.String,
-            ["aiPreview"]                        = ConfigFieldType.Bool,
+            ["aiPreview"]                        = ConfigFieldType.Bool,    // legacy FE toggle — translated to ui.ai.mode below
+            ["ui.ai.mode"]                       = ConfigFieldType.String,  // tri-state (off|preview|live)
             ["density"]                          = ConfigFieldType.String,
             ["inbox.sections.review-requested"]  = ConfigFieldType.Bool,
             ["inbox.sections.awaiting-author"]   = ConfigFieldType.Bool,
@@ -136,7 +138,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             {
                 "theme"     => _current with { Ui = ui with { Theme  = (string)value! } },
                 "accent"    => _current with { Ui = ui with { Accent = (string)value! } },
-                "aiPreview" => _current with { Ui = ui with { AiPreview = (bool)value! } },
+                "aiPreview"  => _current with { Ui = ui with { Ai = ui.Ai with { Mode = (bool)value! ? AiMode.Preview : AiMode.Off } } },
+                "ui.ai.mode" => _current with { Ui = ui with { Ai = ui.Ai with { Mode = ParseAiMode((string)value!) } } },
                 "density"   => _current with { Ui = ui with { Density = (string)value! } },
                 "inbox.sections.review-requested" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = (bool)value! } } },
@@ -172,6 +175,27 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         bool      => "bool",
         var other => other.GetType().Name,
     };
+
+    // Parse the `ui.ai.mode` string patch value into AiMode. An unknown value throws
+    // ConfigPatchException (→ 400 via the endpoint mapping). Deliberately does NOT echo the
+    // user-supplied `value` in the message — matches DescribeValue's redaction discipline.
+    // Uses OrdinalIgnoreCase comparison rather than `value.ToLowerInvariant() switch` because
+    // CA1308 (analyzers AllEnabledByDefault + TWAE) rejects ToLowerInvariant for normalization;
+    // OrdinalIgnoreCase is the codebase's string-comparison idiom (e.g. ActivePrPoller,
+    // SubmitPipeline) and is case-insensitive without allocating a lowercased string. The
+    // hardcoded off/preview/live strings stay in lockstep with the on-disk kebab serialization
+    // only while AiMode members remain single words (kebab == lowercase); a future multi-word
+    // member (e.g. "live-read-only") must match KebabCaseJsonNamingPolicy here and the wire projection.
+    private static AiMode ParseAiMode(string value)
+    {
+        if (string.Equals(value, "off", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Off;
+        if (string.Equals(value, "preview", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Preview;
+        if (string.Equals(value, "live", StringComparison.OrdinalIgnoreCase))
+            return AiMode.Live;
+        throw new ConfigPatchException("ui.ai.mode must be one of: off, preview, live.");  // do NOT echo `value`
+    }
 
     private async Task ReadFromDiskAsync(CancellationToken ct)
     {
@@ -212,6 +236,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             // let the strongly-typed Deserialize below surface the shape through the
             // existing JsonException catch. Caught by Copilot post-open code review (PR #53).
             bool rewritten = TryRewriteLegacyGithubShape(rootNode);
+            rewritten |= TryRewriteLegacyAiPreviewShape(rootNode);
             if (rewritten)
             {
                 raw = rootNode!.ToJsonString();
@@ -256,6 +281,15 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             if (parsed.Github.Accounts is null || parsed.Github.Accounts.Count == 0)
             {
                 parsed = parsed with { Github = AppConfig.Default.Github };
+            }
+
+            // Nested backfill: an old config with `ui` present but no `ai` key deserializes
+            // Ui.Ai to null. The AiModeState DI seed reads Ui.Ai.Mode, so without this
+            // guard a legacy config would NRE at startup. Symmetric to the Inbox.Sections
+            // backfill above; the check is on a nested property, not the sub-record itself.
+            if (parsed.Ui.Ai is null)
+            {
+                parsed = parsed with { Ui = parsed.Ui with { Ai = AppConfig.Default.Ui.Ai } };
             }
 
             _current = parsed;
@@ -343,6 +377,29 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         github.Remove("host");
         github.Remove("local-workspace");
         github["accounts"] = new JsonArray(account);
+        return true;
+    }
+
+    /// <summary>
+    /// Migrates the pre-v2 <c>ui.ai-preview</c> (bool) into the v2 <c>ui.ai.mode</c> nested shape
+    /// (true → "preview", false → "off"). Defensive per PR #53: a non-bool value is left untouched
+    /// so Deserialize/backfill handles it (never throws InvalidOperationException out of the catch).
+    /// Returns true if it rewrote the node (caller persists back).
+    /// </summary>
+    private static bool TryRewriteLegacyAiPreviewShape(JsonNode? rootNode)
+    {
+        if (rootNode is not JsonObject root) return false;
+        if (root["ui"] is not JsonObject ui) return false;
+        if (ui["ai-preview"] is not JsonValue legacy) return false;
+        if (ui["ai"] is JsonObject already && already["mode"] is JsonValue modeVal && modeVal.TryGetValue<string>(out _)) { ui.Remove("ai-preview"); return true; } // already migrated (has a real STRING mode); drop the stale key. A non-string mode (e.g. 42/null) is NOT "migrated" — fall through and rebuild from the legacy bool so ai-preview intent survives (PR #242 review).
+        if (!legacy.TryGetValue<bool>(out var on)) return false;             // non-bool → leave for the Default fallback
+        // A present-but-incomplete ui["ai"] — a malformed non-object (e.g. a JSON string) OR an empty/mode-less object
+        // ({}) — is NOT short-circuited above; it falls through to the overwrite below and is rebuilt from the legacy
+        // bool, so a corrupt OR empty `ai` value cannot silently discard the user's ai-preview intent
+        // (ce-doc-review rounds 1+2, adversarial edge cases). The round-1 `is JsonObject` check missed the empty-{} case.
+
+        ui["ai"] = new JsonObject { ["mode"] = on ? "preview" : "off" };
+        ui.Remove("ai-preview");
         return true;
     }
 

@@ -30,7 +30,7 @@ public class AiFileFocusEndpointTests
     public async Task Get_ai_file_focus_returns_200_with_placeholder_entries_when_aiPreview_is_on()
     {
         using var factory = new PRismWebApplicationFactory();
-        factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
         var client = factory.CreateClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/file-focus", UriKind.Relative));
@@ -50,7 +50,7 @@ public class AiFileFocusEndpointTests
         // the new endpoint. Catches accidental middleware exemption widening
         // (a la /api/health) for the /ai/* family.
         using var factory = new PRismWebApplicationFactory();
-        factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
         var client = factory.CreateUnauthenticatedClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/file-focus", UriKind.Relative));

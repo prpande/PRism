@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using PRism.Core.Ai;
 using PRism.Core.State;
 
 namespace PRism.Core.Config;
@@ -21,7 +22,7 @@ public sealed record AppConfig(
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
-        new UiConfig("system", "indigo", false, "comfortable"),
+        new UiConfig("system", "indigo", new AiConfig(AiMode.Off), "comfortable"),
         new GithubConfig(new[]
         {
             new GithubAccountConfig(
@@ -49,7 +50,10 @@ public sealed record InboxSectionsConfig(
 public sealed record ReviewConfig(bool BlockSubmitOnStaleDrafts, bool RequireVerdictReconfirmOnNewIteration);
 public sealed record IterationsConfig(int ClusterGapSeconds, bool ClusteringDisabled = false);
 public sealed record LoggingConfig(string Level, bool StateEvents, int StateEventsRetentionFiles);
-public sealed record UiConfig(string Theme, string Accent, bool AiPreview, string Density = "comfortable");
+public sealed record UiConfig(string Theme, string Accent, AiConfig Ai, string Density = "comfortable");
+
+/// <summary>AI mode config (spec §4). Persisted at <c>ui.ai.mode</c>.</summary>
+public sealed record AiConfig(AiMode Mode);
 
 public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
 {

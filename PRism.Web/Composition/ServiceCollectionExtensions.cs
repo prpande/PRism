@@ -13,9 +13,10 @@ internal static class ServiceCollectionExtensions
 {
     /// <summary>
     /// Composes PRism's AI seam machinery for the web host. Registers both Noop and
-    /// Placeholder impl sets and the <see cref="IAiSeamSelector"/> that picks between them at
-    /// request time based on <see cref="AiPreviewState.IsOn"/> (which mirrors the live
-    /// <c>ui.aiPreview</c> config flag, hot-reloaded by <c>ConfigStore</c>).
+    /// Placeholder impl sets and the <see cref="IAiSeamSelector"/> that does tri-state per-feature
+    /// resolution off <see cref="AiModeState"/> (Off→Noop, Preview→Placeholder,
+    /// Live→real-iff-registered-and-available), which mirrors the live <c>ui.ai.mode</c> config
+    /// value, hot-reloaded by <c>ConfigStore</c>.
     /// </summary>
     /// <remarks>
     /// The "AddPrismAi belongs in Web" carve-out is documented in
@@ -35,8 +36,8 @@ internal static class ServiceCollectionExtensions
         services.AddPlaceholderSeams();
 
         services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
-            sp.GetRequiredService<AiPreviewState>(),
-            new Dictionary<Type, object>
+            sp.GetRequiredService<AiModeState>(),
+            noop: new Dictionary<Type, object>
             {
                 [typeof(IPrSummarizer)] = sp.GetRequiredService<NoopPrSummarizer>(),
                 [typeof(IFileFocusRanker)] = sp.GetRequiredService<NoopFileFocusRanker>(),
@@ -48,7 +49,7 @@ internal static class ServiceCollectionExtensions
                 [typeof(IInboxItemEnricher)] = sp.GetRequiredService<NoopInboxItemEnricher>(),
                 [typeof(IInboxRanker)] = sp.GetRequiredService<NoopInboxRanker>(),
             },
-            new Dictionary<Type, object>
+            placeholder: new Dictionary<Type, object>
             {
                 [typeof(IPrSummarizer)] = sp.GetRequiredService<PlaceholderPrSummarizer>(),
                 [typeof(IFileFocusRanker)] = sp.GetRequiredService<PlaceholderFileFocusRanker>(),
@@ -59,7 +60,9 @@ internal static class ServiceCollectionExtensions
                 [typeof(IDraftReconciliator)] = sp.GetRequiredService<PlaceholderDraftReconciliator>(),
                 [typeof(IInboxItemEnricher)] = sp.GetRequiredService<PlaceholderInboxItemEnricher>(),
                 [typeof(IInboxRanker)] = sp.GetRequiredService<PlaceholderInboxRanker>(),
-            }));
+            },
+            real: new Dictionary<Type, object>(),    // P0: no real seam impls yet (Live → Noop everywhere)
+            liveAvailable: () => false));            // P0: no live features; P1 wires the cached probe-availability
 
         return services;
     }

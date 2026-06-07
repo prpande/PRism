@@ -22,7 +22,7 @@ public class AiEndpointsTests
     public async Task Get_ai_summary_returns_204_when_aiPreview_is_off()
     {
         using var factory = new PRismWebApplicationFactory();
-        // Default state: AiPreviewState.IsOn = false → NoopPrSummarizer.
+        // Default state: AiModeState.Mode = Off → NoopPrSummarizer.
         var client = factory.CreateClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/summary", UriKind.Relative));
@@ -34,7 +34,7 @@ public class AiEndpointsTests
     public async Task Get_ai_summary_returns_200_with_placeholder_body_when_aiPreview_is_on()
     {
         using var factory = new PRismWebApplicationFactory();
-        factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
         var client = factory.CreateClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/summary", UriKind.Relative));
@@ -49,7 +49,7 @@ public class AiEndpointsTests
     public async Task Get_ai_summary_serializes_camelCase_properties()
     {
         using var factory = new PRismWebApplicationFactory();
-        factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
         var client = factory.CreateClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/summary", UriKind.Relative));

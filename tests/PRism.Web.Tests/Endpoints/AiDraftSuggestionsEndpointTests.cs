@@ -30,7 +30,7 @@ public class AiDraftSuggestionsEndpointTests
     public async Task Get_ai_draft_suggestions_returns_200_with_placeholder_entries_when_aiPreview_is_on()
     {
         using var factory = new PRismWebApplicationFactory();
-        factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
         var client = factory.CreateClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/draft-suggestions", UriKind.Relative));
@@ -48,7 +48,7 @@ public class AiDraftSuggestionsEndpointTests
     public async Task Get_ai_draft_suggestions_returns_401_without_session_token()
     {
         using var factory = new PRismWebApplicationFactory();
-        factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
         var client = factory.CreateUnauthenticatedClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/draft-suggestions", UriKind.Relative));
@@ -65,7 +65,7 @@ public class AiDraftSuggestionsEndpointTests
         // forgets the lineNumber replacement), this test catches it before the
         // cohort demo silently breaks.
         using var factory = new PRismWebApplicationFactory();
-        factory.Services.GetRequiredService<AiPreviewState>().IsOn = true;
+        factory.Services.GetRequiredService<AiModeState>().Mode = AiMode.Preview;
         var client = factory.CreateClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/draft-suggestions", UriKind.Relative));
