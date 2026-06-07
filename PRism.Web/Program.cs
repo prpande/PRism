@@ -316,6 +316,7 @@ app.MapPrRootCommentEndpoints();
 app.MapSubmitInFlight();
 app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();
+app.MapFeedback();
 
 if (builder.Environment.IsEnvironment("Test"))
     app.MapGet("/test/boom", () => { throw new InvalidOperationException("test boom"); });
