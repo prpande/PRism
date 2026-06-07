@@ -55,7 +55,8 @@ test('first-run /setup also hides the top nav tabs (#212)', async ({ page }) => 
   await expect(page.getByRole('link', { name: /^settings$/i })).toHaveCount(0);
   // #215: on /setup the product name is shown as the visible header wordmark
   // (the logomark itself goes decorative, alt=""), filling the empty no-nav header.
-  await expect(page.getByText('PRism', { exact: true })).toBeVisible();
+  // Scoped to <header> so the assertion can't drift onto future page copy.
+  await expect(page.locator('header').getByText('PRism', { exact: true })).toBeVisible();
 });
 
 test('cold start hides the top nav tabs on /welcome (#130)', async ({ page }) => {
@@ -69,4 +70,6 @@ test('cold start hides the top nav tabs on /welcome (#130)', async ({ page }) =>
   await expect(page.getByRole('link', { name: /^settings$/i })).toHaveCount(0);
   // Logo still present.
   await expect(page.getByAltText('PRism')).toBeVisible();
+  // #215: header wordmark SUPPRESSED on /welcome (hero owns the name).
+  await expect(page.locator('header').getByText('PRism', { exact: true })).toHaveCount(0);
 });
