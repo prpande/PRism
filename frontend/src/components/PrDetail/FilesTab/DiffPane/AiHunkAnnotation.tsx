@@ -1,4 +1,5 @@
 import type { HunkAnnotation, AnnotationTone } from '../../../../api/types';
+import { SampleBadge } from '../../../Ai/SampleBadge';
 import styles from './AiHunkAnnotation.module.css';
 
 export interface AiHunkAnnotationProps {
@@ -30,6 +31,7 @@ export function AiHunkAnnotation({ annotation }: AiHunkAnnotationProps) {
       <div className={styles.aiHunkBody}>
         <div className={`ai-hunk-meta ${styles.aiHunkMeta}`}>
           <span>AI</span>
+          <SampleBadge solid />
           <span className={`chip chip-${chip.variant}`}>{chip.label}</span>
         </div>
         <div>{annotation.body}</div>
