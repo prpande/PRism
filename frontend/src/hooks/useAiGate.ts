@@ -14,5 +14,12 @@ import { usePreferences } from './usePreferences';
 export function useAiGate(key: keyof AiCapabilities): boolean {
   const { capabilities } = useCapabilities();
   const { preferences } = usePreferences();
-  return (capabilities?.[key] ?? false) && (preferences?.ui.aiPreview ?? false);
+  return (capabilities?.[key] ?? false) && (preferences?.ui.aiMode ?? 'off') !== 'off';
+}
+
+// Preview-mode predicate for the sample-data treatment (SampleBadge). True only
+// in Preview; false in Off and Live. Spec §5/§6.
+export function useIsSampleMode(): boolean {
+  const { preferences } = usePreferences();
+  return preferences?.ui.aiMode === 'preview';
 }

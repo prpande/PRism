@@ -14,8 +14,8 @@ import { usePreferences } from './usePreferences';
 // Forward-compat (D112, DEFER-TO-V1.X): when backend capability decoupling lands and
 // `AiCapabilities` stops mirroring `AiPreviewState.IsOn`, restore an independent
 // reactive capabilities source here (the deferred shared-store / CapabilitiesContext).
-// `useAiGate`'s two-factor `capabilities[key] && aiPreview` shape is intentionally
-// left unchanged so that swap is the only follow-up needed.
+// `useAiGate`'s two-factor `capabilities[key] && aiMode !== 'off'` shape is
+// intentionally left unchanged so that swap is the only follow-up needed.
 const ALL_ON: AiCapabilities = {
   summary: true,
   fileFocus: true,
@@ -50,6 +50,6 @@ export function useCapabilities() {
   // loaded a well-formed PreferencesResponse, derive `null` so useAiGate's
   // `capabilities?.[key] ?? false` short-circuits the gate off — same as the
   // pre-#221 loading state.
-  const capabilities = preferences?.ui ? (preferences.ui.aiPreview ? ALL_ON : ALL_OFF) : null;
+  const capabilities = preferences?.ui ? (preferences.ui.aiMode === 'preview' ? ALL_ON : ALL_OFF) : null;
   return { capabilities, error, refetch: noopRefetch };
 }
