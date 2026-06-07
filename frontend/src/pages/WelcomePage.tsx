@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import styles from './WelcomePage.module.css';
 
 // Placeholder copy (tagline + benefits) — the human rewrite is owned by #222.
@@ -11,6 +11,7 @@ const BENEFITS: ReadonlyArray<{ emoji: string; text: string }> = [
 ];
 
 export function WelcomePage() {
+  const location = useLocation();
   return (
     <div className={styles.screen}>
       <div className={styles.bg} aria-hidden="true" />
@@ -38,7 +39,7 @@ export function WelcomePage() {
         </Link>
         {/* Footer: Help is now a real link (#210). Send feedback remains a stub until #211. */}
         <div className={styles.footer}>
-          <Link to="/help" className={styles.footerLink}>
+          <Link to="/help" state={{ backgroundLocation: location }} className={styles.footerLink}>
             Help
           </Link>
           <span className={styles.footerDivider} aria-hidden="true">

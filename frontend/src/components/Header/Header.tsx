@@ -78,6 +78,7 @@ export function Header({ isAuthed }: HeaderProps) {
       {isAuthed && (
         <Link
           to="/help"
+          state={{ backgroundLocation: location }}
           className={helpActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
           aria-label="Help"
           aria-current={helpActive ? 'page' : undefined}
