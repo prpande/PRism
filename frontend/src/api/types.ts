@@ -1,6 +1,7 @@
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'indigo' | 'amber' | 'teal';
 export type Density = 'comfortable' | 'compact';
+export type AiMode = 'off' | 'preview' | 'live';
 
 // S6 PR1 widened GET /api/preferences from the flat { theme, accent, aiPreview }
 // shape to a nested { ui, inbox, github } shape (spec § 2.4). UiPreferences is now
@@ -13,6 +14,7 @@ export interface UiPreferences {
   theme: Theme;
   accent: Accent;
   aiPreview: boolean;
+  aiMode: AiMode;
   density: Density;
 }
 

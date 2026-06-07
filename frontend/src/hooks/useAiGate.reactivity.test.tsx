@@ -28,7 +28,7 @@ vi.mock('../api/client', () => {
     inboxRanking: on,
   });
   const prefs = (): PreferencesResponse => ({
-    ui: { theme: 'dark', accent: 'indigo', density: 'comfortable', aiPreview: state.aiPreview },
+    ui: { theme: 'dark', accent: 'indigo', density: 'comfortable', aiPreview: state.aiPreview, aiMode: 'off' },
     inbox: { sections: {} } as never,
     github: {} as never,
   });
