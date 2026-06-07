@@ -24,12 +24,25 @@ In scope — these surfaces scale:
 - Markdown file view (`MarkdownFileView`)
 - **Diff code text** (the `.diffTable` body — code lines + gutter line numbers)
 
+Also scales (content authored/previewed in the Submit flow, all via `MarkdownRenderer`):
+
+- Submit-dialog PR-root body preview (`SubmitDialog` → `MarkdownRenderer`, no className)
+- Pre-submit validator messages (`PreSubmitValidatorCard`, renders `.markdown-body`)
+
+These live in the Submit modal but are PR *content*, not chrome — the B1 reviewer
+should expect them to scale and not flag a scaled Submit preview as a regression.
+
 Explicitly **out** of scope — these stay fixed at all settings:
 
 - Inbox, Settings, the welcome/setup flows, the app header/nav
 - All chrome *inside* PR-detail: file tree, compare picker, diff-settings menu,
   iteration tab strip, commit multi-select, drafts-tab headers/buttons, toolbars,
   the diff-pane header/path label, and `@@` hunk-header markers
+- **AI summary / hotspot text** (`AiSummaryCard`) — renders plain text (not
+  `MarkdownRenderer`) and inherits `var(--text-sm)` with no `--content-scale` hook.
+  This is an AI-preview feature on a parallel track, outside the owner's enumerated
+  scope (overview/comments/diffs). Left fixed deliberately; can be folded in later
+  with a one-line hook on `.aiSummaryBody` if desired. **(Open question — see below.)**
 
 > **Note — issue body has stale paths.** #135 references
 > `frontend/src/components/Settings/AppearanceSection.tsx` and
@@ -83,6 +96,40 @@ as a `ui.*` string), so every layer has a proven sibling to copy.
 ```
 
 **Steps (5, Default centered):** `xs 0.8× · s 0.9× · m 1.0× (Default) · l 1.2× · xl 1.4×`.
+The down-steps (0.1 apart) are gentler than the up-steps (0.2 apart) **intentionally**:
+enlarging is the common need, so the upward range reaches further (+40%) while the
+downward range stays conservative (−20%) to keep small text legible. Do not "correct"
+this to a uniform spread.
+
+### Per-surface scaling contract (cascade caveats)
+
+`.markdown-body` is composed onto its element by `MarkdownRenderer.tsx:130` as
+`markdown-body ${className}`. Whether `calc(1em * var(--content-scale))` is a true
+no-op at scale 1 depends on **where** each consumer pins its font-size:
+
+- **Parent-pinned (correct as-is):** `PrRootConversation` (`.body` 13px),
+  `ExistingCommentWidget` (`.commentBody var(--text-sm)`), `MarkdownFileView`,
+  drafts/composer all set font-size on a **parent** of the markdown-body element.
+  `1em` resolves against that parent base → scale 1 reproduces today's size and the
+  multiply scales correctly. **The parent re-pin is load-bearing**: e.g.
+  `.commentBody { font-size: var(--text-sm) }` resets the cascade (these comments sit
+  *inside* `.diffTable`, which is itself scaled) so `.markdown-body`'s single multiply
+  is the *only* scaling applied — do not remove it during any cleanup.
+
+- **Same-element collision (must fix — C1):** `PrDescription.tsx:31` passes
+  `className={styles.prDescriptionBody}`, and `.prDescriptionBody` pins
+  `font-size: var(--text-sm)` on the **same element** as `.markdown-body`. Equal
+  specificity (0,1,0); the CSS-module rule is injected after `tokens.css` (documented
+  in `AiSummaryCard.module.css:6-7`) so it **wins** and the description would not scale.
+  **Fix:** move `font-size: var(--text-sm)` off `.prDescriptionBody` onto PrDescription's
+  parent wrapper, so the element carries only `.markdown-body` and `1em` resolves
+  against the wrapper's `var(--text-sm)` (scale-1 no-op preserved, scaling restored).
+  This makes PrDescription match the parent-pinned pattern the other five already use.
+
+- **Inline `code` inside prose (must fix — I1):** `.prDescriptionBody code` and
+  `.body code` pin a literal `font-size: 12px`, so inline code would stay fixed while
+  surrounding prose scales. Change these to a **relative** `font-size: 0.92em` so inline
+  code tracks the scaled prose. (Corrects the earlier "no pinned px" assumption.)
 
 ### Persistence (mirrors `density`)
 
@@ -126,21 +173,44 @@ A new component in `frontend/src/components/controls/FontSizeSlider.tsx`, added 
 new row in `AppearancePane` under Density.
 
 - A native `<input type="range" min="0" max="4" step="1">` — gives keyboard
-  (arrow keys), drag, and focus handling for free. The numeric index `0–4` maps to
-  the enum `['xs','s','m','l','xl']`.
+  (arrow keys), drag, and focus handling for free.
 - Beneath the track, **five "a" glyphs as tick marks, growing left → right** as the
   visual size legend. No text labels.
 - A11y: `aria-label="Content font size"`; `aria-valuetext` set to the step's human
   name (`Extra small · Small · Default · Large · Extra large`) so screen readers
   announce a meaningful value rather than a bare `0–4`.
 
-`AppearancePane` wires it with the established optimistic-apply-with-rollback pattern
-(identical to density):
+**Enum ↔ index binding.** A single ordered constant is the source of truth for both
+directions — the slider is controlled by the index of the current enum value, and
+`onChange` maps the index back to the enum. The component never holds its own state:
 
 ```ts
+const SCALE_ORDER = ['xs', 's', 'm', 'l', 'xl'] as const; // index 0–4, 'm' at center (2)
+
+// controlled value:
+value={SCALE_ORDER.indexOf(props.value)}
+// onChange:
+onChange={(e) => props.onChange(SCALE_ORDER[Number(e.target.value)])}
+```
+
+**PATCH-per-drag is acceptable — no debounce.** A range input fires `onChange` on every
+step crossing, but with `step=1` over a 5-position range a full drag crosses at most
+~4 integer boundaries → ~4 `PATCH /api/preferences` calls worst case. That matches the
+existing **undebounced** `SegmentedControl` density path (a few clicks = a few PATCHes),
+so no debounce machinery is added. Keyboard arrow steps are one PATCH each, same as today.
+
+`AppearancePane` wires it with the established optimistic-apply-with-rollback pattern,
+capturing the prior value *before* the optimistic write (mirrors the density handler at
+`AppearancePane.tsx:35-41`, including the defensive coercion of an off-enum persisted value):
+
+```ts
+const contentScale: ContentScale = SCALE_ORDER.includes(preferences.ui.contentScale)
+  ? preferences.ui.contentScale
+  : 'm';
 const onContentScale = (value: ContentScale) => {
+  const prior = contentScale; // captured before the optimistic DOM write
   applyContentScaleToDocument(value);
-  void set('contentScale', value).catch(() => applyContentScaleToDocument(priorScale));
+  void set('contentScale', value).catch(() => applyContentScaleToDocument(prior));
 };
 ```
 
@@ -182,21 +252,42 @@ CSS: data-content-scale → --content-scale → .markdown-body / .diffTable mult
   `aria-valuetext` present.
 - **`AppearancePane` test:** slider row present and bound to `preferences.ui.contentScale`;
   change calls `set('contentScale', …)`; optimistic apply + rollback on rejected set.
-- **Playwright B1 visual proof:** PR-detail at XS / Default / XL — assert content
-  (overview + comments + diff code) scales while chrome (file tree, toolbars, tab
-  strip, diff header) stays fixed. **Verify the split-diff synthetic h-scrollbar
-  (`useLockedPaneScroll`) still tracks correctly at non-default scales** — font-size
-  changes line widths, and the scrollbar spacer must recompute.
+- **Playwright B1 visual proof:** PR-detail at XS / Default / XL — assert content scales
+  while chrome (file tree, toolbars, tab strip, diff header, `@@` hunk markers) stays
+  fixed. Cover each in-scope surface *individually* so a same-element collision can't
+  hide: **assert the Overview description's computed font-size actually changes** (the C1
+  regression site) — not just the comments — plus a comment, a draft, and the diff code.
+  **Verify the split-diff synthetic h-scrollbar (`useLockedPaneScroll`) still tracks
+  correctly at non-default scales** — font-size changes line widths, and the scrollbar
+  spacer must recompute. Screenshot the slider at all five steps and confirm the thumb
+  visually sits over each "a" glyph.
 
 ## Risks / open verification
 
-1. **Diff h-scroll at scale ≠ 1** — `useLockedPaneScroll` measures real `scrollWidth`,
+1. **Overview description same-element collision (C1)** — `.prDescriptionBody` pins
+   font-size on the same element as `.markdown-body` and wins the equal-specificity
+   cascade. Fixed by moving the pin to the parent wrapper (see Per-surface contract).
+   The B1 proof asserts the description's computed size changes, so a silent regression
+   here can't ship.
+2. **Diff h-scroll at scale ≠ 1** — `useLockedPaneScroll` measures real `scrollWidth`,
    so it *should* adapt; flagged as an explicit B1 check rather than assumed.
-2. **Heading/code scaling within prose** — markdown headings and inline `code` inherit
-   `.markdown-body`'s font-size (no pinned px), so the relative `1em` multiply cascades
-   correctly; confirmed against tokens.css (no `.markdown-body h1{font-size:…}` rule).
-3. **Line-height** — `.diffTable` line-height is unitless (`1.55`), so it scales with
+3. **Inline `code` is pinned to literal 12px** in `.prDescriptionBody code` / `.body code`
+   — converted to relative `0.92em` so it tracks scaled prose (see Per-surface contract).
+   Markdown headings carry no pinned px (confirmed: no `.markdown-body h1{font-size:…}`
+   in tokens.css), so they scale via the `1em` multiply already.
+4. **Slider thumb ↔ glyph alignment** — native range UA end-padding means the thumb
+   center doesn't reach the track's pixel edges; the five glyphs are a legend beneath
+   the track, so alignment is approximate. B1 polish item — pad the glyph row to the
+   thumb's reachable range if it drifts.
+5. **Line-height** — `.diffTable` line-height is unitless (`1.55`), so it scales with
    font-size automatically; no separate adjustment needed.
+
+## Open question for owner
+
+- **Should AI summary / hotspot text scale too?** It's PR-detail content but renders via
+  `AiSummaryCard` (plain text, not `MarkdownRenderer`) and was not in the enumerated scope.
+  Current design leaves it fixed. Including it is a one-line CSS hook on `.aiSummaryBody`
+  if the owner wants it in. **Default: leave fixed unless told otherwise.**
 
 ## Out of scope (YAGNI)
 
