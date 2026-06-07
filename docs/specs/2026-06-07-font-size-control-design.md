@@ -133,14 +133,15 @@ verified against the module CSS:
 | Surface | Element to hook (carries the pin) | Token → scaled | Notes |
 |---------|-----------------------------------|----------------|-------|
 | Diff code (lines + gutter) | `DiffPane.module.css` `.diffTable` | `var(--text-sm)` | `.diffContent`/`.diffGutter` inherit → code + line numbers scale together |
-| AI summary block | `AiSummaryCard.module.css` `.aiSummaryCard` | `var(--text-sm)` | hook the **card** (the body/category/chip carry no own font-size and inherit); scales the whole AI block |
+| AI summary body | `AiSummaryCard.module.css` `.aiSummaryCard` | `var(--text-sm)` | body has no own pin → inherits from the card → scales |
+| AI summary category | `AiSummaryCard.module.css` `.aiSummaryCategory` | `var(--text-xs)` | own pin (data) → scale it separately. The `.aiSummaryChip` ("AI preview — sample…") is a disclaimer label and **stays fixed by design** |
 | Stats tile value | `StatsTiles.module.css` `.statsTileValue` | `var(--text-2xl)` | two separate pins → two edits |
 | Stats tile label | `StatsTiles.module.css` `.statsTileLabel` | `var(--text-xs)` | |
-| AI hunk annotation | `AiHunkAnnotation.module.css` `.aiHunk` (root) | `var(--text-xs)` | body `<div>` is classless and inherits from `.aiHunk`; hook the root |
+| AI hunk annotation | `AiHunkAnnotation.module.css` `.aiHunk` (root) | `var(--text-xs)` | body `<div>` is classless and inherits from `.aiHunk`; hook the root. The severity `.chip` ("Behavior change") keeps its own fixed size (status indicator) — **intentionally fixed** |
 | In-tab PR title | `PrDescription.module.css` `.prDescriptionTitle` | `var(--text-md)` | **renders only when `aiPreview=false`** — see Per-surface contract |
 | Raw markdown file view | `MarkdownFileView.module.css` `.markdownRaw` | `var(--text-sm)` | the Rendered path uses `.markdown-body`; the Raw `<pre>` is a separate pin (raw source = file data, scales like code) |
-| Root-comment metadata (author/time) | `PrRootConversation.module.css` `.band` | `var(--text-xs)` | metadata is a **sibling** of `.body`, not under `.markdown-body`; hook it so it scales with its comment |
-| Inline-comment metadata (author/time) | `ExistingCommentWidget.module.css` `.commentMeta` | `var(--text-xs)` | sibling of `.commentBody`; same reason |
+| Root-comment metadata (author/time) | `PrRootConversation.module.css` `.band` | `var(--text-xs)` | **⚠ PENDING owner decision (I-A):** scaling this de-aligns the accent rail node (`--rail-node-y` is tuned to the fixed 24px avatar center). If "scale," `--rail-node-y` must become scale-aware; if "fixed," drop this row. |
+| Inline-comment metadata (author/time) | `ExistingCommentWidget.module.css` `.commentMeta` | `var(--text-xs)` | **⚠ PENDING owner decision (I-A):** sibling of `.commentBody`; pairs with the row above |
 
 Chrome (`.diffPaneHeader`, `.diffPanePath`, `.diffHunkHeader`, tab strip, toolbars,
 file-tree controls, `PrHeader`) pins its own tokens and is **not** in this list, so it
@@ -355,6 +356,23 @@ CSS: data-content-scale → --content-scale → content hooks (.markdown-body, .
    thumb's reachable range if it drifts.
 5. **Line-height** — `.diffTable` line-height is unitless (`1.55`), so it scales with
    font-size automatically; no separate adjustment needed.
+6. **Comment rail-node alignment (I-A) — PENDING owner decision.** If comment
+   author/time metadata scales (`.band` / `.commentMeta`), the band's optical center
+   shifts relative to the fixed-px avatar, so `--rail-node-y`
+   (`PrRootConversation.module.css:49`, tuned to the 24px avatar) would need to become
+   scale-aware, and B1 must verify the accent node still centers on the band at XS/XL.
+   If metadata stays fixed, this risk is void. See the Open question below.
+
+## Open question for owner (I-A)
+
+**Should comment author/timestamp metadata scale, or stay fixed?** It's data, but it sits
+in a fixed-24px-avatar identity row, and scaling it (a) mismatches the unscaled avatar and
+(b) de-aligns the accent rail node (`--rail-node-y` is tuned to the avatar center; the CSS
+warns against changing `--text-xs` there). **Recommendation: keep metadata fixed** — scale
+the comment *body* (the content you read) but treat the author/avatar/time as a fixed
+identity header (like the avatar itself). This avoids both the visual mismatch and the
+rail-node re-tuning. If you'd rather it scale, the plan makes `--rail-node-y` scale-aware
+and B1 verifies node alignment at every step.
 
 ## Out of scope (YAGNI)
 
