@@ -162,3 +162,29 @@ describe('InboxRow showRepo', () => {
     expect(meta.textContent!.trimStart().startsWith('·')).toBe(false);
   });
 });
+
+describe('InboxRow tail reserve-and-collapse', () => {
+  it('always reserves the diff, counts, and comment slots', () => {
+    const { container } = renderInboxRow({ ...PR, additions: 0, deletions: 0, commentCount: 0 });
+    expect(container.querySelector('[class*="diffSlot"]')).not.toBeNull();
+    expect(container.querySelector('[class*="countsSlot"]')).not.toBeNull();
+    expect(container.querySelector('[class*="commentSlot"]')).not.toBeNull();
+  });
+
+  it('renders the diff-bar slot empty at zero diff but keeps the counts populated', () => {
+    const { container } = renderInboxRow({ ...PR, additions: 0, deletions: 0 });
+    const diffSlot = container.querySelector('[class*="diffSlot"]')!;
+    expect(diffSlot.querySelector('[class*="diffbar"]')).toBeNull(); // DiffBar returns null at zero total
+    expect(container.querySelector('[class*="countsSlot"]')!.textContent).toContain('+0');
+  });
+
+  it('renders the comment slot empty when commentCount is 0', () => {
+    const { container } = renderInboxRow({ ...PR, commentCount: 0 });
+    expect(container.querySelector('[class*="commentSlot"]')!.querySelector('[class*="comments"]')).toBeNull();
+  });
+
+  it('renders the comment count when commentCount > 0', () => {
+    const { container } = renderInboxRow({ ...PR, commentCount: 5 });
+    expect(container.querySelector('[class*="commentSlot"]')!.textContent).toContain('5');
+  });
+});

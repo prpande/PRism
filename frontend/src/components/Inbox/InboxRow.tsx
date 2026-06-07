@@ -83,21 +83,29 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo =
         </span>
       </span>
       <span className={styles.tail}>
-        {doneState === 'merged' && (
-          <span className={`${styles.stateBadge} ${styles.badgeMerged}`}>Merged</span>
-        )}
-        {doneState === 'closed' && (
-          <span className={`${styles.stateBadge} ${styles.badgeClosed}`}>Closed</span>
-        )}
-        {showCategoryChip && enrichment?.categoryChip && (
-          <span className={styles.chip}>{enrichment.categoryChip}</span>
-        )}
-        <DiffBar additions={pr.additions} deletions={pr.deletions} max={maxDiff} />
-        <span className={styles.counts}>
-          <span className={styles.add}>+{pr.additions}</span>
-          <span className={styles.del}>−{pr.deletions}</span>
+        <span className={styles.tailLead}>
+          {doneState === 'merged' && (
+            <span className={`${styles.stateBadge} ${styles.badgeMerged}`}>Merged</span>
+          )}
+          {doneState === 'closed' && (
+            <span className={`${styles.stateBadge} ${styles.badgeClosed}`}>Closed</span>
+          )}
+          {showCategoryChip && enrichment?.categoryChip && (
+            <span className={styles.chip}>{enrichment.categoryChip}</span>
+          )}
         </span>
-        {pr.commentCount > 0 && <span className={styles.comments}>{pr.commentCount}</span>}
+        <span className={styles.metrics}>
+          <span className={styles.diffSlot}>
+            <DiffBar additions={pr.additions} deletions={pr.deletions} max={maxDiff} />
+          </span>
+          <span className={`${styles.counts} ${styles.countsSlot}`}>
+            <span className={styles.add}>+{pr.additions}</span>
+            <span className={styles.del}>−{pr.deletions}</span>
+          </span>
+          <span className={styles.commentSlot}>
+            {pr.commentCount > 0 && <span className={styles.comments}>{pr.commentCount}</span>}
+          </span>
+        </span>
       </span>
     </button>
   );

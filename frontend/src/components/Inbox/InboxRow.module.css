@@ -1,7 +1,8 @@
 /* InboxRow — single PR row in the inbox list */
 .row {
   display: grid;
-  grid-template-columns: 16px 1fr auto;
+  grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
+  --inbox-tail-w: 200px; /* ~140px metrics + ~60px badge/chip zone; tuned in B1 */
   gap: var(--s-3);
   width: 100%;
   padding: var(--s-3) var(--s-4);
@@ -120,6 +121,51 @@
   display: flex;
   align-items: center;
   gap: var(--s-3);
+  min-width: 0;
+}
+
+/* Badge + AI chip flow here, left of the metrics; takes the slack and
+   truncates so it never pushes the right-pinned metrics. */
+.tailLead {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  overflow: hidden;
+}
+
+/* Right-pinned, fixed-width slots in fixed order — this is what makes the
+   numbers line up column-for-column across rows. */
+.metrics {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  justify-content: flex-end;
+}
+
+.diffSlot {
+  flex: none;
+  width: 64px; /* matches DiffBar track width */
+  display: flex;
+  justify-content: flex-end;
+}
+
+.countsSlot {
+  flex: none;
+  width: 72px;
+  display: flex;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+.commentSlot {
+  flex: none;
+  width: 28px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .chip {
@@ -131,6 +177,10 @@
   border-radius: var(--radius-2);
   font-size: var(--text-2xs);
   font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Done-state badge — text is the primary signal, colour is secondary */
