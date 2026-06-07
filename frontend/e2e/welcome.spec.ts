@@ -51,11 +51,11 @@ test('/welcome hides the top nav and keeps the logo (first run, #130)', async ({
   await expect(page.locator('header').getByText('PRism', { exact: true })).toHaveCount(0);
 });
 
-test('footer Help / Send feedback are non-interactive stubs', async ({ page }) => {
+test('footer Help links to /help; Send feedback is a non-interactive stub', async ({ page }) => {
+  // #210 wired Help to the /help route; Send feedback stays a stub until #211 (PR2).
   await page.goto('/welcome');
-  await expect(page.getByText('Help')).toBeVisible();
+  await expect(page.getByRole('link', { name: /^help$/i })).toHaveAttribute('href', '/help');
   await expect(page.getByText('Send feedback')).toBeVisible();
-  await expect(page.getByRole('link', { name: /^help$/i })).toHaveCount(0);
   await expect(page.getByRole('link', { name: /send feedback/i })).toHaveCount(0);
 });
 
