@@ -3,7 +3,7 @@
 - **Issue:** [#135](https://github.com/prpande/PRism/issues/135) — Settings: font-size control for PR-detail content (comments, description, overview, diffs)
 - **Date:** 2026-06-07
 - **Tier / Risk:** T3 (cross-cutting backend + frontend + CSS vertical slice) / **B1** (UI-visual — human visual sign-off before merge)
-- **Status:** Design — approved by owner (scope = all data, Option 2: chrome fixed), pending spec review gate
+- **Status:** Design — approved by owner (scope = all data, Option 2: chrome fixed; comment metadata fixed per I-A); 3× ce-doc-review applied; pending human spec review gate
 
 ## Problem
 
@@ -25,11 +25,12 @@ In scope — these data surfaces scale, per tab:
 - PR title + description (`PrDescription`)
 - AI summary text (`AiSummaryCard` / `.aiSummaryBody`)
 - Stats-tile values + labels (`StatsTiles`)
-- Root / conversation comments incl. author + timestamp metadata (`PrRootConversation`)
+- Root / conversation comment **bodies** (`PrRootConversation`) — author/timestamp
+  metadata stays fixed (part of the identity row; see I-A)
 
 **Files tab** (`FilesTab`)
 - Diff code text (the `.diffTable` body — code lines + gutter line numbers)
-- Inline diff comments incl. metadata (`ExistingCommentWidget`)
+- Inline diff comment **bodies** (`ExistingCommentWidget`) — metadata stays fixed
 - AI hunk annotations (`AiHunkAnnotation`)
 - Rendered markdown file view (`MarkdownFileView`)
 
@@ -52,14 +53,14 @@ Explicitly **out** of scope — chrome stays fixed at all settings:
   (`DiscardAllStaleButton`, `MarkAllReadButton`, `ReviewFilesCta`), the diff-pane
   header/path label, and `@@` hunk-header markers
 
-**Boundary cases flagged for the review + B1 sign-off** (defaults below; reviewer to
-pressure-test, owner to confirm at the visual gate):
-- *File-tree file names* — data, but live in a navigation pane. **Default: fixed**
-  (treated as chrome, like a sidebar).
-- *Comment author / timestamp metadata* — **Default: scales** with its comment (it's
-  part of the comment's data block, not a global control).
-- *Stats-tile labels* (e.g. "Files", "Threads") vs values — **Default: both scale**
-  (the whole tile is overview data).
+**Boundary cases** (owner-decided; B1 confirms at the visual gate):
+- *File-tree file names* — data, but live in a navigation pane. **Fixed** (treated as
+  chrome, like a sidebar).
+- *Comment author / timestamp metadata* — **Fixed** (owner decision, I-A): part of the
+  fixed-avatar identity row; scaling it mismatched the avatar and de-aligned the rail
+  node. Only the comment body scales.
+- *Stats-tile labels* (e.g. "Files", "Threads") vs values — **Both scale** (the whole
+  tile is overview data).
 
 > **Note — issue body has stale paths.** #135 references
 > `frontend/src/components/Settings/AppearanceSection.tsx` and
@@ -140,8 +141,10 @@ verified against the module CSS:
 | AI hunk annotation | `AiHunkAnnotation.module.css` `.aiHunk` (root) | `var(--text-xs)` | body `<div>` is classless and inherits from `.aiHunk`; hook the root. The severity `.chip` ("Behavior change") keeps its own fixed size (status indicator) — **intentionally fixed** |
 | In-tab PR title | `PrDescription.module.css` `.prDescriptionTitle` | `var(--text-md)` | **renders only when `aiPreview=false`** — see Per-surface contract |
 | Raw markdown file view | `MarkdownFileView.module.css` `.markdownRaw` | `var(--text-sm)` | the Rendered path uses `.markdown-body`; the Raw `<pre>` is a separate pin (raw source = file data, scales like code) |
-| Root-comment metadata (author/time) | `PrRootConversation.module.css` `.band` | `var(--text-xs)` | **⚠ PENDING owner decision (I-A):** scaling this de-aligns the accent rail node (`--rail-node-y` is tuned to the fixed 24px avatar center). If "scale," `--rail-node-y` must become scale-aware; if "fixed," drop this row. |
-| Inline-comment metadata (author/time) | `ExistingCommentWidget.module.css` `.commentMeta` | `var(--text-xs)` | **⚠ PENDING owner decision (I-A):** sibling of `.commentBody`; pairs with the row above |
+
+Comment **author/timestamp metadata** (`.band`, `.commentMeta`) is **deliberately not
+hooked** — it stays fixed as part of the fixed-avatar identity row (owner decision, I-A;
+see Decision log). Only the comment *body* scales.
 
 Chrome (`.diffPaneHeader`, `.diffPanePath`, `.diffHunkHeader`, tab strip, toolbars,
 file-tree controls, `PrHeader`) pins its own tokens and is **not** in this list, so it
@@ -325,13 +328,14 @@ CSS: data-content-scale → --content-scale → content hooks (.markdown-body, .
   in-scope data surface's computed font-size actually changes, *per surface* (a single
   "content scaled" eyeball would hide a missed hook like C1):
   - Overview: PR title (use an `aiPreview=false` fixture — title only renders then) +
-    description (C1 site), AI summary block, a stats tile (value **and** label), a root
-    comment **including its author/timestamp metadata** (`.band`)
-  - Files: diff code, an inline comment **incl. its `.commentMeta`**, AI hunk annotation,
-    a markdown file in **both Rendered and Raw** views
+    description (C1 site), AI summary body **and category**, a stats tile (value **and**
+    label), a root comment **body**
+  - Files: diff code, an inline comment **body**, AI hunk annotation, a markdown file in
+    **both Rendered and Raw** views
   - Drafts: a draft body
-  And assert chrome stays **fixed**: tab strip, Files toolbar, file-tree names (boundary
-  default = fixed), diff-pane header/path, `@@` hunk markers, `PrHeader` title/metadata.
+  And assert these stay **fixed**: comment author/timestamp metadata (`.band` /
+  `.commentMeta`) and the AI summary chip; tab strip, Files toolbar, file-tree names,
+  diff-pane header/path, `@@` hunk markers, `PrHeader` title/metadata.
   **Verify the split-diff synthetic h-scrollbar (`useLockedPaneScroll`) still tracks
   correctly at non-default scales** — font-size changes line widths, and the scrollbar
   spacer must recompute. Screenshot the slider at all five steps; confirm the thumb sits
@@ -356,23 +360,17 @@ CSS: data-content-scale → --content-scale → content hooks (.markdown-body, .
    thumb's reachable range if it drifts.
 5. **Line-height** — `.diffTable` line-height is unitless (`1.55`), so it scales with
    font-size automatically; no separate adjustment needed.
-6. **Comment rail-node alignment (I-A) — PENDING owner decision.** If comment
-   author/time metadata scales (`.band` / `.commentMeta`), the band's optical center
-   shifts relative to the fixed-px avatar, so `--rail-node-y`
-   (`PrRootConversation.module.css:49`, tuned to the 24px avatar) would need to become
-   scale-aware, and B1 must verify the accent node still centers on the band at XS/XL.
-   If metadata stays fixed, this risk is void. See the Open question below.
+6. **Comment rail-node alignment (I-A) — RESOLVED (void).** Owner chose to keep comment
+   author/time metadata **fixed**, so `.band` / `.commentMeta` are not scaled and
+   `--rail-node-y` (`PrRootConversation.module.css:49`) needs no change. The comment body
+   scales; the identity row (avatar + author + time) stays at its tuned geometry.
 
-## Open question for owner (I-A)
+## Decision log (I-A)
 
-**Should comment author/timestamp metadata scale, or stay fixed?** It's data, but it sits
-in a fixed-24px-avatar identity row, and scaling it (a) mismatches the unscaled avatar and
-(b) de-aligns the accent rail node (`--rail-node-y` is tuned to the avatar center; the CSS
-warns against changing `--text-xs` there). **Recommendation: keep metadata fixed** — scale
-the comment *body* (the content you read) but treat the author/avatar/time as a fixed
-identity header (like the avatar itself). This avoids both the visual mismatch and the
-rail-node re-tuning. If you'd rather it scale, the plan makes `--rail-node-y` scale-aware
-and B1 verifies node alignment at every step.
+**Comment author/timestamp metadata stays fixed** (owner decision, 2026-06-07). It sits
+in a fixed-24px-avatar identity row; scaling it mismatched the avatar and de-aligned the
+accent rail node (`--rail-node-y`, tuned to the avatar center). The comment *body* scales;
+the author/avatar/time identity header stays fixed. No `--rail-node-y` change needed.
 
 ## Out of scope (YAGNI)
 
