@@ -5,7 +5,7 @@ import {
   applyContentScaleToDocument,
 } from '../../../utils/applyTheme';
 import type { Accent, ContentScale, Density, Theme } from '../../../api/types';
-import { FontSizeSlider } from '../../controls/FontSizeSlider';
+import { FontSizeSlider, SCALE_ORDER } from '../../controls/FontSizeSlider';
 import { SegmentedControl } from '../../controls/SegmentedControl';
 import { AccentSwatches } from '../../controls/AccentSwatches';
 import { Switch } from '../../controls/Switch';
@@ -44,8 +44,9 @@ export function AppearancePane() {
     applyDensityToDocument(value);
     void set('density', value).catch(() => applyDensityToDocument(density));
   };
-  const SCALE_ORDER: readonly ContentScale[] = ['xs', 's', 'm', 'l', 'xl'];
-  const contentScale: ContentScale = SCALE_ORDER.includes(preferences.ui.contentScale)
+  const contentScale: ContentScale = (SCALE_ORDER as readonly ContentScale[]).includes(
+    preferences.ui.contentScale,
+  )
     ? preferences.ui.contentScale
     : 'm';
   const onContentScale = (value: ContentScale) => {

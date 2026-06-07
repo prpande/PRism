@@ -3,7 +3,7 @@ import styles from './FontSizeSlider.module.css';
 
 // Single ordered source of truth for both directions of the index↔enum mapping.
 // Index 0–4; 'm' (Default) sits at the center, index 2.
-const SCALE_ORDER = ['xs', 's', 'm', 'l', 'xl'] as const;
+export const SCALE_ORDER = ['xs', 's', 'm', 'l', 'xl'] as const;
 const STEP_NAMES: Record<ContentScale, string> = {
   xs: 'Extra small',
   s: 'Small',
