@@ -69,17 +69,21 @@ public class EventsEndpointsTests
         subs.Current.Should().Be(0);
 
         var client = factory.CreateClient();
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 
         using var resp = await client.GetAsync(
             new Uri("/api/events", UriKind.Relative),
             HttpCompletionOption.ResponseHeadersRead,
             cts.Token);
 
-        // Read the initial subscriber-assigned event to confirm the subscription is established.
-        using var stream = await resp.Content.ReadAsStreamAsync(cts.Token);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        await reader.ReadLineAsync(cts.Token); // "event: subscriber-assigned"
+        // Registration is server-side (RunSubscriberAsync increments the count) and
+        // independent of the client reading the handshake frame. Poll the count rather
+        // than reading the stream — the handshake read is the same teardown-racy
+        // IOException surface hardened in #238 on the sibling close test.
+        await TestPoll.UntilAsync(
+            () => subs.Current == 1,
+            TimeSpan.FromSeconds(5),
+            "SSE subscriber count should reach 1 after the client connects");
 
         subs.Current.Should().Be(1);
     }
@@ -173,9 +177,10 @@ public class EventsEndpointsTests
             },
             cts.Token);
 
+        // The helper only returns once both required fragments are present, so the
+        // changedSectionIds/count checks would be tautological here. Assert only what
+        // the helper does NOT guarantee — the SSE data-line prefix.
         dataLine.Should().StartWith("data: ");
-        dataLine.Should().Contain("\"changedSectionIds\":[\"review-requested\"]");
-        dataLine.Should().Contain("\"newOrUpdatedPrCount\":1");
     }
 
     /// <summary>
@@ -200,7 +205,9 @@ public class EventsEndpointsTests
 
             var dataLine = await reader.ReadLineAsync(ct);
             if (dataLine is null)
-                continue;
+                throw new InvalidOperationException(
+                    "SSE stream ended mid-frame: an 'event: inbox-updated' line was read " +
+                    "but no following data line arrived");
 
             var allPresent = true;
             foreach (var fragment in requiredFragments)
