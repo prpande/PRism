@@ -9,7 +9,7 @@ import { LockIcon, PanelsIcon, SparkIcon } from './welcomeIcons';
 const BENEFITS: ReadonlyArray<{ Icon: FC; text: string }> = [
   {
     Icon: LockIcon,
-    text: 'Local-first by design. Your token lives in your OS keychain, never on someone else’s server.',
+    text: 'Local-first by design. Your token is stored encrypted on this machine, never on someone else’s server.',
   },
   {
     Icon: PanelsIcon,
