@@ -23,7 +23,7 @@ import type { PrReference } from '../../api/types';
 import { prRefKey } from '../../api/types';
 import { useOpenTabs } from '../../contexts/OpenTabsContext';
 import { useTabScrollMemory } from '../../hooks/useTabScrollMemory';
-import { useTopProgress } from '../../contexts/LoadingBarContext';
+import { LoadingBar } from '../LoadingBar';
 import { useActivationTransition } from '../../hooks/useActivationTransition';
 import { ErrorModal } from '../ErrorModal';
 import bannerReconcileStyles from './BannerReconcile.module.css';
@@ -55,9 +55,6 @@ export function PrDetailView({
   const navigate = useNavigate();
 
   const { data, isLoading, error, reload } = usePrDetail(prRef);
-  // Only the active (route-matched) tab feeds the global bar; hidden keep-alive
-  // tabs pass false. Per-instance key so two mounted views never collide.
-  useTopProgress(`pr-detail:${refKey}`, active && isLoading);
   const updates = useActivePrUpdates(prRef);
   const draftSession = useDraftSession(prRef);
   // Refetch draft session when other tabs / the reload pipeline mutate
@@ -267,6 +264,10 @@ export function PrDetailView({
 
   return (
     <div className={pageClassName} data-prref={refKey} hidden={!active}>
+      {/* Per-tab loading bar pinned to THIS tab's content boundary (not a global
+          screen-top bar) — each open PR tab owns its own. Shows on cold load and
+          background reload; self-contained, so no layout shift. */}
+      <LoadingBar active={active && isLoading} data-testid={`pr-loading-bar:${refKey}`} />
       <PrHeader
         reference={prRef}
         loading={!data && isLoading}

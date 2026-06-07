@@ -1,9 +1,16 @@
-# Loading affordance: high-fidelity skeletons + global top progress bar
+# Loading affordance: high-fidelity skeletons + per-tab loading bar
 
-- **Status:** Design — awaiting human review
+- **Status:** Design — implemented (PR #248); revised per B1 feedback
 - **Issues:** #181 (PR-detail: no clear loading affordance on open), #147 (PrHeader empty title/author on cold-load — folded in), #244 (inbox cold-load shows a generic spinner — sibling, PR2)
 - **Worktree / branch:** `feature/181-loading-affordance`
 - **Date:** 2026-06-06
+
+## Revision — 2026-06-07 (B1 feedback) — supersedes where noted
+
+Owner B1 review of PR #248 reversed two decisions below. The code and these notes are authoritative; the original prose in §4.5 and the §3 buttons rows is kept for history but **superseded**:
+
+1. **The progress bar is PER-TAB, not global.** It is no longer a single bar pinned to the screen top (the "Y" decision in §4.5). Each open PR tab renders its own `LoadingBar` pinned to **that tab's content boundary** (directly below the tab strip). New component `components/LoadingBar/LoadingBar.tsx` — self-contained (an absolute bar inside a zero-height relative slot, so no positioned-ancestor dependency and no layout shift). The global `LoadingBarContext` / `useTopProgress` / app-root mount are **removed**; `PrDetailView` renders `<LoadingBar active={active && isLoading} />` directly. PR2's inbox drops the same component at the inbox content top.
+2. **No buttons in the loading state, as a rule.** The header action group (Verdict/Submit/Ask-AI/Open-in-GitHub) and the collapse-header toggle are **not rendered while `loading`** (previously "kept real"). Rationale: nothing should be clickable before the PR loads, and verdict/submit availability depends on merged-vs-open state we don't have yet — keep that logic out of the loading state. The body skeleton also drops its button-shaped "Review files" CTA placeholder.
 
 ## 1. Problem
 
@@ -87,7 +94,7 @@ Render a skeleton that is the **same DOM shape** as the loaded view. Two parts:
 | Subtitle branch/CI/mergeability chips | chips | two chip-shaped `<Skeleton>`s |
 | Tab strip (Overview/Files/Drafts) | real | **real** static chrome |
 | Collapse toggle | real | **real** |
-| Action buttons (Verdict/Submit/Ask AI/Open-in-GitHub) | real | **kept real** — already safe on cold load: `VerdictPicker`/`SubmitButton` are `disabled={!session}` (session is null until the draft session loads), `AskAiButton` only toggles a drawer (no PR data), `OpenInGitHubButton` renders nothing without `htmlUrl`. So no data-dependent action can fire against null data. |
+| Action buttons (Verdict/Submit/Ask AI/Open-in-GitHub) | ~~real~~ | **SUPERSEDED (Rev 2026-06-07): not rendered while loading.** (Originally "kept real" because they were `disabled={!session}` etc.; B1 feedback removed them entirely — no clickable buttons before load, and no merged-vs-open logic in the loading state.) |
 
 Implementation: `PrHeader` already receives `title`/`author`/etc. as props that are empty on cold load. Add a `loading?: boolean` prop **derived by `PrDetailView` as `!data && isLoading`** — the identical predicate to the body gate. This matters on the **error** path (`data === null`, `isLoading === false`): deriving header `loading` from `data === null` alone would leave the header shimmering behind the `ErrorModal` (and briefly after the user dismisses it, before `navigate('/')` lands) — a header skeleton with no body. Sharing the body's `!data && isLoading` predicate clears the header skeleton exactly when the body stops showing one. The prop swaps the title/author/chip slots for `<Skeleton>`s; no structural divergence — same elements, same grid. **Existing `PrHeader` tests** run with `loading` omitted/false and must stay green; any test asserting on the `h1` title or author element presence is reviewed for selector assumptions that the `loading=true` swap would break (see §7).
 
@@ -118,7 +125,7 @@ Replaces the centered spinner branch in `InboxPage` (`isLoading && !data`). Mirr
 
 Static counts (how many section/row placeholders) are fixed constants — a plausible-looking shape, not data-driven. **On resolution** the skeleton is replaced wholesale by the real sections, or by `EmptyAllSections` when the inbox has no PRs; a one-time layout shift as fixed placeholders give way to real content is accepted (this is a local PoC, not a CLS-budgeted public page).
 
-### 4.5 Global top progress bar (the "Y" decision)
+### 4.5 ~~Global top progress bar (the "Y" decision)~~ — SUPERSEDED by Revision 2026-06-07 (now a per-tab `LoadingBar`)
 
 **Component** — `frontend/src/components/TopProgressBar/TopProgressBar.tsx`, mounted once at the app root (in `App.tsx`, above `<Routes>`). Fixed to the viewport top, full width, ~3px, high `z-index` (below modal/toast layers, above page content). **Accent color** uses the existing accent token (the same one `PrTabStrip` uses for the active-tab border — verified at plan time; no new token), so light/dark are both covered by the established surface ladder. Indeterminate sliding animation while active; on the active→idle transition it sweeps to 100% then fades out (~200 ms). This bar finish is **independent** of the skeleton lifecycle — the bar may still be fading while content is already on screen, which is the normal NProgress-style idiom, not a coordination bug. Honors `prefers-reduced-motion`: while active the bar sits at a fixed ~80% fill (no slide); on idle it **disappears directly from that fill** — no jump-to-100%, no fade, a single instant hide. This applies to both the success and the error completion paths. `aria-hidden` (the per-surface skeletons/spinners carry the AT-facing busy state; a global indeterminate bar would be screen-reader noise).
 
@@ -164,12 +171,12 @@ Header and body share the `!data && isLoading` predicate, so on error both stop 
 
 **PR1 — closes #181 + #147** (PR-detail + shared infrastructure):
 - `components/Skeleton/Skeleton.tsx` (+`.module.css`) — new primitive.
-- `contexts/LoadingBarContext.tsx` — new provider/hook.
-- `components/TopProgressBar/TopProgressBar.tsx` (+`.module.css`) — new bar.
-- `App.tsx` — mount `LoadingBarProvider` + `<TopProgressBar/>` at root.
+- `components/LoadingBar/LoadingBar.tsx` (+`.module.css`) — new **per-tab** bar (Rev 2026-06-07; replaces the ~~`contexts/LoadingBarContext.tsx`~~ + ~~`components/TopProgressBar/`~~ global design). Self-contained, takes `active: boolean`.
+- `App.tsx` — ~~mount `LoadingBarProvider` + `<TopProgressBar/>`~~ **no change** (Rev 2026-06-07: the bar is per-tab now, not app-root).
 - `hooks/usePrDetail.ts` — drop `showSkeleton` from `UsePrDetailResult` and the `useDelayedLoading(isLoading)` call (its only consumer, `PrDetailView`, now reads `isLoading`). `useDelayedLoading` and its other callers (`useFileDiff`, `useUnionDiff`) untouched.
-- `components/PrDetail/PrHeader.tsx` — `loading` prop swaps title/author/chip slots for skeletons.
-- `components/PrDetail/PrDetailView.tsx` — destructure `isLoading`; change body gate to `!data && isLoading`; derive `loading={!data && isLoading}` for `PrHeader`; replace `PrDetailSkeleton` body with the Overview-shaped skeleton (root keeps `data-testid="pr-detail-skeleton"`); feed `useTopProgress('pr-detail:' + prRefKey, active && isLoading)`. (No `useDelayedLoading` change — see §4.2.)
+- `components/PrDetail/PrHeader.tsx` — `loading` prop swaps title/author/chip slots for skeletons **and hides the action group + collapse toggle** (Rev 2026-06-07).
+- `components/PrDetail/PrDetailSkeleton.tsx` — new; Overview-shaped body skeleton, **no button-shaped CTA** (Rev 2026-06-07).
+- `components/PrDetail/PrDetailView.tsx` — destructure `isLoading`; change body gate to `!data && isLoading`; derive `loading={!data && isLoading}` for `PrHeader`; render `<PrDetailSkeleton/>`; render `<LoadingBar active={active && isLoading} />` at the tab content top (Rev 2026-06-07; replaces ~~`useTopProgress('pr-detail:' + prRefKey, …)`~~). (No `useDelayedLoading` change — see §4.2.)
 - `components/PrDetail/PrDetailView.freshness.test.tsx` + `PrDetailView.test.tsx` + `PrTabHost.test.tsx` — reshape the `usePrDetail` mock: drop `showSkeleton`, add `isLoading`. Update the freshness test's #180 assertion to query `data-testid="pr-detail-skeleton"` and its background-reload injection (`showSkeleton: true` → `isLoading: true`). Without the `isLoading` field the new `!data && isLoading` gate reads `undefined` and a cold-load skeleton assertion would pass *vacuously*.
 
 **PR2 — closes sibling inbox issue** (reuses PR1 primitives):
@@ -199,7 +206,7 @@ Two PRs (not one) for reviewability: PR1 establishes the primitives + closes #18
 ## 8. Open decisions (resolved)
 
 - **Treatment:** C+Y — content-shaped skeletons on both surfaces **and** a global top bar. (User-selected with the footgun disclosed.)
-- **Header action buttons during load:** kept real (already `disabled={!session}` where data-dependent).
+- **Header action buttons during load:** ~~kept real~~ → **removed during load** (Rev 2026-06-07); the body CTA placeholder is dropped too.
 - **Bar store:** keyed-boolean signal map, **not** a ref-counted counter (StrictMode-safe by construction; no watchdog timer needed). PR-detail uses a **per-instance key** (`'pr-detail:'+prRefKey`) so two mounted keep-alive views never collide on one key. — revised from the first draft's ref-count (round 1) and single-key (round 2) after ce-doc-review.
 - **Timing fix:** gate `PrDetailView` body on `!data && isLoading`; derive `PrHeader loading` from the *same* predicate; trim `usePrDetail`'s now-orphaned `showSkeleton`. Leave `useDelayedLoading` itself untouched. — revised from the first draft's `immediate` option (round 1) and the header/body predicate split (round 2).
 - **PR split:** two PRs.

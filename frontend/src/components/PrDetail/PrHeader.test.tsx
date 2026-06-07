@@ -28,9 +28,19 @@ describe('PrHeader loading', () => {
     expect(screen.getByTestId('pr-header-title-skeleton')).toBeInTheDocument();
   });
 
-  it('renders the real (empty) title element when not loading', () => {
+  it('renders no action buttons or collapse toggle while loading (no clicks before load)', () => {
+    renderHeader({ loading: true });
+    // The Submit-review action and the header-collapse toggle are real,
+    // state-dependent buttons — they must not render in the loading state.
+    expect(screen.queryByRole('button', { name: /submit review/i })).toBeNull();
+    expect(screen.queryByTestId('pr-header-collapse-toggle')).toBeNull();
+    expect(screen.queryByRole('button', { name: /open in github/i })).toBeNull();
+  });
+
+  it('renders the real (empty) title element + the collapse toggle when not loading', () => {
     renderHeader({ loading: false, title: 'Real title' });
     expect(screen.queryByTestId('pr-header-title-skeleton')).toBeNull();
     expect(screen.getByText('Real title')).toBeInTheDocument();
+    expect(screen.getByTestId('pr-header-collapse-toggle')).toBeInTheDocument();
   });
 });

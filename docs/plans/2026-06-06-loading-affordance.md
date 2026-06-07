@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Revision 2026-06-07 (B1 feedback, applies to PR1 + PR2):** The progress bar is **per-tab**, not global — a self-contained `components/LoadingBar/LoadingBar.tsx` rendered at each surface's content top, replacing the `LoadingBarContext` / `useTopProgress` / app-root `TopProgressBar` that Tasks 2–4 describe. And the loading state renders **no buttons** — `PrHeader` hides its action group + collapse toggle while `loading`, and `PrDetailSkeleton` drops the CTA placeholder. Where the tasks below say "global top bar", "`LoadingBarContext`", "`useTopProgress`", or "CTA skeleton", read the revised design in the spec's "Revision — 2026-06-07" block. PR2 (inbox) renders `<LoadingBar active={isLoading}/>` at the inbox content top instead of `useTopProgress('inbox', …)`.
+
 **Goal:** Replace weak loading states on PR-detail (#181/#147) and Inbox (#244) with immediate, content-shaped skeletons, plus a global top progress bar.
 
 **Architecture:** A shared `<Skeleton>` primitive backs content-shaped skeletons on both surfaces. PR-detail's body gate changes from `!data && showSkeleton` (100ms anti-flash) to `!data && isLoading` (instant on cold open; keeps content on background reload — #180 preserved). A keyed-boolean `LoadingBarContext` drives a global `<TopProgressBar>` at the app root; the inbox and the *active* PR-detail tab feed it via per-instance keys.

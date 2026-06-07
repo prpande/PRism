@@ -1,11 +1,20 @@
+/* Zero-height relative slot: gives the absolute bar a positioning context at the
+   top of the host container and keeps it out of normal flow (no layout shift
+   when it toggles). */
+.slot {
+  position: relative;
+  height: 0;
+}
+
 .bar {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
-  width: 100%;
+  right: 0;
   height: 3px;
-  z-index: 60; /* above page content, below modal/toast (which sit higher) */
+  z-index: 5; /* above tab content, below banners / modals / toasts */
   pointer-events: none;
+  overflow: hidden; /* clip the indeterminate slide to the container width */
   opacity: 0;
   transition: opacity 200ms ease;
 }

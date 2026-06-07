@@ -438,55 +438,61 @@ export function PrHeader({
             {iterationLabel && <span className="chip">{iterationLabel}</span>}
           </div>
         </div>
-        <div className={styles.prActions}>
-          {/* Only when nothing is in flight in *this* tab — re-firing submit()
+        {/* No action buttons during cold load: nothing is clickable before the PR
+            is loaded, and verdict/submit availability depends on merged-vs-open
+            state we don't have yet — keep buttons out of the loading state as a
+            rule rather than threading that logic through the skeleton. */}
+        {!loading && (
+          <div className={styles.prActions}>
+            {/* Only when nothing is in flight in *this* tab — re-firing submit()
               over an active pipeline would 409 and (caught) wedge the dialog. */}
-          {session && submit.state.kind === 'idle' && (
-            <SubmitInProgressBadge session={session} onResume={onResume} />
-          )}
-          {/* Verdict picker is hidden (not disabled) on a closed/merged PR — a
+            {session && submit.state.kind === 'idle' && (
+              <SubmitInProgressBadge session={session} onResume={onResume} />
+            )}
+            {/* Verdict picker is hidden (not disabled) on a closed/merged PR — a
               verdict can't be submitted there (spec § 13.1). */}
-          {!isClosedOrMerged && (
-            <VerdictPicker
-              value={session?.draftVerdict ?? null}
-              verdictStatus={session?.draftVerdictStatus}
-              disabled={!session || inSubmitFlow}
-              onChange={patchVerdict}
-            />
-          )}
-          {/* Read order on a closed/merged PR: [Discard all drafts | Submit (disabled)]. */}
-          {session && isClosedOrMerged && (
-            <DiscardAllDraftsButton
-              prState={prState}
-              session={session}
-              onDiscard={onDiscardAllDrafts}
-            />
-          )}
-          {/* Closed-dialog discard surface (spec § 4.9) — mutually exclusive
+            {!isClosedOrMerged && (
+              <VerdictPicker
+                value={session?.draftVerdict ?? null}
+                verdictStatus={session?.draftVerdictStatus}
+                disabled={!session || inSubmitFlow}
+                onChange={patchVerdict}
+              />
+            )}
+            {/* Read order on a closed/merged PR: [Discard all drafts | Submit (disabled)]. */}
+            {session && isClosedOrMerged && (
+              <DiscardAllDraftsButton
+                prState={prState}
+                session={session}
+                onDiscard={onDiscardAllDrafts}
+              />
+            )}
+            {/* Closed-dialog discard surface (spec § 4.9) — mutually exclusive
               with the SubmitDialog's footer Discard button via `!dialogOpen`. */}
-          {session?.pendingReviewId != null && !dialogOpen && (
-            <button
-              type="button"
-              className={styles.pendingReviewPill}
-              data-testid="pending-review-pill"
-              onClick={() => {
-                setPillDiscardError(null);
-                setPillDiscardModalOpen(true);
-              }}
-            >
-              Pending review on GitHub · Discard
-            </button>
-          )}
-          <SubmitButton
-            session={session ?? EMPTY_SESSION}
-            headShaDrift={headShaDrift}
-            validatorResults={validatorResults}
-            disabled={!session || inSubmitFlow || isClosedOrMerged}
-            onSubmit={() => setDialogOpen(true)}
-          />
-          <AskAiButton onClick={toggleAskAi} />
-          <OpenInGitHubButton href={htmlUrl} />
-        </div>
+            {session?.pendingReviewId != null && !dialogOpen && (
+              <button
+                type="button"
+                className={styles.pendingReviewPill}
+                data-testid="pending-review-pill"
+                onClick={() => {
+                  setPillDiscardError(null);
+                  setPillDiscardModalOpen(true);
+                }}
+              >
+                Pending review on GitHub · Discard
+              </button>
+            )}
+            <SubmitButton
+              session={session ?? EMPTY_SESSION}
+              headShaDrift={headShaDrift}
+              validatorResults={validatorResults}
+              disabled={!session || inSubmitFlow || isClosedOrMerged}
+              onSubmit={() => setDialogOpen(true)}
+            />
+            <AskAiButton onClick={toggleAskAi} />
+            <OpenInGitHubButton href={htmlUrl} />
+          </div>
+        )}
       </div>
       <div className={styles.subTabRow}>
         <PrSubTabStrip
@@ -495,18 +501,22 @@ export function PrHeader({
           fileCount={fileCount}
           draftsCount={draftsCount}
         />
-        <button
-          type="button"
-          className={styles.collapseToggle}
-          data-testid="pr-header-collapse-toggle"
-          aria-expanded={!collapsed}
-          aria-controls={metaId}
-          aria-label={collapsed ? 'Expand PR details' : 'Collapse PR details'}
-          title={collapsed ? 'Expand PR details' : 'Collapse PR details'}
-          onClick={toggleCollapsed}
-        >
-          <CollapseChevron />
-        </button>
+        {/* No collapse toggle during cold load — keep buttons out of the loading
+            state (there's nothing to collapse yet). */}
+        {!loading && (
+          <button
+            type="button"
+            className={styles.collapseToggle}
+            data-testid="pr-header-collapse-toggle"
+            aria-expanded={!collapsed}
+            aria-controls={metaId}
+            aria-label={collapsed ? 'Expand PR details' : 'Collapse PR details'}
+            title={collapsed ? 'Expand PR details' : 'Collapse PR details'}
+            onClick={toggleCollapsed}
+          >
+            <CollapseChevron />
+          </button>
+        )}
       </div>
       {submit.lastResume && (
         <ImportedDraftsBanner
