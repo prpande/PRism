@@ -26,6 +26,7 @@ import { ImportedDraftsBanner } from './ForeignPendingReviewModal/ImportedDrafts
 import styles from './PrHeader.module.css';
 import { AskAiButton } from './AskAiButton';
 import { Avatar } from '../Avatar/Avatar';
+import { Skeleton } from '../Skeleton';
 import { useAskAiDrawer } from '../../contexts/AskAiDrawerContext';
 import { SubmitDialog } from './SubmitDialog/SubmitDialog';
 import { OpenInGitHubButton } from './OpenInGitHubButton';
@@ -122,6 +123,8 @@ interface PrHeaderProps {
   closedAt?: string | null;
   // #131 — authoritative PR web URL (PrDetailPr.htmlUrl). Absent → no button.
   htmlUrl?: string | null;
+  /** True while the PR detail is cold-loading (!data && isLoading). Swaps title/author/chip slots for skeletons. */
+  loading?: boolean;
 }
 
 export function PrHeader({
@@ -148,6 +151,7 @@ export function PrHeader({
   mergedAt,
   closedAt,
   htmlUrl,
+  loading = false,
 }: PrHeaderProps) {
   const validatorResults: ValidatorResult[] = useAiGate('preSubmitValidators')
     ? CANNED_PRESUBMIT_VALIDATOR_RESULTS
@@ -388,7 +392,17 @@ export function PrHeader({
             <span>#{reference.number}</span>
           </div>
           <h1 className={styles.prTitle} data-testid="pr-title">
-            {title}
+            {loading ? (
+              <>
+                {/* The skeleton is aria-hidden; without this the <h1> would be an
+                    empty/unnamed heading in the a11y tree (an AT user navigating
+                    by heading would land on a blank one). */}
+                <span className="sr-only">Loading pull request…</span>
+                <Skeleton width="60%" height={22} data-testid="pr-header-title-skeleton" />
+              </>
+            ) : (
+              title
+            )}
           </h1>
           {prState === 'merged' && mergedAt && (
             <span className={styles.statusMerged}>Merged {formatAge(mergedAt)}</span>
@@ -397,10 +411,31 @@ export function PrHeader({
             <span className={styles.statusClosed}>Closed {formatAge(closedAt)}</span>
           )}
           <div className={`row gap-3 muted-2 ${styles.prSubtitle}`}>
-            <span className={`pr-subtitle-author ${styles.subtitleAuthor}`}>
-              <Avatar src={avatarUrl} login={author} size="sm" />
-              {author}
+            {/* While loading the author slot holds only aria-hidden skeletons;
+                hide the whole span from AT so it isn't an empty nameless slot
+                (the h1's sr-only "Loading pull request…" carries the signal). */}
+            <span
+              className={`pr-subtitle-author ${styles.subtitleAuthor}`}
+              aria-hidden={loading || undefined}
+            >
+              {loading ? (
+                <>
+                  <Skeleton circle width={20} data-testid="pr-header-author-skeleton" />
+                  <Skeleton width={110} height={12} />
+                </>
+              ) : (
+                <>
+                  <Avatar src={avatarUrl} login={author} size="sm" />
+                  {author}
+                </>
+              )}
             </span>
+            {loading && (
+              <>
+                <Skeleton width={90} height={18} radius={9} data-testid="pr-header-chip-skeleton" />
+                <Skeleton width={60} height={18} radius={9} data-testid="pr-header-chip-skeleton" />
+              </>
+            )}
             {branchInfo && (
               <span className="pr-subtitle-branch">
                 {branchInfo.headBranch} → {branchInfo.baseBranch}
@@ -415,55 +450,61 @@ export function PrHeader({
             {iterationLabel && <span className="chip">{iterationLabel}</span>}
           </div>
         </div>
-        <div className={styles.prActions}>
-          {/* Only when nothing is in flight in *this* tab — re-firing submit()
+        {/* No action buttons during cold load: nothing is clickable before the PR
+            is loaded, and verdict/submit availability depends on merged-vs-open
+            state we don't have yet — keep buttons out of the loading state as a
+            rule rather than threading that logic through the skeleton. */}
+        {!loading && (
+          <div className={styles.prActions}>
+            {/* Only when nothing is in flight in *this* tab — re-firing submit()
               over an active pipeline would 409 and (caught) wedge the dialog. */}
-          {session && submit.state.kind === 'idle' && (
-            <SubmitInProgressBadge session={session} onResume={onResume} />
-          )}
-          {/* Verdict picker is hidden (not disabled) on a closed/merged PR — a
+            {session && submit.state.kind === 'idle' && (
+              <SubmitInProgressBadge session={session} onResume={onResume} />
+            )}
+            {/* Verdict picker is hidden (not disabled) on a closed/merged PR — a
               verdict can't be submitted there (spec § 13.1). */}
-          {!isClosedOrMerged && (
-            <VerdictPicker
-              value={session?.draftVerdict ?? null}
-              verdictStatus={session?.draftVerdictStatus}
-              disabled={!session || inSubmitFlow}
-              onChange={patchVerdict}
-            />
-          )}
-          {/* Read order on a closed/merged PR: [Discard all drafts | Submit (disabled)]. */}
-          {session && isClosedOrMerged && (
-            <DiscardAllDraftsButton
-              prState={prState}
-              session={session}
-              onDiscard={onDiscardAllDrafts}
-            />
-          )}
-          {/* Closed-dialog discard surface (spec § 4.9) — mutually exclusive
+            {!isClosedOrMerged && (
+              <VerdictPicker
+                value={session?.draftVerdict ?? null}
+                verdictStatus={session?.draftVerdictStatus}
+                disabled={!session || inSubmitFlow}
+                onChange={patchVerdict}
+              />
+            )}
+            {/* Read order on a closed/merged PR: [Discard all drafts | Submit (disabled)]. */}
+            {session && isClosedOrMerged && (
+              <DiscardAllDraftsButton
+                prState={prState}
+                session={session}
+                onDiscard={onDiscardAllDrafts}
+              />
+            )}
+            {/* Closed-dialog discard surface (spec § 4.9) — mutually exclusive
               with the SubmitDialog's footer Discard button via `!dialogOpen`. */}
-          {session?.pendingReviewId != null && !dialogOpen && (
-            <button
-              type="button"
-              className={styles.pendingReviewPill}
-              data-testid="pending-review-pill"
-              onClick={() => {
-                setPillDiscardError(null);
-                setPillDiscardModalOpen(true);
-              }}
-            >
-              Pending review on GitHub · Discard
-            </button>
-          )}
-          <SubmitButton
-            session={session ?? EMPTY_SESSION}
-            headShaDrift={headShaDrift}
-            validatorResults={validatorResults}
-            disabled={!session || inSubmitFlow || isClosedOrMerged}
-            onSubmit={() => setDialogOpen(true)}
-          />
-          <AskAiButton onClick={toggleAskAi} />
-          <OpenInGitHubButton href={htmlUrl} />
-        </div>
+            {session?.pendingReviewId != null && !dialogOpen && (
+              <button
+                type="button"
+                className={styles.pendingReviewPill}
+                data-testid="pending-review-pill"
+                onClick={() => {
+                  setPillDiscardError(null);
+                  setPillDiscardModalOpen(true);
+                }}
+              >
+                Pending review on GitHub · Discard
+              </button>
+            )}
+            <SubmitButton
+              session={session ?? EMPTY_SESSION}
+              headShaDrift={headShaDrift}
+              validatorResults={validatorResults}
+              disabled={!session || inSubmitFlow || isClosedOrMerged}
+              onSubmit={() => setDialogOpen(true)}
+            />
+            <AskAiButton onClick={toggleAskAi} />
+            <OpenInGitHubButton href={htmlUrl} />
+          </div>
+        )}
       </div>
       <div className={styles.subTabRow}>
         <PrSubTabStrip
@@ -472,18 +513,22 @@ export function PrHeader({
           fileCount={fileCount}
           draftsCount={draftsCount}
         />
-        <button
-          type="button"
-          className={styles.collapseToggle}
-          data-testid="pr-header-collapse-toggle"
-          aria-expanded={!collapsed}
-          aria-controls={metaId}
-          aria-label={collapsed ? 'Expand PR details' : 'Collapse PR details'}
-          title={collapsed ? 'Expand PR details' : 'Collapse PR details'}
-          onClick={toggleCollapsed}
-        >
-          <CollapseChevron />
-        </button>
+        {/* No collapse toggle during cold load — keep buttons out of the loading
+            state (there's nothing to collapse yet). */}
+        {!loading && (
+          <button
+            type="button"
+            className={styles.collapseToggle}
+            data-testid="pr-header-collapse-toggle"
+            aria-expanded={!collapsed}
+            aria-controls={metaId}
+            aria-label={collapsed ? 'Expand PR details' : 'Collapse PR details'}
+            title={collapsed ? 'Expand PR details' : 'Collapse PR details'}
+            onClick={toggleCollapsed}
+          >
+            <CollapseChevron />
+          </button>
+        )}
       </div>
       {submit.lastResume && (
         <ImportedDraftsBanner

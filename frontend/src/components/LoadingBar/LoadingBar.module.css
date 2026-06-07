@@ -1,0 +1,65 @@
+/* Zero-height relative slot: gives the absolute bar a positioning context at the
+   top of the host container and keeps it out of normal flow (no layout shift
+   when it toggles). */
+.slot {
+  position: relative;
+  height: 0;
+}
+
+.bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 5; /* above tab content, below banners / modals / toasts */
+  pointer-events: none;
+  overflow: hidden; /* clip the indeterminate slide to the container width */
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.bar[data-active='true'] {
+  opacity: 1;
+}
+
+.fill {
+  height: 100%;
+  width: 40%;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+/* Animate only while active. Each open PR tab keeps its own (hidden) bar mounted
+   under keep-alive; gating on data-active stops idle bars from compositing a
+   forever-looping animation off-screen. */
+.bar[data-active='true'] .fill {
+  animation: indeterminate 1.1s ease-in-out infinite;
+}
+
+/* Animate transform (compositor-only) rather than margin-left (layout/reflow).
+   The fill is 40% wide: translateX(-100%) parks it fully off the left edge,
+   translateX(250%) carries its left edge to the container's right edge (fully
+   off the right) — the same sweep the old margin-left −40%→100% produced. */
+@keyframes indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    transition: none;
+  }
+  .fill {
+    width: 80%;
+  }
+  /* Match the active rule's specificity (0,2,1) so this actually overrides the
+     animation when the bar is active. */
+  .bar[data-active='true'] .fill {
+    animation: none;
+  }
+}
