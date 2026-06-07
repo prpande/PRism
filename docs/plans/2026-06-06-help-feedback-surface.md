@@ -18,6 +18,20 @@
 
 ---
 
+## Amendment (2026-06-07): PR1 Help is a routed MODAL, not a page
+
+After PR1's first cut shipped a full-page `/help`, owner review redirected it to a **routed modal** mirroring Settings (see the spec's matching amendment). PR1 below described Tasks 1–7 against a page; the as-built PR1 differs as follows (Tasks 8–18 / PR2 are unchanged):
+
+- **Task 1 (HelpIcon)** — unchanged; the header `?` glyph still applies.
+- **Tasks 2–3 (HelpPage + `/help` page route)** — superseded. Instead: `components/Help/HelpModal.tsx` (bespoke portal modal like `SettingsModal` — scrim, focus trap, Esc/scrim/✕ close, auth-aware focus-restore), `components/Help/HelpModalRoutes.tsx` (ungated analog of `SettingsModalRoutes`), `components/Help/HelpSectionIcons.tsx` (accent-tracking SVGs), and `HelpModal.module.css`. Content is the same five sections, now **collapsible accordion** items (first open) with accent-colored icons. `App.tsx`: removed the `/help` page route, made `backgroundLocation` synthesise an auth-aware background for `/help`, and mounted `<HelpModalRoutes>`. `useEffectiveLocation` treats `/help` like `/settings`.
+- **Tasks 4–5 (header `?` + `/welcome` Help link)** — unchanged behavior, but both triggers now pass `state={{ backgroundLocation: location }}` so the modal opens over the current page.
+- **Task 6 (e2e)** — asserts the dialog (modal) rather than a page; adds a first-run welcome-footer case.
+- Adversarial review fixes folded in: conditional `aria-controls`, `useId` body ids, re-auth focus fallback (`setup-card`), the Settings link forwards the real background, and the `useEffectiveLocation` `/help` guard.
+
+The page-oriented task bodies below are retained for history; the bullet list above is the source of truth for PR1's Help surface.
+
+---
+
 # PR1 — Help surface (#210)
 
 > Frontend-only, B1 only. Independently shippable; its value does not depend on PR2. The `/welcome` `Send feedback` stub and the HelpPage feedback button are left for PR2.

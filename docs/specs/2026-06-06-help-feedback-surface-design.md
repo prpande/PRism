@@ -36,16 +36,20 @@ The two are coupled by #211's own acceptance criterion: the feedback entry point
 
 **Local-first boundary.** PRism's "local-first" promise (`WelcomePage`: *"your PAT never leaves this device"*) is a **credential/data-storage** promise: the PAT and PR data stay on-device. Feedback is an explicit, **user-initiated** action that deliberately produces public off-device state (a GitHub issue). The PAT is still used only locally by the sidecar — not exfiltrated — so the literal promise holds; the boundary is stated so the feature doesn't read as contradicting the welcome screen.
 
+## Amendment (2026-06-07): Help is a routed MODAL, not a standalone page
+
+Owner review of PR1's first cut (a full-page `/help`) changed the presentation: Help is now a **routed modal** that opens *over* the page behind it, mirroring the Settings modal (`SettingsModalRoutes` + the `backgroundLocation` trick), with **collapsible accordion sections** and **accent-tracking SVG section icons** (`currentColor` under a `color: var(--accent)` wrapper — not fixed-color emoji). The route, the entry points (header `?`, `/welcome` footer), the auth-agnostic reachability, and all content/copy are unchanged from the prose below — only the container changed from a page to a modal. Concretely: `HelpPage` → `HelpModal` (bespoke portal modal like `SettingsModal`) + `HelpModalRoutes` (ungated analog of `SettingsModalRoutes`); `App.tsx`'s `backgroundLocation` synthesises an auth-aware background for a cold `/help` deep-link (`/` authed, `unauthedTarget` otherwise); `useEffectiveLocation` treats `/help` like `/settings`. Wherever the text below says "page", read "modal". The diagram is updated; older "HelpPage / static page" references in §§2, 5, 10, 12 are superseded by this note.
+
 ## 3. Architecture overview
 
 ```
 Header (authed)            WelcomePage (first-run)
-   │ ? icon                   │ "Help"  "Send feedback" footer links
-   ▼                          ▼              │
- /help route  ◄───────────────┘              │
-   │ HelpPage (static guide; auth-agnostic)  │
-   │   └─ "Send feedback" button ────────────┤
-   ▼                                         ▼
+   │ ? icon (Link→/help)      │ "Help" (Link→/help)  "Send feedback" footer
+   ▼   +backgroundLocation    ▼   +backgroundLocation     │
+ /help (routed modal over the background page; auth-agnostic, ungated)
+   │ HelpModal — accordion sections, accent-colored icons │
+   │   └─ "Send feedback" button (PR2) ───────────────────┤
+   ▼                                                       ▼
         FeedbackDialog (modal, auth-adaptive)
                  │ submit
         ┌────────┴───────────────────────────────┐
@@ -119,10 +123,10 @@ The feedback repo slug defaults to `prpande/PRism-feedback`, needed by both the 
 
 ## 5. Frontend components
 
-- **`/help` route** — added to `App.tsx` Routes, rendered **outside** the `isAuthed` gates (like `/welcome`) so it resolves in first-run, rejected-token, and authed states.
-- **`HelpPage`** (`pages/HelpPage.tsx`) — static, scannable guide. **No loading/empty state** — fully static, bundled at build time, renders synchronously.
-  - **Hierarchy:** `<h1>Help`, then one `<h2>` per section, each with a stable `id`. Sections, in order: what PRism is → core loop (Inbox → PR detail → submit) → what each surface does → connect/replace your **GitHub PAT** (links to Settings → GitHub Connection; links to **#213**) → keyboard shortcuts (links to `⌘K`). A **"Send feedback"** button sits after the last section.
-  - **Copy constraints (anti-AI-slop):** each section opens with a *user task* ("To review a PR…"), not a feature blurb; surfaces named with their **exact in-app labels**; **no emoji/icons in headings**; concise, no screenshots.
+- **`/help` routed modal** (amended 2026-06-07) — `HelpModalRoutes` (an ungated analog of `SettingsModalRoutes`) matches `/help` and renders `HelpModal` over the page behind the scrim. Rendered **outside** the `isAuthed` gates so it resolves in first-run, rejected-token, and authed states. `App.tsx`'s `backgroundLocation` synthesises an auth-aware background for a cold `/help` deep-link (`/` authed, `unauthedTarget` otherwise); `useEffectiveLocation` treats `/help` like `/settings` so chrome (PrTabStrip/PrTabHost/AskAi drawer) keeps tracking the background.
+- **`HelpModal`** (`components/Help/HelpModal.tsx` + `HelpModalRoutes.tsx`) — a bespoke portal modal mirroring `SettingsModal` (scrim, focus trap, Esc / scrim-click / ✕ close, focus capture+restore with an auth-aware fallback landmark). **No loading/empty state** — fully static content, bundled at build time.
+  - **Hierarchy:** `<h2>Help` title; body is a vertical stack of **collapsible accordion sections** (`<button aria-expanded aria-controls>` + the shared `InboxCaret`; first section open by default). Each section header carries an **accent-tracking SVG icon** (`HelpSectionIcons`, `currentColor` under `.sectionIcon{color:var(--accent)}`). Sections, in order: what PRism is → review loop (Inbox → PR detail → submit) → main surfaces → connect/replace your **GitHub PAT** (authed → Link to Settings → GitHub connection, forwarding the page Help was opened over; unauthed → Link to `/setup`; both reference **#213** guidance) → keyboard shortcuts (`?` / `⌘/`) → Send feedback (PR2 placeholder).
+  - **Copy constraints (anti-AI-slop):** each section opens with a *user task* ("To review a PR…"), not a feature blurb; surfaces named with their **exact in-app labels**; section **icons are accent-colored SVGs, not emoji**; concise, no screenshots.
   - **Content fix:** says **GitHub PAT**, never "Azure DevOps token" (#210's body is stale; the app is GitHub-only).
 - **Header `?` icon** — a Link beside the `⚙` gear, rendered when `isAuthed`; navigates to `/help`; gains the active style + `aria-current="page"` when `pathname === '/help'` (mirrors `gearOn`). **Rejected-token** users (on `/setup`, `isAuthed` false) see no `?` — reachable via direct URL only, acceptable for that focused re-auth state. No always-visible `?` added (scope expansion).
 - **`/welcome` footer wiring** — the two inert `<span>` stubs become real controls: `Help` → `/help`; `Send feedback` → opens `FeedbackDialog`.
