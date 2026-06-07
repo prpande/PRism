@@ -133,7 +133,7 @@ verified against the module CSS:
 
 | Surface | Element to hook (carries the pin) | Token → scaled | Notes |
 |---------|-----------------------------------|----------------|-------|
-| Diff code (lines + gutter) | `DiffPane.module.css` `.diffTable` | `var(--text-sm)` | `.diffContent`/`.diffGutter` inherit → code + line numbers scale together |
+| Diff code (lines + gutter) | `tokens.css` `.diff-line` (the `<tr>`) | `var(--text-sm)` | **Correction (found in CI e2e):** each `<td>` inherits from the nearer `.diff-line` `<tr>`, which pins `var(--text-sm)` and *shadows* a value set on `.diffTable` — so the row is the effective hook. `.diffContent`/`.diffGutter` inherit it → code + line numbers scale together; `.diff-line--hunk-header` re-pins `var(--text-xs)` so `@@` markers stay fixed |
 | AI summary body | `AiSummaryCard.module.css` `.aiSummaryCard` | `var(--text-sm)` | body has no own pin → inherits from the card → scales |
 | AI summary category | `AiSummaryCard.module.css` `.aiSummaryCategory` | `var(--text-xs)` | own pin (data) → scale it separately. The `.aiSummaryChip` ("AI preview — sample…") is a disclaimer label and **stays fixed by design** |
 | Stats tile value | `StatsTiles.module.css` `.statsTileValue` | `var(--text-2xl)` | two separate pins → two edits |

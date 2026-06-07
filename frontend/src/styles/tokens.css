@@ -961,7 +961,12 @@ a:hover { text-decoration: underline; }
    (`.diff-line.diff-add` / `.diff-line.diff-rem` equivalents). */
 .diff-line {
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  /* #135: the diff <tr> is the EFFECTIVE font-size hook for diff code + gutter
+     line numbers — each <td> inherits from this nearer ancestor, so a font-size on
+     `.diffTable` alone is shadowed here. Scale on the row so code + line numbers
+     scale together. The `--hunk-header` row below re-pins var(--text-xs) (unscaled),
+     so the `@@ … @@` markers stay fixed. */
+  font-size: calc(var(--text-sm) * var(--content-scale));
 }
 .diff-line--insert {
   background: var(--diff-add-bg);
