@@ -97,6 +97,34 @@ function Get-ServeDetachedPaths {
     }
 }
 
+function Invoke-HealthProbe {
+    # GET /api/health: the only endpoint reachable from bare PowerShell (GET so
+    # OriginCheckMiddleware doesn't apply; auth-exempt via IsLivenessEndpoint).
+    # Returns the parsed body { port; version; dataDir } on a 200, else $null.
+    # A connection-refused (nobody listening / still starting) is expected during
+    # polling, not an error -- swallow it and return $null.
+    param([int]$Port, [int]$TimeoutSec = 2)
+    try {
+        $resp = Invoke-WebRequest -Uri "http://localhost:$Port/api/health" `
+            -UseBasicParsing -TimeoutSec $TimeoutSec -ErrorAction Stop
+        if ($resp.StatusCode -ne 200) { return $null }
+        return ($resp.Content | ConvertFrom-Json)
+    } catch {
+        return $null
+    }
+}
+
+function Get-PortOwnerPid {
+    # The app binds the 'localhost' hostname, so Kestrel listens on BOTH 127.0.0.1
+    # and ::1 -> Get-NetTCPConnection returns TWO rows with the SAME OwningProcess.
+    # Dedupe defensively (spec section 4.5). Returns the owning PID, or $null if free.
+    param([int]$Port)
+    $owner = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -ErrorAction SilentlyContinue |
+        Select-Object -Unique | Select-Object -First 1
+    return $owner
+}
+
 # --- main (skipped when the script is dot-sourced for isolated testing) ---
 if ($MyInvocation.InvocationName -ne '.') {
     Assert-Platform
