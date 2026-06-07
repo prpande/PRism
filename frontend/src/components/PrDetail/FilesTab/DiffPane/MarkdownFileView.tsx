@@ -44,9 +44,11 @@ export function MarkdownFileView({ rawContent, isLoading }: MarkdownFileViewProp
       </div>
       <div className={`markdown-file-view-content ${styles.markdownFileViewContent}`}>
         {mode === 'rendered' ? (
-          <MarkdownRenderer source={rawContent} />
+          <div data-testid="markdown-rendered">
+            <MarkdownRenderer source={rawContent} />
+          </div>
         ) : (
-          <pre className={`markdown-raw ${styles.markdownRaw}`}>
+          <pre className={`markdown-raw ${styles.markdownRaw}`} data-testid="markdown-raw">
             <code>{rawContent}</code>
           </pre>
         )}

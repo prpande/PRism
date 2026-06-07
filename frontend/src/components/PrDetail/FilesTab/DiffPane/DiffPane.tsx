@@ -328,7 +328,7 @@ export function DiffPane({
   if (isLoading && !file) {
     return (
       <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
-        <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+        <div className={`diff-pane-header ${styles.diffPaneHeader}`} data-testid="diff-pane-header">
           <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
           <Spinner size="sm" className={styles.diffPaneLoading} />
         </div>
@@ -339,7 +339,7 @@ export function DiffPane({
   if (!file || file.hunks.length === 0) {
     return (
       <div className={`diff-pane ${styles.diffPane}`} data-testid="diff-pane">
-        <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+        <div className={`diff-pane-header ${styles.diffPaneHeader}`} data-testid="diff-pane-header">
           <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
         </div>
         <div className={`diff-pane-body muted ${styles.diffPaneBody}`}>
@@ -621,7 +621,7 @@ export function DiffPane({
       className={`diff-pane ${modeClass}${wrapClass} ${styles.diffPane}`}
       data-testid="diff-pane"
     >
-      <div className={`diff-pane-header ${styles.diffPaneHeader}`}>
+      <div className={`diff-pane-header ${styles.diffPaneHeader}`} data-testid="diff-pane-header">
         <span className={`diff-pane-path ${styles.diffPanePath}`}>{selectedPath}</span>
         {/* Suppress the header spinner while the whole-file overlay spinner is
             active so only one role=status live region announces at a time. */}
@@ -781,7 +781,9 @@ function DiffLineRow({
             (line.newLineNum ?? '')
           )}
         </td>
-        <td className={`diff-content ${styles.diffContent}`}>{renderContent()}</td>
+        <td className={`diff-content ${styles.diffContent}`} data-testid="diff-code-line">
+          {renderContent()}
+        </td>
       </tr>
       {threadsAtLine && threadsAtLine.length > 0 && (
         <tr className={`diff-comment-row ${styles.diffCommentRow}`}>

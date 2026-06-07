@@ -24,11 +24,17 @@ export function PrDescription({ title, body, aiPreview }: PrDescriptionProps) {
 
   return (
     <section className={cardClass} data-testid="pr-description">
-      {!aiPreview && <div className={styles.prDescriptionTitle}>{title}</div>}
+      {!aiPreview && (
+        <div className={styles.prDescriptionTitle} data-testid="pr-description-title">
+          {title}
+        </div>
+      )}
       {isEmptyBody ? (
         <p className={`${styles.prDescriptionEmpty} muted`}>No description provided</p>
       ) : (
-        <MarkdownRenderer source={body} className={styles.prDescriptionBody} />
+        <div data-testid="pr-description-body">
+          <MarkdownRenderer source={body} className={styles.prDescriptionBody} />
+        </div>
       )}
     </section>
   );

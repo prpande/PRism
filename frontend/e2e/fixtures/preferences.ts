@@ -31,6 +31,7 @@ export function makeDefaultPreferences() {
       accent: 'indigo' as const,
       aiPreview: false,
       density: 'comfortable' as const,
+      contentScale: 'm' as const,
     },
     inbox: {
       sections: {
