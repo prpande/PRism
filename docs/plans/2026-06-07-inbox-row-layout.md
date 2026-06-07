@@ -666,24 +666,26 @@ In `InboxPage.module.css`, add `container-type` to `.sections` (currently lines 
 In `InboxRow.module.css`, append the responsive drops. Below the narrow threshold, shrink the tail and drop the diff bar first, then the AI chip:
 
 ```css
-/* Pane-relative responsive: the row responds to the .sections column width.
-   Alignment is a within-regime invariant — the metrics column shifts once at
-   the breakpoint (tail width changes), by design. Thresholds tuned in B1. */
-@container (max-width: 560px) {
+/* Pane-relative responsive: the row responds to the named inbox-sections
+   container's width. Alignment is a within-regime invariant — the metrics
+   column shifts once at the breakpoint (tail width changes), by design.
+   Threshold tuned in B1. */
+@container inbox-sections (max-width: 560px) {
   .row {
     --inbox-tail-w: 136px;
   }
+  /* Drop diff bar AND AI chip together — a squeezed-but-present chip clamps to a
+     cryptic ~1-char stub (caught in the B1 pass), worse than dropping it. */
   .diffSlot {
     display: none;
   }
-}
-
-@container (max-width: 460px) {
   .chip {
     display: none;
   }
 }
 ```
+
+(B1 note: the container is named `inbox-sections` (set on `.sections` in `InboxPage.module.css`) so a future ancestor container can't hijack the breakpoint; and the chip drops at the same 560px breakpoint as the diff bar rather than a separate 460px one.)
 
 - [ ] **Step 3: Sanity-run the suite + commit**
 

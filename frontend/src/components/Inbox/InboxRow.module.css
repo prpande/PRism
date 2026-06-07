@@ -244,12 +244,12 @@
   .row {
     --inbox-tail-w: 136px;
   }
+  /* Drop the diff bar AND the AI category chip together: at this width the chip
+     would otherwise clamp to a cryptic ~1-char stub rather than read as a label.
+     The +/− counts and comment count are kept (last to go). */
   .diffSlot {
     display: none;
   }
-}
-
-@container inbox-sections (max-width: 460px) {
   .chip {
     display: none;
   }

@@ -97,11 +97,10 @@ The row must respond to **its own width**, not the viewport. The inbox sections-
 
 So: establish a **container** on the `.sections` column — `container-type: inline-size` (inline-axis containment only; `.sections` is width-driven, not content-height-driven, so this is side-effect-free) — and drive the row with a `@container` query. This is new work (no container context exists today). The narrow threshold is a token, tuned in the B1 pass.
 
-Below the narrow threshold, drop tail content in **priority order** and shrink `--inbox-tail-w` so the title column reclaims the space:
+Below the narrow threshold, drop tail content and shrink `--inbox-tail-w` so the title column reclaims the space:
 
-1. Drop the **diff bar** first (most decorative; numbers still convey magnitude).
-2. Then the **AI chip**.
-3. **+/− counts** and **comment count** are last and effectively never drop.
+1. Drop the **diff bar** and the **AI category chip** together. (Priority intent is diff-bar-first, but the B1 pass showed a chip squeezed-but-not-dropped clamps to a cryptic ~1-character stub — worse than absent — so both drop at the same narrow breakpoint.)
+2. **+/− counts** and **comment count** are kept (last to go, effectively never drop).
 
 **Alignment is a within-regime invariant.** At the breakpoint `--inbox-tail-w` changes, so the metrics column x shifts *once* across the breakpoint — by design, not a defect. Within either regime, every row's metrics align. The meta line truncates (never wraps) at every width. No horizontal overflow at any width — verified in the B1 pass at a narrow pane.
 
