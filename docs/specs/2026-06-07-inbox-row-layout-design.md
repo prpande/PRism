@@ -78,13 +78,18 @@ No field is removed; this change is layout, not amputation. The deliberate pass 
 
 ### Status dot states
 
-| `ci` (open PRs only) | Dot | Token |
-|---|---|---|
-| `failing` | red | `--danger-fg` (existing) |
-| `pending` | amber | `--warning-fg` (existing) |
-| `none` | invisible, slot reserved | — (existing `opacity: 0`) |
+CI state must read **irrespective of the user-chosen accent** and without relying on hue. Two guarantees:
 
-Done PRs (merged/closed) are terminal and never show a CI dot (unchanged). The dot's `title`/tooltip names the state ("CI failing" / "CI pending"); the state is also folded into the `aria-label` (see Accessibility).
+- **Semantic colour, never accent-derived.** The dot uses fixed semantic tokens (`--danger-fg`, `--warning-fg`) that do **not** reference `--accent`, so changing the accent cannot recolour or wash out the CI signal. The accent only ever paints the unread bar — a separate element in a separate position (the 2px left edge), never the status dot.
+- **Shape distinguishes state, not just colour.** `failing` and `pending` differ in **shape**, so they're distinguishable in greyscale / for colour-blind users / against any accent. Colour is the secondary, reinforcing cue.
+
+| `ci` (open PRs only) | Shape | Colour token |
+|---|---|---|
+| `failing` | **solid** filled dot | `--danger-fg` (existing) |
+| `pending` | **hollow ring** dot (transparent fill, ~1.5px border) | `--warning-fg` (existing) |
+| `none` | invisible, slot reserved (existing `opacity: 0`) | — |
+
+Done PRs (merged/closed) are terminal and never show a CI dot (unchanged). The dot's `title`/tooltip names the state ("CI failing" / "CI pending"); the state is also folded into the `aria-label` (see Accessibility). The shape + semantic-colour + label combination means CI state is conveyed three ways, none of them dependent on the accent.
 
 ## Responsive behavior
 
@@ -112,7 +117,7 @@ Below the narrow threshold, drop tail content in **priority order** and shrink `
 **Vitest (`InboxRow.test.tsx`, extend):**
 - Title clamp class applied; full title present in the `title` attribute and `aria-label` even when visually clamped.
 - Meta renders single-line (no wrap container class / `nowrap`); author truncation class applied.
-- Status dot: `failing` → danger class; `pending` → warning class; `none`/done → reserved-invisible. Open-PR `aria-label` names `pending`/`failing`; done-PR label unchanged (no CI state).
+- Status dot: `failing` → solid + danger class; `pending` → hollow-ring + warning class (distinct shape class, not only colour); `none`/done → reserved-invisible. Open-PR `aria-label` names `pending`/`failing`; done-PR label unchanged (no CI state). The shape class is what proves state is conveyed without relying on hue.
 - Tail reserve-and-collapse — **two distinct cases**:
   - Diff bar absent (`additions + deletions === 0`): diff-bar slot renders empty; `+/−` and comment slots still render and stay positioned.
   - Comment count absent (`commentCount === 0`): comment slot renders empty; `+/−` stay positioned (don't slide to the right edge).
