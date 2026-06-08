@@ -9,7 +9,8 @@ import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
 import { ActivityRail } from '../components/ActivityRail/ActivityRail';
 import { SampleBadge } from '../components/Ai/SampleBadge';
-import { Spinner } from '../components/Spinner';
+import { InboxSkeleton } from '../components/Inbox/InboxSkeleton';
+import { LoadingBar } from '../components/LoadingBar';
 import { ErrorModal } from '../components/ErrorModal';
 import styles from './InboxPage.module.css';
 
@@ -35,9 +36,12 @@ export function InboxPage() {
 
   if (isLoading && !data)
     return (
-      <main className={styles.loading}>
-        <Spinner size="lg" />
-      </main>
+      <>
+        {/* Per-surface loading bar pinned to the inbox content top (self-contained,
+            no layout shift) + the content-shaped skeleton. */}
+        <LoadingBar active data-testid="inbox-loading-bar" />
+        <InboxSkeleton showRail={showActivityRail} />
+      </>
     );
   if (error && !data)
     return (
@@ -65,29 +69,36 @@ export function InboxPage() {
   };
 
   return (
-    <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
-      {updates.hasUpdate && (
-        <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
-      )}
-      <InboxToolbar />
-      <div className={styles.grid}>
-        <div className={styles.sections}>
-          {showCategoryChip && <SampleBadge variant="region" />}
-          {allEmpty && <EmptyAllSections />}
-          {sections.map((s) => (
-            <InboxSection
-              key={s.id}
-              section={s}
-              enrichments={data.enrichments}
-              showCategoryChip={showCategoryChip}
-              maxDiff={maxDiff}
-              defaultOpen={s.id !== 'recently-closed'}
-            />
-          ))}
-          {data.tokenScopeFooterEnabled && <InboxFooter />}
+    <>
+      {/* Background reload (data present, isLoading): the bar is the non-intrusive
+          "refreshing" signal. Kept a sibling ABOVE <main> (not inside it) so it
+          spans the same full width as the cold-load bar above <InboxSkeleton> —
+          no width/position jump when the skeleton is replaced by content. */}
+      <LoadingBar active={isLoading} data-testid="inbox-loading-bar" />
+      <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
+        {updates.hasUpdate && (
+          <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
+        )}
+        <InboxToolbar />
+        <div className={styles.grid}>
+          <div className={styles.sections}>
+            {showCategoryChip && <SampleBadge variant="region" />}
+            {allEmpty && <EmptyAllSections />}
+            {sections.map((s) => (
+              <InboxSection
+                key={s.id}
+                section={s}
+                enrichments={data.enrichments}
+                showCategoryChip={showCategoryChip}
+                maxDiff={maxDiff}
+                defaultOpen={s.id !== 'recently-closed'}
+              />
+            ))}
+            {data.tokenScopeFooterEnabled && <InboxFooter />}
+          </div>
+          {showActivityRail && <ActivityRail />}
         </div>
-        {showActivityRail && <ActivityRail />}
-      </div>
-    </main>
+      </main>
+    </>
   );
 }

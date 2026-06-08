@@ -3,7 +3,9 @@ using Microsoft.Extensions.Logging;
 using PRism.Core;
 using PRism.Core.Auth;
 using PRism.Core.Config;
+using PRism.Core.Feedback;
 using PRism.Core.Inbox;
+using PRism.GitHub.Feedback;
 using PRism.GitHub.Inbox;
 
 namespace PRism.GitHub;
@@ -83,6 +85,28 @@ public static class ServiceCollectionExtensions
             var tokens = sp.GetRequiredService<ITokenStore>();
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             return new GitHubCiFailingDetector(factory, () => tokens.ReadAsync(CancellationToken.None));
+        });
+
+        // Feedback always targets github.com (the feedback repo lives there),
+        // independent of the user's configured host (§4.1).
+        services.AddHttpClient(GitHubFeedbackSubmitter.ClientName, client =>
+        {
+            client.BaseAddress = new Uri("https://api.github.com/");
+        });
+
+        services.AddSingleton<IFeedbackSubmitter>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            // Late-bind the configured host (Func<string?>) so a live config change
+            // (github.com → GHES) takes effect immediately without restart — matches
+            // the late-binding pattern used for the token reader. A stale early-bound
+            // host could let a GHES PAT reach api.github.com after a host change.
+            return new GitHubFeedbackSubmitter(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                () => config.Current.Github.Host);
         });
 
         return services;

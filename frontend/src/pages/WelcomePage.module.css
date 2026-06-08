@@ -72,8 +72,16 @@
   color: var(--text-1);
   line-height: 1.45;
 }
-.benefitEmoji {
+/* Monochrome benefit icon (welcomeIcons.tsx), rendered in the user's accent —
+   matching the app's existing icon treatment (Help modal section icons use
+   var(--accent) the same way). line-height:0 keeps the inline SVG from adding row
+   height; the small top offset optically aligns the 18px glyph with the first line
+   of text. */
+.benefitIcon {
   flex: none;
+  color: var(--accent);
+  line-height: 0;
+  margin-top: 1px;
 }
 .cta {
   width: 100%;
@@ -99,9 +107,25 @@
 .footerDivider {
   color: var(--text-4);
 }
-/* The Help / Send-feedback stubs read as quiet "coming soon" labels, not links.
-   They inherit the muted `.footer` color; `cursor: default` reinforces that they
-   are not clickable. #210/#211 replace them with real links. */
+/* The Send-feedback stub reads as a quiet "coming soon" label, not a link.
+   It inherits the muted `.footer` color; `cursor: default` reinforces it
+   is not clickable. #211 replaces it with a real trigger. */
 .footerStub {
   cursor: default;
+}
+/* Help link (and future Send-feedback button) in the welcome footer. */
+.footerLink {
+  color: var(--text-2);
+  text-decoration: none;
+}
+.footerLink:hover,
+.footerLink:focus-visible {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+button.footerLink {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
 }

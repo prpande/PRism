@@ -53,7 +53,9 @@ describe('Header', () => {
 
   it('hides the whole nav (no landmark, no tab links) when not authed; keeps the logo + spacer', () => {
     renderAt('/setup', false);
-    expect(screen.getByAltText('PRism')).toBeInTheDocument();
+    // #215: on /setup the name is presented as the visible wordmark (the mark
+    // itself goes decorative), so the lockup is proven by the wordmark text.
+    expect(screen.getByText('PRism')).toBeInTheDocument();
     expect(screen.queryByRole('navigation')).toBeNull();
     expect(screen.queryByRole('link', { name: /inbox/i })).toBeNull();
     expect(screen.queryByRole('link', { name: /^settings$/i })).toBeNull();
@@ -105,5 +107,29 @@ describe('Header', () => {
     renderAt('/settings');
     expect(screen.queryByPlaceholderText(/jump to PR or file/i)).toBeNull();
     expect(screen.queryByLabelText(/global search/i)).toBeNull();
+  });
+});
+
+// #215 — the "PRism" wordmark fills the empty no-nav header. Header only sees
+// isAuthed + pathname, so first-run /setup and rejected-token re-auth are the
+// SAME render here (both isAuthed=false at /setup); one test covers both. The
+// per-state distinction (hasToken) lives in App, not Header.
+describe('Header wordmark (#215)', () => {
+  it('shows the visible wordmark on /setup (first-run and re-auth); mark is decorative', () => {
+    renderAt('/setup', false);
+    expect(screen.getByText('PRism')).toBeInTheDocument();
+    expect(screen.queryByAltText('PRism')).toBeNull();
+  });
+
+  it('suppresses the wordmark on /welcome; the mark keeps the name (no double "PRism")', () => {
+    renderAt('/welcome', false);
+    expect(screen.queryByText('PRism')).toBeNull();
+    expect(screen.getByAltText('PRism')).toBeInTheDocument();
+  });
+
+  it('shows no visible wordmark in the authed header; mark keeps the name', () => {
+    renderAt('/', true);
+    expect(screen.queryByText('PRism')).toBeNull();
+    expect(screen.getByAltText('PRism')).toBeInTheDocument();
   });
 });

@@ -73,7 +73,7 @@ const { reloadSpy, clearUnreadSpy, updatesClearSpy, prDetailResult, updatesResul
     prDetailResult: {
       current: {
         data: null as PrDetailDto | null,
-        showSkeleton: false,
+        isLoading: false,
         error: null as Error | null,
       },
     },
@@ -91,7 +91,7 @@ const { reloadSpy, clearUnreadSpy, updatesClearSpy, prDetailResult, updatesResul
 vi.mock('../../hooks/usePrDetail', () => ({
   usePrDetail: () => ({
     data: prDetailResult.current.data,
-    showSkeleton: prDetailResult.current.showSkeleton,
+    isLoading: prDetailResult.current.isLoading,
     error: prDetailResult.current.error,
     reload: reloadSpy,
   }),
@@ -229,9 +229,19 @@ beforeEach(() => {
   reloadSpy.mockClear();
   clearUnreadSpy.mockClear();
   updatesClearSpy.mockClear();
-  prDetailResult.current = { data: PR_DETAIL, showSkeleton: false, error: null };
+  prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
   updatesResult.current = { hasUpdate: false };
   fileDiffResult.current = { data: null, isLoading: false, showSkeleton: false, error: null };
+});
+
+describe('PrDetailView — cold load shows the Overview-shaped skeleton (#181)', () => {
+  test('renders the pr-detail-skeleton when data is null and isLoading is true', () => {
+    // Genuine first load / PR-navigation: no data yet, fetch in flight. The
+    // `!data && isLoading` gate must show the body skeleton.
+    prDetailResult.current = { data: null, isLoading: true, error: null };
+    renderPrDetailView({ active: true });
+    expect(screen.getByTestId('pr-detail-skeleton')).toBeInTheDocument();
+  });
 });
 
 describe('PrDetailView — freshness on activation (Task 8)', () => {
@@ -286,13 +296,13 @@ describe('PrDetailView — freshness on activation (Task 8)', () => {
   // test would fail.
   test('refetch failure preserves kept-alive content and shows the error banner', async () => {
     // Mount with data present so the Files sub-tab can be rendered.
-    prDetailResult.current = { data: PR_DETAIL, showSkeleton: false, error: null };
+    prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
     const view = renderPrDetailView({ active: true });
 
     // Simulate a rejected focus-refetch that kept last-known data but set error.
     prDetailResult.current = {
       data: PR_DETAIL,
-      showSkeleton: false,
+      isLoading: false,
       error: new Error('network down'),
     };
     view.rerender({ active: true });
@@ -415,17 +425,16 @@ describe('FilesTab — stale selected file resets to first after refetch (OQ5)',
 // ---------------------------------------------------------------------------
 // #180 — returning to a kept-alive Files tab must NOT reset the selected file
 // + scroll. Root cause: on re-activation, usePrDetail.reload() sets isLoading
-// true; once the GET exceeds useDelayedLoading's 100ms threshold, showSkeleton
-// flips true while `data` is still present. PrDetailView's render gate
-// (`showSkeleton ? <Skeleton/> : data ? <content/> : null`) then lets the
-// skeleton WIN over present data, unmounting the entire data-subtree
+// true while `data` is still present. A skeleton gate on `isLoading` alone
+// (`isLoading ? <Skeleton/> : data ? <content/> : null`) would let the skeleton
+// WIN over present data, unmounting the entire data-subtree
 // (Overview/Files/Drafts). FilesTab loses its selectedPath + inner scroll and
 // remounts fresh on data-return (auto-selecting the first file).
 //
-// The fix gates the skeleton on `!data`: a background refresh keeps content
-// mounted (the skeleton only shows on the genuine initial load, data still
-// null). This test locks "showSkeleton + data present → kept-alive subtree and
-// its selection survive". RED on main (skeleton unmounts FilesTab).
+// The fix gates the skeleton on `!data && isLoading`: a background refresh keeps
+// content mounted (the skeleton only shows on the genuine initial load, data
+// still null). This test locks "isLoading + data present → kept-alive subtree
+// and its selection survive". RED on main (skeleton unmounts FilesTab).
 // ---------------------------------------------------------------------------
 describe('PrDetailView — background reload preserves kept-alive Files state (#180)', () => {
   function file(path: string): FileChange {
@@ -462,14 +471,14 @@ describe('PrDetailView — background reload preserves kept-alive Files state (#
     return selected?.getAttribute('data-path') ?? null;
   }
 
-  test('showSkeleton while data is present keeps FilesTab mounted and its selected file', async () => {
+  test('isLoading while data is present keeps FilesTab mounted and its selected file', async () => {
     fileDiffResult.current = {
       data: { range: 'all', files: [file('alpha.ts'), file('beta.ts')], truncated: false },
       isLoading: false,
       showSkeleton: false,
       error: null,
     };
-    prDetailResult.current = { data: PR_DETAIL, showSkeleton: false, error: null };
+    prDetailResult.current = { data: PR_DETAIL, isLoading: false, error: null };
     const view = renderFilesActive();
 
     // Files tab mounted; auto-select chose the first file. Select the second so
@@ -482,12 +491,12 @@ describe('PrDetailView — background reload preserves kept-alive Files state (#
     // delayed-loading skeleton has flipped on. The kept-alive subtree MUST stay
     // mounted (the keep-alive contract) — the skeleton must NOT replace present
     // data, and the user's selected file must survive.
-    prDetailResult.current = { data: PR_DETAIL, showSkeleton: true, error: null };
+    prDetailResult.current = { data: PR_DETAIL, isLoading: true, error: null };
     view.rerender(true);
 
     expect(screen.queryByTestId('files-tab-root')).toBeInTheDocument();
     expect(selectedPathOf()).toBe('beta.ts');
     // The page-level skeleton must not blank present content.
-    expect(document.querySelector('.pr-detail-skeleton')).toBeNull();
+    expect(screen.queryByTestId('pr-detail-skeleton')).toBeNull();
   });
 });

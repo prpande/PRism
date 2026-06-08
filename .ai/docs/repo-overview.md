@@ -1,6 +1,6 @@
 # Repository overview
 
-PRism is **mid-implementation**. Main contents:
+PRism's V1 review experience is complete and shipping; current work is fit-and-finish polish plus AI-augmentation development against the in-place seams. Main contents:
 
 - `PRism.sln` and seven backend projects: `PRism.Core`, `PRism.Core.Contracts`, `PRism.GitHub`, `PRism.Web`, `PRism.AI.Contracts`, `PRism.AI.Placeholder`, `PRism.AI.ClaudeCode`
 - `tests/` — `PRism.Core.Tests`, `PRism.GitHub.Tests`, `PRism.Web.Tests`

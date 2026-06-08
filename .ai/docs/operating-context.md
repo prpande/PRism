@@ -1,6 +1,6 @@
 # Operating in this repo right now
 
-- Most edits at this stage may be spec or backlog markdown. When a spec change has cross-cutting consequences, search the corpus for the affected term — many spec sections reference each other and `docs/spec/00-verification-notes.md` cross-links throughout.
+- Most edits at this stage are feature code, polish, and per-slice design/plan markdown under `docs/specs/` and `docs/plans/`. When a spec change has cross-cutting consequences, search the corpus for the affected term — many spec sections reference each other and `docs/spec/00-verification-notes.md` cross-links throughout.
 - `docs/spec-review.md` is transient working notes from adversarial review passes; findings get absorbed into the spec proper. Don't edit it as if it were canonical.
 - `.github/workflows/` includes automation that mentions `@claude` on PRs — opening a PR may trigger automated Claude code review.
 

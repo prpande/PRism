@@ -1,5 +1,6 @@
 import { test, expect, type Route, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 
 // ---------------------------------------------------------------------------
 // Spec § 6 — Accessibility baseline audit (Pass 1: automated axe-core).
@@ -483,31 +484,39 @@ test.describe('A11y audit — LoadingScreen honors prefers-reduced-motion', () =
 test.describe('A11y audit — Spinner honors prefers-reduced-motion (#125)', () => {
   test('ring rotation is replaced by a pulse under reducedMotion: reduce', async ({
     page,
+    request,
   }, testInfo) => {
     // Assert against the production build (what ships, and the only project CI
     // runs). The vite-dev project re-optimizes dependencies on first load and
-    // forces a full page reload mid-test, tearing down the transient inbox
-    // spinner before the computed-style read can settle — a dev-server artifact,
-    // not a product behavior.
+    // forces a full page reload mid-test, tearing down the transient spinner
+    // before the computed-style read can settle — a dev-server artifact, not a
+    // product behavior.
     test.skip(testInfo.project.name === 'dev', 'computed-style assertion targets the prod build');
 
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    await setupBaseMocks(page);
-    // Hold the inbox response open so InboxPage stays in its loading branch and
-    // keeps the <Spinner> mounted for the duration of the assertions.
-    await page.unroute('**/api/inbox');
-    await page.route('**/api/inbox', HANG_FOREVER);
-    await page.goto('/');
+    await resetBackendState(request);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // #244 replaced the inbox cold-load <Spinner> with a content-shaped skeleton,
+    // so the remaining <Spinner> mount is the diff pane's "whole file" overlay.
+    // Drive it via the hermetic acme/api/123 fixture (single small file → "Show
+    // full file" is enabled) and hold the whole-file content fetch open so the
+    // overlay <Spinner size="md"> stays mounted for the assertions.
+    await page.route('**/api/pr/acme/api/123/file**', HANG_FOREVER);
+    await setupAndOpenScenarioPr(page);
+    await page.goto('/pr/acme/api/123/files');
+    await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
+    await page.getByTestId('diff-settings-trigger').click();
+    await page.getByTestId('show-full-file-checkbox').check();
 
-    // The inbox loading state is the only spinner inside a <main> (LoadingScreen
-    // is a top-level div), so this uniquely targets the ring (the aria-hidden
-    // child of the spinner's status region).
-    const ring = page.locator('main [role="status"] [aria-hidden="true"]');
+    // While the whole-file overlay is active the header spinner is suppressed, so
+    // the overlay is the only role=status in the diff pane. Target the ring (the
+    // aria-hidden child of the spinner's status region).
+    const ring = page.locator('[data-testid="diff-pane"] [role="status"] [aria-hidden="true"]');
     await expect(ring).toBeVisible({ timeout: 10_000 });
 
     // Assert via animation-duration (hash-independent, unlike keyframe names
     // which CSS-modules hashes): rotation is 0.6s, the reduced-motion pulse is
-    // 1.2s. Poll to ride out the LoadingScreen→Inbox remount.
+    // 1.2s. Poll to ride out the diff-pane render settling.
     await expect
       .poll(
         async () => {
