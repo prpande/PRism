@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Spinner } from '../Spinner';
 import styles from './LoadingScreen.module.css';
 
 interface Props {
@@ -27,14 +28,12 @@ export function LoadingScreen({
     // region, which we want during the indeterminate Loading… phase but not
     // after the content settles.
     <div className={styles.screen} role="status" aria-busy={!timedOut}>
-      <img src="/prism-logo.png" alt="" aria-hidden="true" className={styles.watermark} />
       <div className={styles.center}>
-        <img
-          src="/prism-logo.png"
-          alt=""
-          aria-hidden="true"
-          className={timedOut ? styles.logoStill : styles.pulseLogo}
-        />
+        {/* Static brand mark — the activity cue is the spinner below, not a
+            pulsing logo. The spinner is decorative so this region stays the
+            single live region announcing the Loading… → timeout transition. */}
+        <img src="/prism-logo.png" alt="" aria-hidden="true" className={styles.logo} />
+        {!timedOut && <Spinner size="lg" decorative />}
         <span className={styles.label}>{timedOut ? timeoutLabel : label}</span>
         {timedOut && (
           // Compose the global `.btn .btn-secondary` utility classes from

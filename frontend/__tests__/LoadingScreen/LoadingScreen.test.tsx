@@ -17,14 +17,26 @@ describe('LoadingScreen', () => {
     expect(screen.getByText('Booting…')).toBeInTheDocument();
   });
 
-  it('marks both logo images aria-hidden so SRs do not announce them', () => {
+  it('renders a single decorative logo image (no background watermark)', () => {
     const { container } = render(<LoadingScreen />);
     const imgs = container.querySelectorAll('img');
-    expect(imgs.length).toBe(2);
-    imgs.forEach((img) => {
-      expect(img).toHaveAttribute('aria-hidden', 'true');
-      expect(img).toHaveAttribute('alt', '');
+    expect(imgs.length).toBe(1);
+    expect(imgs[0]).toHaveAttribute('aria-hidden', 'true');
+    expect(imgs[0]).toHaveAttribute('alt', '');
+  });
+
+  it('shows a decorative spinner while loading and removes it once timed out', () => {
+    vi.useFakeTimers();
+    const { container } = render(<LoadingScreen timeoutMs={1000} />);
+    // The decorative spinner is a lone aria-hidden <span> (no nested status
+    // region); the logo is an <img>, so this selector isolates the ring.
+    expect(container.querySelector('span[aria-hidden="true"]')).not.toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
     });
+
+    expect(container.querySelector('span[aria-hidden="true"]')).toBeNull();
   });
 
   // role="status" carries implicit aria-live="polite" + aria-atomic="true" per
