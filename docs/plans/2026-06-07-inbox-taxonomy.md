@@ -380,7 +380,8 @@ git commit -m "feat(#262): widen CI probe across all sections with fault-isolati
 
 > This won't compile until Task 5 removes `CiFailing` from the record — that's fine; Tasks 4–5 land together. (`s.CiFailing` no longer referenced anywhere after this edit.)
 
-- [ ] **Step 2:** Defer build/commit to Task 5 (same compile unit). Proceed.
+- [ ] **Step 2: Preserve authored-off coverage.** The old "force authored when ci-failing enabled, then drop if its own toggle is off" tests are being rewritten by the Task 5 Step 7 sweep. Add (or keep) an `InboxRefreshOrchestratorTests` case asserting `authored-by-me` is **absent** from the snapshot when `Sections.AuthoredByMe` is false — so the simplified `ResolveVisibleSections` gating doesn't silently regress.
+- [ ] **Step 3:** Defer build/commit to Task 5 (same compile unit). Proceed.
 
 ---
 
@@ -477,7 +478,17 @@ internal sealed record InboxSectionsDto(
 - [ ] **Step 9: Commit** (include every test file touched by the Step 7 sweep)
 
 ```bash
-git add PRism.Core/Config/AppConfig.cs PRism.Core/Config/ConfigStore.cs PRism.Web/Endpoints/PreferencesDtos.cs PRism.Web/Endpoints/PreferencesEndpoints.cs PRism.Core/Inbox/InboxRefreshOrchestrator.cs tests/
+# Stage the production files + ONLY the test files the Step 7 sweep touched
+# (avoid a bare `tests/` glob that could capture unrelated drift).
+git add PRism.Core/Config/AppConfig.cs PRism.Core/Config/ConfigStore.cs \
+  PRism.Web/Endpoints/PreferencesDtos.cs PRism.Web/Endpoints/PreferencesEndpoints.cs \
+  PRism.Core/Inbox/InboxRefreshOrchestrator.cs \
+  tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncDottedPathTests.cs \
+  tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs \
+  tests/PRism.Core.Tests/Inbox/InboxDeduplicatorTests.cs \
+  tests/PRism.GitHub.Tests/Inbox/GitHubSectionQueryRunnerTests.cs \
+  tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs
+# …plus any additional file the Step 7 grep surfaced — stage each explicitly, not via `tests/`.
 git commit -m "feat(#262): drop ci-failing section from config + wire DTO + patch allowlist"
 ```
 
@@ -744,6 +755,7 @@ Goal: a search-led, client-side filter/sort bar over the sections. Pure function
 - `frontend/src/components/Inbox/filters/FilterSearchInput.tsx`
 - `frontend/src/components/Inbox/filters/FilterFacet.tsx`
 - `frontend/src/components/Inbox/filters/FilterSummary.tsx`
+- `frontend/src/components/Inbox/filters/NoFilterMatches.tsx` (the all-match-nothing zero-state; created in Task 15)
 - `frontend/src/components/Inbox/filters/filters.module.css`
 
 ---
@@ -752,6 +764,7 @@ Goal: a search-led, client-side filter/sort bar over the sections. Pure function
 
 **Files:**
 - Create: `frontend/src/components/Inbox/filters/applyInboxFilters.ts`
+- Modify: `frontend/src/api/types.ts` (add the single `SortKey` definition)
 - Test: `frontend/src/components/Inbox/filters/applyInboxFilters.test.ts`
 
 - [ ] **Step 1: Define the types + write the test.** Create the test first:
@@ -838,10 +851,18 @@ describe('applyInboxFilters', () => {
 
 - [ ] **Step 3: Implement** `applyInboxFilters.ts`:
 
-```ts
-import type { CiStatus, InboxSection, PrInboxItem } from '../../../api/types';
+First add the canonical `SortKey` to `frontend/src/api/types.ts` (single source of truth — `InboxPreferences.defaultSort` in Task 19 reuses it; defining it here, in the base types module, avoids a circular import since `applyInboxFilters` already imports from `types.ts`):
 
+```ts
+// frontend/src/api/types.ts — add near InboxResponse
 export type SortKey = 'updated' | 'pushed' | 'diff' | 'comments';
+```
+
+Then `applyInboxFilters.ts` imports and re-exports it (so `import type { SortKey } from './applyInboxFilters'` in `FilterBar`/`InboxToolbar`/tests keeps working):
+
+```ts
+import type { CiStatus, InboxSection, PrInboxItem, SortKey } from '../../../api/types';
+export type { SortKey };
 
 export interface InboxFilters {
   text: string;
@@ -927,13 +948,22 @@ git commit -m "feat(#262): applyInboxFilters pure filter+sort over inbox section
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useInboxFilters } from './useInboxFilters';
-import type { InboxSection } from '../../../api/types';
+import type { InboxSection, PrInboxItem } from '../../../api/types';
 
+// Complete fixtures: applyInboxFilters sorts UNCONDITIONALLY (even with no active
+// filter), so the comparator reads updatedAt/reference — partial `as never` stubs
+// throw `undefined.localeCompare` at runtime (tsc won't catch it). Reuse a full
+// PrInboxItem shape (same as Task 11's `pr()` factory).
+const item = (repo: string, author: string, n: number): PrInboxItem => ({
+  reference: { owner: 'acme', repo: repo.split('/')[1], number: n },
+  title: 't', author, repo,
+  updatedAt: '2026-06-01T00:00:00Z', pushedAt: '2026-06-01T00:00:00Z',
+  iterationNumber: 1, commentCount: 0, additions: 0, deletions: 0,
+  headSha: 's', ci: 'none', lastViewedHeadSha: null, lastSeenCommentId: null,
+  mergedAt: null, closedAt: null,
+});
 const secs: InboxSection[] = [
-  { id: 'a', label: 'a', items: [
-    { repo: 'acme/api', author: 'dana' } as never,
-    { repo: 'acme/bff', author: 'pat' } as never,
-  ] },
+  { id: 'a', label: 'a', items: [item('acme/api', 'dana', 1), item('acme/bff', 'pat', 2)] },
 ];
 
 describe('useInboxFilters', () => {
@@ -1243,14 +1273,19 @@ git commit -m "feat(#262): filter primitives (search, facet popover, summary)"
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { FilterBar } from './FilterBar';
-import type { InboxSection } from '../../../api/types';
+import type { InboxSection, PrInboxItem } from '../../../api/types';
 
-const secs: InboxSection[] = [
-  { id: 's', label: 's', items: [
-    { repo: 'acme/api', author: 'dana', ci: 'failing', title: 't' } as never,
-    { repo: 'acme/api', author: 'dana', ci: 'none', title: 't' } as never,
-  ] },
-];
+// Complete fixtures (see Task 12 note): the bar runs applyInboxFilters which sorts
+// unconditionally, so items need updatedAt/reference or the comparator throws.
+const item = (ci: PrInboxItem['ci'], n: number): PrInboxItem => ({
+  reference: { owner: 'acme', repo: 'api', number: n },
+  title: 't', author: 'dana', repo: 'acme/api',
+  updatedAt: '2026-06-01T00:00:00Z', pushedAt: '2026-06-01T00:00:00Z',
+  iterationNumber: 1, commentCount: 0, additions: 0, deletions: 0,
+  headSha: 's', ci, lastViewedHeadSha: null, lastSeenCommentId: null,
+  mergedAt: null, closedAt: null,
+});
+const secs: InboxSection[] = [{ id: 's', label: 's', items: [item('failing', 1), item('none', 2)] }];
 
 it('CI trigger shows the failing count when unselected', () => {
   render(<FilterBar sections={secs} initialSort="updated" ciProbeComplete onState={() => {}} />);
@@ -1297,6 +1332,9 @@ interface Props {
 
 export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: Props) {
   const f = useInboxFilters(sections, initialSort);
+  // `onState` MUST be a stable reference (a useState setter like InboxPage's
+  // `setFilterState`, or a useCallback) — an inline arrow would re-fire this effect
+  // every render. f.clear is a []-dep useCallback; f.result only changes with the data.
   useEffect(() => onState({ result: f.result, clear: f.clear }), [f.result, f.clear, onState]);
 
   const failingCount = sections.reduce(
@@ -1467,7 +1505,7 @@ Replace the toolbar + sections render region:
 
 > **Shared `clear` — no hook lift.** The canonical `clear` lives in `FilterBar`'s hook. Rather than lift the hook into the page (which would make `FilterBar` presentational and ripple through `InboxToolbar`), `FilterBar` reports `{ result, clear }` up via `onState` (Task 14). `InboxPage` holds that `FilterBarState` and passes `filterState.clear` to the zero-state, so the in-bar summary's Clear and the zero-state's Clear are the same function. `FilterBar` keeps owning the hook; Task 14's component and test stand as written.
 
-Create `NoFilterMatches.tsx`:
+Create `frontend/src/components/Inbox/filters/NoFilterMatches.tsx` (in the `filters/` dir, so the `'../components/Inbox/filters/NoFilterMatches'` import resolves):
 
 ```tsx
 import styles from './filters.module.css';
@@ -1491,15 +1529,23 @@ interface Props {
   // …existing…
   forceOpen?: boolean;
 }
-// inside component:
+// inside component — replace the existing `const [open, setOpen] = useState(defaultOpen);`:
 const [userToggled, setUserToggled] = useState(false);
-const open = userToggled ? userOpen : (forceOpen ?? defaultOpen);
-// where userOpen is the existing useState; rename the existing `open`/`setOpen`:
 const [userOpen, setUserOpen] = useState(defaultOpen);
-const onToggle = () => { setUserToggled(true); setUserOpen((o) => !o); };
+const open = userToggled ? userOpen : (forceOpen ?? defaultOpen);
+const onToggle = () => {
+  setUserToggled(true);
+  setUserOpen((o) => !o);
+};
+// When the filter releases this section (forceOpen → false), drop the session's
+// manual-toggle memory so it returns to its pre-filter default on the next reveal.
+// Added unconditionally (not deferred to the B1 assert) — it is the correct model.
+useEffect(() => {
+  if (!forceOpen) setUserToggled(false);
+}, [forceOpen]);
 ```
 
-Update the header button `onClick={onToggle}` and `aria-expanded={open}`, and the body guard `{open && (...)}`. (When a filter clears, `InboxPage` re-mounts sections by key only if needed; the simplest faithful behavior — reset to pre-filter state on clear — is achieved because `forceOpen` goes false and `userToggled` persists only within the session. If the visual assert shows a stale-collapse edge, reset `userToggled` on `forceOpen` going false via an effect.)
+Update the header button `onClick={onToggle}` and `aria-expanded={open}`, and the body guard `{open && (...)}`. Add `useEffect` to the React import. **Add a unit test:** a section with `forceOpen` starting false and `defaultOpen={false}` renders collapsed; flipping `forceOpen` true renders it expanded; a manual collapse during `forceOpen` wins; clearing `forceOpen` resets to `defaultOpen`. Re-run `InboxSection.test.tsx` (the recently-closed default-collapse assertion still holds: `forceOpen` is false for `recently-closed`).
 
 - [ ] **Step 6: Run to verify pass + typecheck** — `npm test -- InboxPage FilterBar` → PASS; `npm run build` → PASS.
 
@@ -1704,14 +1750,12 @@ it('routes inbox.defaultSort to the scalar branch, not sections', () => {
 
 - [ ] **Step 2: Run to verify failure** — `npm test -- PreferencesContext` → FAIL.
 
-- [ ] **Step 3: `types.ts`** — add to `InboxPreferences` and the `Density`-style sort type:
+- [ ] **Step 3: `types.ts`** — reuse the `SortKey` already defined here in Task 11 (do **not** introduce a parallel `InboxSortKey`):
 
 ```ts
-export type InboxSortKey = 'updated' | 'pushed' | 'diff' | 'comments';
-
 export interface InboxPreferences {
   sections: InboxSectionsPreferences;
-  defaultSort: InboxSortKey;
+  defaultSort: SortKey;
 }
 ```
 
@@ -1810,8 +1854,9 @@ import { usePreferences } from '../hooks/usePreferences';
 // …inside InboxPage:
 const { preferences } = usePreferences();
 const initialSort = preferences?.inbox.defaultSort ?? 'updated';
-// pass initialSort to <InboxToolbar initialSort={initialSort} … />
 ```
+
+Then **replace** the PR2 placeholder `initialSort="updated"` in the `<InboxToolbar … />` JSX with `initialSort={initialSort}`, and delete the "PR3 replaces this literal" comment added in Task 15.
 
 - [ ] **Step 5: Run to verify pass + build** — `npm test -- InboxPane` → PASS; `npm run build` → PASS.
 
@@ -1836,7 +1881,7 @@ git commit -m "feat(#262): default-sort Settings select applied to the inbox bar
 ## Self-review checklist (run before opening PR1)
 
 - **Spec coverage:** ci-failing→filter (T3–T9), CI fault-isolation + ciProbeComplete (T1–T3, T8, T14–T15), relabel (T7, T9), explicit order (T7), filter bar + facets + search + sort (T11–T15), empty/zero states + expand-on-reveal (T15), per-row dot + tooltip (T16), defaultSort (T18–T20), config migration (T5), dedup pair drop (T6). ✔
-- **Type consistency:** `CiDetectResult` (T1) consumed in T3; `SortKey`/`InboxFilters` (T11) used by T12/T14; `ciProbeComplete` flows snapshot(T2)→response(T8)→type(T9)→FilterBar(T14). ✔
+- **Type consistency:** `CiDetectResult` (T1) consumed in T3; `SortKey` defined once in `types.ts` (T11), re-exported by `applyInboxFilters`, reused by `InboxPreferences.defaultSort` (T19) — no parallel `InboxSortKey`; `InboxFilters` (T11) used by T12/T14; `FilterBar` reports `{result, clear}` via `onState` consistently across T14/T15; `ciProbeComplete` flows snapshot(T2)→response(T8)→type(T9)→FilterBar(T14). ✔
 - **No placeholders:** every code step shows real code; where a test helper name is uncertain, the step says "match the file's existing helper" and names the asserted behavior. ✔
 - **FilterBar architecture (resolved):** `FilterBar` owns the hook and reports `{ result, clear }` up via `onState` (T14); `InboxPage` shares that `clear` with the zero-state (T15). No hook lift, no `InboxToolbar` prop churn — Task 14's component/test are final.
 - **Test-corpus fallout (resolved):** T5 Step 7 enumerates the ~58 `ci-failing` references across 8 test files with delete-vs-rewrite guidance; the green-gates assume that sweep is done.
