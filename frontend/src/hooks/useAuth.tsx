@@ -49,10 +49,10 @@ function useAuthState(): AuthContextValue {
     window.addEventListener('focus', handler);
     // S6 PR4 (spec § 3.2.1) — `prism-identity-changed` is dispatched by the SSE
     // bridge in api/events.ts whenever the backend publishes an IdentityChanged
-    // event (Replace token → identity-change rule). The provider lives ABOVE
-    // EventStreamProvider in the tree (App.tsx mounts the provider inside the
-    // auth-gated subtree), so it can't subscribe via useEventSource(); the
-    // window event is the only reachable signal.
+    // event (Replace token → identity-change rule). AuthProvider is mounted at
+    // the top of App (App.tsx wraps AppShell unconditionally — above the auth
+    // gate AND above EventStreamProvider), so useAuthState can't subscribe via
+    // useEventSource(); the window event is the only reachable signal.
     window.addEventListener('prism-identity-changed', handler);
     // Reconnect-replay defense (spec § 3.2.1): the SSE channel doesn't replay
     // events fired during a disconnect, so refetch auth state on every reconnect
