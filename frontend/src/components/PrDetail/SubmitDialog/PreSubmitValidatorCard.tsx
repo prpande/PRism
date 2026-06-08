@@ -3,7 +3,7 @@ import { SampleBadge } from '../../Ai/SampleBadge';
 import type { ValidatorResult, ValidatorSeverity } from '../../../api/types';
 
 // Pre-submit validator slot (spec § 14.1). PoC's NoopPreSubmitValidator
-// returns []; under aiPreview the header feeds frontend-side canned data —
+// returns []; in Preview mode the header feeds frontend-side canned data —
 // there is no IPreSubmitValidator.ValidateAsync call. Renders null when empty
 // (mirrors AiSummaryCard's "data-or-nothing" gating).
 interface Props {

@@ -55,7 +55,7 @@ export interface AiCapabilities {
 }
 
 // Wire contract for GET /api/capabilities. Retained as the endpoint's response
-// shape: since #221 the SPA derives capabilities from the shared aiPreview
+// shape: since #221 the SPA derives capabilities from the shared aiMode
 // preference (useCapabilities) rather than calling this endpoint, but D112 will
 // restore an independent fetch that consumes this type. See useCapabilities.ts.
 export interface CapabilitiesResponse {
