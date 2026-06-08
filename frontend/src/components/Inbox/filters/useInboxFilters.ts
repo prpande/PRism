@@ -31,6 +31,7 @@ export function useInboxFilters(sections: InboxSection[], initialSort: SortKey) 
     [sections],
   );
 
+  // MUST stay memoized: FilterBar reports `result` up via a useEffect; a fresh object each render would loop (setFilterState → re-render → new result → effect → …).
   const result = useMemo(
     () => applyInboxFilters(sections, filters, sort),
     [sections, filters, sort],

@@ -28,7 +28,7 @@ export function InboxPage() {
   const result = filterState?.result ?? null;
   const filterActive = result?.filterActive ?? false;
   const visibleSections = result ? result.sections : sections;
-  const zeroMatch = filterActive && result!.matchCount === 0;
+  const zeroMatch = filterActive && result?.matchCount === 0;
 
   const maxDiff = useMemo(() => {
     let m = 1;
