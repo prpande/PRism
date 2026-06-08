@@ -78,6 +78,28 @@ describe('InboxRow avatar', () => {
   });
 });
 
+describe('InboxRow CI dots', () => {
+  function renderRow(pr: PrInboxItem) {
+    return render(
+      <MemoryRouter>
+        <OpenTabsProvider>
+          <InboxRow pr={pr} enrichment={undefined} showCategoryChip={false} maxDiff={100} />
+        </OpenTabsProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it('renders an accessible pending CI dot', () => {
+    renderRow({ ...PR, ci: 'pending' });
+    expect(screen.getByLabelText('CI: pending')).toBeInTheDocument();
+  });
+
+  it('renders an accessible failing CI dot', () => {
+    renderRow({ ...PR, ci: 'failing' });
+    expect(screen.getByLabelText('CI: failing')).toBeInTheDocument();
+  });
+});
+
 describe('InboxRow showRepo', () => {
   function renderRow(showRepo?: boolean) {
     return render(

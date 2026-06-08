@@ -56,6 +56,10 @@
   background: var(--danger-fg);
 }
 
+.dotPending {
+  background: var(--warning-fg);
+}
+
 /* Main column */
 .main {
   display: flex;

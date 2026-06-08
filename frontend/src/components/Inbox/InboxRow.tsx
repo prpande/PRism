@@ -49,7 +49,19 @@ export function InboxRow({ pr, enrichment, showCategoryChip, maxDiff, showRepo =
     >
       <span className={styles.status}>
         {!isDone && pr.ci === 'failing' ? (
-          <span className={`${styles.dot} ${styles.dotDanger}`} title="CI failing" />
+          <span
+            className={`${styles.dot} ${styles.dotDanger}`}
+            role="img"
+            aria-label="CI: failing"
+            title="CI failing"
+          />
+        ) : !isDone && pr.ci === 'pending' ? (
+          <span
+            className={`${styles.dot} ${styles.dotPending}`}
+            role="img"
+            aria-label="CI: pending"
+            title="CI pending"
+          />
         ) : (
           <span className={styles.dot} style={{ opacity: 0 }} aria-hidden="true" />
         )}
