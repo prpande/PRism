@@ -12,7 +12,12 @@ import type { AuthState, ConnectResponse } from '../api/types';
 export interface AuthContextValue {
   authState: AuthState | null;
   error: Error | null;
-  refetch: () => Promise<void>;
+  // Resolves to the freshly-fetched AuthState, or null if the fetch failed.
+  // Callers that navigate on the result (SetupPage) MUST check the return value
+  // rather than assuming success — refetch swallows the error into `error` state
+  // so it never rejects, which would otherwise let a failed /api/auth/state
+  // fetch fall through to a navigate into a stale routing-gate bounce.
+  refetch: () => Promise<AuthState | null>;
   connect: (pat: string) => Promise<ConnectResponse>;
 }
 
@@ -32,11 +37,14 @@ function useAuthState(): AuthContextValue {
   const [authState, setAuthState] = useState<AuthState | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
-  const refetch = useCallback(async () => {
+  const refetch = useCallback(async (): Promise<AuthState | null> => {
     try {
-      setAuthState(await apiClient.get<AuthState>('/api/auth/state'));
+      const next = await apiClient.get<AuthState>('/api/auth/state');
+      setAuthState(next);
+      return next;
     } catch (e) {
       setError(e as Error);
+      return null;
     }
   }, []);
 

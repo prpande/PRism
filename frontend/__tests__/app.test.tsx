@@ -304,6 +304,46 @@ describe('App routing', () => {
     ).toBeInTheDocument();
   }, 20000);
 
+  it('does not bounce to /welcome when the post-connect auth refetch fails', async () => {
+    // Copilot finding (F2): `await refetch()` only helps if it actually
+    // confirms hasToken before navigating. If /api/auth/state fails right
+    // after a successful connect, navigating blindly lands the user on
+    // /welcome (the gate sees stale hasToken=false, unauthedTarget=/welcome) —
+    // the very "stuck on the welcome screen" loop this PR fixes. Correct
+    // behavior: don't navigate on an unconfirmed refetch; stay on /setup so
+    // the user can retry.
+    let connectCalled = false;
+    server.use(
+      http.get('/api/auth/state', () => {
+        // The post-connect refetch fails transiently; the mount fetch succeeds.
+        if (connectCalled) return HttpResponse.json({ error: 'boom' }, { status: 500 });
+        return HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null });
+      }),
+      http.post('/api/auth/connect', () => {
+        connectCalled = true;
+        return HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' });
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={['/setup']}>
+        <App />
+      </MemoryRouter>,
+    );
+    await screen.findByText(/connect to github/i, {}, { timeout: 5000 });
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_test');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    // The setup form surfaces a "couldn't confirm your session" error (only
+    // reachable once navigation is gated on a confirmed refetch) and stays put —
+    // NOT the inbox, NOT the welcome screen. findByText polls, so it waits out
+    // the async refetch before asserting.
+    expect(
+      await screen.findByText(/couldn't confirm your session/i, {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/connect to github/i)).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/paste a pr url/i)).toBeNull();
+    expect(screen.queryByRole('link', { name: /get started/i })).toBeNull();
+  }, 20000);
+
   it('renders host-change modal when hostMismatch present', async () => {
     server.use(
       http.get('/api/auth/state', () =>

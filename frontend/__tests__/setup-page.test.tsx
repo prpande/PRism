@@ -58,10 +58,17 @@ describe('SetupPage', () => {
   });
 
   it('routes to / (InboxPage) on successful PAT submission', async () => {
+    // The token only goes live once connect succeeds; navigation is gated on the
+    // post-connect /api/auth/state refetch confirming hasToken.
+    let connected = false;
     server.use(
-      http.post('/api/auth/connect', () =>
-        HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' }),
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: connected, host: 'https://github.com', hostMismatch: null }),
       ),
+      http.post('/api/auth/connect', () => {
+        connected = true;
+        return HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' });
+      }),
     );
     renderRouted();
     await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_test');
@@ -139,6 +146,10 @@ describe('SetupPage', () => {
   it('Continue anyway commits and routes to /', async () => {
     let commitCalled = false;
     server.use(
+      // The token goes live only after commit; navigation is gated on the refetch.
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: commitCalled, host: 'https://github.com', hostMismatch: null }),
+      ),
       http.post('/api/auth/connect', () =>
         HttpResponse.json({
           ok: true,
@@ -216,6 +227,11 @@ describe('SetupPage', () => {
       let replaceCalled = false;
       let connectCalled = false;
       server.use(
+        // Replace = re-auth on an existing token, so state reports hasToken; the
+        // post-replace refetch confirms it and navigation proceeds.
+        http.get('/api/auth/state', () =>
+          HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+        ),
         http.post('/api/auth/replace', () => {
           replaceCalled = true;
           return HttpResponse.json({
@@ -246,6 +262,9 @@ describe('SetupPage', () => {
       // session whose authInvalidated=true stays gated even after the new PAT
       // validates, and the Navigate guard at App.tsx bounces / → /setup.
       server.use(
+        http.get('/api/auth/state', () =>
+          HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+        ),
         http.post('/api/auth/replace', () =>
           HttpResponse.json({
             ok: true,
@@ -270,6 +289,9 @@ describe('SetupPage', () => {
 
     it('surfaces an identity-changed success toast naming the new login when identityChanged=true', async () => {
       server.use(
+        http.get('/api/auth/state', () =>
+          HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+        ),
         http.post('/api/auth/replace', () =>
           HttpResponse.json({
             ok: true,
@@ -378,6 +400,9 @@ describe('SetupPage', () => {
     it('does NOT call /api/auth/connect when in replace mode (regression: cross-flow leak)', async () => {
       let connectCalled = false;
       server.use(
+        http.get('/api/auth/state', () =>
+          HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+        ),
         http.post('/api/auth/connect', () => {
           connectCalled = true;
           return HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' });

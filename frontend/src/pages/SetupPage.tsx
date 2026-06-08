@@ -11,6 +11,12 @@ import { replaceToken } from '../api/replaceToken';
 import { connectErrorMessage, replaceErrorMessage } from '../components/Setup/tokenErrorCopy';
 import type { ConnectResponse } from '../api/types';
 
+// Shown when the token was accepted but the follow-up /api/auth/state refetch
+// could not confirm the session (transient network/server error). We stay on
+// /setup and let the user retry rather than navigate into a routing-gate bounce.
+const SESSION_UNCONFIRMED =
+  "Connected, but we couldn't confirm your session. Check your connection, then try again.";
+
 export function SetupPage() {
   const { authState, refetch } = useAuth();
   const [error, setError] = useState<string | undefined>();
@@ -40,11 +46,17 @@ export function SetupPage() {
       }
       window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
       // Refresh the SHARED auth state so App's route gate (isAuthed) observes
-      // hasToken=true BEFORE we navigate. Without this await, navigate('/') runs
-      // while App's hasToken is still stale-false and the gate bounces us back
-      // to /setup — the first-run loop this fix removes.
-      await refetch();
-      navigate('/');
+      // hasToken=true BEFORE we navigate, and ONLY navigate once that's
+      // confirmed. refetch() swallows its error (returns null), so navigating
+      // unconditionally would let a failed /api/auth/state fetch fall through to
+      // navigate('/') with a stale hasToken=false — the gate then bounces to
+      // unauthedTarget (/welcome on first run), the very loop this fix removes.
+      const confirmed = await refetch();
+      if (confirmed?.hasToken) {
+        navigate('/');
+      } else {
+        setError(SESSION_UNCONFIRMED);
+      }
     } catch (e) {
       if (e instanceof ApiError) {
         const body = e.body;
@@ -86,8 +98,13 @@ export function SetupPage() {
         });
       }
       window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
-      await refetch();
-      navigate('/');
+      // Gate the navigate on a confirmed refetch — see onConnect for why.
+      const confirmed = await refetch();
+      if (confirmed?.hasToken) {
+        navigate('/');
+      } else {
+        toast.show({ kind: 'error', message: SESSION_UNCONFIRMED });
+      }
     } catch (e) {
       let message: string;
       if (e instanceof ApiError) {
@@ -122,8 +139,14 @@ export function SetupPage() {
         return;
       }
       window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
-      await refetch();
-      navigate('/');
+      // Gate the navigate on a confirmed refetch — see onConnect for why.
+      const confirmed = await refetch();
+      if (confirmed?.hasToken) {
+        navigate('/');
+      } else {
+        setError(SESSION_UNCONFIRMED);
+        setShowWarning(false);
+      }
     } catch (e) {
       // 409 means the in-memory transient is gone (process restart, double-commit).
       // The user needs to re-paste their token, not see a generic error.
