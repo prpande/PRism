@@ -4,7 +4,7 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { usePreferences } from '../src/hooks/usePreferences';
 import { useCapabilities } from '../src/hooks/useCapabilities';
-import { useAuth } from '../src/hooks/useAuth';
+import { AuthProvider, useAuth } from '../src/hooks/useAuth';
 
 const showMock = vi.fn();
 vi.mock('../src/components/Toast', () => ({
@@ -165,9 +165,35 @@ describe('useCapabilities', () => {
 
 describe('useAuth', () => {
   it('fetches auth state on mount', async () => {
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
+  });
+
+  it('clears a prior error when a later refetch succeeds', async () => {
+    // claude[bot] review (issue 2): a successful refetch must clear any stale
+    // `error`, so the App error-modal invariant (authState === null && error)
+    // can't resurface a dead error if authState ever reverts to null.
+    let calls = 0;
+    server.use(
+      http.get('/api/auth/state', () => {
+        calls += 1;
+        if (calls === 1) return HttpResponse.json({ error: 'boom' }, { status: 500 });
+        return HttpResponse.json({
+          hasToken: true,
+          host: 'https://github.com',
+          hostMismatch: null,
+        });
+      }),
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    // First mount fetch fails → error is set, authState stays null.
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.authState).toBeNull();
+    // A later successful refetch must clear the stale error.
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(result.current.authState?.hasToken).toBe(true));
+    expect(result.current.error).toBeNull();
   });
 
   it('refetches auth state when window regains focus', async () => {
@@ -182,7 +208,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new Event('focus'));
@@ -205,7 +231,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new CustomEvent('prism-identity-changed'));
@@ -228,7 +254,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new CustomEvent('prism-events-reconnected'));
