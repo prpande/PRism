@@ -131,14 +131,11 @@ function mockFetch(opts: MockOptions = {}) {
       return Promise.resolve(
         jsonResponse({
           // useCapabilities + useAiGate derive AI-on from ui.aiMode
-          // ('preview' ⇒ on). OverviewTab.tsx ALSO still reads the legacy
-          // ui.aiPreview field directly to drive PrDescription's `aiPreview`
-          // prop (the overview-card-hero-no-ai modifier), so both are emitted
-          // until that read is migrated in a later task.
+          // ('preview' ⇒ on). PrDescription's `aiPreview` prop is driven by
+          // useAiGate, not the legacy ui.aiPreview preference field.
           ui: {
             theme: 'system',
             accent: 'indigo',
-            aiPreview,
             aiMode: aiPreview ? 'preview' : 'off',
           },
           inbox: {

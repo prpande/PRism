@@ -8,7 +8,7 @@ const prefs = vi.hoisted(() => ({ aiMode: 'off' as 'off' | 'preview' | 'live' })
 vi.mock('../../../hooks/usePreferences', () => ({
   usePreferences: () => ({
     preferences: {
-      ui: { theme: 'dark', accent: 'indigo', density: 'comfortable', aiPreview: false, aiMode: prefs.aiMode },
+      ui: { theme: 'dark', accent: 'indigo', density: 'comfortable', aiMode: prefs.aiMode },
       inbox: { sections: {} },
       github: {},
     },

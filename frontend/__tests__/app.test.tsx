@@ -30,7 +30,7 @@ vi.mock('../src/hooks/useCapabilities', () => ({
 vi.mock('../src/hooks/usePreferences', () => ({
   usePreferences: vi.fn(() => ({
     preferences: {
-      ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+      ui: { theme: 'system', accent: 'indigo', density: 'comfortable' },
       inbox: {
         sections: {
           'review-requested': true,

@@ -12,13 +12,12 @@ import { useToast } from '../components/Toast';
 import type { PreferencesResponse, AiMode } from '../api/types';
 
 // Settings page (spec § 2.6) tightens the dotted-path key set from the bare
-// `string` PR1 ship to the union below. Bare `theme`/`accent`/`aiPreview` keep
-// the back-compat path used by HeaderControls; `inbox.sections.*` are the new
+// `string` PR1 ship to the union below. Bare `theme`/`accent` keep the
+// back-compat path used by HeaderControls; `inbox.sections.*` are the new
 // Settings page keys.
 export type PreferenceKey =
   | 'theme'
   | 'accent'
-  | 'aiPreview'
   | 'ui.ai.mode'
   | 'density'
   | `inbox.sections.${
@@ -29,12 +28,11 @@ export type PreferenceKey =
       | 'ci-failing'
       | 'recently-closed'}`;
 
-type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'aiPreview' | 'density' | 'ui.ai.mode'>;
+type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'density' | 'ui.ai.mode'>;
 
 function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
   if (key === 'theme') return prefs.ui.theme;
   if (key === 'accent') return prefs.ui.accent;
-  if (key === 'aiPreview') return prefs.ui.aiPreview;
   if (key === 'ui.ai.mode') return prefs.ui.aiMode;
   if (key === 'density') return prefs.ui.density;
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
@@ -50,7 +48,6 @@ function writeKey(
     return { ...prefs, ui: { ...prefs.ui, theme: value as PreferencesResponse['ui']['theme'] } };
   if (key === 'accent')
     return { ...prefs, ui: { ...prefs.ui, accent: value as PreferencesResponse['ui']['accent'] } };
-  if (key === 'aiPreview') return { ...prefs, ui: { ...prefs.ui, aiPreview: value as boolean } };
   if (key === 'ui.ai.mode') return { ...prefs, ui: { ...prefs.ui, aiMode: value as AiMode } };
   if (key === 'density')
     return {

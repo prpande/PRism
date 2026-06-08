@@ -13,7 +13,6 @@ export type AiMode = 'off' | 'preview' | 'live';
 export interface UiPreferences {
   theme: Theme;
   accent: Accent;
-  aiPreview: boolean;
   aiMode: AiMode;
   density: Density;
 }
