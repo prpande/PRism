@@ -8,6 +8,25 @@
 > server-side approach dissolves both and fixes the per-row CI dot's authored-only
 > scope as a side effect. See **Rejected alternatives** for the full reasoning. The
 > `State` and inert `Review` facets were also dropped (see Scope).
+>
+> **Revision note 2 (post ce-doc-review round 2, 2026-06-08).** Round 2 verified that
+> the round-1 server-side widening is not free: a CI `429` **throws**
+> (`RateLimitExceededException`) and — because the orchestrator has no CI fault
+> continuation — discards the **entire** snapshot for that tick, so widening the probe
+> set couples the no-CI sections (`review-requested`, `awaiting-author`, `mentioned`)
+> to CI rate-limit pressure they have no dependency on today; and degraded probes
+> (fine-grained-PAT `403` on the Checks API, transient `5xx`) return `ci == none`,
+> indistinguishable from passing, so a "pure client-side" CI filter would **silently
+> under-match**. The owner chose **Option A**: keep the server-side probe but add CI
+> **fault-isolation** (a CI fault degrades only that tick's CI to `none` + retries
+> next tick; it never discards section data) and a **`ciProbeComplete` snapshot flag**
+> driving a "CI status may be incomplete" hint on the CI facet, so under-match is
+> visible not silent. The CI facet trigger also carries the **failing count when
+> unselected** (restores the at-a-glance "N failing" the removed section gave). The
+> slice **decomposes into PRs** (see Implementation decomposition). Doc-accuracy fixes
+> (`SectionLabels`→`Labels`, `sectionsAsItems`→`rawSec3`, the false "frontend ignores
+> unknown section id" claim) and interaction-gap fills (filter expand/collapse, facet
+> value derivation, `recently-closed` under filter) are folded in below.
 
 ## Problem
 
@@ -127,8 +146,9 @@ This is the upstream IA decision; #263 (filters), #264 (CI indicator), and #219
    the CI facet a prominent, first-position facet in the bar.
 2. **`awaiting-author` → relabel "Needs re-review."** Section **id stays
    `awaiting-author`** (wire/string stability, state.json session keys, SSE
-   `changedSectionIds`, tests); only the **display label** changes (backend
-   `SectionLabels` map + `InboxPane` row label + empty-copy string). The label is
+   `changedSectionIds`, tests); only the **display label** changes (the backend
+   `Labels` map in `InboxEndpoints.cs:9-17` — the `["awaiting-author"]` entry — plus the
+   `InboxPane` row label + empty-copy string). The label is
    deliberately **causally neutral** — "Needs re-review" holds for any PR whose head
    advanced past your last review, regardless of *who* pushed (the filter keys on SHA
    inequality, not author attribution, so "the author responded" would be an
@@ -139,23 +159,47 @@ This is the upstream IA decision; #263 (filters), #264 (CI indicator), and #219
 
 During each refresh, the orchestrator probes CI for **all inbox section PRs**, not just
 the authored superset, by feeding the full distinct PR set to the existing
-`ICiFailingDetector`. Because the detector already caches by `(ref, headSha)`, runs on
-the REST core budget (5000/hr, separate from the Search secondary limit), is capped at
-8 concurrent, and degrades gracefully on 403/429/404, the marginal cost is bounded:
-cold-start probes ≈ inbox size; steady state re-probes only PRs whose head changed.
+`ICiFailingDetector`. The detector already caches by `(ref, headSha)`, runs on the REST
+core budget (5000/hr, separate from the Search secondary limit), and is capped at 8
+concurrent, so steady-state cost is changed-heads-only; cold-start probes ≈ inbox size.
+
+**CI fault-isolation (Option A — required, not optional).** Today the detector throws
+`RateLimitExceededException` on `429` (`GitHubCiFailingDetector.cs:104,206`), the
+orchestrator's CI call is unguarded (`InboxRefreshOrchestrator.cs:149`), and the
+orchestrator deliberately has **no** fault continuation (`:75-76`) — so any CI fault
+propagates to `InboxPoller`'s tick-level catch and discards the **whole** snapshot.
+That fragility is tolerable while CI probes only the small authored superset; widening
+it to every section makes it likely and couples the no-CI sections to CI rate pressure.
+The widening therefore **must** wrap the CI fan-out so a `429`/fault leaves the affected
+PRs at `ci == none` **for that tick only** (retried next tick, exactly as degraded
+probes already are — they are not cached, `GitHubCiFailingDetector.cs:49`) and **never**
+discards section data. Net effect: the inbox becomes *more* resilient than today (a CI
+rate-limit no longer freezes the whole inbox), at the cost of transiently-incomplete CI.
+
+**`ciProbeComplete` flag (handles the under-match).** Degraded probes return `ci == none`,
+indistinguishable from passing/no-checks, so a CI filter over an incompletely-probed
+snapshot silently under-matches — persistently for fine-grained-PAT users, whose Checks
+API `403`s every tick (#213 documents FG-PAT as supported). The snapshot therefore carries
+a `bool ciProbeComplete` (false whenever ≥1 probe degraded this tick); when it is false and
+the CI facet is engaged, the filter bar shows a non-blocking "CI status may be incomplete"
+hint. Under-match becomes **visible**, not silent. (This is the honest cost of Option A vs
+the removed always-visible section — surfaced, not hidden.)
 
 Consequences:
-- `PrInboxItem.ci` is populated for **every** section, so the per-row CI dot is correct
-  everywhere (fixes a latent authored-only limitation), and the CI **filter is a pure
-  client-side predicate over the snapshot** — instant, no endpoint, no "checking" state,
-  no deadlock.
+- `PrInboxItem.ci` is populated for **every** section (subject to probe success), so the
+  per-row CI dot is correct everywhere (fixes a latent authored-only limitation), and the
+  CI **filter is a client-side predicate over the snapshot** — instant, no endpoint, no
+  per-request "checking" state, no deadlock. The `ciProbeComplete` hint covers the
+  degraded-probe gap.
 - The detector's `DetectAsync` parameter is renamed from `authoredItems` to a neutral
   `items` (the logic is already scope-agnostic — it probes per-ref). The orchestrator's
-  CI fan-out runs over `sectionsAsItems` (distinct by ref) instead of only
-  `authored-by-me`. `ResolveVisibleSections`' "force authored when ci-failing enabled"
-  hack is removed (ci-failing is gone).
+  CI fan-out source is the **distinct-by-ref raw live set** (today `rawSec3`), with
+  `ciByRef` built **before** `MaterializePrInboxItem` consumes it (`:146-150,189`) — not
+  the post-materialization `sections` dict. `ResolveVisibleSections`' "force authored when
+  ci-failing enabled" branch (`:276`) is removed (ci-failing is gone).
 - **`recently-closed` is excluded from CI probing** — CI is a live-PR concept; closed
-  PRs get `ci == none` and the CI facet does not apply to that section.
+  PRs get `ci == none` and the CI facet does not apply to that section (it flows through
+  the separate `closedRaw` path and never enters the live raw set).
 - **`passing`** still waits on #264. Until then the CI facet offers `failing` and
   `pending`; the snapshot already distinguishes them. A probed-not-failing-not-pending
   PR is `none` (indistinguishable from "no checks") until #264 adds `passing` — so the
@@ -172,13 +216,21 @@ sections:
   case-insensitive substring, debounced (~120 ms). Inline clear (✕) button when
   non-empty; `Esc` clears it.
 - **Facets** (multi-select; values OR within a facet, facets AND across):
-  - **CI** (first position) — `failing | pending`. Pure client-side over the
-    now-fully-populated `ci` field.
+  - **CI** (first position) — `failing | pending`. Client-side over the `ci` field. The
+    CI trigger shows the **failing count even when no CI value is selected** (e.g.
+    "CI · 3") — this restores the at-a-glance "how many are failing" that the removed
+    `ci-failing` section header gave for free; when `ciProbeComplete` is false the trigger
+    also carries the "CI status may be incomplete" hint (see CI probing).
   - **Repo** — owner/repo values present in the snapshot.
   - **Author** — author logins present in the snapshot.
   Each facet is a **checkbox popover**; the trigger shows the facet name when nothing is
-  selected and a count when ≥1 is selected (e.g. "Repo (2)"). Repo/Author popovers
-  include an inline type-to-filter when their value list is long.
+  selected and a count when ≥1 is selected (e.g. "Repo (2)" — except CI, which always
+  shows its failing count). Repo/Author popovers include an inline type-to-filter when
+  their value list is long. **Facet value lists derive from the full snapshot, not the
+  currently-filtered result set** (no cascading): selecting "CI: failing" does not prune
+  the Repo list. This is the right default for triage — the user always sees every repo,
+  and a zero-result combination explains itself via the zero-state — and it avoids a
+  re-derivation path on every filter change.
 - **Sort** (right-aligned): `Updated` (default) · `Recently pushed` · `Diff size` ·
   `Comments`. Sort applies **within** each visible section (sections are not reordered),
   including `recently-closed`. Comparators are defined over `PrInboxItem`; ties break by
@@ -200,6 +252,21 @@ the snapshot). Section on/off toggles (Settings) remain server-side and orthogon
   **nothing across all sections**, a distinct zero-state renders — "No PRs match your
   filters · Clear" — with the filter bar still visible. This is separate from the
   no-token `EmptyAllSections` copy.
+
+**Expand/collapse under filter.** When a section transitions from hidden-by-filter to
+visible-by-filter (the filter now matches ≥1 of its rows), it renders **expanded**
+regardless of its prior collapsed state — restoring its prior collapsed state would hide
+the very matches the filter surfaced. A manual collapse the user makes *during* a filter
+session persists for that session; clearing the filter restores the pre-filter
+expand/collapse state. `recently-closed` (default-collapsed) is the one exception: when a
+filter matches rows inside it, it renders **visible but still collapsed**, with the match
+count on its header — so the user knows matches exist there without history auto-expanding.
+
+**`recently-closed` under a CI facet.** Its items always carry `ci == none` (excluded from
+probing), so any CI-value selection matches zero of them and the section hides — a
+permanent consequence of selecting *any* CI value (history is never CI-bearing). This is
+intended (a "show me failing" triage filter should not surface closed PRs). The Repo and
+Author facets apply to `recently-closed` normally.
 
 **Persistence: transient.** Filters live in component state; reload clears them. The
 **sort default** is the one durable piece (see below).
@@ -227,9 +294,14 @@ Define a canonical `SectionOrder` constant
 (`review-requested`, `awaiting-author`, `authored-by-me`, `mentioned`,
 `recently-closed`) and order the serialized `sections[]` by it at the `/api/inbox`
 boundary, independent of `Dictionary` enumeration. Removes the documented fragility.
-A pinning test asserts the order regardless of build order. The frontend ignores any
-unknown section id (forward-compat against a version-skewed backend still emitting
-`ci-failing`).
+A pinning test asserts the order regardless of build order. No frontend change is needed
+for unknown ids: `InboxPage.tsx:85-94` already maps **every** section it receives and
+renders it with a fallback label (`InboxEndpoints.cs:45`), and the Electron build bundles
+the same backend + frontend (no independent-deploy version skew is reachable), so a stale
+`ci-failing` from a downgraded backend would simply render with its label — not be
+silently dropped. **Do not** add silent-drop-on-unknown-id logic: it would lose PRs that
+appear only in an unrecognized section. (An earlier draft mis-claimed the frontend already
+ignores unknown ids; it does not, and it should not.)
 
 ### Config migration (`InboxSectionsConfig.CiFailing` removal)
 
@@ -258,21 +330,44 @@ other section bools preserved. No data loss.
   zero-match state.
 - Settings `InboxPane.tsx` — six rows → five (drop `ci-failing`); relabel
   `awaiting-author` → "Needs re-review"; add the `inbox.defaultSort` select.
-- `PreferencesContext.tsx` — `inbox.defaultSort` read/write branch.
-- `api/types.ts` — `defaultSort` preference + `PreferenceKey` member.
+- `PreferencesContext.tsx` — add `inbox.defaultSort` read/write branch **before** the
+  `inbox.sections.*` fallthrough; remove the `inbox.sections.ci-failing` arm of the
+  `PreferenceKey` union.
+- `api/types.ts` — add `defaultSort` preference + `PreferenceKey` member; add
+  `ciProbeComplete: boolean` to `InboxResponse`; remove the `ci-failing` key from
+  `InboxSectionsPreferences`.
+- Per-row CI dot — now rendered in previously-dotless sections (`review-requested`,
+  `mentioned`, `awaiting-author`); add a tooltip / `aria-label` ("CI: failing" / "CI:
+  pending") so the dot is self-describing where users have no prior exposure to it.
+  (Verify whether the authored-context dot already carries one; if so, just ensure it
+  applies in the new locations.)
+- Filter bar — consume `ciProbeComplete`: when false and the CI facet is engaged, show
+  the non-blocking "CI status may be incomplete" hint.
 
 **Backend (changed):**
 - `InboxRefreshOrchestrator` — stop materializing `ci-failing`; run the CI detector over
-  **all** distinct section PRs (excluding `recently-closed`) so `ci` populates
-  everywhere; drop the `ci-failing` branch from `ResolveVisibleSections`.
+  the **distinct-by-ref raw live set** (`rawSec3`, excluding `recently-closed`'s
+  `closedRaw` path) so `ci` populates everywhere; build `ciByRef` **before**
+  `MaterializePrInboxItem`; drop the `ci-failing` branch from `ResolveVisibleSections`
+  (`:276`). **Wrap the CI fan-out in fault-isolation** (reverses the deliberate
+  no-continuation choice at `:75-76`, now that probe volume is large): a `429`/fault
+  leaves affected refs at `ci == none` for the tick and is retried next tick — it must
+  **not** propagate to the tick-level catch and discard the snapshot. Set
+  `ciProbeComplete = false` on the snapshot when ≥1 probe degraded this tick.
 - `GitHubCiFailingDetector` / `ICiFailingDetector` — rename `authoredItems` → `items`
-  (scope-agnostic; no behavioural change beyond input set).
+  (scope-agnostic; no behavioural change beyond input set); update the interface XML-doc
+  comment (currently says "For each authored PR …") to match the widened scope.
 - `InboxDeduplicator` — drop the `ci-failing > authored-by-me` pair.
 - `InboxSectionsConfig` — remove `CiFailing` (6 → 5 fields) + migration test.
-- `SectionLabels` — "Needs re-review" for `awaiting-author`.
+- `Labels` map (`InboxEndpoints.cs`) — "Needs re-review" for `awaiting-author`.
 - Canonical `SectionOrder` + ordering step at the `/api/inbox` serializer + pinning test.
+- `InboxResponse` snapshot — add `ciProbeComplete` (serialized at the `/api/inbox`
+  boundary; default `true`, set `false` when ≥1 CI probe degraded this tick).
 - `AppConfig`/`InboxConfig` `DefaultSort` + `ConfigStore` allowlist arm + DTO + value
-  validation.
+  validation. **Positional-record gotcha:** `InboxConfig`'s last param is the defaulted
+  `RecentlyClosedWindowDays = 14` and `AppConfig.Default` constructs it positionally —
+  add `DefaultSort` with a default (or before the trailing defaulted param) and update the
+  `AppConfig.Default` call site.
 
 ## Testing strategy (TDD)
 
@@ -282,12 +377,15 @@ other section bools preserved. No data loss.
 - **`useInboxFilters`**: facet-value derivation; clear resets all incl. free-text.
 - **Orchestrator**: `ci-failing` section absent; `ci` populated for review-requested /
   mentioned PRs (not just authored); `recently-closed` left `none`; dedup no longer
-  references `ci-failing`.
+  references `ci-failing`. **CI fault-isolation**: a detector `429`/throw leaves the
+  snapshot's section data intact (sections still publish), affected refs are `ci == none`,
+  and `ciProbeComplete == false` — the tick is **not** discarded (regression test against
+  the round-2 finding). A clean tick sets `ciProbeComplete == true`.
 - **Detector**: probing a mixed (authored + non-authored) set populates CI for all;
   cache hit by `(ref, headSha)` skips re-probe; degraded results uncached (existing
   contract preserved under the renamed param).
 - **Ordering**: serialized `sections[]` follows `SectionOrder` regardless of build order;
-  unknown section id ignored by the frontend.
+  an unknown section id renders with a fallback label (not dropped).
 - **Config migration**: old `config.json` with `ciFailing` loads clean; round-trips
   without the key.
 - **`inbox.defaultSort`**: read/write routes to the scalar branch (not
@@ -295,8 +393,11 @@ other section bools preserved. No data loss.
   persists and re-hydrates.
 - **Settings**: five section rows; "Needs re-review" label; `PasteUrlInput` still present.
 - **e2e (B1)**: filter bar narrows live; CI facet filters failing across sections;
-  emptied sections hide; all-match-nothing shows the zero-state; sort reorders within
-  sections; `PasteUrlInput` coexists; light + dark.
+  emptied sections hide and re-reveal **expanded**; all-match-nothing shows the zero-state;
+  sort reorders within sections; `PasteUrlInput` coexists; light + dark. **Separate B1
+  assert (always-on, independent of the filter):** the per-row CI dot now appears on
+  `review-requested` / `mentioned` / `awaiting-author` rows that were previously dotless —
+  a B1 reviewer must verify this unconditional change, not only filter behaviour.
 
 ## Design decisions deferred to the plan (implementation-level)
 
@@ -308,6 +409,26 @@ highlight (mirror the existing toolbar/Settings tokens); debounce leading-edge v
 trailing; and the precise two-row vs one-row toolbar layout that keeps `PasteUrlInput`
 and the filter controls uncramped. Desktop/Electron is the primary target, so narrow-
 viewport responsive behaviour is out of scope.
+
+## Implementation decomposition (for `writing-plans`)
+
+This slice is four loosely-coupled units; `writing-plans` owns the final split, but the
+recommended decomposition is:
+
+- **PR1 — backend (no UI gate).** `ci-failing` removal + dedup-pair drop +
+  `ResolveVisibleSections` cleanup; CI fan-out widening **with fault-isolation +
+  `ciProbeComplete`**; `authoredItems`→`items` rename + XML-doc update; canonical
+  `SectionOrder` + pinning test; `InboxSectionsConfig` field removal + `config.json`
+  migration test. Backend-only, hermetically testable.
+- **PR2 — filter/sort bar (B1-gated).** `useInboxFilters`, `applyInboxFilters`, filter
+  primitives, `InboxToolbar` integration, `EmptyAllSections` gating + zero-match state,
+  expand/collapse-under-filter, per-row CI dot in new sections + tooltip, the CI-trigger
+  failing count + incomplete hint. This is where the human visual asserts live.
+- **PR3 — `inbox.defaultSort` preference.** `AppConfig`/`ConfigStore` allowlist arm + DTO
+  + value validation + `PreferencesContext` branch + `InboxPane` select. Independent of
+  PR1/PR2; can fold into PR2 or ship separately.
+
+PR1 must merge before PR2 (PR2's CI facet depends on `ci` being populated inbox-wide).
 
 ## Risk classification (for the human gate)
 
@@ -368,10 +489,15 @@ viewport responsive behaviour is out of scope.
 - **#225** — close its conceptual thread here (dedup is visible-by-design via this spec;
   no toggle shipped).
 
-## Open questions
+## Resolved decisions (owner-confirmed)
 
-- **CI probe cost owner-confirm:** widening CI probing to all inbox PRs per refresh is
-  affordable on the REST budget with the existing head-SHA cache, but it does shift from
-  pay-when-used to pay-every-tick (justified because it also fixes the per-row dot). If
-  the owner prefers pay-when-used, the fallback is the (more complex) fixed CI-3 with the
-  four mitigations above. Recommendation: server-side probe.
+- **CI approach → Option A (server-side probe + fault-isolation + `ciProbeComplete`).**
+  Owner-confirmed 2026-06-08 over the pay-when-used fallback. The pay-every-tick cost is
+  accepted because it delivers the core #262 goal (failing across *all* relationships) and
+  fixes the per-row dot; the round-2 failure modes (whole-snapshot discard on `429`, silent
+  filter under-match) are neutralized by fault-isolation + the incomplete hint rather than
+  by reverting.
+- **Section ordering stays in this slice.** Removing `ci-failing` reshapes the
+  section-materialization path whose order is Dictionary-enumeration-fragile; pinning it is
+  adjacent and cheap. Not split to a separate issue.
+- **Decompose into PRs → yes** (see Implementation decomposition).
