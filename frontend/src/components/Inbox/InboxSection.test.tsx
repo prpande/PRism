@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { OpenTabsProvider } from '../../contexts/OpenTabsContext';
 import { InboxSection } from './InboxSection';
@@ -44,6 +44,30 @@ function renderSection(section: InboxSectionDto, props?: { defaultOpen?: boolean
   );
 }
 
+function renderForceOpen(
+  section: InboxSectionDto,
+  props: { defaultOpen?: boolean; forceOpen?: boolean },
+) {
+  const tree = (p: { defaultOpen?: boolean; forceOpen?: boolean }) => (
+    <MemoryRouter>
+      <OpenTabsProvider>
+        <InboxSection
+          section={section}
+          enrichments={{}}
+          showCategoryChip={false}
+          maxDiff={100}
+          defaultOpen={p.defaultOpen ?? true}
+          forceOpen={p.forceOpen}
+        />
+      </OpenTabsProvider>
+    </MemoryRouter>
+  );
+  const { rerender } = render(tree(props));
+  return {
+    rerender: (p: { defaultOpen?: boolean; forceOpen?: boolean }) => rerender(tree(p)),
+  };
+}
+
 describe('InboxSection grouping', () => {
   it('renders a RepoGroupAccordion per repo for a multi-repo section (repos open by default)', () => {
     renderSection(
@@ -70,5 +94,50 @@ describe('InboxSection grouping', () => {
     );
     expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
     expect(screen.getByText(/most recent first/i)).toBeInTheDocument();
+  });
+});
+
+describe('InboxSection forceOpen (expand-on-reveal)', () => {
+  const section = makeSection('review-requested', [prFor('acme', 'api', 1)]);
+
+  it('renders collapsed when forceOpen is false and defaultOpen is false', () => {
+    renderForceOpen(section, { defaultOpen: false, forceOpen: false });
+    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /review-requested/i })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('expands when forceOpen flips true even though defaultOpen is false', () => {
+    const { rerender } = renderForceOpen(section, { defaultOpen: false, forceOpen: false });
+    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
+    rerender({ defaultOpen: false, forceOpen: true });
+    expect(screen.getByText('PR 1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /review-requested/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+  });
+
+  it('a manual collapse during forceOpen wins over forceOpen', () => {
+    renderForceOpen(section, { defaultOpen: false, forceOpen: true });
+    expect(screen.getByText('PR 1')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /review-requested/i }));
+    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
+  });
+
+  it('clearing forceOpen resets the section to its defaultOpen (drops manual-toggle memory)', () => {
+    const { rerender } = renderForceOpen(section, { defaultOpen: false, forceOpen: true });
+    // Manually collapse while forced open.
+    fireEvent.click(screen.getByRole('button', { name: /review-requested/i }));
+    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
+    // Filter releases the section: forceOpen → false drops the manual memory,
+    // so it returns to defaultOpen (false) → still collapsed here.
+    rerender({ defaultOpen: false, forceOpen: false });
+    expect(screen.queryByText('PR 1')).not.toBeInTheDocument();
+    // Re-revealing forces it open again from the clean default.
+    rerender({ defaultOpen: false, forceOpen: true });
+    expect(screen.getByText('PR 1')).toBeInTheDocument();
   });
 });

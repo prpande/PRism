@@ -5,13 +5,24 @@ import { http, HttpResponse } from 'msw';
 import { MemoryRouter } from 'react-router-dom';
 import { App } from '../src/App';
 
+// Stable snapshot: the real `useInbox` holds `data` in `useState`, so its reference
+// is stable across renders. Rebuilding `{ data: { sections: [] } }` per call would
+// hand the authed InboxPage a fresh `sections` array each render, re-firing
+// FilterBar's onState effect → setState → re-render → loop.
+const inboxSnapshot = vi.hoisted(() => ({
+  data: {
+    sections: [] as never[],
+    enrichments: {},
+    lastRefreshedAt: '',
+    tokenScopeFooterEnabled: false,
+    ciProbeComplete: true,
+  },
+  isLoading: false,
+  error: null,
+  reload: vi.fn(),
+}));
 vi.mock('../src/hooks/useInbox', () => ({
-  useInbox: vi.fn(() => ({
-    data: { sections: [], enrichments: {}, lastRefreshedAt: '', tokenScopeFooterEnabled: false },
-    isLoading: false,
-    error: null,
-    reload: vi.fn(),
-  })),
+  useInbox: vi.fn(() => inboxSnapshot),
 }));
 vi.mock('../src/hooks/useInboxUpdates', () => ({
   useInboxUpdates: vi.fn(() => ({ hasUpdate: false, summary: '', dismiss: vi.fn() })),

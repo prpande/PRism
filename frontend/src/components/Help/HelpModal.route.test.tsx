@@ -30,13 +30,25 @@ vi.mock('../../api/client', () => ({
   ApiError: class extends Error {},
 }));
 vi.mock('../../api/feedback', () => ({ submitFeedback: vi.fn() }));
+// Hoist the inbox snapshot to a single stable object. The real `useInbox` holds
+// `data` in `useState`, so its reference is stable across renders; a factory that
+// rebuilt `{ data: { sections: [] } }` on every call would hand InboxPage a fresh
+// `sections` array each render, re-firing FilterBar's onState effect → setState →
+// re-render → loop (the authed /help background mounts the real InboxPage).
+const inboxSnapshot = vi.hoisted(() => ({
+  data: {
+    sections: [] as never[],
+    enrichments: {},
+    lastRefreshedAt: '',
+    tokenScopeFooterEnabled: false,
+    ciProbeComplete: true,
+  },
+  isLoading: false,
+  error: null,
+  reload: vi.fn(),
+}));
 vi.mock('../../hooks/useInbox', () => ({
-  useInbox: vi.fn(() => ({
-    data: { sections: [], enrichments: {}, lastRefreshedAt: '', tokenScopeFooterEnabled: false },
-    isLoading: false,
-    error: null,
-    reload: vi.fn(),
-  })),
+  useInbox: vi.fn(() => inboxSnapshot),
 }));
 vi.mock('../../hooks/useInboxUpdates', () => ({
   useInboxUpdates: vi.fn(() => ({ hasUpdate: false, summary: '', dismiss: vi.fn() })),

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { InboxResponse, AiCapabilities, PreferencesResponse } from '../src/api/types';
@@ -218,6 +218,19 @@ describe('InboxPage', () => {
     setHooks({ data: { ...sampleData, tokenScopeFooterEnabled: false } });
     renderPage();
     expect(screen.queryByText(/some prs may be hidden/i)).not.toBeInTheDocument();
+  });
+
+  it('filtering to nothing shows the no-match zero-state, not EmptyAllSections', async () => {
+    // sampleData has one PR with ci: 'none'. Filtering on CI failing matches
+    // nothing, so the distinct zero-match state shows — NOT EmptyAllSections
+    // (which is reserved for a genuinely empty inbox, gated on !filterActive).
+    setHooks({ data: sampleData });
+    renderPage();
+    await screen.findByTestId('inbox-page');
+    fireEvent.click(screen.getByRole('button', { name: /CI/ }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'failing' }));
+    expect(screen.getByText(/No PRs match your filters/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing in your inbox/)).toBeNull();
   });
 });
 

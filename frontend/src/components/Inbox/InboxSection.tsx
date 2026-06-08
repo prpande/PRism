@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { InboxSection as InboxSectionDto, InboxItemEnrichment } from '../../api/types';
 import { groupByRepo, prId } from './groupByRepo';
 import { InboxRow } from './InboxRow';
@@ -23,6 +23,7 @@ interface Props {
   showCategoryChip: boolean;
   maxDiff: number;
   defaultOpen?: boolean;
+  forceOpen?: boolean;
 }
 
 export function InboxSection({
@@ -31,15 +32,37 @@ export function InboxSection({
   showCategoryChip,
   maxDiff,
   defaultOpen = true,
+  forceOpen,
 }: Props) {
-  const [open, setOpen] = useState(defaultOpen);
+  // A filter-revealed section opens expanded (forceOpen), but a manual collapse
+  // during the session still wins. Once the filter releases the section
+  // (forceOpen → false), the session's manual-toggle memory is dropped so the
+  // section returns to its pre-filter default on the next reveal.
+  const [userToggled, setUserToggled] = useState(false);
+  const [userOpen, setUserOpen] = useState(defaultOpen);
+  // `forceOpen` is a force-OPEN signal only: it never force-collapses. The page
+  // wires it as `filterActive && id !== 'recently-closed'`, a concrete boolean —
+  // so we OR with defaultOpen (not `??`), otherwise an explicit `forceOpen={false}`
+  // would override a `defaultOpen={true}` section and wrongly collapse it.
+  const open = userToggled ? userOpen : forceOpen || defaultOpen;
+  // Flip relative to the CURRENTLY DISPLAYED state, not `userOpen`. On the first
+  // toggle after a forceOpen reveal, `userOpen` still holds `defaultOpen` (e.g.
+  // false) while the section shows expanded — a functional flip of `userOpen`
+  // would leave it open. Inverting `open` makes a manual collapse always win.
+  const onToggle = () => {
+    setUserToggled(true);
+    setUserOpen(!open);
+  };
+  useEffect(() => {
+    if (!forceOpen) setUserToggled(false);
+  }, [forceOpen]);
   const isRecentlyClosed = section.id === RECENTLY_CLOSED;
   const groups = groupByRepo(section.items);
   const repoDefaultOpen = !isRecentlyClosed;
 
   return (
     <section className={styles.section}>
-      <button className={styles.header} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+      <button className={styles.header} onClick={onToggle} aria-expanded={open}>
         <InboxCaret open={open} />
         <span className={styles.label}>{section.label}</span>
         <span className={styles.count}>{section.items.length}</span>
