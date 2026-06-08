@@ -39,7 +39,6 @@ public class PreferencesEndpointsTests
         sections.GetProperty("awaiting-author").GetBoolean().Should().BeTrue();
         sections.GetProperty("authored-by-me").GetBoolean().Should().BeTrue();
         sections.GetProperty("mentioned").GetBoolean().Should().BeTrue();
-        sections.GetProperty("ci-failing").GetBoolean().Should().BeTrue();
 
         var github = body.GetProperty("github");
         github.GetProperty("host").GetString().Should().Be("https://github.com");
@@ -115,7 +114,7 @@ public class PreferencesEndpointsTests
         var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
         // Use a JSON literal because the dotted key is not a valid C# anonymous-property name.
         using var content = new StringContent(
-            """{ "inbox.sections.ci-failing": false }""",
+            """{ "inbox.sections.authored-by-me": false }""",
             System.Text.Encoding.UTF8,
             "application/json");
         using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
@@ -126,7 +125,7 @@ public class PreferencesEndpointsTests
         var resp = await client.SendAsync(req);
         resp.IsSuccessStatusCode.Should().BeTrue();
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
-        body.GetProperty("inbox").GetProperty("sections").GetProperty("ci-failing").GetBoolean().Should().BeFalse();
+        body.GetProperty("inbox").GetProperty("sections").GetProperty("authored-by-me").GetBoolean().Should().BeFalse();
     }
 
     [Fact]

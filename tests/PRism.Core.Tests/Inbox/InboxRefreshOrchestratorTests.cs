@@ -112,13 +112,23 @@ public sealed class InboxRefreshOrchestratorTests
             => Task.FromResult(candidates);
     }
 
-    // CI detector: returns all items with CiStatus.None
-    private sealed class NoneciDetector : ICiFailingDetector
+    // CI detector: returns all items with a fixed status + a configurable Complete flag,
+    // or throws a supplied exception to exercise fault-isolation.
+    private sealed class FakeCiDetector : ICiFailingDetector
     {
-        public Task<IReadOnlyList<(RawPrInboxItem Item, CiStatus Ci)>> DetectAsync(
-            IReadOnlyList<RawPrInboxItem> authoredItems, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<(RawPrInboxItem, CiStatus)>>(
-                authoredItems.Select(i => (i, CiStatus.None)).ToList());
+        private readonly CiStatus _status;
+        private readonly bool _complete;
+        private readonly Exception? _throw;
+        public IReadOnlyList<RawPrInboxItem>? LastInput { get; private set; }
+        public FakeCiDetector(CiStatus status = CiStatus.None, bool complete = true, Exception? toThrow = null)
+            { _status = status; _complete = complete; _throw = toThrow; }
+        public Task<CiDetectResult> DetectAsync(IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
+        {
+            LastInput = items;
+            if (_throw is not null) throw _throw;
+            return Task.FromResult(new CiDetectResult(
+                items.Select(i => (i, _status)).ToList(), _complete));
+        }
     }
 
     private static AppConfig DefaultConfig() => AppConfig.Default;
@@ -128,7 +138,6 @@ public sealed class InboxRefreshOrchestratorTests
         bool awaitingAuthor = true,
         bool authoredByMe = true,
         bool mentioned = true,
-        bool ciFailing = true,
         bool recentlyClosed = false,
         int recentlyClosedWindowDays = 14)
         => AppConfig.Default with
@@ -136,7 +145,7 @@ public sealed class InboxRefreshOrchestratorTests
             Inbox = new InboxConfig(
                 Deduplicate: false,
                 Sections: new InboxSectionsConfig(
-                    reviewRequested, awaitingAuthor, authoredByMe, mentioned, ciFailing, recentlyClosed),
+                    reviewRequested, awaitingAuthor, authoredByMe, mentioned, recentlyClosed),
                 ShowHiddenScopeFooter: true,
                 RecentlyClosedWindowDays: recentlyClosedWindowDays)
         };
@@ -189,12 +198,25 @@ public sealed class InboxRefreshOrchestratorTests
                 new Dictionary<string, IReadOnlyList<RawPrInboxItem>>()),
             enricher ?? new IdentityPrEnricher(),
             awaitingFilter ?? new PassthroughAwaitingAuthorFilter(),
-            ciDetector ?? new NoneciDetector(),
+            ciDetector ?? new FakeCiDetector(),
             dedupe ?? new InboxDeduplicator(),
             aiSelector ?? new FakeAiSeamSelector(new NoopInboxItemEnricher()),
             events ?? new RecordingEventBus(),
             stateStore ?? StateStoreMock().Object,
             viewerLogin ?? (() => "testuser"));
+
+    // Convenience overload that wraps a section factory into FakeSectionQueryRunner and
+    // threads through a CI detector. Used by the CI-fan-out tests below.
+    private static InboxRefreshOrchestrator BuildSut(
+        Func<IReadOnlySet<string>, IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>> sections,
+        ICiFailingDetector ciDetector,
+        IConfigStore? config = null,
+        IReviewEventBus? events = null)
+        => Build(
+            config: config ?? ConfigStoreMock().Object,
+            sections: new FakeSectionQueryRunner(sections),
+            ciDetector: ciDetector,
+            events: events);
 
     // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -202,7 +224,7 @@ public sealed class InboxRefreshOrchestratorTests
     public async Task First_refresh_completes_TCS_and_publishes_event()
     {
         var bus = new RecordingEventBus();
-        var sectionIds = new[] { "review-requested", "awaiting-author", "authored-by-me", "mentioned", "ci-failing" };
+        var sectionIds = new[] { "review-requested", "awaiting-author", "authored-by-me", "mentioned" };
         var sections = new FakeSectionQueryRunner(_ => AllSections(2, sectionIds));
 
         var configMock = ConfigStoreMock(ConfigWithSections());
@@ -231,7 +253,7 @@ public sealed class InboxRefreshOrchestratorTests
 
         var configMock = ConfigStoreMock(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: true,
-            mentioned: false, ciFailing: false));
+            mentioned: false));
         using var sut = Build(config: configMock.Object, sections: sections, events: bus);
 
         await sut.RefreshAsync(CancellationToken.None);
@@ -260,7 +282,7 @@ public sealed class InboxRefreshOrchestratorTests
 
         var configMock = ConfigStoreMock(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
-            mentioned: false, ciFailing: false));
+            mentioned: false));
         using var sut = Build(config: configMock.Object, sections: sections, events: bus);
 
         await sut.RefreshAsync(CancellationToken.None);
@@ -283,7 +305,7 @@ public sealed class InboxRefreshOrchestratorTests
 
         var configMock = ConfigStoreMock(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: true,
-            mentioned: false, ciFailing: false));
+            mentioned: false));
         using var sut = Build(config: configMock.Object, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
@@ -358,40 +380,89 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
-    public async Task RefreshAsync_when_AuthoredByMe_disabled_but_CiFailing_enabled_does_not_emit_authored_by_me_section()
+    public async Task RefreshAsync_when_AuthoredByMe_disabled_omits_authored_by_me_section()
     {
-        // The CI detector requires the authored-by-me superset to compute the ci-failing
-        // subset, so ResolveVisibleSections() forces "authored-by-me" into the visible set
-        // even when the user disabled that section. The snapshot, however, must respect
-        // the user's preference and only surface "ci-failing".
-        var sections = new FakeSectionQueryRunner(_ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+        // Coverage for the simplified ResolveVisibleSections gating (ci-failing removed):
+        // authored-by-me must be absent from the visible set AND the snapshot when the
+        // user disables that section. Previously the CI fan-out force-added authored-by-me
+        // to derive the ci-failing subset; now that ci-failing is gone, the gate is plain.
+        IReadOnlySet<string>? capturedVisible = null;
+        var sections = new FakeSectionQueryRunner(visible =>
         {
-            ["authored-by-me"] = new[] { RawPr(1, "sha-1"), RawPr(2, "sha-2") }
+            capturedVisible = visible;
+            return new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = new[] { RawPr(1, "sha-1") },
+            };
         });
 
-        // CI detector reports PR #1 as Failing, PR #2 as Passing
-        var ciDetector = new Mock<ICiFailingDetector>();
-        ciDetector.Setup(d => d.DetectAsync(It.IsAny<IReadOnlyList<RawPrInboxItem>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<RawPrInboxItem> items, CancellationToken _) =>
-                (IReadOnlyList<(RawPrInboxItem, CiStatus)>)items
-                    .Select(i => (i, i.Reference.Number == 1 ? CiStatus.Failing : CiStatus.None))
-                    .ToList());
-
         var configMock = ConfigStoreMock(ConfigWithSections(
-            reviewRequested: false, awaitingAuthor: false, authoredByMe: false,
-            mentioned: false, ciFailing: true));
-        using var sut = Build(
-            config: configMock.Object,
-            sections: sections,
-            ciDetector: ciDetector.Object);
+            reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
+            mentioned: false));
+        using var sut = Build(config: configMock.Object, sections: sections);
 
         await sut.RefreshAsync(CancellationToken.None);
 
+        capturedVisible.Should().NotBeNull();
+        capturedVisible!.Should().NotContain("authored-by-me");
         sut.Current.Should().NotBeNull();
         sut.Current!.Sections.Should().NotContainKey("authored-by-me");
-        sut.Current.Sections.Should().ContainKey("ci-failing");
-        sut.Current.Sections["ci-failing"].Should().ContainSingle()
-            .Which.Reference.Number.Should().Be(1);
+        sut.Current.Sections.Should().NotContainKey("ci-failing");
+    }
+
+    [Fact]
+    public async Task Ci_is_probed_for_all_live_sections_not_just_authored()
+    {
+        var detector = new FakeCiDetector(CiStatus.Failing);
+        var sut = BuildSut(
+            sections: _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = new[] { RawPr(1) },
+                ["authored-by-me"]   = new[] { RawPr(2) },
+            },
+            ciDetector: detector);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        // detector saw BOTH refs (distinct), and the review-requested PR carries CI now.
+        detector.LastInput!.Select(i => i.Reference.Number).Should().BeEquivalentTo(new[] { 1, 2 });
+        sut.Current!.Sections["review-requested"][0].Ci.Should().Be(CiStatus.Failing);
+        sut.Current.Sections.Should().NotContainKey("ci-failing");
+    }
+
+    [Fact]
+    public async Task Ci_rate_limit_publishes_snapshot_then_resurfaces_for_backoff()
+    {
+        var detector = new FakeCiDetector(toThrow: new RateLimitExceededException("429", TimeSpan.FromSeconds(30)));
+        var sut = BuildSut(
+            sections: _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = new[] { RawPr(1) },
+            },
+            ciDetector: detector);
+
+        var act = async () => await sut.RefreshAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<RateLimitExceededException>();   // re-surfaced for poller backoff
+        sut.Current.Should().NotBeNull();                              // …but the snapshot still published
+        sut.Current!.Sections["review-requested"].Should().ContainSingle();
+        sut.Current.CiProbeComplete.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Ci_probe_incomplete_sets_flag_without_throwing()
+    {
+        var detector = new FakeCiDetector(CiStatus.None, complete: false);
+        var sut = BuildSut(
+            sections: _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = new[] { RawPr(1) },
+            },
+            ciDetector: detector);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        sut.Current!.CiProbeComplete.Should().BeFalse();
     }
 
     [Fact]
@@ -453,7 +524,7 @@ public sealed class InboxRefreshOrchestratorTests
 
         var configMock = ConfigStoreMock(ConfigWithSections(
             reviewRequested: true, awaitingAuthor: false, authoredByMe: false,
-            mentioned: false, ciFailing: false));
+            mentioned: false));
         using var sut = Build(config: configMock.Object, sections: sections, events: bus);
 
         await sut.RefreshAsync(CancellationToken.None); // first
@@ -518,7 +589,7 @@ public sealed class InboxRefreshOrchestratorTests
 
         var configMock = ConfigStoreMock(ConfigWithSections(
             reviewRequested: false, awaitingAuthor: true, authoredByMe: true,
-            mentioned: false, ciFailing: false));
+            mentioned: false));
         using var sut = Build(
             config: configMock.Object,
             sections: sections,

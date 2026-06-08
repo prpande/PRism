@@ -66,7 +66,6 @@ internal static class PreferencesEndpoints
                 AwaitingAuthor:  sections.AwaitingAuthor,
                 AuthoredByMe:    sections.AuthoredByMe,
                 Mentioned:       sections.Mentioned,
-                CiFailing:       sections.CiFailing,
                 RecentlyClosed:  sections.RecentlyClosed)),
             Github: new GithubPreferencesDto(
                 Host:       config.Current.Github.Host,

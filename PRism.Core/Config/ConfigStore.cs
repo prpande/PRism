@@ -39,7 +39,6 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["inbox.sections.awaiting-author"]   = ConfigFieldType.Bool,
             ["inbox.sections.authored-by-me"]    = ConfigFieldType.Bool,
             ["inbox.sections.mentioned"]         = ConfigFieldType.Bool,
-            ["inbox.sections.ci-failing"]        = ConfigFieldType.Bool,
             ["inbox.sections.recently-closed"]   = ConfigFieldType.Bool,
         };
 
@@ -146,8 +145,6 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Inbox = _current.Inbox with { Sections = sections with { AuthoredByMe    = (bool)value! } } },
                 "inbox.sections.mentioned" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { Mentioned       = (bool)value! } } },
-                "inbox.sections.ci-failing" =>
-                    _current with { Inbox = _current.Inbox with { Sections = sections with { CiFailing       = (bool)value! } } },
                 "inbox.sections.recently-closed" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { RecentlyClosed  = (bool)value! } } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")

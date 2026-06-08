@@ -142,41 +142,54 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                 rawWithEnrichment["awaiting-author"] = filtered;
             }
 
-            // Section 5 fan-out (CI status decoration on the authored superset)
+            // CI fan-out across ALL live sections (recently-closed flows through a
+            // separate path and never enters rawWithEnrichment, so it is excluded).
+            // Distinct-by-ref so a PR in two sections is probed once.
             var ciByRef = new Dictionary<PrReference, CiStatus>();
-            if (rawWithEnrichment.TryGetValue("authored-by-me", out var rawSec3))
+            var ciProbeComplete = true;
+            RateLimitExceededException? ciRateLimit = null;
+            var liveForCi = rawWithEnrichment.Values
+                .SelectMany(v => v)
+                .GroupBy(r => r.Reference)
+                .Select(g => g.First())
+                .ToList();
+            if (liveForCi.Count > 0)
             {
-                var probed = await _ciDetector.DetectAsync(rawSec3, ct).ConfigureAwait(false);
-                foreach (var (item, ci) in probed.Items) ciByRef[item.Reference] = ci;
-
-                if (visible.Contains("ci-failing"))
+                try
                 {
-                    var failing = probed.Items.Where(t => t.Ci == CiStatus.Failing).Select(t => t.Item).ToList();
-                    Log.CiDetectionComplete(_log, rawSec3.Count, failing.Count);
-                    rawWithEnrichment["ci-failing"] = failing;
+                    var probed = await _ciDetector.DetectAsync(liveForCi, ct).ConfigureAwait(false);
+                    var failingCount = 0;
+                    foreach (var (item, ci) in probed.Items)
+                    {
+                        ciByRef[item.Reference] = ci;
+                        if (ci == CiStatus.Failing) failingCount++;
+                    }
+                    ciProbeComplete = probed.Complete;
+                    Log.CiDetectionComplete(_log, liveForCi.Count, failingCount, probed.Complete);
                 }
-            }
-
-            // The authored-by-me superset is fetched whenever ci-failing is enabled (the
-            // detector needs it to derive the failing subset). If the user disabled the
-            // authored-by-me section itself, drop it now so it never reaches the snapshot.
-            if (!_config.Current.Inbox.Sections.AuthoredByMe)
-            {
-                rawWithEnrichment.Remove("authored-by-me");
+                catch (OperationCanceledException) { throw; }
+                catch (RateLimitExceededException rle)
+                {
+                    // CI is non-critical enrichment. A 429 must NOT discard the snapshot
+                    // (that would freeze the no-CI sections too). Publish without CI, mark
+                    // incomplete, and re-surface the rate-limit AFTER publishing so the
+                    // poller still honors Retry-After. (#262 round-2 fault-isolation.)
+                    ciProbeComplete = false;
+                    ciRateLimit = rle;
+                    Log.CiProbeRateLimited(_log);
+                }
             }
 
             // Convert RawPrInboxItem → PrInboxItem (with state.json reads + CI annotation)
             var state = await _stateStore.LoadAsync(ct).ConfigureAwait(false);
-            // Section UI ordering — review-requested → awaiting-author → authored-by-me → mentioned →
-            // ci-failing — is NOT supplied by ResolveVisibleSections() (it returns a HashSet<string>,
-            // which has no defined enumeration order). The canonical order comes from two sources:
-            //   1. GitHubSectionQueryRunner.SectionQueries is a Dictionary<string, string> initialized
-            //      with the four base sections in the canonical order (review-requested, awaiting-author,
-            //      authored-by-me, mentioned). Its QueryAllAsync filters by visibleSectionIds.Contains(...)
-            //      while iterating SectionQueries, so the returned dictionary's enumeration follows that
-            //      same insertion order. The .ToDictionary(...) call below preserves it again.
-            //   2. "ci-failing" is inserted explicitly later (in the CI fan-out block above), AFTER the
-            //      four base entries — placing it last in the enumeration.
+            // Section UI ordering — review-requested → awaiting-author → authored-by-me → mentioned —
+            // is NOT supplied by ResolveVisibleSections() (it returns a HashSet<string>, which has no
+            // defined enumeration order). The canonical order originates here:
+            //   GitHubSectionQueryRunner.SectionQueries is a Dictionary<string, string> initialized with
+            //   the four base sections in the canonical order (review-requested, awaiting-author,
+            //   authored-by-me, mentioned). Its QueryAllAsync filters by visibleSectionIds.Contains(...)
+            //   while iterating SectionQueries, so the returned dictionary's enumeration follows that
+            //   same insertion order. The .ToDictionary(...) call below preserves it again.
             // Footnote: Dictionary<TKey, TValue>'s enumerator order is documented as undefined for the
             // type, but every CLR shipped since .NET 5 preserves insertion order when no removals occur.
             // PRism relies on this de-facto guarantee; if a future runtime changes it, sections will
@@ -248,7 +261,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             Log.AiEnrichmentComplete(_log, enricher.GetType().Name, allItems.Count, enrichments.Count);
 
             // Build snapshot + diff
-            var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow);
+            var newSnap = new InboxSnapshot(sectionsFinal, enrichmentMap, DateTimeOffset.UtcNow, ciProbeComplete);
             var diff = ComputeDiff(_current, newSnap);
             Volatile.Write(ref _current, newSnap);
 
@@ -263,6 +276,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
                     diff.ChangedSectionIds.ToArray(),
                     diff.NewOrUpdatedPrCount));
             }
+
+            // Snapshot is committed + event published above. Now re-surface a CI rate-limit
+            // so InboxPoller backs off (honoring Retry-After) without losing the snapshot.
+            if (ciRateLimit is not null) throw ciRateLimit;
         }
         finally { _writerLock.Release(); }
     }
@@ -273,10 +290,9 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         var v = new HashSet<string>();
         if (s.ReviewRequested) v.Add("review-requested");
         if (s.AwaitingAuthor) v.Add("awaiting-author");
-        if (s.AuthoredByMe || s.CiFailing) v.Add("authored-by-me"); // ci-failing depends on authored
+        if (s.AuthoredByMe) v.Add("authored-by-me");
         if (s.Mentioned) v.Add("mentioned");
-        if (s.CiFailing) v.Add("ci-failing");
-        // recently-closed is handled separately via QueryClosedHistoryAsync — deliberately NOT in the visible set passed to QueryAllAsync.
+        // recently-closed is handled separately via QueryClosedHistoryAsync.
         return v;
     }
 
@@ -390,8 +406,11 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         [LoggerMessage(Level = LogLevel.Debug, Message = "Awaiting-author filter: {Input} candidates → {Output} kept")]
         internal static partial void AwaitingAuthorFiltered(ILogger logger, int input, int output);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "CI detection: {Authored} authored PRs probed, {Failing} failing")]
-        internal static partial void CiDetectionComplete(ILogger logger, int authored, int failing);
+        [LoggerMessage(Level = LogLevel.Debug, Message = "CI detection: {Probed} PRs probed, {Failing} failing, complete={Complete}")]
+        internal static partial void CiDetectionComplete(ILogger logger, int probed, int failing, bool complete);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Inbox CI probe rate-limited (429); snapshot published without CI, backing off")]
+        internal static partial void CiProbeRateLimited(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Dedupe applied (enabled={Enabled}): {PreCount} → {PostCount} PRs")]
         internal static partial void DedupeApplied(ILogger logger, bool enabled, int preCount, int postCount);

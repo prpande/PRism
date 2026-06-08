@@ -17,7 +17,7 @@ public sealed record AppConfig(
 {
     public static AppConfig Default => new(
         new PollingConfig(30, 120),
-        new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true, true), true, 14),
+        new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true), true, 14),
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
@@ -44,7 +44,6 @@ public sealed record InboxSectionsConfig(
     bool AwaitingAuthor,
     bool AuthoredByMe,
     bool Mentioned,
-    bool CiFailing,
     bool RecentlyClosed = true);
 public sealed record ReviewConfig(bool BlockSubmitOnStaleDrafts, bool RequireVerdictReconfirmOnNewIteration);
 public sealed record IterationsConfig(int ClusterGapSeconds, bool ClusteringDisabled = false);
