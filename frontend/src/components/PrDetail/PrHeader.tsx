@@ -442,7 +442,12 @@ export function PrHeader({
               </span>
             )}
             {ciSummary && <span className={`chip chip-ci chip-ci-${ciSummary}`}>{ciSummary}</span>}
-            {mergeability && (
+            {/* "unknown" is GitHub's not-yet-computed / indeterminate sentinel — it
+                carries no actionable meaning, so we suppress the chip rather than show
+                a meaningless status (Truthful-by-default). Two feed paths use different
+                casing: REST poll → lowercase "unknown", GraphQL load → "UNKNOWN"; the
+                lowercased compare catches both. */}
+            {mergeability && mergeability.toLowerCase() !== 'unknown' && (
               <span className={`chip chip-mergeability chip-mergeability-${mergeability}`}>
                 {mergeability}
               </span>
