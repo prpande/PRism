@@ -147,11 +147,11 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
             if (rawWithEnrichment.TryGetValue("authored-by-me", out var rawSec3))
             {
                 var probed = await _ciDetector.DetectAsync(rawSec3, ct).ConfigureAwait(false);
-                foreach (var (item, ci) in probed) ciByRef[item.Reference] = ci;
+                foreach (var (item, ci) in probed.Items) ciByRef[item.Reference] = ci;
 
                 if (visible.Contains("ci-failing"))
                 {
-                    var failing = probed.Where(t => t.Ci == CiStatus.Failing).Select(t => t.Item).ToList();
+                    var failing = probed.Items.Where(t => t.Ci == CiStatus.Failing).Select(t => t.Item).ToList();
                     Log.CiDetectionComplete(_log, rawSec3.Count, failing.Count);
                     rawWithEnrichment["ci-failing"] = failing;
                 }

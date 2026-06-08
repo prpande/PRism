@@ -80,8 +80,8 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.Failing);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Failing);
     }
 
     [Fact]
@@ -92,8 +92,8 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.Failing);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Failing);
     }
 
     [Fact]
@@ -104,8 +104,8 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.Failing);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Failing);
     }
 
     [Fact]
@@ -116,8 +116,8 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.None);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
     }
 
     [Fact]
@@ -128,8 +128,8 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.Pending);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Pending);
     }
 
     [Fact]
@@ -192,11 +192,11 @@ public sealed class GitHubCiFailingDetectorTests
         var sut = BuildSut(handler);
 
         var first = await sut.DetectAsync([Raw(1)], default);
-        first[0].Ci.Should().Be(CiStatus.None, "the 5xx tick degrades to None");
+        first.Items[0].Ci.Should().Be(CiStatus.None, "the 5xx tick degrades to None");
 
         recovered = true;
         var second = await sut.DetectAsync([Raw(1)], default);
-        second[0].Ci.Should().Be(CiStatus.Failing,
+        second.Items[0].Ci.Should().Be(CiStatus.Failing,
             "the degraded None must not have been cached — the recovered tick re-probes");
     }
 
@@ -221,7 +221,7 @@ public sealed class GitHubCiFailingDetectorTests
 
         var candidate = Raw(1, "sha-A");
         var first = await sut.DetectAsync([candidate], default);
-        first[0].Ci.Should().Be(CiStatus.Failing,
+        first.Items[0].Ci.Should().Be(CiStatus.Failing,
             "a failing check-run is definitive regardless of the combined-status endpoint's health");
         var countAfterFirst = requestCount;
 
@@ -283,7 +283,7 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([], default);
 
-        result.Should().BeEmpty();
+        result.Items.Should().BeEmpty();
         requestCount.Should().Be(0);
     }
 
@@ -330,9 +330,40 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.Failing,
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Failing,
             "a failing check_run on page 2 must be observed via Link-header pagination");
+    }
+
+    [Fact]
+    public async Task DetectAsync_returns_Complete_false_when_a_probe_degrades()
+    {
+        // Checks API 403 (fine-grained PAT) → degraded; status 200 success.
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.Forbidden, "{}")
+                : Respond(HttpStatusCode.OK, """{"state":"success"}"""));
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync(new[] { Raw(1, "sha1") }, CancellationToken.None);
+
+        result.Complete.Should().BeFalse();
+        result.Items.Should().ContainSingle().Which.Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task DetectAsync_returns_Complete_true_when_all_probes_succeed()
+    {
+        var handler = new FakeHttpMessageHandler(req =>
+            req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
+                ? Respond(HttpStatusCode.OK, """{"check_runs":[]}""")
+                : Respond(HttpStatusCode.OK, """{"state":"success"}"""));
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync(new[] { Raw(1, "sha1") }, CancellationToken.None);
+
+        result.Complete.Should().BeTrue();
+        result.Items.Should().ContainSingle();
     }
 
     [Fact]
@@ -393,8 +424,8 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.None);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
     }
 
     [Fact]
@@ -408,8 +439,8 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.None);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
     }
 
     [Fact]
@@ -428,7 +459,7 @@ public sealed class GitHubCiFailingDetectorTests
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
-        result.Should().HaveCount(1);
-        result[0].Ci.Should().Be(CiStatus.None);
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
     }
 }
