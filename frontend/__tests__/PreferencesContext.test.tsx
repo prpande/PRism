@@ -15,7 +15,7 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
     ui: {
       theme: 'system',
       accent: 'indigo',
-      aiPreview: false,
+      aiMode: 'off',
       density: 'comfortable',
       ...overrides,
     },

@@ -24,7 +24,7 @@ function serverWith(ui: Record<string, unknown>) {
   return setupServer(
     http.get('/api/preferences', () =>
       HttpResponse.json({
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable', ...ui },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable', ...ui },
         inbox: { sections: {} },
         github: { host: 'https://github.com', configPath: '/c', logsPath: '/l' },
       }),

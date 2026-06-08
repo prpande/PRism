@@ -19,6 +19,7 @@ vi.mock('../src/hooks/usePreferences', () => ({
 }));
 vi.mock('../src/hooks/useAiGate', () => ({
   useAiGate: vi.fn(),
+  useIsSampleMode: vi.fn().mockReturnValue(false),
 }));
 
 import { useInbox } from '../src/hooks/useInbox';
@@ -66,7 +67,10 @@ function setHooks(
       ui: {
         theme: 'system',
         accent: 'indigo',
-        aiPreview: opts.aiPreview ?? false,
+        // useAiGate is mocked directly below, so this field is not read by
+        // source; migrated off the legacy aiPreview key to ui.aiMode so the
+        // upcoming aiPreview-removal task does not break this literal.
+        aiMode: (opts.aiPreview ?? false) ? 'preview' : 'off',
       },
       inbox: {
         sections: {
@@ -250,7 +254,7 @@ describe('InboxPage — useAiGate migrations', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+        ui: { theme: 'system', accent: 'indigo', aiMode: 'off' },
         inbox: {
           sections: {
             'review-requested': true,

@@ -1,0 +1,24 @@
+.sampleBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in oklch, var(--accent-soft) 70%, transparent);
+  border: 1px dashed color-mix(in oklch, var(--accent) 45%, transparent);
+}
+/* Region variant: same pill, more separation when it sits on a section header. */
+.region {
+  margin-left: var(--s-2);
+}
+/* Solid variant: drop the dashed border + solid fill so the pill stays legible
+   inside an already-dashed container (AiHunkAnnotation). */
+.solid {
+  border-color: transparent;
+  background: var(--accent-soft);
+}

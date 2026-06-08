@@ -3,7 +3,6 @@ import { applyThemeToDocument, applyDensityToDocument } from '../../../utils/app
 import type { Accent, Density, Theme } from '../../../api/types';
 import { SegmentedControl } from '../../controls/SegmentedControl';
 import { AccentSwatches } from '../../controls/AccentSwatches';
-import { Switch } from '../../controls/Switch';
 import pane from './Pane.module.css';
 
 const THEMES = [
@@ -39,14 +38,18 @@ export function AppearancePane() {
     applyDensityToDocument(value);
     void set('density', value).catch(() => applyDensityToDocument(density));
   };
-  // No extra rollback needed (unlike theme/accent/density): those re-apply to
-  // documentElement on failure because they wrote a DOM side-effect optimistically.
-  // aiPreview has no such DOM write — usePreferences.set reverts its own state on a
-  // failed POST (+ error toast), so the controlled Switch reflects the revert.
-  // #221: the AI gates now derive from this shared preference (useCapabilities), so
-  // the toggle propagates reactively — no capabilities refetch to chase.
-  const onAiToggle = (next: boolean) => {
-    void set('aiPreview', next).catch(() => {});
+  // A `live` config (not user-selectable in P0) is shown as Preview-selected.
+  const aiModeShown: 'off' | 'preview' =
+    preferences.ui.aiMode === 'live' ? 'preview' : preferences.ui.aiMode;
+  // The AI gates derive from this shared preference (useCapabilities), so the
+  // selector propagates reactively. usePreferences.set reverts its own state on a
+  // failed POST (+ error toast); no DOM side-effect to roll back here.
+  const onAiMode = (next: 'off' | 'preview') => {
+    // SegmentedControl fires onChange even when the already-selected segment is
+    // clicked. Guard the no-op so clicking the shown Preview on a live config does
+    // not POST ui.ai.mode='preview' and silently downgrade it.
+    if (next === aiModeShown) return;
+    void set('ui.ai.mode', next).catch(() => {});
   };
 
   return (
@@ -56,7 +59,7 @@ export function AppearancePane() {
           <h2 id="appearance-heading" className={pane.title}>
             Appearance
           </h2>
-          <p className={pane.sub}>Theme, accent color, density, and AI preview</p>
+          <p className={pane.sub}>Theme, accent color, density, and AI mode</p>
         </div>
       </div>
       <div className={pane.row}>
@@ -98,20 +101,21 @@ export function AppearancePane() {
       </div>
       <div className={pane.row}>
         <div>
-          <label className={pane.label} htmlFor="appearance-ai-preview">
-            AI preview
-          </label>
-          <div id="ai-help" className={pane.help}>
-            Show AI-generated PR summaries and hotspots
+          <div className={pane.label}>AI mode</div>
+          <div className={pane.help} id="ai-mode-help">
+            Off · no AI. Preview · sample output, clearly labeled.
           </div>
         </div>
         <div className={pane.spring}>
-          <Switch
-            id="appearance-ai-preview"
-            label="AI preview"
-            describedById="ai-help"
-            checked={preferences.ui.aiPreview}
-            onChange={onAiToggle}
+          <SegmentedControl
+            label="AI mode"
+            describedById="ai-mode-help"
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'preview', label: 'Preview' },
+            ]}
+            value={aiModeShown}
+            onChange={onAiMode}
           />
         </div>
       </div>

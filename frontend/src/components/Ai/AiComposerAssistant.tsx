@@ -1,7 +1,8 @@
 import { useAiGate } from '../../hooks/useAiGate';
+import { SampleBadge } from './SampleBadge';
 
 // AI placeholder slot per spec § 5.8 / addendum A1. Self-gates on
-// capabilities.composerAssist + preferences.aiPreview via useAiGate,
+// capabilities.composerAssist + preferences.ui.aiMode via useAiGate,
 // centralizing the two-factor expression (PR9b-ai-gating § 3.1).
 //
 // Mounted next to the Save button inside InlineCommentComposer (Task 39),
@@ -17,7 +18,9 @@ export function AiComposerAssistant() {
       role="note"
       aria-label="AI composer suggestions (preview)"
     >
-      <span className="ai-summary-chip muted">AI preview — composer suggestions appear here</span>
+      <span className="ai-summary-chip muted">
+        <SampleBadge /> composer suggestions appear here
+      </span>
     </div>
   );
 }

@@ -130,7 +130,14 @@ function mockFetch(opts: MockOptions = {}) {
     if (path.startsWith('/api/preferences')) {
       return Promise.resolve(
         jsonResponse({
-          ui: { theme: 'system', accent: 'indigo', aiPreview },
+          // useCapabilities + useAiGate derive AI-on from ui.aiMode
+          // ('preview' ⇒ on). PrDescription's `aiPreview` prop is driven by
+          // useAiGate, not the legacy ui.aiPreview preference field.
+          ui: {
+            theme: 'system',
+            accent: 'indigo',
+            aiMode: aiPreview ? 'preview' : 'off',
+          },
           inbox: {
             sections: {
               'review-requested': true,
@@ -294,7 +301,7 @@ describe('OverviewTab', () => {
       if (path.startsWith('/api/preferences')) {
         return Promise.resolve(
           jsonResponse({
-            ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+            ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
             inbox: {
               sections: {
                 'review-requested': true,
@@ -367,7 +374,7 @@ describe('OverviewTab', () => {
       if (path.startsWith('/api/preferences')) {
         return Promise.resolve(
           jsonResponse({
-            ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+            ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
             inbox: {
               sections: {
                 'review-requested': true,
@@ -450,9 +457,15 @@ describe('OverviewTab', () => {
     });
     await screen.findByText('Placeholder summary body.');
     expect(screen.getByText('Refactor')).toBeInTheDocument();
+    // Task 6 replaced the hardcoded "AI preview — sample content…" chip inside
+    // AiSummaryCard with <SampleBadge/> (data-testid="sample-badge"), shown in
+    // preview mode. Assert the badge instead of the removed string. findBy* is
+    // used because the badge depends on the async preferences fetch (aiMode),
+    // which can resolve a render after the summary body appears.
+    expect(await screen.findByTestId('sample-badge')).toBeInTheDocument();
     expect(
-      screen.getByText(/AI preview — sample content, not generated from this PR/),
-    ).toBeInTheDocument();
+      screen.queryByText(/AI preview — sample content, not generated from this PR/),
+    ).toBeNull();
   });
 
   it('AiSummaryCard takes the hero when aiPreview is on (PrDescription drops the no-ai modifier)', async () => {

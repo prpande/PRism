@@ -1,6 +1,7 @@
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'indigo' | 'amber' | 'teal';
 export type Density = 'comfortable' | 'compact';
+export type AiMode = 'off' | 'preview' | 'live';
 
 // S6 PR1 widened GET /api/preferences from the flat { theme, accent, aiPreview }
 // shape to a nested { ui, inbox, github } shape (spec § 2.4). UiPreferences is now
@@ -12,7 +13,7 @@ export type Density = 'comfortable' | 'compact';
 export interface UiPreferences {
   theme: Theme;
   accent: Accent;
-  aiPreview: boolean;
+  aiMode: AiMode;
   density: Density;
 }
 
@@ -54,7 +55,7 @@ export interface AiCapabilities {
 }
 
 // Wire contract for GET /api/capabilities. Retained as the endpoint's response
-// shape: since #221 the SPA derives capabilities from the shared aiPreview
+// shape: since #221 the SPA derives capabilities from the shared aiMode
 // preference (useCapabilities) rather than calling this endpoint, but D112 will
 // restore an independent fetch that consumes this type. See useCapabilities.ts.
 export interface CapabilitiesResponse {

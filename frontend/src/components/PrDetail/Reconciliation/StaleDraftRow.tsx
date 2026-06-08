@@ -4,6 +4,7 @@ import { sendPatch } from '../../../api/draft';
 import type { PrReference, DraftSuggestion } from '../../../api/types';
 import type { DraftLike } from '../draftKinds';
 import type { PrTabId } from '../PrSubTabStrip';
+import { SampleBadge } from '../../Ai/SampleBadge';
 import styles from './StaleDraftRow.module.css';
 
 // StaleDraftRow operates on the same shape as DraftListItem — see
@@ -131,7 +132,9 @@ export function StaleDraftRow({
             ✨
           </span>
           <div className={styles.staleAiBody}>
-            <div className={`ai-summary-label ${styles.staleAiLabel}`}>AI suggestion</div>
+            <div className={`ai-summary-label ${styles.staleAiLabel}`}>
+              AI suggestion <SampleBadge />
+            </div>
             <div>{aiSuggestion.body}</div>
           </div>
         </div>

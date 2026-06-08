@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { usePreferences } from '../../../hooks/usePreferences';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useAiSummary } from '../../../hooks/useAiSummary';
 import { useAiGate } from '../../../hooks/useAiGate';
@@ -14,9 +13,6 @@ import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
   const { prRef, prDetail, draftSession, readOnly, onSelectSubTab } = usePrDetailContext();
-  const { preferences } = usePreferences();
-
-  const aiPreview = preferences?.ui.aiPreview ?? false; // still needed for PrDescription prop
   const aiOn = useAiGate('summary');
 
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
@@ -75,7 +71,7 @@ export function OverviewTab() {
   return (
     <div className={`${styles.overviewTab} ${styles.overviewGrid}`} data-testid="overview-tab">
       <AiSummaryCard summary={aiSummary} />
-      <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiPreview} />
+      <PrDescription title={prDetail.pr.title} body={prDetail.pr.body} aiPreview={aiOn} />
       <StatsTiles
         filesCount={filesCount}
         draftsCount={draftsCount}

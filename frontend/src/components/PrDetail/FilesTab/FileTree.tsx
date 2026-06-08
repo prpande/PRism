@@ -3,6 +3,7 @@ import type { FileChange, FileChangeStatus, FileFocus, FocusLevel } from '../../
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
 import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import styles from './FileTree.module.css';
+import { SampleBadge } from '../../Ai/SampleBadge';
 
 export interface FileTreeProps {
   files: FileChange[];
@@ -172,6 +173,7 @@ export function FileTree({
     <div className={`file-tree ${styles.fileTree}`} data-testid="file-tree">
       <div className={`file-tree-header ${styles.fileTreeHeader}`}>
         Files · {viewedCount}/{files.length} viewed
+        {aiPreview && <SampleBadge variant="region" />}
       </div>
       <div className={styles.fileTreeBody}>
         <div

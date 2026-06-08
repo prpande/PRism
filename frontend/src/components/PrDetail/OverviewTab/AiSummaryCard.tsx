@@ -1,4 +1,5 @@
 import type { PrSummary } from '../../../api/types';
+import { SampleBadge } from '../../Ai/SampleBadge';
 import styles from './AiSummaryCard.module.css';
 
 interface AiSummaryCardProps {
@@ -13,9 +14,7 @@ export function AiSummaryCard({ summary }: AiSummaryCardProps) {
       className={`ai-summary-card ${styles.aiSummaryCard} overview-card overview-card-hero ai-tint`}
       data-testid="ai-summary-card"
     >
-      <div className={`${styles.aiSummaryChip} muted`}>
-        AI preview — sample content, not generated from this PR
-      </div>
+      <SampleBadge />
       <div className={styles.aiSummaryBody}>{summary.body}</div>
       <div className={styles.aiSummaryCategory}>{summary.category}</div>
     </section>

@@ -1,8 +1,9 @@
 import { MarkdownRenderer } from '../../Markdown/MarkdownRenderer';
+import { SampleBadge } from '../../Ai/SampleBadge';
 import type { ValidatorResult, ValidatorSeverity } from '../../../api/types';
 
 // Pre-submit validator slot (spec § 14.1). PoC's NoopPreSubmitValidator
-// returns []; under aiPreview the header feeds frontend-side canned data —
+// returns []; in Preview mode the header feeds frontend-side canned data —
 // there is no IPreSubmitValidator.ValidateAsync call. Renders null when empty
 // (mirrors AiSummaryCard's "data-or-nothing" gating).
 interface Props {
@@ -19,9 +20,7 @@ export function PreSubmitValidatorCard({ results }: Props) {
   if (results.length === 0) return null;
   return (
     <section className="ai-validator-card ai-tint" aria-label="AI pre-submit checks">
-      <div className="ai-validator-card__chip muted">
-        AI preview — sample content, not generated from this PR
-      </div>
+      <SampleBadge />
       <ul className="ai-validator-card__list">
         {results.map((r) => (
           <li key={`${r.severity}:${r.message}`} className="ai-validator-card__item">

@@ -1,5 +1,13 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// SampleBadge (rendered inside AiSummaryCard) reads aiMode via usePreferences /
+// useIsSampleMode. Drive aiMode:'preview' so the badge mounts; the card itself
+// gates only on `summary` (not on preferences).
+vi.mock('../src/hooks/usePreferences', () => ({
+  usePreferences: () => ({ preferences: { ui: { aiMode: 'preview' } } }),
+}));
+
 import { AiSummaryCard } from '../src/components/PrDetail/OverviewTab/AiSummaryCard';
 
 describe('AiSummaryCard', () => {
@@ -18,11 +26,14 @@ describe('AiSummaryCard', () => {
     expect(screen.getByText('Refactor')).toBeInTheDocument();
   });
 
-  it('renders the muted Preview chip with the spec copy when summary is supplied', () => {
+  it('renders the SampleBadge (replacing the old hardcoded Preview chip) when summary is supplied', () => {
+    // Task 6 replaced the hardcoded "AI preview — sample content…" chip with
+    // <SampleBadge/>, which renders the data-testid="sample-badge" pill in preview mode.
     render(<AiSummaryCard summary={{ body: 'b', category: 'c' }} />);
-    const chip = screen.getByText(/AI preview — sample content, not generated from this PR/);
-    expect(chip).toBeInTheDocument();
-    expect(chip).toHaveClass('muted');
+    expect(screen.getByTestId('sample-badge')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/AI preview — sample content, not generated from this PR/),
+    ).toBeNull();
   });
 
   it('applies the overview-card-hero + ai-tint hero classes when summary is supplied', () => {

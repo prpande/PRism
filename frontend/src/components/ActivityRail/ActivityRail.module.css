@@ -20,6 +20,11 @@
   margin-bottom: var(--s-3);
 }
 
+.titleGroup {
+  display: flex;
+  align-items: center;
+}
+
 .title {
   font-weight: 600;
   color: var(--text-1);

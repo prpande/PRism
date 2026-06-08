@@ -48,7 +48,7 @@ const authedAuthState = {
 // throws. Caught by Playwright on PR #69 (4 inbox tests failed at "Refactor auth
 // flow" never rendering).
 const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+  ui: { theme: 'system', accent: 'indigo', aiMode: 'off' as const, density: 'comfortable' },
   inbox: {
     sections: {
       'review-requested': true,
@@ -269,10 +269,10 @@ test('URL paste with host mismatch shows inline error', async ({ page }) => {
 // ---------------------------------------------------------------------------
 
 test('AI preview toggle reveals activity rail', async ({ page }) => {
-  // Stateful mock: the POST handler flips aiPreview and subsequent GETs reflect it.
+  // Stateful mock: the POST handler flips aiMode and subsequent GETs reflect it.
   // usePreferences.set() in the frontend POSTs and immediately calls setPreferences(next)
   // with the response body, so the component re-renders without a separate GET.
-  let aiPreview = false;
+  let aiMode: 'off' | 'preview' | 'live' = 'off';
 
   await page.route('**/api/auth/state', (route: Route) =>
     route.fulfill({
@@ -283,38 +283,37 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
   );
   await page.route('**/api/preferences', async (route: Route) => {
     if (route.request().method() === 'POST') {
-      // POST body is still the single-field flat shape (spec § 2.3): the client
-      // sends `{ "aiPreview": <bool> }`. Only the GET/POST RESPONSE shape changed
-      // to nested in PR1.
-      const body = JSON.parse(route.request().postData() ?? '{}') as { aiPreview?: boolean };
-      if (typeof body.aiPreview === 'boolean') {
-        aiPreview = body.aiPreview;
+      // POST body is the single-field flat shape (spec § 2.3): the client sends
+      // `{ "ui.ai.mode": <mode> }`. Only the GET/POST RESPONSE shape is nested.
+      const body = JSON.parse(route.request().postData() ?? '{}') as { 'ui.ai.mode'?: string };
+      if (typeof body['ui.ai.mode'] === 'string') {
+        aiMode = body['ui.ai.mode'] as 'off' | 'preview' | 'live';
       }
     }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      // Response shape is nested per S6 PR1 (spec § 2.4) — the aiPreview override
+      // Response shape is nested per S6 PR1 (spec § 2.4) — the aiMode override
       // belongs under `ui`, not at the top level, or the frontend's
-      // preferences.ui.aiPreview consumer never sees the flip.
+      // preferences.ui.aiMode consumer never sees the flip.
       body: JSON.stringify({
         ...defaultPreferences,
-        ui: { ...defaultPreferences.ui, aiPreview },
+        ui: { ...defaultPreferences.ui, aiMode },
       }),
     });
   });
-  // Capabilities are coupled to aiPreview on the real backend (CapabilitiesEndpoints.cs
+  // Capabilities are coupled to aiMode on the real backend (CapabilitiesEndpoints.cs
   // returns AllOn xor AllOff from AiPreviewState.IsOn). Task 17 migrated InboxPage to
   // useAiGate('inboxRanking') which now checks BOTH capabilities.inboxRanking AND
-  // preferences.ui.aiPreview. The mock must mirror the coupling or the ActivityRail
-  // gate stays off even when aiPreview flips true. useCapabilities also subscribes to
+  // preferences.ui.aiMode. The mock must mirror the coupling or the ActivityRail
+  // gate stays off even when aiMode flips on. useCapabilities also subscribes to
   // window.focus — the dispatchEvent below triggers both refetches simultaneously.
   await page.route('**/api/capabilities', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(
-        aiPreview
+        aiMode !== 'off'
           ? { ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true } }
           : allOffCapabilities,
       ),
@@ -344,23 +343,23 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
 
-  // Activity rail is not rendered at all when aiPreview is false
+  // Activity rail is not rendered at all when aiMode is 'off'
   // (InboxPage renders {showActivityRail && <ActivityRail />}).
   await expect(page.getByRole('complementary', { name: /activity/i })).not.toBeAttached();
 
-  // The navbar quick-toggle was removed; AI preview now lives only on the
-  // Settings page (AppearanceSection's `<input role="switch">`). Flip it there,
-  // then re-navigate to "/". A fresh navigation remounts InboxPage so
-  // usePreferences + useCapabilities refetch and see aiPreview=true AND
-  // inboxRanking=true from the now-mutated mock state — this replaces the old
-  // window.dispatchEvent(new Event('focus')) trick.
-  await page.goto('/settings');
-  const aiToggle = page.getByRole('switch', { name: /ai preview/i });
-  await aiToggle.waitFor({ timeout: 30_000 });
+  // The navbar quick-toggle was removed; the AI mode control now lives only on
+  // the Settings Appearance pane (an Off | Preview SegmentedControl of radios).
+  // Click the Preview radio there, then re-navigate to "/". A fresh navigation
+  // remounts InboxPage so usePreferences + useCapabilities refetch and see
+  // aiMode='preview' AND inboxRanking=true from the now-mutated mock state —
+  // this replaces the old window.dispatchEvent(new Event('focus')) trick.
+  await page.goto('/settings/appearance');
+  const previewRadio = page.getByRole('radio', { name: 'Preview' });
+  await previewRadio.waitFor({ timeout: 30_000 });
   const toggleResponse = page.waitForResponse(
     (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );
-  await aiToggle.click();
+  await previewRadio.click();
   await toggleResponse;
 
   await page.goto('/');

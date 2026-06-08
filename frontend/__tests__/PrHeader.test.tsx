@@ -188,7 +188,8 @@ describe('PrHeader', () => {
 
   it('renders the Ask AI button + clicking it toggles the AskAiDrawer when aiPreview is on', () => {
     preferencesValue.preferences = {
-      ui: { theme: 'system', accent: 'indigo', aiPreview: true, density: 'comfortable' },
+      // aiMode:'preview' opens the gate (useAiGate reads aiMode).
+      ui: { theme: 'system', accent: 'indigo', aiMode: 'preview', density: 'comfortable' },
       inbox: {
         sections: {
           'review-requested': true,
