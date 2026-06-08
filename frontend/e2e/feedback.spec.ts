@@ -28,7 +28,7 @@ const defaultPreferences = {
       'awaiting-author': true,
       'authored-by-me': true,
       mentioned: true,
-      'ci-failing': true,
+      'recently-closed': true,
     },
   },
   github: {

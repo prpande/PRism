@@ -61,7 +61,7 @@ describe('InboxSection', () => {
 
   it('renders section-specific empty copy by id', () => {
     renderSection(emptySection);
-    expect(screen.getByText('Nothing waiting on the author.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing needs re-review.')).toBeInTheDocument();
   });
 
   it('falls back to generic empty copy for unknown section ids', () => {
