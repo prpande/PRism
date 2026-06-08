@@ -18,6 +18,12 @@ export function InboxPane() {
   const { preferences, set } = usePreferences();
   if (!preferences) return null;
   const sections = preferences.inbox.sections;
+  // Clamp to a known option so a hand-edited / version-skewed inbox.defaultSort
+  // doesn't leave the controlled <select> in an invalid/blank state (mirrors the
+  // runtime clamp in applyInboxFilters).
+  const defaultSort = SORT_OPTIONS.some((o) => o.key === preferences.inbox.defaultSort)
+    ? preferences.inbox.defaultSort
+    : 'updated';
   return (
     <section aria-labelledby="inbox-heading">
       <div className={pane.head}>
@@ -56,7 +62,7 @@ export function InboxPane() {
         <div className={pane.spring}>
           <select
             id="inbox-default-sort"
-            value={preferences.inbox.defaultSort}
+            value={defaultSort}
             onChange={(e) => set('inbox.defaultSort', e.target.value).catch(() => {})}
           >
             {SORT_OPTIONS.map((o) => (

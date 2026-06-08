@@ -52,7 +52,16 @@ export function FilterFacet({ name, values, selected, onToggle, triggerLabel }: 
     : values;
 
   return (
-    <div className={styles.facet} ref={ref}>
+    <div
+      className={styles.facet}
+      ref={ref}
+      onBlur={(e) => {
+        // Close when keyboard focus (Tab / Shift-Tab) leaves the facet entirely.
+        // relatedTarget inside ref = focus moved within the popover → keep open.
+        // Unlike close(), don't refocus the trigger — the user is tabbing away.
+        if (open && !ref.current?.contains(e.relatedTarget as Node)) setOpen(false);
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -67,6 +76,7 @@ export function FilterFacet({ name, values, selected, onToggle, triggerLabel }: 
           {showSearch && (
             <input
               className={styles.popoverSearch}
+              aria-label={`Filter ${name.toLowerCase()}`}
               placeholder={`Filter ${name.toLowerCase()}…`}
               value={q}
               onChange={(e) => setQ(e.target.value)}

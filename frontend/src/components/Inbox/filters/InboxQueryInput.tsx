@@ -152,6 +152,10 @@ export function InboxQueryInput({ value, onChange }: Props) {
         onPaste={(e) => {
           const pasted = e.clipboardData.getData('text');
           // Only auto-open a pasted PR URL; a pasted filter term just fills the box.
+          // Note: in React's controlled model onPaste fires before the synthetic
+          // onChange. We call onChange(pasted) here so `value` (and the open()
+          // staleness check) see the URL immediately; React's own onChange then
+          // fires with the same string and consumes pasteInProgress on its first run.
           if (looksLikePrUrl(pasted)) {
             pasteInProgress.current = true;
             onChange(pasted);
