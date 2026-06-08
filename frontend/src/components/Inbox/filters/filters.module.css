@@ -1,8 +1,10 @@
-/* Filter bar layout */
+/* Filter bar layout. Nested inside InboxToolbar (which owns the padding /
+   background / bottom border), so .bar is a plain full-width block — its rows
+   stack under the full-width paste input. */
 .bar {
-  padding: var(--s-3) var(--s-4) 0;
-  background: var(--surface-1);
-  border-bottom: 1px solid var(--border-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
 }
 
 .barRow {
@@ -10,21 +12,19 @@
   align-items: center;
   gap: var(--s-2);
   flex-wrap: wrap;
-  margin-bottom: var(--s-3);
 }
 
 .spring {
   flex: 1;
 }
 
-/* Search input */
+/* Search input — leads the filter row at full width (search-led bar). */
 .search {
   position: relative;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  flex: 1;
+  width: 100%;
   min-width: 160px;
-  max-width: 320px;
 }
 
 .searchIcon {
