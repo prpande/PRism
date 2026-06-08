@@ -37,6 +37,7 @@ export function useInboxFilters(sections: InboxSection[], initialSort: SortKey) 
     [sections, filters, sort],
   );
 
+  // No debounce: filtering is a synchronous pass over the in-memory snapshot (no network), so per-keystroke is cheap and instant feels better than a 120ms lag.
   const setText = useCallback((text: string) => setFilters((f) => ({ ...f, text })), []);
   const toggleCi = useCallback(
     (v: CiStatus) => setFilters((f) => ({ ...f, ci: toggle(f.ci, v) })),

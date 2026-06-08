@@ -182,20 +182,10 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
 
             // Convert RawPrInboxItem → PrInboxItem (with state.json reads + CI annotation)
             var state = await _stateStore.LoadAsync(ct).ConfigureAwait(false);
-            // Section UI ordering — review-requested → awaiting-author → authored-by-me → mentioned —
-            // is NOT supplied by ResolveVisibleSections() (it returns a HashSet<string>, which has no
-            // defined enumeration order). The canonical order originates here:
-            //   GitHubSectionQueryRunner.SectionQueries is a Dictionary<string, string> initialized with
-            //   the four base sections in the canonical order (review-requested, awaiting-author,
-            //   authored-by-me, mentioned). Its QueryAllAsync filters by visibleSectionIds.Contains(...)
-            //   while iterating SectionQueries, so the returned dictionary's enumeration follows that
-            //   same insertion order. The .ToDictionary(...) call below preserves it again.
-            // Footnote: Dictionary<TKey, TValue>'s enumerator order is documented as undefined for the
-            // type, but every CLR shipped since .NET 5 preserves insertion order when no removals occur.
-            // PRism relies on this de-facto guarantee; if a future runtime changes it, sections will
-            // silently shuffle. A future refactor that swaps any link in the chain to ConcurrentDictionary
-            // or another unordered structure has the same failure mode. If either risk materializes,
-            // reintroduce explicit ordering at the /api/inbox serialization boundary.
+            // rawWithEnrichment is keyed by section id; build the per-section PrInboxItem lists by
+            // materializing each RawPrInboxItem (state.json reads + CI annotation).
+            // Final UI order is pinned explicitly at the /api/inbox serializer (InboxEndpoints.SectionOrder);
+            // this dict's enumeration order is no longer load-bearing.
             var sectionsAsItems = rawWithEnrichment.ToDictionary(
                 kv => kv.Key,
                 kv => (IReadOnlyList<PrInboxItem>)kv.Value
