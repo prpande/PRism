@@ -363,7 +363,7 @@ public sealed class GitHubCiFailingDetectorTests
         var result = await sut.DetectAsync(new[] { Raw(1, "sha1") }, CancellationToken.None);
 
         result.Complete.Should().BeTrue();
-        result.Items.Should().ContainSingle();
+        result.Items.Should().ContainSingle().Which.Ci.Should().Be(CiStatus.None);
     }
 
     [Fact]

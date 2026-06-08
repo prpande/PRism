@@ -50,8 +50,9 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         })).ConfigureAwait(false);
 
         var anyDegraded = Array.Exists(done, t => t.Degraded);
-        var items2 = done.Select(t => (t.Item, t.Ci)).ToList();
-        return new CiDetectResult(items2, Complete: !anyDegraded);
+        return new CiDetectResult(
+            done.Select(t => (t.Item, t.Ci)).ToList(),
+            Complete: !anyDegraded);
     }
 
     // Returns the classified status plus a Degraded flag: true when either probe hit a
