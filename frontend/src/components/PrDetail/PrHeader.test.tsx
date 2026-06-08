@@ -66,7 +66,9 @@ describe('PrHeader mergeability chip', () => {
 
   it('renders the chip for conflicting', () => {
     const { container } = renderHeader({ loading: false, mergeability: 'conflicting' });
-    expect(container.querySelector('.chip-mergeability')).not.toBeNull();
+    const chip = container.querySelector('.chip-mergeability');
+    expect(chip).not.toBeNull();
+    expect(chip).toHaveTextContent('conflicting');
   });
 
   // GitHub returns "unknown" as its not-yet-computed / indeterminate sentinel.
