@@ -20,7 +20,7 @@ const authedAuthState = {
 };
 
 const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+  ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
   inbox: {
     sections: {
       'review-requested': true,
