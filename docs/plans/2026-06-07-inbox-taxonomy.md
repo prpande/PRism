@@ -278,7 +278,7 @@ public async Task Ci_probe_incomplete_sets_flag_without_throwing()
 }
 ```
 
-> If the file has no `BuildSut(...)` helper, factor the existing inline orchestrator construction in one test into a private helper with `sections`, `ciDetector`, `closed`, `enricher` optional params, and route the existing tests through it. Read the file's existing construction first and match its real ctor argument order (`IConfigStore`, `ISectionQueryRunner`, `IPrEnricher`, `IAwaitingAuthorFilter`, `ICiFailingDetector`, `IInboxDeduplicator`, `IAiSeamSelector`, `IReviewEventBus`, `IAppStateStore`, `Func<string>`).
+> The file already has a construction helper (`Build(ISectionQueryRunner? sections, …)`) that takes a **built runner**, not a section-factory `Func`. Add a thin `BuildSut(...)` overload (or extend the existing one) that wraps the `sections` factory into the file's existing `FakeSectionQueryRunner` (`new FakeSectionQueryRunner(_factory)`) and accepts a `ciDetector`. Match the real ctor argument order (`IConfigStore`, `ISectionQueryRunner`, `IPrEnricher`, `IAwaitingAuthorFilter`, `ICiFailingDetector`, `IInboxDeduplicator`, `IAiSeamSelector`, `IReviewEventBus`, `IAppStateStore`, `Func<string>`). Don't invent a new section-fake — reuse `FakeSectionQueryRunner`.
 
 - [ ] **Step 2: Run to verify failure** — `dotnet test tests/PRism.Core.Tests --filter InboxRefreshOrchestratorTests` → FAIL (compile: `CiDetectResult` not produced; `ci-failing` still present).
 
@@ -400,10 +400,13 @@ git commit -m "feat(#262): widen CI probe across all sections with fault-isolati
 public async Task Loads_legacy_config_with_ciFailing_key_cleanly()
 {
     var dir = Directory.CreateTempSubdirectory().FullName;
+    // Keys MUST be kebab-case: JsonSerializerOptionsFactory.Storage uses
+    // KebabCaseJsonNamingPolicy with PropertyNameCaseInsensitive=false, so a
+    // camelCase key would silently miss-bind and fall back to record defaults.
     var json = """
     { "inbox": { "deduplicate": true, "sections": {
-        "reviewRequested": true, "awaitingAuthor": false, "authoredByMe": true,
-        "mentioned": true, "ciFailing": true, "recentlyClosed": false } } }
+        "review-requested": true, "awaiting-author": false, "authored-by-me": true,
+        "mentioned": true, "ci-failing": true, "recently-closed": false } } }
     """;
     await File.WriteAllTextAsync(Path.Combine(dir, "config.json"), json);
 
@@ -462,12 +465,19 @@ internal sealed record InboxSectionsDto(
 
 - [ ] **Step 6: Edit `PreferencesEndpoints.cs`** — in `BuildResponse`, drop the `CiFailing: sections.CiFailing,` line from the `new InboxSectionsDto(...)` call.
 
-- [ ] **Step 7: Run to verify pass** — `dotnet test tests/PRism.Core.Tests` → PASS (migration + orchestrator + dedup once Task 6 lands). If `InboxRefreshOrchestrator` referenced `CiFailing` anywhere else, the compiler points it out — remove those references.
+- [ ] **Step 7: Sweep the existing `ci-failing` test fallout.** Removing `CiFailing` and the `ci-failing` allowlist/dedup-pair breaks ~58 references across the existing test corpus. Run `git grep -niE "ci-failing|CiFailing|ciFailing" -- tests/` and resolve each — **mechanical compile-fixes** vs **semantic rewrites/deletes**:
+  - `tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncDottedPathTests.cs` — `[InlineData("inbox.sections.ci-failing")]` rows asserting *successful* patch/persist now **must assert rejection** (move them to the unknown-field path) or be deleted; `.CiFailing` reads must be removed; the `BooleanKeyTypeMismatch` ci-failing entries deleted.
+  - `tests/PRism.Core.Tests/Inbox/InboxRefreshOrchestratorTests.cs` — the `ConfigWithSections`/`InboxSectionsConfig(...)` 6-arg constructions drop to 5 args; any test seeding/asserting a `"ci-failing"` **section** is deleted (the section no longer exists); the `ciFailing` helper param is removed.
+  - `tests/PRism.Core.Tests/Inbox/InboxDeduplicatorTests.cs` — tests asserting the `ci-failing > authored-by-me` demotion are **deleted** (behavior removed by Task 6).
+  - `tests/PRism.GitHub.Tests/Inbox/GitHubSectionQueryRunnerTests.cs` — any assertion that `ci-failing` is/ isn't queried: keep only if it still holds (ci-failing never had a query); update wording.
+  - `tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs` + `ConfigStoreTests.cs` — drop `ciFailing`/`CiFailing` from expected wire/round-trip shapes.
+  Budget for both kinds before claiming the gate; a mechanical find-replace alone will leave semantically-wrong tests.
+- [ ] **Step 8: Run to verify pass** — `dotnet test tests/PRism.Core.Tests` → PASS (migration + orchestrator + dedup once Task 6 lands). If `InboxRefreshOrchestrator` referenced `CiFailing` anywhere else, the compiler points it out — remove those references.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit** (include every test file touched by the Step 7 sweep)
 
 ```bash
-git add PRism.Core/Config/AppConfig.cs PRism.Core/Config/ConfigStore.cs PRism.Web/Endpoints/PreferencesDtos.cs PRism.Web/Endpoints/PreferencesEndpoints.cs PRism.Core/Inbox/InboxRefreshOrchestrator.cs tests/PRism.Core.Tests/Config/ConfigStorePatchAsyncDottedPathTests.cs
+git add PRism.Core/Config/AppConfig.cs PRism.Core/Config/ConfigStore.cs PRism.Web/Endpoints/PreferencesDtos.cs PRism.Web/Endpoints/PreferencesEndpoints.cs PRism.Core/Inbox/InboxRefreshOrchestrator.cs tests/
 git commit -m "feat(#262): drop ci-failing section from config + wire DTO + patch allowlist"
 ```
 
@@ -654,12 +664,14 @@ git commit -m "feat(#262): expose ciProbeComplete on /api/inbox response"
 
 ```tsx
 it('renders five section rows without ci-failing and with the re-review label', () => {
-  renderInboxPane(); // existing helper that wraps with a PreferencesProvider stub
+  renderInboxPane(); // see note below — match this file's existing render pattern
   expect(screen.getAllByRole('switch')).toHaveLength(5);
   expect(screen.queryByText('CI failing on my PRs')).toBeNull();
   expect(screen.getByText('Needs re-review')).toBeInTheDocument();
 });
 ```
+
+> **Render pattern:** `InboxPane.test.tsx` does not have a `renderInboxPane` helper today — it `render(<InboxPane />)` with a module-level `vi.mock('../../../hooks/usePreferences', …)` returning a fixed `preferences` object. Use whatever this file already does. **Two edits the mock needs:** drop `'ci-failing'` from the mocked `inbox.sections`, and (for Task 20) add `defaultSort: 'updated'` to the mocked `inbox`. If you want the parameterized `renderInboxPane({ set, defaultSort })` shape used in Task 20, refactor the fixed mock into a small helper now — but the assertions above are the contract, not the helper name.
 
 - [ ] **Step 2: Run to verify failure** — `npm test -- InboxPane` → FAIL (six rows; old label).
 
@@ -698,7 +710,7 @@ const ROWS: readonly { id: InboxSectionId; label: string }[] = [
 ];
 ```
 
-- [ ] **Step 6: `InboxSection.tsx`** — remove the `'ci-failing': 'No CI failures on your PRs — nice.',` line from `EmptyCopy`, and relabel `'awaiting-author'` empty copy if desired (keep "Nothing waiting on the author." or change to "Nothing needs re-review."; choose the latter for consistency).
+- [ ] **Step 6: `InboxSection.tsx`** — remove the `'ci-failing': 'No CI failures on your PRs — nice.',` line from `EmptyCopy`, and change the `'awaiting-author'` empty copy to `'Nothing needs re-review.'` (matches the new label).
 
 - [ ] **Step 7: Run to verify pass + typecheck** — `npm test -- InboxPane PreferencesContext` → PASS; `npm run build` → PASS (the `ci-failing` key removal surfaces any stray references as type errors — fix them).
 
@@ -1241,14 +1253,14 @@ const secs: InboxSection[] = [
 ];
 
 it('CI trigger shows the failing count when unselected', () => {
-  render(<FilterBar sections={secs} initialSort="updated" ciProbeComplete onResult={() => {}} />);
+  render(<FilterBar sections={secs} initialSort="updated" ciProbeComplete onState={() => {}} />);
   expect(screen.getByRole('button', { name: /CI/ })).toHaveTextContent('CI · 1');
 });
 ```
 
 - [ ] **Step 2: Run to verify failure** — `npm test -- FilterBar` → FAIL.
 
-- [ ] **Step 3: Implement** `FilterBar.tsx`. It owns the `useInboxFilters` hook, renders the controls, and reports the `FilterResult` up via `onResult` so `InboxPage` renders the filtered sections:
+- [ ] **Step 3: Implement** `FilterBar.tsx`. It owns the `useInboxFilters` hook, renders the controls, and reports `{ result, clear }` up via `onState` so `InboxPage` renders the filtered sections and shares the same `clear`:
 
 ```tsx
 import { useEffect } from 'react';
@@ -1268,16 +1280,24 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: 'comments', label: 'Comments' },
 ];
 
+// FilterBar owns the hook and reports BOTH the filtered result and the `clear`
+// handler up, so InboxPage's zero-match state shares the exact same `clear` as
+// the in-bar summary — no need to lift the hook into the page.
+export interface FilterBarState {
+  result: FilterResult;
+  clear: () => void;
+}
+
 interface Props {
   sections: InboxSection[];
   initialSort: SortKey;
   ciProbeComplete: boolean;
-  onResult(result: FilterResult): void;
+  onState(state: FilterBarState): void;
 }
 
-export function FilterBar({ sections, initialSort, ciProbeComplete, onResult }: Props) {
+export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: Props) {
   const f = useInboxFilters(sections, initialSort);
-  useEffect(() => onResult(f.result), [f.result, onResult]);
+  useEffect(() => onState({ result: f.result, clear: f.clear }), [f.result, f.clear, onState]);
 
   const failingCount = sections.reduce(
     (n, s) => n + s.items.filter((p) => p.ci === 'failing').length,
@@ -1369,19 +1389,19 @@ it('filtering to nothing shows the no-match zero-state, not EmptyAllSections', a
 
 ```tsx
 import { PasteUrlInput } from './PasteUrlInput';
-import { FilterBar } from './filters/FilterBar';
+import { FilterBar, type FilterBarState } from './filters/FilterBar';
 import type { InboxSection } from '../../api/types';
-import type { FilterResult, SortKey } from './filters/applyInboxFilters';
+import type { SortKey } from './filters/applyInboxFilters';
 import styles from './InboxToolbar.module.css';
 
 interface Props {
   sections: InboxSection[];
   initialSort: SortKey;
   ciProbeComplete: boolean;
-  onResult(result: FilterResult): void;
+  onState(state: FilterBarState): void;
 }
 
-export function InboxToolbar({ sections, initialSort, ciProbeComplete, onResult }: Props) {
+export function InboxToolbar({ sections, initialSort, ciProbeComplete, onState }: Props) {
   return (
     <div className={styles.toolbar}>
       <PasteUrlInput />
@@ -1389,7 +1409,7 @@ export function InboxToolbar({ sections, initialSort, ciProbeComplete, onResult 
         sections={sections}
         initialSort={initialSort}
         ciProbeComplete={ciProbeComplete}
-        onResult={onResult}
+        onState={onState}
       />
     </div>
   );
@@ -1402,27 +1422,31 @@ export function InboxToolbar({ sections, initialSort, ciProbeComplete, onResult 
 // add imports
 import { useState } from 'react';
 import { NoFilterMatches } from '../components/Inbox/filters/NoFilterMatches';
-import type { FilterResult } from '../components/Inbox/filters/applyInboxFilters';
+import type { FilterBarState } from '../components/Inbox/filters/FilterBar';
 // …inside InboxPage, after `const sections = data?.sections ?? [];`
-const [filtered, setFiltered] = useState<FilterResult | null>(null);
-const filterActive = filtered?.filterActive ?? false;
-const visibleSections = filtered ? filtered.sections : sections;
-const zeroMatch = filterActive && filtered!.matchCount === 0;
+const [filterState, setFilterState] = useState<FilterBarState | null>(null);
+const result = filterState?.result ?? null;
+const filterActive = result?.filterActive ?? false;
+const visibleSections = result ? result.sections : sections;
+const zeroMatch = filterActive && result!.matchCount === 0;
 ```
 
 Replace the toolbar + sections render region:
 
 ```tsx
+        {/* initialSort is the literal 'updated' in PR2; Task 20 (PR3) replaces it
+            with the persisted preference. Until PR3 ships, the bar always opens on
+            'updated' — intended interim state, not a bug. */}
         <InboxToolbar
           sections={sections}
           initialSort="updated"
           ciProbeComplete={data.ciProbeComplete}
-          onResult={setFiltered}
+          onState={setFilterState}
         />
         <div className={styles.grid}>
           <div className={styles.sections}>
             {!filterActive && allEmpty && <EmptyAllSections />}
-            {zeroMatch && <NoFilterMatches onClear={() => setFiltered(null) /* see note */} />}
+            {zeroMatch && <NoFilterMatches onClear={() => filterState?.clear()} />}
             {!zeroMatch &&
               visibleSections.map((s) => (
                 <InboxSection
@@ -1441,7 +1465,7 @@ Replace the toolbar + sections render region:
         </div>
 ```
 
-> Note on `Clear` from the zero-state: the canonical clear lives in `FilterBar`'s hook. Rather than reset through the page, render the zero-state's Clear as a no-op visual and rely on the always-visible bar's Clear; OR lift `useInboxFilters` to `InboxPage` and pass `clear` down. **Chosen:** lift is cleaner — move `useInboxFilters` into `InboxPage`, pass `filters`/handlers into `FilterBar` as props, so both the summary and the zero-state share one `clear`. Implement that lift here (FilterBar becomes presentational; the hook lives in the page). Update `FilterBar` props to receive the hook's return instead of calling it internally, and update `FilterBar.test.tsx` to pass a stub hook value.
+> **Shared `clear` — no hook lift.** The canonical `clear` lives in `FilterBar`'s hook. Rather than lift the hook into the page (which would make `FilterBar` presentational and ripple through `InboxToolbar`), `FilterBar` reports `{ result, clear }` up via `onState` (Task 14). `InboxPage` holds that `FilterBarState` and passes `filterState.clear` to the zero-state, so the in-bar summary's Clear and the zero-state's Clear are the same function. `FilterBar` keeps owning the hook; Task 14's component and test stand as written.
 
 Create `NoFilterMatches.tsx`:
 
@@ -1508,6 +1532,8 @@ it('renders an accessible failing CI dot', () => {
 });
 ```
 
+> `InboxRow.test.tsx` has no `renderRow`/`pr` helpers — it uses a fixed `PR` const and an inline `render(<MemoryRouter><OpenTabsProvider>…</…></MemoryRouter>)` (InboxRow calls `useNavigate`/`useOpenTabs`). Reuse that existing wrapper; just vary `ci`. The `getByLabelText` assertions are the contract.
+
 - [ ] **Step 2: Run to verify failure** — `npm test -- InboxRow` → FAIL.
 
 - [ ] **Step 3: Implement** — replace the `<span className={styles.status}>…</span>` block:
@@ -1543,7 +1569,7 @@ git commit -m "feat(#262): accessible pending+failing CI dots in inbox rows"
 **Files:**
 - Create/extend: `frontend/e2e/inbox-filter.spec.ts`
 
-- [ ] **Step 1:** Write a Playwright spec (seed a fixture inbox via the existing test seam) covering: filter bar narrows live; CI facet filters failing across sections; emptied sections hide and re-reveal expanded; all-match-nothing shows the zero-state; sort reorders within a section; `PasteUrlInput` still present; runs in light + dark. Follow the existing `frontend/e2e/*.spec.ts` patterns (globalSetup, seeded data).
+- [ ] **Step 1:** Find how the existing inbox e2e specs seed data first — `git grep -l "inbox" frontend/e2e/` and read the closest spec + its fixture/route-mock setup (the suite already exercises the inbox; reuse that exact seeding approach, whether it's a fixture file under `frontend/e2e/fixtures/` or a mocked `/api/inbox` response). Then write a Playwright spec covering: filter bar narrows live; CI facet filters failing across sections; emptied sections hide and re-reveal expanded; all-match-nothing shows the zero-state; sort reorders within a section; `PasteUrlInput` still present; runs in light + dark. Follow the existing `frontend/e2e/*.spec.ts` patterns (globalSetup, seeded data). Seed at least one `ci: 'failing'` and one `ci: 'pending'` PR in a non-authored section so the CI facet has cross-section data.
 - [ ] **Step 2:** Run the suite locally (`npm run e2e` or the project's Playwright command) → green; regenerate any drifted parity baseline from the CI artifact if the header/toolbar height shifted (per the regen-baseline convention).
 - [ ] **Step 3:** Full gate: `npm test` green, `npm run build` green, prettier clean, `dotnet test` green (no backend change in PR2, but run once).
 - [ ] **Step 4: B1 visual assert** (real account, `./run.ps1 -Reset None --no-browser`): confirm the bar, facet popovers, CI failing-count trigger, incomplete hint (force by using a fine-grained PAT or a repo with restricted Checks), zero-state, expand-on-reveal, sort. Capture screenshots for the PR.
@@ -1608,29 +1634,29 @@ public sealed record InboxConfig(
             ["inbox.defaultSort"] = ConfigFieldType.String,
 ```
 
-add a validated `PatchAsync` arm (value-set check before the assignment — the existing string fields are unvalidated, but a bad sort key would render undefined client-side):
+add a value-set check **before** `_gate.WaitAsync` (mirroring the existing per-key type-validation block — reject bad input without taking the gate), and a plain assignment arm in the switch. After the `switch (expectedType)` type-validation block, add:
 
 ```csharp
-                "inbox.defaultSort" => _current with
-                {
-                    Inbox = _current.Inbox with { DefaultSort = ValidateSort((string)value!) }
-                },
+        if (key == "inbox.defaultSort" && !_allowedSorts.Contains((string)value!))
+            throw new ConfigPatchException(
+                $"field 'inbox.defaultSort' expects one of updated|pushed|diff|comments (got '{(string)value!}')");
 ```
 
-and a helper near `DescribeValue`:
+the switch arm (after `_gate.WaitAsync`) just assigns:
+
+```csharp
+                "inbox.defaultSort" =>
+                    _current with { Inbox = _current.Inbox with { DefaultSort = (string)value! } },
+```
+
+and the allowed-set near `_allowedFields`:
 
 ```csharp
     private static readonly HashSet<string> _allowedSorts =
         new(StringComparer.Ordinal) { "updated", "pushed", "diff", "comments" };
-
-    private static string ValidateSort(string value) =>
-        _allowedSorts.Contains(value)
-            ? value
-            : throw new ConfigPatchException(
-                $"field 'inbox.defaultSort' expects one of updated|pushed|diff|comments (got '{value}')");
 ```
 
-> `ValidateSort` throws *inside* the gate's `switch`. That's after `_gate.WaitAsync`; the `finally` releases the gate, and the `ConfigPatchException` propagates to the endpoint's `catch (ConfigPatchException)` → 400. Acceptable (no disk write happened). If you prefer to validate before the gate, hoist the check into the per-key type-validation block above `_gate.WaitAsync`.
+(The pre-gate `switch (expectedType)` already guarantees `value is string` for `inbox.defaultSort`, so the cast is safe.)
 
 - [ ] **Step 5: `PreferencesDtos.cs`** — add `DefaultSort` to `InboxPreferencesDto`:
 
@@ -1812,4 +1838,5 @@ git commit -m "feat(#262): default-sort Settings select applied to the inbox bar
 - **Spec coverage:** ci-failing→filter (T3–T9), CI fault-isolation + ciProbeComplete (T1–T3, T8, T14–T15), relabel (T7, T9), explicit order (T7), filter bar + facets + search + sort (T11–T15), empty/zero states + expand-on-reveal (T15), per-row dot + tooltip (T16), defaultSort (T18–T20), config migration (T5), dedup pair drop (T6). ✔
 - **Type consistency:** `CiDetectResult` (T1) consumed in T3; `SortKey`/`InboxFilters` (T11) used by T12/T14; `ciProbeComplete` flows snapshot(T2)→response(T8)→type(T9)→FilterBar(T14). ✔
 - **No placeholders:** every code step shows real code; where a test helper name is uncertain, the step says "match the file's existing helper" and names the asserted behavior. ✔
-- **Open risk to verify during execution:** the `InboxPage` `useInboxFilters` lift (T15 note) — decide lift-to-page vs callback-up at implementation time; the plan commits to **lift** so `clear` is shared by the summary and the zero-state.
+- **FilterBar architecture (resolved):** `FilterBar` owns the hook and reports `{ result, clear }` up via `onState` (T14); `InboxPage` shares that `clear` with the zero-state (T15). No hook lift, no `InboxToolbar` prop churn — Task 14's component/test are final.
+- **Test-corpus fallout (resolved):** T5 Step 7 enumerates the ~58 `ci-failing` references across 8 test files with delete-vs-rewrite guidance; the green-gates assume that sweep is done.
