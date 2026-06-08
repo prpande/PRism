@@ -7,8 +7,10 @@ export function ActivityRail() {
     <aside className={styles.rail} aria-label="Activity" data-testid="activity-rail">
       <section className={styles.section}>
         <header className={styles.head}>
-          <span className={styles.title}>Activity</span>
-          <SampleBadge variant="region" />
+          <span className={styles.titleGroup}>
+            <span className={styles.title}>Activity</span>
+            <SampleBadge variant="region" />
+          </span>
           <span className={styles.muted}>last 24h</span>
         </header>
         <ol className={styles.list}>

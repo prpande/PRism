@@ -95,11 +95,14 @@ export function AppearancePane() {
       <div className={pane.row}>
         <div>
           <div className={pane.label}>AI mode</div>
-          <div className={pane.help}>Off · no AI. Preview · sample output, clearly labeled.</div>
+          <div className={pane.help} id="ai-mode-help">
+            Off · no AI. Preview · sample output, clearly labeled.
+          </div>
         </div>
         <div className={pane.spring}>
           <SegmentedControl
             label="AI mode"
+            describedById="ai-mode-help"
             options={[
               { value: 'off', label: 'Off' },
               { value: 'preview', label: 'Preview' },
