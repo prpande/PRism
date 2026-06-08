@@ -26,6 +26,7 @@ export interface InboxSectionsPreferences {
 
 export interface InboxPreferences {
   sections: InboxSectionsPreferences;
+  defaultSort: SortKey;
 }
 
 export interface GithubPreferences {
