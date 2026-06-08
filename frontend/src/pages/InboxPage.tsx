@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
 import { useAiGate } from '../hooks/useAiGate';
+import { usePreferences } from '../hooks/usePreferences';
 import { InboxBanner } from '../components/Inbox/InboxBanner';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
 import { InboxSection } from '../components/Inbox/InboxSection';
@@ -18,6 +19,8 @@ import styles from './InboxPage.module.css';
 export function InboxPage() {
   const { data, error, isLoading, reload } = useInbox();
   const updates = useInboxUpdates();
+  const { preferences } = usePreferences();
+  const initialSort = preferences?.inbox.defaultSort ?? 'updated';
 
   const showCategoryChip = useAiGate('inboxEnrichment');
   const showActivityRail = useAiGate('inboxRanking');
@@ -86,12 +89,9 @@ export function InboxPage() {
         {updates.hasUpdate && (
           <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
         )}
-        {/* initialSort is the literal 'updated' in PR2; Task 20 (PR3) replaces it
-            with the persisted preference. Until PR3 ships, the bar always opens on
-            'updated' — intended interim state, not a bug. */}
         <InboxToolbar
           sections={sections}
-          initialSort="updated"
+          initialSort={initialSort}
           ciProbeComplete={data.ciProbeComplete}
           onState={setFilterState}
         />

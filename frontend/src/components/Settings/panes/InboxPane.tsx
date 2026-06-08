@@ -48,6 +48,25 @@ export function InboxPane() {
           </div>
         </div>
       ))}
+      <div className={pane.row}>
+        <label className={pane.label} htmlFor="inbox-default-sort">
+          Default sort
+        </label>
+        <div className={pane.spring}>
+          <select
+            id="inbox-default-sort"
+            value={preferences.inbox.defaultSort}
+            onChange={(e) =>
+              set('inbox.defaultSort' as PreferenceKey, e.target.value).catch(() => {})
+            }
+          >
+            <option value="updated">Updated</option>
+            <option value="pushed">Recently pushed</option>
+            <option value="diff">Diff size</option>
+            <option value="comments">Comments</option>
+          </select>
+        </div>
+      </div>
     </section>
   );
 }
