@@ -61,13 +61,14 @@ internal static class PreferencesEndpoints
         var sections = config.Current.Inbox.Sections;
         return new PreferencesResponse(
             Ui: new UiPreferencesDto(ui.Theme, ui.Accent, ui.AiPreview, ui.Density, ui.ContentScale),
-            Inbox: new InboxPreferencesDto(new InboxSectionsDto(
-                ReviewRequested: sections.ReviewRequested,
-                AwaitingAuthor:  sections.AwaitingAuthor,
-                AuthoredByMe:    sections.AuthoredByMe,
-                Mentioned:       sections.Mentioned,
-                CiFailing:       sections.CiFailing,
-                RecentlyClosed:  sections.RecentlyClosed)),
+            Inbox: new InboxPreferencesDto(
+                new InboxSectionsDto(
+                    ReviewRequested: sections.ReviewRequested,
+                    AwaitingAuthor:  sections.AwaitingAuthor,
+                    AuthoredByMe:    sections.AuthoredByMe,
+                    Mentioned:       sections.Mentioned,
+                    RecentlyClosed:  sections.RecentlyClosed),
+                config.Current.Inbox.DefaultSort),
             Github: new GithubPreferencesDto(
                 Host:       config.Current.Github.Host,
                 ConfigPath: config.ConfigPath,

@@ -21,30 +21,31 @@ export type PreferenceKey =
   | 'aiPreview'
   | 'density'
   | 'contentScale'
+  | 'inbox.defaultSort'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
       | 'authored-by-me'
       | 'mentioned'
-      | 'ci-failing'
       | 'recently-closed'}`;
 
 type InboxSectionKey = Exclude<
   PreferenceKey,
-  'theme' | 'accent' | 'aiPreview' | 'density' | 'contentScale'
+  'theme' | 'accent' | 'aiPreview' | 'density' | 'contentScale' | 'inbox.defaultSort'
 >;
 
-function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
+export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
   if (key === 'theme') return prefs.ui.theme;
   if (key === 'accent') return prefs.ui.accent;
   if (key === 'aiPreview') return prefs.ui.aiPreview;
   if (key === 'density') return prefs.ui.density;
   if (key === 'contentScale') return prefs.ui.contentScale;
+  if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
   return prefs.inbox.sections[id];
 }
 
-function writeKey(
+export function writeKey(
   prefs: PreferencesResponse,
   key: PreferenceKey,
   value: unknown,
@@ -63,6 +64,14 @@ function writeKey(
     return {
       ...prefs,
       ui: { ...prefs.ui, contentScale: value as PreferencesResponse['ui']['contentScale'] },
+    };
+  if (key === 'inbox.defaultSort')
+    return {
+      ...prefs,
+      inbox: {
+        ...prefs.inbox,
+        defaultSort: value as PreferencesResponse['inbox']['defaultSort'],
+      },
     };
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,
@@ -149,7 +158,7 @@ function usePreferencesStore(enabled: boolean): PreferencesContextValue {
         if (preferences && priorValue !== undefined) {
           setPreferences((cur) => (cur ? writeKey(cur, key, priorValue) : cur));
         }
-        // Generic copy: the internal dotted-path key (`inbox.sections.ci-failing`,
+        // Generic copy: the internal dotted-path key (`inbox.sections.awaiting-author`,
         // etc.) is a wire-format detail with no value to the end user. If a
         // consumer wants key-specific wording it can catch the rejection and
         // show its own toast.

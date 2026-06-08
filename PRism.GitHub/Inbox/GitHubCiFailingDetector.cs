@@ -19,25 +19,22 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         _readToken = readToken;
     }
 
-    public async Task<IReadOnlyList<(RawPrInboxItem Item, CiStatus Ci)>> DetectAsync(
-        IReadOnlyList<RawPrInboxItem> authoredItems, CancellationToken ct)
+    public async Task<CiDetectResult> DetectAsync(
+        IReadOnlyList<RawPrInboxItem> items, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(authoredItems);
-        if (authoredItems.Count == 0) return Array.Empty<(RawPrInboxItem Item, CiStatus Ci)>();
+        ArgumentNullException.ThrowIfNull(items);
+        if (items.Count == 0) return new CiDetectResult(Array.Empty<(RawPrInboxItem, CiStatus)>(), true);
         var token = await _readToken().ConfigureAwait(false);
         using var sem = new SemaphoreSlim(ConcurrencyCap);
 
-        // 5xx / timeout from any per-PR probe propagates here — the orchestrator
-        // decides whether to skip the tick. Unlike the section runner (which
-        // isolates per-section failures), per-PR failures abort the detect tick.
-        var done = await Task.WhenAll(authoredItems.Select(async c =>
+        var done = await Task.WhenAll(items.Select(async c =>
         {
             await sem.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                if (string.IsNullOrEmpty(c.HeadSha)) return (Item: c, Ci: CiStatus.None);
+                if (string.IsNullOrEmpty(c.HeadSha)) return (Item: c, Ci: CiStatus.None, Degraded: false);
                 var key = (c.Reference, c.HeadSha);
-                if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached);
+                if (_cache.TryGetValue(key, out var cached)) return (Item: c, Ci: cached, Degraded: false);
 
                 var (ci, degraded) = await ProbeAsync(c.Reference, c.HeadSha, token, ct).ConfigureAwait(false);
                 // Only cache a result built from complete, successful reads. A DEGRADED
@@ -47,12 +44,15 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 // until the token is replaced. Caching None here would pin it until the
                 // head SHA changes — contradicting the "recovers next tick" contract. (#213)
                 if (!degraded) _cache[key] = ci;
-                return (Item: c, Ci: ci);
+                return (Item: c, Ci: ci, Degraded: degraded);
             }
             finally { sem.Release(); }
         })).ConfigureAwait(false);
 
-        return done;
+        var anyDegraded = Array.Exists(done, t => t.Degraded);
+        return new CiDetectResult(
+            done.Select(t => (t.Item, t.Ci)).ToList(),
+            Complete: !anyDegraded);
     }
 
     // Returns the classified status plus a Degraded flag: true when either probe hit a

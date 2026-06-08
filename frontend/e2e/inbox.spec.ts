@@ -55,8 +55,9 @@ const defaultPreferences = {
       'awaiting-author': true,
       'authored-by-me': true,
       mentioned: true,
-      'ci-failing': true,
+      'recently-closed': true,
     },
+    defaultSort: 'updated',
   },
   github: {
     host: 'https://github.com',
@@ -256,7 +257,7 @@ test('URL paste with host mismatch shows inline error', async ({ page }) => {
   await page.getByPlaceholder(/paste a pr url/i).fill('https://ghe.acme.com/foo/bar/pull/1');
   await page.keyboard.press('Enter');
 
-  // PasteUrlInput renders the error in a <span role="alert">.
+  // The merged inbox input (InboxQueryInput) renders the error in a <span role="alert">.
   // The error message is: "This PR is on ghe.acme.com, but PRism is configured for https://github.com."
   await expect(page.getByRole('alert')).toContainText(/configured for https:\/\/github\.com/i);
 

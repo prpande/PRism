@@ -19,9 +19,9 @@ function prefs(contentScale: PreferencesResponse['ui']['contentScale']): Prefere
         'awaiting-author': true,
         'authored-by-me': true,
         mentioned: true,
-        'ci-failing': true,
         'recently-closed': true,
       },
+      defaultSort: 'updated',
     },
     github: { host: 'h', configPath: 'c', logsPath: 'l' },
   };

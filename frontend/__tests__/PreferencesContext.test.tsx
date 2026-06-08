@@ -1,7 +1,7 @@
 import { render, renderHook, screen, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { apiClient } from '../src/api/client';
-import { PreferencesProvider } from '../src/contexts/PreferencesContext';
+import { PreferencesProvider, readKey, writeKey } from '../src/contexts/PreferencesContext';
 import { usePreferences } from '../src/hooks/usePreferences';
 import type { PreferencesResponse } from '../src/api/types';
 
@@ -20,7 +20,7 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
       contentScale: 'm',
       ...overrides,
     },
-    inbox: { sections: {} } as PreferencesResponse['inbox'],
+    inbox: { sections: {}, defaultSort: 'updated' } as PreferencesResponse['inbox'],
     github: { host: 'https://github.com', configPath: '/c', logsPath: '/l' },
   };
 }
@@ -135,5 +135,20 @@ describe('PreferencesProvider', () => {
     });
     await waitFor(() => expect(result.current.error).toBeNull());
     expect(result.current.preferences?.ui.theme).toBe('dark');
+  });
+});
+
+// #262 PR3: inbox.defaultSort is the first scalar inbox preference. It must route
+// through its own readKey/writeKey branch (prefs.inbox.defaultSort), NOT the
+// inbox.sections.* slice fallthrough (which would land it at sections['defaultSort']).
+describe('readKey/writeKey — inbox.defaultSort routing', () => {
+  it('routes inbox.defaultSort to the scalar branch, not sections', () => {
+    const base = prefs();
+    expect(readKey(base, 'inbox.defaultSort')).toBe('updated');
+
+    const next = writeKey(base, 'inbox.defaultSort', 'pushed');
+    expect(next.inbox.defaultSort).toBe('pushed');
+    // Did NOT leak into the sections slice.
+    expect((next.inbox.sections as unknown as Record<string, unknown>).defaultSort).toBeUndefined();
   });
 });

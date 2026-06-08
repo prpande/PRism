@@ -21,7 +21,7 @@ const server = setupServer(
           'awaiting-author': true,
           'authored-by-me': true,
           mentioned: true,
-          'ci-failing': true,
+          'recently-closed': true,
         },
       },
       github: {
@@ -66,7 +66,7 @@ describe('usePreferences', () => {
     const { result } = renderHook(() => usePreferences());
     await waitFor(() => expect(result.current.preferences).not.toBeNull());
     expect(result.current.preferences!.inbox.sections['review-requested']).toBe(true);
-    expect(result.current.preferences!.inbox.sections['ci-failing']).toBe(true);
+    expect(result.current.preferences!.inbox.sections['awaiting-author']).toBe(true);
     expect(result.current.preferences!.github.configPath).toContain('config.json');
     expect(result.current.preferences!.github.logsPath).toContain('logs');
   });
@@ -80,18 +80,18 @@ describe('usePreferences', () => {
     const { result } = renderHook(() => usePreferences());
     await waitFor(() => expect(result.current.preferences).not.toBeNull());
 
-    // First POST: succeed and flip ci-failing → false.
+    // First POST: succeed and flip review-requested → false.
     server.use(
       http.post('/api/preferences', async () =>
         HttpResponse.json({
           ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
           inbox: {
             sections: {
-              'review-requested': true,
+              'review-requested': false,
               'awaiting-author': true,
               'authored-by-me': true,
               mentioned: true,
-              'ci-failing': false,
+              'recently-closed': true,
             },
           },
           github: {
@@ -103,9 +103,9 @@ describe('usePreferences', () => {
       ),
     );
     await act(async () => {
-      await result.current.set('inbox.sections.ci-failing', false);
+      await result.current.set('inbox.sections.review-requested', false);
     });
-    expect(result.current.preferences!.inbox.sections['ci-failing']).toBe(false);
+    expect(result.current.preferences!.inbox.sections['review-requested']).toBe(false);
 
     // Second POST: fail on the mentioned toggle.
     server.use(http.post('/api/preferences', () => HttpResponse.text('boom', { status: 500 })));
@@ -113,9 +113,9 @@ describe('usePreferences', () => {
       await expect(result.current.set('inbox.sections.mentioned', false)).rejects.toBeDefined();
     });
 
-    // Only `mentioned` reverts; the prior successful `ci-failing` flip survives.
+    // Only `mentioned` reverts; the prior successful `review-requested` flip survives.
     expect(result.current.preferences!.inbox.sections['mentioned']).toBe(true);
-    expect(result.current.preferences!.inbox.sections['ci-failing']).toBe(false);
+    expect(result.current.preferences!.inbox.sections['review-requested']).toBe(false);
   });
 
   it('rolls back preferences and surfaces an error toast when POST /api/preferences rejects', async () => {

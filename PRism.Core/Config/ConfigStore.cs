@@ -41,9 +41,16 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["inbox.sections.awaiting-author"]   = ConfigFieldType.Bool,
             ["inbox.sections.authored-by-me"]    = ConfigFieldType.Bool,
             ["inbox.sections.mentioned"]         = ConfigFieldType.Bool,
-            ["inbox.sections.ci-failing"]        = ConfigFieldType.Bool,
             ["inbox.sections.recently-closed"]   = ConfigFieldType.Bool,
+            ["inbox.defaultSort"]                = ConfigFieldType.String,
         };
+
+    // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
+    // theme/accent/density, which accept any string — Deviation 6). The pre-gate validation
+    // below rejects an out-of-set value with a ConfigPatchException so the endpoint returns
+    // 400 rather than persisting a sort the frontend can't render.
+    private static readonly HashSet<string> _allowedSorts =
+        new(StringComparer.Ordinal) { "updated", "pushed", "diff", "comments" };
 
     public ConfigStore(string dataDir)
     {
@@ -129,6 +136,13 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     $"field '{key}' expects a bool value (got {DescribeValue(value)})");
         }
 
+        // Closed-set value validation BEFORE the gate (mirrors the per-key type check above).
+        // The switch already guaranteed `value is string` for inbox.defaultSort, so the cast
+        // is safe. Reject an unknown sort with a clear message naming the field. (#262 PR3.)
+        if (key == "inbox.defaultSort" && !_allowedSorts.Contains((string)value!))
+            throw new ConfigPatchException(
+                $"field 'inbox.defaultSort' expects one of updated|pushed|diff|comments (got '{(string)value!}')");
+
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -149,10 +163,10 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Inbox = _current.Inbox with { Sections = sections with { AuthoredByMe    = (bool)value! } } },
                 "inbox.sections.mentioned" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { Mentioned       = (bool)value! } } },
-                "inbox.sections.ci-failing" =>
-                    _current with { Inbox = _current.Inbox with { Sections = sections with { CiFailing       = (bool)value! } } },
                 "inbox.sections.recently-closed" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { RecentlyClosed  = (bool)value! } } },
+                "inbox.defaultSort" =>
+                    _current with { Inbox = _current.Inbox with { DefaultSort = (string)value! } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);

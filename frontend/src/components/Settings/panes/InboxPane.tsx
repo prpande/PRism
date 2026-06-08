@@ -1,15 +1,15 @@
 import { usePreferences, type PreferenceKey } from '../../../hooks/usePreferences';
 import type { InboxSectionsPreferences } from '../../../api/types';
+import { SORT_OPTIONS } from '../../Inbox/filters/applyInboxFilters';
 import { Switch } from '../../controls/Switch';
 import pane from './Pane.module.css';
 
 type InboxSectionId = keyof InboxSectionsPreferences;
 const ROWS: readonly { id: InboxSectionId; label: string }[] = [
   { id: 'review-requested', label: 'Review requested' },
-  { id: 'awaiting-author', label: 'Awaiting author' },
+  { id: 'awaiting-author', label: 'Needs re-review' },
   { id: 'authored-by-me', label: 'Authored by me' },
   { id: 'mentioned', label: 'Mentioned' },
-  { id: 'ci-failing', label: 'CI failing on my PRs' },
   { id: 'recently-closed', label: 'Recently closed' },
 ];
 const HELP_ID = 'inbox-section-help';
@@ -18,6 +18,12 @@ export function InboxPane() {
   const { preferences, set } = usePreferences();
   if (!preferences) return null;
   const sections = preferences.inbox.sections;
+  // Clamp to a known option so a hand-edited / version-skewed inbox.defaultSort
+  // doesn't leave the controlled <select> in an invalid/blank state (mirrors the
+  // runtime clamp in applyInboxFilters).
+  const defaultSort = SORT_OPTIONS.some((o) => o.key === preferences.inbox.defaultSort)
+    ? preferences.inbox.defaultSort
+    : 'updated';
   return (
     <section aria-labelledby="inbox-heading">
       <div className={pane.head}>
@@ -49,6 +55,24 @@ export function InboxPane() {
           </div>
         </div>
       ))}
+      <div className={pane.row}>
+        <label className={pane.label} htmlFor="inbox-default-sort">
+          Default sort
+        </label>
+        <div className={pane.spring}>
+          <select
+            id="inbox-default-sort"
+            value={defaultSort}
+            onChange={(e) => set('inbox.defaultSort', e.target.value).catch(() => {})}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
     </section>
   );
 }

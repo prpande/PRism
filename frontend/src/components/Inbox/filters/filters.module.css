@@ -1,0 +1,280 @@
+/* Filter bar layout. Nested inside InboxToolbar (which owns the padding /
+   background / bottom border), so .bar is a plain full-width block — its rows
+   stack under the full-width paste input. */
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.barRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+}
+
+.spring {
+  flex: 1;
+}
+
+/* Search input — leads the filter row at full width (search-led bar). The merged
+   InboxQueryInput renders the error pill below the input, so allow the row to grow
+   vertically (the pill is a flex child that wraps to the next line). */
+.search {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  width: 100%;
+  min-width: 160px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: var(--s-2);
+  /* Pin to the input's vertical center (input ≈ 28px tall, icon 14px → 7px top).
+     Without this the absolutely-positioned icon drifts down when the error pill
+     wraps the .search container onto a second line. */
+  top: 7px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 4px var(--s-5) 4px calc(var(--s-2) + 18px /* icon width */);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  outline: none;
+  transition: border-color var(--t-fast);
+}
+
+.searchInput:focus {
+  border-color: var(--accent);
+}
+
+/* Suppress the browser's native type=search clear "x" — we render our own ✕ clear
+   button (.searchClear), so the native control would be a confusing duplicate.
+   Kept type=search (not type=text) to preserve the searchbox a11y role. */
+.searchInput::-webkit-search-cancel-button {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.searchInput::placeholder {
+  color: var(--text-3);
+}
+
+.searchClear {
+  position: absolute;
+  right: var(--s-1);
+  top: 4px;
+  padding: 2px 4px;
+  font-size: 10px;
+  color: var(--text-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  border-radius: var(--radius-1);
+}
+
+.searchClear:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+/* "↵ Open PR" affordance — shown only when the value is a PR URL. Sits just left
+   of the ✕ clear button (absolute, so it overlays the input's right padding). */
+.openHint {
+  position: absolute;
+  right: calc(var(--s-1) + 20px);
+  top: 6px;
+  padding: 1px var(--s-2);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-1);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Muted variant — shown for a pasted non-PR URL ("Not a PR link") so the user gets
+   feedback instead of silence. Recessed (text-3 on surface-3) vs the accent "Open
+   PR" affordance, signalling "no open action here". */
+.openHintMuted {
+  color: var(--text-3);
+  background: var(--surface-3);
+}
+
+/* Inline error pill (URL parse / host-mismatch). Wraps to the line below the
+   input via the .search flex container's flex-wrap. */
+.error {
+  flex-basis: 100%;
+  margin-top: var(--s-2);
+  display: inline-block;
+  padding: 2px var(--s-3);
+  background: var(--danger-soft, color-mix(in oklch, var(--danger-fg) 12%, transparent));
+  color: var(--danger-fg);
+  border-radius: var(--radius-2);
+  font-size: var(--text-sm);
+}
+
+/* Facet trigger + popover */
+.facet {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px var(--s-3);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color var(--t-fast),
+    color var(--t-fast);
+}
+
+.trigger:hover {
+  border-color: var(--border-strong);
+  color: var(--text-1);
+}
+
+.triggerActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 100;
+  min-width: 180px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+  padding: var(--s-1) 0;
+}
+
+.popoverSearch {
+  display: block;
+  width: calc(100% - var(--s-3) * 2);
+  margin: var(--s-1) var(--s-3) var(--s-2);
+  padding: 4px var(--s-2);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-1);
+  outline: none;
+}
+
+.popoverSearch:focus {
+  border-color: var(--accent);
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 5px var(--s-3);
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  cursor: pointer;
+  user-select: none;
+}
+
+.option:hover {
+  background: var(--surface-3);
+}
+
+.option input[type='checkbox'] {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* Summary row */
+.summary {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding-bottom: var(--s-2);
+  font-size: var(--text-xs);
+  color: var(--text-2);
+  flex-wrap: wrap;
+}
+
+.ciHint {
+  color: var(--text-3);
+  font-style: italic;
+}
+
+.clear {
+  padding: 2px 8px;
+  font-size: var(--text-xs);
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  transition:
+    background var(--t-fast),
+    color var(--t-fast);
+}
+
+.clear:hover {
+  background: var(--accent-soft);
+}
+
+/* Sort label */
+.sort {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.sort select {
+  font-size: var(--text-sm);
+  color: var(--text-1);
+  background: var(--surface-inset);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-2);
+  padding: 3px var(--s-2);
+  cursor: pointer;
+  outline: none;
+}
+
+.sort select:focus {
+  border-color: var(--accent);
+}
+
+/* Zero-match state */
+/* used by NoFilterMatches zero-state (Task 15) */
+.noMatch {
+  padding: var(--s-5) var(--s-4);
+  font-size: var(--text-sm);
+  color: var(--text-2);
+  text-align: center;
+}

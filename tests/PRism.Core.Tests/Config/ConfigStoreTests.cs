@@ -116,7 +116,6 @@ public class ConfigStoreTests
         store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
         store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
-        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
     }
 
     [Fact]
@@ -149,7 +148,6 @@ public class ConfigStoreTests
         store.Current.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
         store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
-        store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
     }
 
     [Fact]
@@ -193,6 +191,5 @@ public class ConfigStoreTests
         parsed.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
         parsed.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         parsed.Inbox.Sections.Mentioned.Should().BeTrue();
-        parsed.Inbox.Sections.CiFailing.Should().BeTrue();
     }
 }

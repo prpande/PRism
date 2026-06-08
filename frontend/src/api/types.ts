@@ -23,12 +23,12 @@ export interface InboxSectionsPreferences {
   'awaiting-author': boolean;
   'authored-by-me': boolean;
   mentioned: boolean;
-  'ci-failing': boolean;
   'recently-closed': boolean;
 }
 
 export interface InboxPreferences {
   sections: InboxSectionsPreferences;
+  defaultSort: SortKey;
 }
 
 export interface GithubPreferences {
@@ -126,11 +126,14 @@ export interface InboxItemEnrichment {
   hoverSummary: string | null;
 }
 
+export type SortKey = 'updated' | 'pushed' | 'diff' | 'comments';
+
 export interface InboxResponse {
   sections: InboxSection[];
   enrichments: Record<string, InboxItemEnrichment>;
   lastRefreshedAt: string;
   tokenScopeFooterEnabled: boolean;
+  ciProbeComplete: boolean;
 }
 
 export interface ParsePrUrlResponse {

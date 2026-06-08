@@ -8,7 +8,6 @@ public sealed class InboxDeduplicator : IInboxDeduplicator
     private static readonly (string Winner, string Loser)[] Pairs =
     {
         ("review-requested", "mentioned"), // 1 wins over 4
-        ("ci-failing", "authored-by-me"),  // 5 wins over 3
     };
 
     public IReadOnlyDictionary<string, IReadOnlyList<PrInboxItem>> Deduplicate(

@@ -39,9 +39,9 @@ export function makeDefaultPreferences() {
         'awaiting-author': true,
         'authored-by-me': true,
         mentioned: true,
-        'ci-failing': true,
         'recently-closed': true,
       },
+      defaultSort: 'updated',
     },
     github: {
       host: 'https://github.com',

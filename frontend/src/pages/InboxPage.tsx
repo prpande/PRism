@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
 import { useAiGate } from '../hooks/useAiGate';
+import { usePreferences } from '../hooks/usePreferences';
 import { InboxBanner } from '../components/Inbox/InboxBanner';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
 import { InboxSection } from '../components/Inbox/InboxSection';
@@ -11,16 +12,26 @@ import { ActivityRail } from '../components/ActivityRail/ActivityRail';
 import { InboxSkeleton } from '../components/Inbox/InboxSkeleton';
 import { LoadingBar } from '../components/LoadingBar';
 import { ErrorModal } from '../components/ErrorModal';
+import { NoFilterMatches } from '../components/Inbox/filters/NoFilterMatches';
+import type { FilterBarState } from '../components/Inbox/filters/FilterBar';
 import styles from './InboxPage.module.css';
 
 export function InboxPage() {
   const { data, error, isLoading, reload } = useInbox();
   const updates = useInboxUpdates();
+  const { preferences } = usePreferences();
+  const initialSort = preferences?.inbox.defaultSort ?? 'updated';
 
   const showCategoryChip = useAiGate('inboxEnrichment');
   const showActivityRail = useAiGate('inboxRanking');
   const sections = data?.sections ?? [];
   const allEmpty = sections.length > 0 && sections.every((s) => s.items.length === 0);
+
+  const [filterState, setFilterState] = useState<FilterBarState | null>(null);
+  const result = filterState?.result ?? null;
+  const filterActive = result?.filterActive ?? false;
+  const visibleSections = result ? result.sections : sections;
+  const zeroMatch = filterActive && result?.matchCount === 0;
 
   const maxDiff = useMemo(() => {
     let m = 1;
@@ -78,20 +89,28 @@ export function InboxPage() {
         {updates.hasUpdate && (
           <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
         )}
-        <InboxToolbar />
+        <InboxToolbar
+          sections={sections}
+          initialSort={initialSort}
+          ciProbeComplete={data.ciProbeComplete}
+          onState={setFilterState}
+        />
         <div className={styles.grid}>
           <div className={styles.sections}>
-            {allEmpty && <EmptyAllSections />}
-            {sections.map((s) => (
-              <InboxSection
-                key={s.id}
-                section={s}
-                enrichments={data.enrichments}
-                showCategoryChip={showCategoryChip}
-                maxDiff={maxDiff}
-                defaultOpen={s.id !== 'recently-closed'}
-              />
-            ))}
+            {!filterActive && allEmpty && <EmptyAllSections />}
+            {zeroMatch && <NoFilterMatches onClear={() => filterState?.clear()} />}
+            {!zeroMatch &&
+              visibleSections.map((s) => (
+                <InboxSection
+                  key={s.id}
+                  section={s}
+                  enrichments={data.enrichments}
+                  showCategoryChip={showCategoryChip}
+                  maxDiff={maxDiff}
+                  defaultOpen={s.id !== 'recently-closed'}
+                  forceOpen={filterActive && s.id !== 'recently-closed'}
+                />
+              ))}
             {data.tokenScopeFooterEnabled && <InboxFooter />}
           </div>
           {showActivityRail && <ActivityRail />}
