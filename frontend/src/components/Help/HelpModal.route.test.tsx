@@ -12,6 +12,7 @@ const authState = vi.hoisted(() => ({
 }));
 vi.mock('../../hooks/useAuth', () => ({
   useAuth: () => ({ authState: authState.value, error: null, refetch: vi.fn() }),
+  AuthProvider: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock('../../hooks/usePreferences', () => ({
   usePreferences: vi.fn(() => ({
