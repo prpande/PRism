@@ -30,6 +30,15 @@ export function looksLikeUrl(s: string): boolean {
 // it ACCEPTS `…/pull/42` and a deep link `…/pull/42/files`. The AUTHORITATIVE parse
 // still happens server-side via parsePrUrl — this only gates the merged input's
 // "open this PR" affordance / action.
+//
+// Deliberately NOT anchored after `\d+` (no `(?:[/?#]|$)`): a trailing-junk id like
+// `…/pull/42abc` stays accepted here even though the server's int.TryParse rejects
+// it (bounded cost — the user just gets the "That doesn't look like a PR link" pill
+// from the server). An end-anchor was tried and reverted: InboxQueryInput's
+// staleness guard calls looksLikePrUrl on the LIVE value mid-paste, and a stricter
+// match flips a transient settling value to "not a PR URL", making a legitimate
+// paste-to-open bail. Tolerance for the settling value is worth more than rejecting
+// a near-zero trailing-junk shape the server already catches.
 export function looksLikePrUrl(s: string): boolean {
   return /^https?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/pull\/\d+/i.test(s.trim());
 }
@@ -68,7 +77,12 @@ export function applyInboxFilters(
   sort: SortKey,
 ): FilterResult {
   const active = isFilterActive(filters);
-  const cmp = comparators[sort];
+  // Clamp an out-of-set sort to 'updated' rather than crashing. `sort` is typed
+  // SortKey, but it can arrive from JSON the type system doesn't police — a
+  // hand-edited / version-skewed inbox.defaultSort in config.json reaches here as
+  // an arbitrary string. Without this, comparators[sort] is undefined and the
+  // tiebreak's cmp(a, b) throws, taking down the whole inbox render.
+  const cmp = comparators[sort] ?? comparators.updated;
   const tiebreak = (a: PrInboxItem, b: PrInboxItem) => {
     const c = cmp(a, b);
     return c !== 0 ? c : b.reference.number - a.reference.number;

@@ -101,6 +101,26 @@ describe('applyInboxFilters', () => {
     // newest updatedAt first
     expect(r.sections[0].items[0].reference.number).toBe(2);
   });
+
+  it('clamps an out-of-set sort to updated instead of crashing', () => {
+    // A hand-edited / version-skewed inbox.defaultSort reaches here as an arbitrary
+    // string the TS type can't police. It must NOT throw (comparators[bad] is
+    // undefined); it falls back to the 'updated' order.
+    const secs = [
+      section('s', [
+        pr({
+          reference: { owner: 'acme', repo: 'api', number: 1 },
+          updatedAt: '2026-06-01T00:00:00Z',
+        }),
+        pr({
+          reference: { owner: 'acme', repo: 'api', number: 2 },
+          updatedAt: '2026-06-02T00:00:00Z',
+        }),
+      ]),
+    ];
+    const r = applyInboxFilters(secs, empty, 'alphabetical' as never);
+    expect(r.sections[0].items[0].reference.number).toBe(2); // updated-order fallback
+  });
 });
 
 describe('looksLikePrUrl', () => {
@@ -127,6 +147,15 @@ describe('looksLikePrUrl', () => {
 
   it('REJECTS a /pull/ with a non-numeric id', () => {
     expect(looksLikePrUrl('https://github.com/o/r/pull/x')).toBe(false);
+  });
+
+  it('ACCEPTS a deep link past the id (the id is not end-anchored, by design)', () => {
+    // Deliberately un-anchored after the number: a deep link resolves to the same
+    // PR, and the staleness-guard tolerance in InboxQueryInput depends on this
+    // permissiveness (see looksLikePrUrl's comment). A trailing-junk id like
+    // `…/pull/42abc` is left for the server parser to reject.
+    expect(looksLikePrUrl('https://github.com/o/r/pull/42/files')).toBe(true);
+    expect(looksLikePrUrl('https://github.com/o/r/pull/42?diff=split')).toBe(true);
   });
 
   it('is false for normal filter terms and non-PR URLs', () => {

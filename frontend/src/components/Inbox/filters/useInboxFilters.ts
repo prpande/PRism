@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CiStatus, InboxSection } from '../../../api/types';
 import {
   applyInboxFilters,
@@ -28,6 +28,23 @@ export function useInboxFilters(sections: InboxSection[], initialSort: SortKey) 
   const [query, setQuery] = useState('');
   const [facets, setFacets] = useState<Omit<InboxFilters, 'text'>>(EMPTY_FACETS);
   const [sort, setSort] = useState<SortKey>(initialSort);
+
+  // `initialSort` derives from the inbox.defaultSort preference, which is fetched
+  // independently of the inbox snapshot. On a cold load the snapshot can win that
+  // race, so this hook first mounts with the 'updated' fallback and `initialSort`
+  // only resolves to the real preference a tick later. A plain useState captures
+  // the fallback forever, silently ignoring the user's chosen default. So: adopt a
+  // changed `initialSort` until the user picks a sort themselves (after which their
+  // choice wins and a later preference change won't yank it out from under them —
+  // same userToggled discipline as InboxSection's forceOpen).
+  const sortTouched = useRef(false);
+  useEffect(() => {
+    if (!sortTouched.current) setSort(initialSort);
+  }, [initialSort]);
+  const setSortByUser = useCallback((next: SortKey) => {
+    sortTouched.current = true;
+    setSort(next);
+  }, []);
 
   const effectiveText = looksLikeUrl(query) ? '' : query;
   const filters = useMemo<InboxFilters>(
@@ -74,7 +91,7 @@ export function useInboxFilters(sections: InboxSection[], initialSort: SortKey) 
     query,
     setQuery,
     sort,
-    setSort,
+    setSort: setSortByUser,
     toggleCi,
     toggleRepo,
     toggleAuthor,

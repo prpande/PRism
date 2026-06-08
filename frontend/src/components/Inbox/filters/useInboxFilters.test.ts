@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useInboxFilters } from './useInboxFilters';
+import type { SortKey } from './applyInboxFilters';
 import type { InboxSection, PrInboxItem } from '../../../api/types';
 
 // Complete fixtures: applyInboxFilters sorts UNCONDITIONALLY (even with no active
@@ -105,5 +106,29 @@ describe('useInboxFilters', () => {
     act(() => result.current.setSort('comments'));
     expect(result.current.sort).toBe('comments');
     expect(result.current.result.sections[0].items[0].reference.number).toBe(1);
+  });
+
+  it('adopts a late-resolving initialSort (preferences losing the cold-load race)', () => {
+    // Cold load: inbox snapshot beats the preferences fetch, so the hook first
+    // mounts with the 'updated' fallback; `initialSort` resolves to the real
+    // inbox.defaultSort a render later. The hook must adopt it, not stay stuck.
+    const { result, rerender } = renderHook(({ s }: { s: SortKey }) => useInboxFilters(secs, s), {
+      initialProps: { s: 'updated' },
+    });
+    expect(result.current.sort).toBe('updated');
+    rerender({ s: 'comments' });
+    expect(result.current.sort).toBe('comments');
+  });
+
+  it('a user sort wins over a later initialSort change (no yank-out-from-under)', () => {
+    const { result, rerender } = renderHook(({ s }: { s: SortKey }) => useInboxFilters(secs, s), {
+      initialProps: { s: 'updated' },
+    });
+    // User explicitly picks a sort...
+    act(() => result.current.setSort('diff'));
+    expect(result.current.sort).toBe('diff');
+    // ...then the preference resolves/changes later — the user's choice stands.
+    rerender({ s: 'comments' });
+    expect(result.current.sort).toBe('diff');
   });
 });
