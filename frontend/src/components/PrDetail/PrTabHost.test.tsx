@@ -53,7 +53,6 @@ vi.mock('../../hooks/useAuth', () => ({
     authState: { hasToken: true, host: 'https://github.com', hostMismatch: null },
     error: null,
     refetch: vi.fn(),
-    connect: vi.fn(),
   }),
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
 }));

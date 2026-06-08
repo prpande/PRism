@@ -170,6 +170,32 @@ describe('useAuth', () => {
     expect(result.current.authState?.hasToken).toBe(false);
   });
 
+  it('clears a prior error when a later refetch succeeds', async () => {
+    // claude[bot] review (issue 2): a successful refetch must clear any stale
+    // `error`, so the App error-modal invariant (authState === null && error)
+    // can't resurface a dead error if authState ever reverts to null.
+    let calls = 0;
+    server.use(
+      http.get('/api/auth/state', () => {
+        calls += 1;
+        if (calls === 1) return HttpResponse.json({ error: 'boom' }, { status: 500 });
+        return HttpResponse.json({
+          hasToken: true,
+          host: 'https://github.com',
+          hostMismatch: null,
+        });
+      }),
+    );
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    // First mount fetch fails → error is set, authState stays null.
+    await waitFor(() => expect(result.current.error).not.toBeNull());
+    expect(result.current.authState).toBeNull();
+    // A later successful refetch must clear the stale error.
+    window.dispatchEvent(new Event('focus'));
+    await waitFor(() => expect(result.current.authState?.hasToken).toBe(true));
+    expect(result.current.error).toBeNull();
+  });
+
   it('refetches auth state when window regains focus', async () => {
     let calls = 0;
     server.use(

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { apiClient } from '../api/client';
-import type { AuthState, ConnectResponse } from '../api/types';
+import type { AuthState } from '../api/types';
 
 export interface AuthContextValue {
   authState: AuthState | null;
@@ -11,7 +11,6 @@ export interface AuthContextValue {
   // so it never rejects, which would otherwise let a failed /api/auth/state
   // fetch fall through to a navigate into a stale routing-gate bounce.
   refetch: () => Promise<AuthState | null>;
-  connect: (pat: string) => Promise<ConnectResponse>;
 }
 
 // A SINGLE shared auth instance, not per-call-site local state. Before this was
@@ -34,6 +33,10 @@ function useAuthState(): AuthContextValue {
     try {
       const next = await apiClient.get<AuthState>('/api/auth/state');
       setAuthState(next);
+      // Clear any stale error from a prior failed refetch — keeps the App error
+      // modal invariant (authState === null && error) from resurfacing a dead
+      // error if authState ever reverts to null. (claude[bot] review, issue 2.)
+      setError(null);
       return next;
     } catch (e) {
       setError(e as Error);
@@ -65,11 +68,7 @@ function useAuthState(): AuthContextValue {
     };
   }, [refetch]);
 
-  const connect = useCallback(async (pat: string) => {
-    return apiClient.post<ConnectResponse>('/api/auth/connect', { pat });
-  }, []);
-
-  return { authState, error, refetch, connect };
+  return { authState, error, refetch };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
