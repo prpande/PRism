@@ -8,10 +8,10 @@
 // between the mock registration and any in-flight fetch.
 //
 // Two stateful variables mirror the real backend's coupled toggle behaviour:
-//   aiPreview    — tracks preferences.ui.aiPreview (toggled via POST /api/preferences)
-//   capsOn       — tracks /api/capabilities (coupled to aiPreview on the wire per D112)
+//   aiMode       — tracks preferences.ui.aiMode (toggled via POST /api/preferences)
+//   capsOn       — tracks /api/capabilities (coupled to aiMode on the wire per D112)
 // Both flip together when the toggle POST fires, which is what
-// useAiGate(key) = capabilities[key] && preferences.ui.aiPreview requires.
+// useAiGate(key) = capabilities[key] && preferences.ui.aiMode !== 'off' requires.
 
 import { test, expect, type Route } from '@playwright/test';
 import { authedAuthState, makeDefaultPreferences } from './fixtures/preferences';
@@ -175,14 +175,14 @@ const sampleInbox = {
 };
 
 // ---------------------------------------------------------------------------
-// Mock setup helper — stateful so toggle POST mutates aiPreview + capsOn
+// Mock setup helper — stateful so toggle POST mutates aiMode + capsOn
 // ---------------------------------------------------------------------------
 
 async function setupMocks(page: import('@playwright/test').Page): Promise<{
-  getAiPreview: () => boolean;
-  setAiPreview: (v: boolean) => void;
+  getAiMode: () => 'off' | 'preview' | 'live';
+  setAiMode: (v: 'off' | 'preview' | 'live') => void;
 }> {
-  let aiPreview = false;
+  let aiMode: 'off' | 'preview' | 'live' = 'off';
 
   await page.route('**/api/auth/state', (route: Route) =>
     route.fulfill({
@@ -195,9 +195,9 @@ async function setupMocks(page: import('@playwright/test').Page): Promise<{
   await page.route('**/api/preferences', async (route: Route) => {
     if (route.request().method() === 'POST') {
       const raw = route.request().postData() ?? '{}';
-      const body = JSON.parse(raw) as { aiPreview?: boolean };
-      if (typeof body.aiPreview === 'boolean') {
-        aiPreview = body.aiPreview;
+      const body = JSON.parse(raw) as { 'ui.ai.mode'?: string };
+      if (typeof body['ui.ai.mode'] === 'string') {
+        aiMode = body['ui.ai.mode'] as 'off' | 'preview' | 'live';
       }
     }
     const prefs = makeDefaultPreferences();
@@ -206,15 +206,15 @@ async function setupMocks(page: import('@playwright/test').Page): Promise<{
       contentType: 'application/json',
       body: JSON.stringify({
         ...prefs,
-        ui: { ...prefs.ui, aiPreview },
+        ui: { ...prefs.ui, aiMode },
       }),
     });
   });
 
-  // Capabilities are coupled to aiPreview on the wire (D112 / useAiGate.ts
-  // comment). Mock the flip so useAiGate(key) = caps[key] && aiPreview works.
+  // Capabilities are coupled to aiMode on the wire (D112 / useAiGate.ts
+  // comment). Mock the flip so useAiGate(key) = caps[key] && aiMode !== 'off' works.
   await page.route('**/api/capabilities', (route: Route) => {
-    const caps = aiPreview ? allOnCapabilities : allOffCapabilities;
+    const caps = aiMode !== 'off' ? allOnCapabilities : allOffCapabilities;
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -326,9 +326,9 @@ async function setupMocks(page: import('@playwright/test').Page): Promise<{
   );
 
   return {
-    getAiPreview: () => aiPreview,
-    setAiPreview: (v: boolean) => {
-      aiPreview = v;
+    getAiMode: () => aiMode,
+    setAiMode: (v: 'off' | 'preview' | 'live') => {
+      aiMode = v;
     },
   };
 }
@@ -366,31 +366,46 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
 
   // ─── STEP 2: Toggle ON ────────────────────────────────────────────────────
 
-  // The navbar quick-toggle was removed; AI preview now lives only on the
-  // Settings modal's appearance pane (#134: AppearancePane's `<input role="switch">`).
-  // Flip it there, then re-navigate to the PR detail. A fresh navigation remounts
-  // the page so useCapabilities/usePreferences refetch the now-updated mock state —
-  // which replaces the old window.dispatchEvent(new Event('focus')) trick.
+  // The navbar quick-toggle was removed; the AI mode control now lives only on
+  // the Settings modal's appearance pane (#134: AppearancePane's Off | Preview
+  // SegmentedControl of radios). Click the Preview radio there, then re-navigate
+  // to the PR detail. A fresh navigation remounts the page so
+  // useCapabilities/usePreferences refetch the now-updated mock state — which
+  // replaces the old window.dispatchEvent(new Event('focus')) trick.
   await page.goto('/settings/appearance');
-  const aiToggle = page.getByRole('switch', { name: /AI preview/i });
-  await aiToggle.waitFor({ timeout: 30_000 });
+  const previewRadio = page.getByRole('radio', { name: 'Preview' });
+  await previewRadio.waitFor({ timeout: 30_000 });
   const toggleResponse = page.waitForResponse(
     (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );
-  await aiToggle.click();
+  await previewRadio.click();
   await toggleResponse;
+
+  // Coverage guard (1): confirm the Preview radio actually latched on the
+  // settings pane. A missed POST-handler migration would leave the app in Off,
+  // making every "sample badge" assertion below pass vacuously — assert the
+  // radio's checked state here so a silent false-green fails fast and loud.
+  await expect(page.getByRole('radio', { name: 'Preview' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
 
   // ─── STEP 3: ON state ─────────────────────────────────────────────────────
 
   // Fresh navigation remounts the PR detail so useCapabilities/usePreferences
-  // refetch and see allOnCapabilities + aiPreview=true (mutated in the mock
-  // closure by the toggle POST above). useAiGate(key) = caps[key] && aiPreview
+  // refetch and see allOnCapabilities + aiMode='preview' (mutated in the mock
+  // closure by the toggle POST above). useAiGate(key) = caps[key] && aiMode !== 'off'
   // is now true for every surface.
   await page.goto(`/pr/${OWNER}/${REPO}/${PR_NUMBER}`);
   await page.locator('[data-testid="pr-header"]').waitFor({ timeout: 30_000 });
 
-  // (a) AiSummaryCard on Overview tab.
+  // (a) AiSummaryCard on Overview tab. This also realizes coverage guard (2):
+  // a real AI surface (not just the settings radio) is on after the POST flip,
+  // so a missed POST-handler migration that left the app in Off fails here
+  // rather than letting the badge-absent checks below pass vacuously.
   await expect(page.getByTestId('ai-summary-card')).toBeVisible({ timeout: 10_000 });
+  // The Preview-only SampleBadge marks the AI sample surface (spec §8).
+  await expect(page.getByTestId('sample-badge').first()).toBeVisible({ timeout: 10_000 });
 
   // (b) AskAiButton visible in header.
   await expect(page.getByRole('button', { name: 'Ask AI' })).toBeVisible({ timeout: 10_000 });
@@ -419,30 +434,34 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
   await expect(page.getByTestId('stale-draft-ai-suggestion')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText('AI suggestion')).toBeVisible();
   await expect(page.getByText('Worth a comment here?')).toBeVisible();
+  // StaleDraftRow's AI suggestion carries the Preview-only SampleBadge.
+  await expect(page.getByTestId('sample-badge').first()).toBeVisible({ timeout: 10_000 });
 
   // (e) Inbox activity rail — a fresh navigation to "/" remounts InboxPage so
-  // usePreferences + useCapabilities refetch and see aiPreview=true and
+  // usePreferences + useCapabilities refetch and see aiMode='preview' and
   // inboxRanking=true from the now-mutated mock state.
   await page.goto('/');
   await expect(page.getByText('Refactor Calc utilities')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('complementary', { name: /activity/i })).toBeVisible({
     timeout: 10_000,
   });
+  // ActivityRail carries the Preview-only SampleBadge on the inbox surface.
+  await expect(page.getByTestId('sample-badge').first()).toBeVisible({ timeout: 10_000 });
 
   // ─── STEP 4: Toggle OFF ───────────────────────────────────────────────────
 
-  // Flip AI preview back off via the Settings modal's appearance-pane switch.
+  // Flip AI mode back off via the Settings modal's appearance-pane Off radio.
   await page.goto('/settings/appearance');
-  const offToggle = page.getByRole('switch', { name: /AI preview/i });
-  await offToggle.waitFor({ timeout: 30_000 });
+  const offRadio = page.getByRole('radio', { name: 'Off' });
+  await offRadio.waitFor({ timeout: 30_000 });
   const offResponse = page.waitForResponse(
     (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
   );
-  await offToggle.click();
+  await offRadio.click();
   await offResponse;
 
   // Fresh navigation remounts the PR detail so useCapabilities refetches
-  // allOffCapabilities (aiPreview is now false in the mock closure → all-off
+  // allOffCapabilities (aiMode is now 'off' in the mock closure → all-off
   // returned → gate collapses).
   await page.goto(`/pr/${OWNER}/${REPO}/${PR_NUMBER}`);
   await page.locator('[data-testid="pr-header"]').waitFor({ timeout: 30_000 });
@@ -452,4 +471,7 @@ test('ai-gating-sweep: off → on → off shows/hides AI surfaces', async ({ pag
 
   // AskAiButton must disappear.
   await expect(page.getByRole('button', { name: 'Ask AI' })).not.toBeVisible();
+
+  // And the Preview-only SampleBadge is gone from every surface once AI is Off.
+  await expect(page.getByTestId('sample-badge')).toHaveCount(0);
 });

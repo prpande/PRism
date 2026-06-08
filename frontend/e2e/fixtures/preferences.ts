@@ -29,7 +29,7 @@ export function makeDefaultPreferences() {
     ui: {
       theme: 'system' as const,
       accent: 'indigo' as const,
-      aiPreview: false,
+      aiMode: 'off' as const,
       density: 'comfortable' as const,
     },
     inbox: {

@@ -29,7 +29,7 @@ function makeDefaultPreferences() {
     ui: {
       theme: 'system' as const,
       accent: 'indigo' as const,
-      aiPreview: false,
+      aiMode: 'off' as const,
       density: 'comfortable' as const,
     },
     inbox: {
@@ -79,8 +79,8 @@ async function setupSettingsMocks(page: import('@playwright/test').Page) {
           store.ui.theme = value as Preferences['ui']['theme'];
         } else if (key === 'accent' && typeof value === 'string') {
           store.ui.accent = value as Preferences['ui']['accent'];
-        } else if (key === 'aiPreview' && typeof value === 'boolean') {
-          store.ui.aiPreview = value;
+        } else if (key === 'ui.ai.mode' && typeof value === 'string') {
+          store.ui.aiMode = value as 'off' | 'preview' | 'live';
         } else if (key === 'density' && typeof value === 'string') {
           store.ui.density = value as Preferences['ui']['density'];
         } else if (key.startsWith('inbox.sections.')) {
