@@ -11,10 +11,9 @@ const RECENTLY_CLOSED = 'recently-closed';
 
 const EmptyCopy: Record<string, string> = {
   'review-requested': 'No reviews requested right now.',
-  'awaiting-author': 'Nothing waiting on the author.',
+  'awaiting-author': 'Nothing needs re-review.',
   'authored-by-me': "You haven't opened any PRs.",
   mentioned: "You aren't @-mentioned on any open PRs.",
-  'ci-failing': 'No CI failures on your PRs — nice.',
   'recently-closed': 'No PRs closed recently.',
 };
 

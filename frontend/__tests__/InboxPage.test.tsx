@@ -74,7 +74,6 @@ function setHooks(
           'awaiting-author': true,
           'authored-by-me': true,
           mentioned: true,
-          'ci-failing': true,
           'recently-closed': true,
         },
       },
@@ -128,6 +127,7 @@ const sampleData: InboxResponse = {
   enrichments: {},
   lastRefreshedAt: new Date().toISOString(),
   tokenScopeFooterEnabled: true,
+  ciProbeComplete: true,
 };
 
 const emptyData: InboxResponse = {
@@ -231,6 +231,7 @@ describe('InboxPage — useAiGate migrations', () => {
         enrichments: {},
         lastRefreshedAt: '2026-01-01T00:00:00Z',
         tokenScopeFooterEnabled: false,
+        ciProbeComplete: true,
       } as InboxResponse,
       isLoading: false,
       error: null,
@@ -250,14 +251,14 @@ describe('InboxPage — useAiGate migrations', () => {
     });
     vi.mocked(usePreferences).mockReturnValue({
       preferences: {
-        ui: { theme: 'system', accent: 'indigo', aiPreview: false },
+        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
         inbox: {
           sections: {
             'review-requested': true,
             'awaiting-author': true,
             'authored-by-me': true,
             mentioned: true,
-            'ci-failing': true,
+            'recently-closed': true,
           },
         },
         github: {

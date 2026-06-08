@@ -21,7 +21,6 @@ export interface InboxSectionsPreferences {
   'awaiting-author': boolean;
   'authored-by-me': boolean;
   mentioned: boolean;
-  'ci-failing': boolean;
   'recently-closed': boolean;
 }
 
@@ -129,6 +128,7 @@ export interface InboxResponse {
   enrichments: Record<string, InboxItemEnrichment>;
   lastRefreshedAt: string;
   tokenScopeFooterEnabled: boolean;
+  ciProbeComplete: boolean;
 }
 
 export interface ParsePrUrlResponse {

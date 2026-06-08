@@ -25,7 +25,6 @@ export type PreferenceKey =
       | 'awaiting-author'
       | 'authored-by-me'
       | 'mentioned'
-      | 'ci-failing'
       | 'recently-closed'}`;
 
 type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'aiPreview' | 'density'>;
@@ -139,7 +138,7 @@ function usePreferencesStore(enabled: boolean): PreferencesContextValue {
         if (preferences && priorValue !== undefined) {
           setPreferences((cur) => (cur ? writeKey(cur, key, priorValue) : cur));
         }
-        // Generic copy: the internal dotted-path key (`inbox.sections.ci-failing`,
+        // Generic copy: the internal dotted-path key (`inbox.sections.awaiting-author`,
         // etc.) is a wire-format detail with no value to the end user. If a
         // consumer wants key-specific wording it can catch the rejection and
         // show its own toast.
