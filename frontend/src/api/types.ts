@@ -123,6 +123,8 @@ export interface InboxItemEnrichment {
   hoverSummary: string | null;
 }
 
+export type SortKey = 'updated' | 'pushed' | 'diff' | 'comments';
+
 export interface InboxResponse {
   sections: InboxSection[];
   enrichments: Record<string, InboxItemEnrichment>;
