@@ -33,6 +33,10 @@
 .searchIcon {
   position: absolute;
   left: var(--s-2);
+  /* Pin to the input's vertical center (input ≈ 28px tall, icon 14px → 7px top).
+     Without this the absolutely-positioned icon drifts down when the error pill
+     wraps the .search container onto a second line. */
+  top: 7px;
   display: inline-flex;
   align-items: center;
   color: var(--accent);

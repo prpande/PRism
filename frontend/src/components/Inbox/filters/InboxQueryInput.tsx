@@ -87,27 +87,49 @@ export function InboxQueryInput({ value, onChange }: Props) {
   return (
     <div className={styles.search}>
       {/* Monochrome accent line-icon (matches HelpIcon/welcomeIcons convention,
-          replacing the multicolour 🔍 emoji). Colour comes from .searchIcon. */}
-      <svg
-        className={styles.searchIcon}
-        width="14"
-        height="14"
-        viewBox="0 0 16 16"
-        aria-hidden="true"
-        focusable="false"
-        fill="none"
-      >
-        <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.2" />
-        <line
-          x1="10.6"
-          y1="10.6"
-          x2="14"
-          y2="14"
+          replacing the multicolour 🔍 emoji). Colour comes from .searchIcon.
+          The glyph tracks the input's mode: a magnifier while filtering, an
+          enter/return arrow once the value is a PR URL (signalling "press Enter
+          to open" — paired with the "↵ Open PR" affordance on the right). */}
+      {isPrUrl ? (
+        <svg
+          className={styles.searchIcon}
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          focusable="false"
+          fill="none"
           stroke="currentColor"
-          strokeWidth="1.2"
+          strokeWidth="2"
           strokeLinecap="round"
-        />
-      </svg>
+          strokeLinejoin="round"
+        >
+          <polyline points="9 10 4 15 9 20" />
+          <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+        </svg>
+      ) : (
+        <svg
+          className={styles.searchIcon}
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          aria-hidden="true"
+          focusable="false"
+          fill="none"
+        >
+          <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.2" />
+          <line
+            x1="10.6"
+            y1="10.6"
+            x2="14"
+            y2="14"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
       <input
         type="search"
         className={styles.searchInput}
