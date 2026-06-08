@@ -431,6 +431,29 @@ public sealed class InboxRefreshOrchestratorTests
     }
 
     [Fact]
+    public async Task Ci_fan_out_dedupes_a_pr_shared_across_sections_to_a_single_probe_input()
+    {
+        // The SAME PR ref appears in two live sections. The orchestrator's CI fan-out
+        // projects all live items distinct-by-ref before handing them to the detector,
+        // so the detector must see that ref exactly once — never one input per section
+        // appearance (which would waste Checks-API budget probing the same PR twice).
+        var shared = RawPr(7);
+        var detector = new FakeCiDetector(CiStatus.Failing);
+        var sut = BuildSut(
+            sections: _ => new Dictionary<string, IReadOnlyList<RawPrInboxItem>>
+            {
+                ["review-requested"] = new[] { shared },
+                ["authored-by-me"]   = new[] { shared },
+            },
+            ciDetector: detector);
+
+        await sut.RefreshAsync(CancellationToken.None);
+
+        detector.LastInput!.Count.Should().Be(1, "a PR shared across sections is probed once, not per appearance");
+        detector.LastInput!.Single().Reference.Number.Should().Be(7);
+    }
+
+    [Fact]
     public async Task Ci_rate_limit_publishes_snapshot_then_resurfaces_for_backoff()
     {
         var detector = new FakeCiDetector(toThrow: new RateLimitExceededException("429", TimeSpan.FromSeconds(30)));
