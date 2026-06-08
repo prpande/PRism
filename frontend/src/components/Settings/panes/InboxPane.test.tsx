@@ -63,10 +63,9 @@ describe('InboxPane', () => {
   });
 
   it('renders a default-sort select and persists a change', () => {
-    const setSpy = vi.fn().mockResolvedValue(undefined);
-    renderInboxPane({ set: setSpy, defaultSort: 'updated' });
+    renderInboxPane({ defaultSort: 'updated' });
     const select = screen.getByLabelText('Default sort');
     fireEvent.change(select, { target: { value: 'pushed' } });
-    expect(setSpy).toHaveBeenCalledWith('inbox.defaultSort', 'pushed');
+    expect(set).toHaveBeenCalledWith('inbox.defaultSort', 'pushed');
   });
 });

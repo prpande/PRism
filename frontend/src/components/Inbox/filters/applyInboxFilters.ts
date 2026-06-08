@@ -1,6 +1,13 @@
 import type { CiStatus, InboxSection, PrInboxItem, SortKey } from '../../../api/types';
 export type { SortKey };
 
+export const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: 'updated', label: 'Updated' },
+  { key: 'pushed', label: 'Recently pushed' },
+  { key: 'diff', label: 'Diff size' },
+  { key: 'comments', label: 'Comments' },
+];
+
 export interface InboxFilters {
   text: string;
   ci: CiStatus[];

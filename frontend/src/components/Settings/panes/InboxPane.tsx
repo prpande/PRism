@@ -1,5 +1,6 @@
 import { usePreferences, type PreferenceKey } from '../../../hooks/usePreferences';
 import type { InboxSectionsPreferences } from '../../../api/types';
+import { SORT_OPTIONS } from '../../Inbox/filters/applyInboxFilters';
 import { Switch } from '../../controls/Switch';
 import pane from './Pane.module.css';
 
@@ -56,14 +57,13 @@ export function InboxPane() {
           <select
             id="inbox-default-sort"
             value={preferences.inbox.defaultSort}
-            onChange={(e) =>
-              set('inbox.defaultSort' as PreferenceKey, e.target.value).catch(() => {})
-            }
+            onChange={(e) => set('inbox.defaultSort', e.target.value).catch(() => {})}
           >
-            <option value="updated">Updated</option>
-            <option value="pushed">Recently pushed</option>
-            <option value="diff">Diff size</option>
-            <option value="comments">Comments</option>
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
           </select>
         </div>
       </div>

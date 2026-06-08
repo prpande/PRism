@@ -2,18 +2,13 @@ import { useEffect } from 'react';
 import type { CiStatus, InboxSection } from '../../../api/types';
 import { useInboxFilters } from './useInboxFilters';
 import type { FilterResult, SortKey } from './applyInboxFilters';
+import { SORT_OPTIONS } from './applyInboxFilters';
 import { FilterSearchInput } from './FilterSearchInput';
 import { FilterFacet } from './FilterFacet';
 import { FilterSummary } from './FilterSummary';
 import styles from './filters.module.css';
 
 const CI_VALUES: CiStatus[] = ['failing', 'pending'];
-const SORTS: { key: SortKey; label: string }[] = [
-  { key: 'updated', label: 'Updated' },
-  { key: 'pushed', label: 'Recently pushed' },
-  { key: 'diff', label: 'Diff size' },
-  { key: 'comments', label: 'Comments' },
-];
 
 // FilterBar owns the hook and reports BOTH the filtered result and the `clear`
 // handler up, so InboxPage's zero-match state shares the exact same `clear` as
@@ -78,7 +73,7 @@ export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: P
         <label className={styles.sort}>
           Sort:{' '}
           <select value={f.sort} onChange={(e) => f.setSort(e.target.value as SortKey)}>
-            {SORTS.map((s) => (
+            {SORT_OPTIONS.map((s) => (
               <option key={s.key} value={s.key}>
                 {s.label}
               </option>
