@@ -30,8 +30,9 @@
 .searchIcon {
   position: absolute;
   left: var(--s-2);
-  font-size: 12px;
-  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
   pointer-events: none;
 }
 
