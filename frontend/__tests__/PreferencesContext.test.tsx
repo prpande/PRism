@@ -17,6 +17,7 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
       accent: 'indigo',
       aiPreview: false,
       density: 'comfortable',
+      contentScale: 'm',
       ...overrides,
     },
     inbox: { sections: {}, defaultSort: 'updated' } as PreferencesResponse['inbox'],

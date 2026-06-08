@@ -16,6 +16,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // / `density` keys are the legacy S0+S1 wire shape (under `ui.*` in config.json but flat
     // on the wire); preserved for back-compat with the existing POST /api/preferences
     // single-field contract. `density` was added in PR9b alongside the same UiConfig sub-record.
+    // `contentScale` was added in #135 alongside UiConfig.ContentScale, following the same bare-`ui.*`-key pattern.
     // The dotted-path `inbox.sections.*` keys (S6 PR1) map onto InboxSectionsConfig in
     // AppConfig.cs — canonical section set documented in docs/spec/03-poc-features.md § 11.
     //
@@ -35,6 +36,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["accent"]                           = ConfigFieldType.String,
             ["aiPreview"]                        = ConfigFieldType.Bool,
             ["density"]                          = ConfigFieldType.String,
+            ["contentScale"]                     = ConfigFieldType.String,
             ["inbox.sections.review-requested"]  = ConfigFieldType.Bool,
             ["inbox.sections.awaiting-author"]   = ConfigFieldType.Bool,
             ["inbox.sections.authored-by-me"]    = ConfigFieldType.Bool,
@@ -152,6 +154,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 "accent"    => _current with { Ui = ui with { Accent = (string)value! } },
                 "aiPreview" => _current with { Ui = ui with { AiPreview = (bool)value! } },
                 "density"   => _current with { Ui = ui with { Density = (string)value! } },
+                "contentScale" => _current with { Ui = ui with { ContentScale = (string)value! } },
                 "inbox.sections.review-requested" =>
                     _current with { Inbox = _current.Inbox with { Sections = sections with { ReviewRequested = (bool)value! } } },
                 "inbox.sections.awaiting-author" =>

@@ -60,7 +60,10 @@ internal static class PreferencesEndpoints
         var ui = config.Current.Ui;
         var sections = config.Current.Inbox.Sections;
         return new PreferencesResponse(
-            Ui: new UiPreferencesDto(ui.Theme, ui.Accent, ui.AiPreview, ui.Density),
+            // main added ui.ContentScale (#135 font-size control); this branch dropped
+            // the ci-failing section (#262 — CI is now a filter axis) and added
+            // inbox.defaultSort (#262 PR3). The merge keeps all three.
+            Ui: new UiPreferencesDto(ui.Theme, ui.Accent, ui.AiPreview, ui.Density, ui.ContentScale),
             Inbox: new InboxPreferencesDto(
                 new InboxSectionsDto(
                     ReviewRequested: sections.ReviewRequested,

@@ -43,7 +43,7 @@ export function PrRootConversation({ comments, replyContext }: PrRootConversatio
                 data-testid="pr-root-comment"
                 aria-label={`Comment by ${comment.author}`}
               >
-                <header className={styles.band}>
+                <header className={styles.band} data-testid="pr-comment-meta">
                   <Avatar src={comment.avatarUrl} login={comment.author} size="md" />
                   <span className={styles.author}>{comment.author}</span>
                   <time className={styles.time} dateTime={comment.createdAt}>

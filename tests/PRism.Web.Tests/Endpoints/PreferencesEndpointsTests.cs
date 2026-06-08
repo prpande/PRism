@@ -33,6 +33,7 @@ public class PreferencesEndpointsTests
         ui.GetProperty("accent").GetString().Should().Be("indigo");
         ui.GetProperty("aiPreview").GetBoolean().Should().BeFalse();
         ui.GetProperty("density").GetString().Should().Be("comfortable");
+        ui.GetProperty("contentScale").GetString().Should().Be("m");
 
         var sections = body.GetProperty("inbox").GetProperty("sections");
         sections.GetProperty("review-requested").GetBoolean().Should().BeTrue();

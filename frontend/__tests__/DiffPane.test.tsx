@@ -472,7 +472,7 @@ describe('DiffPane', () => {
         prUrl=""
       />,
     );
-    const annotationCell = screen.getByTestId('ai-hunk-annotation').closest('td');
+    const annotationCell = screen.getByTestId('ai-hunk').closest('td');
     expect(annotationCell).not.toBeNull();
     expect(annotationCell?.getAttribute('colSpan') ?? annotationCell?.getAttribute('colspan')).toBe(
       '4',

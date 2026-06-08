@@ -17,7 +17,9 @@ export function AiSummaryCard({ summary }: AiSummaryCardProps) {
         AI preview — sample content, not generated from this PR
       </div>
       <div className={styles.aiSummaryBody}>{summary.body}</div>
-      <div className={styles.aiSummaryCategory}>{summary.category}</div>
+      <div className={styles.aiSummaryCategory} data-testid="ai-summary-category">
+        {summary.category}
+      </div>
     </section>
   );
 }
