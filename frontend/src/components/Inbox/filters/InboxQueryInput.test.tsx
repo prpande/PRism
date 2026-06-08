@@ -132,9 +132,9 @@ describe('InboxQueryInput — open behavior (ported from PasteUrlInput)', () => 
 
     renderInput();
     const user = userEvent.setup();
-    // URL-shaped (has scheme + /pull/) so Enter attempts the open; the SERVER
-    // authoritatively rejects it as not-a-pr-url.
-    await user.type(screen.getByPlaceholderText(placeholder), 'https://github.com/foo/bar/pull/x');
+    // URL-shaped (scheme + owner/repo/pull/{number}) so Enter attempts the open; the
+    // SERVER authoritatively rejects it as not-a-pr-url (e.g. wrong host/repo shape).
+    await user.type(screen.getByPlaceholderText(placeholder), 'https://github.com/foo/bar/pull/9');
     await user.keyboard('{Enter}');
 
     await waitFor(() => {
@@ -204,6 +204,108 @@ describe('InboxQueryInput — merged filter/open behavior', () => {
     await user.clear(input);
     await user.type(input, 'https://github.com/foo/bar/pull/42');
     expect(screen.getByText(/open pr/i)).toBeInTheDocument();
+  });
+
+  it('double-Enter on a valid URL navigates / adds a tab exactly ONCE', async () => {
+    // Resolve slowly enough that the second Enter fires while the first open() is
+    // still in flight — the in-flight guard must drop the re-entry.
+    let resolveParse!: (v: {
+      ok: boolean;
+      ref: { owner: string; repo: string; number: number };
+      error: null;
+      configuredHost: null;
+      urlHost: null;
+    }) => void;
+    vi.mocked(inboxApi.parsePrUrl).mockImplementation(
+      () =>
+        new Promise((res) => {
+          resolveParse = res;
+        }),
+    );
+
+    renderInput();
+    const user = userEvent.setup();
+    const input = screen.getByPlaceholderText(placeholder);
+    await user.type(input, 'https://github.com/foo/bar/pull/42');
+    await user.keyboard('{Enter}');
+    await user.keyboard('{Enter}');
+
+    // Release the single in-flight parse.
+    resolveParse({
+      ok: true,
+      ref: { owner: 'foo', repo: 'bar', number: 42 },
+      error: null,
+      configuredHost: null,
+      urlHost: null,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('pr-detail')).toBeInTheDocument();
+    });
+    // Exactly one parse, one tab, one navigation — not two.
+    expect(inboxApi.parsePrUrl).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('1');
+  });
+
+  it('shows a muted "Not a PR link" hint for a non-PR URL', async () => {
+    renderInput();
+    const user = userEvent.setup();
+    const input = screen.getByPlaceholderText(placeholder);
+    await user.type(input, 'https://github.com/o/r/issues/9');
+    expect(screen.getByText(/not a pr link/i)).toBeInTheDocument();
+    expect(screen.queryByText(/↵ open pr/i)).not.toBeInTheDocument();
+  });
+
+  it('shows "↵ Open PR" for a PR URL (not the non-PR hint)', async () => {
+    renderInput();
+    const user = userEvent.setup();
+    const input = screen.getByPlaceholderText(placeholder);
+    await user.type(input, 'https://github.com/o/r/pull/42');
+    expect(screen.getByText(/↵ open pr/i)).toBeInTheDocument();
+    expect(screen.queryByText(/not a pr link/i)).not.toBeInTheDocument();
+  });
+
+  it('associates the error pill with the input via aria-describedby', async () => {
+    vi.mocked(inboxApi.parsePrUrl).mockResolvedValue({
+      ok: false,
+      ref: null,
+      error: 'not-a-pr-url',
+      configuredHost: null,
+      urlHost: null,
+    });
+
+    renderInput();
+    const user = userEvent.setup();
+    const input = screen.getByPlaceholderText(placeholder);
+    await user.type(input, 'https://github.com/foo/bar/pull/9');
+    await user.keyboard('{Enter}');
+
+    const alert = await screen.findByRole('alert');
+    const describedBy = input.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(alert).toHaveAttribute('id', describedBy);
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+  });
+
+  it('clears the error when the user edits the input', async () => {
+    vi.mocked(inboxApi.parsePrUrl).mockResolvedValue({
+      ok: false,
+      ref: null,
+      error: 'not-a-pr-url',
+      configuredHost: null,
+      urlHost: null,
+    });
+
+    renderInput();
+    const user = userEvent.setup();
+    const input = screen.getByPlaceholderText(placeholder);
+    await user.type(input, 'https://github.com/foo/bar/pull/9');
+    await user.keyboard('{Enter}');
+    await screen.findByRole('alert');
+
+    await user.type(input, 'x');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(input).not.toHaveAttribute('aria-describedby');
   });
 
   it('Escape clears the input', async () => {

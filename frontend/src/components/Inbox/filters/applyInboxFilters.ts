@@ -15,14 +15,23 @@ export interface InboxFilters {
   authors: string[];
 }
 
+// Is the value ANY http(s) URL? Used to strip a pasted URL out of the EFFECTIVE
+// text filter (so a non-PR URL — issue/commit/repo — doesn't filter the inbox to a
+// fake empty zero-state). Broader than looksLikePrUrl by design.
+export function looksLikeUrl(s: string): boolean {
+  return /^https?:\/\//i.test(s.trim());
+}
+
 // Cheap, client-side disambiguation between a free-text filter term and a pasted
-// PR URL. A normal filter term never trips this (it requires an http(s) scheme AND
-// a /pull(s)/ segment). The AUTHORITATIVE parse stays server-side via parsePrUrl —
-// this only decides whether the merged inbox input should treat the value as a
-// "filter the inbox" term or an "open this PR" candidate.
+// single-PR URL. TIGHTENED to mirror the server parser's owner/repo/pull/{number}
+// shape (GitHubReviewService requires segment-2 == "pull" + a numeric id): singular
+// `pull`, anchored at the scheme, numeric PR id. This REJECTS the plural list
+// endpoint `…/pulls/42`, a branch path like `…/tree/feat/pull/x`, and a bare term;
+// it ACCEPTS `…/pull/42` and a deep link `…/pull/42/files`. The AUTHORITATIVE parse
+// still happens server-side via parsePrUrl — this only gates the merged input's
+// "open this PR" affordance / action.
 export function looksLikePrUrl(s: string): boolean {
-  const t = s.trim();
-  return /^https?:\/\//i.test(t) && /\/pulls?\//i.test(t);
+  return /^https?:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/pull\/\d+/i.test(s.trim());
 }
 
 export interface FilterResult {

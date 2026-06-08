@@ -55,6 +55,14 @@
   border-color: var(--accent);
 }
 
+/* Suppress the browser's native type=search clear "x" — we render our own ✕ clear
+   button (.searchClear), so the native control would be a confusing duplicate.
+   Kept type=search (not type=text) to preserve the searchbox a11y role. */
+.searchInput::-webkit-search-cancel-button {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
 .searchInput::placeholder {
   color: var(--text-3);
 }
@@ -90,6 +98,14 @@
   border-radius: var(--radius-1);
   pointer-events: none;
   white-space: nowrap;
+}
+
+/* Muted variant — shown for a pasted non-PR URL ("Not a PR link") so the user gets
+   feedback instead of silence. Recessed (text-3 on surface-3) vs the accent "Open
+   PR" affordance, signalling "no open action here". */
+.openHintMuted {
+  color: var(--text-3);
+  background: var(--surface-3);
 }
 
 /* Inline error pill (URL parse / host-mismatch). Wraps to the line below the

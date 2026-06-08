@@ -3,7 +3,7 @@ import type { CiStatus, InboxSection } from '../../../api/types';
 import {
   applyInboxFilters,
   isFilterActive,
-  looksLikePrUrl,
+  looksLikeUrl,
   type InboxFilters,
   type SortKey,
 } from './applyInboxFilters';
@@ -20,14 +20,16 @@ function toggle<T>(list: T[], value: T): T[] {
 
 export function useInboxFilters(sections: InboxSection[], initialSort: SortKey) {
   // The merged inbox input is a single text field doing double duty (filter / open).
-  // We hold its RAW value in `query`; the EFFECTIVE text filter strips out a
-  // URL-shaped value so a pasted PR URL never filters the inbox to empty (no
-  // zero-state flash) — it just sits in the box with the "open" affordance.
+  // We hold its RAW value in `query`; the EFFECTIVE text filter strips out ANY
+  // URL-shaped value (not just PR URLs) so a pasted URL — PR, issue, commit, or
+  // bare repo — never filters the inbox to a fake "No PRs match" zero-state. It
+  // just sits in the box; the stricter "open" affordance/action gates on
+  // looksLikePrUrl in InboxQueryInput.
   const [query, setQuery] = useState('');
   const [facets, setFacets] = useState<Omit<InboxFilters, 'text'>>(EMPTY_FACETS);
   const [sort, setSort] = useState<SortKey>(initialSort);
 
-  const effectiveText = looksLikePrUrl(query) ? '' : query;
+  const effectiveText = looksLikeUrl(query) ? '' : query;
   const filters = useMemo<InboxFilters>(
     () => ({ text: effectiveText, ...facets }),
     [effectiveText, facets],
@@ -80,8 +82,8 @@ export function useInboxFilters(sections: InboxSection[], initialSort: SortKey) 
     repoValues,
     authorValues,
     result,
-    // `active`/filterCount treat a URL in the box as NO active text filter, because
-    // the effective text is '' — the inbox is unfiltered, just showing the URL.
+    // `active`/filterCount treat ANY URL in the box as NO active text filter,
+    // because the effective text is '' — the inbox is unfiltered, just showing the URL.
     active: isFilterActive(filters),
   };
 }

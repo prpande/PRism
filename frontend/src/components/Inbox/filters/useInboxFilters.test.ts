@@ -54,12 +54,22 @@ describe('useInboxFilters', () => {
     expect(result.current.active).toBe(true);
   });
 
-  it('a URL-shaped query does NOT filter (effective text empty, not active)', () => {
+  it('a PR-URL-shaped query does NOT filter (effective text empty, not active)', () => {
     const { result } = renderHook(() => useInboxFilters(secs, 'updated'));
     act(() => result.current.setQuery('https://github.com/foo/bar/pull/42'));
     // Raw query holds the URL (so the input still shows it)...
     expect(result.current.query).toBe('https://github.com/foo/bar/pull/42');
     // ...but the effective text filter is empty — the inbox is NOT filtered.
+    expect(result.current.filters.text).toBe('');
+    expect(result.current.active).toBe(false);
+  });
+
+  it('a NON-PR URL also strips (no fake "No PRs match" zero-state)', () => {
+    const { result } = renderHook(() => useInboxFilters(secs, 'updated'));
+    // A pasted issue/commit/repo URL is still URL-shaped — it must NOT become a
+    // literal text filter that empties the inbox.
+    act(() => result.current.setQuery('https://github.com/o/r/issues/9'));
+    expect(result.current.query).toBe('https://github.com/o/r/issues/9');
     expect(result.current.filters.text).toBe('');
     expect(result.current.active).toBe(false);
   });

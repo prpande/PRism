@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyInboxFilters,
   looksLikePrUrl,
+  looksLikeUrl,
   type InboxFilters,
   type SortKey,
 } from './applyInboxFilters';
@@ -103,21 +104,56 @@ describe('applyInboxFilters', () => {
 });
 
 describe('looksLikePrUrl', () => {
-  it('is true for http(s) URLs with a /pull/ or /pulls/ segment', () => {
-    expect(looksLikePrUrl('https://github.com/foo/bar/pull/42')).toBe(true);
+  it('is true for an http(s) owner/repo/pull/{number} URL (mirrors the server parser)', () => {
+    expect(looksLikePrUrl('https://github.com/o/r/pull/42')).toBe(true);
     expect(looksLikePrUrl('http://ghe.acme.com/o/r/pull/9')).toBe(true);
-    expect(looksLikePrUrl('https://api.github.com/repos/o/r/pulls/9')).toBe(true);
+    // A deep link past the PR number still resolves to the same PR.
+    expect(looksLikePrUrl('https://github.com/o/r/pull/42/files')).toBe(true);
     // Tolerates surrounding whitespace (pasted text often carries it).
     expect(looksLikePrUrl('  https://github.com/foo/bar/pull/42  ')).toBe(true);
+    // Case-insensitive on scheme.
+    expect(looksLikePrUrl('HTTPS://github.com/o/r/pull/42')).toBe(true);
+  });
+
+  it('REJECTS the plural /pulls/ (the API list endpoint, not a single PR)', () => {
+    expect(looksLikePrUrl('https://api.github.com/repos/o/r/pulls/9')).toBe(false);
+    expect(looksLikePrUrl('https://github.com/o/r/pulls/42')).toBe(false);
+  });
+
+  it('REJECTS a branch path that merely contains "pull" deeper in the tree', () => {
+    // owner/repo/tree/<branch…>; segment-2 is "tree", not "pull".
+    expect(looksLikePrUrl('https://github.com/o/r/tree/feat/pull/x')).toBe(false);
+  });
+
+  it('REJECTS a /pull/ with a non-numeric id', () => {
+    expect(looksLikePrUrl('https://github.com/o/r/pull/x')).toBe(false);
   });
 
   it('is false for normal filter terms and non-PR URLs', () => {
     expect(looksLikePrUrl('retry')).toBe(false);
     expect(looksLikePrUrl('acme/bff')).toBe(false);
     expect(looksLikePrUrl('')).toBe(false);
-    // A URL but not a PR link (no /pull(s)/ segment).
+    // A URL but not a PR link (no /pull/ segment).
     expect(looksLikePrUrl('https://github.com/foo/bar/issues/1')).toBe(false);
     // A /pull/ path but no scheme — a bare term, not a URL.
     expect(looksLikePrUrl('foo/bar/pull/42')).toBe(false);
+  });
+});
+
+describe('looksLikeUrl', () => {
+  it('is true for ANY http(s) URL', () => {
+    expect(looksLikeUrl('https://github.com/o/r/pull/42')).toBe(true);
+    expect(looksLikeUrl('https://github.com/o/r/issues/9')).toBe(true);
+    expect(looksLikeUrl('https://github.com/o/r')).toBe(true);
+    expect(looksLikeUrl('http://example.com')).toBe(true);
+    expect(looksLikeUrl('  https://github.com/o/r  ')).toBe(true);
+    expect(looksLikeUrl('HTTP://example.com')).toBe(true);
+  });
+
+  it('is false for a bare term or a repo slug', () => {
+    expect(looksLikeUrl('retry')).toBe(false);
+    expect(looksLikeUrl('acme/bff')).toBe(false);
+    expect(looksLikeUrl('')).toBe(false);
+    expect(looksLikeUrl('github.com/o/r')).toBe(false); // no scheme
   });
 });

@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { inboxApi } from '../../../api/inbox';
 import { useOpenTabs } from '../../../contexts/OpenTabsContext';
-import { looksLikePrUrl } from './applyInboxFilters';
+import { looksLikePrUrl, looksLikeUrl } from './applyInboxFilters';
 import styles from './filters.module.css';
 
 interface Props {
@@ -19,17 +19,41 @@ export function InboxQueryInput({ value, onChange }: Props) {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { addTab } = useOpenTabs();
+  const errorId = useId();
   // Set to true by onPaste; cleared when onChange consumes it — so a pasted URL's
   // error pill survives the change event that React fires right after the paste.
   const pasteInProgress = useRef(false);
+  // In-flight guard: a single open() at a time. A second open trigger (a fast
+  // double-Enter, or Enter landing on a paste already opening) is ignored so we
+  // never double addTab / double navigate.
+  const submitting = useRef(false);
+  // Staleness guard: the value the user is currently looking at, kept in a ref so an
+  // in-flight open() reads the latest after its await. If the user abandons the open
+  // (clears the box, or edits it into something that's no longer a PR URL) before the
+  // parse resolves, we drop the now-stale success instead of navigating away from a
+  // different intent. We deliberately do NOT require byte-exact equality: a pasted
+  // URL legitimately settles via two events, so we test "still a PR URL", not "==".
+  const currentValue = useRef(value);
+  currentValue.current = value;
+  const isStaleOpen = (submitted: string) => {
+    const now = currentValue.current.trim();
+    return now === '' || (now !== submitted && !looksLikePrUrl(now));
+  };
 
-  const isUrl = looksLikePrUrl(value);
+  const isPrUrl = looksLikePrUrl(value);
+  const isNonPrUrl = looksLikeUrl(value) && !isPrUrl;
 
   const open = async (raw: string) => {
     setError(null);
-    if (!raw.trim()) return;
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    // Drop a re-entrant open while one is already in flight (e.g. double-Enter).
+    if (submitting.current) return;
+    submitting.current = true;
     try {
-      const resp = await inboxApi.parsePrUrl(raw.trim());
+      const resp = await inboxApi.parsePrUrl(trimmed);
+      // Drop a stale result the user has moved on from (cleared / typed a term).
+      if (isStaleOpen(trimmed)) return;
       if (resp.ok && resp.ref) {
         // Title is null at paste time — PrDetailPage fills it in via setTitle once
         // usePrDetail resolves.
@@ -51,7 +75,12 @@ export function InboxQueryInput({ value, onChange }: Props) {
           setError("Couldn't parse that URL.");
       }
     } catch {
-      setError("Couldn't reach the server. Try again.");
+      // Network failure — only surface if the user hasn't moved on from this value.
+      if (!isStaleOpen(trimmed)) {
+        setError("Couldn't reach the server. Try again.");
+      }
+    } finally {
+      submitting.current = false;
     }
   };
 
@@ -84,6 +113,8 @@ export function InboxQueryInput({ value, onChange }: Props) {
         className={styles.searchInput}
         placeholder="Filter inbox, or paste a PR URL to open…"
         aria-label="Filter inbox, or paste a PR URL to open"
+        aria-describedby={error ? errorId : undefined}
+        aria-invalid={error ? true : undefined}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
@@ -113,10 +144,17 @@ export function InboxQueryInput({ value, onChange }: Props) {
           if (e.key === 'Enter' && looksLikePrUrl(value)) void open(value);
         }}
       />
-      {isUrl && value && (
-        <span className={styles.openHint} aria-hidden="true">
-          ↵ Open PR
-        </span>
+      {isPrUrl && (
+        <>
+          {/* Visible hint is decorative; AT gets the sr-only cue below. */}
+          <span className={styles.openHint} aria-hidden="true">
+            ↵ Open PR
+          </span>
+          <span className="sr-only">Press Enter to open this PR.</span>
+        </>
+      )}
+      {isNonPrUrl && (
+        <span className={`${styles.openHint} ${styles.openHintMuted}`}>Not a PR link</span>
       )}
       {value && (
         <button
@@ -132,7 +170,7 @@ export function InboxQueryInput({ value, onChange }: Props) {
         </button>
       )}
       {error && (
-        <span className={styles.error} role="alert">
+        <span id={errorId} className={styles.error} role="alert">
           {error}
         </span>
       )}
