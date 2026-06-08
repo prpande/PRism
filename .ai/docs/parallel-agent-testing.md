@@ -136,7 +136,8 @@ Two caveats for **real** (non-e2e) desktop instances:
 
 ## Zero-config alternative
 
-If you only need the app (not a pinned port), omit `--urls` is **not** exposed by
-`run.ps1` (it always sets `-Port`, default 5180). True auto-port for `run.ps1` —
-letting the app self-select from 5180–5199 — is a deferred enhancement (the issue's
-Approach A). For now, assign an explicit `5200 + N` per the table above.
+If you only need the app without a pinned port: note that `--urls` is **not**
+exposed by `run.ps1` directly (it always sets `-Port`, default 5180). True
+auto-port for `run.ps1` — letting the app self-select from 5180–5199 — is a
+deferred enhancement (the issue's Approach A). For now, assign an explicit
+`5200 + N` per the table above.

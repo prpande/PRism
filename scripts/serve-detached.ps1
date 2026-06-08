@@ -82,7 +82,13 @@ function Get-CanonicalDataDir {
         New-Item -ItemType Directory -Force -Path $abs | Out-Null
     }
     # .FullName on an existing dir is the long-path, case-normalized form.
-    return (Get-Item -LiteralPath $abs).FullName.TrimEnd('\', '/')
+    $full = (Get-Item -LiteralPath $abs).FullName
+    # Trim a trailing separator for consistent comparison, but NOT for a drive root
+    # ('C:\' must stay 'C:\' -- degrading to 'C:' would make Join-Path produce
+    # drive-relative paths like 'C:serve-detached.pid'). FullName has no trailing
+    # separator for a normal dir, so this trim is a no-op except on a root.
+    if ($full.Length -gt 3) { $full = $full.TrimEnd('\', '/') }
+    return $full
 }
 
 function Get-ServeDetachedPaths {
@@ -105,8 +111,10 @@ function Invoke-HealthProbe {
     # polling, not an error -- swallow it and return $null.
     param([int]$Port, [int]$TimeoutSec = 2)
     try {
+        # -UseBasicParsing is the only mode in PowerShell 7 (the param is deprecated),
+        # so it is omitted; #requires -Version 7 guarantees the 7+ behavior.
         $resp = Invoke-WebRequest -Uri "http://localhost:$Port/api/health" `
-            -UseBasicParsing -TimeoutSec $TimeoutSec -ErrorAction Stop
+            -TimeoutSec $TimeoutSec -ErrorAction Stop
         if ($resp.StatusCode -ne 200) { return $null }
         return ($resp.Content | ConvertFrom-Json)
     } catch {
@@ -141,7 +149,9 @@ function Stop-ProcessIfMatches {
     if ($ExpectedNames -notcontains $p.Name) { return $false }  # recycled to a different process
     if ($Tree) { taskkill /PID $ProcessId /T /F | Out-Null }
     else       { taskkill /PID $ProcessId /F | Out-Null }
-    return $true
+    # Return success only if taskkill actually killed it -- a failure (exit 128
+    # process-gone, exit 5 access-denied) must NOT report a green "Stopped".
+    return ($LASTEXITCODE -eq 0)
 }
 
 function Invoke-ForcePortReclaim {
@@ -221,7 +231,10 @@ function Write-WrapperScript {
     # an arg would split the authored call line into multiple lines (a malformed
     # wrapper that fails to parse and surfaces as an empty-log launch failure).
     $argTail = @('--no-browser') + @($DotnetArgs | Where-Object { $_ } | ForEach-Object { $_ -replace '[\r\n]+', ' ' })
-    $argLiteral = ($argTail | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ', '
+    # Space-join (not comma): space-separated tokens in PowerShell's call operator
+    # are passed as separate positional args, which ValueFromRemainingArguments
+    # collects unambiguously -- no reliance on array-coercion of a comma list.
+    $argLiteral = ($argTail | ForEach-Object { "'$($_.Replace("'", "''"))'" }) -join ' '
 
     # run.ps1's $Reset is the position-0 ValidateSet param; a bare leading
     # --no-browser with no named -Reset binds positionally to $Reset and fails its
@@ -350,6 +363,9 @@ function Invoke-Launch {
     }
 
     # --- Steps 5-7: author wrapper, detach, write pidfile ---
+    # Recompute the timestamp AFTER the (possibly slow) build so the wrapper banner
+    # and pidfile reflect the actual detach time, not the script-invocation time.
+    $startedUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
     Limit-LogSize -Log $paths.Log
     Write-WrapperScript -WrapperPath $paths.Wrapper -Log $paths.Log -RepoRoot $repoRoot -Port $Port -DataDir $canonical -DotnetArgs $DotnetArgs -StartedUtc $startedUtc
     $wrapperPid = Start-DetachedWrapper -WrapperPath $paths.Wrapper -RepoRoot $repoRoot
@@ -369,7 +385,15 @@ function Invoke-Stop {
     # gone but the app still listens (re-parented case), remove the pidfile.
     # Idempotent: a missing/stale pidfile reports "not running" and exits 0.
     param([string]$RawDataDir)
-    $canonical = Get-CanonicalDataDir -DataDir $RawDataDir
+    if ([string]::IsNullOrWhiteSpace($RawDataDir)) { throw "-DataDir must be a non-empty path." }
+    # Teardown must be side-effect-free: do NOT create the store dir just to stop.
+    # If the store doesn't exist there is nothing to tear down.
+    $abs = [System.IO.Path]::GetFullPath($RawDataDir)
+    if (-not (Test-Path -LiteralPath $abs -PathType Container)) {
+        Write-Host "Store '$abs' does not exist -- nothing to stop." -ForegroundColor DarkGray
+        return
+    }
+    $canonical = Get-CanonicalDataDir -DataDir $RawDataDir   # dir exists -> no creation
     $paths = Get-ServeDetachedPaths -CanonicalDataDir $canonical
     $pf = Read-Pidfile -Path $paths.Pidfile
     if ($null -eq $pf) {
@@ -404,7 +428,11 @@ if ($MyInvocation.InvocationName -ne '.') {
     }
     else {
         $handle = Invoke-Launch -Port $Port -RawDataDir $DataDir -SkipBuild:$SkipBuild -Force:$Force -TimeoutSec $TimeoutSec -DotnetArgs $DotnetArgs
+        # Dual emit by design: Write-Host shows the block to a human (and to an agent
+        # that captured $handle, on the console); the bare $handle goes to the pipeline
+        # so `$h = ./serve-detached.ps1 ...` captures the object. A human running it
+        # interactively sees the block once from Write-Host and once echoed by $handle.
         $handle | Format-List | Out-String | Write-Host
-        $handle   # emit the object so a caller can capture { Pid; Url; Log; DataDir; Version }
+        $handle
     }
 }

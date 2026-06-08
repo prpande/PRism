@@ -2,7 +2,7 @@
 
 **Slice**: dev-tooling, out-of-band — not a roadmap slice. A new helper script plus two small additive switches on [`run.ps1`](../../run.ps1). Sibling in spirit to [`docs/specs/2026-05-06-run-script-reset-design.md`](2026-05-06-run-script-reset-design.md).
 **Date**: 2026-06-07.
-**Status**: Draft — awaiting human spec gate. No code yet. Tracking issue: [#266](https://github.com/prpande/PRism/issues/266).
+**Status**: Implemented — PR [#269](https://github.com/prpande/PRism/pull/269). Tracking issue: [#266](https://github.com/prpande/PRism/issues/266).
 **Source authorities**: [`run.ps1`](../../run.ps1) is the production launch script this builds on; [`PRism.Web/Program.cs`](../../PRism.Web/Program.cs) (port resolution, `ApplicationStarted` ready line, `LockfileManager.Acquire` *before* bind, `--dataDir` echoed verbatim), [`PRism.Web/Endpoints/HealthEndpoints.cs`](../../PRism.Web/Endpoints/HealthEndpoints.cs) (`/api/health` → `{ port, version, dataDir }`), [`PRism.Web/Middleware/SessionTokenMiddleware.cs`](../../PRism.Web/Middleware/SessionTokenMiddleware.cs) (`/api/health` is auth-exempt), and [`.ai/docs/parallel-agent-testing.md`](../../.ai/docs/parallel-agent-testing.md) (the `(port, dataDir)` band) define the contract this script consumes.
 
 ---
