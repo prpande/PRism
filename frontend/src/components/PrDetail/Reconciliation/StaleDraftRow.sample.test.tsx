@@ -33,7 +33,9 @@ const aiSuggestion: DraftSuggestion = {
   body: 'Re-anchor this comment to the moved line.',
 };
 
-beforeEach(() => { mock.aiMode = 'preview'; });
+beforeEach(() => {
+  mock.aiMode = 'preview';
+});
 
 describe('StaleDraftRow sample badge', () => {
   it('renders the badge in the aiSuggestion branch in preview', () => {

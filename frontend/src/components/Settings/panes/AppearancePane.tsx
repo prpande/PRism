@@ -104,7 +104,11 @@ export function AppearancePane() {
               { value: 'off', label: 'Off' },
               { value: 'preview', label: 'Preview' },
             ]}
-            value={(preferences.ui.aiMode === 'live' ? 'preview' : preferences.ui.aiMode) as 'off' | 'preview'}
+            value={
+              (preferences.ui.aiMode === 'live' ? 'preview' : preferences.ui.aiMode) as
+                | 'off'
+                | 'preview'
+            }
             onChange={onAiMode}
           />
         </div>

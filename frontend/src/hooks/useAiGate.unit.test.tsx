@@ -5,17 +5,28 @@ import type { AiCapabilities, AiMode } from '../api/types';
 const mock = vi.hoisted(() => ({ caps: null as AiCapabilities | null, aiMode: 'off' as AiMode }));
 
 vi.mock('./useCapabilities', () => ({ useCapabilities: () => ({ capabilities: mock.caps }) }));
-vi.mock('./usePreferences', () => ({ usePreferences: () => ({ preferences: { ui: { aiMode: mock.aiMode } } }) }));
+vi.mock('./usePreferences', () => ({
+  usePreferences: () => ({ preferences: { ui: { aiMode: mock.aiMode } } }),
+}));
 
 import { useAiGate, useIsSampleMode } from './useAiGate';
 
 const allTrue: AiCapabilities = {
-  summary: true, fileFocus: true, hunkAnnotations: true, preSubmitValidators: true,
-  composerAssist: true, draftSuggestions: true, draftReconciliation: true,
-  inboxEnrichment: true, inboxRanking: true,
+  summary: true,
+  fileFocus: true,
+  hunkAnnotations: true,
+  preSubmitValidators: true,
+  composerAssist: true,
+  draftSuggestions: true,
+  draftReconciliation: true,
+  inboxEnrichment: true,
+  inboxRanking: true,
 };
 
-beforeEach(() => { mock.caps = null; mock.aiMode = 'off'; });
+beforeEach(() => {
+  mock.caps = null;
+  mock.aiMode = 'off';
+});
 
 describe('useAiGate two-factor seam', () => {
   it('is false when capability is false even if mode !== off (locks the D112 shape)', () => {
@@ -39,11 +50,13 @@ describe('useAiGate two-factor seam', () => {
 });
 
 describe('useIsSampleMode', () => {
-  it.each([['off', false], ['preview', true], ['live', false]] as const)(
-    'returns %s -> %s', (m, expected) => {
-      mock.aiMode = m;
-      const { result } = renderHook(() => useIsSampleMode());
-      expect(result.current).toBe(expected);
-    },
-  );
+  it.each([
+    ['off', false],
+    ['preview', true],
+    ['live', false],
+  ] as const)('returns %s -> %s', (m, expected) => {
+    mock.aiMode = m;
+    const { result } = renderHook(() => useIsSampleMode());
+    expect(result.current).toBe(expected);
+  });
 });

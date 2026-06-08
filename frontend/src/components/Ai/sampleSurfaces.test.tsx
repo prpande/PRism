@@ -1,7 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const mock = vi.hoisted(() => ({ aiMode: 'preview' as 'off' | 'preview' | 'live', composerOn: true }));
+const mock = vi.hoisted(() => ({
+  aiMode: 'preview' as 'off' | 'preview' | 'live',
+  composerOn: true,
+}));
 vi.mock('../../hooks/usePreferences', () => ({
   usePreferences: () => ({ preferences: { ui: { aiMode: mock.aiMode } } }),
 }));
@@ -15,7 +18,10 @@ import { AiComposerAssistant } from './AiComposerAssistant';
 import { PreSubmitValidatorCard } from '../PrDetail/SubmitDialog/PreSubmitValidatorCard';
 import type { ValidatorResult } from '../../api/types';
 
-beforeEach(() => { mock.aiMode = 'preview'; mock.composerOn = true; });
+beforeEach(() => {
+  mock.aiMode = 'preview';
+  mock.composerOn = true;
+});
 
 describe('card sample surfaces carry SampleBadge (not the old hardcoded string)', () => {
   it('AiSummaryCard shows the badge and no legacy string', () => {

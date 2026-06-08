@@ -50,6 +50,10 @@ export function useCapabilities() {
   // loaded a well-formed PreferencesResponse, derive `null` so useAiGate's
   // `capabilities?.[key] ?? false` short-circuits the gate off — same as the
   // pre-#221 loading state.
-  const capabilities = preferences?.ui ? (preferences.ui.aiMode === 'preview' ? ALL_ON : ALL_OFF) : null;
+  const capabilities = preferences?.ui
+    ? preferences.ui.aiMode === 'preview'
+      ? ALL_ON
+      : ALL_OFF
+    : null;
   return { capabilities, error, refetch: noopRefetch };
 }

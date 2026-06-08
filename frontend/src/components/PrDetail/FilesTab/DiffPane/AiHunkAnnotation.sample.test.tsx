@@ -16,7 +16,9 @@ const annotation: HunkAnnotation = {
   tone: 'calm',
 };
 
-beforeEach(() => { mock.aiMode = 'preview'; });
+beforeEach(() => {
+  mock.aiMode = 'preview';
+});
 
 describe('AiHunkAnnotation sample badge', () => {
   it('renders the badge in preview', () => {

@@ -8,7 +8,9 @@ vi.mock('../../hooks/usePreferences', () => ({
 
 import { ActivityRail } from './ActivityRail';
 
-beforeEach(() => { mock.aiMode = 'preview'; });
+beforeEach(() => {
+  mock.aiMode = 'preview';
+});
 
 describe('ActivityRail sample badge', () => {
   it('renders the region badge in preview', () => {

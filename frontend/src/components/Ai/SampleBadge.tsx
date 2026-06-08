@@ -13,11 +13,19 @@ export interface SampleBadgeProps {
 // renders Preview/sample content mounts this beside its AI label or section header.
 export function SampleBadge({ variant = 'inline', solid = false }: SampleBadgeProps) {
   if (!useIsSampleMode()) return null;
-  const cls = [styles.sampleBadge, variant === 'region' ? styles.region : '', solid ? styles.solid : '']
+  const cls = [
+    styles.sampleBadge,
+    variant === 'region' ? styles.region : '',
+    solid ? styles.solid : '',
+  ]
     .filter(Boolean)
     .join(' ');
   return (
-    <span className={cls} aria-label="Sample data — illustrative, not real AI output" data-testid="sample-badge">
+    <span
+      className={cls}
+      aria-label="Sample data — illustrative, not real AI output"
+      data-testid="sample-badge"
+    >
       Sample
     </span>
   );

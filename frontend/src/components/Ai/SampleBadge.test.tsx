@@ -8,7 +8,9 @@ vi.mock('../../hooks/usePreferences', () => ({
 
 import { SampleBadge } from './SampleBadge';
 
-beforeEach(() => { mock.aiMode = 'preview'; });
+beforeEach(() => {
+  mock.aiMode = 'preview';
+});
 
 describe('SampleBadge', () => {
   it('renders the Sample pill in preview mode', () => {
