@@ -309,6 +309,7 @@ for (const theme of ['light', 'dark'] as const) {
 
       // The `mentioned` section had no failing PR → its header is now hidden.
       await expect(sectionHeader(page, 'Mentioned')).toBeHidden();
+      await expect(sectionHeader(page, 'Needs re-review')).toBeHidden(); // awaiting-author emptied under CI:failing
       // Sections that still have matches remain.
       await expect(sectionHeader(page, 'Review requested')).toBeVisible();
       await expect(sectionHeader(page, 'Authored by me')).toBeVisible();
