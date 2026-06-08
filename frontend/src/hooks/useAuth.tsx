@@ -1,8 +1,34 @@
-import { useCallback, useEffect, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from 'react';
 import { apiClient } from '../api/client';
 import type { AuthState, ConnectResponse } from '../api/types';
 
-export function useAuth() {
+export interface AuthContextValue {
+  authState: AuthState | null;
+  error: Error | null;
+  refetch: () => Promise<void>;
+  connect: (pat: string) => Promise<ConnectResponse>;
+}
+
+// A SINGLE shared auth instance, not per-call-site local state. Before this was
+// a context, App.tsx and SetupPage.tsx each called useAuth() and got their own
+// independent `authState`. SetupPage committing a token (and refetching) could
+// not update App's copy — and App's copy is the one that gates routing
+// (`isAuthed = hasToken && !authInvalidated`). The result was a first-run
+// bounce: paste token → navigate('/') → App's stale hasToken=false → redirect
+// back to /setup, forcing a second "Get Started" click. Sharing one instance
+// lets SetupPage `await refetch()` so the gate sees hasToken=true BEFORE it
+// navigates. Regression net: app.test.tsx "lands on the Inbox after first-run
+// token submission".
+const AuthContext = createContext<AuthContextValue | null>(null);
+
+function useAuthState(): AuthContextValue {
   const [authState, setAuthState] = useState<AuthState | null>(null);
   const [error, setError] = useState<Error | null>(null);
 
@@ -22,7 +48,7 @@ export function useAuth() {
     window.addEventListener('focus', handler);
     // S6 PR4 (spec § 3.2.1) — `prism-identity-changed` is dispatched by the SSE
     // bridge in api/events.ts whenever the backend publishes an IdentityChanged
-    // event (Replace token → identity-change rule). useAuth lives ABOVE
+    // event (Replace token → identity-change rule). The provider lives ABOVE
     // EventStreamProvider in the tree (App.tsx mounts the provider inside the
     // auth-gated subtree), so it can't subscribe via useEventSource(); the
     // window event is the only reachable signal.
@@ -43,4 +69,17 @@ export function useAuth() {
   }, []);
 
   return { authState, error, refetch, connect };
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const value = useAuthState();
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth(): AuthContextValue {
+  const ctx = useContext(AuthContext);
+  if (ctx === null) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return ctx;
 }

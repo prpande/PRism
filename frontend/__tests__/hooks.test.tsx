@@ -4,7 +4,7 @@ import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { usePreferences } from '../src/hooks/usePreferences';
 import { useCapabilities } from '../src/hooks/useCapabilities';
-import { useAuth } from '../src/hooks/useAuth';
+import { AuthProvider, useAuth } from '../src/hooks/useAuth';
 
 const showMock = vi.fn();
 vi.mock('../src/components/Toast', () => ({
@@ -148,7 +148,7 @@ describe('useCapabilities', () => {
 
 describe('useAuth', () => {
   it('fetches auth state on mount', async () => {
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
   });
@@ -165,7 +165,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new Event('focus'));
@@ -188,7 +188,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new CustomEvent('prism-identity-changed'));
@@ -211,7 +211,7 @@ describe('useAuth', () => {
         });
       }),
     );
-    const { result } = renderHook(() => useAuth());
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.authState).not.toBeNull());
     expect(result.current.authState?.hasToken).toBe(false);
     window.dispatchEvent(new CustomEvent('prism-events-reconnected'));

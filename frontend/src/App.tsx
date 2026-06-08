@@ -14,7 +14,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { OverviewTab } from './components/PrDetail/OverviewTab/OverviewTab';
 import { FilesTab } from './components/PrDetail/FilesTab/FilesTab';
 import { DraftsTabRoute } from './components/PrDetail/DraftsTab/DraftsTabRoute';
-import { useAuth } from './hooks/useAuth';
+import { AuthProvider, useAuth } from './hooks/useAuth';
 import { EventStreamProvider } from './hooks/useEventSource';
 import { apiClient } from './api/client';
 import { OpenTabsProvider } from './contexts/OpenTabsContext';
@@ -30,6 +30,17 @@ function TabSignals() {
 }
 
 export function App() {
+  // AuthProvider wraps AppShell so App and SetupPage (rendered via the routes
+  // inside AppShell) share ONE auth instance — the routing gate and the token
+  // submit can't drift apart. See hooks/useAuth.tsx for why this matters.
+  return (
+    <AuthProvider>
+      <AppShell />
+    </AuthProvider>
+  );
+}
+
+function AppShell() {
   const { authState, error, refetch } = useAuth();
   const [authInvalidated, setAuthInvalidated] = useState(false);
 

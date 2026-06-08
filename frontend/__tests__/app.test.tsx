@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -116,6 +117,72 @@ describe('App routing', () => {
     // App should now force /setup
     expect(await screen.findByText(/connect to github/i)).toBeInTheDocument();
   });
+
+  it('lands on the Inbox after first-run token submission (no manual second click)', async () => {
+    // Mirrors reality: /api/auth/state reports no token until the PAT is
+    // committed by /api/auth/connect, after which it reports hasToken: true.
+    let connected = false;
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: connected, host: 'https://github.com', hostMismatch: null }),
+      ),
+      http.post('/api/auth/connect', () => {
+        connected = true;
+        return HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' });
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    );
+    // First run: no token yet → the Connect to GitHub screen.
+    await screen.findByText(/connect to github/i, {}, { timeout: 5000 });
+    // Paste a token and submit.
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_test');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    // Should land straight in the Inbox — NOT bounce back to the setup screen
+    // and force a second "Get Started" click.
+    expect(
+      await screen.findByPlaceholderText(/paste a pr url/i, {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+  }, 20000);
+
+  it('lands on the Inbox after the no-repos "Continue anyway" first-run path', async () => {
+    // The onContinueAnyway flow has the SAME first-run race as onConnect: a
+    // token with no repos selected shows the warning modal, and committing it
+    // must `await refetch()` before navigate('/') or App's stale hasToken=false
+    // bounces back to /setup. The token isn't live until the commit succeeds.
+    let connected = false;
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: connected, host: 'https://github.com', hostMismatch: null }),
+      ),
+      // connect returns the no-repos warning WITHOUT committing the token.
+      http.post('/api/auth/connect', () =>
+        HttpResponse.json({ ok: true, warning: 'no-repos-selected', host: 'https://github.com' }),
+      ),
+      // commit is what actually makes the token live.
+      http.post('/api/auth/connect/commit', () => {
+        connected = true;
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    );
+    await screen.findByText(/connect to github/i, {}, { timeout: 5000 });
+    await userEvent.type(await screen.findByLabelText(/personal access token/i), 'ghp_test');
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }));
+    // No-repos warning modal appears; commit via "Continue anyway".
+    await userEvent.click(await screen.findByRole('button', { name: /continue anyway/i }));
+    // Should land straight in the Inbox — not bounce back to /setup.
+    expect(
+      await screen.findByPlaceholderText(/paste a pr url/i, {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+  }, 20000);
 
   it('renders host-change modal when hostMismatch present', async () => {
     server.use(

@@ -42,7 +42,7 @@ function replaceErrorMessage(code: string | undefined): string {
 }
 
 export function SetupPage() {
-  const { authState } = useAuth();
+  const { authState, refetch } = useAuth();
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [showWarning, setShowWarning] = useState(false);
@@ -69,6 +69,11 @@ export function SetupPage() {
         return;
       }
       window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
+      // Refresh the SHARED auth state so App's route gate (isAuthed) observes
+      // hasToken=true BEFORE we navigate. Without this await, navigate('/') runs
+      // while App's hasToken is still stale-false and the gate bounces us back
+      // to /setup — the first-run loop this fix removes.
+      await refetch();
       navigate('/');
     } catch (e) {
       setError((e as Error).message);
@@ -102,6 +107,7 @@ export function SetupPage() {
         });
       }
       window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
+      await refetch();
       navigate('/');
     } catch (e) {
       let message: string;
@@ -137,6 +143,7 @@ export function SetupPage() {
         return;
       }
       window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
+      await refetch();
       navigate('/');
     } catch (e) {
       // 409 means the in-memory transient is gone (process restart, double-commit).

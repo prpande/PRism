@@ -6,6 +6,7 @@ import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { SetupPage } from '../src/pages/SetupPage';
 import { ToastProvider, ToastContainer } from '../src/components/Toast';
+import { AuthProvider } from '../src/hooks/useAuth';
 
 const server = setupServer();
 beforeAll(() => server.listen());
@@ -15,14 +16,16 @@ afterAll(() => server.close());
 function renderRouted(initialPath = '/setup') {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
-      <ToastProvider>
-        <Routes>
-          <Route path="/setup" element={<SetupPage />} />
-          <Route path="/" element={<div>InboxMock</div>} />
-          <Route path="/settings" element={<div>SettingsMock</div>} />
-        </Routes>
-        <ToastContainer />
-      </ToastProvider>
+      <AuthProvider>
+        <ToastProvider>
+          <Routes>
+            <Route path="/setup" element={<SetupPage />} />
+            <Route path="/" element={<div>InboxMock</div>} />
+            <Route path="/settings" element={<div>SettingsMock</div>} />
+          </Routes>
+          <ToastContainer />
+        </ToastProvider>
+      </AuthProvider>
     </MemoryRouter>,
   );
 }
