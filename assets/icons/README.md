@@ -11,23 +11,23 @@ per-platform masking or padding.
 the desktop app icons, the web favicon/logo, and the multi-resolution `.ico`
 packs — is regenerated from it by `generate-icons.py`.
 
-| File | Size | Description |
-|---|---|---|
-| `PRismOG.png` | 977×977 | Canonical PNG master (full-bleed squircle, transparent corners) |
-| `PRism{16,32,48,64,256,512}.ico` | multi-res | Identical multi-resolution packs (16/24/32/48/64/128/256); only the filename differs — kept for compatibility |
-| `PRismOG.ico` | multi-res | Same multi-resolution pack as the above |
+| File                             | Size           | Description                                                                                                   |
+| -------------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------- |
+| `PRismOG.png`                    | square, ≥512px | Canonical PNG master (full-bleed squircle, transparent corners; exact pixel size varies per refresh)          |
+| `PRism{16,32,48,64,256,512}.ico` | multi-res      | Identical multi-resolution packs (16/24/32/48/64/128/256); only the filename differs — kept for compatibility |
+| `PRismOG.ico`                    | multi-res      | Same multi-resolution pack as the above                                                                       |
 
 > ICO directory entries cap at 256px, so the `.ico` packs top out at 256 even
 > though the master is larger.
 
 ## Derived copies (regenerated, do not hand-edit)
 
-| Derived path | Source | Transform |
-|---|---|---|
-| `frontend/public/prism-logo.png` | `PRismOG.png` | resize 256×256 |
-| `frontend/public/favicon.png` | `PRismOG.png` | resize 32×32 |
-| `desktop/assets/icon.ico` | `PRismOG.png` | multi-res `.ico` (Windows window/taskbar + electron-builder) |
-| `desktop/assets/icon.icns` | `PRismOG.png` | `.icns` (macOS dock, packaged by electron-builder) |
+| Derived path                     | Source        | Transform                                                    |
+| -------------------------------- | ------------- | ------------------------------------------------------------ |
+| `frontend/public/prism-logo.png` | `PRismOG.png` | resize 256×256                                               |
+| `frontend/public/favicon.png`    | `PRismOG.png` | resize 32×32                                                 |
+| `desktop/assets/icon.ico`        | `PRismOG.png` | multi-res `.ico` (Windows window/taskbar + electron-builder) |
+| `desktop/assets/icon.icns`       | `PRismOG.png` | `.icns` (macOS dock, packaged by electron-builder)           |
 
 `PRism.Web/wwwroot/{favicon.png,prism-logo.png}` are **build artifacts** copied
 from the frontend build — not tracked, not written by the generator.

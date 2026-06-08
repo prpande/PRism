@@ -28,8 +28,10 @@ MASTER = ROOT / "assets" / "icons" / "PRismOG.png"
 
 # ICO directory entries cap at 256px; embedding larger is non-standard.
 ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
-# Apple .icns standard slots (skip 1024 — the master is < 1024, no upscaling).
-ICNS_SIZES = [16, 32, 64, 128, 256, 512]
+# Apple .icns slots. 1024 is the macOS Retina slot; write_icns drops any slot
+# larger than the master, so a smaller master degrades gracefully instead of
+# being upscaled (the exact master size varies per refresh).
+ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
 
 
 def load_master() -> Image.Image:
@@ -64,7 +66,9 @@ def write_ico(master: Image.Image, rel: str, sizes: list[int]) -> None:
 
 def write_icns(master: Image.Image, rel: str, sizes: list[int]) -> None:
     out = ROOT / rel
-    # Pillow's ICNS writer derives the slots it needs from the source image.
+    # Drop any slot larger than the master so we never upscale; a smaller master
+    # simply omits the bigger slots (e.g. a 512px master skips 1024).
+    sizes = [s for s in sizes if s <= master.width]
     biggest = resized(master, max(sizes))
     biggest.save(out, format="ICNS", sizes=[(s, s) for s in sizes])
     print(f"  icns {rel} ({'/'.join(map(str, sizes))})")
@@ -82,8 +86,8 @@ def main() -> None:
     write_ico(master, "desktop/assets/icon.ico", ICO_SIZES)
     write_icns(master, "desktop/assets/icon.icns", ICNS_SIZES)
 
-    # Canonical multi-resolution source packs. Historically six identically
-    # contented files differing only by filename; preserved for compatibility.
+    # Canonical multi-resolution source packs. Historically six files with
+    # identical contents differing only by filename; preserved for compatibility.
     for name in ("PRism16", "PRism32", "PRism48", "PRism64", "PRism256", "PRism512"):
         write_ico(master, f"assets/icons/{name}.ico", ICO_SIZES)
     write_ico(master, "assets/icons/PRismOG.ico", ICO_SIZES)
