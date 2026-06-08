@@ -15,6 +15,16 @@ export interface InboxFilters {
   authors: string[];
 }
 
+// Cheap, client-side disambiguation between a free-text filter term and a pasted
+// PR URL. A normal filter term never trips this (it requires an http(s) scheme AND
+// a /pull(s)/ segment). The AUTHORITATIVE parse stays server-side via parsePrUrl —
+// this only decides whether the merged inbox input should treat the value as a
+// "filter the inbox" term or an "open this PR" candidate.
+export function looksLikePrUrl(s: string): boolean {
+  const t = s.trim();
+  return /^https?:\/\//i.test(t) && /\/pulls?\//i.test(t);
+}
+
 export interface FilterResult {
   sections: InboxSection[];
   filterActive: boolean;

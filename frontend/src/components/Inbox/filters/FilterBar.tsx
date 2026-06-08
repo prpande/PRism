@@ -3,7 +3,7 @@ import type { CiStatus, InboxSection } from '../../../api/types';
 import { useInboxFilters } from './useInboxFilters';
 import type { FilterResult, SortKey } from './applyInboxFilters';
 import { SORT_OPTIONS } from './applyInboxFilters';
-import { FilterSearchInput } from './FilterSearchInput';
+import { InboxQueryInput } from './InboxQueryInput';
 import { FilterFacet } from './FilterFacet';
 import { FilterSummary } from './FilterSummary';
 import styles from './filters.module.css';
@@ -47,7 +47,7 @@ export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: P
   return (
     <div className={styles.bar}>
       <div className={styles.barRow}>
-        <FilterSearchInput value={f.filters.text} onChange={f.setText} />
+        <InboxQueryInput value={f.query} onChange={f.setQuery} />
       </div>
       <div className={styles.barRow}>
         <FilterFacet

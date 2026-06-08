@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { applyInboxFilters, type InboxFilters, type SortKey } from './applyInboxFilters';
+import {
+  applyInboxFilters,
+  looksLikePrUrl,
+  type InboxFilters,
+  type SortKey,
+} from './applyInboxFilters';
 import type { InboxSection, PrInboxItem } from '../../../api/types';
 
 const pr = (over: Partial<PrInboxItem>): PrInboxItem => ({
@@ -94,5 +99,25 @@ describe('applyInboxFilters', () => {
     const r = applyInboxFilters(secs, empty, 'updated');
     // newest updatedAt first
     expect(r.sections[0].items[0].reference.number).toBe(2);
+  });
+});
+
+describe('looksLikePrUrl', () => {
+  it('is true for http(s) URLs with a /pull/ or /pulls/ segment', () => {
+    expect(looksLikePrUrl('https://github.com/foo/bar/pull/42')).toBe(true);
+    expect(looksLikePrUrl('http://ghe.acme.com/o/r/pull/9')).toBe(true);
+    expect(looksLikePrUrl('https://api.github.com/repos/o/r/pulls/9')).toBe(true);
+    // Tolerates surrounding whitespace (pasted text often carries it).
+    expect(looksLikePrUrl('  https://github.com/foo/bar/pull/42  ')).toBe(true);
+  });
+
+  it('is false for normal filter terms and non-PR URLs', () => {
+    expect(looksLikePrUrl('retry')).toBe(false);
+    expect(looksLikePrUrl('acme/bff')).toBe(false);
+    expect(looksLikePrUrl('')).toBe(false);
+    // A URL but not a PR link (no /pull(s)/ segment).
+    expect(looksLikePrUrl('https://github.com/foo/bar/issues/1')).toBe(false);
+    // A /pull/ path but no scheme — a bare term, not a URL.
+    expect(looksLikePrUrl('foo/bar/pull/42')).toBe(false);
   });
 });

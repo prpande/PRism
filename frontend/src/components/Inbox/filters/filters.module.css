@@ -18,10 +18,13 @@
   flex: 1;
 }
 
-/* Search input — leads the filter row at full width (search-led bar). */
+/* Search input — leads the filter row at full width (search-led bar). The merged
+   InboxQueryInput renders the error pill below the input, so allow the row to grow
+   vertically (the pill is a flex child that wraps to the next line). */
 .search {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   width: 100%;
   min-width: 160px;
@@ -59,6 +62,7 @@
 .searchClear {
   position: absolute;
   right: var(--s-1);
+  top: 4px;
   padding: 2px 4px;
   font-size: 10px;
   color: var(--text-3);
@@ -71,6 +75,34 @@
 .searchClear:hover {
   color: var(--text-1);
   background: var(--surface-3);
+}
+
+/* "↵ Open PR" affordance — shown only when the value is a PR URL. Sits just left
+   of the ✕ clear button (absolute, so it overlays the input's right padding). */
+.openHint {
+  position: absolute;
+  right: calc(var(--s-1) + 20px);
+  top: 6px;
+  padding: 1px var(--s-2);
+  font-size: var(--text-xs);
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-1);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Inline error pill (URL parse / host-mismatch). Wraps to the line below the
+   input via the .search flex container's flex-wrap. */
+.error {
+  flex-basis: 100%;
+  margin-top: var(--s-2);
+  display: inline-block;
+  padding: 2px var(--s-3);
+  background: var(--danger-soft, color-mix(in oklch, var(--danger-fg) 12%, transparent));
+  color: var(--danger-fg);
+  border-radius: var(--radius-2);
+  font-size: var(--text-sm);
 }
 
 /* Facet trigger + popover */

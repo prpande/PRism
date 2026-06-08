@@ -36,12 +36,32 @@ describe('useInboxFilters', () => {
     expect(result.current.authorValues).toEqual(['dana', 'pat']);
   });
 
-  it('clear() resets every facet incl. free-text', () => {
+  it('clear() resets every facet incl. the query', () => {
     const { result } = renderHook(() => useInboxFilters(secs, 'updated'));
-    act(() => result.current.setText('retry'));
+    act(() => result.current.setQuery('retry'));
     act(() => result.current.toggleCi('failing'));
     act(() => result.current.clear());
+    expect(result.current.query).toBe('');
     expect(result.current.filters).toEqual({ text: '', ci: [], repos: [], authors: [] });
+    expect(result.current.active).toBe(false);
+  });
+
+  it('a plain term sets the effective text filter and is active', () => {
+    const { result } = renderHook(() => useInboxFilters(secs, 'updated'));
+    act(() => result.current.setQuery('retry'));
+    expect(result.current.query).toBe('retry');
+    expect(result.current.filters.text).toBe('retry');
+    expect(result.current.active).toBe(true);
+  });
+
+  it('a URL-shaped query does NOT filter (effective text empty, not active)', () => {
+    const { result } = renderHook(() => useInboxFilters(secs, 'updated'));
+    act(() => result.current.setQuery('https://github.com/foo/bar/pull/42'));
+    // Raw query holds the URL (so the input still shows it)...
+    expect(result.current.query).toBe('https://github.com/foo/bar/pull/42');
+    // ...but the effective text filter is empty — the inbox is NOT filtered.
+    expect(result.current.filters.text).toBe('');
+    expect(result.current.active).toBe(false);
   });
 
   it('toggleCi accumulates and de-accumulates (toggle twice → back to [])', () => {

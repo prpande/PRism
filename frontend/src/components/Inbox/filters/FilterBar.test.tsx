@@ -1,6 +1,8 @@
 import { it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { FilterBar } from './FilterBar';
+import { OpenTabsProvider } from '../../../contexts/OpenTabsContext';
 import type { InboxSection, PrInboxItem } from '../../../api/types';
 
 // Complete fixtures (see Task 12 note): the bar runs applyInboxFilters which sorts
@@ -30,6 +32,14 @@ const secs: InboxSection[] = [
 const onState = vi.fn();
 
 it('CI trigger shows the failing count when unselected', () => {
-  render(<FilterBar sections={secs} initialSort="updated" ciProbeComplete onState={onState} />);
+  // FilterBar now nests InboxQueryInput, which uses useNavigate + useOpenTabs —
+  // so the bar must render inside a Router + OpenTabsProvider.
+  render(
+    <MemoryRouter>
+      <OpenTabsProvider>
+        <FilterBar sections={secs} initialSort="updated" ciProbeComplete onState={onState} />
+      </OpenTabsProvider>
+    </MemoryRouter>,
+  );
   expect(screen.getByRole('button', { name: /CI/ })).toHaveTextContent('CI · 1');
 });

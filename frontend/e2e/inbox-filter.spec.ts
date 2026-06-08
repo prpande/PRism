@@ -266,14 +266,17 @@ for (const theme of ['light', 'dark'] as const) {
         .toBe(theme);
     });
 
-    test('PasteUrlInput is still present alongside the filter bar', async ({ page }) => {
-      await expect(page.getByPlaceholder(/paste a pr url/i)).toBeVisible();
-      // Filter search input lives in the same toolbar.
-      await expect(page.getByRole('searchbox', { name: /filter prs/i })).toBeVisible();
+    test('one merged input does both filter + paste-to-open', async ({ page }) => {
+      // #262: the paste-URL box and the filter search were merged into ONE input.
+      // It is a searchbox whose placeholder/label names both jobs, and there is
+      // exactly one such input (no second stacked box).
+      const merged = page.getByRole('searchbox', { name: /filter inbox, or paste a pr url/i });
+      await expect(merged).toBeVisible();
+      await expect(page.getByPlaceholder(/filter inbox, or paste a pr url/i)).toHaveCount(1);
     });
 
     test('free-text filter narrows rows live', async ({ page }) => {
-      const search = page.getByRole('searchbox', { name: /filter prs/i });
+      const search = page.getByRole('searchbox', { name: /filter inbox, or paste a pr url/i });
       // All five seeded PRs visible up front.
       await expect(page.getByText('Add retry budget')).toBeVisible();
       await expect(page.getByText('Docs sweep')).toBeVisible();
@@ -328,7 +331,7 @@ for (const theme of ['light', 'dark'] as const) {
     });
 
     test('all-match-nothing shows the "No PRs match your filters" zero-state', async ({ page }) => {
-      const search = page.getByRole('searchbox', { name: /filter prs/i });
+      const search = page.getByRole('searchbox', { name: /filter inbox, or paste a pr url/i });
       await search.fill('zzz-no-such-pr');
 
       // Every section is emptied → the dedicated zero-state renders, and no row
@@ -384,7 +387,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.goto('/');
       await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
 
-      await page.getByRole('searchbox', { name: /filter prs/i }).fill('a');
+      await page.getByRole('searchbox', { name: /filter inbox, or paste a pr url/i }).fill('a');
       await expect(page.getByRole('status')).toContainText(/CI status may be incomplete/i);
     });
   });
