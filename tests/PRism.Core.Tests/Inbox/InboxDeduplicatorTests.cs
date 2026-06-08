@@ -62,7 +62,7 @@ public sealed class InboxDeduplicatorTests
             ["ci-failing"]     = new[] { pr },   // legacy shape; must NOT be collapsed now
         };
 
-        var result = new InboxDeduplicator().Deduplicate(sections, deduplicate: true);
+        var result = _sut.Deduplicate(sections, deduplicate: true);
 
         result["authored-by-me"].Should().ContainSingle();   // not demoted away by a ci-failing winner
     }
@@ -113,6 +113,10 @@ public sealed class InboxDeduplicatorTests
     [Fact]
     public void Section_ordering_preserved()
     {
+        // Pins that input insertion order is preserved through the dedup pass.
+        // This is NOT canonical UI order (which is the endpoint's SectionOrder job).
+        // Do NOT remove the endpoint's OrderBy reasoning that this test makes it safe —
+        // the deduplicator makes no ordering guarantees beyond echoing back what it received.
         var input = new Dictionary<string, IReadOnlyList<PrInboxItem>>
         {
             ["review-requested"] = Array.Empty<PrInboxItem>(),

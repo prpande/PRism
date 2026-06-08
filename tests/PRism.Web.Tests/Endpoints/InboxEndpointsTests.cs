@@ -15,12 +15,14 @@ public class InboxEndpointsTests
     private static InboxSnapshot MakeSnapshot(
         IReadOnlyDictionary<string, IReadOnlyList<PrInboxItem>>? sections = null,
         IReadOnlyDictionary<string, InboxItemEnrichment>? enrichments = null,
-        DateTimeOffset? refreshedAt = null)
+        DateTimeOffset? refreshedAt = null,
+        bool ciProbeComplete = true)
     {
         return new InboxSnapshot(
             sections ?? new Dictionary<string, IReadOnlyList<PrInboxItem>>(),
             enrichments ?? new Dictionary<string, InboxItemEnrichment>(),
-            refreshedAt ?? DateTimeOffset.UtcNow);
+            refreshedAt ?? DateTimeOffset.UtcNow,
+            ciProbeComplete);
     }
 
     private static PrInboxItem MakeItem(string owner = "foo", string repo = "bar", int number = 1) =>
@@ -225,5 +227,28 @@ public class InboxEndpointsTests
         resp.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("tokenScopeFooterEnabled").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Get_inbox_ciProbeComplete_false_is_round_tripped()
+    {
+        // MakeSnapshot with default ciProbeComplete=true is exercised by Get_inbox_returns_snapshot_when_present
+        // (tokenScopeFooterEnabled=true there; ciProbeComplete was not checked, but the ctor default covers it).
+        // This test pins the false branch: a snapshot whose CI probe has not yet completed must
+        // surface ciProbeComplete=false in the serialized response body.
+        var fakeOrch = new FakeInboxRefreshOrchestrator
+        {
+            Current = MakeSnapshot(ciProbeComplete: false),
+        };
+
+        using var factory = new PRismWebApplicationFactory();
+        factory.FakeOrchestrator = fakeOrch;
+        var client = factory.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/api/inbox", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        body.GetProperty("ciProbeComplete").GetBoolean().Should().BeFalse();
     }
 }
