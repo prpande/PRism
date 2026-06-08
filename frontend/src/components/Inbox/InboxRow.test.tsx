@@ -98,6 +98,11 @@ describe('InboxRow CI dots', () => {
     renderRow({ ...PR, ci: 'failing' });
     expect(screen.getByLabelText('CI: failing')).toBeInTheDocument();
   });
+
+  it('renders no CI dot for a done (merged) PR', () => {
+    renderRow({ ...PR, ci: 'failing', mergedAt: new Date().toISOString() });
+    expect(screen.queryByRole('img')).toBeNull();
+  });
 });
 
 describe('InboxRow showRepo', () => {
