@@ -46,6 +46,9 @@
   width: 100%;
   border-collapse: collapse;
   font-family: var(--font-mono);
+  /* #135: content font-size scaling is applied on the `.diff-line` <tr> (tokens.css),
+     NOT here — each <td> inherits from the nearer <tr>, which would shadow a value set
+     on the table. Keep the base token here for the table baseline. */
   font-size: var(--text-sm);
   line-height: 1.55;
 }

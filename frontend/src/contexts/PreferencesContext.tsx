@@ -20,6 +20,7 @@ export type PreferenceKey =
   | 'accent'
   | 'aiPreview'
   | 'density'
+  | 'contentScale'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
@@ -28,13 +29,17 @@ export type PreferenceKey =
       | 'ci-failing'
       | 'recently-closed'}`;
 
-type InboxSectionKey = Exclude<PreferenceKey, 'theme' | 'accent' | 'aiPreview' | 'density'>;
+type InboxSectionKey = Exclude<
+  PreferenceKey,
+  'theme' | 'accent' | 'aiPreview' | 'density' | 'contentScale'
+>;
 
 function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
   if (key === 'theme') return prefs.ui.theme;
   if (key === 'accent') return prefs.ui.accent;
   if (key === 'aiPreview') return prefs.ui.aiPreview;
   if (key === 'density') return prefs.ui.density;
+  if (key === 'contentScale') return prefs.ui.contentScale;
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
   return prefs.inbox.sections[id];
 }
@@ -53,6 +58,11 @@ function writeKey(
     return {
       ...prefs,
       ui: { ...prefs.ui, density: value as PreferencesResponse['ui']['density'] },
+    };
+  if (key === 'contentScale')
+    return {
+      ...prefs,
+      ui: { ...prefs.ui, contentScale: value as PreferencesResponse['ui']['contentScale'] },
     };
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,

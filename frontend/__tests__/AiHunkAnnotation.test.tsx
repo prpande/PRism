@@ -14,7 +14,7 @@ describe('AiHunkAnnotation', () => {
         }}
       />,
     );
-    expect(screen.getByTestId('ai-hunk-annotation')).toBeInTheDocument();
+    expect(screen.getByTestId('ai-hunk')).toBeInTheDocument();
     expect(screen.getByText('Note')).toBeInTheDocument();
     expect(screen.getByText('Looks fine.')).toBeInTheDocument();
     const chip = screen.getByText('Note');

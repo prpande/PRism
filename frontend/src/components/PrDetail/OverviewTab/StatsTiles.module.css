@@ -16,13 +16,13 @@
 }
 
 .statsTileLabel {
-  font-size: var(--text-xs);
+  font-size: calc(var(--text-xs) * var(--content-scale));
   color: var(--text-2);
   margin: 4px 0 0;
 }
 
 .statsTileValue {
-  font-size: var(--text-2xl);
+  font-size: calc(var(--text-2xl) * var(--content-scale));
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.1;

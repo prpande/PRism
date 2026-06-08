@@ -60,7 +60,7 @@ internal static class PreferencesEndpoints
         var ui = config.Current.Ui;
         var sections = config.Current.Inbox.Sections;
         return new PreferencesResponse(
-            Ui: new UiPreferencesDto(ui.Theme, ui.Accent, ui.AiPreview, ui.Density),
+            Ui: new UiPreferencesDto(ui.Theme, ui.Accent, ui.AiPreview, ui.Density, ui.ContentScale),
             Inbox: new InboxPreferencesDto(new InboxSectionsDto(
                 ReviewRequested: sections.ReviewRequested,
                 AwaitingAuthor:  sections.AwaitingAuthor,

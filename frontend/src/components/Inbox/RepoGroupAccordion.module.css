@@ -56,8 +56,3 @@
   font-variant-numeric: tabular-nums;
   font-weight: 500;
 }
-
-/* Rows indent under the band so the group reads as nested. */
-.body {
-  padding-left: var(--s-4);
-}
