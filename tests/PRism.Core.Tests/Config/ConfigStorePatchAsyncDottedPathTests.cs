@@ -331,4 +331,28 @@ public class ConfigStorePatchAsyncDottedPathTests
 
         await act.Should().ThrowAsync<ConfigPatchException>().WithMessage("*unknown field*");
     }
+
+    // #262 PR3: inbox.defaultSort is the first scalar (string) inbox preference. A valid
+    // value patches through to InboxConfig.DefaultSort and persists.
+    [Fact]
+    public async Task Patch_sets_valid_default_sort()
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        await store.PatchAsync(new Dictionary<string, object?> { ["inbox.defaultSort"] = "pushed" }, CancellationToken.None);
+        store.Current.Inbox.DefaultSort.Should().Be("pushed");
+    }
+
+    // #262 PR3: the allowlist accepts inbox.defaultSort as a string, but a value-set check
+    // (updated|pushed|diff|comments) runs before the gate — a bogus value is rejected with a
+    // clean ConfigPatchException naming the field (→ 400), not silently persisted.
+    [Fact]
+    public async Task Patch_rejects_unknown_default_sort_value()
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.defaultSort"] = "bogus" }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>().WithMessage("*inbox.defaultSort*");
+    }
 }

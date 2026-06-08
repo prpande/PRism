@@ -23,7 +23,7 @@ internal sealed record PreferencesResponse(
 
 internal sealed record UiPreferencesDto(string Theme, string Accent, bool AiPreview, string Density);
 
-internal sealed record InboxPreferencesDto(InboxSectionsDto Sections);
+internal sealed record InboxPreferencesDto(InboxSectionsDto Sections, string DefaultSort);
 
 internal sealed record InboxSectionsDto(
     [property: JsonPropertyName("review-requested")] bool ReviewRequested,

@@ -38,7 +38,8 @@ public sealed record InboxConfig(
     bool Deduplicate,
     InboxSectionsConfig Sections,
     bool ShowHiddenScopeFooter,
-    int RecentlyClosedWindowDays = 14);
+    int RecentlyClosedWindowDays = 14,
+    string DefaultSort = "updated");
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,
