@@ -145,6 +145,62 @@ public class InboxEndpointsTests
     }
 
     [Fact]
+    public async Task Sections_serialize_in_canonical_order_regardless_of_snapshot_order()
+    {
+        // Seed snapshot with sections inserted OUT of canonical order to prove
+        // the endpoint re-orders them before serialization.
+        var items = new Dictionary<string, IReadOnlyList<PrInboxItem>>
+        {
+            ["mentioned"]         = new[] { MakeItem() },
+            ["review-requested"]  = new[] { MakeItem() },
+            ["recently-closed"]   = new[] { MakeItem() },
+            ["authored-by-me"]    = new[] { MakeItem() },
+            ["awaiting-author"]   = new[] { MakeItem() },
+        };
+        var fakeOrch = new FakeInboxRefreshOrchestrator
+        {
+            Current = MakeSnapshot(items),
+        };
+
+        using var factory = new PRismWebApplicationFactory();
+        factory.FakeOrchestrator = fakeOrch;
+        var client = factory.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/api/inbox", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        var ids = body.GetProperty("sections").EnumerateArray()
+            .Select(s => s.GetProperty("id").GetString())
+            .ToList();
+        ids.Should().Equal("review-requested", "awaiting-author", "authored-by-me", "mentioned", "recently-closed");
+    }
+
+    [Fact]
+    public async Task Awaiting_author_label_is_needs_re_review()
+    {
+        var items = new Dictionary<string, IReadOnlyList<PrInboxItem>>
+        {
+            ["awaiting-author"] = new[] { MakeItem() },
+        };
+        var fakeOrch = new FakeInboxRefreshOrchestrator
+        {
+            Current = MakeSnapshot(items),
+        };
+
+        using var factory = new PRismWebApplicationFactory();
+        factory.FakeOrchestrator = fakeOrch;
+        var client = factory.CreateClient();
+
+        var resp = await client.GetAsync(new Uri("/api/inbox", UriKind.Relative));
+
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>();
+        var label = body.GetProperty("sections").EnumerateArray().First().GetProperty("label").GetString();
+        label.Should().Be("Needs re-review");
+    }
+
+    [Fact]
     public async Task Get_inbox_token_scope_footer_reflects_config()
     {
         // Default config has ShowHiddenScopeFooter = true; write a config.json that sets it false.

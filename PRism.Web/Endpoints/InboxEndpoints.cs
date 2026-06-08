@@ -9,11 +9,18 @@ internal static class InboxEndpoints
     private static readonly Dictionary<string, string> Labels = new()
     {
         ["review-requested"]  = "Review requested",
-        ["awaiting-author"]   = "Awaiting author",
+        ["awaiting-author"]   = "Needs re-review",
         ["authored-by-me"]    = "Authored by me",
         ["mentioned"]         = "Mentioned",
-        ["ci-failing"]        = "CI failing on my PRs",
         ["recently-closed"]   = "Recently closed",
+    };
+
+    // Canonical UI order. Serialized sections follow this regardless of snapshot
+    // dictionary enumeration; unknown ids sort last (stable) and render with a
+    // fallback label rather than being dropped.
+    private static readonly string[] SectionOrder =
+    {
+        "review-requested", "awaiting-author", "authored-by-me", "mentioned", "recently-closed",
     };
 
     public static IEndpointRouteBuilder MapInbox(this IEndpointRouteBuilder app)
@@ -39,9 +46,12 @@ internal static class InboxEndpoints
                         type: "/inbox/initializing");
             }
             var snap = orch.Current!;
-            // Section ordering: relies on Dictionary insertion-order preservation from
-            // InboxRefreshOrchestrator's pipeline. See InboxRefreshOrchestrator for details.
             var sections = snap.Sections
+                .OrderBy(kv =>
+                {
+                    var i = Array.IndexOf(SectionOrder, kv.Key);
+                    return i < 0 ? int.MaxValue : i;
+                })
                 .Select(kv => new InboxSectionDto(kv.Key, Labels.TryGetValue(kv.Key, out var lbl) ? lbl : kv.Key, kv.Value))
                 .ToList();
             return Results.Ok(new InboxResponse(
