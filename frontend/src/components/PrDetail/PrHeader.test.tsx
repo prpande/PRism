@@ -71,9 +71,9 @@ describe('PrHeader mergeability chip', () => {
 
   // GitHub returns "unknown" as its not-yet-computed / indeterminate sentinel.
   // It carries no actionable meaning, so the chip is suppressed (Truthful-by-default).
-  // Two code paths feed Pr.Mergeability with different casing: the REST poll snapshot
-  // emits lowercase mergeable_state ("unknown"); the GraphQL load emits uppercase
-  // ("UNKNOWN"). The guard must catch both.
+  // In production this prop only holds the uppercase GraphQL value ("UNKNOWN"); the
+  // lowercase "unknown" is the REST poll's mergeable_state, which is currently dropped
+  // before it reaches the frontend. We guard/test both casings defensively.
   it('hides the chip when mergeability is unknown (lowercase REST poll value)', () => {
     const { container } = renderHeader({ loading: false, mergeability: 'unknown' });
     expect(container.querySelector('.chip-mergeability')).toBeNull();
