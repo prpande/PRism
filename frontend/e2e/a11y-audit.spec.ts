@@ -36,6 +36,7 @@ const defaultPreferences = {
       mentioned: true,
       'recently-closed': true,
     },
+    defaultSort: 'updated',
   },
   github: {
     host: 'https://github.com',

@@ -166,6 +166,7 @@ function preferencesFor(theme: 'light' | 'dark') {
         mentioned: true,
         'recently-closed': true,
       },
+      defaultSort: 'updated',
     },
     github: {
       host: 'https://github.com',
