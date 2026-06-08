@@ -26,11 +26,14 @@ const empty: InboxFilters = { text: '', ci: [], repos: [], authors: [] };
 const updated: SortKey = 'updated';
 
 describe('applyInboxFilters', () => {
-  it('returns sections unchanged when no filter is active', () => {
+  it('returns all items (sorted) and filterActive=false when no facet is set', () => {
     const secs = [section('review-requested', [pr({})])];
     const r = applyInboxFilters(secs, empty, updated);
+    // applyInboxFilters always returns a fresh sorted copy — deep-equal, not reference-equal.
     expect(r.filterActive).toBe(false);
     expect(r.sections).toEqual(secs);
+    expect(r.matchCount).toBe(r.totalCount);
+    expect(r.matchCount).toBe(1);
   });
 
   it('free-text matches title OR repo, case-insensitive', () => {
