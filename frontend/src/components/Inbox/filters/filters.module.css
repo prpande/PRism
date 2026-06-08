@@ -37,7 +37,7 @@
 
 .searchInput {
   width: 100%;
-  padding: 4px var(--s-5) 4px calc(var(--s-2) + 18px);
+  padding: 4px var(--s-5) 4px calc(var(--s-2) + 18px /* icon width */);
   font-size: var(--text-sm);
   color: var(--text-1);
   background: var(--surface-inset);
@@ -218,6 +218,7 @@
 }
 
 /* Zero-match state */
+/* used by NoFilterMatches zero-state (Task 15) */
 .noMatch {
   padding: var(--s-5) var(--s-4);
   font-size: var(--text-sm);

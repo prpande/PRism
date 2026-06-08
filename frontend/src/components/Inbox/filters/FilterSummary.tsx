@@ -23,7 +23,12 @@ export function FilterSummary({
       {filterCount} {filterCount === 1 ? 'filter' : 'filters'} · showing {matchCount} of{' '}
       {totalCount} PRs
       {ciIncomplete && <span className={styles.ciHint}> · CI status may be incomplete</span>}{' '}
-      <button type="button" className={styles.clear} onClick={onClear}>
+      <button
+        type="button"
+        className={styles.clear}
+        aria-label="Clear all filters"
+        onClick={onClear}
+      >
         Clear
       </button>
     </div>

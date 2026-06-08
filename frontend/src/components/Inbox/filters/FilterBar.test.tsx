@@ -1,4 +1,4 @@
-import { it, expect } from 'vitest';
+import { it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { FilterBar } from './FilterBar';
 import type { InboxSection, PrInboxItem } from '../../../api/types';
@@ -27,7 +27,9 @@ const secs: InboxSection[] = [
   { id: 's', label: 's', items: [item('failing', 1), item('none', 2)] },
 ];
 
+const onState = vi.fn();
+
 it('CI trigger shows the failing count when unselected', () => {
-  render(<FilterBar sections={secs} initialSort="updated" ciProbeComplete onState={() => {}} />);
+  render(<FilterBar sections={secs} initialSort="updated" ciProbeComplete onState={onState} />);
   expect(screen.getByRole('button', { name: /CI/ })).toHaveTextContent('CI · 1');
 });

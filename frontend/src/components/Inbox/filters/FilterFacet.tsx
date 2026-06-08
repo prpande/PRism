@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import styles from './filters.module.css';
 
 interface Props {
@@ -14,14 +14,28 @@ export function FilterFacet({ name, values, selected, onToggle, triggerLabel }: 
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    // Defer focus so it lands after any click-sequence that triggered close
+    // (outside-click: pointerdown fires before mouseup/click steal focus to body).
+    setTimeout(() => triggerRef.current?.focus(), 0);
+  }, []);
+
+  // Reset in-popover search query when closing so a stale-filtered list is
+  // never shown on re-open.
+  useEffect(() => {
+    if (!open) setQ('');
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') close();
     };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
@@ -29,7 +43,7 @@ export function FilterFacet({ name, values, selected, onToggle, triggerLabel }: 
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
     };
-  }, [open]);
+  }, [open, close]);
 
   const label = triggerLabel ?? (selected.length > 0 ? `${name} (${selected.length})` : name);
   const showSearch = values.length > 8;
@@ -40,9 +54,9 @@ export function FilterFacet({ name, values, selected, onToggle, triggerLabel }: 
   return (
     <div className={styles.facet} ref={ref}>
       <button
+        ref={triggerRef}
         type="button"
         className={`${styles.trigger} ${selected.length > 0 ? styles.triggerActive : ''}`}
-        aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
