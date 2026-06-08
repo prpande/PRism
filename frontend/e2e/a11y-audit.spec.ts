@@ -437,12 +437,14 @@ test.describe('A11y audit — automated axe-core pass per spec § 6', () => {
 });
 
 // ---------------------------------------------------------------------------
-// PR6 deferral fold-in: prefers-reduced-motion suppresses LoadingScreen pulse.
+// LoadingScreen brand mark is static (never pulses). The activity cue is the
+// decorative spinner, whose own reduced-motion behavior is covered by the
+// Spinner suite below. Here we just assert the brand logo carries no animation,
+// so a pulsing/flashing logo can never regress back in.
 //
 // The LoadingScreen renders during the brief window between App mount and the
 // /api/auth/state response. We delay that response indefinitely so the screen
-// stays mounted long enough for the assertion. Under `reducedMotion: 'reduce'`
-// the .pulseLogo CSS rule sets `animation: none` (LoadingScreen.module.css).
+// stays mounted long enough for the assertion.
 // ---------------------------------------------------------------------------
 
 // Helper for routes that should hang for the test duration. Awaiting a
@@ -456,28 +458,22 @@ const HANG_FOREVER = async () => {
   });
 };
 
-test.describe('A11y audit — LoadingScreen honors prefers-reduced-motion', () => {
-  test('pulse animation is suppressed under reducedMotion: reduce', async ({ page }) => {
-    await page.emulateMedia({ reducedMotion: 'reduce' });
+test.describe('A11y audit — LoadingScreen brand mark is static', () => {
+  test('the logo has no animation; motion is delegated to the spinner', async ({ page }) => {
     // Hold the auth response open so the LoadingScreen stays visible. useAuth
     // stays in its pending state and App renders <LoadingScreen />.
     await page.route('**/api/auth/state', HANG_FOREVER);
     await page.goto('/');
     const loadingRegion = page.getByRole('status').first();
     await expect(loadingRegion).toBeVisible({ timeout: 5_000 });
-    // Bind by CSS-modules-hashed class substring rather than sibling index, so
-    // the test fails fast if the LoadingScreen reorders its <img> elements OR
-    // if the 10s internal timer fires and swaps pulseLogo → logoStill before
-    // the assertion runs. Either case would otherwise produce a silent
-    // false-pass because logoStill also has `animation: none`.
-    const pulseLogo = loadingRegion.locator('img[class*="pulseLogo"]');
-    await expect(pulseLogo).toBeVisible();
-    const animationName = await pulseLogo.evaluate(
-      (el) => window.getComputedStyle(el).animationName,
-    );
-    // Under prefers-reduced-motion: reduce, the @media override sets
-    // `animation: none` — getComputedStyle reports 'none' for animationName.
+    // Bind by CSS-modules-hashed class substring. The static brand mark is the
+    // only <img> on the screen (the background watermark was removed).
+    const logo = loadingRegion.locator('img[class*="logo"]');
+    await expect(logo).toBeVisible();
+    const animationName = await logo.evaluate((el) => window.getComputedStyle(el).animationName);
     expect(animationName).toBe('none');
+    // The decorative spinner ring provides the activity cue while loading.
+    await expect(loadingRegion.locator('span[class*="ring"]')).toBeVisible();
   });
 });
 
