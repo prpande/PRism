@@ -24,6 +24,7 @@ export function SampleBadge({ variant = 'inline', solid = false }: SampleBadgePr
     <span
       className={cls}
       aria-label="Sample data — illustrative, not real AI output"
+      data-sample-badge=""
       data-testid="sample-badge"
     >
       Sample

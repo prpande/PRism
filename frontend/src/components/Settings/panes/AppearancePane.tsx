@@ -38,10 +38,17 @@ export function AppearancePane() {
     applyDensityToDocument(value);
     void set('density', value).catch(() => applyDensityToDocument(density));
   };
+  // A `live` config (not user-selectable in P0) is shown as Preview-selected.
+  const aiModeShown: 'off' | 'preview' =
+    preferences.ui.aiMode === 'live' ? 'preview' : preferences.ui.aiMode;
   // The AI gates derive from this shared preference (useCapabilities), so the
   // selector propagates reactively. usePreferences.set reverts its own state on a
   // failed POST (+ error toast); no DOM side-effect to roll back here.
   const onAiMode = (next: 'off' | 'preview') => {
+    // SegmentedControl fires onChange even when the already-selected segment is
+    // clicked. Guard the no-op so clicking the shown Preview on a live config does
+    // not POST ui.ai.mode='preview' and silently downgrade it.
+    if (next === aiModeShown) return;
     void set('ui.ai.mode', next).catch(() => {});
   };
 
@@ -107,11 +114,7 @@ export function AppearancePane() {
               { value: 'off', label: 'Off' },
               { value: 'preview', label: 'Preview' },
             ]}
-            value={
-              (preferences.ui.aiMode === 'live' ? 'preview' : preferences.ui.aiMode) as
-                | 'off'
-                | 'preview'
-            }
+            value={aiModeShown}
             onChange={onAiMode}
           />
         </div>

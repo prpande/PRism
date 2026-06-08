@@ -16,7 +16,7 @@
 /* Restore the vertical gap the legacy "preview" chip used to provide between the
    sample marker and the body (SampleBadge carries no margin of its own). The
    adjacent-sibling form self-disables in Off/Live, where the badge is absent. */
-.aiSummaryCard [data-testid='sample-badge'] + * {
+.aiSummaryCard [data-sample-badge] + * {
   margin-top: var(--s-2);
 }
 

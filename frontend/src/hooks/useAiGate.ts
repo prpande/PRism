@@ -2,15 +2,15 @@ import type { AiCapabilities } from '../api/types';
 import { useCapabilities } from './useCapabilities';
 import { usePreferences } from './usePreferences';
 
-// PR9b-ai-gating § 3.1. Centralizes the `capabilities[key] && aiPreview`
-// expression that was previously duplicated across 4 sites (and missing
-// the capability check on AskAiButton). 9 consumers after this PR ships.
+// PR9b-ai-gating § 3.1 / PR3a. Centralizes the two-factor AI gate that was
+// previously duplicated across 4 sites (and missing the capability check on
+// AskAiButton). 9 consumers after this PR ships.
 //
-// Today the two factors are coupled on the wire — CapabilitiesEndpoints.cs:13
-// returns AllOn xor AllOff from AiPreviewState.IsOn, and PreferencesEndpoints
-// mirrors aiPreview into that state. So `useAiGate(key)` returns the same
-// value as `aiPreview` regardless of key. The two-factor shape is forward-
-// compat scaffolding for backend capability decoupling — see D112.
+// The two factors: `capabilities[key]` (derived locally from `ui.aiMode` — see
+// useCapabilities) AND `ui.aiMode !== 'off'`. As of PR2 the backend resolves
+// capabilities per-flag/tri-state, but the FE still derives them locally, so today
+// both factors move together with the mode. The two-factor shape is forward-compat
+// scaffolding for the FE adopting the real per-flag wire — see D112.
 export function useAiGate(key: keyof AiCapabilities): boolean {
   const { capabilities } = useCapabilities();
   const { preferences } = usePreferences();

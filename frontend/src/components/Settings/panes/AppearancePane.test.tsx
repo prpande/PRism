@@ -45,4 +45,11 @@ describe('AppearancePane', () => {
     expect(screen.getByRole('radio', { name: 'Preview' })).toHaveAttribute('aria-checked', 'true');
     expect(set).not.toHaveBeenCalled();
   });
+
+  it('does not POST when the already-shown Preview is clicked on a live config', async () => {
+    prefs.aiMode = 'live';
+    render(<AppearancePane />);
+    await userEvent.click(screen.getByRole('radio', { name: 'Preview' }));
+    expect(set).not.toHaveBeenCalled();
+  });
 });
