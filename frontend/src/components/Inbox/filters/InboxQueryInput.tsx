@@ -88,9 +88,10 @@ export function InboxQueryInput({ value, onChange }: Props) {
     <div className={styles.search}>
       {/* Monochrome accent line-icon (matches HelpIcon/welcomeIcons convention,
           replacing the multicolour 🔍 emoji). Colour comes from .searchIcon.
-          The glyph tracks the input's mode: a magnifier while filtering, an
-          enter/return arrow once the value is a PR URL (signalling "press Enter
-          to open" — paired with the "↵ Open PR" affordance on the right). */}
+          The glyph tracks the input's mode: a magnifier while filtering, the
+          git-pull-request symbol once the value is a PR URL (signalling "this is
+          a PR to open" — paired with the "↵ Open PR" affordance on the right).
+          Stroke weight matches the magnifier (1.8/24 ≈ 1.2/16). */}
       {isPrUrl ? (
         <svg
           className={styles.searchIcon}
@@ -101,12 +102,14 @@ export function InboxQueryInput({ value, onChange }: Props) {
           focusable="false"
           fill="none"
           stroke="currentColor"
-          strokeWidth="2"
+          strokeWidth="1.8"
           strokeLinecap="round"
           strokeLinejoin="round"
         >
-          <polyline points="9 10 4 15 9 20" />
-          <path d="M20 4v7a4 4 0 0 1-4 4H4" />
+          <circle cx="6" cy="6" r="3" />
+          <circle cx="18" cy="18" r="3" />
+          <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+          <line x1="6" y1="9" x2="6" y2="21" />
         </svg>
       ) : (
         <svg
