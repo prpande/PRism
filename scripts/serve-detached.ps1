@@ -148,8 +148,9 @@ function Invoke-ForcePortReclaim {
     # -Force occupant kill (spec section 4.5/section 5). The occupant is FOREIGN, so
     # there is no name we recorded to compare. Defend against the recycle TOCTOU by
     # re-reading the owner immediately before killing: surface the name, then kill
-    # THAT pid. If the port freed on its own -> nothing to do. If a NEW occupant
-    # appeared -> re-probe (caller loops), don't fire at a stale pid.
+    # THAT pid. If the port freed on its own -> nothing to do. This is single-shot:
+    # the caller (Invoke-Launch) re-checks the port after a short settle and aborts
+    # if a new occupant grabbed it, rather than this function looping.
     param([int]$Port)
     $owner = Get-PortOwnerPid -Port $Port
     if (-not $owner) { return $true }   # already free
@@ -287,7 +288,10 @@ function Wait-ForHealth {
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
         $body = Invoke-HealthProbe -Port $Port
-        if ($null -ne $body -and ($body.dataDir.TrimEnd('\', '/') -ieq $CanonicalDataDir)) {
+        # Guard $body.dataDir not-null BEFORE .TrimEnd() (mirrors the port pre-check):
+        # a foreign server that races onto the port and returns 200 with JSON lacking
+        # dataDir would otherwise throw 'method on null' and escape the poll loop.
+        if ($null -ne $body -and $null -ne $body.dataDir -and ($body.dataDir.TrimEnd('\', '/') -ieq $CanonicalDataDir)) {
             # Carry $body.version out from the SAME probe that proved READY -- avoids
             # a redundant second probe (and the null-version race if the port flickers).
             return [pscustomobject]@{ ServerPid = (Get-PortOwnerPid -Port $Port); Version = $body.version }
