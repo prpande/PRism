@@ -8,6 +8,7 @@ import { InboxSection } from '../components/Inbox/InboxSection';
 import { InboxFooter } from '../components/Inbox/InboxFooter';
 import { EmptyAllSections } from '../components/Inbox/EmptyAllSections';
 import { ActivityRail } from '../components/ActivityRail/ActivityRail';
+import { SampleBadge } from '../components/Ai/SampleBadge';
 import { Spinner } from '../components/Spinner';
 import { ErrorModal } from '../components/ErrorModal';
 import styles from './InboxPage.module.css';
@@ -71,6 +72,7 @@ export function InboxPage() {
       <InboxToolbar />
       <div className={styles.grid}>
         <div className={styles.sections}>
+          {showCategoryChip && <SampleBadge variant="region" />}
           {allEmpty && <EmptyAllSections />}
           {sections.map((s) => (
             <InboxSection

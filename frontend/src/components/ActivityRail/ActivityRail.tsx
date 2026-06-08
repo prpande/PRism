@@ -1,5 +1,6 @@
 import { activityItems, watchedRepos } from './activityData';
 import styles from './ActivityRail.module.css';
+import { SampleBadge } from '../Ai/SampleBadge';
 
 export function ActivityRail() {
   return (
@@ -7,6 +8,7 @@ export function ActivityRail() {
       <section className={styles.section}>
         <header className={styles.head}>
           <span className={styles.title}>Activity</span>
+          <SampleBadge variant="region" />
           <span className={styles.muted}>last 24h</span>
         </header>
         <ol className={styles.list}>

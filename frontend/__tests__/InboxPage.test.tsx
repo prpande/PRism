@@ -19,6 +19,7 @@ vi.mock('../src/hooks/usePreferences', () => ({
 }));
 vi.mock('../src/hooks/useAiGate', () => ({
   useAiGate: vi.fn(),
+  useIsSampleMode: vi.fn().mockReturnValue(false),
 }));
 
 import { useInbox } from '../src/hooks/useInbox';
