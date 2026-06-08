@@ -56,7 +56,7 @@ internal static class InboxEndpoints
                 .ToList();
             return Results.Ok(new InboxResponse(
                 sections, snap.Enrichments, snap.LastRefreshedAt,
-                config.Current.Inbox.ShowHiddenScopeFooter));
+                config.Current.Inbox.ShowHiddenScopeFooter, snap.CiProbeComplete));
         });
 
         app.MapPost("/api/inbox/parse-pr-url", async (
