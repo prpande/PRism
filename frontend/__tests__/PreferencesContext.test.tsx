@@ -15,6 +15,8 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
     ui: {
       theme: 'system',
       accent: 'indigo',
+      // aiPreview is still a required UiPreferences field (removed in a later
+      // task). Kept here only to satisfy the type; gating now reads aiMode.
       aiPreview: false,
       aiMode: 'off',
       density: 'comfortable',

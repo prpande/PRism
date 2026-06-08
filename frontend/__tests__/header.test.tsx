@@ -6,7 +6,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { Header } from '../src/components/Header/Header';
 
 const preferencesBody = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+  ui: { theme: 'system', accent: 'indigo', aiMode: 'off', density: 'comfortable' },
   inbox: {
     sections: {
       'review-requested': true,

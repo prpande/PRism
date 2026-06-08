@@ -188,7 +188,10 @@ describe('PrHeader', () => {
 
   it('renders the Ask AI button + clicking it toggles the AskAiDrawer when aiPreview is on', () => {
     preferencesValue.preferences = {
-      ui: { theme: 'system', accent: 'indigo', aiPreview: true, aiMode: 'off', density: 'comfortable' },
+      // aiMode:'preview' opens the gate (useAiGate reads aiMode). aiPreview is
+      // still a required UiPreferences field (removed in a later task), so it is
+      // retained for the type but no longer drives gating.
+      ui: { theme: 'system', accent: 'indigo', aiPreview: true, aiMode: 'preview', density: 'comfortable' },
       inbox: {
         sections: {
           'review-requested': true,
