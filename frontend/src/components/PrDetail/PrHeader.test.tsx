@@ -55,3 +55,32 @@ describe('PrHeader loading', () => {
     expect(screen.getByTestId('pr-header-collapse-toggle')).toBeInTheDocument();
   });
 });
+
+describe('PrHeader mergeability chip', () => {
+  it('renders the chip for a concrete mergeability state', () => {
+    const { container } = renderHeader({ loading: false, mergeability: 'mergeable' });
+    const chip = container.querySelector('.chip-mergeability');
+    expect(chip).not.toBeNull();
+    expect(chip).toHaveTextContent('mergeable');
+  });
+
+  it('renders the chip for conflicting', () => {
+    const { container } = renderHeader({ loading: false, mergeability: 'conflicting' });
+    expect(container.querySelector('.chip-mergeability')).not.toBeNull();
+  });
+
+  // GitHub returns "unknown" as its not-yet-computed / indeterminate sentinel.
+  // It carries no actionable meaning, so the chip is suppressed (Truthful-by-default).
+  // Two code paths feed Pr.Mergeability with different casing: the REST poll snapshot
+  // emits lowercase mergeable_state ("unknown"); the GraphQL load emits uppercase
+  // ("UNKNOWN"). The guard must catch both.
+  it('hides the chip when mergeability is unknown (lowercase REST poll value)', () => {
+    const { container } = renderHeader({ loading: false, mergeability: 'unknown' });
+    expect(container.querySelector('.chip-mergeability')).toBeNull();
+  });
+
+  it('hides the chip when mergeability is UNKNOWN (uppercase GraphQL value)', () => {
+    const { container } = renderHeader({ loading: false, mergeability: 'UNKNOWN' });
+    expect(container.querySelector('.chip-mergeability')).toBeNull();
+  });
+});
