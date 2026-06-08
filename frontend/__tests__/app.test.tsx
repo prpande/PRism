@@ -317,7 +317,11 @@ describe('App routing', () => {
       http.get('/api/auth/state', () => {
         // The post-connect refetch fails transiently; the mount fetch succeeds.
         if (connectCalled) return HttpResponse.json({ error: 'boom' }, { status: 500 });
-        return HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null });
+        return HttpResponse.json({
+          hasToken: false,
+          host: 'https://github.com',
+          hostMismatch: null,
+        });
       }),
       http.post('/api/auth/connect', () => {
         connectCalled = true;

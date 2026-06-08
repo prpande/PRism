@@ -148,7 +148,11 @@ describe('SetupPage', () => {
     server.use(
       // The token goes live only after commit; navigation is gated on the refetch.
       http.get('/api/auth/state', () =>
-        HttpResponse.json({ hasToken: commitCalled, host: 'https://github.com', hostMismatch: null }),
+        HttpResponse.json({
+          hasToken: commitCalled,
+          host: 'https://github.com',
+          hostMismatch: null,
+        }),
       ),
       http.post('/api/auth/connect', () =>
         HttpResponse.json({
