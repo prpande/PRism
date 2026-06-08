@@ -90,7 +90,7 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
 
         var lists = await Task.WhenAll(queries.Select(async q =>
         {
-            try { return (IReadOnlyList<RawPrInboxItem>)await SearchAsync(q.Item2, token, ct).ConfigureAwait(false); }
+            try { return (IReadOnlyList<RawPrInboxItem>)await SearchAsync(q.Item2, token, ct, sort: "updated").ConfigureAwait(false); }
 #pragma warning disable CA1031 // generic catch — per-sub-query failure isolates, consistent with QueryAllAsync. Cancellation and rate-limit propagate.
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not RateLimitExceededException)
 #pragma warning restore CA1031
@@ -106,9 +106,10 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
             .ToList();
     }
 
-    private async Task<List<RawPrInboxItem>> SearchAsync(string q, string? token, CancellationToken ct)
+    private async Task<List<RawPrInboxItem>> SearchAsync(string q, string? token, CancellationToken ct, string? sort = null)
     {
-        var url = $"search/issues?q={Uri.EscapeDataString(q)}&per_page=50";
+        var url = $"search/issues?q={Uri.EscapeDataString(q)}&per_page=50"
+            + (sort is null ? "" : $"&sort={Uri.EscapeDataString(sort)}&order=desc");
         using var http = _httpFactory.CreateClient("github");
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         if (!string.IsNullOrEmpty(token))
@@ -140,7 +141,10 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
             if (!int.TryParse(path[3], out var n)) continue;
 
             var repo = $"{path[0]}/{path[1]}";
-            var login = item.GetProperty("user").GetProperty("login").GetString() ?? "";
+            var userEl = item.GetProperty("user");
+            var login = userEl.GetProperty("login").GetString() ?? "";
+            var avatarUrl = userEl.TryGetProperty("avatar_url", out var av) && av.ValueKind == JsonValueKind.String
+                ? av.GetString() : null;
             var title = item.GetProperty("title").GetString() ?? "";
             var updated = item.GetProperty("updated_at").GetDateTimeOffset();
             var comments = item.TryGetProperty("comments", out var c) ? c.GetInt32() : 0;
@@ -152,7 +156,8 @@ public sealed partial class GitHubSectionQueryRunner : ISectionQueryRunner
                 comments,
                 0, 0, // additions/deletions not in Search API; refined in fan-out
                 "",   // head_sha not in Search API; refined in fan-out
-                1));  // iteration approx
+                1,    // iteration approx
+                AvatarUrl: avatarUrl));
         }
         return result;
     }

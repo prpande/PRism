@@ -246,6 +246,23 @@ public sealed class GitHubSectionQueryRunnerTests
     }
 
     [Fact]
+    public async Task QueryClosedHistory_RequestsUpdatedDescSort()
+    {
+        var calls = new List<string>();
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            calls.Add(req.RequestUri!.Query);
+            return Respond(HttpStatusCode.OK, """{ "items": [] }""");
+        });
+        var sut = BuildSut(handler);
+
+        await sut.QueryClosedHistoryAsync(14, default);
+
+        calls.Should().NotBeEmpty();
+        calls.Should().OnlyContain(q => q.Contains("sort=updated") && q.Contains("order=desc"));
+    }
+
+    [Fact]
     public async Task QueryClosedHistory_OneSubQueryFails_ReturnsOtherSubQuerysResults()
     {
         // Per-sub-query failure isolation (mirrors QueryAllAsync's Section_failure test):
@@ -267,6 +284,33 @@ public sealed class GitHubSectionQueryRunnerTests
 
         result.Select(r => r.Reference.Number).Should().BeEquivalentTo(new[] { 5 },
             "the failed involves:@me sub-query must yield empty without throwing, leaving only the reviewed-by:@me result");
+    }
+
+    [Fact]
+    public async Task Search_carries_user_avatar_url_to_raw_item()
+    {
+        const string body = """
+        {
+          "items": [
+            {
+              "number": 42,
+              "title": "Test PR",
+              "user": { "login": "amelia", "avatar_url": "https://avatars.githubusercontent.com/u/1?v=4" },
+              "repository_url": "https://api.github.com/repos/acme/api",
+              "updated_at": "2026-05-06T10:00:00Z",
+              "comments": 3,
+              "pull_request": { "html_url": "https://github.com/acme/api/pull/42" }
+            }
+          ]
+        }
+        """;
+        var handler = new FakeHttpMessageHandler((_) => Respond(HttpStatusCode.OK, body));
+        var sut = BuildSut(handler);
+
+        var result = await sut.QueryAllAsync(new HashSet<string> { "review-requested" }, default);
+
+        result["review-requested"].Single().AvatarUrl
+            .Should().Be("https://avatars.githubusercontent.com/u/1?v=4");
     }
 
     private static string SearchResponseWithNumbers(params int[] numbers)

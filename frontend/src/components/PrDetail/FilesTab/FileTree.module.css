@@ -1,10 +1,15 @@
 .fileTree {
+  /* Single-line rows of a fixed height so the scrolling tree column and the fixed
+     checkbox column stay aligned row-for-row. */
+  --tree-row-h: 32px;
   display: flex;
   flex-direction: column;
   background: var(--surface-1);
-  min-width: 240px;
-  max-width: 360px;
-  overflow-y: auto;
+  min-width: 0;
+  /* No inner vertical scroll: the tree grows to its content height and the outer
+     tree pane (.filesTabTree) owns vertical scrolling, so there is no vertical
+     scrollbar dividing the two columns. */
+  overflow: visible;
 }
 .fileTreeHeader {
   padding: var(--s-3) var(--s-4);
@@ -18,9 +23,87 @@
   padding: var(--s-4);
   font-size: var(--text-sm);
 }
-.fileTreeList {
+/* Two-column body: the tree scrolls horizontally as one object inside
+   .fileTreeScroll; the checkbox column sits OUTSIDE that scroller so it never moves
+   horizontally. Vertical alignment needs no JS — both columns are content-height
+   siblings in this flex row, so they grow together and the outer pane scrolls them
+   as one. */
+.fileTreeBody {
+  display: flex;
+}
+.fileTreeScroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* #214: clipped (was overflow-x: auto). The synthetic bottom-pinned bar
+     (.fileTreeHScroll) drives horizontal scroll via translateX on .fileTreeInner, so the
+     scrollbar is reachable without scrolling the tree to its end. scrollWidth still
+     reports the full content width here, which useTreeHScroll measures. Height grows to
+     content; the outer pane owns vertical scrolling. */
+  overflow-x: hidden;
+  overflow-y: hidden;
+}
+.fileTreeInner {
+  /* Widest row sets the width; every row is width:100% of this, so the whole tree
+     shifts by the same amount on scroll and indentation stays aligned. */
+  width: max-content;
+  min-width: 100%;
   display: flex;
   flex-direction: column;
+  /* #214: shifted in lockstep by the synthetic scrollbar's scrollLeft. Paint-time only —
+     does not affect scrollWidth or row height, so checkbox-column alignment holds. */
+  transform: translateX(calc(var(--file-tree-hscroll, 0px) * -1));
+}
+
+/* #214 — synthetic horizontal scrollbar, mirroring DiffPane's .diffHScroll. A sticky
+   footer row OUTSIDE the content-height tree body so it pins to the bottom of the visible
+   .filesTabTree pane (which owns vertical scroll). It mirrors .fileTreeBody's two-column
+   layout so the bar aligns under .fileTreeScroll and its thumb proportion honestly
+   reflects the tree column's overflow. */
+.fileTreeHScrollRow {
+  /* `display` is toggled by useTreeHScroll: `flex` when the tree overflows horizontally,
+     `none` otherwise — so when the tree fits, NOTHING (not even this row's 1px top border)
+     is left pinned at the pane bottom. Default `none` also avoids a one-frame empty-footer
+     flash before the hook's first measure. The border lives on the ROW (toggled with it),
+     not on the bar/spacer, so the footer line spans both columns when shown and vanishes
+     entirely when hidden. */
+  display: none;
+  position: sticky;
+  bottom: 0;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-1);
+}
+.fileTreeHScroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.fileTreeHScrollSpacer {
+  /* useTreeHScroll sizes width to overflow + viewport width; this only needs a height so
+     the bar gets a scrollable track. */
+  height: 1px;
+}
+/* Reserves the static-checkbox-column width (.fileTreeCheckSlot = 14px box + var(--s-3)
+   padding each side) so the bar spans only the tree column. */
+.fileTreeHScrollSpacerCol {
+  flex: 0 0 auto;
+  width: calc(14px + 2 * var(--s-3));
+}
+.fileTreeCheckCol {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  /* No border/seam — the checkbox column reads as part of the same surface as the
+     tree even though it is a separate, non-horizontally-scrolling object. */
+}
+.fileTreeCheckSlot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--tree-row-h);
+  padding: 0 var(--s-3);
+  flex: none;
 }
 
 /* File rows — handoff `tree-row` treatment */
@@ -28,7 +111,9 @@
   display: flex;
   align-items: center;
   gap: var(--s-2);
-  padding: 6px var(--s-3);
+  height: var(--tree-row-h);
+  box-sizing: border-box;
+  padding-right: var(--s-3);
   background: transparent;
   border: none;
   width: 100%;
@@ -46,13 +131,11 @@
   color: var(--text-1);
 }
 
-/* Viewed-state — handoff strikethrough via :has() sibling selector (D33).
-   Baseline 2023; supported in current Chrome, Safari, Firefox. */
-.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeFileName {
+/* Viewed-state — dim only. Strikethrough is reserved for deletion (item 5/6).
+   Driven by a row class because the checkbox now lives in a separate column, so the
+   old :has(sibling-checkbox) relationship no longer holds. */
+.fileTreeFileViewed .fileTreeFileName {
   color: var(--text-3);
-  text-decoration: line-through;
-  text-decoration-color: var(--border-strong);
-  text-decoration-thickness: 1px;
 }
 
 /* File-status badges — handoff `tree-status-*` treatment.
@@ -120,16 +203,17 @@
   flex: none;
 }
 
+/* The name renders at full width (no ellipsis); the whole filename is reachable by
+   scrolling the tree column. Long names extend the row, which widens .fileTreeInner
+   and so the shared horizontal scroll. */
 .fileTreeFileName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fileTreeSpacer {
-  flex: none;
-  margin-left: auto;
+.fileTreeFileNameDeleted {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger-fg);
+  text-decoration-thickness: 1.5px;
+  color: var(--text-2);
 }
 .fileTreeViewedCheckbox {
   flex: none;
@@ -137,23 +221,27 @@
   height: 14px;
   cursor: pointer;
 }
-.fileTreeFile:has(.fileTreeViewedCheckbox:checked) .fileTreeViewedCheckbox {
+.fileTreeViewedCheckbox:checked {
   /* Match handoff `tree-row.is-viewed .tree-viewed` filled-accent treatment */
   accent-color: var(--accent);
 }
 
 /* Directory rows — production-only structure; no handoff source */
-.fileTreeDir {
-  display: flex;
-  flex-direction: column;
-}
 .fileTreeDirHeader {
   display: flex;
   align-items: center;
-  padding: 6px var(--s-3);
+  gap: var(--s-2);
+  height: var(--tree-row-h);
+  box-sizing: border-box;
+  padding-right: var(--s-3);
+  transition: background var(--t-fast);
+}
+.fileTreeDirHeader:hover {
+  background: var(--surface-3);
 }
 .fileTreeDirToggle {
   display: inline-flex;
+  flex: none;
   align-items: center;
   gap: var(--s-2);
   background: transparent;
@@ -164,15 +252,24 @@
   cursor: pointer;
 }
 .fileTreeChevron {
-  display: inline-block;
-  width: 1em;
-  text-align: center;
-  color: var(--text-3);
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--text-2);
   transition: transform var(--t-fast);
 }
 .fileTreeChevronOpen {
   transform: rotate(90deg);
 }
+.fileTreeFolderIcon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--accent);
+}
 .fileTreeDirName {
   font-weight: 500;
+  white-space: nowrap;
 }

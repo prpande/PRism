@@ -1,4 +1,5 @@
-import type { APIRequestContext, Page } from '@playwright/test';
+import { expect, type APIRequestContext, type Page } from '@playwright/test';
+import { BACKEND_ORIGIN } from './backend-origin';
 
 // Per-test state reset. The backend process is long-running across the whole
 // Playwright run; without this, FakeReviewService head-sha mutations and
@@ -13,8 +14,8 @@ import type { APIRequestContext, Page } from '@playwright/test';
 // they don't expect. /test/reset only resets state.json (sessions), not
 // config, so we patch aiPreview explicitly. No auth required on the endpoint.
 export async function resetBackendState(request: APIRequestContext): Promise<void> {
-  const resp = await request.post('http://localhost:5180/test/reset', {
-    headers: { Origin: 'http://localhost:5180' },
+  const resp = await request.post(`${BACKEND_ORIGIN}/test/reset`, {
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok()) {
     throw new Error(`/test/reset failed: ${resp.status()} ${await resp.text()}`);
@@ -26,16 +27,25 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
   if (body.sessions !== 0) {
     throw new Error(`/test/reset did not clear state — sessions=${body.sessions} after reset`);
   }
-  // Reset AI preview preference so parity-baselines and layout-sensitive specs
-  // don't render AI content from a prior session's config.json. Best-effort:
-  // if it fails (e.g., server not yet in auth-accepting state), silently skip
+  // Reset AI preview + content-scale preferences so parity-baselines and
+  // layout-sensitive specs don't inherit a prior session's config.json. The
+  // reused server (reuseExistingServer: !isCI) persists config across runs, so
+  // a prior font-size spec that left contentScale='xl' would otherwise scale
+  // content in every later spec's screenshots (and break #135's own baseline
+  // capture). 'm' is the default and removes the data-content-scale attribute.
+  //
+  // POST /api/preferences enforces EXACTLY ONE field per patch
+  // (PreferencesEndpoints.cs → "exactly one field per patch"), so these must be
+  // two separate requests — a combined body 400s and resets neither. Best-effort:
+  // a non-200 (e.g., config already default) is acceptable and silently ignored
   // rather than failing the beforeEach — the test will fail for its own reason.
-  const aiResp = await request.post('http://localhost:5180/api/preferences', {
-    headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:5180' },
-    data: JSON.stringify({ aiPreview: false }),
-  });
-  // Non-200 is acceptable here (e.g., 400 if config is already default).
-  void aiResp;
+  for (const patch of [{ aiPreview: false }, { contentScale: 'm' }]) {
+    const resp = await request.post(`${BACKEND_ORIGIN}/api/preferences`, {
+      headers: { 'Content-Type': 'application/json', Origin: BACKEND_ORIGIN },
+      data: JSON.stringify(patch),
+    });
+    void resp;
+  }
 }
 
 // Shared setup flow for S4 PR7 Playwright specs. Each spec runs against a
@@ -47,11 +57,18 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
 // non-empty PAT input value is accepted.
 export async function setupAndOpenScenarioPr(page: Page): Promise<void> {
   await page.goto('/setup');
+  // Wait for hydration before filling (#148/D5): Continue starts DISABLED (a
+  // controlled React state), so asserting that first proves the form's onChange
+  // handlers are attached and the fill below drives state — otherwise .fill()
+  // can race hydration, the controlled input never updates, Continue stays
+  // disabled, the click no-ops, and waitForURL('/') times out.
+  await expect(page.getByRole('button', { name: /continue/i })).toBeDisabled();
   await page.getByLabel(/personal access token/i).fill('ghp_e2e_token');
   await page.getByRole('button', { name: /continue/i }).click();
-  // After connect, the SPA navigates to /. Wait for the inbox to render
-  // (the fake exposes one section, "Review requested", with the canonical
-  // scenario row). Click into the PR detail.
+  // After connect, the SPA navigates to / (inbox). Wait for that route — the
+  // fake exposes one section, "Review requested", with the canonical scenario
+  // row. This helper stops at the inbox; callers that need the PR detail must
+  // navigate there separately (e.g. openScenarioPr / page.goto('/pr/...')).
   await page.waitForURL('/');
 }
 
@@ -85,7 +102,7 @@ export async function reloadPr(
   return page.request.post(`/api/pr/${pr.owner}/${pr.repo}/${pr.number}/reload`, {
     data: { headSha },
     headers: {
-      Origin: 'http://localhost:5180',
+      Origin: BACKEND_ORIGIN,
       'X-PRism-Tab-Id': tabId,
     },
   });
@@ -102,7 +119,7 @@ export async function advanceHead(
 ): Promise<void> {
   const resp = await page.request.post('/test/advance-head', {
     data: { newHeadSha, fileChanges },
-    headers: { Origin: 'http://localhost:5180' },
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok()) {
     throw new Error(`/test/advance-head failed: ${resp.status()} ${await resp.text()}`);

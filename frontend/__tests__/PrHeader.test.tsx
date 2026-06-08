@@ -188,7 +188,13 @@ describe('PrHeader', () => {
 
   it('renders the Ask AI button + clicking it toggles the AskAiDrawer when aiPreview is on', () => {
     preferencesValue.preferences = {
-      ui: { theme: 'system', accent: 'indigo', aiPreview: true, density: 'comfortable' },
+      ui: {
+        theme: 'system',
+        accent: 'indigo',
+        aiPreview: true,
+        density: 'comfortable',
+        contentScale: 'm',
+      },
       inbox: {
         sections: {
           'review-requested': true,
@@ -254,6 +260,32 @@ describe('PrHeader', () => {
     render(<PrHeader {...baseProps} fileCount={5} />);
     const filesTab = screen.getByRole('tab', { name: /files/i });
     expect(filesTab.textContent).toMatch(/5/);
+  });
+});
+
+describe('#131 Open in GitHub button', () => {
+  it('renders the button when htmlUrl is present', () => {
+    render(<PrHeader {...baseProps} htmlUrl="https://github.example.com/octocat/hello/pull/42" />);
+    const link = screen.getByTestId('open-in-github-button');
+    expect(link).toHaveAttribute('href', 'https://github.example.com/octocat/hello/pull/42');
+  });
+
+  it('renders nothing for the button when htmlUrl is absent', () => {
+    render(<PrHeader {...baseProps} />);
+    expect(screen.queryByTestId('open-in-github-button')).toBeNull();
+  });
+
+  it('dev-warns when a loaded PR (title present) has no htmlUrl', () => {
+    // The warn is the spec-named (D2) regression signal: a loaded PR with no
+    // htmlUrl silently drops all three escape-hatch links. Assert it fires so a
+    // future removal of the useEffect is caught.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    render(<PrHeader {...baseProps} />);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('Open-in-GitHub links hidden'),
+      expect.anything(),
+    );
+    warn.mockRestore();
   });
 });
 

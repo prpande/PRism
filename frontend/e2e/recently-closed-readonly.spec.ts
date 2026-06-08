@@ -169,7 +169,7 @@ for (const { state, label } of [
     //       (selectable / copy-able) but there are NO Edit / NO Delete buttons.
     // ---------------------------------------------------------------------
     await page.goto('/pr/acme/api/123/drafts');
-    const draftsTab = page.getByTestId('drafts-tab');
+    const draftsTab = page.getByTestId('drafts-tab-root');
     await expect(draftsTab).toBeVisible({ timeout: 10_000 });
     // Body text renders read-only.
     await expect(draftsTab.getByText('draft on a done pr')).toBeVisible();

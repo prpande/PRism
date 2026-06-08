@@ -58,3 +58,15 @@ dotnet test --no-build --configuration Release
 # 5. Frontend e2e (Playwright) — required when README criteria apply
 cd frontend && npx playwright test
 ```
+
+## Running parallel agents (testing without collisions)
+
+Multiple agents/worktrees can build, launch, and test on one machine at the same
+time without colliding on the HTTP port or the data store. Each session takes a
+private `(port, dataDir)`: agents launch detached with
+`scripts\serve-detached.ps1 -Port 5200 -DataDir $env:TEMP\PRism-wt-0` (a human
+watching the console uses `./run.ps1` in the foreground), and run the frontend
+e2e with `$env:PRISM_E2E_PORT=5200`. Defaults (5180 / `%LocalApplicationData%\PRism`) are
+unchanged for single-agent flows. Full instructions — port band, desktop caveats,
+`-Reset` safety, credential notes — are in
+[`parallel-agent-testing.md`](parallel-agent-testing.md).

@@ -62,9 +62,55 @@ describe('InboxRow', () => {
     expect(screen.getByText('amelia')).toBeInTheDocument();
   });
 
-  it('shows New chip when lastViewedHeadSha is null', () => {
+  // #121/#122: the "New" badge is gone; the left accent bar (data-unread) is the
+  // single new-activity indicator, driven by "commits since you last viewed",
+  // not 30-min recency.
+  it('no longer renders the "New" badge', () => {
     renderRow(basePr);
-    expect(screen.getByText('New')).toBeInTheDocument();
+    expect(screen.queryByText('New')).toBeNull();
+  });
+
+  it('marks unread when the head moved since last view', () => {
+    renderRow({ ...basePr, lastViewedHeadSha: 'old', headSha: 'new' });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'true');
+    expect(row.getAttribute('aria-label')).toContain('unread');
+  });
+
+  it('is NOT unread when viewed head matches current head', () => {
+    renderRow({ ...basePr, lastViewedHeadSha: 'same', headSha: 'same' });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'false');
+    expect(row.getAttribute('aria-label')).not.toContain('unread');
+  });
+
+  it('IS unread for a never-opened PR (lastViewedHeadSha null) — its current state is unseen', () => {
+    renderRow({ ...basePr, lastViewedHeadSha: null, headSha: 'abc' });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'true');
+    expect(row.getAttribute('aria-label')).toContain('unread');
+  });
+
+  it('is NOT unread for a merged PR even if the head moved', () => {
+    renderRow({
+      ...basePr,
+      lastViewedHeadSha: 'old',
+      headSha: 'new',
+      mergedAt: new Date().toISOString(),
+    });
+    const row = screen.getByRole('button');
+    expect(row).toHaveAttribute('data-unread', 'false');
+    expect(row.getAttribute('aria-label')).not.toContain('unread');
+  });
+
+  it('is NOT unread for a closed PR even if the head moved', () => {
+    renderRow({
+      ...basePr,
+      lastViewedHeadSha: 'old',
+      headSha: 'new',
+      closedAt: new Date().toISOString(),
+    });
+    expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
   });
 
   it('shows CI failing dot when ci is failing', () => {
@@ -117,6 +163,8 @@ describe('InboxRow', () => {
   it('does not show the New chip on a done row even when lastViewedHeadSha is null', () => {
     renderRow({ ...basePr, lastViewedHeadSha: null, mergedAt: new Date().toISOString() });
     expect(screen.queryByText('New')).not.toBeInTheDocument();
+    // ...and the unread bar is suppressed too (done rows never flag).
+    expect(screen.getByRole('button')).toHaveAttribute('data-unread', 'false');
   });
 
   it('does not show the CI-failing dot on a done row', () => {

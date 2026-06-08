@@ -25,14 +25,40 @@ test('Replace token to a PAT with the SAME login navigates to / without an ident
     }),
   );
 
-  await page.goto('/settings');
-  await expect(page.getByRole('heading', { name: /^auth$/i, level: 2 })).toBeVisible({
+  // #134: Replace-token lives on the GitHub Connection pane of the Settings modal.
+  await page.goto('/settings/github-connection');
+  await expect(page.getByRole('heading', { name: /github connection/i, level: 2 })).toBeVisible({
     timeout: 30_000,
   });
+
+  // #130/#134: authed chrome is the Inbox nav tab + the Header Settings gear
+  // (aria-label "Settings", a top-level link, not inside <nav>). No Setup tab.
+  const headerNav = page.locator('header nav');
+  await expect(headerNav.getByRole('link', { name: /^inbox$/i })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Settings', exact: true })).toBeVisible();
+  await expect(headerNav.getByRole('link', { name: /^setup$/i })).toHaveCount(0);
+  // Active-state highlighting (spec B1) — on /settings/*, the gear is current,
+  // Inbox is not.
+  await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(headerNav.getByRole('link', { name: /^inbox$/i })).not.toHaveAttribute(
+    'aria-current',
+    'page',
+  );
 
   await page.getByRole('link', { name: /^replace token$/i }).click();
   await page.waitForURL(/\/setup\?replace=1/, { timeout: 10_000 });
   await expect(page.getByRole('link', { name: /cancel/i })).toBeVisible();
+
+  // #130: replace-from-Settings is an authed state — the Settings gear stays
+  // active even though the path is /setup, and there is still no Setup tab.
+  await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(page.locator('header nav').getByRole('link', { name: /^setup$/i })).toHaveCount(0);
 
   await page.getByLabel(/personal access token/i).fill('ghp_same_login');
   await page.getByRole('button', { name: /continue/i }).click();
@@ -42,6 +68,9 @@ test('Replace token to a PAT with the SAME login navigates to / without an ident
   // post-navigation render.
   await page.waitForURL(/\/$|^http.*\/$/, { timeout: 10_000 });
 
-  // No identity-change toast surfaced. role="status" is the toast surface.
-  await expect(page.getByRole('status')).toHaveCount(0);
+  // No identity-change toast surfaced. Filter the role="status" toast surface
+  // by its identity-change copy (matching the sibling different-login spec) so
+  // this does not race the Inbox first-load spinner, which is also role="status"
+  // (#125) while /api/inbox resolves.
+  await expect(page.getByRole('status').filter({ hasText: /connected as/i })).toHaveCount(0);
 });

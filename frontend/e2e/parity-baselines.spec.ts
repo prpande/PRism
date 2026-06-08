@@ -1,4 +1,5 @@
 import { test, expect, request, type Page } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState, setupAndOpenScenarioPr } from './helpers/s4-setup';
 import {
   setupAndOpenHandoffParityFixture,
@@ -17,7 +18,7 @@ import {
 async function resetAiPreview(page: Page): Promise<void> {
   const resp = await page.request.post('/api/preferences', {
     data: { aiPreview: false },
-    headers: { Origin: 'http://localhost:5180' },
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok()) {
     throw new Error(
@@ -70,9 +71,29 @@ const KILL_ANIMATIONS_CSS =
   '*, *::before, *::after { animation: none !important; transition: none !important; }';
 
 test.beforeEach(async () => {
+  // Pixel parity baselines are a CI-ONLY gate: the canonical baselines are
+  // generated in the Linux Playwright container (.github/workflows/ci.yml) and
+  // live under __screenshots__/linux/. Local machines render fonts/subpixels
+  // differently, so they can never match locally (screenshots are a CI
+  // regression gate, not a local one). The non-visual suite covers behaviour
+  // locally; these run on CI against the canonical baselines.
+  test.skip(!process.env.CI, 'pixel baselines are CI-only (machine-specific rendering)');
   const ctx = await request.newContext();
   await resetBackendState(ctx);
   await ctx.dispose();
+});
+
+// Avatar determinism (#127): the four avatar'd zones — inbox (sm), pr-detail-header
+// (lg), pr-detail-overview (md band), pr-detail-files-diff (sm review-comment widget)
+// — must not depend on a live avatars.githubusercontent.com fetch, or the baseline
+// would vary with CDN/network timing. Abort the avatar CDN so the deterministic
+// initials-fallback circle renders. Mirrors the fonts.gstatic.com abort precedent in
+// the pr-detail-files-diff test. Fake-mode fixtures generally carry no avatarUrl (so
+// most zones already render initials), but this guarantees determinism even if a
+// fixture ever gains one. Registered AFTER the CI-skip hook above so it inherits the
+// same local skip (the route only matters when the test actually runs, i.e. on CI).
+test.beforeEach(async ({ page }) => {
+  await page.route('**/avatars.githubusercontent.com/**', (route) => route.abort());
 });
 
 test.describe('parity baselines — Inbox', () => {
@@ -119,7 +140,7 @@ test.describe('parity baselines — Inbox', () => {
     // used in helpers/s4-setup.ts (OriginCheckMiddleware requires it on POST).
     const prefResp = await page.request.post('/api/preferences', {
       data: { aiPreview: true },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!prefResp.ok()) {
       throw new Error(
@@ -151,19 +172,9 @@ test.describe('parity baselines — Setup', () => {
   });
 });
 
-test.describe('parity baselines — Settings', () => {
-  test('settings-page', async ({ page }) => {
-    await page.setViewportSize(VIEWPORT);
-    await setupAndOpenScenarioPr(page);
-    await page.goto('/settings');
-    await page.locator('[data-testid="settings-page"]').waitFor();
-    await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
-    await expect(page.locator('[data-testid="settings-page"]')).toHaveScreenshot(
-      'settings-page.png',
-      SCREENSHOT_OPTS,
-    );
-  });
-});
+// #134: the standalone /settings page was replaced by the routed Settings modal.
+// Its visual coverage now lives in settings-modal-visual.spec.ts (appearance /
+// github-connection / narrow), so the old settings-page parity baseline is gone.
 
 test.describe('parity baselines — PR Detail', () => {
   test('pr-detail-header', async ({ page }) => {
@@ -268,8 +279,9 @@ test.describe('parity baselines — PR Detail', () => {
       expect(cellCount).toBe(4); // split: old-gutter | old-content | new-gutter | new-content
     }
 
-    // Toggle to unified via the toolbar button.
-    await page.getByRole('button', { name: /side-by-side|unified/i }).click();
+    // Select Unified via the inline diff-view tiles (the toolbar text button is
+    // gone). Click the label rather than the clip-hidden radio input.
+    await page.locator('label:has([data-testid="diff-view-unified"])').click();
     await page.waitForFunction(
       () => !!document.querySelector('[data-testid="diff-pane"].diff-pane--unified'),
     );
@@ -304,7 +316,7 @@ test.describe('parity baselines — PR Detail', () => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenHandoffParityFixtureWithStaleDraft(page);
     await page.goto('/pr/acme/api/123/drafts');
-    const drafts = page.locator('[data-testid="drafts-tab"]');
+    const drafts = page.locator('[data-testid="drafts-tab-root"]');
     await drafts.waitFor();
     await page.addStyleTag({ content: KILL_ANIMATIONS_CSS });
     await expect(drafts).toHaveScreenshot('pr-detail-drafts.png', SCREENSHOT_OPTS);
@@ -361,7 +373,7 @@ test.describe('parity baselines — app chrome', () => {
     // helpers/s4-setup.ts).
     const subResp = await page.request.post('/api/events/subscriptions', {
       data: { PrRef: 'acme/api/123' },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!subResp.ok()) {
       throw new Error(
@@ -385,7 +397,7 @@ test.describe('parity baselines — app chrome', () => {
         NewHeadSha: null,
         CommentCountDelta: 1,
       },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!emitResp.ok()) {
       throw new Error(
@@ -414,7 +426,7 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // Hard-reload to /files so React state (including AskAiDrawer isOpen) is
     // reset to initial values. SPA navigation keeps prior isOpen=true state
     // if the drawer was opened during fixture setup; a full page load clears it.
-    await page.goto('http://localhost:5180/pr/acme/api/123/files');
+    await page.goto(`${BACKEND_ORIGIN}/pr/acme/api/123/files`);
 
     await page.locator('[data-testid="files-tab-tree-row"][data-path="src/Calc.cs"]').click();
     const diff = page.locator('[data-testid="files-tab-diff"]');
@@ -424,20 +436,23 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // are present, so the subsequent whole-file fetch doesn't 422 with snapshot-evicted.
     await diff.locator('tr.diff-line--insert').nth(7).waitFor();
 
-    const toggle = page.locator('[data-testid="whole-file-toggle"]');
-    await expect(toggle).toBeVisible();
-    await expect(toggle).toHaveText('Show full file');
+    // "Show full file" now lives in the DiffSettingsMenu gear panel.
+    // Open the gear, verify the checkbox is unchecked, then enable whole-file.
+    const gear = page.locator('[data-testid="diff-settings-trigger"]');
+    await expect(gear).toBeVisible();
+    await gear.click();
+    const showFullFileCheckbox = page.locator('[data-testid="show-full-file-checkbox"]');
+    await expect(showFullFileCheckbox).toBeVisible();
+    await expect(showFullFileCheckbox).not.toBeChecked();
     expect(await page.locator('tr[data-fill="true"]').count()).toBe(0);
 
-    await toggle.click();
-    // Wait for the toggle to flip to "Hunks only" (wholeFileEnabled=true) and for
-    // hunk-header rows to disappear (fetchStatus='ok'). The fixture's hunk spans
-    // all content lines; the file's trailing newline produces ONE empty filled-
-    // context row at headLines.length (the split of a terminal-newline string
-    // emits an extra empty element). Waiting for the hunk-header to leave is the
-    // correct liveness signal; the filled-row count assertion below pins the
-    // expected behavior.
-    await expect(toggle).toHaveText('Hunks only');
+    await showFullFileCheckbox.click();
+    await expect(showFullFileCheckbox).toBeChecked();
+    // Wait for hunk-header rows to disappear (wholeFileEnabled=true, fetchStatus='ok').
+    // The fixture's hunk spans all content lines; the file's trailing newline produces
+    // ONE empty filled-context row at headLines.length (the split of a terminal-newline
+    // string emits an extra empty element). Waiting for the hunk-header to leave is the
+    // correct liveness signal; the filled-row count assertion below pins the behavior.
     await expect(page.locator('.diff-line--hunk-header')).toHaveCount(0);
     await expect(page.locator('tr[data-fill="true"]')).toHaveCount(1);
 
@@ -447,12 +462,12 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
       SCREENSHOT_OPTS,
     );
 
-    // Toggle off + scroll-reset assertion
+    // Toggle off + scroll-reset assertion: uncheck the checkbox to revert.
     await page.locator('[data-testid="diff-pane"]').evaluate((el) => {
       (el.querySelector('.diff-pane-body') as HTMLElement).scrollTop = 500;
     });
-    await toggle.click();
-    await expect(toggle).toHaveText('Show full file');
+    await showFullFileCheckbox.click();
+    await expect(showFullFileCheckbox).not.toBeChecked();
     const scrollTop = await page.locator('[data-testid="diff-pane"]').evaluate((el) => {
       return (el.querySelector('.diff-pane-body') as HTMLElement).scrollTop;
     });
@@ -469,9 +484,14 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // The iteration-tab-strip exposes data-testid per iteration (added in Task 10).
     await page.locator('[data-testid="iteration-tab-1"]').click();
 
-    const toggle = page.locator('[data-testid="whole-file-toggle"]');
-    await expect(toggle).toBeDisabled();
-    await expect(toggle).toHaveAttribute('title', /'all' iteration view/);
+    // "Show full file" is now in the DiffSettingsMenu gear. Open it and assert
+    // the checkbox is disabled with the expected helper text.
+    await page.locator('[data-testid="diff-settings-trigger"]').click();
+    const checkbox = page.locator('[data-testid="show-full-file-checkbox"]');
+    await expect(checkbox).toBeDisabled();
+    await expect(page.locator('[data-testid="show-full-file-helper"]')).toContainText(
+      /'all' iteration view/,
+    );
   });
 
   test('whole-file force-failure renders banner and reverts toggle', async ({ page }) => {
@@ -481,9 +501,9 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // Canonical scenario's headSha is a known stable value.
     const headSha = '3333333333333333333333333333333333333333';
 
-    const forceResp = await page.request.post('http://localhost:5180/test/file/force-failure', {
+    const forceResp = await page.request.post(`${BACKEND_ORIGIN}/test/file/force-failure`, {
       data: { path: 'src/Calc.cs', sha: headSha, problemType: '/file/too-large' },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     expect(forceResp.ok()).toBe(true);
 
@@ -493,17 +513,26 @@ test.describe('parity baselines — PR Detail — whole-file', () => {
     // the PrDetailLoader snapshot-cache is populated so the /file endpoint
     // does not 422 with snapshot-evicted.
     await page.locator('[data-testid="files-tab-diff"] tr.diff-line--insert').first().waitFor();
-    const toggle = page.locator('[data-testid="whole-file-toggle"]');
-    await toggle.click();
+    // "Show full file" now lives in the DiffSettingsMenu gear. Open it and
+    // enable whole-file view for the current file.
+    await page.locator('[data-testid="diff-settings-trigger"]').click();
+    const checkbox = page.locator('[data-testid="show-full-file-checkbox"]');
+    await checkbox.click();
 
     const banner = page.locator('[data-testid="whole-file-failure-banner"]');
     await expect(banner).toBeVisible();
     await expect(banner).toContainText(/file is too large/i);
-    await expect(toggle).toHaveText('Show full file');
+    // After failure the checkbox stays checked (showFullFile=true) but
+    // wholeFileEnabled derives to false (failed path excluded).
+    await expect(checkbox).toBeChecked();
 
     await banner.locator('button[aria-label="Dismiss whole-file error banner"]').click();
     await expect(banner).toHaveCount(0);
-    await expect(toggle).toHaveText('Show full file');
+    // Dismissing the banner clicks outside the gear popover, which (correctly)
+    // closes it and unmounts the checkbox. Re-open the gear to assert that the
+    // global showFullFile preference persisted across the failure.
+    await page.locator('[data-testid="diff-settings-trigger"]').click();
+    await expect(checkbox).toBeChecked();
   });
 });
 
@@ -518,7 +547,7 @@ test.describe('parity baselines — Ask AI', () => {
     // inbox-activity-rail test above (flat dotted-path field, loopback Origin).
     const prefResp = await page.request.post('/api/preferences', {
       data: { aiPreview: true },
-      headers: { Origin: 'http://localhost:5180' },
+      headers: { Origin: BACKEND_ORIGIN },
     });
     if (!prefResp.ok()) {
       throw new Error(

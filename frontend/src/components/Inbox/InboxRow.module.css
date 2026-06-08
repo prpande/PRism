@@ -1,7 +1,8 @@
 /* InboxRow — single PR row in the inbox list */
 .row {
   display: grid;
-  grid-template-columns: 16px 1fr auto;
+  grid-template-columns: 16px minmax(0, 1fr) var(--inbox-tail-w);
+  --inbox-tail-w: 224px; /* metrics only: 64 diff + 72 counts + 52 comments + 2×12 gaps = 212, +12 slack; tuned in B1 */
   gap: var(--s-3);
   width: 100%;
   padding: var(--s-3) var(--s-4);
@@ -22,8 +23,11 @@
   background: var(--surface-2);
 }
 
-/* Freshness — left-edge accent on truly-fresh rows */
-.rowFresh::before {
+/* Unread activity — left-edge accent bar on rows with commits the user hasn't
+   seen since they last viewed the PR (#121/#122). Driven by data-unread (set in
+   InboxRow.tsx), now the single new-activity indicator with the "New" badge gone.
+   Was previously gated on 30-min wall-clock recency of updatedAt. */
+.row[data-unread='true']::before {
   content: '';
   position: absolute;
   left: 0;
@@ -32,14 +36,6 @@
   width: 2px;
   background: var(--accent);
   border-radius: 0 2px 2px 0;
-}
-
-.rowToday {
-  /* no additional decoration */
-}
-
-.rowOlder {
-  /* no additional decoration */
 }
 
 /* Status column (16px wide) */
@@ -57,22 +53,18 @@
   border-radius: 50%;
 }
 
-.dotDanger {
+.dotFailing {
   background: var(--danger-fg);
 }
 
-.newChip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 5px;
-  background: var(--accent);
-  color: var(--accent-text);
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
+/* Hollow ring — shape distinguishes pending from failing without relying on
+   hue, so CI state reads in greyscale / for colour-blind users / against any
+   user-chosen accent. Explicit border-box (not just the global reset) keeps the
+   1.5px border inside the 8×8 dot rather than expanding it to ~11px. */
+.dotPending {
+  box-sizing: border-box;
+  background: transparent;
+  border: 1.5px solid var(--warning-fg);
 }
 
 /* Main column */
@@ -83,12 +75,15 @@
 }
 
 .title {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2; /* forward-compat alias; the -webkit-box trio above is the operative clamp */
+  overflow: hidden;
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-1);
   margin-bottom: 4px;
-  text-wrap: pretty;
 }
 
 .meta {
@@ -97,7 +92,8 @@
   gap: 6px;
   font-size: var(--text-xs);
   color: var(--text-3);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .mono {
@@ -109,11 +105,74 @@
   color: var(--border-strong);
 }
 
-/* Tail column */
+.author {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.authorName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tail column — holds only the aligned metrics now; the AI chip + state badge
+   live on the meta line (they're labels, not metrics, and a variable-width pill
+   can't sit in a fixed-width aligned column without clipping). Right-align so
+   the metrics sit flush with the row's right edge. */
 .tail {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+/* Right-pinned, fixed-width slots in fixed order — this is what makes the
+   numbers line up column-for-column across rows. */
+.metrics {
+  flex: none;
+  display: flex;
+  align-items: center;
   gap: var(--s-3);
+}
+
+.diffSlot {
+  flex: none;
+  width: 64px; /* matches DiffBar track width */
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 72px fits up to 4-digit +adds / −dels (the realistic inbox ceiling); a PR
+   with BOTH counts at 5 digits (~20k-line churn) overflows ~7px into the gap.
+   That tail case is accepted rather than widening every row's tail — the right
+   edge stays pinned so column alignment holds either way (#227 B1). */
+.countsSlot {
+  flex: none;
+  width: 72px;
+  display: flex;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 52px fits a 3-digit comment count (~48px pill) without the pill bleeding into
+   the adjacent gap; 2-digit is the common case. Right-pinned so the glyph+count
+   right edge aligns across rows regardless of digit count. */
+.commentSlot {
+  flex: none;
+  width: 52px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* Chip + its trailing separator as one unit, so the narrow-width drop removes
+   both (otherwise the separator orphans to a leading "· " on the meta line). */
+.chipWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .chip {
@@ -125,6 +184,10 @@
   border-radius: var(--radius-2);
   font-size: var(--text-2xs);
   font-weight: 500;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Done-state badge — text is the primary signal, colour is secondary */
@@ -160,12 +223,53 @@
 }
 
 .comments {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 2px 6px;
   border-radius: var(--radius-2);
   font-size: var(--text-xs);
   color: var(--text-3);
 }
 
+/* Accent-tinted comment glyph (not an emoji) so the count reads as comments
+   while staying inside the theme's colour scheme. */
+.commentIcon {
+  flex: none;
+  color: var(--accent);
+}
+
 .row:hover .comments {
   background: var(--surface-3);
+}
+
+/* Indent grouped rows via left padding, not the accordion body, so the tail's
+   right edge stays flush with flat rows and the metrics align across flat +
+   grouped rows (border-box keeps width:100% honest). */
+.row[data-grouped='true'] {
+  padding-left: calc(var(--s-4) + var(--s-4));
+}
+
+/* Pane-relative responsive: the row responds to the named `inbox-sections`
+   container's width (set on .sections in InboxPage.module.css), NOT the viewport
+   — the right rail flips the sections-column width independent of viewport. The
+   name guards against a future ancestor container hijacking these breakpoints.
+   Alignment is a within-regime invariant — the metrics column shifts once at
+   the breakpoint (tail width changes), by design. Thresholds tuned in B1. */
+@container inbox-sections (max-width: 560px) {
+  /* Override --inbox-tail-w declared on .row itself; the grid template re-resolves.
+     72 counts + 52 comments + 12 gap = 136, +8 slack (diff bar is hidden below). */
+  .row {
+    --inbox-tail-w: 144px;
+  }
+  /* Drop the diff bar AND the AI category chip together: at this width the chip
+     would otherwise clamp to a cryptic ~1-char stub rather than read as a label.
+     The +/− counts and comment count are kept (last to go). */
+  .diffSlot {
+    display: none;
+  }
+  /* Hide the chip AND its trailing separator together (no orphan "· "). */
+  .chipWrap {
+    display: none;
+  }
 }

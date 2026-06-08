@@ -59,7 +59,9 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('App routing', () => {
-  it('routes to /setup when no token', async () => {
+  it('routes to /welcome on first run (no token)', async () => {
+    // #212: a true first-run user (!hasToken) lands on the welcome screen, NOT
+    // the cold /setup token form.
     server.use(
       http.get('/api/auth/state', () =>
         HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
@@ -70,7 +72,120 @@ describe('App routing', () => {
         <App />
       </MemoryRouter>,
     );
+    expect(await screen.findByRole('heading', { level: 1, name: 'PRism' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /get started/i })).toBeInTheDocument();
+    // Not the setup screen.
+    expect(screen.queryByText(/connect to github/i)).toBeNull();
+    // #130: first-run still hides the nav entirely.
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('link', { name: /inbox/i })).toBeNull();
+  });
+
+  it('reachable /setup directly while unauthed (not bounced to /welcome)', async () => {
+    // #212: /setup stays directly reachable so a first-run user mid-typing is not
+    // bounced. Navigating straight to /setup shows the token form.
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/setup']}>
+        <App />
+      </MemoryRouter>,
+    );
     expect(await screen.findByText(/connect to github/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /get started/i })).toBeNull();
+  });
+
+  it('authed user navigating to /welcome is redirected to / (Inbox)', async () => {
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/welcome']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByPlaceholderText(/paste a pr url/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /get started/i })).toBeNull();
+  });
+
+  it('first-run /settings redirects to /welcome (all four guard sites change together)', async () => {
+    // #212: the spec warns "all four redirect sites change together — missing one
+    // leaks a first-run user back to /setup". This guards the /settings site.
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/settings']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { level: 1, name: 'PRism' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /get started/i })).toBeInTheDocument();
+    expect(screen.queryByText(/connect to github/i)).toBeNull();
+  });
+
+  it('first-run /pr/* deep link redirects to /welcome (PR ref dropped)', async () => {
+    // #212: a never-connected user hitting a PR deep link lands on /welcome
+    // (consistent with the catch-all); the PR ref is intentionally dropped.
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/pr/acme/api/123']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { level: 1, name: 'PRism' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /get started/i })).toBeInTheDocument();
+    expect(screen.queryByText(/connect to github/i)).toBeNull();
+  });
+
+  it('unknown route redirects a first-run user to /welcome (catch-all site)', async () => {
+    // #212: the `*` catch-all is the fourth modified redirect site; an unknown
+    // path in a no-token state must also land on /welcome, not /setup.
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: false, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/does-not-exist']}>
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole('heading', { level: 1, name: 'PRism' })).toBeInTheDocument();
+    expect(screen.queryByText(/connect to github/i)).toBeNull();
+  });
+
+  it('re-auth session starting at /welcome redirects to /setup (hasToken arm, not /welcome or Inbox)', async () => {
+    // #212: pins the /welcome ternary's `hasToken && !isAuthed` arm. A token-bearing
+    // session whose token is rejected must never rest on /welcome or the Inbox — it
+    // routes to /setup (unauthedTarget resolves to /setup because hasToken is true).
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/welcome']}>
+        <App />
+      </MemoryRouter>,
+    );
+    // Authed first → Inbox (the /welcome authed arm redirects to /).
+    expect(await screen.findByPlaceholderText(/paste a pr url/i)).toBeInTheDocument();
+    // Token rejected mid-session → must land on /setup, not /welcome, not Inbox.
+    window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+    expect(await screen.findByText(/connect to github/i)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /get started/i })).toBeNull();
   });
 
   it('routes to / (InboxPage) when token present', async () => {
@@ -96,7 +211,9 @@ describe('App routing', () => {
         <App />
       </MemoryRouter>,
     );
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    // Auth failure now surfaces as a centered ErrorModal (alertdialog), not a bare alert.
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent("Couldn't load auth state");
   });
 
   it('navigates to /setup when prism-auth-rejected event fires', async () => {
@@ -131,8 +248,11 @@ describe('App routing', () => {
         return HttpResponse.json({ ok: true, login: 'octocat', host: 'https://github.com' });
       }),
     );
+    // Start at /setup directly (the token form). #212's welcome screen is
+    // upstream of this bug and orthogonal; the regression is the setup→inbox
+    // transition after submit.
     render(
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={['/setup']}>
         <App />
       </MemoryRouter>,
     );
@@ -169,7 +289,7 @@ describe('App routing', () => {
       }),
     );
     render(
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={['/setup']}>
         <App />
       </MemoryRouter>,
     );
@@ -200,5 +320,34 @@ describe('App routing', () => {
       </MemoryRouter>,
     );
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    // #130 no-regress: host-mismatch is an early return before <Header>, so no nav.
+    expect(screen.queryByRole('navigation')).toBeNull();
+  });
+
+  it('hides the header nav when a token exists but auth is rejected, and restores it on recovery', async () => {
+    server.use(
+      http.get('/api/auth/state', () =>
+        HttpResponse.json({ hasToken: true, host: 'https://github.com', hostMismatch: null }),
+      ),
+    );
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    );
+    // Authed: nav is visible.
+    expect(await screen.findByRole('link', { name: /inbox/i })).toBeInTheDocument();
+
+    // 401 mid-session → isAuthed=false → nav hidden, bounced to /setup.
+    window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
+    expect(await screen.findByText(/connect to github/i)).toBeInTheDocument();
+    // #212: re-auth (token present, rejected) goes to /setup, never the welcome hero.
+    expect(screen.queryByRole('link', { name: /get started/i })).toBeNull();
+    expect(screen.queryByRole('navigation')).toBeNull();
+    expect(screen.queryByRole('link', { name: /inbox/i })).toBeNull();
+
+    // Recovery → nav restored.
+    window.dispatchEvent(new CustomEvent('prism-auth-recovered'));
+    expect(await screen.findByRole('link', { name: /inbox/i })).toBeInTheDocument();
   });
 });

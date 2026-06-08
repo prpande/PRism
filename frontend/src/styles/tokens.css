@@ -59,17 +59,23 @@
    LIGHT — slate-tinted whites; never pure white
    ====================================================================== */
 [data-theme="light"] {
-  /* surfaces (multiple levels) */
-  --surface-0: oklch(0.985 0.003 250);   /* page bg */
-  --surface-1: oklch(1 0 0);              /* cards / diff */
-  --surface-2: oklch(0.97 0.004 250);    /* panels, sidebars */
-  --surface-3: oklch(0.945 0.005 250);   /* hover, raised */
-  --surface-inset: oklch(0.96 0.004 250);
+  /* surfaces (multiple levels)
+     Ladder rebalanced for visible hierarchy (#124): lowered overall and widened
+     to 0.025–0.035 L steps so page / card / panel / raised read as distinct (was
+     compressed into 0.945–1.0 with surface-1 at pure white). Worst body-text pair
+     (--text-3 on --surface-3) computes to 4.85:1 — clears WCAG 1.4.3 AA (4.5:1).
+     See docs/specs/2026-06-04-light-theme-contrast-design.md. */
+  --surface-0: oklch(0.96 0.003 250);     /* page bg */
+  --surface-1: oklch(0.99 0 0);           /* cards / diff (lightest) */
+  --surface-2: oklch(0.925 0.004 250);    /* panels, sidebars */
+  --surface-3: oklch(0.90 0.005 250);     /* hover, raised */
+  --surface-inset: oklch(0.95 0.004 250); /* recessive: nested input wells */
 
-  /* borders */
-  --border-1: oklch(0.91 0.005 250);
-  --border-2: oklch(0.87 0.006 250);
-  --border-strong: oklch(0.78 0.008 250);
+  /* borders — darkened only ~0.02 so edge weight supports, not dominates, the
+     surface hierarchy above (#124) */
+  --border-1: oklch(0.89 0.005 250);
+  --border-2: oklch(0.85 0.006 250);
+  --border-strong: oklch(0.76 0.008 250);
 
   /* text */
   /* text-3 lowered from oklch(0.58 0.008 250) to oklch(0.48 0.010 250)
@@ -247,6 +253,77 @@
   overflow-y: auto;
 }
 
+/* PR-detail Files view: bind the shell to the viewport so the diff scrolls in
+   an internal container and its horizontal scrollbar sits at the BOTTOM OF THE
+   SCREEN — not below a tall, page-scrolled file (#191).
+
+   Under keep-alive the Files sub-tab is always present in the DOM (mounted-but-
+   hidden) on EVERY open PR tab, so the old `:has(.files-tab)` selector would
+   latch the viewport-bound layout on whenever any tab had ever visited Files —
+   including the Inbox/Overview/Drafts views. The trigger is now an explicit
+   `[data-files-active]` marker on [data-app-scroll], set by PrDetailView only
+   when it is the ACTIVE view showing Files (and removed otherwise). The nested
+   selectors target the active view's `.pr-detail-page` + its visible
+   `[data-subtab='files']` slot rather than the bare `.files-tab` class, since
+   hidden sibling Files slots also carry `.files-tab`. Works in the browser and
+   composes with the desktop-shell rules above. */
+[data-app-shell]:has([data-app-scroll][data-files-active]) {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+[data-app-shell]:has([data-app-scroll][data-files-active]) > * {
+  flex-shrink: 0;
+}
+[data-app-scroll][data-files-active] {
+  /* overflow-y: auto (not hidden) is the escape hatch: if the rigid header
+     stack (PrHeader + banners + a tall UnresolvedPanel) exceeds the viewport,
+     the page scrolls vertically to reach it instead of clipping into a
+     dead-end (Copilot #155). In the common case the page fits exactly and this
+     never engages, so the diff keeps its internal scroll + bottom scrollbar. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* overflow-x: hidden is explicit because setting overflow-y to a non-visible
+     value makes the UA compute overflow-x as `auto` (CSS Overflow §3), which
+     would surface a spurious outer horizontal scrollbar. The diff keeps its
+     OWN internal horizontal scroller (DiffPane) — the shared outer scroller
+     must never scroll horizontally (#156/#149/#155 regression contract). */
+  overflow-x: hidden;
+}
+[data-files-active] .pr-detail-page:not([hidden]) {
+  /* min-height (not height) so the page can grow past the viewport when the
+     header stack is tall, letting [data-app-scroll] scroll to it. The
+     :not([hidden]) guard is essential under keep-alive: an explicit `display:
+     flex` here would otherwise override the `hidden` attribute's UA
+     `display:none` and un-hide the inactive PR tabs' .pr-detail-page roots.
+     Only the active view (the one matching the route, hidden={false}) is laid
+     out; the hidden siblings keep their UA display:none. */
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+[data-files-active] .pr-detail-page:not([hidden]) > * {
+  flex-shrink: 0;
+}
+[data-files-active] [data-subtab='files']:not([hidden]) {
+  /* The keep-alive Files slot is the flex child that fills the remaining
+     viewport. flex-basis 0 (not auto) so the diff's content height never
+     inflates the page — it scrolls INTERNALLY. The min-height floor keeps it
+     usable when a tall header forces the page to scroll instead. :not([hidden])
+     guards against the same display:flex-overrides-hidden trap for the
+     non-active Overview/Drafts sub-tab slots, which also live in the DOM. */
+  flex: 1 1 0;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+}
+[data-files-active] [data-subtab='files']:not([hidden]) > .files-tab {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
 /* ======================================================================
    Base
    ====================================================================== */
@@ -266,6 +343,37 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 code, pre, .mono { font-family: var(--font-mono); font-feature-settings: "calt" 0; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
+
+/* MarkdownRenderer output. `.markdown-body` is a global class applied in
+   MarkdownRenderer.tsx; every rendered comment / description / draft shares it.
+   Goal: prevent the page-level horizontal scrollbar that long inline tokens or
+   wide code blocks used to force on markdown surfaces (PR Overview description +
+   root comments, inline diff comments, drafts) — #117/#149. Long inline tokens
+   (URLs, paths) break anywhere; `<pre>` switches to `white-space: pre-wrap` so
+   long code lines wrap at the container width while keeping their indentation,
+   instead of scrolling within the block. (Note: this addresses text/code
+   overflow; intrinsically-wide GFM content like tables or images can still
+   overflow and would need their own `overflow-x` wrapper.) */
+/* #135 — content font-size scaling. A single multiplier var, selected by the
+   data-content-scale attribute on <html> (set by applyContentScaleToDocument).
+   No attribute / "m" → 1 → no-op (existing baselines unchanged). Consumed only by
+   the content hooks below + the enumerated module-CSS classes; chrome uses the bare
+   --text-* tokens and stays fixed. */
+:root { --content-scale: 1; }
+[data-content-scale='xs'] { --content-scale: 0.8; }
+[data-content-scale='s'] { --content-scale: 0.9; }
+[data-content-scale='l'] { --content-scale: 1.2; }
+[data-content-scale='xl'] { --content-scale: 1.4; }
+
+.markdown-body {
+  overflow-wrap: anywhere;
+  font-size: calc(1em * var(--content-scale));
+}
+.markdown-body pre {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 
 ::selection { background: var(--accent-soft); color: var(--text-1); }
 
@@ -299,9 +407,22 @@ a:hover { text-decoration: underline; }
    Spec § 6.1 Pass 2 ("SR-only badge labels"). Mirrors the well-known
    clip-rect pattern that survives flex/grid layouts without affecting
    sibling sizing. The Cheatsheet's `.srOnly` CSS-module class predates
-   this utility and uses an equivalent recipe locally. */
+   this utility and uses an equivalent recipe locally.
+
+   `top: 0; left: 0` pins the box to the origin of its containing block
+   instead of its static-flow position. Without this, an absolutely
+   positioned `.sr-only` inside a tall, internally-scrolled view with no
+   positioned ancestor takes its static position deep in the document and,
+   because its containing block is the initial containing block (<html>),
+   extends `documentElement.scrollHeight` past the viewport — the page
+   scrolls into empty space (issue #197). Pinned to the origin it can no
+   longer contribute trailing overflow. The element stays visually hidden
+   (1px + clip-rect) and SR-announced (reading order is DOM order, not
+   visual position; these spans are non-focusable). */
 .sr-only {
   position: absolute;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   padding: 0;
@@ -600,6 +721,8 @@ a:hover { text-decoration: underline; }
   z-index: 1000;
   overflow-y: auto;
 }
+/* #182: ErrorModal vertically centers its card; base stays top-anchored. */
+.modal-backdrop--center { align-items: center; }
 .modal-dialog {
   width: 100%;
   max-width: 480px;
@@ -645,8 +768,36 @@ a:hover { text-decoration: underline; }
 }
 .verdict-picker__segment:last-child { border-right: none; }
 .verdict-picker__segment:hover:not(:disabled) { background: var(--surface-3); color: var(--text-1); }
+/* Issue #123: each verb's selected state carries a GitHub-style semantic color.
+   --accent-text is theme-aware (near-white in light, near-black in dark) and the
+   semantic colors track the same lightness curve as --accent (≈0.55 light →
+   ≈0.72 dark), so it stays the correct on-color foreground for all three. */
+/* The :hover variants carry :not(:disabled): the per-verb background rules then
+   out-specify the generic .verdict-picker__segment:hover:not(:disabled) rule
+   (0,4,0 vs 0,3,0), and the base color rule ties it and wins on source order —
+   so a hovered selected segment (the common post-click state) keeps its semantic
+   color instead of the neutral hover style. */
 .verdict-picker__segment--selected,
-.verdict-picker__segment--selected:hover { background: var(--accent); color: var(--accent-text); }
+.verdict-picker__segment--selected:hover:not(:disabled) {
+  /* --accent is the fallback fill: the per-verb rules below override it for the
+     three known verdicts, but a future verb added to SEGMENTS without a matching
+     rule degrades to the prior accent style rather than rendering no fill. */
+  background: var(--accent);
+  color: var(--accent-text);
+}
+.verdict-picker__segment--selected[data-verdict='approve'],
+.verdict-picker__segment--selected[data-verdict='approve']:hover:not(:disabled) { background: var(--success); }
+/* Request-changes uses --warning (amber), not --danger. --warning is light in
+   BOTH themes (≈0.62 / ≈0.78), so the theme-flipping --accent-text (white in
+   light) would fail contrast — this verb needs dark ink in both themes, mirroring
+   how btn-danger hardcodes its on-color text. */
+.verdict-picker__segment--selected[data-verdict='request-changes'],
+.verdict-picker__segment--selected[data-verdict='request-changes']:hover:not(:disabled) {
+  background: var(--warning);
+  color: oklch(0.18 0 0);
+}
+.verdict-picker__segment--selected[data-verdict='comment'],
+.verdict-picker__segment--selected[data-verdict='comment']:hover:not(:disabled) { background: var(--info); }
 .verdict-picker__segment:disabled { opacity: 0.5; cursor: not-allowed; }
 .verdict-picker__status { white-space: nowrap; }
 
@@ -810,7 +961,12 @@ a:hover { text-decoration: underline; }
    (`.diff-line.diff-add` / `.diff-line.diff-rem` equivalents). */
 .diff-line {
   font-family: var(--font-mono);
-  font-size: var(--text-sm);
+  /* #135: the diff <tr> is the EFFECTIVE font-size hook for diff code + gutter
+     line numbers — each <td> inherits from this nearer ancestor, so a font-size on
+     `.diffTable` alone is shadowed here. Scale on the row so code + line numbers
+     scale together. The `--hunk-header` row below re-pins var(--text-xs) (unscaled),
+     so the `@@ … @@` markers stay fixed. */
+  font-size: calc(var(--text-sm) * var(--content-scale));
 }
 .diff-line--insert {
   background: var(--diff-add-bg);
@@ -822,4 +978,31 @@ a:hover { text-decoration: underline; }
   background: var(--surface-2);
   color: var(--accent);
   font-size: var(--text-xs);
+}
+/* Syntax highlighting — global classes so the dual-theme selector below
+   matches the literal rendered class (CSS-module hashing would not). */
+/* .codeLine intentionally declares NO `display`. It is the single direct child
+   of the diff content cell, and in split scroll-mode DiffPane.module.css's
+   `.diffContent > * { display: inline-block; transform: … }` rule owns its
+   display + horizontal-scroll transform. Setting `display` here would fight
+   that rule at equal specificity (cascade-order dependent). As a <span> it
+   defaults to inline, which is correct for the Overview path. The one hard
+   rule: never `display: contents` (it would remove the transform target). */
+.codeToken {
+  color: var(--shiki-light); /* light is the default; tokens carry no bare color */
+}
+html[data-theme='dark'] .codeToken {
+  color: var(--shiki-dark);
+}
+/* Background-only word-diff variants for the highlighted (merged) path —
+   foreground is owned by .codeToken. Full-color .wordDiffInsert/.wordDiffDelete
+   in WordDiffOverlay.module.css stay for the no-token fallback path. */
+.wordDiffInsertBg {
+  background: var(--diff-add-bg);
+  border-radius: 2px;
+}
+.wordDiffDeleteBg {
+  background: var(--diff-rem-bg);
+  border-radius: 2px;
+  text-decoration: line-through;
 }

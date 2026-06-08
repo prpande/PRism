@@ -134,6 +134,12 @@ test('S-dialog 1 — the legacy PR-level summary textarea no longer renders', as
   await expect(dialog.getByTestId('pr-root-edit-toggle')).toBeEnabled();
 });
 
+// Regression (#173): under keep-alive, deep-linking / landing on the Files tab
+// must NOT mount the hidden Overview composer (which would auto-open on a
+// persisted PR-root draft and claim 'reply-composer', disabling this dialog's
+// Edit toggle). The fix seeds the keep-alive `visited` set with only the landed
+// sub-tab (PrDetailView), so Overview mounts on first actual visit. The "seed
+// via dialog, land on Files so Overview never claims" premise holds again.
 test('S-dialog 2 — the PR-root draft body renders as a preview in the dialog', async ({ page }) => {
   await arrangePrWithInlineDraft(page);
   const body = 'A seeded PR-root body for the preview.';
@@ -150,6 +156,7 @@ test('S-dialog 2 — the PR-root draft body renders as a preview in the dialog',
   await expect(dialog.getByTestId('pr-root-edit-toggle')).toBeEnabled();
 });
 
+// Regression (#173): same keep-alive cross-surface-lock fix as S-dialog 2.
 test('S-dialog 3 — Edit toggle: type → autosave → Done re-renders preview → reopen resets to preview', async ({
   page,
 }) => {

@@ -18,7 +18,12 @@ function installPrism(over: Partial<PrismWindowControls> = {}) {
     }),
     ...over,
   };
-  window.prism = { isDesktop: true, platform: 'win32', windowControls: controls };
+  window.prism = {
+    isDesktop: true,
+    platform: 'win32',
+    openExternal: vi.fn().mockResolvedValue(true),
+    windowControls: controls,
+  };
   return { controls, fireMax: (m: boolean) => maxCb(m) };
 }
 

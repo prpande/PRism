@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND_ORIGIN } from './helpers/backend-origin';
 import { resetBackendState } from './helpers/s4-setup';
 
 // S6 PR4 / spec § 3.1 — Replace link is aria-disabled while a submit is in flight.
@@ -23,8 +24,8 @@ async function holdSubmitLock(request: import('@playwright/test').APIRequestCont
   // PropertyNameCaseInsensitive=true by default — but a future tightening that
   // copies the factory's CaseInsensitive=false would silently break PascalCase
   // bodies. The s4 /test/advance-head helper uses the same camelCase pattern.)
-  const resp = await request.post('http://localhost:5180/test/submit/hold', {
-    headers: { Origin: 'http://localhost:5180', 'Content-Type': 'application/json' },
+  const resp = await request.post(`${BACKEND_ORIGIN}/test/submit/hold`, {
+    headers: { Origin: BACKEND_ORIGIN, 'Content-Type': 'application/json' },
     data: { owner: 'octocat', repo: 'Hello-World', number: 42 },
   });
   if (!resp.ok()) {
@@ -33,8 +34,8 @@ async function holdSubmitLock(request: import('@playwright/test').APIRequestCont
 }
 
 async function releaseSubmitLock(request: import('@playwright/test').APIRequestContext) {
-  const resp = await request.post('http://localhost:5180/test/submit/release-hold', {
-    headers: { Origin: 'http://localhost:5180' },
+  const resp = await request.post(`${BACKEND_ORIGIN}/test/submit/release-hold`, {
+    headers: { Origin: BACKEND_ORIGIN },
   });
   if (!resp.ok() && resp.status() !== 204) {
     throw new Error(`/test/submit/release-hold failed: ${resp.status()} ${await resp.text()}`);
@@ -66,10 +67,11 @@ test('Replace token link is aria-disabled while a submit lock is held', async ({
   // 2) Acquire the SubmitLockRegistry slot synthetically (no real submit running).
   await holdSubmitLock(request);
 
-  // 3) Navigate to Settings; AuthSection's useSubmitInFlight hook fetches
-  //    /api/submit/in-flight on mount and renders the disabled state.
-  await page.goto('/settings');
-  await expect(page.getByRole('heading', { name: /^auth$/i, level: 2 })).toBeVisible({
+  // 3) Navigate to Settings; the GitHub Connection pane's useSubmitInFlight hook
+  //    fetches /api/submit/in-flight on mount and renders the disabled state.
+  //    #134: Replace-token + submit-lock state live on /settings/github-connection.
+  await page.goto('/settings/github-connection');
+  await expect(page.getByRole('heading', { name: /github connection/i, level: 2 })).toBeVisible({
     timeout: 30_000,
   });
 
@@ -93,7 +95,8 @@ test('Replace link re-enables after the submit lock is released (state-changed n
   // hook releases via HTTP (not via the SSE channel), so the page-level event
   // doesn't fire. A fresh navigation triggers the hook's mount-time fetch.
   await holdSubmitLock(request);
-  await page.goto('/settings');
+  // #134: Replace-token lives on the GitHub Connection pane of the Settings modal.
+  await page.goto('/settings/github-connection');
   await expect(page.getByRole('link', { name: /^replace token$/i })).toHaveAttribute(
     'aria-disabled',
     'true',

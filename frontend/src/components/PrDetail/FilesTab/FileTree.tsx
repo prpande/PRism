@@ -1,6 +1,7 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import type { FileChange, FileChangeStatus, FileFocus, FocusLevel } from '../../../api/types';
 import { buildTree, type TreeNode, type FileTreeNode, type DirectoryTreeNode } from './treeBuilder';
+import { useTreeHScroll } from '../../../hooks/useTreeHScroll';
 import styles from './FileTree.module.css';
 
 export interface FileTreeProps {
@@ -21,12 +22,88 @@ const STATUS_LABELS: Record<string, string> = {
   renamed: 'R',
 };
 
+const STATUS_WORD: Record<FileChangeStatus, string> = {
+  added: 'Added',
+  modified: 'Modified',
+  deleted: 'Deleted',
+  renamed: 'Renamed',
+};
+
+// File rows indent one level deeper than their parent directory header
+// ((depth + 1) vs depth) so a file sits visually inside its folder; a depth-0 file
+// (no parent dir) still gets one level of indent.
+const INDENT_PER_LEVEL = 12;
+
 const FILE_STATUS_MODULE: Record<FileChangeStatus, string> = {
   added: styles.fileStatusAdded,
   modified: styles.fileStatusModified,
   deleted: styles.fileStatusDeleted,
   renamed: styles.fileStatusRenamed,
 };
+
+// The tree renders as a flat, ordered list of rows so the scrolling tree column
+// and the fixed checkbox column can be rendered from the SAME sequence — row i in
+// one lines up with slot i in the other. Directory expand/collapse state is lifted
+// here (a Set of collapsed directory keys) rather than living in each row, which is
+// what makes the flat list — and therefore the two aligned columns — possible.
+interface FileRow {
+  kind: 'file';
+  key: string;
+  depth: number;
+  node: FileTreeNode;
+  setSize: number;
+  posInSet: number;
+}
+interface DirRow {
+  kind: 'dir';
+  key: string;
+  depth: number;
+  node: DirectoryTreeNode;
+  dirKey: string;
+  expanded: boolean;
+  setSize: number;
+  posInSet: number;
+}
+type RenderRow = FileRow | DirRow;
+
+// Directory nodes carry only a (possibly duplicated) compacted name, so collapse
+// state is keyed by the ancestor chain joined with a NUL separator — unique and
+// stable across re-renders. NUL cannot appear in a path segment.
+const DIR_KEY_SEP = String.fromCharCode(0);
+// The tree renders flat (siblings of one role=tree), not via nested role=group
+// wrappers, because the same flat row list also drives the fixed checkbox column.
+// A flat ARIA tree must therefore carry aria-level AND aria-setsize/aria-posinset so
+// assistive tech can still infer per-level grouping — `setSize`/`posInSet` are the
+// count of, and 1-based position within, this node's sibling group.
+function buildRows(
+  nodes: TreeNode[],
+  collapsed: Set<string>,
+  depth: number,
+  parentKey: string,
+  out: RenderRow[],
+): void {
+  const setSize = nodes.length;
+  nodes.forEach((node, i) => {
+    const posInSet = i + 1;
+    if (node.kind === 'file') {
+      out.push({ kind: 'file', key: `file:${node.path}`, depth, node, setSize, posInSet });
+    } else {
+      const dirKey = parentKey ? parentKey + DIR_KEY_SEP + node.name : node.name;
+      const expanded = !collapsed.has(dirKey);
+      out.push({
+        kind: 'dir',
+        key: `dir:${dirKey}`,
+        depth,
+        node,
+        dirKey,
+        expanded,
+        setSize,
+        posInSet,
+      });
+      if (expanded) buildRows(node.children, collapsed, depth + 1, dirKey, out);
+    }
+  });
+}
 
 export function FileTree({
   files,
@@ -39,7 +116,30 @@ export function FileTree({
   aiPreview,
 }: FileTreeProps) {
   const tree = useMemo(() => buildTree(files), [files]);
-  const viewedCount = files.filter((f) => viewedPaths.has(f.path)).length;
+  const viewedCount = useMemo(
+    () => files.filter((f) => viewedPaths.has(f.path)).length,
+    [files, viewedPaths],
+  );
+
+  // Collapse state intentionally persists across `files` changes (e.g. a background
+  // freshness refetch): a dir the user collapsed stays collapsed on reload. Stale
+  // keys for dirs that no longer exist are harmless — they just sit unused, and any
+  // collapsed dir always has a chevron to re-expand it.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const toggleDir = useCallback((dirKey: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(dirKey)) next.delete(dirKey);
+      else next.add(dirKey);
+      return next;
+    });
+  }, []);
+
+  const rows = useMemo(() => {
+    const out: RenderRow[] = [];
+    buildRows(tree, collapsed, 0, '', out);
+    return out;
+  }, [tree, collapsed]);
 
   const focusByPath = useMemo(() => {
     if (!focusEntries) return null;
@@ -47,6 +147,16 @@ export function FileTree({
     for (const entry of focusEntries) m.set(entry.path, entry.level);
     return m;
   }, [focusEntries]);
+
+  // #214 — synthetic, bottom-pinned horizontal scrollbar. The clipped tree column
+  // (.fileTreeScroll) is shifted via translateX from this bar's scrollLeft, so the bar
+  // (a sticky footer below) is reachable without scrolling the tree to its end. Refs stay
+  // null on the empty/loading render paths below; useTreeHScroll null-guards those.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const hScrollRowRef = useRef<HTMLDivElement>(null);
+  const hScrollRef = useRef<HTMLDivElement>(null);
+  const hScrollSpacerRef = useRef<HTMLDivElement>(null);
+  useTreeHScroll(scrollRef, hScrollRowRef, hScrollRef, hScrollSpacerRef, rows.length > 0, [rows]);
 
   if (files.length === 0) {
     if (isLoading) return null;
@@ -59,137 +169,136 @@ export function FileTree({
   }
 
   return (
-    <div
-      className={`file-tree ${styles.fileTree}`}
-      role="tree"
-      aria-label="File tree"
-      data-testid="file-tree"
-    >
+    <div className={`file-tree ${styles.fileTree}`} data-testid="file-tree">
       <div className={`file-tree-header ${styles.fileTreeHeader}`}>
         Files · {viewedCount}/{files.length} viewed
       </div>
-      <div className={`file-tree-list ${styles.fileTreeList}`}>
-        {tree.map((node) => (
-          <TreeNodeComponent
-            key={nodeKey(node)}
-            node={node}
-            selectedPath={selectedPath}
-            onSelectFile={onSelectFile}
-            viewedPaths={viewedPaths}
-            onToggleViewed={onToggleViewed}
-            depth={0}
-            focusByPath={focusByPath}
-            aiPreview={aiPreview}
-          />
-        ))}
+      <div className={styles.fileTreeBody}>
+        <div
+          ref={scrollRef}
+          className={`file-tree-scroll ${styles.fileTreeScroll}`}
+          role="tree"
+          aria-label="File tree"
+        >
+          <div className={`file-tree-inner ${styles.fileTreeInner}`}>
+            {rows.map((row) =>
+              row.kind === 'dir' ? (
+                <DirCell key={row.key} row={row} onToggle={toggleDir} />
+              ) : (
+                <FileCell
+                  key={row.key}
+                  row={row}
+                  isSelected={selectedPath === row.node.path}
+                  isViewed={viewedPaths.has(row.node.path)}
+                  onSelectFile={onSelectFile}
+                  focusLevel={focusByPath?.get(row.node.path) ?? null}
+                  aiPreview={aiPreview}
+                />
+              ),
+            )}
+          </div>
+        </div>
+        {/* Checkbox column — a separate object that never scrolls horizontally, so the
+            checkboxes stay fixed while names scroll. It shares the outer pane's vertical
+            scroll with the tree (plain content-height siblings), so no border/seam and no
+            JS sync: the two columns read as one surface. */}
+        <div
+          className={`file-tree-check-col ${styles.fileTreeCheckCol}`}
+          role="group"
+          aria-label="Mark files viewed"
+        >
+          {rows.map((row) =>
+            row.kind === 'file' ? (
+              <CheckSlot
+                key={row.key}
+                node={row.node}
+                isViewed={viewedPaths.has(row.node.path)}
+                onToggleViewed={onToggleViewed}
+              />
+            ) : (
+              <div key={row.key} className={styles.fileTreeCheckSlot} aria-hidden="true" />
+            ),
+          )}
+        </div>
+      </div>
+      {/* #214 — synthetic horizontal scrollbar, pinned to the bottom of the visible tree
+          pane. A sticky footer OUTSIDE the content-height tree body (so it stays reachable
+          without scrolling the tree to its end), mirroring .fileTreeBody's two-column
+          layout so the bar aligns under .fileTreeScroll and the thumb proportion stays
+          honest. aria-hidden + non-tabbable, matching DiffPane's .diffHScroll: it is a
+          pointer/trackpad affordance; full names reach assistive tech via the row title.
+          useTreeHScroll toggles `display` so it shows only when the tree overflows. */}
+      <div
+        ref={hScrollRowRef}
+        className={`file-tree-hscroll-row ${styles.fileTreeHScrollRow}`}
+        aria-hidden="true"
+      >
+        <div
+          ref={hScrollRef}
+          className={`file-tree-hscroll ${styles.fileTreeHScroll}`}
+          data-testid="file-tree-hscroll"
+        >
+          <div ref={hScrollSpacerRef} className={styles.fileTreeHScrollSpacer} />
+        </div>
+        <div className={styles.fileTreeHScrollSpacerCol} />
       </div>
     </div>
   );
 }
 
-function nodeKey(node: TreeNode): string {
-  return node.kind === 'file' ? (node as FileTreeNode).path : (node as DirectoryTreeNode).name;
-}
-
-function TreeNodeComponent({
-  node,
-  selectedPath,
+function FileCell({
+  row,
+  isSelected,
+  isViewed,
   onSelectFile,
-  viewedPaths,
-  onToggleViewed,
-  depth,
-  focusByPath,
+  focusLevel,
   aiPreview,
 }: {
-  node: TreeNode;
-  selectedPath: string | null;
+  row: FileRow;
+  isSelected: boolean;
+  isViewed: boolean;
   onSelectFile: (path: string) => void;
-  viewedPaths: Set<string>;
-  onToggleViewed: (path: string) => void;
-  depth: number;
-  focusByPath: Map<string, FocusLevel> | null;
+  focusLevel: FocusLevel | null;
   aiPreview: boolean;
 }) {
-  if (node.kind === 'file') {
-    return (
-      <FileNodeComponent
-        node={node}
-        selectedPath={selectedPath}
-        onSelectFile={onSelectFile}
-        viewedPaths={viewedPaths}
-        onToggleViewed={onToggleViewed}
-        depth={depth}
-        focusByPath={focusByPath}
-        aiPreview={aiPreview}
-      />
-    );
-  }
-  return (
-    <DirectoryNodeComponent
-      node={node}
-      selectedPath={selectedPath}
-      onSelectFile={onSelectFile}
-      viewedPaths={viewedPaths}
-      onToggleViewed={onToggleViewed}
-      depth={depth}
-      focusByPath={focusByPath}
-      aiPreview={aiPreview}
-    />
-  );
-}
-
-function FileNodeComponent({
-  node,
-  selectedPath,
-  onSelectFile,
-  viewedPaths,
-  onToggleViewed,
-  depth,
-  focusByPath,
-  aiPreview,
-}: {
-  node: FileTreeNode;
-  selectedPath: string | null;
-  onSelectFile: (path: string) => void;
-  viewedPaths: Set<string>;
-  onToggleViewed: (path: string) => void;
-  depth: number;
-  focusByPath: Map<string, FocusLevel> | null;
-  aiPreview: boolean;
-}) {
-  const isSelected = selectedPath === node.path;
-  const isViewed = viewedPaths.has(node.path);
-  const focusLevel = focusByPath?.get(node.path) ?? null;
-
-  // onChange (not onClick + readOnly) so Space-key activation toggles the
-  // checkbox consistently across browsers (claude[bot] iter 1 #10). The
-  // stopPropagation guard still applies to the click path so toggling the
-  // checkbox does not bubble to the row-level onSelectFile handler.
-  const handleCheckboxClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-  }, []);
-  const handleCheckboxChange = useCallback(() => {
-    onToggleViewed(node.path);
-  }, [onToggleViewed, node.path]);
-
+  const node = row.node;
   return (
     <div
-      className={`file-tree-file${isSelected ? ' file-tree-file--selected' : ''} ${styles.fileTreeFile}${isSelected ? ` ${styles.fileTreeFileSelected}` : ''}`}
+      className={`file-tree-file${isSelected ? ' file-tree-file--selected' : ''}${
+        isViewed ? ' file-tree-file--viewed' : ''
+      } ${styles.fileTreeFile}${isSelected ? ` ${styles.fileTreeFileSelected}` : ''}${
+        isViewed ? ` ${styles.fileTreeFileViewed}` : ''
+      }`}
       role="treeitem"
+      aria-level={row.depth + 1}
+      aria-setsize={row.setSize}
+      aria-posinset={row.posInSet}
+      aria-selected={isSelected}
       data-testid="files-tab-tree-row"
       data-selected={isSelected}
       data-path={node.path}
-      style={{ paddingLeft: `${(depth + 1) * 16}px` }}
+      style={{ paddingLeft: `${(row.depth + 1) * INDENT_PER_LEVEL}px` }}
       onClick={() => onSelectFile(node.path)}
       tabIndex={isSelected ? 0 : -1}
     >
       <span
         className={`file-status file-status--${node.file.status} ${styles.fileStatus} ${FILE_STATUS_MODULE[node.file.status]}`}
+        aria-hidden="true"
       >
         {STATUS_LABELS[node.file.status] ?? '?'}
       </span>
-      <span className={`file-tree-file-name ${styles.fileTreeFileName}`}>{node.name}</span>
-      <span className={`file-tree-spacer ${styles.fileTreeSpacer}`} />
+      {/* sr-only status word BEFORE the name; trailing space separates it from the filename when spoken */}
+      <span className="sr-only">{`${STATUS_WORD[node.file.status] ?? 'Unknown'} `}</span>
+      <span
+        title={node.name}
+        className={`file-tree-file-name ${styles.fileTreeFileName}${
+          node.file.status === 'deleted'
+            ? ` file-tree-file-name--deleted ${styles.fileTreeFileNameDeleted}`
+            : ''
+        }`}
+      >
+        {node.name}
+      </span>
       <span
         className={`file-tree-ai ${styles.fileTreeAi}`}
         data-on={aiPreview ? '1' : '0'}
@@ -205,75 +314,88 @@ function FileNodeComponent({
       {focusLevel && focusLevel !== 'low' && (
         <span className="sr-only">{` AI focus: ${focusLevel}`}</span>
       )}
+    </div>
+  );
+}
+
+function CheckSlot({
+  node,
+  isViewed,
+  onToggleViewed,
+}: {
+  node: FileTreeNode;
+  isViewed: boolean;
+  onToggleViewed: (path: string) => void;
+}) {
+  // onChange (not onClick + readOnly) so Space-key activation toggles consistently
+  // across browsers. The checkbox lives in its own column, so no row-level click to
+  // stop from bubbling.
+  const handleChange = useCallback(() => {
+    onToggleViewed(node.path);
+  }, [onToggleViewed, node.path]);
+
+  return (
+    <div className={styles.fileTreeCheckSlot}>
       <input
         type="checkbox"
         checked={isViewed}
-        onChange={handleCheckboxChange}
-        onClick={handleCheckboxClick}
-        aria-label={`Viewed ${node.name}`}
+        onChange={handleChange}
+        aria-label={`Viewed ${node.path}`}
         className={`file-tree-viewed-checkbox ${styles.fileTreeViewedCheckbox}`}
       />
     </div>
   );
 }
 
-function DirectoryNodeComponent({
-  node,
-  selectedPath,
-  onSelectFile,
-  viewedPaths,
-  onToggleViewed,
-  depth,
-  focusByPath,
-  aiPreview,
-}: {
-  node: DirectoryTreeNode;
-  selectedPath: string | null;
-  onSelectFile: (path: string) => void;
-  viewedPaths: Set<string>;
-  onToggleViewed: (path: string) => void;
-  depth: number;
-  focusByPath: Map<string, FocusLevel> | null;
-  aiPreview: boolean;
-}) {
-  const [expanded, setExpanded] = useState(true);
-
+function DirCell({ row, onToggle }: { row: DirRow; onToggle: (dirKey: string) => void }) {
+  const node = row.node;
+  const { expanded } = row;
   return (
-    <div className={`file-tree-dir ${styles.fileTreeDir}`} role="treeitem" aria-expanded={expanded}>
-      <div
-        className={`file-tree-dir-header ${styles.fileTreeDirHeader}`}
-        style={{ paddingLeft: `${depth * 16}px` }}
+    <div
+      className={`file-tree-dir-header ${styles.fileTreeDirHeader}`}
+      role="treeitem"
+      aria-level={row.depth + 1}
+      aria-setsize={row.setSize}
+      aria-posinset={row.posInSet}
+      aria-expanded={expanded}
+      style={{ paddingLeft: `${row.depth * INDENT_PER_LEVEL}px` }}
+    >
+      <button
+        className={`file-tree-dir-toggle ${styles.fileTreeDirToggle}`}
+        onClick={() => onToggle(row.dirKey)}
+        aria-label={`Toggle ${node.name}`}
+        aria-expanded={expanded}
       >
-        <button
-          className={`file-tree-dir-toggle ${styles.fileTreeDirToggle}`}
-          onClick={() => setExpanded((e) => !e)}
-          aria-label={`Toggle ${node.name}`}
+        <span
+          className={`file-tree-chevron${expanded ? ' file-tree-chevron--open' : ''} ${styles.fileTreeChevron}${expanded ? ` ${styles.fileTreeChevronOpen}` : ''}`}
         >
-          <span
-            className={`file-tree-chevron${expanded ? ' file-tree-chevron--open' : ''} ${styles.fileTreeChevron}${expanded ? ` ${styles.fileTreeChevronOpen}` : ''}`}
-          >
-            ▸
-          </span>
-        </button>
-        <span className={`file-tree-dir-name ${styles.fileTreeDirName}`}>{node.name}</span>
-      </div>
-      {expanded && (
-        <div role="group">
-          {node.children.map((child) => (
-            <TreeNodeComponent
-              key={nodeKey(child)}
-              node={child}
-              selectedPath={selectedPath}
-              onSelectFile={onSelectFile}
-              viewedPaths={viewedPaths}
-              onToggleViewed={onToggleViewed}
-              depth={depth + 1}
-              focusByPath={focusByPath}
-              aiPreview={aiPreview}
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+            <path
+              d="M6 4l4 4-4 4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
             />
-          ))}
-        </div>
-      )}
+          </svg>
+        </span>
+        <svg
+          viewBox="0 0 16 16"
+          width="16"
+          height="16"
+          aria-hidden="true"
+          className={`file-tree-folder-icon ${styles.fileTreeFolderIcon}`}
+        >
+          <path
+            d="M1.5 4.5a1 1 0 0 1 1-1H6l1.5 1.5h6a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"
+            fill="currentColor"
+          />
+        </svg>
+      </button>
+      <span className={`file-tree-dir-name ${styles.fileTreeDirName}`} title={node.name}>
+        {node.name}
+      </span>
     </div>
   );
 }

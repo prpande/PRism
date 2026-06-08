@@ -31,7 +31,7 @@
 .commentMeta {
   display: flex;
   gap: var(--s-2);
-  align-items: baseline;
+  align-items: center;
   font-size: var(--text-xs);
 }
 .commentAuthor {

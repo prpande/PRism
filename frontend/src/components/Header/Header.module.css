@@ -17,16 +17,55 @@
   border-radius: 6px;
   text-decoration: none;
   color: var(--text-2);
+  transition:
+    color var(--t-fast) var(--ease-out),
+    background var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out);
+}
+/* Hover / keyboard-focus: a subtle accent GLOW (accent text + faint tint + soft
+   outer shadow) instead of the global a:hover underline (#120). Uses only the
+   existing --accent / --accent-ring tokens, so it tracks every accent + theme.
+   Specificity (0,2,0) beats the global `a:hover` (0,1,1), killing the underline. */
+.tab:hover,
+.tab:focus-visible {
+  text-decoration: none;
+  /* --accent-hover (not --accent): on the faint tint, plain --accent text only
+     reaches ~4.1–4.3:1 in light theme (below WCAG AA 4.5 for 14px labels) across
+     all three accents; --accent-hover is darker in light / lighter in dark, which
+     lifts every accent to ~5.3–5.6:1 light and higher in dark. */
+  color: var(--accent-hover);
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+  box-shadow: 0 0 12px -2px var(--accent-ring);
 }
 .tabActive {
   composes: tab;
-  background: var(--surface-2);
+  /* Selected tab: a soft solid accent tint (a steadier fill than the hover glow)
+     so "selected" reads distinct from "hovering". */
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
   color: var(--text-1);
   font-weight: 500;
+}
+/* The selected tab keeps its tint when hovered — don't stack the hover glow on
+   top, so the active state stays stable. Placed after .tab:hover (equal
+   specificity) so source order wins. */
+.tabActive:hover,
+.tabActive:focus-visible {
+  color: var(--text-1);
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+  box-shadow: none;
+}
+/* Respect "reduce motion" — suppress the tab transition (mirrors the same guard
+   on PrTabStrip's .tab so the top nav and PR-tab strip behave consistently). */
+@media (prefers-reduced-motion: reduce) {
+  .tab {
+    transition: none;
+  }
 }
 .spacer {
   flex: 1;
 }
+/* Styling for the gated ⌘K search input — only live when SEARCH_PALETTE_ENABLED
+   (Header.tsx) is flipped on; retained alongside that flag, not dead styling. */
 .search {
   height: 32px;
   padding: 0 12px;
@@ -39,6 +78,26 @@
 .search:disabled {
   opacity: 0.7;
   cursor: not-allowed;
+}
+
+.gear {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-2);
+  color: var(--text-2);
+}
+.gear:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+.gear:focus-visible {
+  outline: 2px solid var(--accent-ring);
+}
+.gearOn {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 /* ----------------------------------------------------------------------------

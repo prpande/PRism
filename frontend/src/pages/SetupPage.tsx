@@ -8,38 +8,8 @@ import { apiClient, ApiError } from '../api/client';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../components/Toast';
 import { replaceToken } from '../api/replaceToken';
+import { connectErrorMessage, replaceErrorMessage } from '../components/Setup/tokenErrorCopy';
 import type { ConnectResponse } from '../api/types';
-
-// Maps AuthReplaceError.error codes (PRism.Web/Endpoints/AuthEndpoints.cs) to
-// user-facing copy. Centralized so the SetupPage render path stays slim. Codes
-// are the wire contract from /api/auth/replace + the lowercased AuthValidationError
-// enum names (`invalidtoken`, `insufficientscopes`, `networkerror`, `dnserror`,
-// `servererror`). The `submit-in-flight` copy is taken verbatim from spec § 3.2.1
-// step 8 (design.md:240); the spec prose does NOT name the held prRef in the
-// user-facing string, so the body.prRef field on a 409 is intentionally unused
-// here (it's still surfaced in the structured-log forensic record).
-function replaceErrorMessage(code: string | undefined): string {
-  switch (code) {
-    case 'submit-in-flight':
-      return 'A submit started during your token paste. Try Replace again in a moment.';
-    case 'pat-required':
-      return 'Paste your new token before continuing.';
-    case 'invalid-json':
-      return 'Internal error while parsing the token. Please refresh and try again.';
-    case 'invalidtoken':
-    case 'validation-failed':
-      return 'GitHub rejected this token. Check the scopes and try again.';
-    case 'insufficientscopes':
-      return "Your token doesn't have the required scopes. Regenerate with repo / read:org and try again.";
-    case 'networkerror':
-    case 'dnserror':
-      return 'Network error reaching GitHub. Check your connection, then try again.';
-    case 'servererror':
-      return 'GitHub returned a server error. Try again in a moment.';
-    default:
-      return code ? `Validation failed (${code}).` : 'Validation failed.';
-  }
-}
 
 export function SetupPage() {
   const { authState, refetch } = useAuth();
@@ -61,7 +31,7 @@ export function SetupPage() {
     try {
       const result = await apiClient.post<ConnectResponse>('/api/auth/connect', { pat });
       if (!result.ok) {
-        setError(result.detail ?? result.error ?? 'Validation failed.');
+        setError(connectErrorMessage(result.error));
         return;
       }
       if (result.warning === 'no-repos-selected') {
@@ -76,7 +46,16 @@ export function SetupPage() {
       await refetch();
       navigate('/');
     } catch (e) {
-      setError((e as Error).message);
+      if (e instanceof ApiError) {
+        const body = e.body;
+        const code =
+          typeof body === 'object' && body !== null
+            ? (body as { error?: unknown }).error
+            : undefined;
+        setError(connectErrorMessage(typeof code === 'string' ? code : undefined));
+      } else {
+        setError(connectErrorMessage('networkerror'));
+      }
     } finally {
       setBusy(false);
     }
@@ -175,8 +154,10 @@ export function SetupPage() {
             host={authState.host}
             onSubmit={isReplaceMode ? onReplace : onConnect}
             error={error}
+            onErrorClear={() => setError(undefined)}
             busy={busy}
             isReplaceMode={isReplaceMode}
+            showBackToWelcome={!authState.hasToken}
           />
         </div>
       </div>

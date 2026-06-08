@@ -3,6 +3,7 @@ import { sendPatch } from '../../../api/draft';
 import type { PrReference, ReviewSessionDto, DraftSuggestion } from '../../../api/types';
 import { StaleDraftRow } from './StaleDraftRow';
 import type { DraftLike } from '../draftKinds';
+import type { PrTabId } from '../PrSubTabStrip';
 import { useAiGate } from '../../../hooks/useAiGate';
 import { useAiDraftSuggestions } from '../../../hooks/useAiDraftSuggestions';
 import styles from './UnresolvedPanel.module.css';
@@ -19,6 +20,11 @@ interface UnresolvedPanelProps {
   // verdict-confirm + StaleDraftRow actions so this tab cannot race the
   // claiming tab's edits.
   readOnly?: boolean;
+  // Threaded down to each StaleDraftRow's "Show me" / "Edit" CTA. Passed
+  // as an explicit prop (not read from PrDetailContext) because this panel
+  // is always-visible chrome that mounts BEFORE the data-gated provider —
+  // see StaleDraftRow's prop comment + keep-alive deferrals § Step 3b.
+  onSelectSubTab: (tab: PrTabId) => void;
 }
 
 interface PanelCounts {
@@ -70,6 +76,7 @@ export function UnresolvedPanel({
   session,
   onMutated,
   readOnly = false,
+  onSelectSubTab,
 }: UnresolvedPanelProps) {
   const counts = useMemo(() => computeCounts(session), [session]);
 
@@ -173,6 +180,7 @@ export function UnresolvedPanel({
             prRef={prRef}
             draft={d}
             onMutated={onMutated}
+            onSelectSubTab={onSelectSubTab}
             aiSuggestion={
               d.kind === 'comment' && d.data.filePath != null && d.data.lineNumber != null
                 ? (suggestionFor?.get(`${d.data.filePath}:${d.data.lineNumber}`) ?? null)

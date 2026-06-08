@@ -1,27 +1,37 @@
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { Logo } from './Logo';
 import { WindowControls } from './WindowControls';
+import { GearIcon } from '../PrDetail/FilesTab/diffIcons';
+import { HelpIcon } from './HelpIcon';
 import styles from './Header.module.css';
 
 interface HeaderProps {
-  // App's useAuth() is the single source — this prop avoids a second
-  // useAuth() instance here that would duplicate the focus listener
-  // and the /api/auth/state GET on every focus.
-  hasToken: boolean;
+  // The gate is "authenticated and usable", not merely "has a token": a
+  // rejected-token session (authInvalidated) still has a token but is bounced to
+  // /setup, so its nav would only bounce. App computes
+  // isAuthed = hasToken && !authInvalidated and passes it here (#130).
+  isAuthed: boolean;
 }
 
-// Spec § 2.1 three-tab active-state:
+// Active-state (authed nav only — Inbox + Settings):
 //   Inbox    → pathname === '/' || '/inbox'
 //   Settings → pathname === '/settings' || (pathname === '/setup' && ?replace=…)
-//   Setup    → pathname === '/setup' && !?replace=…
 // Replace-token UX is a Settings affordance, so /setup?replace=1 keeps Settings
-// active and de-activates Setup. Plain Link (not NavLink) is used so the custom
-// query-param-aware predicate is the sole driver of aria-current — NavLink's
-// built-in path-matching would mark /setup active even when ?replace=1 is set.
-// The `·` first-run indicator on Setup communicates first-run-needed without
-// altering tab weight (no token yet).
-export function Header({ hasToken }: HeaderProps) {
-  const { pathname } = useLocation();
+// active. There is no standalone Setup tab (#130): first-run hides the nav, and
+// re-running setup lives in Settings → Auth ("Replace token").
+//
+// The global ⌘K search palette is not built yet (#119). Rather than ship a
+// permanently-disabled box with a not-allowed cursor, the markup is kept but
+// gated behind this flag so nothing dead renders. When the palette lands, ALL
+// THREE of these are required — flipping the flag alone would just re-introduce
+// the dead control #119 removed: (1) set this to true, (2) remove `disabled`,
+// (3) wire the ⌘K handler. It renders only off the Inbox, where the central
+// "Paste a PR URL…" box already covers the same need.
+const SEARCH_PALETTE_ENABLED = false;
+
+export function Header({ isAuthed }: HeaderProps) {
+  const location = useLocation();
+  const { pathname } = location;
   const [searchParams] = useSearchParams();
   const isReplaceMode = searchParams.has('replace');
 
@@ -30,46 +40,68 @@ export function Header({ hasToken }: HeaderProps) {
     pathname === '/settings' ||
     pathname.startsWith('/settings/') ||
     (pathname === '/setup' && isReplaceMode);
-  const setupActive = pathname === '/setup' && !isReplaceMode;
-
-  const needsFirstRun = !hasToken;
+  const helpActive = pathname === '/help';
 
   const classFor = (active: boolean) => (active ? styles.tabActive : styles.tab);
 
   return (
     <header className={styles.header}>
-      <Logo />
-      <nav className={styles.tabs}>
+      {/* #215: show the "PRism" wordmark in the empty no-nav header (first-run
+          /setup and rejected-token re-auth), but NOT on /welcome, whose hero
+          already names the product (avoids a double "PRism" on one screen). When
+          authed the nav owns the space, so the mark stands alone. The visible-
+          text ⇄ alt coupling lives inside Logo. */}
+      <Logo showName={!isAuthed && pathname !== '/welcome'} />
+      {/* #130: the nav tab strip renders only when authed. During first-run and
+          rejected-token re-auth the tabs would only bounce back to /setup, so the
+          <nav> element is omitted entirely (an empty navigation landmark is an a11y
+          smell). Logo + WindowControls remain in every state — hiding the desktop
+          close button would trap the user. */}
+      {isAuthed && (
+        <nav className={styles.tabs}>
+          <Link
+            to="/"
+            className={classFor(inboxActive)}
+            aria-current={inboxActive ? 'page' : undefined}
+          >
+            Inbox
+          </Link>
+        </nav>
+      )}
+      {/* Unconditional — owns the middle so the Logo stays left-flush in the
+          no-nav state. Must NOT be wrapped in the {isAuthed && …} block. */}
+      <div className={styles.spacer} data-testid="header-spacer" />
+      {SEARCH_PALETTE_ENABLED && !inboxActive && (
+        <input
+          className={styles.search}
+          placeholder="Jump to PR or file… ⌘K"
+          title="Search palette — v1.1"
+          disabled
+          aria-label="Global search (placeholder)"
+        />
+      )}
+      {isAuthed && (
         <Link
-          to="/"
-          className={classFor(inboxActive)}
-          aria-current={inboxActive ? 'page' : undefined}
+          to="/help"
+          state={{ backgroundLocation: location }}
+          className={helpActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+          aria-label="Help"
+          aria-current={helpActive ? 'page' : undefined}
         >
-          Inbox
+          <HelpIcon />
         </Link>
+      )}
+      {isAuthed && (
         <Link
-          to="/settings"
-          className={classFor(settingsActive)}
+          to="/settings/appearance"
+          state={{ backgroundLocation: location }}
+          className={settingsActive ? `${styles.gear} ${styles.gearOn}` : styles.gear}
+          aria-label="Settings"
           aria-current={settingsActive ? 'page' : undefined}
         >
-          Settings
+          <GearIcon />
         </Link>
-        <Link
-          to="/setup"
-          className={classFor(setupActive)}
-          aria-current={setupActive ? 'page' : undefined}
-        >
-          {needsFirstRun ? '· Setup' : 'Setup'}
-        </Link>
-      </nav>
-      <div className={styles.spacer} />
-      <input
-        className={styles.search}
-        placeholder="Jump to PR or file… ⌘K"
-        title="Search palette — v1.1"
-        disabled
-        aria-label="Global search (placeholder)"
-      />
+      )}
       {/* Desktop shell only — renders nothing in the browser. The theme/accent/AI
           quick toggles that used to live here were removed (they're in Settings);
           the saved-appearance apply-on-load they also did now lives in the

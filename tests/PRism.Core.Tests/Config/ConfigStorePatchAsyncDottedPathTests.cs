@@ -1,5 +1,7 @@
+using System.Text.Json;
 using FluentAssertions;
 using PRism.Core.Config;
+using PRism.Core.Json;
 using PRism.Core.Tests.TestHelpers;
 using Xunit;
 
@@ -159,6 +161,9 @@ public class ConfigStorePatchAsyncDottedPathTests
         { "density", null },
         { "density", true },
         { "density", 5 },
+        { "contentScale", null },
+        { "contentScale", true },
+        { "contentScale", 5 },
     };
 
     [Theory]
@@ -222,6 +227,49 @@ public class ConfigStorePatchAsyncDottedPathTests
         store.Current.Ui.AiPreview.Should().BeTrue();
     }
 
+    // #135: contentScale is a string-typed `ui.*` key alongside theme/accent/density.
+    // Round-trips all five legal values; enum-membership is NOT enforced server-side
+    // (Deviation 6 — same gap as theme/accent/density).
+    [Theory]
+    [InlineData("xs")]
+    [InlineData("s")]
+    [InlineData("m")]
+    [InlineData("l")]
+    [InlineData("xl")]
+    public async Task PatchAsync_ContentScaleValidString_PersistsAndReadsBack(string value)
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(
+            new Dictionary<string, object?> { ["contentScale"] = value },
+            CancellationToken.None);
+
+        store.Current.Ui.ContentScale.Should().Be(value);
+    }
+
+    // #135: a config.json written before the field existed must load with the
+    // parameter default ("m"). Same STJ record-positional-default path as density.
+    [Fact]
+    public async Task InitAsync_LegacyConfigWithoutContentScale_DefaultsToM()
+    {
+        using var dir = new TempDataDir();
+        var path = Path.Combine(dir.Path, "config.json");
+        await File.WriteAllTextAsync(path, """
+            {
+              "ui": { "theme": "dark", "accent": "amber", "ai-preview": true, "density": "compact" }
+            }
+            """);
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Ui.ContentScale.Should().Be("m");
+        store.Current.Ui.Density.Should().Be("compact");
+        store.Current.Ui.Theme.Should().Be("dark");
+        store.Current.Ui.AiPreview.Should().BeTrue();
+    }
+
     [Fact]
     public async Task PatchAsync_BooleanKey_NullValue_DoesNotSilentlyFlipOff()
     {
@@ -273,5 +321,25 @@ public class ConfigStorePatchAsyncDottedPathTests
         store.Current.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         store.Current.Inbox.Sections.Mentioned.Should().BeTrue();
         store.Current.Inbox.Sections.CiFailing.Should().BeTrue();
+    }
+
+    // #133 inbox group-by-repo: RecentlyClosedWindowDays is a new trailing-defaulted
+    // parameter on InboxConfig (default 14). An existing config.json without this field
+    // must deserialize with the default so existing users are unaffected.
+    [Fact]
+    public void LegacyConfig_WithoutRecentlyClosedWindowDays_DefaultsTo14()
+    {
+        const string json = """
+        {
+          "inbox": {
+            "deduplicate": true,
+            "sections": { "review-requested": true },
+            "show-hidden-scope-footer": true
+          }
+        }
+        """;
+        var options = JsonSerializerOptionsFactory.Storage;
+        var cfg = JsonSerializer.Deserialize<AppConfig>(json, options);
+        cfg!.Inbox.RecentlyClosedWindowDays.Should().Be(14);
     }
 }

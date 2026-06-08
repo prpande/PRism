@@ -25,11 +25,10 @@
   color: var(--text-1);
 }
 .diffPaneLoading {
-  /* D36 — JSX-rendered `<span>Loading…</span>` conditional on isLoading.
-     CSS-generated content via ::after was rejected for WCAG 2.1 F87
-     (CSS content not announced by screen readers). */
+  /* #125 — layout hook for the <Spinner> in the diff-pane header (formerly a
+     JSX `<span>Loading…</span>`; the spinner keeps a real sr-only label, so the
+     WCAG 2.1 F87 concern about CSS-generated content still does not apply). */
   margin-left: auto;
-  font-size: var(--text-xs);
 }
 .diffPanePath {
   font-family: var(--font-mono);
@@ -47,6 +46,9 @@
   width: 100%;
   border-collapse: collapse;
   font-family: var(--font-mono);
+  /* #135: content font-size scaling is applied on the `.diff-line` <tr> (tokens.css),
+     NOT here — each <td> inherits from the nearer <tr>, which would shadow a value set
+     on the table. Keep the base token here for the table baseline. */
   font-size: var(--text-sm);
   line-height: 1.55;
 }
@@ -76,6 +78,61 @@
   padding: 0 var(--s-2);
   white-space: pre;
   overflow: visible;
+}
+
+/* #115 — locked side-by-side horizontal scroll (no per-line scrollbars).
+
+   Scroll mode (default): the split table stays `table-layout: fixed` (50/50
+   panes, below). Each content cell CLIPS its overflow (`overflow: hidden`), so
+   a too-wide line shows no per-cell scrollbar. A single synthetic scrollbar
+   (`.diffHScroll`, rendered by DiffPane) drives a uniform `transform: translateX`
+   shift of every content cell in lockstep via useLockedPaneScroll, so old and
+   new of the SAME line always show the same columns — the user tracks a change
+   without the two halves drifting apart. These split-scroll rules (`overflow: hidden`,
+   `table-layout: fixed`) don't apply to unified mode, which keeps its
+   single-column body scroll. (The wrap-mode rule below, however, DOES apply to
+   unified `.diffContent` cells when the toggle is on.)
+
+   Wrap mode (FilesTab toolbar toggle, root carries `diff-pane--wrap`): long
+   lines soft-wrap within their pane instead of scrolling — in split AND unified. */
+:global(.diff-pane--split:not(.diff-pane--wrap)) .diffContent {
+  overflow: hidden;
+}
+/* Horizontal scroll = a uniform geometric shift of every line, driven by
+   useLockedPaneScroll through --diff-hscroll. transform: translateX moves the
+   whole rendered line box by exactly the offset, so short and long lines shift
+   in lockstep and old/new of the same line stay column-aligned. (Was text-indent,
+   which only offsets the *first line's start* and rendered raggedly across
+   variable-width lines — #191 validation.) */
+:global(.diff-pane--split:not(.diff-pane--wrap)) .diffContent > * {
+  display: inline-block;
+  white-space: pre;
+  transform: translateX(calc(var(--diff-hscroll, 0px) * -1));
+}
+:global(.diff-pane--wrap) .diffContent {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Single synthetic horizontal scrollbar for split scroll-mode (one control for
+   both panes). useLockedPaneScroll sizes the inner spacer to the content
+   overflow and drives `--diff-hscroll` from this bar's scrollLeft, which every
+   content cell reads via `transform: translateX` — so dragging it shifts old +
+   new together. */
+.diffHScroll {
+  /* A flex sibling of the (flex: 1) scrolling body, so it sits permanently at
+     the bottom of the diff pane — always reachable without scrolling to the end
+     of the file. flex-shrink: 0 keeps the body from squeezing it away. The hook
+     toggles `display` so it only appears when a file actually overflows. */
+  flex-shrink: 0;
+  height: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-1);
+}
+.diffHScrollSpacer {
+  height: 1px;
 }
 
 /* Diff-line add/remove tinting lives in tokens.css as GLOBAL rules on the literal
@@ -128,6 +185,9 @@
    matches the existing codebase convention and keeps specificity at
    one class selector per global-class, two with the descendant. */
 
+/* Both split modes use fixed 50/50 columns: scroll mode clips each pane and a
+   synthetic scrollbar drives both in lockstep (see #115 block above); wrap mode
+   wraps within the fixed panes. */
 :global(.diff-pane--split) .diffTable {
   table-layout: fixed;
 }

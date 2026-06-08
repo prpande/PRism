@@ -75,3 +75,114 @@
 .statusClosed {
   color: var(--danger-fg);
 }
+
+/* ---- #128: sub-tab row holds the tabs + the collapse chevron (sibling of the
+   role="tablist", never a child — avoids aria-required-children). ---- */
+.subTabRow {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+/* Assumes PrSubTabStrip is the FIRST child of .subTabRow (it grows; the chevron
+   stays fixed and is pushed right by its own margin-left:auto). If a future
+   element is inserted before the tab strip, give the strip an explicit class and
+   target that instead of :first-child. */
+.subTabRow > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.collapseToggle {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  background: transparent;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  color: var(--text-3);
+  cursor: pointer;
+  transition:
+    color var(--t-fast),
+    background var(--t-fast),
+    border-color var(--t-fast);
+}
+.collapseToggle:hover {
+  color: var(--text-1);
+  background: var(--surface-2);
+}
+.collapseToggle:active {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+/* Focus ring. The outline automatically follows the button's own
+   border-radius (--radius-2 set above), so no radius re-declaration is needed. */
+.collapseToggle:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+.collapseToggle svg {
+  transition: transform var(--t-fast);
+}
+
+/* ---- #128: collapsed state. The meta column reflows to a single row holding
+   the (ellipsized) title + the CI/mergeability chips; read-once fields hide.
+   The chips stay in .prSubtitle — only the non-chip children are hidden — so no
+   JSX restructure is needed (plan deviation from spec A.2). ---- */
+.prHeader[data-collapsed] :global(.pr-meta-repo),
+.prHeader[data-collapsed] .statusMerged,
+.prHeader[data-collapsed] .statusClosed {
+  display: none;
+}
+.prHeader[data-collapsed] :global(.pr-meta) {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.prHeader[data-collapsed] .prTitle {
+  /* Gentle step down from the expanded --text-xl (20px); --text-base (14px)
+     read as too small against the action-row height (#128 review feedback). */
+  font-size: var(--text-lg);
+  margin: 0;
+  max-width: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prHeader[data-collapsed] .prSubtitle {
+  flex: 0 0 auto;
+}
+/* Keep ONLY the CI + mergeability chips; hide author/branch/iterationLabel.
+   .chip-ci / .chip-mergeability are GLOBAL classes (className strings in
+   PrHeader.tsx, no module rule), so they MUST be wrapped in :global() — a bare
+   .chip-ci inside a CSS Module is hashed and matches nothing, which would hide
+   the very chips we want to keep. Same idiom as DiffPane.module.css's
+   :global(.diff-pane--split:not(...)).
+   FOOTGUN: this is an implicit allowlist — ANY new .prSubtitle child that is not
+   .chip-ci / .chip-mergeability will hide in collapsed mode. Add it to the keep
+   list here if a future child must stay visible when collapsed. */
+.prHeader[data-collapsed] .prSubtitle > :not(:global(.chip-ci)):not(:global(.chip-mergeability)) {
+  display: none;
+}
+.prHeader[data-collapsed] .collapseToggle svg {
+  transform: rotate(180deg);
+}
+
+/* Motion: only the chevron rotation animates (the collapse itself is an instant
+   reflow — see plan). Suppress the rotation under reduced-motion. */
+@media (prefers-reduced-motion: reduce) {
+  .collapseToggle svg {
+    transition: none;
+  }
+}
+
+.subtitleAuthor {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

@@ -52,7 +52,8 @@ internal sealed class FakePrReader : IPrReader
                 IsClosed: _store.IsClosed,
                 OpenedAt: _store.Now.AddHours(-1),
                 MergedAt: mergedAt,
-                ClosedAt: closedAt);
+                ClosedAt: closedAt,
+                HtmlUrl: "https://github.com/acme/api/pull/123");
             var detail = new PrDetailDto(
                 Pr: pr,
                 ClusteringQuality: ClusteringQuality.Ok,
@@ -96,9 +97,18 @@ internal sealed class FakePrReader : IPrReader
             {
                 new DiffHunk(OldStart: 0, OldLines: 0, NewStart: 1, NewLines: newLines.Length, Body: sb.ToString()),
             };
+            var files = new List<FileChange> { new("src/Calc.cs", FileChangeStatus.Modified, hunks) };
+            // #214 e2e-only: append trivial single-line FileChanges so the file-TREE overflows
+            // horizontally. Each gets a one-line `added` hunk so selecting it renders non-blank.
+            foreach (var path in _store.ExtraTreeFiles)
+            {
+                var body = $"@@ -0,0 +1,1 @@\n+// {path}\n";
+                var extraHunks = new[] { new DiffHunk(OldStart: 0, OldLines: 0, NewStart: 1, NewLines: 1, Body: body) };
+                files.Add(new FileChange(path, FileChangeStatus.Added, extraHunks));
+            }
             return Task.FromResult(new DiffDto(
                 Range: $"{range.BaseSha}..{range.HeadSha}",
-                Files: new[] { new FileChange("src/Calc.cs", FileChangeStatus.Modified, hunks) },
+                Files: files.ToArray(),
                 Truncated: false));
         }
     }

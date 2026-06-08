@@ -17,11 +17,11 @@ public sealed record AppConfig(
 {
     public static AppConfig Default => new(
         new PollingConfig(30, 120),
-        new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true, true), true),
+        new InboxConfig(true, new InboxSectionsConfig(true, true, true, true, true, true), true, 14),
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
-        new UiConfig("system", "indigo", false, "comfortable"),
+        new UiConfig("system", "indigo", false, "comfortable", "m"),
         new GithubConfig(new[]
         {
             new GithubAccountConfig(
@@ -37,7 +37,8 @@ public sealed record PollingConfig(int ActivePrSeconds, int InboxSeconds);
 public sealed record InboxConfig(
     bool Deduplicate,
     InboxSectionsConfig Sections,
-    bool ShowHiddenScopeFooter);
+    bool ShowHiddenScopeFooter,
+    int RecentlyClosedWindowDays = 14);
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,
@@ -48,7 +49,7 @@ public sealed record InboxSectionsConfig(
 public sealed record ReviewConfig(bool BlockSubmitOnStaleDrafts, bool RequireVerdictReconfirmOnNewIteration);
 public sealed record IterationsConfig(int ClusterGapSeconds, bool ClusteringDisabled = false);
 public sealed record LoggingConfig(string Level, bool StateEvents, int StateEventsRetentionFiles);
-public sealed record UiConfig(string Theme, string Accent, bool AiPreview, string Density = "comfortable");
+public sealed record UiConfig(string Theme, string Accent, bool AiPreview, string Density = "comfortable", string ContentScale = "m");
 
 public sealed record GithubConfig(IReadOnlyList<GithubAccountConfig> Accounts)
 {

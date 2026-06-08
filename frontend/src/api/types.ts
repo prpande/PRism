@@ -1,6 +1,7 @@
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'indigo' | 'amber' | 'teal';
 export type Density = 'comfortable' | 'compact';
+export type ContentScale = 'xs' | 's' | 'm' | 'l' | 'xl';
 
 // S6 PR1 widened GET /api/preferences from the flat { theme, accent, aiPreview }
 // shape to a nested { ui, inbox, github } shape (spec § 2.4). UiPreferences is now
@@ -14,6 +15,7 @@ export interface UiPreferences {
   accent: Accent;
   aiPreview: boolean;
   density: Density;
+  contentScale: ContentScale;
 }
 
 export interface InboxSectionsPreferences {
@@ -53,6 +55,10 @@ export interface AiCapabilities {
   inboxRanking: boolean;
 }
 
+// Wire contract for GET /api/capabilities. Retained as the endpoint's response
+// shape: since #221 the SPA derives capabilities from the shared aiPreview
+// preference (useCapabilities) rather than calling this endpoint, but D112 will
+// restore an independent fetch that consumes this type. See useCapabilities.ts.
 export interface CapabilitiesResponse {
   ai: AiCapabilities;
 }
@@ -92,6 +98,7 @@ export interface PrInboxItem {
   reference: PrReference;
   title: string;
   author: string;
+  avatarUrl?: string | null;
   repo: string;
   updatedAt: string;
   pushedAt: string;
@@ -144,6 +151,8 @@ export interface PrDetailPr {
   title: string;
   body: string;
   author: string;
+  avatarUrl?: string | null;
+  htmlUrl?: string | null;
   state: string;
   headSha: string;
   baseSha: string;
@@ -179,6 +188,7 @@ export interface IterationDto {
 export interface IssueCommentDto {
   id: number;
   author: string;
+  avatarUrl?: string | null;
   createdAt: string;
   body: string;
 }
@@ -186,6 +196,7 @@ export interface IssueCommentDto {
 export interface ReviewCommentDto {
   commentId: string;
   author: string;
+  avatarUrl?: string | null;
   createdAt: string;
   body: string;
   editedAt: string | null;

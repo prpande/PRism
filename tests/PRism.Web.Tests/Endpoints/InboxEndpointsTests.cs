@@ -14,12 +14,13 @@ public class InboxEndpointsTests
 {
     private static InboxSnapshot MakeSnapshot(
         IReadOnlyDictionary<string, IReadOnlyList<PrInboxItem>>? sections = null,
-        IReadOnlyDictionary<string, InboxItemEnrichment>? enrichments = null)
+        IReadOnlyDictionary<string, InboxItemEnrichment>? enrichments = null,
+        DateTimeOffset? refreshedAt = null)
     {
         return new InboxSnapshot(
             sections ?? new Dictionary<string, IReadOnlyList<PrInboxItem>>(),
             enrichments ?? new Dictionary<string, InboxItemEnrichment>(),
-            DateTimeOffset.UtcNow);
+            refreshedAt ?? DateTimeOffset.UtcNow);
     }
 
     private static PrInboxItem MakeItem(string owner = "foo", string repo = "bar", int number = 1) =>
@@ -91,9 +92,14 @@ public class InboxEndpointsTests
         {
             ["foo/bar#1"] = new InboxItemEnrichment("foo/bar#1", null, null),
         };
+        // Pin the snapshot's refresh time to a known instant so the assertion
+        // verifies the endpoint round-trips the stored value exactly, rather than
+        // comparing two independent wall-clock reads — the latter races and trips
+        // BeCloseTo(now, 5s) on a loaded runner (#153).
+        var refreshedAt = DateTimeOffset.UtcNow;
         var fakeOrch = new FakeInboxRefreshOrchestrator
         {
-            Current = MakeSnapshot(items, enrichments),
+            Current = MakeSnapshot(items, enrichments, refreshedAt),
         };
 
         using var factory = new PRismWebApplicationFactory();
@@ -109,7 +115,7 @@ public class InboxEndpointsTests
         body.GetProperty("sections")[0].GetProperty("label").GetString().Should().Be("Review requested");
         body.GetProperty("sections")[0].GetProperty("items").GetArrayLength().Should().Be(1);
         body.GetProperty("enrichments").TryGetProperty("foo/bar#1", out _).Should().BeTrue();
-        body.GetProperty("lastRefreshedAt").GetDateTimeOffset().Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+        body.GetProperty("lastRefreshedAt").GetDateTimeOffset().Should().Be(refreshedAt);
         body.GetProperty("tokenScopeFooterEnabled").GetBoolean().Should().BeTrue();
     }
 

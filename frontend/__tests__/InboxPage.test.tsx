@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { InboxResponse, AiCapabilities, PreferencesResponse } from '../src/api/types';
@@ -148,10 +148,15 @@ function renderPage() {
 describe('InboxPage', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('shows loading state while fetching first snapshot', () => {
+  it('shows the content-shaped skeleton (not a spinner) while fetching first snapshot', () => {
     setHooks({ data: null, isLoading: true });
     renderPage();
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    const skeleton = screen.getByTestId('inbox-skeleton');
+    expect(skeleton).toBeInTheDocument();
+    expect(skeleton).toHaveAttribute('aria-busy', 'true');
+    expect(within(skeleton).getByText(/loading inbox/i)).toBeInTheDocument();
+    // The per-surface loading bar shows alongside the skeleton.
+    expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true');
   });
 
   it('shows error state with retry button when initial fetch fails', () => {
@@ -166,6 +171,16 @@ describe('InboxPage', () => {
     renderPage();
     expect(screen.getByText('Review requested')).toBeInTheDocument();
     expect(screen.getByText('Test PR')).toBeInTheDocument();
+  });
+
+  it('shows the loading bar (not a skeleton) over present data during a background reload', () => {
+    // data present + isLoading: the bar signals the in-flight refresh at the
+    // content top; the content-shaped skeleton must NOT flash over good data.
+    setHooks({ data: sampleData, isLoading: true });
+    renderPage();
+    expect(screen.getByText('Test PR')).toBeInTheDocument();
+    expect(screen.queryByTestId('inbox-skeleton')).toBeNull();
+    expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true');
   });
 
   it('shows empty hint when every section is empty', () => {

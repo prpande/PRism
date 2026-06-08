@@ -54,7 +54,10 @@ public class PrSubmitEndpointsTests
 
         await TestPoll.UntilAsync(() => ctx.Submitter.FinalizeCalled, PipelineWait, "pipeline should finalize");
         await TestPoll.UntilAsync(() => ctx.Bus.Published.OfType<DraftSubmitted>().Any(), PipelineWait, "DraftSubmitted should publish");
-        ctx.Bus.Published.OfType<StateChanged>().Should().NotBeEmpty("a StateChanged fires alongside DraftSubmitted on success");
+        // StateChanged publishes alongside DraftSubmitted but not necessarily in the same tick;
+        // poll for it (like the two lines above) rather than asserting immediately, or the check
+        // races the async publication and flakes on slower/contended runners.
+        await TestPoll.UntilAsync(() => ctx.Bus.Published.OfType<StateChanged>().Any(), PipelineWait, "a StateChanged fires alongside DraftSubmitted on success");
 
         var session = await ctx.LoadSessionAsync("o", "r", 1);
         session!.DraftComments.Should().BeEmpty();
