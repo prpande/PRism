@@ -403,8 +403,8 @@ public class ConfigStorePatchAsyncDottedPathTests
     }
 
     // #275: SectionOrder is a new trailing-defaulted string parameter on InboxConfig.
-    // A config.json written before the field existed must load with the canonical
-    // work-section order. Same STJ record-positional-default path as DefaultSort.
+    // AppConfig.Default (what feature code reads at runtime) must expose the canonical
+    // work-section order — recently-closed is pinned in the frontend, so it is absent here.
     [Fact]
     public void Default_SectionOrder_IsCanonicalWorkOrder()
     {
@@ -412,6 +412,8 @@ public class ConfigStorePatchAsyncDottedPathTests
             .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
     }
 
+    // #275: a config.json written before the field existed must load with the canonical
+    // default via STJ's record-positional-default path (same mechanism as DefaultSort).
     [Fact]
     public async Task InitAsync_LegacyConfigWithoutSectionOrder_DefaultsToCanonical()
     {
