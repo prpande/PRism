@@ -15,6 +15,16 @@ wants `authored-by-me` first; someone who works off pings wants `mentioned` up t
 Today everyone is forced into one ordering. The section order should be a user
 preference so the inbox matches how each person actually works.
 
+**Honest scope note.** PRism is a single-user local app, so the archetypes above are
+really one person's varying modes, not a population. Two affordances already ship on
+this exact surface: per-section **on/off** switches (`InboxPane.tsx`) and **accordion
+collapse** on every section header. Those already cover the dominant "this section is
+irrelevant to me" case — you disable or collapse it. Reorder earns its place only on
+the *residual* case they don't touch: when you want two or more sections **visible**
+but in a **different relative priority** than canonical (e.g. an author who reviews
+*and* authors but wants their own PRs first). That residual case is the justification;
+"hide what I don't want" is already solved and is not what this builds.
+
 This is **ordering/personalization only** — distinct from #262 (the taxonomy itself,
 now shipped), #263 (filters — which PRs show, absorbed into #262), and #219 (the
 repo-grouping toggle — a within-section layout choice).
@@ -102,8 +112,20 @@ order, no migration code needed. (This is distinct from `ReadFromDiskAsync`'s
 null-guard path, which backfills whole null *sub-records*, not individual missing
 scalar fields.)
 
+Note the wire/disk key split, consistent with `DefaultSort`: the **patch/wire** key is
+`inbox.sectionOrder` (camelCase), while the **on-disk** key under the Storage naming
+policy is `inbox.section-order` (kebab). The implementer should not assume they match
+— this mirrors the existing `inbox.defaultSort` ↔ on-disk `default-sort` split.
+
 `recently-closed` is **not** part of this string — it is pinned in the frontend, so
 keeping it out of the persisted order keeps the model to the four reorderable ids.
+
+**Single source of truth for the canonical four-id list.** The ordered id list
+appears at two layers — the backend default string (here, the backend SSOT) and the
+frontend (used by both the lenient render-time fallback and the restore-default
+button). To prevent drift, the **frontend** canonical order is defined **once** as an
+exported constant in `sectionOrder.ts` (below) and imported by every frontend consumer
+— no second literal in `InboxPane`. Backend and frontend each hold exactly one copy.
 
 ### Unit 2 — patch allowlist + validation (`ConfigStore.cs`)
 
@@ -129,22 +151,70 @@ strict, read is lenient.
 `BuildResponse` populates it from `config.Current.Inbox.SectionOrder`. No change to
 the POST value-coercion switch — the value is a JSON string, already handled.
 
+**Frontend type-union trap (`PreferencesContext.tsx`).** Adding `inbox.sectionOrder`
+to the `PreferenceKey` union is not enough. `InboxSectionKey` is derived as
+`Exclude<PreferenceKey, ...>`, and `readKey`/`writeKey` fall through to an
+`inbox.sections.<id>` *slice* path for any key not handled by an explicit arm. If
+`inbox.sectionOrder` is added to the union but **not** added to the `Exclude` list and
+**not** given its own early-return arm in both `readKey` and `writeKey`, it routes
+through the slice logic (`writeKey` line ~76: `key.slice('inbox.sections.'.length)`)
+and corrupts the write. So the change is three coordinated edits: (1) add to the
+`PreferenceKey` union, (2) add to the `Exclude<...>` list that forms `InboxSectionKey`,
+(3) add explicit string arms in `readKey` and `writeKey`. A unit test asserting
+`set('inbox.sectionOrder', "...")` does **not** touch `inbox.sections.*` guards this.
+
 ### Unit 4 — `InboxPane` reorder UI (`InboxPane.tsx`)
 
 The four work-section rows gain **Move up / Move down** buttons (top row's up and
 bottom row's down disabled). `recently-closed` renders as a pinned, non-reorderable
-bottom row (its on/off switch stays; it simply has no move buttons and is visually
-marked as fixed). A **Restore default order** button writes the canonical order.
+bottom row. A **Restore default order** button writes the canonical order.
+
+The displayed row order is derived from `preferences.inbox.sectionOrder` (run through
+the same lenient `orderInboxSections` helper as the inbox, over the four work ids) so
+Settings and inbox never disagree. The pane holds **no independent row-order state** —
+it is purely derived from preferences, so an in-flight POST that later rolls back can
+never leave Settings showing an order the server didn't accept.
+
+**The in-flight race (apply-on-success, not optimistic).** `PreferencesContext.set`
+is **not** optimistic: `setPreferences(next)` runs only *after* the POST resolves (the
+"optimistic" wording in its comments refers to the key-scoped *rollback* on failure,
+not a forward apply). For idempotent toggles that is invisible, but reorder moves are
+**order-dependent**: each move computes its next permutation from
+`preferences.inbox.sectionOrder`, which does not update until the round-trip
+completes. Two quick Move-up clicks would both read the same pre-move order and the
+second move would be lost. **Resolution: disable all reorder controls (every move
+button + restore-default) while any `inbox.sectionOrder` `set()` promise is pending,
+re-enabling on settle.** This serializes moves, makes each one compute from a settled
+order, and is the simplest correct guard given the apply-on-success model. (Making
+`set` globally optimistic is out of scope — it would touch every preference control.)
+
+**Restore-default state.** The restore-default button is **disabled when the current
+order already equals the canonical default** (computable from the same derived state),
+so clicking it never fires a no-op POST + misleading success toast.
+
+**`recently-closed` pinned treatment.** It renders as the last row with its on/off
+switch intact but **no move buttons** — in their place, a static muted "Pinned" tag
+(reusing existing pane typography, no new component) so the absence of controls reads
+as intentional, not broken. It is never part of the reorderable set.
+
+**On/off is independent of order.** A work section's on/off switch and its position
+are orthogonal. `inbox.sectionOrder` **always carries all four work ids** regardless
+of which are toggled off; a disabled section keeps its move buttons and its saved
+slot, so re-enabling it returns it to that slot. (The inbox only renders enabled
+sections, but the persisted order is complete, so no slot is ever lost.)
+
+**Subtitle copy.** The pane subtitle (`InboxPane.tsx:34`, currently "Choose which
+lists appear in your inbox") is updated to cover the new capability, e.g. "Choose
+which inbox sections appear and in what order."
 
 Each move computes the new full-permutation string and calls
-`set('inbox.sectionOrder', next)` — the same optimistic-update/rollback/toast path
-every other control in the pane uses. The displayed row order is derived from
-`preferences.inbox.sectionOrder` (run through the same lenient `orderInboxSections`
-helper as the inbox, over the four work ids) so Settings and inbox never disagree.
-
-Buttons carry explicit `aria-label`s (`Move {label} up` / `Move {label} down`) and
-the reorder region is announced; keyboard users operate the buttons directly. This
-is the accessibility win that picking buttons over drag-and-drop buys for free.
+`set('inbox.sectionOrder', next)` — the same apply-on-success/rollback/toast path
+every other control in the pane uses. Buttons carry explicit `aria-label`s
+(`Move {label} up` / `Move {label} down`), kept on the **disabled** boundary buttons
+too (disabled, not hidden, so the label is still announced and the boundary is
+discoverable); the reorder region is a labelled `role="group"`. Keyboard users operate
+the buttons directly — the accessibility win that picking buttons over drag-and-drop
+buys for free.
 
 ### Unit 5 — `orderInboxSections()` (pure render-time sort) + `InboxPage` wiring
 
@@ -172,12 +242,16 @@ remains.
 ## Data flow
 
 1. User clicks **Move up** on `authored-by-me` in Settings → Inbox.
-2. `InboxPane` computes the new permutation string and calls
+2. `InboxPane` computes the new permutation string, **disables all reorder controls**,
+   and calls
    `set('inbox.sectionOrder', "review-requested,authored-by-me,awaiting-author,mentioned")`.
-3. `PreferencesContext` optimistically applies it locally, POSTs the single-field
-   patch; `ConfigStore.PatchAsync` validates the permutation and writes `config.json`.
-4. On success the server echoes the full preferences snapshot; on failure the key is
-   rolled back and an error toast shows (existing machinery, unchanged).
+3. `PreferencesContext.set` POSTs the single-field patch and `ConfigStore.PatchAsync`
+   validates the permutation and writes `config.json`. (`set` applies the new snapshot
+   on **success**, not before — it is apply-on-success, not optimistic; the controls
+   stay disabled until it settles, which serializes order-dependent moves.)
+4. On success the server echoes the full preferences snapshot and the controls
+   re-enable; on failure the key is rolled back, an error toast shows, and the controls
+   re-enable (existing machinery, unchanged).
 5. The inbox, reading the same `preferences.inbox.sectionOrder`, re-runs
    `orderInboxSections` and re-renders the sections in the new order. `recently-closed`
    stays pinned at the bottom throughout.
@@ -191,7 +265,10 @@ remains.
 - **Corrupt / partial / stale on-disk value** (hand-edited `config.json`): the
   render-time helper is lenient — partial orders append the rest canonically, unknown
   ids are ignored, an empty/malformed string falls back to full canonical order. No
-  section is ever dropped. The strict-write/lenient-read split is deliberate.
+  section is ever dropped. The strict-write/lenient-read split is deliberate. A
+  lingering bad on-disk value (e.g. an explicit empty string that STJ does not
+  default-backfill) is harmless — it renders as canonical and is overwritten by the
+  next move or restore-default.
 - **Preferences not yet loaded**: `orderInboxSections(sections, undefined)` returns
   canonical order — identical to today's cold-load behavior.
 
@@ -211,7 +288,14 @@ remains.
   first; empty/`undefined` → canonical; filter-narrowed subset preserves saved order.
 - `InboxPane`: move-up/down buttons reorder rows and call `set` with the right string;
   top-up/bottom-down disabled; `recently-closed` has no move buttons; restore-default
-  writes canonical; `aria-label`s present.
+  writes canonical and is **disabled when already at the default**; `aria-label`s
+  present on disabled boundary buttons; reorder controls are **disabled while a move
+  POST is in flight** (two rapid Move-up clicks must not lose the second move — assert
+  the pending move serializes); a section toggled off keeps its slot in the persisted
+  order (re-enabling restores its position).
+- `PreferencesContext`: `set('inbox.sectionOrder', "...")` round-trips via the
+  `readKey`/`writeKey` string arms and does **not** touch any `inbox.sections.*` value
+  (guards the `Exclude`/slice-fallthrough trap).
 - `InboxPage`: sections render in the saved order; `recently-closed` last.
 
 **e2e (`Playwright`):** reorder in Settings, return to inbox, assert section order;
