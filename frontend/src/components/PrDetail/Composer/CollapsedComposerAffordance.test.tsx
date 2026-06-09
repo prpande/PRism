@@ -6,7 +6,9 @@ import { CollapsedComposerAffordance } from './CollapsedComposerAffordance';
 describe('CollapsedComposerAffordance', () => {
   it('is a button with the given label + aria-label and opens on click', () => {
     const onOpen = vi.fn();
-    render(<CollapsedComposerAffordance label="Reply…" ariaLabel="Reply to thread" onOpen={onOpen} />);
+    render(
+      <CollapsedComposerAffordance label="Reply…" ariaLabel="Reply to thread" onOpen={onOpen} />,
+    );
     const btn = screen.getByRole('button', { name: 'Reply to thread' });
     expect(btn).toHaveTextContent('Reply…');
     fireEvent.click(btn);
@@ -29,7 +31,12 @@ describe('CollapsedComposerAffordance', () => {
   it('is inert under readOnly (no open on click)', () => {
     const onOpen = vi.fn();
     render(
-      <CollapsedComposerAffordance label="Reply…" ariaLabel="Reply to thread" readOnly onOpen={onOpen} />,
+      <CollapsedComposerAffordance
+        label="Reply…"
+        ariaLabel="Reply to thread"
+        readOnly
+        onOpen={onOpen}
+      />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Reply to thread' }));
     expect(onOpen).not.toHaveBeenCalled();
