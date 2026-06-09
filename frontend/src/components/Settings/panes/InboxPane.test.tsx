@@ -70,8 +70,9 @@ describe('InboxPane', () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith('inbox.sections.awaiting-author', true));
   });
 
-  it('renders five section rows without ci-failing and with the re-review label', () => {
+  it('renders five section rows + the activity-rail toggle (6 switches), without ci-failing and with the re-review label', () => {
     renderInboxPane();
+    // 5 section toggles + the "Show activity rail" toggle (#137).
     expect(screen.getAllByRole('switch')).toHaveLength(6);
     expect(screen.queryByText('CI failing on my PRs')).toBeNull();
     expect(screen.getByText('Needs re-review')).toBeInTheDocument();

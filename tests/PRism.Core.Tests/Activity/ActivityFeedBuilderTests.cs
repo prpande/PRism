@@ -31,9 +31,6 @@ public sealed class ActivityFeedBuilderTests
             Ev("7", "PullRequestEvent", action: "closed", merged: true),
         };
 
-        var verbs = ActivityFeedBuilder.Build(raw, Now).Items
-            .OrderBy(i => i.Timestamp).Select(i => i.Verb).ToArray();
-
         // Distinct ids + same timestamp ordering preserved via stable sort by ts desc.
         ActivityFeedBuilder.Build(raw, Now).Items.Select(i => i.Verb).Should()
             .BeEquivalentTo(new[]
