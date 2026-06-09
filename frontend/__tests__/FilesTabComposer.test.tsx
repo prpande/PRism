@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { FilesTab } from '../src/components/PrDetail/FilesTab/FilesTab';
@@ -267,15 +267,16 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     );
   });
 
-  it('ClickAnotherLine_ExistingDraftSaved_ShowsModalWithDiscardOrKeep', async () => {
-    // Session already has a draft on line 1.
+  it('ClickAnotherLine_ExistingDraftSaved_OpensNewComposerImmediately_NoModal', async () => {
+    // #299 fix #2: drafts auto-save as you type, so a line switch never needs a
+    // "keep or discard?" prompt — the existing draft is already saved. Switching
+    // lines just keeps it and opens the new composer. Discard stays an explicit
+    // action on the composer itself.
+    const tracker = { calls: [] as { url: string; body: unknown }[] };
     const session = sessionWithDraftAt('src/main.ts', 1, 'right', 'saved body');
-    globalThis.fetch = makeRouteHandler(onefileDiff, session) as unknown as typeof fetch;
+    globalThis.fetch = makeRouteHandler(onefileDiff, session, tracker) as unknown as typeof fetch;
     renderFilesTab();
 
-    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
-    // race between waitFor's success callback and the next sync line cannot
-    // flip the file tree back to skeleton between query and click.
     await waitFor(() => {
       fireEvent.click(screen.getByText('main.ts'));
     });
@@ -283,87 +284,70 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     // Open composer at line 1 → composerDraftId === 'uuid-existing'.
     const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
     fireEvent.click(line1);
+    await screen.findByRole('form', { name: 'Draft comment on src/main.ts line 1' });
 
-    // Click line 3 → A2 modal appears.
+    // Click line 3 → composer moves immediately, NO modal.
     const line3 = screen.getByRole('button', { name: 'Add comment on line 3' });
     fireEvent.click(line3);
 
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent(/Discard or keep your saved draft/i);
-    expect(within(dialog).getByRole('button', { name: 'Keep' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Discard' })).toBeInTheDocument();
-  });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Discard or keep your saved draft/i)).not.toBeInTheDocument();
 
-  it('ClickAnotherLine_DiscardBranch_FiresDeleteDraftComment', async () => {
-    const tracker = { calls: [] as { url: string; body: unknown }[] };
-    const session = sessionWithDraftAt('src/main.ts', 1, 'right', 'saved body');
-    globalThis.fetch = makeRouteHandler(onefileDiff, session, tracker) as unknown as typeof fetch;
-    renderFilesTab();
-
-    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
-    // race between waitFor's success callback and the next sync line cannot
-    // flip the file tree back to skeleton between query and click.
-    await waitFor(() => {
-      fireEvent.click(screen.getByText('main.ts'));
-    });
-
-    const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
-    fireEvent.click(line1);
-    const line3 = screen.getByRole('button', { name: 'Add comment on line 3' });
-    fireEvent.click(line3);
-
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Discard' }));
-
-    await waitFor(() => {
-      const deleteCalls = tracker.calls.filter((c) => {
-        const b = c.body as Record<string, unknown> | null;
-        return !!b && 'deleteDraftComment' in b;
-      });
-      expect(deleteCalls.length).toBeGreaterThanOrEqual(1);
-    });
-    const deleteCall = tracker.calls.find(
-      (c) =>
-        typeof c.body === 'object' &&
-        c.body !== null &&
-        'deleteDraftComment' in (c.body as Record<string, unknown>),
-    );
-    expect(deleteCall?.body).toEqual({ deleteDraftComment: { id: 'uuid-existing' } });
-  });
-
-  it('ClickAnotherLine_KeepBranch_LeavesDraftPersisted', async () => {
-    const tracker = { calls: [] as { url: string; body: unknown }[] };
-    const session = sessionWithDraftAt('src/main.ts', 1, 'right', 'saved body');
-    globalThis.fetch = makeRouteHandler(onefileDiff, session, tracker) as unknown as typeof fetch;
-    renderFilesTab();
-
-    // Atomic find-and-click: do the click inside waitFor's retry cycle so a
-    // race between waitFor's success callback and the next sync line cannot
-    // flip the file tree back to skeleton between query and click.
-    await waitFor(() => {
-      fireEvent.click(screen.getByText('main.ts'));
-    });
-
-    const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
-    fireEvent.click(line1);
-    const line3 = screen.getByRole('button', { name: 'Add comment on line 3' });
-    fireEvent.click(line3);
-
-    const dialog = await screen.findByRole('dialog');
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep' }));
-
-    // The Keep branch must NOT issue a deleteDraftComment.
-    const deleteCalls = tracker.calls.filter((c) => {
-      const b = c.body as Record<string, unknown> | null;
-      return !!b && 'deleteDraftComment' in b;
-    });
-    expect(deleteCalls).toHaveLength(0);
-
-    // Composer is now at line 3; the modal is closed.
     await waitFor(() =>
       expect(
         screen.getByRole('form', { name: 'Draft comment on src/main.ts line 3' }),
       ).toBeInTheDocument(),
     );
+
+    // Keep semantics: the saved draft was NOT deleted by the switch.
+    const deleteCalls = tracker.calls.filter((c) => {
+      const b = c.body as Record<string, unknown> | null;
+      return !!b && 'deleteDraftComment' in b;
+    });
+    expect(deleteCalls).toHaveLength(0);
+  });
+
+  it('RapidLineSwitch_FlushesPendingDraft_NoLostWork', async () => {
+    // #299 acceptance: no lost-draft on rapid line-to-line authoring. With the
+    // transition modal gone, a line switch unmounts the composer immediately;
+    // without a flush, an edit typed within the 250ms debounce window would be
+    // dropped. Typing then switching lines before the debounce fires must still
+    // persist the in-progress draft.
+    const tracker = { calls: [] as { url: string; body: unknown }[] };
+    globalThis.fetch = makeRouteHandler(
+      onefileDiff,
+      emptySession(),
+      tracker,
+    ) as unknown as typeof fetch;
+    renderFilesTab();
+
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
+
+    const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
+    fireEvent.click(line1);
+    const textarea = (await screen.findByLabelText('Comment body')) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'flush me before switching' } });
+
+    // Switch lines immediately — do NOT wait for the debounce.
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment on line 3' }));
+
+    await waitFor(() => {
+      const creates = tracker.calls.filter((c) => {
+        const b = c.body as Record<string, unknown> | null;
+        return !!b && 'newDraftComment' in b;
+      });
+      expect(creates).toHaveLength(1);
+    });
+    const create = tracker.calls.find((c) => {
+      const b = c.body as Record<string, unknown> | null;
+      return !!b && 'newDraftComment' in b;
+    });
+    const payload = (
+      create!.body as { newDraftComment: { bodyMarkdown: string; lineNumber: number } }
+    ).newDraftComment;
+    expect(payload.bodyMarkdown).toBe('flush me before switching');
+    expect(payload.lineNumber).toBe(1);
   });
 });
