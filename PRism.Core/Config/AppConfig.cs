@@ -39,7 +39,8 @@ public sealed record InboxConfig(
     InboxSectionsConfig Sections,
     bool ShowHiddenScopeFooter,
     int RecentlyClosedWindowDays = 14,
-    string DefaultSort = "updated");
+    string DefaultSort = "updated",
+    string SectionOrder = "review-requested,awaiting-author,authored-by-me,mentioned");
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,

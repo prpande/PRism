@@ -401,4 +401,31 @@ public class ConfigStorePatchAsyncDottedPathTests
             new Dictionary<string, object?> { ["inbox.defaultSort"] = "bogus" }, CancellationToken.None);
         await act.Should().ThrowAsync<ConfigPatchException>().WithMessage("*inbox.defaultSort*");
     }
+
+    // #275: SectionOrder is a new trailing-defaulted string parameter on InboxConfig.
+    // A config.json written before the field existed must load with the canonical
+    // work-section order. Same STJ record-positional-default path as DefaultSort.
+    [Fact]
+    public void Default_SectionOrder_IsCanonicalWorkOrder()
+    {
+        AppConfig.Default.Inbox.SectionOrder
+            .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
+    }
+
+    [Fact]
+    public async Task InitAsync_LegacyConfigWithoutSectionOrder_DefaultsToCanonical()
+    {
+        using var dir = new TempDataDir();
+        var path = Path.Combine(dir.Path, "config.json");
+        await File.WriteAllTextAsync(path, """
+            {
+              "inbox": { "deduplicate": true, "sections": { "review-requested": true } }
+            }
+            """);
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Inbox.SectionOrder
+            .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
+    }
 }
