@@ -213,17 +213,38 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);
         var state = doc.RootElement.TryGetProperty("state", out var s) ? s.GetString() : "success";
-        // GitHub's combined-status endpoint returns state="pending" when no legacy
-        // statuses are registered; combined with check-runs results in the outer
-        // Failing > Pending > None precedence, so an "all-Checks-pass + no-statuses"
-        // PR may still surface as Pending. Acceptable for PoC; v2 may refine.
+        // GitHub's combined-status endpoint returns state="pending" when NO legacy commit
+        // statuses are registered — the default for a modern Actions-only PR (check-runs,
+        // not statuses) or a PR with no CI at all. Reading that bare "pending" as Pending
+        // lit a false amber "checks in progress" dot on PRs that have no checks (#286). So
+        // "pending" is only honored when at least one status context is actually registered
+        // (total_count > 0); otherwise this source contributes None and the check-runs probe
+        // decides. Failing/None states are unaffected. (Pre-#286 this was a PoC shortcut.)
         var status = state switch
         {
             "failure" or "error" => CiStatus.Failing,
-            "pending" => CiStatus.Pending,
+            "pending" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Pending,
             _ => CiStatus.None,
         };
         return (status, false);
+    }
+
+    // A registered status context surfaces as a positive `total_count` OR a non-empty
+    // inline `statuses` array. The two agree in practice, but OR-ing them (rather than
+    // letting `total_count` short-circuit) matches the documented intent and tolerates
+    // payload quirks. `total_count` is read with TryGetInt32 so an unexpected non-integer
+    // number degrades to the array signal instead of throwing. An absent/zero count with
+    // an empty array means "none registered", which GitHub still labels state="pending". (#286)
+    private static bool HasRegisteredStatuses(JsonElement root)
+    {
+        var hasStatuses = root.TryGetProperty("statuses", out var statuses)
+            && statuses.ValueKind == JsonValueKind.Array
+            && statuses.GetArrayLength() > 0;
+        var hasCount = root.TryGetProperty("total_count", out var count)
+            && count.ValueKind == JsonValueKind.Number
+            && count.TryGetInt32(out var n)
+            && n > 0;
+        return hasStatuses || hasCount;
     }
 
     private Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
