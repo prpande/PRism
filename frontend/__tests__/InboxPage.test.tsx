@@ -36,6 +36,7 @@ function setHooks(
     // aiPreview now controls the inboxRanking gate (ActivityRail visibility)
     aiPreview?: boolean;
     inboxEnrichment?: boolean;
+    sectionOrder?: string;
   } = {},
 ) {
   vi.mocked(useInbox).mockReturnValue({
@@ -76,6 +77,7 @@ function setHooks(
           mentioned: true,
           'recently-closed': true,
         },
+        sectionOrder: opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned',
       },
       github: {
         host: 'https://github.com',
@@ -231,6 +233,34 @@ describe('InboxPage', () => {
     fireEvent.click(await screen.findByRole('checkbox', { name: 'failing' }));
     expect(screen.getByText(/No PRs match your filters/)).toBeInTheDocument();
     expect(screen.queryByText(/Nothing in your inbox/)).toBeNull();
+  });
+
+  it('renders sections in the saved order with recently-closed pinned last', () => {
+    setHooks({
+      data: {
+        sections: [
+          { id: 'review-requested', label: 'Review requested', items: [] },
+          { id: 'authored-by-me', label: 'Authored by me', items: [] },
+          { id: 'mentioned', label: 'Mentioned', items: [] },
+          { id: 'recently-closed', label: 'Recently closed', items: [] },
+        ],
+        enrichments: {}, lastRefreshedAt: '', tokenScopeFooterEnabled: false, ciProbeComplete: true,
+      },
+      sectionOrder: 'mentioned,authored-by-me,review-requested,awaiting-author',
+    });
+    render(
+      <MemoryRouter><OpenTabsProvider><InboxPage /></OpenTabsProvider></MemoryRouter>,
+    );
+    // InboxSection renders a <button> header whose textContent is: caret + label + count.
+    // Filter to buttons that contain any of the four section label substrings.
+    const order = screen
+      .getAllByRole('button')
+      .map((b) => b.textContent ?? '')
+      .filter((t) => /Review requested|Authored by me|Mentioned|Recently closed/.test(t));
+    expect(order[0]).toMatch(/Mentioned/);
+    expect(order[1]).toMatch(/Authored by me/);
+    expect(order[2]).toMatch(/Review requested/);
+    expect(order.at(-1)).toMatch(/Recently closed/);
   });
 });
 
