@@ -227,3 +227,11 @@ describe('InlineCommentComposer — closed PR banner (spec § 5.3)', () => {
     expect(screen.getByText(/PR closed — text not saved/i)).toBeInTheDocument();
   });
 });
+
+describe('InlineCommentComposer — composer-frame (Task 7)', () => {
+  it('wraps the composer in the shared composer-frame', () => {
+    render(<Harness />);
+    const form = screen.getByRole('form', { name: /Draft comment/ });
+    expect(form).toHaveClass('composer-frame');
+  });
+});
