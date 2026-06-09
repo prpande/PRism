@@ -111,7 +111,9 @@ export function ActivityRail() {
             Activity unavailable
           </p>
         ) : allHiddenAreBots ? (
-          <p className={styles.empty}>No human activity in the last 24h — turn on &quot;Show bots&quot; to see bot activity</p>
+          <p className={styles.empty}>
+            No human activity in the last 24h — turn on &quot;Show bots&quot; to see bot activity
+          </p>
         ) : visible.length === 0 ? (
           <p className={styles.empty}>No pull-request activity in the last 24h</p>
         ) : (

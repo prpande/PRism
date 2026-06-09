@@ -9,9 +9,16 @@ vi.mock('../api/activity', () => ({ getActivity: getActivityMock }));
 const RESP = (n: number): ActivityResponse => ({
   items: [
     {
-      actorLogin: 'alice', actorAvatarUrl: null, actorIsBot: false, verb: 'reviewed',
-      repo: 'acme/api', prNumber: n, title: 'T', url: `https://github.com/acme/api/pull/${n}`,
-      timestamp: new Date().toISOString(), source: 'received-event',
+      actorLogin: 'alice',
+      actorAvatarUrl: null,
+      actorIsBot: false,
+      verb: 'reviewed',
+      repo: 'acme/api',
+      prNumber: n,
+      title: 'T',
+      url: `https://github.com/acme/api/pull/${n}`,
+      timestamp: new Date().toISOString(),
+      source: 'received-event',
     },
   ],
   generatedAt: new Date().toISOString(),

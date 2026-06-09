@@ -18,14 +18,26 @@ function resp(partial: Partial<ActivityResponse> = {}): ActivityResponse {
 }
 const item = (over: Partial<ActivityResponse['items'][0]>): ActivityResponse['items'][0] => {
   const base = {
-    actorLogin: 'alice', actorAvatarUrl: null, actorIsBot: false, verb: 'reviewed' as const,
-    repo: 'acme/api', prNumber: 7, title: 'Fix login',
-    timestamp: new Date().toISOString(), source: 'received-event' as const, ...over,
+    actorLogin: 'alice',
+    actorAvatarUrl: null,
+    actorIsBot: false,
+    verb: 'reviewed' as const,
+    repo: 'acme/api',
+    prNumber: 7,
+    title: 'Fix login',
+    timestamp: new Date().toISOString(),
+    source: 'received-event' as const,
+    ...over,
   };
   return { ...base, url: over.url ?? `https://github.com/acme/api/pull/${base.prNumber}` };
 };
 
-const renderRail = () => render(<MemoryRouter><ActivityRail /></MemoryRouter>);
+const renderRail = () =>
+  render(
+    <MemoryRouter>
+      <ActivityRail />
+    </MemoryRouter>,
+  );
 
 beforeEach(() => useActivityMock.mockReset());
 
@@ -40,7 +52,8 @@ describe('ActivityRail (P1)', () => {
   test('renders actor + verb + PR ref as an in-app link', () => {
     useActivityMock.mockReturnValue({
       data: resp({ items: [item({ actorLogin: 'noah.s', verb: 'reviewed', prNumber: 1810 })] }),
-      isLoading: false, error: null,
+      isLoading: false,
+      error: null,
     });
     renderRail();
     const link = screen.getByRole('link', { name: /noah\.s reviewed #1810/i });
@@ -73,7 +86,8 @@ describe('ActivityRail (P1)', () => {
   test('empty (all-bots, default hidden) names the filter, not the window', () => {
     useActivityMock.mockReturnValue({
       data: resp({ items: [item({ actorLogin: 'ci[bot]', actorIsBot: true })] }),
-      isLoading: false, error: null,
+      isLoading: false,
+      error: null,
     });
     renderRail();
     expect(screen.getByText(/no human activity in the last 24h/i)).toBeInTheDocument();
@@ -82,7 +96,8 @@ describe('ActivityRail (P1)', () => {
   test('degraded note shows on backend-degraded flag', () => {
     useActivityMock.mockReturnValue({
       data: resp({ items: [], degraded: { receivedEvents: true } }),
-      isLoading: false, error: null,
+      isLoading: false,
+      error: null,
     });
     renderRail();
     expect(screen.getByText('Activity unavailable')).toBeInTheDocument();
@@ -99,10 +114,11 @@ describe('ActivityRail (P1)', () => {
   test('malformed PR url falls back to an external anchor without throwing', () => {
     useActivityMock.mockReturnValue({
       data: resp({ items: [item({ url: 'not a url' })] }),
-      isLoading: false, error: null,
+      isLoading: false,
+      error: null,
     });
     renderRail();
     const link = screen.getByRole('link', { name: /alice reviewed #7/i });
-    expect(link).toHaveAttribute('href', 'not a url');   // external <a>, no crash
+    expect(link).toHaveAttribute('href', 'not a url'); // external <a>, no crash
   });
 });

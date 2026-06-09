@@ -15,9 +15,10 @@
 
 .head {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: baseline;
   margin-bottom: var(--s-3);
+  gap: var(--s-2);
 }
 
 .title {
@@ -99,13 +100,6 @@
   }
 }
 
-/* Override the existing .head rule: it is `justify-content: space-between`, which
-   distributes free space BETWEEN the three children and defeats margin-left:auto on
-   the toggle. Switch to flex-start so margin-left:auto pins the toggle trailing. */
-.head {
-  justify-content: flex-start;
-  gap: var(--s-2);
-}
 .botToggle {
   margin-left: auto;
   font-size: var(--text-2xs);

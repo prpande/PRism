@@ -139,7 +139,9 @@ export function InboxRow({
                   so the category text — not the marker — absorbs any width pressure, and it
                   hides together with the chip below the 560px breakpoint. */}
               <span className={styles.chip}>
-                <span className={styles.chipMarker} aria-hidden="true">AI</span>
+                <span className={styles.chipMarker} aria-hidden="true">
+                  AI
+                </span>
                 {enrichment.categoryChip}
               </span>
               <span className={styles.dotsep}>·</span>
