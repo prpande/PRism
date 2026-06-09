@@ -78,7 +78,7 @@ export function writeKey(
   if (key === 'inbox.sectionOrder')
     return {
       ...prefs,
-      inbox: { ...prefs.inbox, sectionOrder: value as string },
+      inbox: { ...prefs.inbox, sectionOrder: value as PreferencesResponse['inbox']['sectionOrder'] },
     };
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,
