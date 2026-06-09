@@ -97,6 +97,8 @@ internal static class PrCommentEndpoints
     {
         if (draft.PostedCommentId is { } posted)
             return await AlreadyPostedAsync(store, sessionKey, draft.Id, draft.BodyMarkdown, draft.PostedBodySnapshot, posted, prRef, bus, isReply: true, ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(draft.ParentThreadId))
+            return Results.Json(new SubmitErrorDto("missing-thread", "This reply draft has no parent thread; reload the page and try again."), statusCode: StatusCodes.Status400BadRequest);
         if (draft.BodyMarkdown.Length > PipelineMarker.GitHubReviewBodyMaxChars) return BodyTooLarge();
 
         CreatedReviewCommentResult created;

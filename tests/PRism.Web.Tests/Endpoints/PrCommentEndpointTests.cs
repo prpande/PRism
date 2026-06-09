@@ -205,6 +205,25 @@ public class PrCommentEndpointTests
         ctx.Submitter.ReviewComments.Should().BeEmpty("must not call GitHub when anchor is missing");
     }
 
+    // ── 6b. Empty/whitespace ParentThreadId → 400 missing-thread ─────────────
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task PostComment_empty_parent_thread_id_returns_400_missing_thread(string parentThreadId)
+    {
+        using var ctx = CommentTestContext.Create();
+        await ctx.SeedSessionAsync("o", "r", 11, SessionWithReplyDraft(draftId: "r1", parentThreadId: parentThreadId));
+
+        var resp = await ctx.Post(11, "r1");
+
+        resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await resp.Content.ReadFromJsonAsync<JsonElement>(CamelCase);
+        body.GetProperty("code").GetString().Should().Be("missing-thread");
+
+        ctx.Submitter.ReviewCommentReplies.Should().BeEmpty("must not call GitHub when ParentThreadId is missing");
+    }
+
     // ── 7. Unauthorized → 401 ─────────────────────────────────────────────────
 
     [Fact]

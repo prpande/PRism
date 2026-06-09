@@ -35,8 +35,9 @@ const VIEWER_LABEL = 'You';
 // Unique React key per optimistic placeholder. crypto.randomUUID where
 // available (jsdom + modern browsers), else a small monotonic fallback so the
 // function is total in bare-node test contexts.
-// NOTE: optimisticCounter is a module-mutable fallback only for environments
-// lacking crypto.randomUUID; a single FilesTab mounts at a time.
+// NOTE: optimisticCounter is a module-scoped fallback only used when
+// crypto.randomUUID is unavailable; a process-global monotonic counter keeps
+// ids unique even across multiple kept-alive FilesTab instances.
 let optimisticCounter = 0;
 function newClientId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
