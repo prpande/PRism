@@ -72,6 +72,17 @@ public sealed class GitHubCiFailingDetectorTests
         }
         """;
 
+    private const string EmptyCheckRuns = """{ "check_runs": [] }""";
+
+    // GitHub's combined-status endpoint reports state="pending" with total_count=0 when no
+    // legacy commit statuses are registered — the default for an Actions-only or no-CI PR (#286).
+    private const string EmptyPendingStatus = """{ "state": "pending", "total_count": 0, "statuses": [] }""";
+
+    // A genuinely in-progress legacy commit status (registered context, total_count > 0).
+    private const string RegisteredPendingStatus = """
+        { "state": "pending", "total_count": 1, "statuses": [ { "context": "ci/legacy", "state": "pending" } ] }
+        """;
+
     [Fact]
     public async Task Failing_check_run_marks_failing()
     {
@@ -124,6 +135,36 @@ public sealed class GitHubCiFailingDetectorTests
     public async Task All_pending_marks_pending()
     {
         var handler = RouterHandler(InProgressCheckRun, PendingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Combined_status_pending_with_no_registered_statuses_marks_none()
+    {
+        // #286: GitHub's combined-status endpoint returns state="pending" when NO legacy
+        // commit statuses are registered (Actions-only or no-CI PRs). That is "no checks
+        // configured", not "checks in progress". With empty check-runs too, the PR has no
+        // CI at all → None (no amber dot). Pre-#286 this misclassified as Pending.
+        var handler = RouterHandler(EmptyCheckRuns, EmptyPendingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task Combined_status_pending_with_registered_statuses_marks_pending()
+    {
+        // A genuinely in-progress legacy status (total_count > 0) is real Pending — the
+        // #286 fix must not regress this: only EMPTY combined-status pending is demoted.
+        var handler = RouterHandler(EmptyCheckRuns, RegisteredPendingStatus);
         var sut = BuildSut(handler);
 
         var result = await sut.DetectAsync([Raw(1)], default);
