@@ -557,6 +557,7 @@ export function DiffPane({
             filePath={path}
             syntax={syntax}
             isFilled={line.isFilled}
+            isAnchored={!!threadsByLine.get(line.newLineNum ?? -1)?.length}
             onLineClick={onLineClick}
           />,
         );
@@ -577,6 +578,7 @@ export function DiffPane({
               newText={next.content}
               filePath={path}
               syntax={syntax}
+              isAnchored={!!threadsByLine.get(next.newLineNum ?? -1)?.length}
               onLineClick={onLineClick}
             />,
           );
@@ -606,6 +608,7 @@ export function DiffPane({
             content={line.content}
             filePath={path}
             syntax={syntax}
+            isAnchored={!!threadsByLine.get(line.newLineNum ?? -1)?.length}
             onLineClick={onLineClick}
           />,
         );
@@ -703,7 +706,8 @@ function DiffLineRow({
   renderComposerForLine,
   replyContext,
 }: DiffLineRowProps) {
-  const rowClass = `diff-line diff-line--${line.type}`;
+  const isAnchored = (threadsAtLine?.length ?? 0) > 0;
+  const rowClass = `diff-line diff-line--${line.type}${isAnchored ? ' diff-line--commented' : ''}`;
 
   const renderContent = () => {
     if (line.type === 'hunk-header') {
@@ -824,6 +828,7 @@ interface SplitDiffLineRowProps {
   filePath: string;
   syntax: SyntaxTokenMaps;
   isFilled?: boolean;
+  isAnchored?: boolean;
   onLineClick?: (anchor: InlineAnchor) => void;
 }
 
@@ -837,6 +842,7 @@ function SplitDiffLineRow({
   filePath,
   syntax,
   isFilled,
+  isAnchored,
   onLineClick,
 }: SplitDiffLineRowProps) {
   if (kind === 'header') {
@@ -895,6 +901,7 @@ function SplitDiffLineRow({
           data-side="new"
           className={`diff-content ${styles.diffContent}`}
           data-testid="diff-code-line"
+          {...(isAnchored ? { 'data-commented': 'true' } : {})}
         >
           <HighlightedLine
             spans={tokensFor(syntax, 'new', newLineNum)}
@@ -974,6 +981,7 @@ function SplitDiffLineRow({
           data-side="new"
           className={`diff-content ${styles.diffContent}`}
           data-testid="diff-code-line"
+          {...(isAnchored ? { 'data-commented': 'true' } : {})}
         >
           <HighlightedLine
             spans={tokensFor(syntax, 'new', newLineNum)}
@@ -1031,6 +1039,7 @@ function SplitDiffLineRow({
           data-side="new"
           className={`diff-content ${styles.diffContent}`}
           data-testid="diff-code-line"
+          {...(isAnchored ? { 'data-commented': 'true' } : {})}
         >
           <MergedPairedContent
             syntax={syntax}
