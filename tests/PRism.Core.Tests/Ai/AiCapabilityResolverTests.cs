@@ -15,39 +15,39 @@ public sealed class AiCapabilityResolverTests
     [Fact]
     public void Off_all_flags_false_reason_none()
     {
-        var caps = EmptyP0.Resolve(AiMode.Off, LlmAvailability.Ok);
+        var caps = EmptyP0.Resolve(AiMode.Off, LlmAvailability.Ok, consented: true);
         caps.Summary.Should().BeFalse();
         caps.InboxRanking.Should().BeFalse();
-        AiCapabilityResolver.DisabledReason(AiMode.Off, LlmAvailability.Ok).Should().Be("none");
+        AiCapabilityResolver.DisabledReason(AiMode.Off, LlmAvailability.Ok, consented: true).Should().Be("none");
     }
 
     [Fact]
     public void Preview_all_flags_true_reason_none()
     {
-        var caps = EmptyP0.Resolve(AiMode.Preview, LlmAvailability.Ok);
+        var caps = EmptyP0.Resolve(AiMode.Preview, LlmAvailability.Ok, consented: true);
         caps.Summary.Should().BeTrue();
         caps.HunkAnnotations.Should().BeTrue();
         caps.InboxRanking.Should().BeTrue();
-        AiCapabilityResolver.DisabledReason(AiMode.Preview, LlmAvailability.Ok).Should().Be("none");
+        AiCapabilityResolver.DisabledReason(AiMode.Preview, LlmAvailability.Ok, consented: true).Should().Be("none");
     }
 
     [Fact]
     public void Live_in_P0_all_flags_false_and_surfaces_probe_reason()
     {
         var unavailable = LlmAvailability.Unavailable("cli-not-installed");
-        var caps = EmptyP0.Resolve(AiMode.Live, unavailable);
+        var caps = EmptyP0.Resolve(AiMode.Live, unavailable, consented: false);
         caps.Summary.Should().BeFalse(); // no real impl registered in P0
-        AiCapabilityResolver.DisabledReason(AiMode.Live, unavailable).Should().Be("cli-not-installed");
+        AiCapabilityResolver.DisabledReason(AiMode.Live, unavailable, consented: false).Should().Be("cli-not-installed");
     }
 
     [Fact]
     public void Live_with_a_registered_live_seam_and_available_lights_only_that_flag()
     {
         var resolver = new AiCapabilityResolver(new Dictionary<Type, object> { [typeof(IPrSummarizer)] = new object() });
-        var caps = resolver.Resolve(AiMode.Live, LlmAvailability.Ok);
+        var caps = resolver.Resolve(AiMode.Live, LlmAvailability.Ok, consented: true);
         caps.Summary.Should().BeTrue();
         caps.FileFocus.Should().BeFalse();
-        AiCapabilityResolver.DisabledReason(AiMode.Live, LlmAvailability.Ok).Should().Be("none");
+        AiCapabilityResolver.DisabledReason(AiMode.Live, LlmAvailability.Ok, consented: true).Should().Be("none");
     }
 
     [Fact]
@@ -70,10 +70,10 @@ public sealed class AiCapabilityResolverTests
         var realSeams = new Dictionary<Type, object>();
         var resolver = new AiCapabilityResolver(realSeams);
 
-        resolver.Resolve(AiMode.Live, LlmAvailability.Ok).Summary.Should().BeFalse(); // empty: nothing live yet
+        resolver.Resolve(AiMode.Live, LlmAvailability.Ok, consented: true).Summary.Should().BeFalse(); // empty: nothing live yet
 
         realSeams[typeof(IPrSummarizer)] = new object(); // P1 registers a real impl into the shared dict
 
-        resolver.Resolve(AiMode.Live, LlmAvailability.Ok).Summary.Should().BeTrue(); // resolver reflects it live
+        resolver.Resolve(AiMode.Live, LlmAvailability.Ok, consented: true).Summary.Should().BeTrue(); // resolver reflects it live
     }
 }

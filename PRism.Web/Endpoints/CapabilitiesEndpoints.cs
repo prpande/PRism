@@ -17,6 +17,7 @@ internal static partial class CapabilitiesEndpoints
             AiModeState state,
             AiCapabilityResolver resolver,
             ILlmAvailabilityProbe probe,
+            AiConsentState consent,
             ILogger<Category> log,
             CancellationToken ct) =>
         {
@@ -49,13 +50,14 @@ internal static partial class CapabilitiesEndpoints
                 availability = LlmAvailability.Ok;
             }
 
+            var consented = consent.IsConsented(AiProviderIds.Claude, AiDisclosure.CurrentVersion);
             return Results.Ok(new
             {
-                ai = resolver.Resolve(mode, availability),                  // FE-compat: the `ai` envelope + 9 keys
+                ai = resolver.Resolve(mode, availability, consented),       // FE-compat: the `ai` envelope + 9 keys
 #pragma warning disable CA1308 // lowercase mode names (off|preview|live) are part of the wire contract surfaced to the renderer
                 mode = mode.ToString().ToLowerInvariant(),                  // "off" | "preview" | "live"
 #pragma warning restore CA1308
-                disabledReason = AiCapabilityResolver.DisabledReason(mode, availability),  // length-capped at the trust boundary inside DisabledReason
+                disabledReason = AiCapabilityResolver.DisabledReason(mode, availability, consented),  // length-capped at the trust boundary inside DisabledReason
             });
         });
         return app;
