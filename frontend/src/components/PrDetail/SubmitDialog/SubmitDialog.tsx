@@ -30,7 +30,7 @@ import type {
 } from '../../../api/types';
 import type { SubmitState } from '../../../hooks/useSubmit';
 
-type AutosaveControl = { flush: () => Promise<void>; badge: ComposerSaveBadge };
+type AutosaveControl = { flush: () => Promise<string | null>; badge: ComposerSaveBadge };
 
 // No-op registry/holder defaults so renders that don't wire the draft session
 // (e.g. isolated unit tests of the submit lifecycle) still mount. PrHeader

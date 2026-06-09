@@ -43,7 +43,7 @@ export interface InlineCommentComposerProps {
   // pending (debounced) edit *before* swapping composers on a diff-line switch.
   // Without it, the now-modal-less immediate swap would drop edits typed within
   // the last debounce window. Cleared on unmount.
-  flushRef?: React.MutableRefObject<(() => Promise<void>) | null>;
+  flushRef?: React.MutableRefObject<(() => Promise<string | null>) | null>;
 }
 
 function composerAriaLabel(anchor: InlineAnchor): string {

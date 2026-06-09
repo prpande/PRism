@@ -244,7 +244,7 @@ export function FilesTab() {
   // #299 — holds the active composer's flush so a line switch can persist a
   // pending debounced edit before the composer is swapped out (the modal that
   // used to bridge that gap is gone). The composer (un)registers it itself.
-  const activeComposerFlushRef = useRef<(() => Promise<void>) | null>(null);
+  const activeComposerFlushRef = useRef<(() => Promise<string | null>) | null>(null);
 
   function findExistingDraft(anchor: InlineAnchor): { id: string; bodyMarkdown: string } | null {
     const session = draftSession.session;
