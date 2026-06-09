@@ -152,3 +152,26 @@ describe('readKey/writeKey — inbox.defaultSort routing', () => {
     expect((next.inbox.sections as unknown as Record<string, unknown>).defaultSort).toBeUndefined();
   });
 });
+
+// #275: inbox.sectionOrder is a new scalar inbox preference. It must route
+// through its own readKey/writeKey branch, NOT the inbox.sections.* slice
+// fallthrough (which would corrupt the sections map).
+describe('readKey/writeKey — inbox.sectionOrder routing', () => {
+  it('writes inbox.sectionOrder via its own arm without touching inbox.sections', () => {
+    const before = {
+      ui: {}, github: {},
+      inbox: {
+        sections: { 'review-requested': true, 'awaiting-author': true, 'authored-by-me': true, mentioned: true, 'recently-closed': true },
+        defaultSort: 'updated',
+        sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+      },
+    } as unknown as import('../src/api/types').PreferencesResponse;
+
+    const after = writeKey(before, 'inbox.sectionOrder', 'mentioned,review-requested,authored-by-me,awaiting-author');
+
+    expect(after.inbox.sectionOrder).toBe('mentioned,review-requested,authored-by-me,awaiting-author');
+    // The slice-fallthrough trap: sections must be untouched.
+    expect(after.inbox.sections).toEqual(before.inbox.sections);
+    expect(readKey(after, 'inbox.sectionOrder')).toBe('mentioned,review-requested,authored-by-me,awaiting-author');
+  });
+});
