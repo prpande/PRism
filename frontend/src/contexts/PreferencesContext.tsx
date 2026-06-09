@@ -23,6 +23,7 @@ export type PreferenceKey =
   | 'contentScale'
   | 'inbox.defaultSort'
   | 'inbox.sectionOrder'
+  | 'inbox.showActivityRail'
   | `inbox.sections.${
       | 'review-requested'
       | 'awaiting-author'
@@ -39,6 +40,7 @@ type InboxSectionKey = Exclude<
   | 'contentScale'
   | 'inbox.defaultSort'
   | 'inbox.sectionOrder'
+  | 'inbox.showActivityRail'
 >;
 
 export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
@@ -49,6 +51,7 @@ export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown
   if (key === 'contentScale') return prefs.ui.contentScale;
   if (key === 'inbox.defaultSort') return prefs.inbox.defaultSort;
   if (key === 'inbox.sectionOrder') return prefs.inbox.sectionOrder;
+  if (key === 'inbox.showActivityRail') return prefs.inbox.showActivityRail;
   const id = key.slice('inbox.sections.'.length) as keyof PreferencesResponse['inbox']['sections'];
   return prefs.inbox.sections[id];
 }
@@ -89,6 +92,8 @@ export function writeKey(
         sectionOrder: value as PreferencesResponse['inbox']['sectionOrder'],
       },
     };
+  if (key === 'inbox.showActivityRail')
+    return { ...prefs, inbox: { ...prefs.inbox, showActivityRail: value as boolean } };
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,
   ) as keyof PreferencesResponse['inbox']['sections'];
