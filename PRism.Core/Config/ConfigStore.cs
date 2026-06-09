@@ -104,6 +104,28 @@ public sealed class ConfigStore : IConfigStore, IDisposable
         RaiseChanged();
     }
 
+    public async Task RecordAiConsentAsync(string providerId, string disclosureVersion, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(providerId);
+        ArgumentException.ThrowIfNullOrEmpty(disclosureVersion);
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var ai = _current.Ui.Ai with
+            {
+                Consent = new AiConsentConfig(providerId, disclosureVersion, DateTimeOffset.UtcNow),
+            };
+            _current = _current with { Ui = _current.Ui with { Ai = ai } };
+            await WriteToDiskAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        RaiseChanged();
+    }
+
     public async Task PatchAsync(IReadOnlyDictionary<string, object?> patch, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(patch);
