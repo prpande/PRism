@@ -260,7 +260,9 @@ describe('OverviewTab', () => {
     expect(screen.getByText('reviewer2')).toBeInTheDocument();
     // S3 footer placeholder is gone — S4 PR5 wires real actions.
     expect(screen.queryByText(/Composer not available in this context\./)).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reply' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Reply to the PR conversation' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /mark all read/i })).toBeInTheDocument();
   });
 
