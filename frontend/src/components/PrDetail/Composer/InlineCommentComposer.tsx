@@ -50,7 +50,9 @@ export interface InlineCommentComposerProps {
   anyOtherDraftsStaged?: boolean;
   beginPosting?: () => void;
   endPosting?: () => void;
-  onPosted?: (postedCommentId: number) => void;
+  // #302 Task 11b — carries the posted body so the parent can render an
+  // optimistic placeholder card immediately (before the refetch lands).
+  onPosted?: (postedCommentId: number, body: string) => void;
 }
 
 function composerAriaLabel(anchor: InlineAnchor): string {
@@ -224,7 +226,7 @@ export function InlineCommentComposer({
       const id = (await flush()) ?? draftId;     // id assigned during flush; prop is stale
       if (!id) { setPostError('Could not save the draft. Try again.'); return; }
       const res = await postComment(prRef, id);
-      if (res.ok) { onPosted?.(res.postedCommentId); onClose(); }
+      if (res.ok) { onPosted?.(res.postedCommentId, body); onClose(); }
       else { setPostError(res.message); }
     } finally {
       // Safe even when onClose() above triggers unmount: endPosting is an

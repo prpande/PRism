@@ -30,7 +30,7 @@ function Harness({
   anyOtherDraftsStaged?: boolean;
   beginPosting?: () => void;
   endPosting?: () => void;
-  onPosted?: (id: number) => void;
+  onPosted?: (id: number, body: string) => void;
   onClose?: () => void;
 }) {
   const [draftId, setDraftId] = useState<string | null>(initialDraftId);
@@ -174,7 +174,7 @@ describe('ReplyComposer — post-now (Task 10)', () => {
 
     expect(beginPosting).toHaveBeenCalledOnce();
     expect(commentApi.postComment).toHaveBeenCalledWith(ref, expect.any(String));
-    expect(onPosted).toHaveBeenCalledWith(99);
+    expect(onPosted).toHaveBeenCalledWith(99, expect.any(String));
     expect(onClose).toHaveBeenCalledOnce();
     expect(endPosting).toHaveBeenCalledOnce();
   });

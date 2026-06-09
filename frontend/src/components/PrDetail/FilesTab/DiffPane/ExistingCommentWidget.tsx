@@ -13,6 +13,7 @@ import {
   computeAnyOtherDraftsStaged,
   type ComposerOwnerKey,
 } from '../../../../hooks/useDraftSession';
+import type { OptimisticComment } from '../optimisticComment';
 
 export interface ExistingCommentWidgetReplyContext {
   prRef: PrReference;
@@ -34,8 +35,15 @@ export interface ExistingCommentWidgetReplyContext {
   beginPosting?: () => void;
   endPosting?: () => void;
   // Fired after a successful post-now so the parent refetches the session and
-  // the just-posted comment surfaces (11a: plain refetch; 11b adds optimism).
-  onReplyPosted?: () => void;
+  // the just-posted comment surfaces. 11b passes the posted body so the parent
+  // can stash an optimistic placeholder for this thread.
+  onReplyPosted?: (threadId: string, postedCommentId: number, body: string) => void;
+  // #302 Task 11b — optimistic reply placeholders, keyed by threadId. Each
+  // thread renders its entries (dimmed) AFTER its real comments, filtered to
+  // exclude any whose postedCommentId already matches a real comment's
+  // databaseId (de-dup by databaseId — see optimisticComment.ts). Optional so
+  // pure-rendering tests can omit it.
+  optimisticByThread?: Record<string, OptimisticComment[]>;
 }
 
 export interface ExistingCommentWidgetProps {
@@ -94,6 +102,14 @@ function ThreadView({
     replyContext?.onReplyComposerClose();
   };
 
+  // #302 Task 11b — optimistic placeholders for this thread, filtered to drop
+  // any whose postedCommentId already appears as a real comment's databaseId
+  // (belt-and-suspenders with FilesTab's cleanup effect; the de-dup key is
+  // databaseId, never body text).
+  const optimisticForThread = (replyContext?.optimisticByThread?.[thread.threadId] ?? []).filter(
+    (o) => !thread.comments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
+  );
+
   return (
     <div
       className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}${thread.isResolved ? ` ${styles.commentThreadResolved}` : ''}`}
@@ -113,6 +129,18 @@ function ThreadView({
               <span aria-label="Resolved thread">Resolved</span>
             ) : undefined
           }
+        />
+      ))}
+
+      {optimisticForThread.map((o) => (
+        <CommentCard
+          key={o.clientId}
+          author={o.author}
+          createdAt={o.createdAt}
+          body={o.body}
+          density="compact"
+          className="comment-card--posting"
+          data-testid="inline-comment-card-optimistic"
         />
       ))}
 
@@ -147,7 +175,9 @@ function ThreadView({
           )}
           beginPosting={replyContext.beginPosting}
           endPosting={replyContext.endPosting}
-          onPosted={() => replyContext.onReplyPosted?.()}
+          onPosted={(id, postedBody) =>
+            replyContext.onReplyPosted?.(thread.threadId, id, postedBody)
+          }
         />
       )}
     </div>

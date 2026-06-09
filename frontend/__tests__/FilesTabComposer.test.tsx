@@ -424,3 +424,35 @@ describe('FilesTab — inline post-now wiring (#302 Task 11a)', () => {
     );
   });
 });
+
+describe('FilesTab — inline optimistic placeholder (#302 Task 11b)', () => {
+  it('shows a dimmed optimistic card at the line immediately after a new-inline post-now', async () => {
+    // The mocked POST returns postedCommentId 12345, and the refetched session
+    // is the same empty session (reviewComments stays empty — no real comment
+    // with databaseId 12345 lands), so the optimistic placeholder must remain
+    // visible (de-dup by databaseId finds no match → keep showing it).
+    const tracker = { calls: [] as { url: string; body: unknown }[] };
+    const handler = makeRouteHandler(
+      onefileDiff,
+      sessionWithDraftAt('src/main.ts', 1, 'right', 'my new comment'),
+      tracker,
+    );
+    globalThis.fetch = handler as unknown as typeof fetch;
+    renderFilesTab();
+
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
+
+    const lineButton = await screen.findByRole('button', { name: 'Add comment on line 1' });
+    fireEvent.click(lineButton);
+    await screen.findByRole('form', { name: 'Draft comment on src/main.ts line 1' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+
+    // The optimistic placeholder appears (dimmed) right where the composer was.
+    const optimistic = await screen.findByTestId('inline-comment-card-optimistic');
+    expect(optimistic).toHaveTextContent('my new comment');
+    expect(optimistic.className).toContain('comment-card--posting');
+  });
+});

@@ -1022,6 +1022,13 @@ a:hover { text-decoration: underline; }
   background: var(--surface-2);
 }
 
+/* #302 Task 11b — optimistic just-posted comment placeholder. Dimmed to read
+   as "posting…": the real comment replaces it once the refetch lands (de-dup
+   by databaseId). Applied to CommentCard via its `className` prop. */
+.comment-card--posting {
+  opacity: 0.6;
+}
+
 /* Diff-line tints (spec §4.4, D34). Lifted from the per-row literal class
    strings DiffPane emits — `.diff-line diff-line--insert` / `--delete` /
    `--hunk-header`. `--context` lines stay transparent (no rule needed —
