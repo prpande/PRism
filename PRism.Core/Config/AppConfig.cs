@@ -39,7 +39,12 @@ public sealed record InboxConfig(
     InboxSectionsConfig Sections,
     bool ShowHiddenScopeFooter,
     int RecentlyClosedWindowDays = 14,
-    string DefaultSort = "updated");
+    string DefaultSort = "updated",
+    // #275 user-customizable order of the four WORK sections. recently-closed is
+    // deliberately absent — it is an archive pinned to the bottom in the frontend,
+    // never part of the reorderable/persisted order. Validated as a permutation of
+    // these four ids in ConfigStore.PatchAsync.
+    string SectionOrder = "review-requested,awaiting-author,authored-by-me,mentioned");
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,

@@ -22,6 +22,7 @@ function prefs(contentScale: PreferencesResponse['ui']['contentScale']): Prefere
         'recently-closed': true,
       },
       defaultSort: 'updated',
+      sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
     },
     github: { host: 'h', configPath: 'c', logsPath: 'l' },
   };

@@ -4,6 +4,7 @@ import { useInboxUpdates } from '../hooks/useInboxUpdates';
 import { useAiGate } from '../hooks/useAiGate';
 import { usePreferences } from '../hooks/usePreferences';
 import { InboxBanner } from '../components/Inbox/InboxBanner';
+import { orderInboxSections } from '../components/Inbox/sectionOrder';
 import { InboxToolbar } from '../components/Inbox/InboxToolbar';
 import { InboxSection } from '../components/Inbox/InboxSection';
 import { InboxFooter } from '../components/Inbox/InboxFooter';
@@ -100,7 +101,7 @@ export function InboxPage() {
             {!filterActive && allEmpty && <EmptyAllSections />}
             {zeroMatch && <NoFilterMatches onClear={() => filterState?.clear()} />}
             {!zeroMatch &&
-              visibleSections.map((s) => (
+              orderInboxSections(visibleSections, preferences?.inbox.sectionOrder).map((s) => (
                 <InboxSection
                   key={s.id}
                   section={s}

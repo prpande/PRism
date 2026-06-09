@@ -43,6 +43,7 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             ["inbox.sections.mentioned"]         = ConfigFieldType.Bool,
             ["inbox.sections.recently-closed"]   = ConfigFieldType.Bool,
             ["inbox.defaultSort"]                = ConfigFieldType.String,
+            ["inbox.sectionOrder"]               = ConfigFieldType.String,
         };
 
     // #262 PR3: inbox.defaultSort is a string-typed key with a CLOSED value set (unlike
@@ -51,6 +52,16 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // 400 rather than persisting a sort the frontend can't render.
     private static readonly HashSet<string> _allowedSorts =
         new(StringComparer.Ordinal) { "updated", "pushed", "diff", "comments" };
+
+    // #275: inbox.sectionOrder is a string-typed key whose value must be a permutation
+    // of exactly these four work-section ids (recently-closed is pinned in the frontend
+    // and never part of the persisted order). Validated BEFORE the gate so a malformed
+    // value returns 400, not a persisted order the frontend can't render coherently.
+    // Keep in sync with the frontend SSOT CANONICAL_WORK_ORDER in
+    // frontend/src/components/Inbox/sectionOrder.ts — if a 5th work section is ever
+    // added it must be added in both places (and the default in AppConfig.SectionOrder).
+    private static readonly string[] _workSectionIds =
+        { "review-requested", "awaiting-author", "authored-by-me", "mentioned" };
 
     public ConfigStore(string dataDir)
     {
@@ -143,6 +154,24 @@ public sealed class ConfigStore : IConfigStore, IDisposable
             throw new ConfigPatchException(
                 $"field 'inbox.defaultSort' expects one of updated|pushed|diff|comments (got '{(string)value!}')");
 
+        if (key == "inbox.sectionOrder")
+        {
+            // TrimEntries (tolerate surrounding spaces) but NOT RemoveEmptyEntries:
+            // an empty segment from a trailing/leading/double comma must survive so the
+            // count check rejects it. Dropping empties would silently accept (and persist)
+            // a malformed string like "a,b,c,d," — violating strict-write. (Copilot PR #303.)
+            var ids = ((string)value!).Split(',', StringSplitOptions.TrimEntries);
+            var ordered = new HashSet<string>(ids, StringComparer.Ordinal);
+            if (ids.Length != _workSectionIds.Length
+                || ordered.Count != ids.Length
+                || !_workSectionIds.All(ordered.Contains))
+            {
+                throw new ConfigPatchException(
+                    "field 'inbox.sectionOrder' expects a comma-separated permutation of the four " +
+                    "work-section ids (review-requested, awaiting-author, authored-by-me, mentioned)");
+            }
+        }
+
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -167,6 +196,8 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                     _current with { Inbox = _current.Inbox with { Sections = sections with { RecentlyClosed  = (bool)value! } } },
                 "inbox.defaultSort" =>
                     _current with { Inbox = _current.Inbox with { DefaultSort = (string)value! } },
+                "inbox.sectionOrder" =>
+                    _current with { Inbox = _current.Inbox with { SectionOrder = (string)value! } },
                 _ => throw new ConfigPatchException($"unknown field: {key}")
             };
             await WriteToDiskAsync(ct).ConfigureAwait(false);
