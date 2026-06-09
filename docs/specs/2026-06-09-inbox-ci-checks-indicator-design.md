@@ -157,8 +157,8 @@ without competing with the leading PR-state icon:
 
 | State | Octicon | Token |
 |-------|---------|-------|
-| `passing` | `check-circle-fill-16` (✓) | `--success-fg` |
-| `failing` | `x-circle-fill-16` (✗) | `--danger-fg` |
+| `passing` | `check-16` (✓, **no enclosing circle**) | `--success-fg` |
+| `failing` | `x-16` (✗, **no enclosing circle**) | `--danger-fg` |
 | `pending` | `dot-fill-16` (●, static) | `--warning-fg` |
 | `none` / done row | nothing rendered | — |
 
@@ -210,9 +210,9 @@ child for a sighted-only hover tooltip.
   Promoting state to an icon keeps it in the aria-label, satisfying the issue's
   "PR state must stay in the aria-label".
 - Both glyph families stay shape-distinct: PR state uses three structurally
-  different octicons (pull-request / merge / closed); CI uses ✓ / ✗ / ● whose
-  interior mark distinguishes state beyond hue (see Decision 4 for the honest
-  greyscale limit + the B1 backstop).
+  different octicons (pull-request / merge / closed); CI uses **bare** ✓ / ✗ / ●
+  — three distinct outlines that distinguish state on shape alone, no enclosing
+  circle (see Decision 4).
 
 ## Testing
 
@@ -254,8 +254,9 @@ child for a sighted-only hover tooltip.
     (`--success-fg` / `--danger-fg` / `--warning-fg` / `--merged-fg`) — already
     AA in both themes; this confirms the glyph *use* of them against the row
     surface, not fresh colour derivation. No new tokens to verify.
-  - **Greyscale legibility:** desaturated, confirm `passing` (✓) vs `failing` (✗)
-    remain tellable apart at 14px (Decision 4).
+  - **Greyscale legibility:** desaturated, confirm `passing` (bare ✓) vs `failing`
+    (bare ✗) remain tellable apart at 14px — re-confirms the design-preview result
+    that unenclosed glyphs read cleanly desaturated (Decision 4).
   - **Flanking read:** confirm the open-icon (green) + ✓ (green) on a passing open
     row reads as two distinct signals, not a doubled-up smear (Decision 1).
 
@@ -302,17 +303,18 @@ child for a sighted-only hover tooltip.
    detector/orchestrator change. (Contrast the CI half, which genuinely needs the
    new `Passing` enum + detector logic.)
 
-4. **CI: octicons over an extended dot family.** A filled green dot for passing
-   would make passing-green and failing-red both filled dots distinguished only by
-   hue, breaking the greyscale/colour-blind distinguishability the #227 hollow
-   ring protected. GitHub-style octicons (✓ / ✗ / ●) carry an interior mark that
-   distinguishes state beyond hue and are house style.
-   **Honest limit:** `check-circle-fill` and `x-circle-fill` share a circular
-   silhouette — the only greyscale difference is the interior ✓-vs-✗ knockout,
-   which can collapse at very small sizes (true of GitHub's own list icons too).
-   Mitigations: (a) render at 14px so the interior mark stays readable; (b) the
-   B1 greyscale-legibility check. If they collapse, fall back to keeping `pending`
-   as the #227 hollow ring and/or bump size — decided at B1, not assumed here.
+4. **CI: bare check / cross, not circle-enclosed.** CI uses the *unenclosed*
+   octicons `check-16` (✓) and `x-16` (✗) plus the amber `dot-fill` for pending —
+   **not** the `check-circle-fill` / `x-circle-fill` variants. The circle-enclosed
+   variants share one circular silhouette, so in greyscale they collapse to "two
+   filled circles" told apart only by a faint interior knockout — the owner
+   rejected them at the design-preview gate for exactly this reason. A bare check
+   and a bare cross have genuinely different outlines, so CI state survives
+   greyscale and colour-blindness on **shape alone**, restoring the #227
+   hue-independence intent that a filled-dot family would have broken. It also
+   means CI does not echo the circular silhouette of the leading PR-state
+   octicons. Confirmed greyscale-legible at the design-preview gate (bare ✓ vs ✗
+   are unmistakable desaturated); re-confirmed at B1 on the built app.
 
 5. **Pending is static, not animated.** GitHub's PR *list* uses a static amber
    dot (the spinner is PR-page only). A spinner in a dense list competes with the
