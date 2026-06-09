@@ -23,6 +23,7 @@
 - `frontend/src/components/PrDetail/Composer/CollapsedComposerAffordance.tsx` — input-placeholder reply button.
 - `frontend/src/components/PrDetail/Composer/CollapsedComposerAffordance.module.css`
 - `frontend/src/components/PrDetail/Composer/CollapsedComposerAffordance.test.tsx`
+- `frontend/__tests__/DiffPaneHighlight.test.tsx` — marker-class assertion for commented diff lines (Task 6).
 
 **Modified:**
 - `frontend/src/styles/tokens.css` — add `composer-frame` classes (additive; do NOT restyle bare `composer-*` globals) + the `diff-line--commented` recipes.
@@ -96,7 +97,9 @@ export type CommentDensity = 'comfortable' | 'compact';
 
 export interface CommentCardProps {
   author: string;
-  avatarUrl: string | null;
+  // Optional to match IssueCommentDto/ReviewCommentDto (`avatarUrl?: string | null`)
+  // — the Overview test fixtures omit it, so a non-optional type breaks `tsc -b`.
+  avatarUrl?: string | null;
   createdAt: string;
   body: string;
   density?: CommentDensity;
@@ -536,7 +539,7 @@ function thread(over: Partial<ReviewThreadDto> = {}): ReviewThreadDto {
       { commentId: 'c2', author: 'prpande', avatarUrl: null, body: 'two', createdAt: '2026-05-18T00:00:00Z' },
     ],
     ...over,
-  } as ReviewThreadDto;
+  } as ReviewThreadDto; // cast satisfies the omitted editedAt/anchorSha fields — keep it.
 }
 
 describe('ExistingCommentWidget', () => {
@@ -585,15 +588,19 @@ And replace the Reply `<button>` (lines 98-109) with:
 
 ```tsx
 {replyContext && !composerOpen && (
-  <CollapsedComposerAffordance
-    label={existingDraft ? 'Continue draft…' : 'Reply…'}
-    ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
-    hasDraft={!!existingDraft}
-    readOnly={replyContext.readOnly}
-    onOpen={handleReplyClick}
-  />
+  <div className={`comment-thread-actions ${styles.commentThreadActions}`}>
+    <CollapsedComposerAffordance
+      label={existingDraft ? 'Continue draft…' : 'Reply…'}
+      ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
+      hasDraft={!!existingDraft}
+      readOnly={replyContext.readOnly}
+      onOpen={handleReplyClick}
+    />
+  </div>
 )}
 ```
+
+(Keeping the `comment-thread-actions` wrapper preserves the `.commentThreadActions` CSS rule kept in Step 4 — don't render the affordance bare.)
 
 - [ ] **Step 4: Update `ExistingCommentWidget.module.css`**
 
@@ -639,7 +646,7 @@ git commit -m "feat(#287): diff threads render stacked CommentCards + resolved t
 ## Task 6: Commented-line highlight in `DiffPane`
 
 **Files:**
-- Modify: `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx` (unified `DiffLineRow` ~764; split content cells)
+- Modify: `frontend/src/components/PrDetail/FilesTab/DiffPane/DiffPane.tsx` (unified `DiffLineRow` `rowClass` ~706; `SplitDiffLineRowProps` ~817 + its 5 call sites in `renderSplitRows`; the split new-side content cells)
 - Modify: `frontend/src/styles/tokens.css` (the `.diff-line` block ~962) and/or `DiffPane.module.css`
 - Test: `frontend/__tests__/DiffPaneHighlight.test.tsx` (new) — assert the marker class lands on the anchored row.
 
@@ -677,11 +684,17 @@ const isAnchored = (threadsAtLine?.length ?? 0) > 0;
 const rowClass = `diff-line diff-line--${line.type}${isAnchored ? ' diff-line--commented' : ''}`;
 ```
 
-For the **split** row component (`SplitDiffLineRow`), compute the same `isAnchored` from its `threadsAtLine` prop and add `data-commented="true"` to the `data-side="new"` content `<td>` (the cell that already carries `data-side`). Example, on the new-side content cell:
+For the **split** path, `SplitDiffLineRow` does **not** receive the thread map — split comment widgets surface through a *separate* row via `emitWidgetAndComposerRows(idx, line.newLineNum)`. So the highlight needs explicit plumbing:
+
+1. Add `isAnchored?: boolean` to `SplitDiffLineRowProps` (~`DiffPane.tsx:817`).
+2. At each split-row call site in `renderSplitRows` (the `header`/`paired`/`context`/`solo-delete`/`solo-insert` emits, ~`DiffPane.tsx:509,551,571,588,602`), pass `isAnchored={!!threadsByLine.get(newLineNum ?? -1)?.length}` — `threadsByLine` (built ~`DiffPane.tsx:353`) is in scope there.
+3. Inside `SplitDiffLineRow`, add `{...(isAnchored ? { 'data-commented': 'true' } : {})}` to the **new-side** content `<td>` (the `data-side="new"` cell) of the `context`, `solo-insert`, and `paired` kinds:
 
 ```tsx
 <td className={`diff-content ${styles.diffContent}`} data-side="new" {...(isAnchored ? { 'data-commented': 'true' } : {})}>
 ```
+
+Skip the `solo-delete` new-side cell — it's the empty/`aria-hidden` half and is never anchored (threads are new-side; solo-delete lines have no `newLineNum`).
 
 - [ ] **Step 4: Add the CSS recipes**
 
