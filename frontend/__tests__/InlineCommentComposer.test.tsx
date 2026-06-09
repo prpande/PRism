@@ -211,8 +211,10 @@ describe('InlineCommentComposer — 404 recovery', () => {
   });
 });
 
-describe('InlineCommentComposer — closed PR banner (spec § 5.3)', () => {
-  it('renders a banner when prState !== "open"', () => {
+describe('InlineCommentComposer — closed PR (spec § 5.3, #302 updated)', () => {
+  // #302: "text not saved" banner removed (guard relaxed — drafts now stage on closed/merged).
+  // The "comments post immediately" footer note replaces it.
+  it('does NOT render a "text not saved" banner when prState !== "open"', () => {
     render(
       <InlineCommentComposer
         prRef={ref}
@@ -224,7 +226,9 @@ describe('InlineCommentComposer — closed PR banner (spec § 5.3)', () => {
         onClose={() => undefined}
       />,
     );
-    expect(screen.getByText(/PR closed — text not saved/i)).toBeInTheDocument();
+    expect(screen.queryByText(/text not saved/i)).not.toBeInTheDocument();
+    // The "comments post immediately" note is shown instead.
+    expect(screen.getByText(/comments post immediately/i)).toBeInTheDocument();
   });
 });
 

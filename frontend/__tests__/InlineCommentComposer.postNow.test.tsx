@@ -231,4 +231,53 @@ describe('InlineCommentComposer — post-now (Task 9)', () => {
     // endPosting always called (finally)
     expect(endPosting).toHaveBeenCalledOnce();
   });
+
+  // Case 6 (#302): post-now on a merged PR stages the draft and posts it
+  it('merged PR: clicking Comment stages the draft via sendPatch and calls postComment with the id', async () => {
+    const beginPosting = vi.fn();
+    const endPosting = vi.fn();
+    const onPosted = vi.fn();
+    const onClose = vi.fn();
+
+    // The composer has no pre-existing draftId; flush() must create one via sendPatch.
+    vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({
+      ok: true,
+      assignedId: 'new-merged-draft-id',
+    });
+
+    vi.mocked(commentApi.postComment).mockResolvedValue({
+      ok: true,
+      postedCommentId: 77,
+    });
+
+    render(
+      <Harness
+        prState="merged"
+        initialDraftId={null}
+        initialBody="looks good!"
+        anyOtherDraftsStaged={false}
+        beginPosting={beginPosting}
+        endPosting={endPosting}
+        onPosted={onPosted}
+        onClose={onClose}
+      />,
+    );
+
+    const commentBtn = screen.getByRole('button', { name: 'Comment' });
+    fireEvent.click(commentBtn);
+
+    await settle(0);
+
+    // sendPatch must have been called (draft was staged)
+    expect(draftApi.sendPatch).toHaveBeenCalledWith(ref, expect.objectContaining({ kind: 'newDraftComment' }));
+
+    // postComment must have been called with the id returned by sendPatch
+    expect(commentApi.postComment).toHaveBeenCalledWith(ref, 'new-merged-draft-id');
+
+    // Full happy path
+    expect(beginPosting).toHaveBeenCalledOnce();
+    expect(onPosted).toHaveBeenCalledWith(77, 'looks good!');
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(endPosting).toHaveBeenCalledOnce();
+  });
 });

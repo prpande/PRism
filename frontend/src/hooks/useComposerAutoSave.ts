@@ -80,7 +80,6 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
 
   const performSave = useCallback(async (currentBody: string): Promise<void> => {
     const p = propsRef.current;
-    if (p.prState !== 'open') return;
     if (p.disabled) return;
     const trimmed = currentBody.trim();
 
@@ -179,7 +178,6 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
   }, [performSave]);
 
   useEffect(() => {
-    if (props.prState !== 'open') return;
     if (props.disabled) {
       // Cancel any pending debounce. Without this an in-flight timer
       // queued just before the flag flipped would still fire after the
@@ -201,7 +199,7 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
         debounceTimer.current = null;
       }
     };
-  }, [props.body, props.prState, props.disabled, performSave]);
+  }, [props.body, props.disabled, performSave]);
 
   return { badge, flush };
 }

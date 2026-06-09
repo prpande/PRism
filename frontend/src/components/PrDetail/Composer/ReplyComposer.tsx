@@ -232,12 +232,6 @@ export function ReplyComposer({
       data-testid="reply-composer"
       className={`reply-composer composer-frame ${styles.replyComposer}`}
     >
-      {closedBanner && (
-        <div className="composer-closed-banner muted" role="status">
-          PR {prState === 'closed' ? 'closed' : 'merged'} — text not saved
-        </div>
-      )}
-
       {previewMode ? (
         <ComposerMarkdownPreview body={body} />
       ) : (

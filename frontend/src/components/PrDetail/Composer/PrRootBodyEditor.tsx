@@ -128,16 +128,8 @@ export function PrRootBodyEditor({
     onDraftLost?.();
   };
 
-  const closedBanner = prState !== 'open';
-
   return (
     <div className={styles.editor}>
-      {closedBanner && (
-        <div className="composer-closed-banner muted" role="status">
-          PR {prState === 'closed' ? 'closed' : 'merged'} — text not saved
-        </div>
-      )}
-
       <textarea
         ref={textareaRef}
         className="composer-textarea"

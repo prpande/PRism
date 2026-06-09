@@ -291,12 +291,6 @@ export function InlineCommentComposer({
       data-testid="inline-comment-composer"
       className={`inline-comment-composer composer-frame ${styles.inlineCommentComposer}`}
     >
-      {closedBanner && (
-        <div className="composer-closed-banner muted" role="status">
-          PR {prState === 'closed' ? 'closed' : 'merged'} — text not saved
-        </div>
-      )}
-
       {previewMode ? (
         <ComposerMarkdownPreview body={body} />
       ) : (
