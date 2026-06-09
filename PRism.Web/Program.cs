@@ -314,6 +314,7 @@ app.MapPreferences();
 app.MapAuth();
 app.MapEvents();
 app.MapInbox();
+app.MapActivity();
 app.MapPrDetail();
 app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
