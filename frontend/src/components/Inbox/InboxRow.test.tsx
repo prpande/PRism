@@ -95,7 +95,7 @@ describe('InboxRow title', () => {
       title: 'Refactor the pagination cursor encoder to be stable across reorders and deletes',
     };
     const { container } = renderInboxRow(long);
-    const titleEl = container.querySelector('[class*="title"]')!;
+    const titleEl = container.querySelector('[class*="title"][title]')!;
     expect(titleEl.getAttribute('title')).toBe(long.title);
     // truncation hides nothing from AT: the untruncated title stays in the aria-label
     expect(screen.getByRole('button').getAttribute('aria-label')).toContain(long.title);
@@ -110,38 +110,63 @@ describe('InboxRow meta', () => {
   });
 });
 
-describe('InboxRow CI dot', () => {
-  it('renders a solid failing dot and names it in the aria-label for open PRs', () => {
+describe('InboxRow PR-state leading icon', () => {
+  it('renders the open glyph for an open PR', () => {
+    const { container } = renderInboxRow({ ...PR, mergedAt: null, closedAt: null });
+    expect(container.querySelector('[data-pr-state="open"]')).not.toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· open');
+  });
+
+  it('renders the merged glyph + aria for a merged PR', () => {
+    const { container } = renderInboxRow({ ...PR, mergedAt: new Date().toISOString() });
+    expect(container.querySelector('[data-pr-state="merged"]')).not.toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· merged');
+  });
+
+  it('renders the closed glyph + aria for a closed PR', () => {
+    const { container } = renderInboxRow({ ...PR, closedAt: new Date().toISOString() });
+    expect(container.querySelector('[data-pr-state="closed"]')).not.toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· closed');
+  });
+
+  it('no longer renders a "Merged"/"Closed" text badge', () => {
+    renderInboxRow({ ...PR, mergedAt: new Date().toISOString() });
+    expect(screen.queryByText('Merged')).toBeNull();
+  });
+});
+
+describe('InboxRow CI suffix glyph', () => {
+  it('renders a passing check glyph + aria for an open passing PR', () => {
+    const { container } = renderInboxRow({ ...PR, ci: 'passing' });
+    expect(container.querySelector('[data-ci="passing"]')).not.toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('CI passing');
+  });
+
+  it('renders a failing cross glyph + aria for an open failing PR', () => {
     const { container } = renderInboxRow({ ...PR, ci: 'failing' });
-    expect(container.querySelector('[class*="dotFailing"]')).not.toBeNull();
+    expect(container.querySelector('[data-ci="failing"]')).not.toBeNull();
     expect(screen.getByRole('button').getAttribute('aria-label')).toContain('CI failing');
   });
 
-  it('renders a hollow-ring pending dot and names it in the aria-label for open PRs', () => {
+  it('renders a pending dot glyph + aria for an open pending PR', () => {
     const { container } = renderInboxRow({ ...PR, ci: 'pending' });
-    expect(container.querySelector('[class*="dotPending"]')).not.toBeNull();
+    expect(container.querySelector('[data-ci="pending"]')).not.toBeNull();
     expect(screen.getByRole('button').getAttribute('aria-label')).toContain('CI pending');
   });
 
-  it('shows no CI dot and no CI suffix when ci is none', () => {
+  it('renders no CI glyph and no CI suffix when ci is none', () => {
     const { container } = renderInboxRow({ ...PR, ci: 'none' });
-    expect(container.querySelector('[class*="dotFailing"]')).toBeNull();
-    expect(container.querySelector('[class*="dotPending"]')).toBeNull();
+    expect(container.querySelector('[data-ci]')).toBeNull();
     expect(screen.getByRole('button').getAttribute('aria-label')).not.toContain('CI ');
-    // the status slot is still reserved (an invisible placeholder dot), so the
-    // column doesn't reflow when CI state changes
-    expect(container.querySelector('[class*="status"]')!.children).toHaveLength(1);
   });
 
-  it('never shows a CI dot or CI suffix on a done (merged) PR even when ci=failing', () => {
+  it('renders no CI glyph on a done (merged) PR even when ci=failing', () => {
     const { container } = renderInboxRow({
       ...PR,
       ci: 'failing',
       mergedAt: new Date().toISOString(),
     });
-    expect(container.querySelector('[class*="dotFailing"]')).toBeNull();
-    expect(container.querySelector('[class*="dotPending"]')).toBeNull();
-    // AT parity: the hidden dot means no "CI failing" in the label either
+    expect(container.querySelector('[data-ci]')).toBeNull();
     expect(screen.getByRole('button').getAttribute('aria-label')).not.toContain('CI ');
   });
 });
@@ -236,10 +261,10 @@ describe('InboxRow chip + badge placement (on the meta line, not the metrics tai
     expect(chip.closest('[class*="tail"]')).toBeNull();
   });
 
-  it('renders the Merged badge on the meta line for a merged PR', () => {
-    renderInboxRow({ ...PR, mergedAt: new Date().toISOString() });
-    const badge = screen.getByText('Merged');
-    expect(badge.closest('[class*="meta"]')).not.toBeNull();
-    expect(badge.closest('[class*="tail"]')).toBeNull();
+  it('shows merged state via the leading icon + aria, not a meta-line badge', () => {
+    const { container } = renderInboxRow({ ...PR, mergedAt: new Date().toISOString() });
+    expect(container.querySelector('[data-pr-state="merged"]')).not.toBeNull();
+    expect(screen.queryByText('Merged')).toBeNull();
+    expect(screen.getByRole('button').getAttribute('aria-label')).toContain('· merged');
   });
 });

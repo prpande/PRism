@@ -42,6 +42,9 @@ export function makeDefaultPreferences() {
         'recently-closed': true,
       },
       defaultSort: 'updated',
+      // #275: the real GET /api/preferences always emits sectionOrder; keep the
+      // shared mock in contract with it (canonical order = no reorder applied).
+      sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
     },
     github: {
       host: 'https://github.com',
