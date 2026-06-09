@@ -20,57 +20,91 @@ Make the inline comments feel native to the diff by **mirroring the Overview tab
 
 ## Approach (locked in brainstorm)
 
-**Extract shared primitives used by *both* Overview and the diff** (single source of truth — they can't drift), adapted to the diff's denser/narrower context:
+Extract shared primitives used by **both** Overview and the diff, adapted to the diff's denser/narrower context.
 
-- **`CommentCard`** — the inner comment card: `--surface-1` body, 1px `--border-1`, `--radius-3`, `--shadow-1`, with a header **band** (`--surface-2` fill + border-bottom holding avatar + author + time) and a padded markdown body. A `density` prop: `comfortable` (Overview) and `compact` (diff — tighter padding, `--text-xs`/`--text-sm` scale). Overview's existing card *is* this component's `comfortable` form — its rendered appearance must not change.
-- **Composer shell** — the collapsed **input-placeholder affordance** and the expanded **framed composer** (textarea container + action bar), shared by the inline composer, the reply composer, and the PR-root reply composer. Behavior (auto-save, draft id, cross-tab gating) stays in each composer; only the visual frame is shared.
+**What is actually shared** (scoped honestly — not "they can never drift"): the **comment band + body** formatting and the **collapsed composer affordance**. A change to the band or body lands on both surfaces from one place. Per-context layout — Overview's timeline rail, the diff's line highlight, the resolved tag, card stacking/gaps — is **not** shared and lives in each caller; those can still diverge by design.
 
-Each context owns its *layout*: Overview keeps its vertical **timeline rail**; the diff **omits the rail** (visual overhead in a 2–3-comment thread) and anchors the thread via the highlighted line instead.
+- **`CommentCard`** — the inner comment card: `--surface-1` body, 1px `--border-1`, `--radius-3`, **`--shadow-2`**, a header **band** (`--surface-2` fill + border-bottom: avatar + author + time) and a padded markdown body. **Constraint:** `CommentCard` owns band + body + the `density` prop *only*. Resolved-state, the rail, and stacking are the **caller's** composition (children/slots), never a `density`-keyed branch inside the card — this keeps the component from accreting `if (compact)` conditionals.
+- **`CollapsedComposerAffordance`** — the input-placeholder button ("Reply…") shared by the diff's reply affordance and Overview's reply button (which is already this exact treatment).
+- **`composer-frame` (new CSS classes)** — the expanded framed shell (outer wrapper + action-bar footer). **Do NOT restyle the bare `composer-*` globals** (see Implementation constraints): they are consumed by `PrRootBodyEditor` and `SubmitDialog`, which have no frame and would break.
+
+Each context owns its layout: Overview keeps its vertical **timeline rail**; the diff **omits the rail** (overhead in a 2–3-comment thread) and anchors via the highlighted line.
 
 ### Rejected alternatives
-- **Shared CSS/classes only, separate components (B)** — drifts over time; one surface gets a tweak the other misses. The owner explicitly wants a single source of truth.
-- **Reimplement the look in the diff (C)** — most drift, least consistency.
+- **Shared CSS/classes only, separate components (B)** — the band/body would drift; the owner wants a single component for the card so a band tweak lands both places.
+- **Reimplement the look in the diff (C)** — most drift.
 - **Bring the timeline rail into the diff** — overhead in short, narrow inline threads; the line highlight is the better anchor.
 
 ## Design
 
 ### 1. Composer (priority)
-- **Collapsed:** an input-placeholder affordance ("Add a comment…" / "Reply…") styled like Overview's reply button — `--surface-2`, 1px `--border-1`, `--radius-2`, `cursor: text`, hover → `--border-strong`. Replaces today's bare button.
-- **Expanded:** a **framed shell** — `--surface-1`, 1px `--border-2`, `--radius-3`, `--shadow-1`; on focus the frame takes the accent border + `--accent-ring` glow (matching the app's `.input`/`.textarea` focus). The textarea is borderless *inside* the frame (the frame owns the border) so it reads as one control, not a textarea floating in a band.
-- **Action bar:** a `--surface-2` footer strip with a top border. Left→right: **Preview** toggle (ghost), a quiet **save-state pill** (`saved`/`saving`/`unsaved`/`rejected` — reuses the existing `composer-badge--*` color map), the **AI** preview chip (kept, restyled small), a spacer, **Discard** (ghost), **Save** (primary). All using the app's `.btn` styles.
-- The `prState !== 'open'` closed-banner path is unchanged (its behavior is owned by #302).
+
+**Important scope clarification:** the **new-comment** composer (`InlineCommentComposer`) is mounted **already-expanded** when the user clicks a diff line (today's behavior — unchanged). There is **no** new always-visible "Add a comment…" affordance on blank diff lines. The **collapsed input-placeholder** applies to the **reply** affordance only (the per-thread "Reply" button in `ExistingCommentWidget`, mirroring Overview's existing reply button). This keeps the change visual-only.
+
+- **Collapsed reply affordance:** an input-placeholder ("Reply…") styled like Overview's reply button — `--surface-2`, 1px `--border-1`, `--radius-2`, `cursor: text`, hover → `--border-strong`. It is a **`<button>`** element (matching `prRootReplyButton`), `aria-label="Reply to thread on <file> line <N>"`; Enter/Space expand it.
+  - **Existing-draft state:** when a saved reply draft exists for the thread but the composer is not yet open (cross-tab arrival; today the composer auto-opens — that path is unchanged), the collapsed affordance reads **"Continue draft…"** with the `composer-badge--saved` pill inline.
+  - **`readOnly` (cross-tab ownership):** the collapsed affordance is rendered **non-interactive** — `--text-3`, no pointer, no hover, click does not expand. (Distinct from `prState !== 'open'`, which is #302's concern.)
+- **Expanded:** a **framed shell** (new `composer-frame` class) — `--surface-1`, 1px `--border-2`, `--radius-3`, `--shadow-1`; on focus the **frame** takes the accent border + `--accent-ring` glow (matching `.input`/`.textarea`). The textarea is borderless *inside* the frame so the whole reads as one control. (The bare `.composer-textarea` global keeps its own border for its other consumers — the frame's borderless textarea is a `composer-frame`-scoped override.)
+- **Action bar:** a `--surface-2` footer strip with a top border. Left→right: **Preview** toggle (ghost), a quiet **save-state pill** (reuses `composer-badge--saved/saving/unsaved/rejected`), the **AI** preview chip (kept, restyled small), spacer, **Discard** (ghost), **Save** (primary, `composer-save btn btn-primary btn-sm` — no new `.composer-save` rule). The existing expanded-composer `readOnly` behavior (disabled textarea + buttons) is unchanged.
 
 ### 2. Commented-line highlight + anchoring
-- The anchored diff row gets a faint `--accent` wash (`color-mix(in oklch, var(--accent-soft) 70%, var(--surface-1))`) + a 2px `--accent` inset left edge (`box-shadow: inset 2px 0 0 var(--accent)`), composing over the existing add/remove tints.
-- Scope: **just the anchored line** (precise, low noise), not the whole hunk.
-- The thread renders **directly under** the anchored line with **no outer `--surface-2` wrapper** — removing the nested-surface band that drives the bolted-on read.
+- The anchored diff row is marked and given a faint `--accent` wash (`color-mix(in oklch, var(--accent-soft) 70%, var(--surface-1))`) + a 2px `--accent` inset edge, composing over the existing add/remove tints. Scope: **just the anchored line**, not the hunk. The thread renders directly under it with **no outer `--surface-2` wrapper**.
+- **Two recipes are required** (the diff renders unified *and* split differently):
+  - **Unified:** row-level `background` on the anchored `<tr>` + `box-shadow: inset 2px 0 0 var(--accent)` on the new-side gutter cell.
+  - **Split:** the wash + inset edge go on the **content `<td>` matching the thread's anchored `data-side`** (`old`/`new`), mirroring the existing split-mode add/remove tint isolation — *not* the `<tr>` (a row shadow would land on the wrong column and wash the empty half-cell).
+- **Anchor marker:** today nothing classes the commented code row (`threadsAtLine` only drives the follow-up comment row). A `hasThread`/`isAnchored` boolean must be threaded into `DiffLineRow` and the `SplitDiffLineRow` variants, keyed off `threadsAtLine?.length`, to emit the marker class.
 
 ### 3. Thread = stacked `CommentCard`s
-- Each comment is its own compact `CommentCard`, stacked with an `--s-2` gap → clear per-comment demarcation. Replaces the single-card/hairline-entries model.
-- **Resolved threads:** quietly differentiated — `opacity: ~0.72` + a small "Resolved" tag in the band (pill, `--surface-3`/`--text-3`). Not the current heavy dashed treatment; not collapsed-by-default.
+- Each comment is its own compact `CommentCard`, stacked with an `--s-2` gap → clear demarcation. Replaces the single-card/hairline-entries model.
+- **Resolved threads:** quietly differentiated — `opacity: ~0.72` + a small "Resolved" tag in the band (pill, `--surface-3`/`--text-3`). **Hovering** a resolved thread restores opacity to 1 so the reply affordance reads clearly; **reply remains available** on resolved threads (valid per GitHub's model). Not the heavy dashed treatment; not collapsed-by-default.
 
 ### 4. Meta line / band
-- Adopts the Overview band: avatar (compact size) + author at 600 weight (`--text-1`) + timestamp (`--text-3`), bound into the card header with a border-bottom. Consistent across Overview and the diff via the shared band.
+Adopts the Overview band: avatar (compact `sm` size in the diff) + author at 600 weight (`--text-1`) + timestamp (`--text-3`), bound into the card header with a border-bottom. Shared via `CommentCard`.
+
+## Interaction & accessibility states
+
+| State | Behavior |
+|---|---|
+| Collapsed reply, no draft | `<button>` "Reply…", `cursor: text`, Enter/Space → expand. |
+| Collapsed reply, saved draft exists | "Continue draft…" + `composer-badge--saved` pill. |
+| Collapsed reply, `readOnly` | Non-interactive, dimmed (`--text-3`), no expand. |
+| Expanded composer focus | Accent border + `--accent-ring` on the **frame**. |
+| Markdown body, wide content | Compact card body `overflow-x: auto` (scroll code blocks/tables, don't clip into the gutter); `img { max-width: 100% }`. |
+| Content scale (#135) | `.markdown-body` inside compact cards inherits `--content-scale` normally — the user's chosen scale applies to inline comments as it does to Overview. |
+| Resolved thread | Dimmed + "Resolved" `<span aria-label="Resolved thread">`; restores opacity on hover; reply available. |
+| Commented line SR | The thread container carries `aria-label="Comment thread on <file> line <N>"` (preserve the existing reply-button label); the line wash is decorative (no SR text). |
 
 ## Components touched
 
 | File | Change |
 |---|---|
-| **`CommentCard`** (new, shared — likely `components/PrDetail/Comment/`) | Card + band + body + `density` prop. |
-| Composer shell (new shared CSS/primitive + tokens) | Collapsed affordance + framed shell + action bar. Extends the existing `composer-*` globals in `tokens.css`. |
-| `FilesTab/DiffPane/ExistingCommentWidget.tsx` (+ `.module.css`) | Render stacked `CommentCard`s; drop the `--surface-2` wrapper; resolved tag. |
-| `FilesTab/DiffPane/DiffPane.tsx` (+ CSS) | Apply the commented-line highlight to the anchored row. |
-| `Composer/InlineCommentComposer.tsx` / `ReplyComposer.tsx` / `ComposerMarkdownPreview` (+ CSS) | Use the framed shell + action bar + collapsed affordance. Behavior unchanged. |
-| `OverviewTab/PrRootConversation.tsx` (+ CSS) | Refactor its card markup to render through `CommentCard` (`comfortable`); keep the timeline rail wrapping it. **Appearance must not change** (verified at B1). |
-| `Composer/PrRootReplyComposer.tsx` (+ CSS) | Adopt the shared framed shell (its reply-button affordance is already the model). |
+| **`CommentCard`** (new, shared — `components/PrDetail/Comment/`) | Band + body + `density` prop; forwards `data-testid` + `aria-label` so Overview's tests (`pr-root-comment`, `pr-comment-meta`) stay green. |
+| **`CollapsedComposerAffordance`** (new, shared) | Input-placeholder reply button (2 consumers). |
+| `composer-frame` CSS (new classes in `tokens.css`, **additive**) | Framed shell + action-bar footer + borderless-textarea-within-frame override. |
+| `FilesTab/DiffPane/ExistingCommentWidget.tsx` (+ `.module.css`) | Stacked `CommentCard`s; drop the `--surface-2` wrapper; resolved tag; reply affordance via `CollapsedComposerAffordance`. |
+| `FilesTab/DiffPane/DiffPane.tsx` (+ `.module.css`) | Anchor-marker plumbing + the two highlight recipes (unified/split). |
+| `Composer/InlineCommentComposer.tsx` / `ReplyComposer.tsx` / `ComposerMarkdownPreview` (+ CSS) | Adopt `composer-frame` + action bar. **Behavior unchanged** — do not touch the #299 `onSaved`/`flushRef` props or the auto-save wiring. |
+| `OverviewTab/PrRootConversation.tsx` (+ CSS) | Render its card through `CommentCard` (`comfortable`); keep the timeline rail wrapping it. **Appearance must not change.** |
+| `Composer/PrRootReplyComposer.tsx` (+ CSS) | Adopt the shared collapsed affordance / frame around its **outer** container only. |
+| `Composer/PrRootBodyEditor.tsx` | **CSS wrapper boundary only** — its internal textarea + autosave wiring are unchanged; it must NOT be forced into the frame model. |
+
+**Explicitly untouched (but verified):** `PrRootBodyEditor` and `SubmitDialog` consume the bare `composer-*` globals; since we add `composer-frame` rather than restyle the globals, they are unchanged — confirmed in the B1 matrix.
+
+## Implementation constraints (regression surface — for the plan)
+
+1. **Don't restyle the bare `composer-*` globals** (`.composer-textarea`, `.composer-badge`, `.composer-preview-toggle`). Add `composer-frame`-scoped rules. Bare-global consumers: `PrRootBodyEditor`, `SubmitDialog`.
+2. **`comfortable` density must reproduce today's Overview card byte-for-byte** across four axes: **avatar size** (`md`), **band padding** (`var(--s-2) var(--s-4)`), **body padding** (`var(--s-3) var(--s-4)`), **font scale**. Use `--shadow-2` (not `--shadow-1`). The shared body must carry Overview's `.body p` / `.body code` prose rules verbatim (the diff body gains them — an intended improvement).
+3. **`compact` density** (diff): avatar `sm`, band padding `var(--s-1) var(--s-3)`, body padding `var(--s-2) var(--s-3)`, `--text-xs`/`--text-sm` scale, card `--shadow-1`.
+4. **Timeline rail coupling:** `--rail-node-y` in `PrRootConversation.module.css` is hand-tuned to the band's `padding-top` (`--s-2`) + the `md` avatar. The `comfortable` card must preserve those, or `--rail-node-y` is re-derived (verify at B1).
+5. **Test selectors:** before refactoring `ExistingCommentWidget`, inventory the literal global classes it emits (`comment-thread`, `comment-thread--resolved`, `comment-entry`, `comment-meta`, `comment-author`, `comment-body`) and `data-testid` to find pinned tests; the plan lists which migrate vs. survive.
 
 ## Testing & verification
-- **Component tests (vitest):** `CommentCard` renders band/body/density + resolved state; `ExistingCommentWidget` renders one card per comment; composer renders collapsed affordance → expands → action bar. Existing inline-composer/reply behavior tests stay green (behavior is untouched).
-- **B1 visual proof (Playwright, light + dark):** before/after for — single comment, multi-comment thread, resolved thread, composer collapsed, composer open, reply open, markdown-rich body — plus an **Overview before/after** to confirm the shared-primitive refactor left it visually identical.
+- **Component tests (vitest):** `CommentCard` renders band/body/density + resolved + forwards testid; `ExistingCommentWidget` renders one card per comment; the collapsed affordance expands on click/Enter and is inert under `readOnly`. Existing composer/reply behavior tests stay green (behavior untouched).
+- **B1 visual proof (Playwright, light + dark):** before/after for — single comment, multi-comment thread, resolved thread, composer collapsed/open, reply open, markdown-rich body (incl. a wide code block), unified **and** split highlight — plus **Overview before/after** (visual identity) and **`PrRootBodyEditor`/`SubmitDialog` before/after** (confirm the bare-global composers are untouched).
 
 ## Out of scope / deferred
-- **Disable add/reply on merged (and closed-unmerged) PRs** → [#302](https://github.com/prpande/PRism/issues/302) (depends on the comment/review decoupling: a merged PR can still take a single comment).
-- **Reply drafts appearing live in the Drafts tab** — the [#299](https://github.com/prpande/PRism/issues/299) boundary; not part of this visual pass.
+- **Disable add/reply on merged (and closed-unmerged) PRs** → [#302](https://github.com/prpande/PRism/issues/302).
+- **Reply drafts appearing live in the Drafts tab** — the [#299](https://github.com/prpande/PRism/issues/299) boundary.
 
 ## Risk
-Gated **B1 (UI)** — correctness is human-eyeball. The one substantive risk is the `CommentCard` extraction regressing Overview's appearance; mitigated by the Overview before/after B1 check. No backend, no submit-pipeline, no draft-session changes.
+Gated **B1 (UI)**. Substantive risks: (a) the global-vs-`composer-frame` decision leaking into `PrRootBodyEditor`/`SubmitDialog`; (b) the `CommentCard` extraction regressing Overview (shadow/padding/avatar/prose-rule fidelity + the rail node). Both are covered by an expanded B1 before/after matrix. No backend, submit-pipeline, or draft-session changes.
