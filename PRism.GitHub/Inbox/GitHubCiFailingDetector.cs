@@ -213,17 +213,34 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         using var doc = JsonDocument.Parse(body);
         var state = doc.RootElement.TryGetProperty("state", out var s) ? s.GetString() : "success";
-        // GitHub's combined-status endpoint returns state="pending" when no legacy
-        // statuses are registered; combined with check-runs results in the outer
-        // Failing > Pending > None precedence, so an "all-Checks-pass + no-statuses"
-        // PR may still surface as Pending. Acceptable for PoC; v2 may refine.
+        // GitHub's combined-status endpoint returns state="pending" when NO legacy commit
+        // statuses are registered — the default for a modern Actions-only PR (check-runs,
+        // not statuses) or a PR with no CI at all. Reading that bare "pending" as Pending
+        // lit a false amber "checks in progress" dot on PRs that have no checks (#286). So
+        // "pending" is only honored when at least one status context is actually registered
+        // (total_count > 0); otherwise this source contributes None and the check-runs probe
+        // decides. Failing/None states are unaffected. (Pre-#286 this was a PoC shortcut.)
         var status = state switch
         {
             "failure" or "error" => CiStatus.Failing,
-            "pending" => CiStatus.Pending,
+            "pending" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Pending,
             _ => CiStatus.None,
         };
         return (status, false);
+    }
+
+    // The combined-status payload carries `total_count` (number of registered status
+    // contexts) and an inline `statuses` array. Either being non-empty means real
+    // statuses exist; an absent/zero count with an empty array means "none registered",
+    // which GitHub still labels state="pending". total_count is the documented field;
+    // the array length is a defensive fallback if it is ever missing. (#286)
+    private static bool HasRegisteredStatuses(JsonElement root)
+    {
+        if (root.TryGetProperty("total_count", out var count) && count.ValueKind == JsonValueKind.Number)
+            return count.GetInt32() > 0;
+        return root.TryGetProperty("statuses", out var statuses)
+            && statuses.ValueKind == JsonValueKind.Array
+            && statuses.GetArrayLength() > 0;
     }
 
     private Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
