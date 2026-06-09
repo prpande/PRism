@@ -24,6 +24,15 @@ public class PlaceholderEgressGuardTests
     public void Contracts_assembly_does_not_reference_System_Net_Http()
         => AssertNoHttpReference(typeof(IPrSummarizer).Assembly);             // PRism.AI.Contracts
 
+    // The obvious managed network-egress vectors. GetReferencedAssemblies only lists an
+    // assembly once a type from it is actually used, so naming these is the non-brittle
+    // tripwire: it fires exactly when someone wires HttpClient (System.Net.Http), a raw
+    // socket (System.Net.Sockets), or WebClient/WebRequest (System.Net.Requests) into the
+    // placeholder/contracts assembly. Not exhaustive (a transitive package could still hide
+    // egress), but it spans the realistic ways a "real model" call gets bolted on.
+    private static readonly string[] EgressAssemblies =
+        { "System.Net.Http", "System.Net.Sockets", "System.Net.Requests" };
+
     private static void AssertNoHttpReference(Assembly assembly)
     {
         var referenced = assembly
@@ -31,10 +40,11 @@ public class PlaceholderEgressGuardTests
             .Select(a => a.Name)
             .ToArray();
 
-        referenced.Should().NotContain(
-            "System.Net.Http",
+        referenced.Should().NotIntersectWith(
+            EgressAssemblies,
             because: "the default-on placeholder AI seams must perform zero network egress; a " +
-                     "reference to System.Net.Http means HttpClient (or similar) was wired in — " +
-                     "which requires a privacy/egress review before it can ship default-on (#283).");
+                     "reference to a network assembly means HttpClient/sockets/WebRequest was " +
+                     "wired in — which requires a privacy/egress review before it can ship " +
+                     "default-on (#283).");
     }
 }
