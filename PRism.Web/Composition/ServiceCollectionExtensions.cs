@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PRism.AI.ClaudeCode;
 using PRism.AI.Contracts;
@@ -66,13 +67,16 @@ internal static class ServiceCollectionExtensions
                 // Cold path: if the detail view hasn't populated the snapshot yet, LOAD it.
                 // Do NOT call GetOrFetchDiffAsync with empty SHAs — that would forward empty
                 // base/head to the GitHub adapter (PR #T9 design constraint).
-                var snapshot = loader.TryGetCachedSnapshot(pr);
-                if (snapshot is null)
-                {
-                    await loader.LoadAsync(pr, ct).ConfigureAwait(false);
-                    snapshot = loader.TryGetCachedSnapshot(pr)
-                        ?? throw new InvalidOperationException($"PR detail unavailable for {pr}");
-                }
+                //
+                // Fix: use LoadAsync's return value directly. LoadAsync may return a NON-NULL
+                // snapshot WITHOUT caching it when a generation flush races the load (see
+                // PrDetailLoader.cs lines 148-151: if Volatile.Read(_generation) != generation
+                // at the end of LoadAsync, the snapshot is returned uncached). Re-calling
+                // TryGetCachedSnapshot after LoadAsync would return null in that race, causing a
+                // spurious InvalidOperationException even though fresh data is available.
+                var snapshot = loader.TryGetCachedSnapshot(pr)
+                    ?? await loader.LoadAsync(pr, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"PR detail unavailable for {pr}");
                 var baseSha = snapshot.Detail.Pr.BaseSha;
                 var headSha = snapshot.Detail.Pr.HeadSha;
                 var diffDto = await loader.GetOrFetchDiffAsync(pr, new DiffRangeRequest(baseSha, headSha), ct).ConfigureAwait(false);
@@ -126,6 +130,17 @@ internal static class ServiceCollectionExtensions
             consent: sp.GetRequiredService<AiConsentState>(),
             features: sp.GetRequiredService<AiFeatureState>());
         });
+
+        // Explicitly warm up IAiSeamSelector at host startup so realSeams is populated
+        // before /api/capabilities can be served. Without this, realSeams is populated
+        // lazily inside the IAiSeamSelector factory, and the first /api/capabilities call
+        // in Live mode could report summary=false if something else hasn't already resolved
+        // the selector (e.g. in tests that don't exercise the InboxPoller startup chain).
+        // AiSeamWarmup.StartAsync resolves IAiSeamSelector once, forcing the factory to run.
+        // IHostedService.StartAsync runs in registration order (after ViewerLoginHydrator
+        // and InboxPoller, which are registered in AddPrismCore) — that's fine; we just
+        // need the selector resolved before request handling begins, which StartAsync guarantees.
+        services.AddHostedService<AiSeamWarmup>();
 
         return services;
     }
