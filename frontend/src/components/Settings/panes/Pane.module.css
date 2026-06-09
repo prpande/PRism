@@ -76,7 +76,7 @@
 .moveGroup {
   display: inline-flex;
   gap: 2px;
-  margin-right: var(--space-2, 8px);
+  margin-right: 8px;
 }
 .moveBtn {
   display: inline-flex;
@@ -99,7 +99,7 @@
   cursor: default;
 }
 .pinnedTag {
-  margin-right: var(--space-2, 8px);
+  margin-right: 8px;
   font-size: var(--text-xs);
   color: var(--text-2);
   text-transform: uppercase;

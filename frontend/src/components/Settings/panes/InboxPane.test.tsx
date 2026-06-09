@@ -104,8 +104,12 @@ describe('InboxPane reorder', () => {
     renderInboxPane({ set: () => new Promise((r) => { resolve = r; }) });
     const down = screen.getByRole('button', { name: 'Move Review requested down' });
     await userEvent.click(down);
-    expect(screen.getByRole('button', { name: 'Move Authored by me up' })).toBeDisabled();
+    const other = screen.getByRole('button', { name: 'Move Authored by me up' });
+    expect(other).toBeDisabled();
+    // Settle the POST and confirm controls recover (also flushes the state update
+    // inside act so no dangling-update warning leaks).
     resolve(undefined);
+    await waitFor(() => expect(other).toBeEnabled());
   });
 
   it('disables Restore default order when already at the canonical default', () => {
