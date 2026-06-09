@@ -48,6 +48,10 @@ export function orderInboxSections(
     const savedIndex = saved.indexOf(id);
     if (savedIndex >= 0) return savedIndex;
     const canonicalIndex = (CANONICAL_WORK_ORDER as readonly string[]).indexOf(id);
+    // A known canonical id not in the saved order sorts by its canonical index;
+    // a wholly unknown future id falls back to CANONICAL_WORK_ORDER.length, which
+    // places it after every unlisted canonical section but still before
+    // recently-closed (PINNED_LAST_RANK). Never dropped (acceptance criterion #3).
     return saved.length + (canonicalIndex >= 0 ? canonicalIndex : CANONICAL_WORK_ORDER.length);
   };
   return [...sections].sort((a, b) => rank(a.id) - rank(b.id));

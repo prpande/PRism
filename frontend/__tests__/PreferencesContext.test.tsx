@@ -20,7 +20,11 @@ function prefs(overrides: Partial<PreferencesResponse['ui']> = {}): PreferencesR
       contentScale: 'm',
       ...overrides,
     },
-    inbox: { sections: {}, defaultSort: 'updated' } as PreferencesResponse['inbox'],
+    inbox: {
+      sections: {},
+      defaultSort: 'updated',
+      sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+    } as PreferencesResponse['inbox'],
     github: { host: 'https://github.com', configPath: '/c', logsPath: '/l' },
   };
 }
