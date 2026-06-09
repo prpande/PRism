@@ -253,6 +253,47 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
+    public async Task Passing_checks_with_pending_status_marks_pending()
+    {
+        // Precedence: Pending outranks Passing. Green check-runs + a genuinely
+        // in-progress legacy status → (Passing, Pending) → Pending (#264).
+        var handler = RouterHandler(AllPassingCheckRuns, RegisteredPendingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items[0].Ci.Should().Be(CiStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Passing_while_other_source_degraded_is_not_cached()
+    {
+        // #264/#213: a Passing observed while the OTHER source 5xx'd must NOT be cached —
+        // the unread source could hide a Failing. The next tick must re-probe and reflect
+        // the recovered status (here the combined-status endpoint recovers to failure).
+        var recovered = false;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, AllPassingCheckRuns);
+            // /status: degraded (503) first tick, then recovers to a failure status.
+            return recovered
+                ? Respond(HttpStatusCode.OK, FailureStatus)
+                : Respond(HttpStatusCode.ServiceUnavailable, "{}");
+        });
+        var sut = BuildSut(handler);
+
+        var first = await sut.DetectAsync([Raw(1)], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Passing,
+            "checks are green and the degraded status source contributes nothing this tick");
+
+        recovered = true;
+        var second = await sut.DetectAsync([Raw(1)], default);
+        second.Items[0].Ci.Should().Be(CiStatus.Failing,
+            "the degraded Passing must not have been cached — the recovered tick re-probes and sees the failure");
+    }
+
+    [Fact]
     public async Task Cache_hit_skips_http()
     {
         var requestCount = 0;
