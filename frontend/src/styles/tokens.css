@@ -953,6 +953,38 @@ a:hover { text-decoration: underline; }
   gap: var(--s-2);
 }
 
+/* #287 — composer-frame: the expanded inline/reply composer reads as ONE
+   bordered control. ADDITIVE — the bare `.composer-textarea`/`.composer-badge`/
+   `.composer-preview-toggle` globals are unchanged (PrRootBodyEditor +
+   SubmitDialog consume them frameless). */
+.composer-frame {
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-3);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+/* The frame is the SOLE focus indicator: kill the inner textarea's border AND
+   its :focus-visible ring so focus doesn't paint two rings. */
+.composer-frame .composer-textarea {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+.composer-frame .composer-textarea:focus-visible {
+  outline: none;
+}
+.composer-frame:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+/* Action bar = a footer strip, not a loose row. */
+.composer-frame .composer-actions {
+  padding: var(--s-2) var(--s-3);
+  border-top: 1px solid var(--border-1);
+  background: var(--surface-2);
+}
+
 /* Diff-line tints (spec §4.4, D34). Lifted from the per-row literal class
    strings DiffPane emits — `.diff-line diff-line--insert` / `--delete` /
    `--hunk-header`. `--context` lines stay transparent (no rule needed —
