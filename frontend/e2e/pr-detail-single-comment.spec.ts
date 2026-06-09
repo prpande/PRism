@@ -232,16 +232,54 @@ test('#302 merged PR — only Comment button shown; merged sub-label present', a
   const composerMerged = page.getByTestId('inline-comment-composer');
   await expect(composerMerged).toBeVisible();
 
-  // On a merged PR:
-  //   - The "PR merged — text not saved" closed banner must be present.
+  // On a merged PR (#302 post-now behavior):
+  //   - The old "PR merged — text not saved" closed banner is GONE (post-now is live).
   //   - "Add to review" save button must NOT be present (closedBanner = true hides it).
-  //   - "Comment" button must be visible.
+  //   - "Add review comment" label must NOT be present either.
+  //   - "Comment" button must be visible (and FUNCTIONAL — types and posts below).
   //   - The "PR is merged — comments post immediately" sub-note must be visible.
-  await expect(composerMerged.getByText(/text not saved/i)).toBeVisible();
+  await expect(composerMerged.getByText(/text not saved/i)).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Add to review' })).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Add review comment' })).toHaveCount(0);
   await expect(composerMerged.getByRole('button', { name: 'Comment', exact: true })).toBeVisible();
   await expect(composerMerged.getByText(/PR is merged — comments post immediately/i)).toBeVisible();
+
+  // STRENGTHEN: post-now actually works on a merged PR (#302 core contract).
+  // Type a body, click "Comment", assert the comment is posted.
+  const mergedBody = 'Post-now comment on a merged PR.';
+  await composerMerged.getByRole('textbox', { name: /comment body/i }).fill(mergedBody);
+
+  // The "Comment" button must NOT be aria-disabled (body is non-empty, no other
+  // drafts staged, posting=false, readOnly=false, and — critically after #302 —
+  // merged PRs are no longer read-only from the autosave perspective).
+  const commentBtnMerged = composerMerged.getByRole('button', { name: 'Comment', exact: true });
+  await expect(commentBtnMerged).not.toHaveAttribute('aria-disabled', 'true');
+
+  const postPromiseMerged = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/pr/acme/api/123/comment/post') &&
+      r.request().method() === 'POST' &&
+      r.status() === 200,
+    { timeout: 15_000 },
+  );
+  await commentBtnMerged.click();
+  await postPromiseMerged;
+
+  // Composer closes on success.
+  await expect(composerMerged).toHaveCount(0, { timeout: 10_000 });
+
+  // The comment body becomes visible in the diff (optimistic card or real refetch).
+  await expect(page.getByText(mergedBody).first()).toBeVisible({ timeout: 10_000 });
+
+  // Backend: exactly one inline record on the merged PR, correct path/body.
+  const mergedReviewComments = await inspectReviewComments(page.request);
+  expect(mergedReviewComments).toHaveLength(1);
+  expect(mergedReviewComments[0].kind).toBe('inline');
+  expect(mergedReviewComments[0].body).toBe(mergedBody);
+  expect(mergedReviewComments[0].path).toBe('src/Calc.cs');
+  expect(mergedReviewComments[0].pr.owner).toBe(PR.owner);
+  expect(mergedReviewComments[0].pr.repo).toBe(PR.repo);
+  expect(mergedReviewComments[0].pr.number).toBe(PR.number);
 });
 
 // ---------------------------------------------------------------------------
