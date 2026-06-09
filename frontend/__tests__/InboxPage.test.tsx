@@ -246,6 +246,8 @@ describe('InboxPage', () => {
         ],
         enrichments: {}, lastRefreshedAt: '', tokenScopeFooterEnabled: false, ciProbeComplete: true,
       },
+      // awaiting-author is in the saved order but absent from `sections` — exercises
+      // orderInboxSections' "saved id matching no live section is harmlessly ignored".
       sectionOrder: 'mentioned,authored-by-me,review-requested,awaiting-author',
     });
     render(
@@ -257,6 +259,9 @@ describe('InboxPage', () => {
       .getAllByRole('button')
       .map((b) => b.textContent ?? '')
       .filter((t) => /Review requested|Authored by me|Mentioned|Recently closed/.test(t));
+    // Exactly the 4 live sections render; pin the count so "recently-closed last" is
+    // an explicit guarantee, not an artifact of the filter happening to match 4.
+    expect(order).toHaveLength(4);
     expect(order[0]).toMatch(/Mentioned/);
     expect(order[1]).toMatch(/Authored by me/);
     expect(order[2]).toMatch(/Review requested/);
