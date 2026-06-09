@@ -126,6 +126,18 @@ function makeRouteHandler(
           }),
         );
       }
+      if (url.endsWith('/comment/post') && method === 'POST') {
+        patchTracker?.calls.push({
+          url,
+          body: init?.body ? JSON.parse(init.body as string) : null,
+        });
+        return Promise.resolve(
+          new Response(JSON.stringify({ postedCommentId: 12345 }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        );
+      }
       if (url.endsWith('/draft') && method === 'PUT') {
         const body = init?.body ? (JSON.parse(init.body as string) as unknown) : null;
         patchTracker?.calls.push({ url, body });
@@ -349,5 +361,99 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     ).newDraftComment;
     expect(payload.bodyMarkdown).toBe('flush me before switching');
     expect(payload.lineNumber).toBe(1);
+  });
+});
+
+describe('FilesTab — inline post-now wiring (#302 Task 11a)', () => {
+  it('clicking Comment on a saved inline draft posts via /comment/post and then refetches the session', async () => {
+    // A saved draft already exists on line 1, so the composer mounts with a
+    // persisted draftId and the post-now "Comment" button is enabled.
+    const tracker = { calls: [] as { url: string; body: unknown }[] };
+    const handler = makeRouteHandler(
+      onefileDiff,
+      sessionWithDraftAt('src/main.ts', 1, 'right', 'a saved body'),
+      tracker,
+    );
+    globalThis.fetch = handler as unknown as typeof fetch;
+    renderFilesTab();
+
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
+
+    const lineButton = await screen.findByRole('button', { name: 'Add comment on line 1' });
+    fireEvent.click(lineButton);
+
+    // Composer hydrates from the saved draft.
+    await screen.findByRole('form', { name: 'Draft comment on src/main.ts line 1' });
+
+    // Count GET /draft fetches up to this point so we can assert a *new* one
+    // (the refetch) fires after the post lands.
+    const getDraftCallsBefore = handler.mock.calls.filter((call: unknown[]) => {
+      const u = call[0];
+      const init = call[1] as RequestInit | undefined;
+      return typeof u === 'string' && u.endsWith('/draft') && (init?.method ?? 'GET') === 'GET';
+    }).length;
+
+    // Click "Comment" (post-now). With a valid persisted draft and no other
+    // staged drafts, the button is enabled.
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+
+    // The post hits POST /comment/post with the draft id...
+    await waitFor(() => {
+      const posts = tracker.calls.filter((c) => c.url.endsWith('/comment/post'));
+      expect(posts).toHaveLength(1);
+      expect(posts[0].body).toEqual({ draftId: 'uuid-existing' });
+    });
+
+    // ...and the session is refetched (a new GET /draft) so the posted comment
+    // surfaces via the existing refetch-on-save (11a — no optimistic insert).
+    await waitFor(() => {
+      const getDraftCallsAfter = handler.mock.calls.filter((call: unknown[]) => {
+        const u = call[0];
+        const init = call[1] as RequestInit | undefined;
+        return typeof u === 'string' && u.endsWith('/draft') && (init?.method ?? 'GET') === 'GET';
+      }).length;
+      expect(getDraftCallsAfter).toBeGreaterThan(getDraftCallsBefore);
+    });
+
+    // The composer closed after a successful post.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('form', { name: 'Draft comment on src/main.ts line 1' }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe('FilesTab — inline optimistic placeholder (#302 Task 11b)', () => {
+  it('shows a dimmed optimistic card at the line immediately after a new-inline post-now', async () => {
+    // The mocked POST returns postedCommentId 12345, and the refetched session
+    // is the same empty session (reviewComments stays empty — no real comment
+    // with databaseId 12345 lands), so the optimistic placeholder must remain
+    // visible (de-dup by databaseId finds no match → keep showing it).
+    const tracker = { calls: [] as { url: string; body: unknown }[] };
+    const handler = makeRouteHandler(
+      onefileDiff,
+      sessionWithDraftAt('src/main.ts', 1, 'right', 'my new comment'),
+      tracker,
+    );
+    globalThis.fetch = handler as unknown as typeof fetch;
+    renderFilesTab();
+
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
+
+    const lineButton = await screen.findByRole('button', { name: 'Add comment on line 1' });
+    fireEvent.click(lineButton);
+    await screen.findByRole('form', { name: 'Draft comment on src/main.ts line 1' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+
+    // The optimistic placeholder appears (dimmed) right where the composer was.
+    const optimistic = await screen.findByTestId('inline-comment-card-optimistic');
+    expect(optimistic).toHaveTextContent('my new comment');
+    expect(optimistic.className).toContain('comment-card--posting');
   });
 });

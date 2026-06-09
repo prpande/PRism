@@ -15,7 +15,10 @@ interface HarnessProps {
   prState?: 'open' | 'closed' | 'merged';
   registerOpenComposer?: (draftId: string, ownerKey: string) => () => void;
   onBodyChange?: (body: string) => void;
-  onAutosaveControl?: (control: { flush: () => Promise<void>; badge: ComposerSaveBadge }) => void;
+  onAutosaveControl?: (control: {
+    flush: () => Promise<string | null>;
+    badge: ComposerSaveBadge;
+  }) => void;
   onDraftLost?: () => void;
 }
 
@@ -207,15 +210,16 @@ describe('PrRootBodyEditor — surfaced callbacks', () => {
   });
 });
 
-describe('PrRootBodyEditor — readOnly + banner', () => {
+describe('PrRootBodyEditor — readOnly + banner (#302 updated)', () => {
   it('readOnly makes the textarea read-only', () => {
     render(<Harness readOnly />);
     const textarea = screen.getByLabelText('PR-level body') as HTMLTextAreaElement;
     expect(textarea).toHaveAttribute('readOnly');
   });
 
-  it('renders the closed banner when prState !== "open"', () => {
+  // #302: "text not saved" banner removed — drafts now stage on closed/merged PRs.
+  it('does NOT render a "text not saved" banner when prState !== "open"', () => {
     render(<Harness prState="closed" />);
-    expect(screen.getByText(/PR closed — text not saved/i)).toBeInTheDocument();
+    expect(screen.queryByText(/text not saved/i)).not.toBeInTheDocument();
   });
 });

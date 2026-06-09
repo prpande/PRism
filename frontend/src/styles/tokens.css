@@ -936,6 +936,43 @@ a:hover { text-decoration: underline; }
    etc.) composes `composer-save btn btn-primary btn-sm`, and the .btn / .btn-primary /
    .btn-sm globals supply the full visual treatment. An empty `.composer-save` stub
    would be a speculative future-anchor with no current consumer. */
+/* #302 — post-now button (secondary style so it visually reads as less-committed than
+   composer-save / "Add to review" which is the primary action on an open PR). */
+.composer-post-now {
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-2);
+  border: 1px solid var(--border-2);
+  background: var(--surface-1);
+  color: var(--text-1);
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition: background var(--t-fast) var(--ease-out),
+              border-color var(--t-fast) var(--ease-out);
+}
+.composer-post-now:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+.composer-post-now:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Small muted sub-label shown when the PR is merged (post-now only mode). */
+.composer-merged-note {
+  font-size: var(--text-xs);
+  color: var(--text-2);
+}
+/* Inline error banner shown below the action row after a failed post. */
+.composer-error {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius-1);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+  font-size: var(--text-xs);
+}
 .composer-closed-banner {
   font-size: var(--text-sm);
   padding: var(--s-2) var(--s-3);
@@ -983,6 +1020,13 @@ a:hover { text-decoration: underline; }
   padding: var(--s-2) var(--s-3);
   border-top: 1px solid var(--border-1);
   background: var(--surface-2);
+}
+
+/* #302 Task 11b — optimistic just-posted comment placeholder. Dimmed to read
+   as "posting…": the real comment replaces it once the refetch lands (de-dup
+   by databaseId). Applied to CommentCard via its `className` prop. */
+.comment-card--posting {
+  opacity: 0.6;
 }
 
 /* Diff-line tints (spec §4.4, D34). Lifted from the per-row literal class

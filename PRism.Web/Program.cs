@@ -318,6 +318,7 @@ app.MapPrDraftEndpoints();
 app.MapPrReloadEndpoints();
 app.MapPrSubmitEndpoints();
 app.MapPrRootCommentEndpoints();
+app.MapPrCommentEndpoints();
 app.MapSubmitInFlight();
 app.MapPrDraftsDiscardAllEndpoint();
 app.MapAi();

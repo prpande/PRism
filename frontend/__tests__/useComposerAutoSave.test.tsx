@@ -310,17 +310,34 @@ describe('useComposerAutoSave — error handling', () => {
   });
 });
 
-describe('useComposerAutoSave — prState gate', () => {
-  it('prState_Closed_NoSave', async () => {
-    const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+describe('useComposerAutoSave — prState gate (#302: relaxed)', () => {
+  // #302: guard relaxed — drafts now stage on closed/merged PRs so post-now works.
+  it('prState_Closed_SavesNormally', async () => {
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockResolvedValue({ ok: true, assignedId: 'uuid-closed' });
     renderHook(() => useComposerAutoSave(defaultProps({ body: 'abc', prState: 'closed' })));
     await flushTimersAndPromises();
-    expect(spy).not.toHaveBeenCalled();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toMatchObject({ kind: 'newDraftComment' });
   });
 
-  it('prState_Merged_NoSave', async () => {
-    const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+  it('prState_Merged_SavesNormally', async () => {
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockResolvedValue({ ok: true, assignedId: 'uuid-merged' });
     renderHook(() => useComposerAutoSave(defaultProps({ body: 'abc', prState: 'merged' })));
+    await flushTimersAndPromises();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toMatchObject({ kind: 'newDraftComment' });
+  });
+
+  // The disabled flag (cross-tab take-over) STILL blocks saves regardless of prState.
+  it('disabled_flag_BlocksSave_regardless_of_prState', async () => {
+    const spy = vi.spyOn(draftApi, 'sendPatch').mockResolvedValue({ ok: true, assignedId: null });
+    renderHook(() =>
+      useComposerAutoSave(defaultProps({ body: 'abc', prState: 'open', disabled: true })),
+    );
     await flushTimersAndPromises();
     expect(spy).not.toHaveBeenCalled();
   });
@@ -340,6 +357,27 @@ describe('useComposerAutoSave — flush()', () => {
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0][1]).toMatchObject({ kind: 'newDraftComment' });
+  });
+
+  // #302 — flush on merged PR must stage the draft and return its id.
+  it('flush_OnMergedPR_StagesDraftAndReturnsId', async () => {
+    const spy = vi
+      .spyOn(draftApi, 'sendPatch')
+      .mockResolvedValue({ ok: true, assignedId: 'uuid-merged' });
+    const { result } = renderHook(() =>
+      useComposerAutoSave(defaultProps({ body: 'abc', prState: 'merged' })),
+    );
+
+    let returnedId: string | null = null;
+    await act(async () => {
+      returnedId = await result.current.flush();
+    });
+
+    // Draft must have been staged
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][1]).toMatchObject({ kind: 'newDraftComment' });
+    // flush must return the assigned id (not null)
+    expect(returnedId).toBe('uuid-merged');
   });
 });
 

@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react';
-import type { DraftReplyDto, PrReference, ReviewThreadDto } from '../../../../api/types';
+import type {
+  DraftCommentDto,
+  DraftReplyDto,
+  PrReference,
+  ReviewThreadDto,
+} from '../../../../api/types';
 import { CommentCard } from '../../Comment/CommentCard';
 import { CollapsedComposerAffordance } from '../../Composer/CollapsedComposerAffordance';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
 import styles from './ExistingCommentWidget.module.css';
-import type { ComposerOwnerKey } from '../../../../hooks/useDraftSession';
+import {
+  computeAnyOtherDraftsStaged,
+  type ComposerOwnerKey,
+} from '../../../../hooks/useDraftSession';
+import type { OptimisticComment } from '../optimisticComment';
 
 export interface ExistingCommentWidgetReplyContext {
   prRef: PrReference;
@@ -17,6 +26,24 @@ export interface ExistingCommentWidgetReplyContext {
   onReplyComposerClose: () => void;
   // Spec § 5.7a. Forwarded to ReplyComposer; disables textarea + save.
   readOnly?: boolean;
+  // #302 — post-now wiring (Task 11a). The staged-check needs this reply's own
+  // draft id, which only exists here (inside ThreadView). So the parent hands
+  // down the raw pieces and ThreadView calls computeAnyOtherDraftsStaged with
+  // its draftReplyId. All optional so pure-rendering tests can omit them.
+  draftComments?: DraftCommentDto[];
+  postingInProgress?: boolean;
+  beginPosting?: () => void;
+  endPosting?: () => void;
+  // Fired after a successful post-now so the parent refetches the session and
+  // the just-posted comment surfaces. 11b passes the posted body so the parent
+  // can stash an optimistic placeholder for this thread.
+  onReplyPosted?: (threadId: string, postedCommentId: number, body: string) => void;
+  // #302 Task 11b — optimistic reply placeholders, keyed by threadId. Each
+  // thread renders its entries (dimmed) AFTER its real comments, filtered to
+  // exclude any whose postedCommentId already matches a real comment's
+  // databaseId (de-dup by databaseId — see optimisticComment.ts). Optional so
+  // pure-rendering tests can omit it.
+  optimisticByThread?: Record<string, OptimisticComment[]>;
 }
 
 export interface ExistingCommentWidgetProps {
@@ -75,6 +102,14 @@ function ThreadView({
     replyContext?.onReplyComposerClose();
   };
 
+  // #302 Task 11b — optimistic placeholders for this thread, filtered to drop
+  // any whose postedCommentId already appears as a real comment's databaseId
+  // (belt-and-suspenders with FilesTab's cleanup effect; the de-dup key is
+  // databaseId, never body text).
+  const optimisticForThread = (replyContext?.optimisticByThread?.[thread.threadId] ?? []).filter(
+    (o) => !thread.comments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
+  );
+
   return (
     <div
       className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}${thread.isResolved ? ` ${styles.commentThreadResolved}` : ''}`}
@@ -94,6 +129,18 @@ function ThreadView({
               <span aria-label="Resolved thread">Resolved</span>
             ) : undefined
           }
+        />
+      ))}
+
+      {optimisticForThread.map((o) => (
+        <CommentCard
+          key={o.clientId}
+          author={o.author}
+          createdAt={o.createdAt}
+          body={o.body}
+          density="compact"
+          className="comment-card--posting"
+          data-testid="inline-comment-card-optimistic"
         />
       ))}
 
@@ -120,6 +167,17 @@ function ThreadView({
           registerOpenComposer={replyContext.registerOpenComposer}
           onClose={handleComposerClose}
           readOnly={replyContext.readOnly ?? false}
+          anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
+            replyContext.draftComments ?? [],
+            replyContext.draftReplies,
+            draftReplyId,
+            replyContext.postingInProgress ?? false,
+          )}
+          beginPosting={replyContext.beginPosting}
+          endPosting={replyContext.endPosting}
+          onPosted={(id, postedBody) =>
+            replyContext.onReplyPosted?.(thread.threadId, id, postedBody)
+          }
         />
       )}
     </div>

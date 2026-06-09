@@ -50,3 +50,6 @@ public sealed record SubmitDuplicateMarkerDetectedBusEvent(
 public sealed record RootCommentPostedBusEvent(
     PrReference PrRef,
     long IssueCommentId) : IReviewEvent;
+
+// #302 — published when a single inline comment or reply is posted directly (not via a review).
+public sealed record SingleCommentPostedBusEvent(PrReference PrRef, long ReviewCommentId) : IReviewEvent;

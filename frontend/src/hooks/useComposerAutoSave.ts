@@ -47,7 +47,10 @@ export interface UseComposerAutoSaveProps {
 
 export interface UseComposerAutoSaveResult {
   badge: ComposerSaveBadge;
-  flush: () => Promise<void>;
+  // Returns the (possibly just-assigned) draft id after the save completes.
+  // Callers that post-now need the fresh id because the captured `draftId` prop
+  // is stale until the next render. (#302 Task 8.)
+  flush: () => Promise<string | null>;
 }
 
 export const COMPOSER_DEBOUNCE_MS = 250;
@@ -77,7 +80,6 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
 
   const performSave = useCallback(async (currentBody: string): Promise<void> => {
     const p = propsRef.current;
-    if (p.prState !== 'open') return;
     if (p.disabled) return;
     const trimmed = currentBody.trim();
 
@@ -166,16 +168,16 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
     applyErrorBadge(result, setBadge);
   }, []);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback(async (): Promise<string | null> => {
     if (debounceTimer.current) {
       clearTimeout(debounceTimer.current);
       debounceTimer.current = null;
     }
     await performSave(propsRef.current.body);
+    return draftIdRef.current;
   }, [performSave]);
 
   useEffect(() => {
-    if (props.prState !== 'open') return;
     if (props.disabled) {
       // Cancel any pending debounce. Without this an in-flight timer
       // queued just before the flag flipped would still fire after the
@@ -197,7 +199,7 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
         debounceTimer.current = null;
       }
     };
-  }, [props.body, props.prState, props.disabled, performSave]);
+  }, [props.body, props.disabled, performSave]);
 
   return { badge, flush };
 }
