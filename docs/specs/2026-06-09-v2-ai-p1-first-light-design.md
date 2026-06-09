@@ -26,13 +26,14 @@ P0 (PR1–PR3a) built the AI substrate dark: `ILlmProvider` + `ClaudeCodeLlmProv
 
 - **Backend** — `ClaudeCodeSummarizer : IPrSummarizer` (provider + sanitizer + diff + token tracker + a per-process in-memory summary cache); register it into the live-seam dictionary; the explicit D111 `IsSubscribed` gate on `/ai/summary`.
 - **Backend** — egress consent wired into the Live-availability gating (the two predicates + the disabled-reason path — see §5 for the *actual* wiring, which is more than a one-line change); a consent record in `AppConfig`; `GET /api/ai/egress-disclosure`; `POST /api/ai/consent`.
-- **Frontend** — make **Live** a selectable third segment via a two-phase commit (§7); the consent-before-flip `EgressConsentModal`; rewire `AiSummaryCard`/`useAiSummary` with a loading affordance, coordinated with the active-PR subscription.
+- **Backend** — the **per-feature user-enablement seam** (§5.1): a per-feature `userEnabled` term threaded into the gating so a user can switch an individual AI feature off and stop its token spend, backend-enforced. Storage + holder + the gate term land now with **Summary** as the first consumer (default on); the per-feature **toggle UI** and the FE per-flag wire are deferred (below). This exists from the get-go so P2's inbox enrich/rank (the real token spenders) inherit the gate with zero backend retrofit.
+- **Frontend** — make **Live** a selectable third segment via a two-phase commit (§7); the consent-before-flip `EgressConsentModal`; rewire `AiSummaryCard`/`useAiSummary` with a loading affordance + a no-retry error state (§13 resolved), coordinated with the active-PR subscription.
 
 **Out of scope — deferred:**
 
 - **P1b** — `<dataDir>/llm-cache` file cache + restart survival, event-bus eviction, the per-PR **context artifact** keyed `(prRef, baseSha, headSha)`, **base-rebase staleness** eviction (R2), measured prompt-cache hit, the **stale badge + Regenerate** UX, the formal **`IAiCache`** contract (introduced when the disk impl's requirements are known — §4), and the disclosure-version **409 re-fetch** path (§7).
 - **PR-nature classification / the `Category` field** — `Category` is left empty in P1a (see §2 deferrals; the FE suppresses the empty label, §7). The classifier is one feature serving two surfaces (inbox chip + detail `Category`), built later per roadmap §3.2 cost-control decisions.
-- **The 4 disabled-state guidance messages** and a **dedicated Settings → AI pane** — AI mode stays in `AppearancePane`; consent is a modal triggered from there.
+- **The 4 disabled-state guidance messages**, the **per-feature toggle UI**, and the **FE per-flag wire (D112)** all land with a **dedicated Settings → AI pane** — AI mode stays in `AppearancePane` this slice; consent is a modal triggered from there. Because every feature defaults `userEnabled=true` (§5.1), the FE needs no per-flag knowledge yet (all-on), so D112 stays deferred without retrofit risk.
 - **The re-consent affordance** for the "Live + consent-required" state — unreachable through normal UI this slice (single provider, constant disclosure version); recovery is the Off→Live re-toggle (which re-opens the modal). Built when a real trigger ships.
 - **Multi-provider** — there is one provider. The "active provider id" is a constant (§5); per-provider consent switching is modeled in the record shape but is **forward-looking** (no switch mechanism exists to exercise it).
 
@@ -48,6 +49,7 @@ PR detail (Live) ──GET /ai/summary──► AiEndpoints (handler gains IActi
                                          │  Live branch: seamRegistered
                                          │            && liveAvailable()   ← was () => false; now real
                                          │            && consentRecorded(providerId)
+                                         │            && userEnabled(feature)   ← per-feature toggle (§5.1)
                                          │  not usable ─► NoopPrSummarizer ─► null ─► 204
                                          ▼
                                     ClaudeCodeSummarizer.SummarizeAsync(prRef)
@@ -67,6 +69,8 @@ PR detail (Live) ──GET /ai/summary──► AiEndpoints (handler gains IActi
 
 So the consent change touches **three sites**, not one. The reason-precedence rule must be explicit: when Live is **both** probe-unavailable **and** unconsented, `disabledReason` reports the **provider/probe reason first** (consent is moot if the provider can't run); `consent-required` is reported only when the provider is available but consent is absent.
 
+**The full effective gate** is `effective(feature, mode) = mode≠off && userEnabled(feature) && capableForMode(feature, mode)`, where `capableForMode` in Preview = a Placeholder exists (always true) and in Live = `seamRegistered && available && consented`. `userEnabled(feature)` (§5.1) is the new per-feature term and gates **both** Preview and Live presence (turning a feature off hides its sample too); Off is all-off regardless. For P1a every feature defaults `userEnabled=true`, so Summary's behavior is unchanged — the term is the seam, exercised by one feature now.
+
 ## 4. Backend — the summarizer
 
 **`ClaudeCodeSummarizer : IPrSummarizer`** (new). **Composition site:** compose it in `PRism.Web`'s `AddPrismAi` (where the AI seams are already wired), not inside `PRism.AI.ClaudeCode` — that keeps the AI provider project free of a `PRism.Core.PrDetail` dependency. `SummarizeAsync(PrReference, ct)`:
@@ -84,7 +88,7 @@ So the consent change touches **three sites**, not one. The reason-precedence ru
 
 **Eval.** P1a ships a reasonable v1 prompt. The golden-set tuning loop (roadmap §11.1) is the **P1→P2 gate**, human-anchored — it does **not** block this slice's merge.
 
-## 5. Backend — egress consent
+## 5. Backend — egress consent & per-feature enablement
 
 **Predicates (the real wiring — see §3).** Consent term: `consentRecorded(ClaudeProviderId)` ⇔ a stored record exists whose `DisclosureVersion == current` and whose `ProviderId == ClaudeProviderId`. Fold it into (1) the selector's `liveAvailable` delegate and (2) the resolver's `Capable`, and surface it via (3) `DisabledReason` + `CapabilitiesEndpoints`. No consent ⇒ `Summary` flag `false`, `disabledReason="consent-required"` (when provider available), seam ⇒ Noop ⇒ 204. **Security guarantee:** a direct `POST /api/preferences {"ui.ai.mode":"live"}` cannot egress — the seam resolves Noop until a consent record exists.
 
@@ -101,9 +105,20 @@ So the consent change touches **three sites**, not one. The reason-precedence ru
 
 **Consent withdrawal (named gap).** Switching to Off/Preview does *not* delete the consent record — it makes the predicate moot until Live is re-selected. A permanent "revoke consent" action is **not** in this slice (deferred with the Settings→AI pane); document this so it is a conscious omission.
 
+### 5.1 Per-feature user enablement (token-spend control)
+
+A second gating axis, distinct from *system capability*: the user's explicit choice to run a given AI feature at all. Motivation is token spend — a user who finds (say) inbox enrichment unhelpful must be able to switch it off and stop its calls, and that switch must be **backend-enforced** (a frontend-only toggle would still burn tokens, and the inbox fan-out features are the real spenders). This slice lands the **seam**, not the UI.
+
+- **Storage.** Add an `ai.features` block to `AppConfig` — a per-feature `bool` keyed by the nine `AiCapabilities` field names (`summary`, `fileFocus`, `hunkAnnotations`, `preSubmitValidators`, `composerAssist`, `draftSuggestions`, `draftReconciliation`, `inboxEnrichment`, `inboxRanking`). **Default: every feature `true`** (so existing behavior is unchanged). Persisted via `ConfigStore` with the same null-backfill discipline as consent (absent on disk ⇒ all-true Default; no NRE).
+- **Holder.** An `AiFeatureState` singleton mirrors `ai.features` on `ConfigStore.Changed`, parallel to `AiModeState` / `AiConsentState`.
+- **Gate.** `AiSeamSelector` and `AiCapabilityResolver` consult `AiFeatureState.IsEnabled(featureKey)` as a term in the effective gate (§3). The seam-type → feature-key map reuses the existing capability-flag ↔ seam-type correspondence in the resolver. A disabled feature resolves to **Noop ⇒ 204** in Live (no token spend) and to Noop (no sample) in Preview.
+- **This slice wires Summary only** (`userEnabled("summary")`, default true). The other eight keys exist in storage and are gated, but only Summary has a live consumer to exercise the path. No `POST` to set per-feature flags and no FE wire ship here — the Settings→AI toggle UI owns those (deferred). Because all default true, `/api/capabilities` and the FE need no change this slice.
+
+**Why now:** P2 registers the inbox enrich/rank seams (the high-volume token spenders). If the per-feature gate exists from P1a, those features inherit it by construction; if it does not, P2 must retrofit the gate across already-shipped features. Recorded as a cross-cutting model in roadmap §3.2/§4.
+
 ## 6. Backend — the D111 gate on `/ai/summary`
 
-`IActivePrCache.IsSubscribed(prRef)` is the D111 token-spend gate: a live summary call fires only for a PR with an active subscriber. The `/ai/summary` handler currently injects only `(IAiSeamSelector, ct)`; the gate **adds an `IActivePrCache` parameter** and an early `if (!cache.IsSubscribed(prRef)) return NoContent();` branch **before** resolving the seam, mirroring the established `IsSubscribed` pattern in `PrSubmitEndpoints`/`PrRootCommentEndpoints`. This replaces the standing `D111: …add an IsSubscribed gate` comment with real code + a test. Off / no-consent / not-subscribed all converge on **204**.
+`IActivePrCache.IsSubscribed(prRef)` is the D111 token-spend gate: a live summary call fires only for a PR with an active subscriber. The `/ai/summary` handler currently injects only `(IAiSeamSelector, ct)`; the gate **adds an `IActivePrCache` parameter** and an early `if (!cache.IsSubscribed(prRef)) return NoContent();` branch **before** resolving the seam, mirroring the established `IsSubscribed` pattern in `PrSubmitEndpoints`/`PrRootCommentEndpoints`. This replaces the standing `D111: …add an IsSubscribed gate` comment with real code + a test. Off / no-consent / not-subscribed / feature-disabled all converge on **204** (gate closed); only a gate-open provider failure differs (503, §7).
 
 **Subscription-race coordination (correctness, not just spend).** The active-PR subscription is established by an async SSE handshake (`useActivePrUpdates`: stream connect → `subscriberId()` → `POST /api/events/subscriptions`). On a cold PR open, a summary fetch fired on mount can **beat** subscription registration ⇒ D111 ⇒ 204 ⇒ card hidden — and today `useAiSummary` only refetches on `[prRef, enabled]`, so it never recovers. **Fix:** gate `useAiSummary`'s `enabled` (and refetch) on the active-PR subscription being **established**, not on bare mount, so the FE fetch and the backend D111 gate agree. Tested explicitly (§11) — the existing always-subscribed test fake hides this race.
 
@@ -125,7 +140,9 @@ So the consent change touches **three sites**, not one. The reason-precedence ru
 - **Error / fail-closed:** disclosure fetch failure ⇒ modal shows an error, cannot consent.
 - **Default focus:** **Decline** (the less-destructive action), matching the discard-modal precedent.
 
-**`useAiSummary` + `AiSummaryCard`.** The hook returns `PrSummary | null` today; refactor to `{ summary, loading }` and gate `enabled` on subscription-established (§6). **Consumer + mock migration (both test trees):** update the `OverviewTab` destructure and `AiSummaryCard` prop usage, and every `vi.mock('.../useAiSummary', () => ({ useAiSummary: () => null }))` site → `() => ({ summary: null, loading: false })`, in **both** co-located `src/**` and legacy `frontend/__tests__/`. `AiSummaryCard` renders a **`Skeleton`-based loading affordance** (`aria-busy`/`aria-live`, matching `InboxSkeleton`) while in flight, the summary on success, and **hides** on failure/204 (best-effort, per §13 open decision). `Category===""` ⇒ the category label is not rendered, and the card layout must read intentionally with the category region absent for the whole P1a window (not merely suppress the label).
+**`useAiSummary` + `AiSummaryCard`.** The hook returns `PrSummary | null` today; refactor to `{ summary, loading, error }` and gate `enabled` on subscription-established (§6). **Consumer + mock migration (both test trees):** update the `OverviewTab` destructure and `AiSummaryCard` prop usage, and every `vi.mock('.../useAiSummary', () => ({ useAiSummary: () => null }))` site → `() => ({ summary: null, loading: false, error: false })`, in **both** co-located `src/**` and legacy `frontend/__tests__/`. `AiSummaryCard` renders, by state: **loading** ⇒ a `Skeleton`-based affordance (`aria-busy`/`aria-live`, matching `InboxSkeleton`); **success** ⇒ the summary; **provider-failure** ⇒ a one-line inline error ("AI summary unavailable") with **no Retry control** and **no auto-retry** (recovery is reopening the PR — a deliberate, non-spammable action; deliberate Regenerate is P1b); **gate-closed (204)** ⇒ hidden. `Category===""` ⇒ the category label is not rendered, and the card layout must read intentionally with the category region absent for the whole P1a window (not merely suppress the label).
+
+**Distinguishing failure from absence (required for the error state).** The FE can only show an error if the backend separates "tried and failed" from "not applicable." So: a **gate-closed** outcome (Off / not-subscribed / no-consent / feature-disabled → seam is Noop → null) returns **204** (hidden); a **gate-open** outcome where the real summarizer's provider call throws returns a **distinct non-success status (e.g. 503, never 500)** that the FE maps to the error state. Mechanically: `NoopPrSummarizer` returns null (⇒ 204); `ClaudeCodeSummarizer` lets `LlmProviderException` propagate (it no longer swallows it to null), and the endpoint catches it → 503. Success ⇒ 200.
 
 **Help text.** Update the `ai-mode-help` text to describe all three segments (currently "Off · no AI. Preview · sample output, clearly labeled." → add Live), so the radiogroup's `aria-describedby` stays accurate.
 
@@ -134,15 +151,17 @@ So the consent change touches **three sites**, not one. The reason-precedence ru
 | State | Backend | Card |
 |---|---|---|
 | Off / Preview | seam = Noop / Placeholder | hidden / sample (unchanged) |
-| **Live, consented, subscribed** | real summarizer → 200 | loading → summary |
+| **Live, consented, subscribed, ok** | real summarizer → 200 | loading → summary |
+| **Live, consented, subscribed, provider fails** | exception → **503** | inline error, **no retry** |
 | **Live, consented, not subscribed** | D111 → 204 | hidden |
 | **Live, not consented** | predicate → Noop → 204; `disabledReason="consent-required"` | hidden; selecting Live (re-)opens the modal |
+| **Live, feature `userEnabled=false`** | gate → Noop → 204 | hidden (no token spend) |
 
-**Accepted P1a gap (named):** the not-subscribed, not-consented, and provider-failure cases all render an identical hidden card — the user gets no signal distinguishing "working, nothing to show" from "broken." This is the subject of the §13 open decision; absent that, it is an explicitly accepted P1a limitation.
+**Distinguished vs. silent (named).** Provider-failure now renders a visible error (503 → §13 resolved), so "broken" is no longer indistinguishable from "absent." The remaining 204 cases (not-subscribed, not-consented, feature-disabled) are **intentionally** silent for P1a — they are not failures; the user either isn't viewing the PR, hasn't consented (selecting Live re-opens the modal), or turned the feature off themselves.
 
 ## 9. Error handling & accepted limitations
 
-- **Provider failure/timeout** ⇒ `LlmProviderException` ⇒ null ⇒ 204 ⇒ card hidden. **Never 500.** (See §13: whether to surface a minimal error+Retry instead of silent hide.)
+- **Provider failure/timeout** (gate was open) ⇒ `LlmProviderException` propagates ⇒ endpoint returns **503** ⇒ FE shows the inline **no-retry** error state (§7, §13). **Never 500.** Gate-closed cases (Off / not-subscribed / no-consent / feature-disabled) return **204** ⇒ card hidden — these are not failures.
 - **Token-tracker write failure** ⇒ logged, non-fatal.
 - **Disclosure fetch failure** ⇒ modal error, cannot consent — **fail-closed**.
 - **Accepted: base-rebase staleness (R2, roadmap-rated High).** Cache keyed `(prRef, headSha)`; a base rebase leaving `headSha` unchanged can serve a stale summary until process restart. **A GitHub tracking issue for P1b (R2 `(prRef, baseSha, headSha)` keying + base-change eviction, plus the other deferred P1b items) MUST be filed and referenced before P1a merges** — so a High risk is not left open without an enforcement trail.
@@ -162,7 +181,8 @@ So the consent change touches **three sites**, not one. The reason-precedence ru
 
 - `ClaudeCodeSummarizer` unit — cache hit ⇒ 0 provider calls; diff+title+description each sanitized; `ITokenUsageTracker.RecordAsync(feature:"pr-summary")`; injection in diff/title/description does not corrupt; delimiter-escape attempt neutralized; provider exception ⇒ null; snapshot-absent-on-first-view ⇒ a stable cache key still resolves.
 - Consent — predicate unit tests on **both** the selector delegate and the resolver `Capable`/`DisabledReason`: Live + available + no consent ⇒ false + `consent-required` + Noop; + consent ⇒ true + real; disclosure-version mismatch invalidates; **provider-id mismatch invalidates (predicate unit test, not an integration fixture — no switch UI exists)**; reason-precedence (probe-unavailable **and** unconsented ⇒ provider reason wins).
-- `/ai/summary` integration — **204** not-subscribed (D111); **204** Live-but-unconsented (zero egress, blocking exit criterion); **200** Live + consented + subscribed; Off ⇒ 204; **summary fetch arriving before subscription registers ⇒ recovers once subscribed** (the cold-open race).
+- `/ai/summary` integration — **204** not-subscribed (D111); **204** Live-but-unconsented (zero egress, blocking exit criterion); **204** Live but `userEnabled("summary")=false` (zero egress); **200** Live + consented + subscribed; **503** when the gate is open and the provider throws (the error path, distinct from 204); Off ⇒ 204; **summary fetch arriving before subscription registers ⇒ recovers once subscribed** (the cold-open race).
+- Per-feature enablement — `AiSeamSelector`/`AiCapabilityResolver` resolve Noop and the flag is false when `userEnabled(feature)=false` (Preview and Live); default-true leaves behavior unchanged; `ConfigStore` `ai.features` round-trip + legacy-load backfill (absent ⇒ all-true, no NRE) + `AiFeatureState` mirror on `Changed`.
 - Endpoints — `/api/ai/consent` records (204), stale version ⇒ 409; `/api/ai/egress-disclosure` returns recipient/categories/version/`alreadyConsented`; **both return 401 without a session token; `POST /api/ai/consent` returns 403 with a missing Origin.**
 - `ConfigStore.RecordAiConsentAsync` round-trip + `AiConsentState` mirror on `Changed` + **concurrent-write safety** + legacy-config load (no NRE when `AiConsent` absent on disk).
 
@@ -170,7 +190,7 @@ So the consent change touches **three sites**, not one. The reason-precedence ru
 
 - `AppearancePane` — Live segment renders; selecting Live (`alreadyConsented:false`) opens the modal and does **not** POST `live` or advance the control; (`alreadyConsented:true`) POSTs `live` directly; off/preview unchanged + no-op guard; Decline returns focus to the prior segment.
 - `EgressConsentModal` — loading (skeleton, buttons disabled), error (fail-closed), Accept ⇒ consent POST then mode POST, Decline ⇒ no POST, non-204 ⇒ generic failure + revert; default focus on Decline; `aria-describedby` present.
-- `useAiSummary`/`AiSummaryCard` — loading affordance during fetch; gated on subscription-established; renders summary; empty `Category` ⇒ no label; hides on failure.
+- `useAiSummary`/`AiSummaryCard` — loading affordance during fetch; gated on subscription-established; renders summary; empty `Category` ⇒ no label; **503 ⇒ inline error state with no Retry control**; 204 ⇒ hidden.
 
 **e2e (Playwright):** Live + consent happy path (select Live → modal → Accept → summary); Decline path (no summary, segment unchanged).
 
@@ -181,10 +201,13 @@ So the consent change touches **three sites**, not one. The reason-precedence ru
 - Flag off ⇒ 204; **Live + no consent ⇒ 204 with zero egress** (blocking); not-subscribed ⇒ 204; cold-open subscription race recovers.
 - Injected `IGNORE PREVIOUS INSTRUCTIONS…` in diff/title/description does not corrupt output.
 - Consent recorded gates Live end-to-end; declining leaves mode unchanged.
+- **Per-feature enablement seam present:** Summary gated through `userEnabled("summary")` (default on, behavior unchanged); `userEnabled("summary")=false` ⇒ 204, zero provider calls; the other eight keys exist in storage + gate.
+- **Provider failure surfaces:** gate-open provider failure ⇒ 503 ⇒ inline no-retry error (not a silent hidden card).
 - The PR3a sequencing risk is **closed**: consent guard + first real seam in one PR.
 
 **Deferred to P1b — and the roadmap §P1 governance gate depends on them (roadmap: "the dogfood signal gates on P1b"), so merging P1a does NOT clear the P1→P2 gate:** `cache_read_input_tokens > 0` (measured prompt-cache hit), `ActivePrUpdated` eviction + regenerate, base-rebase eviction (R2), head-shift-mid-call leaves no stale entry, stale-badge + Regenerate UX. *(Whether `ITokenUsageTracker` should already capture `cache_read_input_tokens` in P1a — so P1b can measure without a schema change — is a plan-phase question; the field exists on `LlmResult` today.)*
 
-## 13. Open decision (resolve with user before planning)
+## 13. Resolved decisions (2026-06-09)
 
-**Should P1a include a minimal inline error + Retry affordance, instead of silently hiding the card on failure?** The product and design reviews both flag that this is PRism's first real-AI feature and the source of the dogfood trust signal; a provider timeout right after a deliberate consent ceremony renders as "the feature is broken," and dogfood feedback ("AI didn't show up") becomes uninterpretable because failure and genuine-absence look identical. Surfacing `{ error }` alongside the `{ summary, loading }` refactor already in scope is a small delta; full Regenerate + stale-badge stays P1b. **Recommendation: pull a minimal error+Retry into P1a.** This expands the scope the user originally bounded (which deferred "Regenerate UX"), so it needs explicit sign-off.
+- **Failure UX (resolved):** P1a surfaces a visible **inline error** on provider failure (so "broken" ≠ "absent" — the product/design review's dogfood-trust concern), but with **no Retry control and no auto-retry** — a retry button invites repeated clicks and unwanted token spend. Recovery is reopening the PR (deliberate, non-spammable); deliberate Regenerate is P1b. Backend distinguishes the cases via status (gate-closed 204 vs. provider-failure 503) — §7, §9.
+- **Per-feature user-enablement seam (resolved):** the backend gate term + storage land in P1a with Summary as the first consumer (default on); the per-feature toggle UI + FE per-flag wire are deferred to the Settings→AI pane. Motivation is user-controlled token spend; the full cross-cutting model is recorded in roadmap §3.2/§4 — §5.1.
