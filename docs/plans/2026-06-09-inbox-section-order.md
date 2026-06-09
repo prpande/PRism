@@ -633,7 +633,7 @@ type InboxSectionKey = Exclude<
 - [ ] **Step 4: Run the test + typecheck**
 
 Run: `node ./node_modules/vitest/vitest.mjs run __tests__/PreferencesContext.test.tsx`
-Expected: PASS. Then `npm run build` (`tsc -b`) — it will flag every test fixture that constructs an `inbox` preferences object without the now-required `sectionOrder`. Add `sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned'` to each (expected sites: `frontend/__tests__/InboxPage.test.tsx`, `frontend/src/components/Settings/panes/InboxPane.test.tsx`, `frontend/src/components/AppearanceSync.test.tsx`, and any other the compiler names). Re-run `npm run build` until green.
+Expected: PASS. Then `npm run build` (`tsc -b`) to find the fixtures that must change. **Important — only *typed, uncast* `inbox` literals are flagged by tsc.** Fixtures that build the `inbox` object behind an `as PreferencesResponse` / `as PreferencesResponse['inbox']` cast or an inferred inline mock are **not** caught (they already omit `defaultSort` today and the build is green): that's `frontend/__tests__/InboxPage.test.tsx`, `frontend/__tests__/PreferencesContext.test.tsx`, and `frontend/src/components/Settings/panes/InboxPane.test.tsx`. The fixtures tsc **will** flag are the typed uncast literals — currently `frontend/src/components/AppearanceSync.test.tsx` and `frontend/__tests__/PrHeader.test.tsx`. Add `sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned'` to whatever `npm run build` names, **and** to the cast/inline fixtures whose test bodies exercise `sectionOrder` at runtime (InboxPage.test.tsx Task 6, InboxPane.test.tsx Task 7). Re-run `npm run build` until green — trust the compiler's list over this one.
 
 - [ ] **Step 5: Commit**
 
@@ -1069,7 +1069,9 @@ test('reordering a section in Settings reorders the inbox and persists', async (
 });
 ```
 
-> This is a functional (DOM-order) e2e, not a visual baseline — it does not add screenshot baselines (which are CI-linux-only and churn-prone). The selectors/route names above are placeholders to match against the actual neighboring spec; the assertions (POST permutation, inbox DOM order, persistence after reload) are the contract.
+> **Functional-only by design.** This e2e asserts DOM order + persistence; it does **not** add screenshot baselines (those are CI-linux-only and churn-prone). The spec's Testing section mentions "B1 visual proof" alongside e2e — that proof is **not** this task. It is the separate gated step in *Final verification* below (Playwright screenshots posted to the PR), captured before opening the PR. Task 8 owns the functional contract only.
+>
+> **Real selectors (not the placeholders above).** There is no `inbox-section-header` testid today — `InboxSection` renders its header as `<button className={styles.header}>` whose accessible name is the section label followed by the item count (e.g. "Review requested 0"). Assert order with `page.getByRole('button', { name: /Review requested/ })` etc., or add a `data-testid` to the header in `InboxSection.tsx` if a stable hook is preferred. Match the app's actual Settings route and inbox route from the neighboring functional spec.
 
 - [ ] **Step 2: Run the e2e**
 
