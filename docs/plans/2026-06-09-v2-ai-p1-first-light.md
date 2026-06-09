@@ -26,7 +26,7 @@
 ## Key Technical Decisions (KTD)
 
 - **KTD-1 — Selector does not probe; provider-down → 503.** `AiSeamSelector.Resolve<T>()` is synchronous and runs on every seam access; it cannot perform the ~10s async `ILlmAvailabilityProbe`. The selector's Live gate is therefore `seamRegistered && consentRecorded && featureEnabled` (all synchronous reads from state holders). Actual provider liveness is enforced lazily: if `claude` is unreachable, `ClaudeCodeLlmProvider` throws `LlmProviderException`, the endpoint maps it to **503**, and the FE shows the no-retry error. The async probe stays only in `AiCapabilityResolver`/`CapabilitiesEndpoints` for the Settings `disabledReason` display. This reconciles the spec §3 "available" term: in the selector it reduces to "a real seam is registered"; reachability is a call-time concern, never a 204 gate. **Accepted cross-surface consequence:** Settings (probe-based) and the summary call (no-probe) use different liveness models, so a user can see Summary marked available in Settings while a call still 503s if `claude` goes unreachable in between. This is a transient-failure window, not a logic bug — the FE error copy is the single source of truth for a call-time failure, and Settings availability is advisory.
-- **KTD-6 — Probe is uncached this slice (flagged scope risk — confirm with the owner).** `CapabilitiesEndpoints` does an **uncached** ~10s `claude --version` probe **only in Live mode**. Today Live is unreachable so this never fires; **this slice makes Live reachable**, so a Live-mode user triggers a 10s subprocess spawn on every `useCapabilities` refetch (which fires on every window focus). The substrate's own code comment flags adding the two-tier probe cache (KTD-4 in the roadmap) "in P1 before Live becomes FE-reachable." **Decision pending:** either (a) add a short-TTL (≈30–60s) memoization of the probe result in `CapabilitiesEndpoints` as a small extra task in this slice (~15 lines + a test), or (b) ship Live-reachable with the uncached probe and fold the cache into the P1b tracking issue, accepting a per-focus subprocess spawn for Live users during dogfood. Recommend (a) — it is cheap and the substrate already called for it. **Not yet written as a task pending the owner's call.**
+- **KTD-6 — Short-TTL probe cache (Task 6b — owner decided: in P1a).** `CapabilitiesEndpoints` does a ~10s `claude --version` probe **only in Live mode**; today Live is unreachable so it never fires, but **this slice makes Live reachable**, so without a cache a Live-mode user triggers a 10s subprocess spawn on every `useCapabilities` refetch (every window focus). The substrate's own code comment called for the cache "in P1 before Live becomes FE-reachable." **Resolved:** Task 6b adds a `CachedLlmAvailabilityProbe` decorator with a ~30s TTL (driven by `TimeProvider` for testability). Provider availability rarely changes within a session, so a 30s memo collapses per-focus spawns to ≤1 probe/30s while staying fresh enough.
 - **KTD-2 — Summary model = `claude-sonnet-4-6` (committed default, tunable).** `LlmRequest.Model` is per-call and `ClaudeCodeProviderOptions` carries no model. Sonnet balances cost and diff-summarization quality for a cost-conscious first surface. Defined as `ClaudeCodeSummarizer.SummaryModel`. The product owner may override (e.g. to a Haiku tier for lower cost or Opus for quality) — change the one constant.
 - **KTD-3 — Config placement: nest under `AiConfig`.** Consent and features persist at `ui.ai.consent` / `ui.ai.features` by extending `AiConfig(AiMode Mode)` → `AiConfig(AiMode Mode, AiConsentConfig Consent, AiFeaturesConfig Features)`. This co-locates all AI config exactly as `ui.ai.mode` already nests under `UiConfig.Ai`, and the existing `Ui.Ai is null` backfill extends naturally to nested `Consent`/`Features` backfill (mirrors the `Inbox.Sections` nested-backfill precedent). The spec's conceptual `ai.features.<key>` naming maps to the concrete `ui.ai.features.<key>`.
 - **KTD-4 — In-memory cache = `ConcurrentDictionary`.** P1a uses a private `ConcurrentDictionary<string, PrSummary>` keyed `$"{prRef}#{headSha}"` inside `ClaudeCodeSummarizer`. No `IMemoryCache` DI, no `IAiCache` interface (both deferred to P1b per spec §4). Failures are never stored (store happens only after a successful generate), so "reopen the PR to recover" re-invokes.
@@ -54,6 +54,7 @@ These are created in early tasks and reused; listed here so signatures stay cons
 - `PRism.Core/Ai/AiConsentState.cs`, `PRism.Core/Ai/AiFeatureState.cs`
 - `PRism.Core/Ai/AiProviderIds.cs`, `PRism.Core/Ai/AiSeamFeatureKeys.cs`
 - `PRism.Web/Ai/ClaudeCodeSummarizer.cs` (composed in Web — keeps `PRism.AI.ClaudeCode` free of `PRism.Core.PrDetail`)
+- `PRism.Web/Ai/PrDiffText.cs` (pure DiffDto→text renderer), `PRism.Web/Ai/CachedLlmAvailabilityProbe.cs` (KTD-6 probe cache)
 - `PRism.Web/Ai/PrCategoryParser.cs` (pure parse/validate, unit-tested in isolation)
 - `PRism.Web/Endpoints/EgressDisclosure.cs`, `PRism.Web/Endpoints/AiConsentEndpoints.cs`
 
@@ -86,7 +87,7 @@ These are created in early tasks and reused; listed here so signatures stay cons
 
 ## Task ordering rationale
 
-Bottom-up so **every commit compiles and every test passes**: config storage (T1) → state holders (T2) → structured write (T3) → gating primitives (T4) → selector (T5) → resolver/capabilities (T6) → category parser (T7) → summarizer (T8) → register + flip (T9) → endpoint D111/503 (T10) → consent endpoints (T11) → FE api (T12) → hook (T13) → card (T14) → consent api+modal (T15) → AppearancePane (T16) → e2e (T17). The §1 atomic-ordering mandate is satisfied because the selector consent gate (T5) and the real-seam registration (T9) land in this one branch/PR; T9's commit message must reference the mandate.
+Bottom-up so **every commit compiles and every test passes**: config storage (T1) → state holders (T2) → structured write (T3) → gating primitives (T4) → selector (T5) → resolver/capabilities (T6) → probe cache (T6b) → category parser (T7) → summarizer (T8) → register + flip (T9) → endpoint D111/503 (T10) → consent endpoints (T11) → FE api (T12) → hook (T13) → card (T14) → consent api+modal (T15) → AppearancePane (T16) → e2e (T17). The §1 atomic-ordering mandate is satisfied because the selector consent gate (T5) and the real-seam registration (T9) land in this one branch/PR; T9's commit message must reference the mandate.
 
 **Single-PR review risk (named).** The §1 mandate forces only **T5 + T9** to co-land; it does not require all 18 tasks in one indivisible blob, but they share a branch and the PR is large. Mitigations: (1) review **commit-by-commit**, not as one squashed diff — each task is a self-contained, compiling commit; (2) the backend (T1–T11) and frontend (T12–T17) halves are independently revertible at the commit level — only T5↔T9 are coupled; (3) a defect found late in one half can be reverted without unwinding the other, except the T5/T9 pair. Call this out in the PR description so the reviewer paginates by commit.
 
@@ -884,6 +885,142 @@ Expected: PASS.
 ```bash
 git add PRism.Core/Ai/AiCapabilityResolver.cs PRism.Web/Endpoints/CapabilitiesEndpoints.cs tests/PRism.Core.Tests/Ai/AiCapabilityResolverConsentTests.cs tests/PRism.Web.Tests/Endpoints/CapabilitiesConsentTests.cs
 git commit -m "feat(ai): fold consent into capability resolver + capabilities endpoint"
+```
+
+---
+
+### Task 6b: Short-TTL probe cache (`CachedLlmAvailabilityProbe`)
+
+**Files:**
+- Create: `PRism.Web/Ai/CachedLlmAvailabilityProbe.cs`
+- Modify: `PRism.Web/Composition/ServiceCollectionExtensions.cs` (`AddPrismAi` — decorate `ILlmAvailabilityProbe`)
+- Test: `tests/PRism.Web.Tests/Ai/CachedLlmAvailabilityProbeTests.cs` (create)
+
+**Why:** KTD-6 — Live becomes FE-reachable this slice, so the per-window-focus uncached probe must be memoized. A decorator over the existing `ILlmAvailabilityProbe`, TTL-bounded via injected `TimeProvider`.
+
+- [ ] **Step 1: Confirm the probe interface + current registration** — read `ILlmAvailabilityProbe` (the `ProbeAsync(ct)` signature) and find where `ClaudeCodeAvailabilityProbe` is registered (likely `AddPrismClaudeCode` in `PRism.AI.ClaudeCode/ServiceCollectionExtensions.cs`). Note the exact interface namespace.
+
+- [ ] **Step 2: Write the failing test** — within the TTL, a second `ProbeAsync` returns the cached result without calling the inner probe; after the TTL elapses, it re-probes.
+
+```csharp
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using FluentAssertions;
+using Microsoft.Extensions.Time.Testing;
+using PRism.AI.Contracts.Provider;
+using PRism.Web.Ai;
+using Xunit;
+
+namespace PRism.Web.Tests.Ai;
+
+public sealed class CachedLlmAvailabilityProbeTests
+{
+    private sealed class CountingProbe : ILlmAvailabilityProbe
+    {
+        public int Calls;
+        public Task<LlmAvailability> ProbeAsync(CancellationToken ct) { Calls++; return Task.FromResult(LlmAvailability.Ok); }
+    }
+
+    [Fact]
+    public async Task SecondCall_WithinTtl_UsesCache()
+    {
+        var inner = new CountingProbe();
+        var clock = new FakeTimeProvider();
+        var probe = new CachedLlmAvailabilityProbe(inner, clock, TimeSpan.FromSeconds(30));
+
+        await probe.ProbeAsync(CancellationToken.None);
+        await probe.ProbeAsync(CancellationToken.None);
+        inner.Calls.Should().Be(1);
+
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await probe.ProbeAsync(CancellationToken.None);
+        inner.Calls.Should().Be(2);
+    }
+}
+```
+
+> `FakeTimeProvider` is in `Microsoft.Extensions.TimeProvider.Testing` — confirm the test project references it; if not, add the package or use a hand-rolled `TimeProvider` stub.
+
+- [ ] **Step 3: Run to verify it fails**
+
+Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj -p:NuGetAudit=false --filter CachedLlmAvailabilityProbeTests`
+Expected: FAIL — type doesn't exist.
+
+- [ ] **Step 4: Implement the decorator**
+
+```csharp
+using PRism.AI.Contracts.Provider;
+
+namespace PRism.Web.Ai;
+
+/// <summary>Caches the inner availability probe for a short TTL (KTD-6). Live is FE-reachable this slice
+/// and useCapabilities refetches on every window focus, so an uncached ~10s probe would spawn a claude
+/// subprocess per focus. Availability rarely changes within a session; a ~30s memo bounds the spawn rate.</summary>
+public sealed class CachedLlmAvailabilityProbe : ILlmAvailabilityProbe
+{
+    private readonly ILlmAvailabilityProbe _inner;
+    private readonly TimeProvider _clock;
+    private readonly TimeSpan _ttl;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private LlmAvailability? _cached;
+    private DateTimeOffset _cachedAt;
+
+    public CachedLlmAvailabilityProbe(ILlmAvailabilityProbe inner, TimeProvider clock, TimeSpan ttl)
+    {
+        _inner = inner;
+        _clock = clock;
+        _ttl = ttl;
+    }
+
+    public async Task<LlmAvailability> ProbeAsync(CancellationToken ct)
+    {
+        var now = _clock.GetUtcNow();
+        if (_cached is not null && now - _cachedAt < _ttl) return _cached;
+
+        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            now = _clock.GetUtcNow();
+            if (_cached is not null && now - _cachedAt < _ttl) return _cached; // double-check after lock
+            var result = await _inner.ProbeAsync(ct).ConfigureAwait(false);
+            _cached = result;
+            _cachedAt = now;
+            return result;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+}
+```
+
+- [ ] **Step 5: Decorate in `AddPrismAi`** — wrap the registered `ILlmAvailabilityProbe`. Since `AddPrismClaudeCode` (which registers the concrete probe) runs **before** `AddPrismAi` in `Program.cs`, capture the concrete probe and re-register the interface as the decorator:
+
+```csharp
+// In AddPrismAi, after the existing registrations:
+services.AddSingleton<ILlmAvailabilityProbe>(sp =>
+{
+    // The concrete probe was registered by AddPrismClaudeCode. Resolve it directly (by concrete type)
+    // to avoid wrapping the decorator around itself. Confirm the concrete type name in Step 1.
+    var inner = sp.GetRequiredService<ClaudeCodeAvailabilityProbe>();
+    return new CachedLlmAvailabilityProbe(inner, TimeProvider.System, TimeSpan.FromSeconds(30));
+});
+```
+
+> **DI note:** this requires `ClaudeCodeAvailabilityProbe` to be resolvable by its **concrete type**. If `AddPrismClaudeCode` registers it only as `ILlmAvailabilityProbe`, add `services.AddSingleton<ClaudeCodeAvailabilityProbe>()` there (or change its registration to register both). If the repo already uses Scrutor, `services.Decorate<ILlmAvailabilityProbe, CachedLlmAvailabilityProbe>()` is cleaner — check for an existing `Decorate` usage first. Confirm in Step 1 and pick the approach that matches the codebase.
+
+- [ ] **Step 6: Run the test + the capabilities integration test (Task 6) to confirm the decorator didn't break the probe path**
+
+Run: `dotnet test tests/PRism.Web.Tests/PRism.Web.Tests.csproj -p:NuGetAudit=false --filter "CachedLlmAvailabilityProbeTests|CapabilitiesConsentTests"`
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add PRism.Web/Ai/CachedLlmAvailabilityProbe.cs PRism.Web/Composition/ServiceCollectionExtensions.cs tests/PRism.Web.Tests/Ai/CachedLlmAvailabilityProbeTests.cs
+git commit -m "feat(ai): cache the Live availability probe (short TTL) for FE-reachable Live"
 ```
 
 ---
