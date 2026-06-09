@@ -340,7 +340,7 @@ export function InlineCommentComposer({
         {!closedBanner && (
           <button
             type="button"
-            className="composer-save"
+            className="composer-save btn btn-primary btn-sm"
             aria-disabled={saveDisabled}
             title={saveTooltip}
             onClick={handleSaveClick}

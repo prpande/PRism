@@ -111,7 +111,6 @@ test('#302 inline post-now — Comment button posts immediately, no pending revi
   // The placeholder dedupes against the real comment once the refetch lands
   // (matched by databaseId). We assert the placeholder appears promptly and that
   // eventually the real card (or still the optimistic, pre-dedup) shows the body.
-  const optimisticCard = page.getByTestId('inline-comment-card-optimistic').first();
   // The placeholder may appear and disappear quickly; wait for either the
   // optimistic card OR the text to become visible within the line widget.
   await expect(

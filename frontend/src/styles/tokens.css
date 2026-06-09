@@ -969,8 +969,8 @@ a:hover { text-decoration: underline; }
 .composer-error {
   padding: var(--s-1) var(--s-2);
   border-radius: var(--radius-1);
-  background: var(--surface-danger, var(--surface-2));
-  color: var(--text-danger, inherit);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
   font-size: var(--text-xs);
 }
 .composer-closed-banner {
