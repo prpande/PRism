@@ -126,7 +126,13 @@ never collide).
 
 **[P1] received_events type set** — **verified live against the owner's real feed**
 (78 PR-anchored events, 100% carrying both actor and PR number). Each row below was
-observed; reviews dominate (~48), then review-comments (~14), then PR lifecycle (~11):
+observed; reviews dominate (~48), then review-comments (~14), then PR lifecycle (~11).
+**These percentages are descriptive of one feed at one time, not a GitHub API
+contract** — the API guarantees neither actor-presence nor a stable payload shape. The
+normalizer's drop-on-missing-actor/PR-number path (§ Builder step 1) is the fallback
+for when they don't hold; because drops are silent, the builder **logs a debug counter
+of dropped-but-recognized events** so feed thinning from a payload-shape shift is
+observable during the dogfood window instead of masquerading as a quiet feed.
 
 | Event type | → Verb | PR number from |
 |---|---|---|
@@ -218,12 +224,21 @@ needs a within-feed dedup:
    `ActorAvatarUrl` from `actor`, `ActorIsBot` per the detection rule (`[bot]` suffix +
    known-bot allowlist), `Verb` per the table, `Repo`, `PrNumber` from the payload
    field named in the table, `Url`, `Timestamp = created_at`, `Source = ReceivedEvent`).
-   Events outside the set are dropped. **If `actor` is unexpectedly absent, drop the
-   item** — keeps the P1 guarantee that every emitted item has a non-null `ActorLogin`.
+   Events outside the set are dropped. **If `actor` or the PR number is unexpectedly
+   absent on a recognized type, drop the item** (keeps the P1 guarantee that every
+   emitted item has a non-null `ActorLogin`) **and increment a debug-logged
+   dropped-recognized counter** so a payload-shape shift surfaces as an observable
+   number, not silent feed thinning.
 2. **Window** to the last 24h.
-3. **Within-feed dedup** on `(Repo, PrNumber, Verb, ActorLogin)`, keeping the most
-   recent (the live feed repeats the same actor/verb/PR — e.g. `Copilot reviewed #195`
-   twice).
+3. **Within-feed dedup** — collapse only **true API duplicates**, keyed on the GitHub
+   event **`id`** (the Events API re-emits the same logical event — e.g. `Copilot
+   reviewed #195` appeared twice with the *same* event id). **Do not** collapse on a
+   semantic `(Repo, PrNumber, Verb, ActorLogin)` tuple: that erases two genuinely
+   distinct same-actor actions (e.g. `noah.s reviewed #1810` requesting-changes at 9am
+   then approving at 4pm), which is exactly the actor-attribution signal the rail
+   exists to show. *(Confirm the GitHub event `id` is present on `received_events`
+   items during implementation; if it is not, fall back to the semantic tuple **plus a
+   short time-window** so only near-simultaneous repeats collapse.)*
 4. **Sort** by `Timestamp` desc. **Do NOT cap server-side** — return the deduped 24h
    set up to a safety max (`MaxRawItems`, ~50) so the client can filter bots and *then*
    cap to `MaxActivityItems` (12) without leaving gaps (see § P1 frontend).
@@ -236,10 +251,16 @@ cross-feed dedup/merge/slot-reservation stages.
 `GET /api/activity` → `IActivityProvider.GetActivityAsync(ct)` → `ActivityResponse`.
 No orchestrator.
 
-- **Auth:** inherits the global middleware pipeline (`HostHeaderCheckMiddleware`,
-  `OriginCheckMiddleware`, `SessionTokenMiddleware`) like every other `/api/*`
+- **Auth:** inherits the global middleware pipeline like every other `/api/*`
   endpoint — requires a valid `prism-session` token; **not** a new unauthenticated
-  surface.
+  surface. Precise per-middleware reality (so the plan doesn't over-credit the
+  pipeline): `SessionTokenMiddleware` (per-process random cookie) is the **effective
+  gate for this GET**; `HostHeaderCheckMiddleware` is enforced **sidecar-mode +
+  non-Development only** (`Program.cs` passes `sidecar.Enabled && !IsDevelopment()`),
+  and `OriginCheckMiddleware` gates **mutating** methods (a GET passes its origin
+  check). This is the same posture as every existing GET `/api/*` endpoint — #137
+  introduces no new exposure — but DNS-rebinding defense for this endpoint in
+  browser-tab mode rests on the session cookie, not the Host-header check.
 - **No server cache in P1.** A single user polling ~90s = ~1 GitHub call/90s, which
   needs no cache. (The TTL cache lands in P2, where the merge makes 3 calls per miss
   and the cache must also handle identity-change invalidation — see P2.)
@@ -270,16 +291,33 @@ not stretched to inbox height.
 - **Verb phrasing:** every P1 item has an actor → `{actor} {verbPhrase} {prRef}`
   (e.g. "noah.s reviewed #1810", "rohitpradhan03 commented on MindBodyPOS#5436",
   "jules.t merged #1827"), with a small avatar + login. (Actorless templates arrive in
-  P2 with notifications.)
+  P2 with notifications.) **Avatar:** reuse the existing `Avatar` component (#127) at
+  its small (`sm`) slot with the same initials/placeholder fallback the PR-detail
+  comment cards use (#129) for a null/404 `ActorAvatarUrl`. In P1 `ActorLogin` is never
+  null; the null-actor avatar slot only matters in P2 (actorless notification rows),
+  where the slot shows the generic placeholder, not an empty gap.
+- **Accessible name for each row:** the `Title` field is on the wire but, to keep row
+  density, is **not** in the visible phrase. The clickable `<Link>`/`<a>` carries an
+  `aria-label` that appends the title — e.g. `noah.s reviewed #1810 — Fix login
+  redirect loop` — so a screen-reader user gets PR context the sighted compact row
+  omits. If `Title` is null, the label is the visible phrase alone.
 - **Bot filter toggle (in-rail header):** a small control at the top of the Activity
   panel toggles bot-authored items in/out — default **show** (`mergewatch[bot]`,
-  `Copilot`, etc. visible). Filtering is **client-side and instant**: the hook holds the
-  full deduped set (`ActorIsBot`-tagged); the rail filters per the toggle, **then** caps
-  to `MaxActivityItems` (12) — so hiding bots backfills with human activity instead of
-  leaving gaps. The toggle state **persists** as an inbox preference
-  `inbox.activityRailShowBots` (Bool, default `true`) via the existing scalar-config
-  pipeline (#275 pattern) + `InboxPreferencesDto`, so the choice survives reloads. This
-  is distinct from the Settings "Show activity rail" master toggle.
+  `Copilot`, etc. visible). The panel header becomes a three-element flex row —
+  `"Activity"` title · `"last 24h"` muted label · toggle pinned to the trailing edge;
+  under squeeze the muted label drops before the title or toggle. The control is an
+  `aria-pressed` **toggle button** with a stable accessible name (`"Show bots"`,
+  `aria-pressed` reflecting on/off) — matching PRism's existing toggle-button
+  convention (gear / AI toggle) rather than a label that swaps between "show"/"hide".
+  Filtering is **client-side and instant**: the hook holds the full deduped set
+  (`ActorIsBot`-tagged); the rail filters per the toggle, **then** caps to
+  `MaxActivityItems` (12) — so hiding bots backfills with human activity instead of
+  leaving gaps. **[Persistence is an open owner decision — see the review note at the
+  end of this doc's history; the spec currently specifies a persisted preference.]**
+  The toggle state **persists** as an inbox preference `inbox.activityRailShowBots`
+  (Bool, default `true`) via the existing scalar-config pipeline (#275 pattern) +
+  `InboxPreferencesDto`, so the choice survives reloads. This is distinct from the
+  Settings "Show activity rail" master toggle.
 - **Clickable items (in-app):** received_events items always carry a GitHub PR
   `html_url` (`github.com/{owner}/{repo}/pull/{n}`). A small parser extracts
   owner/repo/number from that URL into a `PrReference` and builds the **in-app router
@@ -290,17 +328,43 @@ not stretched to inbox height.
   Both render as focusable, keyboard-activatable anchors. (The richer external-link
   affordance for varied URL shapes is a P2 concern when notification URLs arrive.)
 - **States:**
-  - *Loading* (first paint): `InboxSkeleton`'s rail must render a **single** panel in
-    P1 (the existing skeleton draws two stacked blocks — parameterize it to one so the
-    skeleton matches the one-panel P1 rail and there is no load-time collapse). The
-    second block returns with Watching in P2.
-  - *Empty:* **`No pull-request activity in the last 24h`** — names the window so a
-    functional-but-quiet feed reads as working, not broken.
+  - *Loading — cold inbox load* (first paint): `InboxSkeleton`'s rail renders a
+    **single** panel in P1. The existing skeleton always draws two stacked blocks
+    inside its `showRail` branch (`InboxSkeleton.tsx`); the change is to that block
+    **count inside the existing `showRail` branch** (not the boolean prop, which only
+    decides whether the rail column appears). The second block returns with Watching
+    in P2.
+  - *Loading — rail mounting after a preference flip:* enabling **Settings → Inbox →
+    Show activity rail** while the inbox is already painted mounts the rail with
+    `useActivity` `isLoading && !data` but **without** the `InboxSkeleton` path (the
+    inbox itself isn't loading). The rail must render its **own** in-card skeleton
+    (the `.section` chrome + a couple of placeholder rows) on this path — never a bare
+    panel and never a flash of the empty/degraded copy before the first fetch resolves.
+    This is the most common first impression of the rail, so it is specified, not left
+    to the implementer.
+  - *Empty (quiet feed):* **`No pull-request activity in the last 24h`** — names the
+    window so a functional-but-quiet feed reads as working, not broken.
+  - *Empty (bots filtered out):* when the feed has items but the bot toggle is **off**
+    and the human-only set is empty (e.g. a 24h window where every actor was a bot),
+    show **`No human activity in the last 24h — turn on "Show bots" to see bot
+    activity`**. This names the *filter* as the cause, not the window, so the user who
+    just watched rows disappear isn't told the feed is quiet.
   - *Degraded / Error:* a single generic inline note **`Activity unavailable`**, shown
     when the fetch fails (and no last-good data) or `Degraded.ReceivedEvents` is true.
     It uses a **distinct treatment from the empty state** (a muted warning/alert style,
     not the same plain muted text) so "broken" and "quiet" are visually separable. No
-    cause-specific messaging (rationale below).
+    cause-specific messaging (rationale below) — **with one recommended carve-out under
+    owner review:** distinguish the **auth-invalid (401 / revoked token)** case from
+    generic degradation, rendering "**Reconnect GitHub**" instead of "Activity
+    unavailable". A 401 is *unambiguous* (unlike the several causes behind a 403) and is
+    the one failure the user can act on; a mid-session token revocation surfaces on the
+    rail's 90s poll, and "Settings unreachable without a token" only covers *enabling*,
+    not mid-session revocation. This is a narrow `AuthInvalid` boolean on
+    `ActivityDegradation`, **not** the rejected `DegradationCause` enum, so it doesn't
+    reintroduce FG-token steering. *(Counter-view from security-lens: a revoked token
+    breaks the whole app and already surfaces via the primary auth gate / `/api/auth/
+    state` / `IdentityChanged` SSE, so the generic note is defensible. Owner to decide;
+    the contract block below does not yet include `AuthInvalid`.)*
 - **Rendering safety:** GitHub-supplied strings (`Title`, `ActorLogin`) render as text
   via React's default escaping — never `dangerouslySetInnerHTML`.
 - Relative-time rendering **reuses the inbox row's existing relative-time formatter** so
@@ -339,9 +403,11 @@ viewport). Turning it on, with real data backing the rail, completes #309's defe
 - **Builder** (fake reader): the type→verb table (Review/ReviewComment/IssueComment-on-
   PR/PR-opened/closed-merged); `IssueCommentEvent` kept only when `payload.issue.
   pull_request` present (plain-issue comment dropped); `PushEvent` dropped; actor-absent
-  event dropped; **`ActorIsBot` tagging** (`[bot]` suffix + allowlist; `Copilot` → bot);
-  **within-feed dedup** collapses repeated `(Repo,PrNumber,Verb,ActorLogin)` keeping the
-  newest; 24h windowing; sort; returns up to `MaxRawItems` (no server cap to 12).
+  event dropped **and counted** (dropped-recognized counter increments); **`ActorIsBot`
+  tagging** (`[bot]` suffix + allowlist; `Copilot` → bot); **event-`id` dedup** collapses
+  a re-emitted duplicate (same event id) but **keeps two distinct same-actor/verb/PR
+  events with different ids** (e.g. two separate reviews hours apart — must NOT collapse);
+  24h windowing; sort; returns up to `MaxRawItems` (no server cap to 12).
 - **Reader** (mocked `HttpClient`): received_events shape parsing; PR-number extraction
   per type; 429 / 403 → empty + degraded.
 - **Endpoint:** 200 happy; 200 degraded; no-token → empty + degraded; served behind
@@ -353,17 +419,22 @@ viewport). Turning it on, with real data backing the rail, completes #309's defe
   re-caps to 12**; toggle reads/writes `inbox.activityRailShowBots`.
 - **Settings toggle:** reflects + writes `inbox.showActivityRail`.
 - **e2e:** rail visual baseline with real-shaped fake data via a Test-env activity fake
-  seam mirroring `PRISM_E2E_FAKE_REVIEW` (`ASPNETCORE_ENVIRONMENT=Test`). Seam shape is
-  a planning artifact (§ Deferred to plan); if a test-only route, it inherits the same
-  env-guard as `MapTestEndpoints`. Baselines regenerated after owner B1.
+  seam mirroring `PRISM_E2E_FAKE_REVIEW` (`ASPNETCORE_ENVIRONMENT=Test`). **Prefer the
+  DI-swap model** — register a fake `IActivityProvider` under the `PRISM_E2E_FAKE_REVIEW`
+  guard (as `FakeReviewBackingStore` swaps the review services) — over a test-only HTTP
+  route, because the DI swap never exposes an HTTP surface that could inject arbitrary
+  actor logins / PR URLs in production. If a seeding route is unavoidable it must live
+  inside `MapTestEndpoints` under the same env-guard, with a negative test mirroring
+  `TestEndpoints_NotRegisteredInProduction_404`. Final seam shape is a planning artifact
+  (§ Deferred to plan). Baselines regenerated after owner B1.
 
 ## P1 acceptance criteria
 
 - [ ] Activity panel renders real `received_events` (PR-anchored type set: reviewed /
       commented / opened / closed / merged), actor + verb + PR ref + relative time;
       items open the PR in-app.
-- [ ] Within-feed dedup collapses repeated actor/verb/PR; no "pushed" verb (confirmed
-      unavailable).
+- [ ] Within-feed dedup collapses **re-emitted duplicates by event `id`** while keeping
+      genuinely distinct same-actor events; no "pushed" verb (confirmed unavailable).
 - [ ] In-rail bot toggle (default show) filters `[bot]`/known-bot actors client-side and
       re-caps to 12; choice persists via `inbox.activityRailShowBots`.
 - [ ] Watching `<section>` not rendered; loading skeleton shows a single panel.
@@ -383,12 +454,27 @@ After ~1–2 weeks of Phase 1 dogfooding, the owner makes a **qualitative keep /
 self-assessment**: did the actor feed prove useful in practice? (PRism has no usage
 telemetry; this is deliberately a judgment call, not a measured click rate — adding
 analytics is out of scope.) **Keep → build Phase 2. Cut → stop here** (Phase 1 is
-self-contained). To avoid a biased "cut", the assessment must distinguish *"the feed
-is genuinely valuable but my watched repos were quiet"* from *"the concept doesn't
-help"* — the "No pull-request activity in the last 24h" empty copy exists precisely so
-a quiet feed doesn't masquerade as a broken one. If the owner's watch graph is
-chronically quiet over the trial, widening the dogfooding window (e.g. 72h) is a
-cheaper diagnostic than cutting.
+self-contained).
+
+**The gate is pre-registered with a falsifiable CUT criterion, not just a keep
+rationale** — written here, before Phase 1 ships, while incentives are neutral (the
+self-assessor is also the builder; a post-build "did it prove useful?" is a sunk-cost
+question otherwise):
+
+- **CUT if:** over the active trial, the owner cannot recall a single concrete instance
+  where an actor line **changed an action they took** (opened a PR from the rail they'd
+  not have found via the inbox, re-reviewed because of a named reviewer's activity,
+  etc.). A lightweight manual tally of rail-originated PR opens (not analytics) anchors
+  this. "Interesting to glance at" is a cut, not a keep.
+- **KEEP if:** the tally is non-trivial **and** the value wasn't an artifact of one
+  unusually busy week.
+- **Anti-false-cut guard (bounded):** distinguish *"genuinely valuable but my watched
+  repos were quiet"* from *"the concept doesn't help"* — the "No pull-request activity
+  in the last 24h" empty copy and the dropped-recognized debug counter both exist so a
+  quiet *or* a silently-thinning feed doesn't masquerade as a useless one. If the watch
+  graph was chronically quiet, the window may be widened **once** (e.g. to 72h) — **not
+  open-endedly**, since "widen until it looks useful" is exactly how the initial
+  dormant-watch-list false-negative was nearly rationalized into a keep.
 
 ---
 
@@ -425,8 +511,12 @@ Insert between normalize and cap:
      is `review-requested`/`mention`, else the event's). Two **distinct non-null
      actors** in a group stay **separate items** (the actor detail is the payoff and is
      never collapsed). **3-way case** (one null notification + ≥2 distinct-actor
-     events): the notification merges into the **most-recent** event by `Timestamp`;
-     the others remain separate.
+     events): if the notification's `reason` is **genuinely you-relevant**
+     (`review_requested`/`mention`), it stays its **own actorless row** rather than
+     merging — the "you were asked / mentioned" meaning is actor-independent and must
+     not be bound to whichever actor happened to act last. Only a **non-you-relevant
+     duplicate** notification merges, and then into the **most-recent** matching event
+     by `Timestamp`; the others remain separate.
    - Note: the merge only fires when the verb matches on both sides. A notification
      whose `reason` maps to a verb with no event counterpart (e.g. `subscribed` →
      `Other`) will **not** merge with a concrete-verb event for the same PR — by design
@@ -451,10 +541,25 @@ P2 adds a **single process-lifetime `ActivityResponse` behind a ~60s TTL**, held
 instance field on the singleton `IActivityProvider`. **Not keyed by token** — PRism is
 single-user (the `Func<Task<string?>>` token reader prevents stale-token capture). This
 avoids storing the PAT as a heap key and bounds cost to **≤3 GitHub calls / 60s**.
-**Identity change must invalidate it:** `IActivityProvider` exposes `Reset()`, and the
-`/api/auth/replace` `identityChanged` path calls it alongside the existing
-`activePrCache.Clear()` / `activeRegistry.RemoveAll()` — otherwise the new identity
-could be served the prior identity's feed data for up to 60s.
+**Identity change must invalidate it:** `IActivityProvider` exposes `Reset()`, wired
+into the `/api/auth/replace` flow alongside the existing `activePrCache.Clear()` /
+`activeRegistry.RemoveAll()` — otherwise the new identity could be served the prior
+identity's feed data for up to 60s. **Two wiring decisions for the plan:**
+- **Same-login token rotation.** The existing reset block fires **only when
+  `identityChanged`** (`priorLogin != newLogin`). Rotating to a *different PAT for the
+  same login* (e.g. after revoking a leaked token whose `repo` access has since been
+  narrowed) leaves `identityChanged == false`, so the activity cache — like the PR
+  cache today — would serve the old token's (possibly broader-scope, private-repo) feed
+  for up to 60s. Because the activity feed surfaces **private-repo events whose
+  visibility depends on current token scope**, the plan should call `Reset()` on
+  **every successful `/api/auth/replace` commit**, not only the login-change branch (or
+  explicitly accept and document the 60s window). This is a stronger requirement than
+  the PR cache's current policy and is called out deliberately.
+- **Subscribe vs. imperative call.** The same `identityChanged` block already publishes
+  an in-process `IdentityChanged` bus message. The plan should weigh having
+  `IActivityProvider` **subscribe** to that message over adding a fourth manual call —
+  subscription co-locates invalidation with the other reset consumers and prevents a
+  future identity-reset path from silently missing the activity cache.
 
 ## P2 frontend
 
@@ -482,8 +587,9 @@ could be served the prior identity's feed data for up to 60s.
 - **Distinct actors:** two different actors, same PR + verb → **two** items.
 - **3-way:** one notification + two distinct-actor events → notification merges into the
   most-recent event; the other stays separate.
-- **No-counterpart reason:** `subscribed`→`Other` does not merge with a `Pushed` event
-  for the same PR (stays two items).
+- **No-counterpart reason:** `subscribed`→`Other` does not merge with a `Closed` event
+  for the same PR (stays two items). (Uses a real verb — there is no `Pushed` event;
+  see § Scope.)
 - **Cap:** 20 notifications + 5 events → **≥ `MinEventSlots` (4)** event items survive.
 - Watching count computed pre-cap; idle ordering + padding.
 - Cache invalidated on `identityChanged` (no cross-identity data within TTL).
@@ -521,9 +627,16 @@ could be served the prior identity's feed data for up to 60s.
 ## Constants *(shared)*
 
 - Activity window: **24h** (matches the existing "last 24h" label). Not configurable.
+  Both `24h` and `MaxActivityItems = 12` are **provisional** — they are inherited from
+  the mock's copy, not derived from the feed's freshness. Given the 30s–6h source lag
+  and a weekend/part-time gap (Mon morning could show an empty rail despite relevant
+  Fri activity), the P1 trial is also the test of whether 24h is wide enough; revisit
+  both after the keep decision rather than treating them as fixed.
 - `MaxActivityItems` = 12 (**visible cap, applied client-side after bot-filter**);
   `MaxRawItems` ≈ 50 (server returns the deduped 24h set up to this so the client can
-  filter + re-cap without gaps); `MinEventSlots` (P2) = 4; `MaxWatchingRows` (P2) = 8.
+  filter + re-cap without gaps); `MinEventSlots` (P2) = 4; `MaxWatchingRows` (P2) = 8
+  (≈ the rail's per-viewport row capacity at standard density; an arbitrary bound on an
+  unbounded watched-repo list, revisit in P2 UX polish).
 - Poll cadence: ~90s client. Server TTL cache (~60s) is **P2 only**.
 
 ## Out of scope / deferred *(shared)*
