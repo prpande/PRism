@@ -168,45 +168,77 @@ do **not** over-sweep `InboxRefreshOrchestratorTests.cs:321` (injects its own
 ### C2 — Inbox category chip marker (`frontend/src/components/Inbox/InboxRow.tsx:100-104`)
 Today: `<span className={chipWrap}><span className={chip}>{categoryChip}</span>…</span>`.
 
-Add the preview affordance **inside the chip element** so it travels with the chip:
-- A small leading marker within the chip, using a **muted/preview token (e.g.
-  `--text-3`), not `--accent`** (the chip currently shares `--accent` with real
-  signals — unread bar, comment glyph — so the marker must read as distinct).
-- The chip carries `title` + `aria-label` =
-  **`"AI preview — sample category, not generated from this PR"`** (mirrors the
-  established `AiSummaryCard` / `PreSubmitValidatorCard` wording, noun adjusted).
-- **Width guard:** the chip-with-marker must fit the existing tail budget; if space
-  is tight, the **category text** is shortened, not the marker. The `meta` row is
-  `flex-wrap:nowrap; overflow:hidden` (silent clipping), so the marker must not push
+**The fake category is visual-only — so the marker is a visual treatment.** The row
+is a `<button aria-label={ariaLabel}>` (`InboxRow.tsx:52-56,64`) and that
+`ariaLabel` does **not** include the category. A screen reader announces only the
+button's own label and **suppresses descendant `aria-label`/`title`** — so a chip
+`aria-label` would never be announced, and (more importantly) SR users never
+perceive the fabricated "Refactor" at all. There is therefore no SR honesty gap to
+close: the category is honest-by-omission for AT. The marker exists for **sighted**
+users who see the chip. (Do **not** rely on a chip `aria-label` as an a11y
+mechanism — it's swallowed. A `title` may stay as a mouse-hover tooltip only.)
+
+**Marker form (concrete, so the implementer doesn't guess):**
+- Prepend a **separate** element inside the chip: `<span className={chipMarker}>AI</span>`
+  before the category text — i.e. renders as `AI Refactor`, not a single blob.
+- `chipMarker` uses a **muted token (`--text-3`), not `--accent`** (the chip shares
+  `--accent` with real signals — unread bar, comment glyph — so the marker must read
+  as distinct), with a small fixed `font-size` so its width is known.
+- **Width guard:** the marker is fixed-width; if the tail budget is tight, the
+  **category text** is shortened, not the marker. The `meta` row is
+  `flex-wrap:nowrap; overflow:hidden` (silent clipping) — the marker must not push
   real fields off-screen.
 
-**Narrow-width is already consistent (verified):** below the 560px container
-breakpoint, `.chipWrap` is `display:none` (`InboxRow.module.css:267-275`) and the
-row's own `aria-label` (`InboxRow.tsx:52-56`) does **not** include the category. So
-when the chip hides, the fake category disappears from both the visual and a11y
-trees — nothing unmarked is disclosed. Placing the marker inside the chip is
-sufficient; no separate narrow-width disclosure is needed.
+**Per-row repetition — accepted.** The placeholder enricher returns the same
+"Refactor" category for every row, so `AI Refactor` repeats down the list. This is
+accepted rather than moved to a section-header badge: the chip (and its marker) is
+hidden together below the 560px container breakpoint (`InboxRow.module.css:267-275`),
+and a section-level badge would not track that per-row hide. The repetition is
+inherent to placeholder data and resolves when a real model returns varied
+categories. Final visual read is confirmed at the B1 gate.
+
+**Narrow-width is consistent (verified):** below 560px, `.chipWrap` is
+`display:none`, so the chip + its marker disappear together — nothing unmarked is
+disclosed, and (per above) nothing was announced to AT anyway.
 
 ### C3 — Decouple the activity rail from AI (owner decision: config flag)
 
 The rail is a fully fabricated static mockup with two sections (Activity +
 Watching), **not** backed by the `IInboxRanker` seam or any data pipeline — and
 `IInboxRanker.RankAsync` is **never called in the live inbox pipeline**
-(`InboxRefreshOrchestrator` does not invoke it), so the only thing `inboxRanking`
-gates is the rail's visibility. It does not belong under the AI preview toggle.
+(`InboxRefreshOrchestrator.cs:248` resolves only `IInboxItemEnricher`; the ranker
+seam is registered in DI but never resolved). NB: the one live `RankAsync` call,
+`AiEndpoints.cs:40`, is **`IFileFocusRanker`.RankAsync** — a *different* interface
+that shares the method name, on the PR-detail file-focus surface, unrelated to the
+inbox. So the only thing `inboxRanking` gates is the rail's visibility, and the rail
+does not belong under the AI preview toggle.
 
-**Change:** introduce a new **non-AI** inbox setting and gate the rail on it.
+**Change:** introduce a new **non-AI** inbox setting and gate the rail on it. Each
+"stop" below is **two code sites** — naming only one risks a half-wired, silently
+no-op'ing field:
 
-- **Backend config** — add `bool ShowActivityRail = false` to `InboxConfig`
-  (`AppConfig.cs`), following the additive scalar-field pattern used for
-  `SectionOrder`/`DefaultSort` (#275). Default **false**: the rail shows for nobody
-  unless explicitly enabled in `config.json`. Wire it through the existing config
-  surface: the `PatchAsync` allowlist in `ConfigStore`, the preferences DTO/mapping
-  in `PreferencesEndpoints`, and the frontend `Preferences` types + `usePreferences`.
+- **Backend config** — append `bool ShowActivityRail = false` to `InboxConfig`
+  (`AppConfig.cs`) **as the last record parameter, after `SectionOrder`** (C# needs
+  optional params last; the positional `new InboxConfig(true, …, 14)` at
+  `AppConfig.cs:20` stays valid with a trailing defaulted param). Following the
+  additive scalar pattern of `SectionOrder`/`DefaultSort` (#275). Default **false**:
+  the rail shows for nobody unless explicitly enabled in `config.json`.
+- **ConfigStore (two sites)** — add `["inbox.showActivityRail"] = ConfigFieldType.Bool`
+  to `_allowedFields` **and** an apply-switch arm
+  `"inbox.showActivityRail" => _current with { Inbox = _current.Inbox with { ShowActivityRail = (bool)value! } }`.
+  (Allowlist alone passes validation but falls through the apply switch to the
+  `_ => throw` default → 400.)
+- **PreferencesEndpoints (two sites)** — add `bool ShowActivityRail` to
+  `InboxPreferencesDto` (`PreferencesDtos.cs`) **and** pass
+  `config.Current.Inbox.ShowActivityRail` in `BuildResponse` (it projects field-by-
+  field, not wholesale). camelCase serialization is automatic — no `[JsonPropertyName]`.
+- **Frontend type** — add `showActivityRail: boolean` to `InboxPreferences` in
+  `frontend/src/api/types.ts` (not the `usePreferences` hook, which is a thin
+  re-export). `tsc -b` catches the omission.
 - **Frontend gate** — in `InboxPage.tsx`, replace
-  `const showActivityRail = useAiGate('inboxRanking')` with a read of
-  `preferences?.inbox.showActivityRail ?? false`. The `<ActivityRail/>` render and
-  the `<InboxSkeleton showRail=…/>` prop now follow the new flag.
+  `const showActivityRail = useAiGate('inboxRanking')` with
+  `preferences?.inbox.showActivityRail ?? false`. The `<ActivityRail/>` render
+  (`:117`) and the `<InboxSkeleton showRail=…/>` prop (`:54`) follow the new flag.
 - **No Settings UI toggle** — the rail is still a fabricated mockup; surfacing a
   "show sample activity" switch to users would be dishonest until the feed is real.
   Config-only for now; a UI control lands when the rail carries real data.
@@ -214,6 +246,15 @@ gates is the rail's visibility. It does not belong under the AI preview toggle.
   `PlaceholderInboxRanker`/`NoopInboxRanker` lose their only consumer. They are
   harmless ceremonial infra; removing them would widen scope into AI-contract
   cleanup, so they stay. Noted for a future cleanup.
+
+**Existing AI-on users lose the rail (intended).** Today the rail is gated purely on
+`useAiGate('inboxRanking')`, so every current user who has AI preview ON sees it.
+After this change it is gated on the new flag, which is absent from their
+`config.json` → backfills `false` → the rail **disappears** for them on upgrade,
+with no Settings control to restore it (config-only). This is an accepted
+consequence of taking a fabricated mockup out of AI scope — no real data is lost,
+and the restore path is hand-editing `config.json` until the feed is real. Called
+out here and in the PR `## Proof` so it isn't a silent surprise.
 
 This is the one place the review changed the originally-approved "mark everything
 shown" framing — the owner chose to take the rail out of AI scope entirely.
@@ -249,10 +290,11 @@ should fail.
 - **Config round-trip (new):** `inbox.showActivityRail` defaults `false`; survives a
   GET → PATCH(true) → GET round-trip through the preferences endpoint + allowlist.
 - **Frontend (new):** `InboxRow` — when `showCategoryChip` + an enrichment are
-  present, the chip exposes the preview accessible label and the marker is visually
-  present. `InboxPage` — the rail does **not** render when `aiPreview` is on but
+  present, the `AI` marker span renders before the category text (visual marker
+  present). `InboxPage` — the rail does **not** render when `aiPreview` is on but
   `inbox.showActivityRail` is false (decoupled), and **does** render when
-  `showActivityRail` is true regardless of `aiPreview`.
+  `showActivityRail` is true regardless of `aiPreview`. `InboxSkeleton` — no rail
+  placeholder when `showActivityRail` defaults false (cold-load first impression).
 - **Frontend (rewrite, decoupling ripple):** the rail no longer toggles with AI —
   - `InboxPage.test.tsx:202-212` ("renders/hides ActivityRail when aiPreview on/off")
     → re-point to `inbox.showActivityRail`.
