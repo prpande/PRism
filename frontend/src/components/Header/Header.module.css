@@ -54,10 +54,13 @@
   background: color-mix(in oklch, var(--accent) 14%, transparent);
   box-shadow: none;
 }
-/* Respect "reduce motion" — suppress the tab transition (mirrors the same guard
-   on PrTabStrip's .tab so the top nav and PR-tab strip behave consistently). */
+/* Respect "reduce motion" — suppress the tab + gear transitions (mirrors the same
+   guard on PrTabStrip's .tab so the top nav and PR-tab strip behave consistently).
+   .gear is included because its #290 accent-glow hover now carries the same
+   transition as .tab. */
 @media (prefers-reduced-motion: reduce) {
-  .tab {
+  .tab,
+  .gear {
     transition: none;
   }
 }
@@ -87,17 +90,42 @@
   height: 32px;
   border-radius: var(--radius-2);
   color: var(--text-2);
+  /* Same transition the tab uses, so the accent glow below fades in identically
+     (#290). Suppressed under prefers-reduced-motion alongside .tab. */
+  transition:
+    color var(--t-fast) var(--ease-out),
+    background var(--t-fast) var(--ease-out),
+    box-shadow var(--t-fast) var(--ease-out);
 }
-.gear:hover {
-  background: var(--surface-3);
-  color: var(--text-1);
+/* Hover / keyboard-focus: the SAME accent glow the Inbox tab uses (#290), so every
+   nav-bar item shares one hover language instead of the old neutral surface-3 swap.
+   Mirrors .tab:hover (lines 29-39) — same tokens, so it tracks every accent + theme. */
+.gear:hover,
+.gear:focus-visible {
+  color: var(--accent-hover);
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+  box-shadow: 0 0 12px -2px var(--accent-ring);
 }
+/* Keyboard focus additionally keeps a crisp ring ON TOP of the glow. The diffuse
+   glow alone is a weak focus indicator for a 32px icon on the accent-tinted desktop
+   bar (WCAG 2.4.7/2.4.13); the text tabs lean on their color+bg change instead. */
 .gear:focus-visible {
   outline: 2px solid var(--accent-ring);
+  outline-offset: 1px;
 }
 .gearOn {
   background: var(--accent-soft);
   color: var(--accent);
+}
+/* Active gear (a Settings/Help modal is open) holds its accent-soft fill on
+   hover/focus — don't stack the glow on top, so "active" stays steady. The exact
+   analog of .tabActive:hover (lines 51-56). Equal specificity to .gear:hover, placed
+   after it so source order wins. */
+.gearOn:hover,
+.gearOn:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: none;
 }
 
 /* ----------------------------------------------------------------------------
@@ -133,6 +161,24 @@
   height: 58px;
   padding: 0 22px;
   gap: 16px;
+}
+
+/* Light theme only (#289): in light, --shadow-2 is two stacked soft blurs at very
+   low opacity, which over the accent-tinted bar smears the bottom edge into a
+   gradient and washes out the existing 1px border-bottom — the edge reads fuzzy, not
+   a line. The base .header keeps `border-bottom: 1px solid var(--border-1)` in desktop
+   mode, so we make THAT the defined line: lift it to the slightly darker --border-2,
+   and replace the diffuse --shadow-2 with ONLY a tight negative-spread drop for
+   contained elevation (the negative spread pulls the blur in so it can't smear past
+   the bar). Using the border for the line — rather than stacking a `0 1px 0` shadow
+   hairline below it — avoids a double-line edge. Dark keeps the heavier --shadow-2 (a
+   defined black band that already reads fine), so this is scoped to light only.
+   data-theme and data-shell both sit on <html>, so this is one compound selector on
+   the same element (specificity 0,3,0) — it out-specifies the base desktop-shell rule
+   above (0,2,0) and wins the cascade. */
+:global([data-theme='light'][data-shell='desktop']) .header {
+  border-bottom-color: var(--border-2);
+  box-shadow: 0 6px 10px -6px oklch(0.2 0.01 250 / 0.1);
 }
 
 /* Roomier, density-independent tab + search spacing (base uses --s-3, which
