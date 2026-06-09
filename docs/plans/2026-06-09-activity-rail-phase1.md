@@ -410,99 +410,28 @@ public static class ActivityFeedBuilder
         ArgumentNullException.ThrowIfNull(events);
 
         var dropped = 0;
-        var mapped = new List<ActivityItem>(events.Count);
-
-        foreach (var e in events)
-        {
-            var verb = MapVerb(e);
-            if (verb is null) continue;                       // unmapped type → silent drop (not counted)
-
-            // Recognized type but missing the data that makes a row valid → drop + COUNT.
-            if (string.IsNullOrEmpty(e.ActorLogin) || e.PrNumber is null || string.IsNullOrEmpty(e.Url()))
-            {
-                dropped++;
-                continue;
-            }
-
-            mapped.Add(new ActivityItem(
-                ActorLogin: e.ActorLogin,
-                ActorAvatarUrl: e.ActorAvatarUrl,
-                ActorIsBot: IsBot(e.ActorLogin),
-                Verb: verb.Value,
-                Repo: e.Repo,
-                PrNumber: e.PrNumber.Value,
-                Title: e.Title,
-                Url: e.HtmlUrl!,
-                Timestamp: e.CreatedAt,
-                Source: ActivitySource.ReceivedEvent));
-        }
-
-        var items = mapped
-            .Where(i => i.Timestamp >= now.AddHours(-WindowHours))   // 24h window
-            .GroupBy(_ => 0)                                          // placeholder to allow id-dedup below
-            .SelectMany(g => g)
-            .ToList();
-
-        // Event-id dedup: collapse re-emitted duplicates (same GitHub event id),
-        // but KEEP distinct ids even if same actor/verb/PR (real distinct activity).
-        var byId = new Dictionary<string, ActivityItem>(StringComparer.Ordinal);
-        var idOf = events.ToDictionary(e => e, e => e.Id);   // not used; see simpler approach below
-        // Simpler: dedup on the raw id mapped alongside. Rebuild with id carried.
-
-        // --- replace the above block: carry id through mapping ---
-        throw new NotImplementedException("see Step 2.4 — this scaffold is intentionally incomplete");
-    }
-
-    private static ActivityVerb? MapVerb(RawReceivedEvent e) => e.Type switch
-    {
-        "PullRequestReviewEvent" => ActivityVerb.Reviewed,
-        "PullRequestReviewCommentEvent" => ActivityVerb.Commented,
-        "IssueCommentEvent" when e.IsPullRequestComment => ActivityVerb.Commented,
-        "PullRequestEvent" => e.Action switch
-        {
-            "opened" => ActivityVerb.Opened,
-            "reopened" => ActivityVerb.Reopened,
-            "closed" => e.Merged ? ActivityVerb.Merged : ActivityVerb.Closed,
-            _ => null,
-        },
-        _ => null,
-    };
-
-    private static bool IsBot(string login) =>
-        login.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase) || KnownBots.Contains(login);
-}
-
-internal static class RawReceivedEventUrl
-{
-    public static string? Url(this RawReceivedEvent e) => e.HtmlUrl;
-}
-```
-
-- [ ] **Step 2.4: Replace the scaffold with the real pipeline.** The Step 2.3 body intentionally threw to force you to write the clean version. Replace the entire `Build` method body with this (keeps id through mapping so dedup is by event id):
-
-```csharp
-    public static ActivityBuildResult Build(
-        IReadOnlyList<RawReceivedEvent> events, DateTimeOffset now)
-    {
-        ArgumentNullException.ThrowIfNull(events);
-
-        var dropped = 0;
         var cutoff = now.AddHours(-WindowHours);
         var byId = new Dictionary<string, ActivityItem>(StringComparer.Ordinal);
 
         foreach (var e in events)
         {
             var verb = MapVerb(e);
-            if (verb is null) continue;                         // unmapped → silent drop
+            if (verb is null) continue;                 // unmapped type → silent drop (not counted)
 
+            // 24h window check FIRST so the dropped-recognized counter reflects only
+            // IN-WINDOW payload drift, not stale events page 1 happens to carry.
+            if (e.CreatedAt < cutoff) continue;
+
+            // Recognized + in-window but missing the data that makes a row valid → drop + COUNT.
             if (string.IsNullOrEmpty(e.ActorLogin) || e.PrNumber is null || string.IsNullOrEmpty(e.HtmlUrl))
             {
-                dropped++;                                      // recognized but unusable → drop + count
+                dropped++;
                 continue;
             }
 
-            if (e.CreatedAt < cutoff) continue;                 // 24h window
-            if (byId.ContainsKey(e.Id)) continue;               // event-id dedup (keep first; ids are unique per event)
+            // Event-id dedup: collapse a re-emitted duplicate (same GitHub event id),
+            // but KEEP distinct ids even if same actor/verb/PR (real distinct activity).
+            if (byId.ContainsKey(e.Id)) continue;
 
             byId[e.Id] = new ActivityItem(
                 ActorLogin: e.ActorLogin,
@@ -524,17 +453,36 @@ internal static class RawReceivedEventUrl
 
         return new ActivityBuildResult(items, dropped);
     }
+
+    private static ActivityVerb? MapVerb(RawReceivedEvent e) => e.Type switch
+    {
+        "PullRequestReviewEvent" => ActivityVerb.Reviewed,
+        "PullRequestReviewCommentEvent" => ActivityVerb.Commented,
+        "IssueCommentEvent" when e.IsPullRequestComment => ActivityVerb.Commented,
+        "PullRequestEvent" => e.Action switch
+        {
+            "opened" => ActivityVerb.Opened,
+            "reopened" => ActivityVerb.Reopened,
+            "closed" => e.Merged ? ActivityVerb.Merged : ActivityVerb.Closed,
+            _ => null,
+        },
+        _ => null,
+    };
+
+    private static bool IsBot(string login) =>
+        login.EndsWith("[bot]", StringComparison.OrdinalIgnoreCase) || KnownBots.Contains(login);
+}
 ```
 
-Then delete the now-unused `RawReceivedEventUrl` helper and the dead `idOf`/`GroupBy` lines from Step 2.3.
+The `Build` body above is the final implementation — single pass, window-before-drop-count (so the dropped-recognized counter reflects only in-window payload drift), event-`id` dedup keeping distinct ids. No scaffold/rewrite cycle.
 
-- [ ] **Step 2.5: Fix the stray test line.** In `ActivityFeedBuilderTests.Windows_to_last_24h`, delete the `.Which.Id()...` assertion; keep just:
+- [ ] **Step 2.4: Fix the stray test line.** In `ActivityFeedBuilderTests.Windows_to_last_24h`, delete the `.Which.Id()...` assertion; keep just:
 
 ```csharp
         ActivityFeedBuilder.Build(raw, Now).Items.Should().ContainSingle();
 ```
 
-- [ ] **Step 2.6: Run to verify green + commit.**
+- [ ] **Step 2.5: Run to verify green + commit.**
 
 ```bash
 dotnet test tests/PRism.Core.Tests --filter "FullyQualifiedName~ActivityFeedBuilderTests" --nologo
@@ -586,13 +534,17 @@ public sealed class GitHubReceivedEventsReaderTests
     }]
     """;
 
+    // REAL GitHub shape: issue.html_url is the /issues/ form; the /pull/ web URL lives
+    // ONLY in issue.pull_request.html_url. (A fabricated /pull/ in issue.html_url would
+    // certify the URL bug as correct — don't.)
     private const string IssueCommentOnPr = """
     [{
       "id": "101", "type": "IssueCommentEvent",
       "actor": { "login": "bob", "avatar_url": "https://a/bob.png" },
       "repo": { "name": "acme/api" },
       "payload": { "action": "created",
-        "issue": { "number": 9, "title": "Bug", "html_url": "https://github.com/acme/api/pull/9", "pull_request": { "url": "https://api.github.com/repos/acme/api/pulls/9" } } },
+        "issue": { "number": 9, "title": "Bug", "html_url": "https://github.com/acme/api/issues/9",
+          "pull_request": { "url": "https://api.github.com/repos/acme/api/pulls/9", "html_url": "https://github.com/acme/api/pull/9" } } },
       "created_at": "2026-06-09T10:00:00Z"
     }]
     """;
@@ -620,6 +572,9 @@ public sealed class GitHubReceivedEventsReaderTests
         var e = result.Events.Should().ContainSingle().Subject;
         e.IsPullRequestComment.Should().BeTrue();
         e.PrNumber.Should().Be(9);
+        // Must use the /pull/ web URL (from issue.pull_request.html_url), NOT /issues/,
+        // so the in-app link parser builds a /pr/ route.
+        e.HtmlUrl.Should().Be("https://github.com/acme/api/pull/9");
     }
 
     [Theory]
@@ -783,7 +738,13 @@ public sealed class GitHubReceivedEventsReader : IReceivedEventsReader
                     && prMarker.ValueKind == JsonValueKind.Object;
                 if (issue.TryGetProperty("number", out var n) && n.TryGetInt32(out var num)) prNumber = num;
                 title = issue.TryGetProperty("title", out var t) ? t.GetString() : null;
-                htmlUrl = issue.TryGetProperty("html_url", out var u) ? u.GetString() : null;
+                // CRITICAL: an IssueCommentEvent on a PR carries issue.html_url = ".../issues/N"
+                // (the issues view), while the real PR web URL ".../pull/N" lives ONLY in
+                // issue.pull_request.html_url. Use the PR url for PR comments so the in-app
+                // /pr/ link parser (Task 8.3) matches; fall back to issue.html_url otherwise.
+                htmlUrl = (isPrComment && prMarker.TryGetProperty("html_url", out var prHtml))
+                    ? prHtml.GetString()
+                    : (issue.TryGetProperty("html_url", out var u) ? u.GetString() : null);
             }
         }
 
@@ -914,18 +875,25 @@ public sealed class ActivityProvider : IActivityProvider
         services.AddSingleton<PRism.Core.Activity.IReceivedEventsReader>(sp =>
         {
             var tokens = sp.GetRequiredService<ITokenStore>();
-            var state = sp.GetRequiredService<IAppStateStore>();   // committed-login source
+            var viewerLogin = sp.GetRequiredService<IViewerLoginProvider>();   // live SSOT login cache
             var factory = sp.GetRequiredService<IHttpClientFactory>();
             return new PRism.GitHub.Activity.GitHubReceivedEventsReader(
                 factory,
                 () => tokens.ReadAsync(CancellationToken.None),
-                async () => (await state.GetAsync(CancellationToken.None)).LastConfiguredLogin);
+                () => Task.FromResult(viewerLogin.Get() is { Length: > 0 } l ? l : null));
         });
 ```
 
-> **Login source:** confirm the committed-login property name and the state-store interface during implementation (search for where `priorLogin`/`newLogin` come from in `AuthEndpoints.cs` — it reads the committed login from app state). Replace `IAppStateStore`/`GetAsync`/`LastConfiguredLogin` with the real members. If the login isn't readily available from state, fall back to a one-time `GET /user` lookup cached in the reader — but prefer the state value (no extra call). The reader already degrades gracefully on a null login, so a missing source fails safe.
+> **Login source (verified):** the committed viewer login is `IViewerLoginProvider.Get()`
+> (`PRism.Core/Auth/IViewerLoginProvider.cs`) — the in-memory SSOT the app populates on
+> connect/commit/replace and hydrates at startup (`ViewerLoginHydrator`). It is synchronous
+> and returns `""` when unset, so wrap in `Task.FromResult` and coalesce empty → `null` so
+> the reader's null-login degrade path fires. (`config.Current.Github.Accounts[0].Login`,
+> what `AuthEndpoints.cs` reads, is an equivalent source but the provider is the live cache.)
+> Confirm `IViewerLoginProvider` is registered in the GitHub/Web composition before this
+> reader resolves it.
 
-- [ ] **Step 4.5: Register the provider in `PRism.Web/Program.cs`.** Add near the other singleton service registrations (before `var app = builder.Build();`):
+- [ ] **Step 4.5: Register the provider in `PRism.Web/Program.cs`.** Add near the other singleton service registrations, **before** the `PRISM_E2E_FAKE_REVIEW` swap block (~line 88) so Task 11.2's `RemoveAll(typeof(IActivityProvider))` finds and replaces this registration:
 
 ```csharp
 builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Core.Activity.ActivityProvider>();
@@ -1024,9 +992,10 @@ public sealed class ActivityEndpointsTests
     public async Task Requires_session_token()
     {
         await using var factory = FactoryWith(OneReviewed());
-        // A client WITHOUT the session cookie must be 401'd by SessionTokenMiddleware.
-        var client = factory.CreateClient(new WebApplicationFactoryClientOptions());
-        client.DefaultRequestHeaders.Remove("X-PRism-Session");
+        // PRismWebApplicationFactory.ConfigureClient auto-attaches the session cookie AND
+        // header on CreateClient(), so removing the header is NOT enough — use the factory's
+        // CreateUnauthenticatedClient() which bypasses ConfigureClient entirely.
+        var client = ((PRismWebApplicationFactory)factory).CreateUnauthenticatedClient();
 
         var resp = await client.GetAsync(new System.Uri("/api/activity", System.UriKind.Relative));
         resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -1034,7 +1003,7 @@ public sealed class ActivityEndpointsTests
 }
 ```
 
-> **Session-cookie note:** match however `PreferencesEndpointsTests` obtains an authed client (it uses `PRismWebApplicationFactory`). If that factory auto-authes, the `Requires_session_token` test must construct a *raw* client that bypasses the auto-auth; adapt to the real helper. If there's no easy un-authed client, replace that test with the existing pattern other endpoint tests use to assert middleware coverage (or drop it — the middleware is global and already covered elsewhere; the AC only needs the endpoint to sit behind it, which it does by registration).
+> **Note:** `FactoryWith` wraps `PRismWebApplicationFactory` via `WithWebHostBuilder`, which returns a `WebApplicationFactory<Program>`. To reach `CreateUnauthenticatedClient()` (defined on `PRismWebApplicationFactory`), either cast as shown or have `FactoryWith` return the `PRismWebApplicationFactory` and apply the service override through its own `ConfigureServices` hook. Confirm the method name against `tests/PRism.Web.Tests/TestHelpers/PRismWebApplicationFactory.cs` (it exposes `CreateUnauthenticatedClient()` that skips the cookie/header injection). The `RemoveAll` override needs `using Microsoft.Extensions.DependencyInjection.Extensions;`.
 
 - [ ] **Step 5.2: Run to verify red.**
 
@@ -1081,7 +1050,7 @@ app.MapActivity();
 ```bash
 dotnet test tests/PRism.Web.Tests --filter "FullyQualifiedName~ActivityEndpointsTests" --nologo
 ```
-Expected: PASS. If the kebab-case enum assertions fail, the JSON serializer isn't applying the project's enum naming to these new enums — find how `CiStatus` gets its `JsonStringEnumConverter`/`JsonNamingPolicy` (search `JsonStringEnumConverter` in `PRism.Web`/`Program.cs`/`PRism.Core`) and ensure `ActivityVerb`/`ActivitySource` are covered the same way (usually a global `JsonSerializerOptions` converter — no per-enum attribute needed). Re-run until green.
+Expected: PASS. Kebab-case enum serialization is **already global** and will cover the new enums automatically — `PRism.Core/Json/JsonSerializerOptionsFactory.cs` registers `new JsonStringEnumConverter(new KebabCaseJsonNamingPolicy())` and `PRism.Web/Composition/ServiceCollectionExtensions.cs` copies those converters into `ConfigureHttpJsonOptions`, so `Results.Ok(...)` emits `"reviewed"` / `"received-event"` with no per-enum attribute. (If the assertions somehow fail, that global config is the place to look — but it's verified present.)
 
 - [ ] **Step 5.6: Commit.**
 
@@ -1394,14 +1363,21 @@ describe('ActivityRail (P1)', () => {
     expect(screen.getByText(/no human activity in the last 24h/i)).toBeInTheDocument();
   });
 
-  test('degraded note is distinct from empty', () => {
+  test('degraded note shows on backend-degraded flag', () => {
     useActivityMock.mockReturnValue({
       data: resp({ items: [], degraded: { receivedEvents: true } }),
       isLoading: false, error: null,
     });
     renderRail();
     expect(screen.getByText('Activity unavailable')).toBeInTheDocument();
-    expect(screen.queryByText(/last 24h$/)).not.toBe(screen.getByText('Activity unavailable'));
+  });
+
+  test('degraded note also shows when the initial fetch itself fails (no data)', () => {
+    // The (!data && error) branch — a frontend fetch failure, distinct from the
+    // backend degraded flag. Same copy by design (both are "unavailable").
+    useActivityMock.mockReturnValue({ data: null, isLoading: false, error: new Error('net') });
+    renderRail();
+    expect(screen.getByText('Activity unavailable')).toBeInTheDocument();
   });
 
   test('malformed PR url falls back to an external anchor without throwing', () => {
@@ -1466,6 +1442,8 @@ function Row({ item }: { item: ActivityItem }) {
   const label = `${item.actorLogin} ${VERB_PHRASE[item.verb]} #${item.prNumber}${
     item.title ? ` — ${item.title}` : ''
   }`;
+  // Avatar self-sets aria-hidden internally, so the row's aria-label is the sole
+  // accessible name (no double announcement).
   const inner = (
     <>
       <Avatar src={item.actorAvatarUrl} login={item.actorLogin ?? ''} size="sm" />
@@ -1481,7 +1459,13 @@ function Row({ item }: { item: ActivityItem }) {
           {inner}
         </Link>
       ) : (
-        <a href={item.url} className={styles.rowLink} aria-label={label} rel="noreferrer">
+        <a
+          href={item.url}
+          className={styles.rowLink}
+          aria-label={label}
+          target="_blank"
+          rel="noreferrer"
+        >
           {inner}
         </a>
       )}
@@ -1521,7 +1505,7 @@ export function ActivityRail() {
         </header>
 
         {isLoading && !data ? (
-          <ol className={styles.list} aria-busy="true">
+          <ol className={styles.list} aria-busy="true" aria-label="Loading activity">
             {Array.from({ length: 4 }, (_, i) => (
               <li key={i} className={styles.skeletonRow} aria-hidden="true" />
             ))}
@@ -1536,8 +1520,10 @@ export function ActivityRail() {
           <p className={styles.empty}>No pull-request activity in the last 24h</p>
         ) : (
           <ol className={styles.list}>
-            {visible.map((it) => (
-              <Row key={`${it.url}:${it.verb}:${it.timestamp}`} item={it} />
+            {visible.map((it, idx) => (
+              // idx tiebreaker: two distinct events can share url+verb+timestamp (sub-second
+              // precision isn't guaranteed); the list is sorted + display-only so index keys are safe.
+              <Row key={`${it.url}:${it.verb}:${it.timestamp}:${idx}`} item={it} />
             ))}
           </ol>
         )}
@@ -1550,6 +1536,13 @@ export function ActivityRail() {
 - [ ] **Step 8.4: Add the new CSS classes.** Append to `frontend/src/components/ActivityRail/ActivityRail.module.css` (existing `.rail/.section/.head/.title/.muted/.list/.item/.actor/.pr/.when` stay):
 
 ```css
+/* Override the existing .head rule: it is `justify-content: space-between`, which
+   distributes free space BETWEEN the three children and defeats margin-left:auto on
+   the toggle. Switch to flex-start so margin-left:auto pins the toggle trailing. */
+.head {
+  justify-content: flex-start;
+  gap: var(--s-2);
+}
 .botToggle {
   margin-left: auto;
   font-size: var(--text-2xs);
@@ -1597,7 +1590,7 @@ export function ActivityRail() {
 }
 ```
 
-> Adjust the `.head` rule if needed so the toggle sits at the trailing edge (the existing `.head` is `justify-content: space-between`; `margin-left: auto` on the toggle keeps title + muted left and toggle right). If `--warning-*` tokens don't exist, use the existing alert/snackbar token names — grep `StreamHealthSnackbar.module.css` for the project's warning treatment and reuse it so "broken" reads distinctly from the muted "quiet" copy.
+> If `--warning-*` tokens don't exist, use the existing alert/snackbar token names — grep `StreamHealthSnackbar.module.css` for the project's warning treatment and reuse it so "broken" reads distinctly from the muted "quiet" copy.
 
 - [ ] **Step 8.5: Delete the mock.**
 
@@ -1682,7 +1675,7 @@ git commit -m "feat(#137): single-panel P1 inbox rail skeleton (P1)"
 - Modify: `frontend/src/components/Settings/panes/InboxPane.tsx`
 - Test: `frontend/src/components/Settings/panes/InboxPane.test.tsx` (extend or create)
 
-- [ ] **Step 10.1: Add the preference key + read/write arms.** In `frontend/src/contexts/PreferencesContext.tsx`:
+- [ ] **Step 10.1: Add the preference key + read/write arms.** First confirm it's not already there: `grep -n "showActivityRail" frontend/src/contexts/PreferencesContext.tsx`. #309 added `showActivityRail` to the `InboxPreferences` *type* and the backend config, but left it **config-only** — it is NOT in the `PreferenceKey` union / `readKey` / `writeKey` yet (verified). If grep shows it already wired, skip this step. Otherwise, in `frontend/src/contexts/PreferencesContext.tsx`:
 
 Add to the `PreferenceKey` union (after `'inbox.sectionOrder'`):
 
@@ -1710,28 +1703,45 @@ Add to `writeKey` (after the `inbox.sectionOrder` arm):
   <Switch
     id="inbox-show-activity-rail"
     label="Show activity rail"
+    describedById="inbox-show-activity-rail-help"
     checked={showActivityRail}
     onChange={(next) => set('inbox.showActivityRail', next).catch(() => {})}
   />
   <div className={pane.spring} />
-  <span className={pane.subLabel}>Hidden on narrow windows.</span>
+  <span id="inbox-show-activity-rail-help" className={pane.help}>
+    The rail is hidden on narrow windows.
+  </span>
 </div>
 ```
 
-> Read the current value the same way `defaultSort`/`sections` are read at the top of `InboxPane` (e.g. `const showActivityRail = prefs.inbox.showActivityRail;` from whatever preferences accessor the pane already uses). Match the existing row markup (`pane.row`, `pane.subLabel` — if `subLabel` doesn't exist, reuse the muted class the pane already uses for helper text). The static sub-label is always shown (the panel doesn't branch on viewport).
+> **Class name:** `pane.subLabel` does NOT exist in `Pane.module.css`. Use `pane.help`
+> (the per-control helper-text class the section toggles already use via `describedById`)
+> — confirm against `Pane.module.css` (it exposes `help`, `sub`, `row`, `spring`, …).
+> Match the `renderSwitch` pattern at `InboxPane.tsx` (the `Switch` takes `id`, `label`,
+> `describedById`, `checked`, `onChange`). Read the current value the same way
+> `defaultSort`/`sections` are read at the top of the pane. The helper text is always shown
+> (the panel doesn't branch on viewport); the copy describes the *rail's* responsive
+> behavior, not the toggle's function (the toggle label already says what it does).
 
 - [ ] **Step 10.3: Add/extend the pane test.** In `frontend/src/components/Settings/panes/InboxPane.test.tsx` (create if absent, modeling the existing Settings pane tests), add:
 
 ```typescript
 test('Show activity rail toggle reflects and writes inbox.showActivityRail', async () => {
-  // Render the pane with a preferences provider whose inbox.showActivityRail = false,
-  // spying on the preference setter (mirror how the other InboxPane tests mount it).
-  // Assert the switch is unchecked, click it, and assert set('inbox.showActivityRail', true).
-  // (Fill in using the file's existing render harness + setter spy.)
+  // Mount InboxPane the SAME way the existing defaultSort/sections tests in this file do
+  // (they wrap it in the preferences provider and spy the `set` helper). Reuse that harness;
+  // `setSpy` below stands in for however this file captures the preference setter.
+  const setSpy = vi.fn().mockResolvedValue(undefined);
+  renderInboxPane({ inbox: { showActivityRail: false }, set: setSpy }); // ← match the file's helper
+
+  const toggle = screen.getByRole('switch', { name: /show activity rail/i });
+  expect(toggle).not.toBeChecked();
+
+  await userEvent.click(toggle);
+  expect(setSpy).toHaveBeenCalledWith('inbox.showActivityRail', true);
 });
 ```
 
-> Replace the comment body with the concrete assertions using this file's existing test harness (the other Settings pane tests show how the preference setter is spied and how the pane is mounted). The test must (1) assert initial unchecked state from `showActivityRail: false`, (2) click the switch, (3) assert the setter was called with `('inbox.showActivityRail', true)`.
+> **This is a real test, not a placeholder — but `renderInboxPane`/`setSpy` are stand-ins:** wire them to this file's actual mount harness and setter-spy (copy the `defaultSort`/`sections` test's setup verbatim and adapt). The three assertions (initial unchecked, click, `set('inbox.showActivityRail', true)`) are the contract. **Do not run Step 10.4 against a test that still has stand-in names** — a mis-wired harness can pass vacuously. If `Switch` renders `role="switch"`, the query above works; if it renders a checkbox, use `getByRole('checkbox', …)`.
 
 - [ ] **Step 10.4: Run + typecheck + commit.**
 
@@ -1888,10 +1898,20 @@ git commit -m "docs(#137): note GET /api/activity + activity rail real-data (P1)
 
 **Type consistency:** `ActivityItem`/`ActivityResponse`/`ActivityDegradation`/`ActivityVerb`/`ActivitySource` names match backend↔frontend; `MaxRawItems` (50, server) vs `MAX_VISIBLE` (12, client) distinct and intentional; reader returns `ReceivedEventsResult`, builder returns `ActivityBuildResult`, provider returns `ActivityResponse`.
 
-**Known plan-time confirmations (flagged inline, fail-safe):**
-- The committed-login source for the reader (Task 4.4) — confirm the real state-store member; reader degrades safely if null.
-- Enum kebab-case serialization (Task 5.5) — confirm the global converter covers the new enums; the endpoint test fails red otherwise.
-- `Switch`/`pane.subLabel` markup names in `InboxPane` (Task 10.2) and the `Skeleton` testid (Task 9.1) — match the file's existing conventions.
-- Session-cookie un-authed client in the endpoint test (Task 5.1) — adapt to `PRismWebApplicationFactory`'s auth helper.
+**Resolved during ce-doc-review (round on this plan):**
+- Reader login source → `IViewerLoginProvider.Get()` (the fictional `IAppStateStore.GetAsync().LastConfiguredLogin` is gone). Task 4.4.
+- IssueCommentEvent URL → reader prefers `issue.pull_request.html_url` (`/pull/N`), not `issue.html_url` (`/issues/N`); fixture corrected to the real shape + asserts `/pull/`. Tasks 3.1/3.3.
+- Kebab-case enum serialization → confirmed global (`JsonSerializerOptionsFactory` + `ConfigureHttpJsonOptions`); no per-enum work. Task 5.5.
+- `.head` CSS → `justify-content: flex-start` so the toggle pins trailing (was a `space-between`/`margin-left:auto` contradiction). Task 8.4.
+- Un-authed endpoint test → `CreateUnauthenticatedClient()` (the factory auto-attaches the cookie). Task 5.1.
+- Settings helper class → `pane.help` (no `pane.subLabel` exists). Task 10.2.
+- Builder guard order → 24h window before the dropped-recognized count (counter reflects only in-window drift); single-pass `byId` (scaffold-then-rewrite removed). Task 2.
+- Provider registration ordered before the `PRISM_E2E_FAKE_REVIEW` swap block. Tasks 4.5/11.2.
+- Row key index tiebreaker; loading `<ol>` accessible name; external fallback `target="_blank"`; fetch-failure degraded test added. Tasks 8.1/8.3.
 
-**Out of scope (P2, not planned here):** notifications source, Watching panel, two-stage cross-feed merge, slot reservation, ~60s TTL cache + identity-change `Reset()`, visibility-pause, actorless phrasing, persisted bot preference.
+**Remaining plan-time confirmations (flagged inline, fail-safe):**
+- `IViewerLoginProvider` is registered before the reader resolves it (Task 4.4); reader degrades safely if login is null.
+- The `Skeleton` testid in the skeleton test (Task 9.1) and `Switch`'s rendered role (Task 10.3) — match the file's conventions.
+- The `renderInboxPane`/`setSpy` stand-ins (Task 10.3) — wire to the file's real harness before running (do not run a vacuous test).
+
+**Out of scope (P2, not planned here):** notifications source, Watching panel, two-stage cross-feed merge, slot reservation, ~60s TTL cache + identity-change `Reset()`, visibility-pause, actorless phrasing, persisted bot preference. **Also deferred (see spec § Out of scope / deferred for the full list):** cause-specific degradation messaging (`DegradationCause` / "grant access" hint — #312 owns the global auth surface), per-item staleness qualifier / "last updated" footer, usage telemetry, configurable window, SSE push, non-PR notification subjects, marking notifications read. The reader fetches a **single `per_page=100` page** (no pagination) — accepted for P1: received_events is newest-first so the newest 100 cover 24h for a single-user feed, and the client caps to 12 regardless; if an account ever exceeds 100 events/24h the newest items are still correct (only the "last 24h" header slightly over-claims).
