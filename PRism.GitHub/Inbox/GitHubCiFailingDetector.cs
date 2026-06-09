@@ -74,6 +74,10 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         // the incomplete read, so they must re-probe rather than cache an untrustworthy result.
         if (checks == CiStatus.Failing || statuses == CiStatus.Failing) return (CiStatus.Failing, false);
         if (checks == CiStatus.Pending || statuses == CiStatus.Pending) return (CiStatus.Pending, degraded);
+        // Passing is degraded-flagged like Pending/None: a Passing read from one source
+        // while the OTHER source returned a non-2xx could mask a hidden Failing, so it
+        // must NOT be cached — only a definitively-observed Failing is cacheable. (#264/#213)
+        if (checks == CiStatus.Passing || statuses == CiStatus.Passing) return (CiStatus.Passing, degraded);
         return (CiStatus.None, degraded);
     }
 
@@ -88,6 +92,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var anyFailing = false;
         var anyPending = false;
         var anyPage = false;
+        var anyRun = false; // at least one check-run ENTRY seen (not just the array). #264
 
         // GitHub paginates /check-runs when a PR has > per_page entries (monorepo
         // matrix builds routinely cross 100). Follow the rel="next" link until
@@ -150,6 +155,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             // invalidates an old cancellation) is not handled here; v2 may refine.
             foreach (var r in runs.EnumerateArray())
             {
+                anyRun = true; // a check-run entry exists → eligible for Passing. #264
                 var status = r.GetProperty("status").GetString();
                 var conclusion = r.TryGetProperty("conclusion", out var cn) ? cn.GetString() : null;
                 if (status != "completed") { anyPending = true; continue; }
@@ -160,7 +166,12 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             if (nextUri is null) break;
         }
 
-        return (anyFailing ? CiStatus.Failing : (anyPending ? CiStatus.Pending : CiStatus.None), false);
+        // anyRun (≥1 entry) + nothing failing/pending → Passing; no entries → None. #264
+        return (anyFailing
+            ? CiStatus.Failing
+            : anyPending
+                ? CiStatus.Pending
+                : anyRun ? CiStatus.Passing : CiStatus.None, false);
     }
 
     // Parses the GitHub Link response header and returns the URL whose attributes

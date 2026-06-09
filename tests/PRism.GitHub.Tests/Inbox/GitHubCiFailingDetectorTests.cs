@@ -125,9 +125,28 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
-    public async Task All_passing_marks_none()
+    public async Task All_passing_marks_passing()
     {
+        // All check-runs completed successfully and the combined status is success
+        // with no registered legacy statuses → (Passing, None) → Passing (#264).
         var handler = RouterHandler(AllPassingCheckRuns, AllPassingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Passing);
+    }
+
+    [Fact]
+    public async Task Empty_check_runs_with_no_statuses_marks_none()
+    {
+        // An EMPTY check_runs array is "no checks", NOT "all checks passed". The
+        // detector must count check-run *entries*, not the array's presence —
+        // otherwise a no-CI PR shows a false green tick (the passing-side analogue
+        // of the #286 false-amber bug). AllPassingStatus is success+empty-statuses
+        // → None, so both sources are None → None.
+        var handler = RouterHandler(EmptyCheckRuns, AllPassingStatus);
         var sut = BuildSut(handler);
 
         var result = await sut.DetectAsync([Raw(1)], default);
@@ -494,8 +513,11 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
-    public async Task Forbidden_combined_status_degrades_to_none_not_throw()
+    public async Task Forbidden_combined_status_degrades_to_passing_not_throw()
     {
+        // #264: check-runs returned all-passing → Passing; combined-status 403'd → degraded
+        // None. ProbeAsync combines: (Passing, None) → Passing (degraded=true, non-cached).
+        // Pre-#264 the result was None because there was no Passing status to emit.
         var handler = new FakeHttpMessageHandler(req =>
             req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
                 ? Respond(HttpStatusCode.OK, AllPassingCheckRuns)
@@ -505,7 +527,8 @@ public sealed class GitHubCiFailingDetectorTests
         var result = await sut.DetectAsync([Raw(1)], default);
 
         result.Items.Should().HaveCount(1);
-        result.Items[0].Ci.Should().Be(CiStatus.None);
+        result.Items[0].Ci.Should().Be(CiStatus.Passing);
+        result.Complete.Should().BeFalse("combined-status 403 → degraded result must not be marked complete");
     }
 
     [Fact]
