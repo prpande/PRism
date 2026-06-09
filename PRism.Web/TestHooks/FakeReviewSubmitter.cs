@@ -223,6 +223,15 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
         lock (_gate) return _issueCommentsCreated.ToList();
     }
 
+    // #302 — real behavior lands in a later task; stubs are sufficient for compilation and
+    // the contract test gate (Task 3). These will be fleshed out when the inline-post / reply
+    // endpoints are wired to the fake (plan step for the e2e fake).
+    public Task<CreatedReviewCommentResult> CreateReviewCommentAsync(PrReference reference, ReviewCommentRequest request, CancellationToken ct)
+        => throw new NotImplementedException();
+
+    public Task<CreatedReviewCommentResult> CreateReviewCommentReplyAsync(PrReference reference, string parentThreadId, string bodyMarkdown, CancellationToken ct)
+        => throw new NotImplementedException();
+
     public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(reference);

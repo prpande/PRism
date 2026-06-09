@@ -305,6 +305,12 @@ internal sealed class TestRootCommentSubmitter : IReviewSubmitter
         IssueComments.Add((reference, bodyMarkdown));
         return Task.FromResult(new CreatedIssueCommentResult(id, DateTimeOffset.UtcNow));
     }
+
+    public Task<CreatedReviewCommentResult> CreateReviewCommentAsync(PrReference reference, ReviewCommentRequest request, CancellationToken ct)
+        => throw new NotImplementedException();
+
+    public Task<CreatedReviewCommentResult> CreateReviewCommentReplyAsync(PrReference reference, string parentThreadId, string bodyMarkdown, CancellationToken ct)
+        => throw new NotImplementedException();
 }
 
 /// <summary>IActivePrCache whose IsSubscribed behaviour is constructor-controlled.</summary>
