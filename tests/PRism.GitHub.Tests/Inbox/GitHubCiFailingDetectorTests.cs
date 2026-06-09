@@ -62,7 +62,6 @@ public sealed class GitHubCiFailingDetectorTests
 
     private const string FailureStatus = """{ "state": "failure", "statuses": [] }""";
     private const string ErrorStatus = """{ "state": "error", "statuses": [] }""";
-    private const string PendingStatus = """{ "state": "pending", "statuses": [] }""";
 
     private const string InProgressCheckRun = """
         {
@@ -70,6 +69,23 @@ public sealed class GitHubCiFailingDetectorTests
             { "name": "ci/build", "status": "in_progress", "conclusion": null }
           ]
         }
+        """;
+
+    private const string EmptyCheckRuns = """{ "check_runs": [] }""";
+
+    // GitHub's combined-status endpoint reports state="pending" with total_count=0 when no
+    // legacy commit statuses are registered — the default for an Actions-only or no-CI PR (#286).
+    private const string EmptyPendingStatus = """{ "state": "pending", "total_count": 0, "statuses": [] }""";
+
+    // A genuinely in-progress legacy commit status (registered context, total_count > 0).
+    private const string RegisteredPendingStatus = """
+        { "state": "pending", "total_count": 1, "statuses": [ { "context": "ci/legacy", "state": "pending" } ] }
+        """;
+
+    // A pending status whose total_count is absent but whose statuses array is non-empty —
+    // exercises HasRegisteredStatuses' array fallback (the OR's second operand).
+    private const string PendingStatusNoTotalCount = """
+        { "state": "pending", "statuses": [ { "context": "ci/legacy", "state": "pending" } ] }
         """;
 
     [Fact]
@@ -123,7 +139,56 @@ public sealed class GitHubCiFailingDetectorTests
     [Fact]
     public async Task All_pending_marks_pending()
     {
-        var handler = RouterHandler(InProgressCheckRun, PendingStatus);
+        // Both sources genuinely pending: an in-progress check-run and a registered
+        // (total_count > 0) pending legacy status. Uses RegisteredPendingStatus rather
+        // than a bare empty-statuses pending so the combined-status source really does
+        // contribute Pending under the #286 semantics (not just the check-run).
+        var handler = RouterHandler(InProgressCheckRun, RegisteredPendingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Combined_status_pending_with_no_registered_statuses_marks_none()
+    {
+        // #286: GitHub's combined-status endpoint returns state="pending" when NO legacy
+        // commit statuses are registered (Actions-only or no-CI PRs). That is "no checks
+        // configured", not "checks in progress". With empty check-runs too, the PR has no
+        // CI at all → None (no amber dot). Pre-#286 this misclassified as Pending.
+        var handler = RouterHandler(EmptyCheckRuns, EmptyPendingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task Combined_status_pending_with_registered_statuses_marks_pending()
+    {
+        // A genuinely in-progress legacy status (total_count > 0) is real Pending — the
+        // #286 fix must not regress this: only EMPTY combined-status pending is demoted.
+        var handler = RouterHandler(EmptyCheckRuns, RegisteredPendingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Combined_status_pending_with_statuses_but_no_total_count_marks_pending()
+    {
+        // HasRegisteredStatuses' array fallback: when total_count is absent, a non-empty
+        // statuses array still counts as a registered context → Pending. Validates the
+        // positive path of the OR (the branch the all-empty case at line above can't reach).
+        var handler = RouterHandler(EmptyCheckRuns, PendingStatusNoTotalCount);
         var sut = BuildSut(handler);
 
         var result = await sut.DetectAsync([Raw(1)], default);
