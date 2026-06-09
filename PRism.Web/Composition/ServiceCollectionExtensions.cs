@@ -1,10 +1,13 @@
 using Microsoft.Extensions.DependencyInjection;
+using PRism.AI.ClaudeCode;
 using PRism.AI.Contracts;
 using PRism.AI.Contracts.Noop;
+using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.AI.Placeholder;
 using PRism.Core.Ai;
 using PRism.Core.Json;
+using PRism.Web.Ai;
 using PRism.Web.Sse;
 
 namespace PRism.Web.Composition;
@@ -34,6 +37,19 @@ internal static class ServiceCollectionExtensions
 
         services.AddNoopSeams();
         services.AddPlaceholderSeams();
+
+        // Wrap the ILlmAvailabilityProbe registered by AddPrismClaudeCode with a short-TTL
+        // cache (KTD-6). Live mode is FE-reachable this slice; useCapabilities refetches on
+        // every window focus — an uncached ~10 s probe would spawn a claude subprocess per
+        // focus. The concrete type is resolvable because AddPrismClaudeCode registers it by
+        // both ClaudeCodeAvailabilityProbe AND ILlmAvailabilityProbe.
+        // Note: PRismWebApplicationFactory.AvailabilityProbeOverride calls RemoveAll<ILlmAvailabilityProbe>
+        // and re-adds a stub — this registration is also removed by that RemoveAll, keeping tests clean.
+        services.AddSingleton<ILlmAvailabilityProbe>(sp =>
+            new CachedLlmAvailabilityProbe(
+                sp.GetRequiredService<ClaudeCodeAvailabilityProbe>(),
+                TimeProvider.System,
+                TimeSpan.FromSeconds(30)));
 
         var realSeams = new Dictionary<Type, object>();   // P0: empty; P1 adds the first real impl here
         // Pass the live dictionary BY REFERENCE (not a .Keys snapshot) — the resolver and the selector
