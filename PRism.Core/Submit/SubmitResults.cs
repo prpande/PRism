@@ -45,3 +45,8 @@ public sealed record PendingReviewCommentSnapshot(
 // Returned by CreateIssueCommentAsync — the REST database ID of the freshly created issue comment
 // (distinct from a GraphQL node ID) and the server-assigned creation timestamp.
 public sealed record CreatedIssueCommentResult(long Id, DateTimeOffset CreatedAt);
+
+// #302 — returned by CreateReviewCommentAsync (REST id) and CreateReviewCommentReplyAsync (GraphQL
+// databaseId). long Id is the numeric review-comment id; feeds DraftComment/DraftReply.PostedCommentId
+// and the frontend databaseId de-dup. Mirrors CreatedIssueCommentResult.
+public sealed record CreatedReviewCommentResult(long Id, DateTimeOffset CreatedAt);
