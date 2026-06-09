@@ -131,6 +131,8 @@ describe('InboxPane reorder', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Move Authored by me up' })).toBeEnabled(),
     );
+    // A failed (rolled-back) move must NOT announce a position change to AT users.
+    expect(screen.getByRole('status')).toHaveTextContent('');
   });
 
   it('announces the move via a polite live region for screen readers', async () => {

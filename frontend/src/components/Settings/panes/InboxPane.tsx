@@ -51,9 +51,15 @@ export function InboxPane() {
   // Apply-on-success model (PreferencesContext.set is NOT optimistic): disable all
   // reorder controls while a move POST is pending so order-dependent moves serialize
   // and a rapid second click can't compute from a stale order (#275 spec, Unit 4).
-  const writeOrder = (next: WorkSectionId[]) => {
+  const writeOrder = (next: WorkSectionId[], announce?: string) => {
     setPending(true);
     set('inbox.sectionOrder', next.join(','))
+      // Announce ONLY after the apply-on-success POST resolves: `set` is non-optimistic,
+      // so the UI hasn't reordered until success, and a failed move rolls back — announcing
+      // up front would tell AT users about a move that never happened (Copilot PR #303).
+      .then(() => {
+        if (announce) setAnnouncement(announce);
+      })
       .catch(() => {})
       .finally(() => setPending(false));
   };
@@ -65,8 +71,7 @@ export function InboxPane() {
     [next[index], next[j]] = [next[j], next[index]];
     // Announce the move for screen-reader / keyboard users — the buttons alone give
     // no feedback that the row position changed (claude[bot] PR #303).
-    setAnnouncement(`${WORK_LABELS[moved]} moved to position ${j + 1} of ${order.length}`);
-    writeOrder(next);
+    writeOrder(next, `${WORK_LABELS[moved]} moved to position ${j + 1} of ${order.length}`);
   };
 
   const renderSwitch = (id: keyof InboxSectionsPreferences, label: string) => (
