@@ -147,7 +147,7 @@ public class PreferencesEndpointsTests
     // #275: GET /api/preferences surfaces inbox.sectionOrder (defaults to canonical),
     // and POST round-trips a valid permutation.
     [Fact]
-    public async Task Preferences_section_order_defaults_and_round_trips()
+    public async Task GET_inbox_sectionOrder_defaults_and_POST_round_trips()
     {
         using var factory = new PRismWebApplicationFactory();
         var client = factory.CreateClient();
