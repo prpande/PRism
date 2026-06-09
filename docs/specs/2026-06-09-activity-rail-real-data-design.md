@@ -53,7 +53,7 @@ mock deleted, toggle wired) and no Phase-2 wire surface was ever shipped.
 | **Watching panel** | hidden (rail shows Activity only) | `/user/subscriptions` + count |
 | **Merge engine** | one source → window → within-feed dedup → sort | full: two-stage cross-feed dedup, actor-preserving merge, event-slot reservation |
 | **Verb phrasing** | actor always present (reviewed/commented/opened/merged; no "pushed") | + actorless templates (notifications carry no actor) |
-| **Bot filter** | in-rail toggle, default show, persisted (`activityRailShowBots`) | (unchanged) |
+| **Bot filter** | in-rail toggle, **default hidden**, **transient** (`useState`, not persisted) | + persist the choice if the friction proves real |
 | **Refresh** | ~90s poll, last-good retention | + ~60s server TTL cache (3 calls/miss) + visibility-pause |
 | **Routing** | in-app `<Link>` (received_events always carry a PR URL) | + external/fallback handling for varied notification URLs |
 | **New classic scope** | none (`repo` covers received_events) | none (`repo` covers notifications + subscriptions) |
@@ -151,12 +151,17 @@ value comes from reviewed / commented / opened / merged instead (which the live 
 has in abundance). `IssueCommentEvent` on a plain issue (no `pull_request` marker) is
 dropped. Any unmapped type → dropped (not `Other`, to keep the feed PR-clean).
 
-**Bots appear and are kept by default.** The live feed includes bot actors
-(`mergewatch-playlist[bot]`, `Copilot`, etc.). They are **kept** by default and
-filtered via an in-rail toggle (see § P1 frontend). Each item is server-tagged
+**Bots appear and are hidden by default.** The live feed includes loud bot actors
+(`mergewatch-playlist[bot]`, `Copilot`, etc.). They are **filtered out by default** and
+revealed via an in-rail toggle (see § P1 frontend) — the owner's call, because the bots
+are noise and the human signal is what the rail is for. Each item is server-tagged
 `ActorIsBot` — detected by the `[bot]` login suffix, **plus a small known-bot
 allowlist** for suffix-less review bots (e.g. `Copilot`, whose login lacked the suffix
-in the live feed — confirm the exact login at implementation).
+in the live feed — confirm the exact login at implementation). **Note the interaction
+with the keep/cut gate:** with bots hidden by default and a review-dominated feed (many
+reviews are bot-authored), the *default* human-only view is sparser than the raw feed —
+during the P1 trial, toggle bots **on** at least once to judge full volume so a
+bot-filtered default doesn't read as a falsely-quiet feed.
 
 **Within-feed dedup (Phase 1, required).** The live feed emits the *same* actor / verb
 / PR more than once (e.g. `Copilot reviewed #195` appeared twice). Phase 1's builder
@@ -302,22 +307,25 @@ not stretched to inbox height.
   redirect loop` — so a screen-reader user gets PR context the sighted compact row
   omits. If `Title` is null, the label is the visible phrase alone.
 - **Bot filter toggle (in-rail header):** a small control at the top of the Activity
-  panel toggles bot-authored items in/out — default **show** (`mergewatch[bot]`,
-  `Copilot`, etc. visible). The panel header becomes a three-element flex row —
-  `"Activity"` title · `"last 24h"` muted label · toggle pinned to the trailing edge;
-  under squeeze the muted label drops before the title or toggle. The control is an
-  `aria-pressed` **toggle button** with a stable accessible name (`"Show bots"`,
-  `aria-pressed` reflecting on/off) — matching PRism's existing toggle-button
-  convention (gear / AI toggle) rather than a label that swaps between "show"/"hide".
-  Filtering is **client-side and instant**: the hook holds the full deduped set
-  (`ActorIsBot`-tagged); the rail filters per the toggle, **then** caps to
-  `MaxActivityItems` (12) — so hiding bots backfills with human activity instead of
-  leaving gaps. **[Persistence is an open owner decision — see the review note at the
-  end of this doc's history; the spec currently specifies a persisted preference.]**
-  The toggle state **persists** as an inbox preference `inbox.activityRailShowBots`
-  (Bool, default `true`) via the existing scalar-config pipeline (#275 pattern) +
-  `InboxPreferencesDto`, so the choice survives reloads. This is distinct from the
-  Settings "Show activity rail" master toggle.
+  panel toggles bot-authored items in/out — **default hidden** (`mergewatch[bot]`,
+  `Copilot`, etc. filtered out; toggle reveals them). The panel header becomes a
+  three-element flex row — `"Activity"` title · `"last 24h"` muted label · toggle pinned
+  to the trailing edge; under squeeze the muted label drops before the title or toggle.
+  The control is an `aria-pressed` **toggle button** with a stable accessible name
+  (`"Show bots"`, `aria-pressed` reflecting on/off) — matching PRism's existing
+  toggle-button convention (gear / AI toggle) rather than a label that swaps between
+  "show"/"hide". Filtering is **client-side and instant**: the hook holds the full
+  deduped set (`ActorIsBot`-tagged); the rail filters per the toggle, **then** caps to
+  `MaxActivityItems` (12) — so revealing bots fills in instead of leaving the human-only
+  view artificially short. **The toggle is transient P1 state** — a `useState`
+  initialized to *hidden*, **not** persisted. (Rationale: P1 is gated on a keep
+  decision, so a persisted `inbox.activityRailShowBots` preference would be ~5–6 sites
+  of config plumbing — `ConfigStore` allowlist + apply arm, `AppConfig`, DTO, TS type,
+  `PreferencesContext` union + read/write — at risk of being dead weight if Phase 1 is
+  cut. With the default already hidden, the common case needs no persistence; if
+  re-revealing bots every session proves annoying during the trial, **P2 adds the
+  persisted preference** via the same cheap #275 pattern, demand-validated.) This is
+  distinct from the Settings "Show activity rail" master toggle.
 - **Clickable items (in-app):** received_events items always carry a GitHub PR
   `html_url` (`github.com/{owner}/{repo}/pull/{n}`). A small parser extracts
   owner/repo/number from that URL into a `PrReference` and builds the **in-app router
@@ -353,18 +361,18 @@ not stretched to inbox height.
     when the fetch fails (and no last-good data) or `Degraded.ReceivedEvents` is true.
     It uses a **distinct treatment from the empty state** (a muted warning/alert style,
     not the same plain muted text) so "broken" and "quiet" are visually separable. No
-    cause-specific messaging (rationale below) — **with one recommended carve-out under
-    owner review:** distinguish the **auth-invalid (401 / revoked token)** case from
-    generic degradation, rendering "**Reconnect GitHub**" instead of "Activity
-    unavailable". A 401 is *unambiguous* (unlike the several causes behind a 403) and is
-    the one failure the user can act on; a mid-session token revocation surfaces on the
-    rail's 90s poll, and "Settings unreachable without a token" only covers *enabling*,
-    not mid-session revocation. This is a narrow `AuthInvalid` boolean on
-    `ActivityDegradation`, **not** the rejected `DegradationCause` enum, so it doesn't
-    reintroduce FG-token steering. *(Counter-view from security-lens: a revoked token
-    breaks the whole app and already surfaces via the primary auth gate / `/api/auth/
-    state` / `IdentityChanged` SSE, so the generic note is defensible. Owner to decide;
-    the contract block below does not yet include `AuthInvalid`.)*
+    cause-specific messaging (rationale below). **The activity rail does not special-case
+    a revoked GitHub PAT.** ce-doc-review surfaced a "distinguish 401 → Reconnect GitHub"
+    idea; investigation of the auth code (`apiClient` → `prism-auth-rejected` →
+    `isAuthed`, `App.tsx`) showed that path fires on **PRism session-cookie** 401s, not
+    on **GitHub PAT** revocation — a mid-session PAT revocation has **no global reconnect
+    surface today** (every GitHub-backed feature, inbox included, just degrades). Adding
+    `AuthInvalid` to *only* this endpoint would make the rail say "Reconnect" while the
+    inbox silently degrades on the same dead token — inconsistent, and worse than uniform
+    degradation. The real gap (a global GitHub-401 → reconnect affordance) is filed as
+    **[#312](https://github.com/prpande/PRism/issues/312)** and is out of scope for #137;
+    this rail conforms to the house degrade-quietly pattern until that global surface
+    exists, then feeds it like every other GitHub surface.
 - **Rendering safety:** GitHub-supplied strings (`Title`, `ActorLogin`) render as text
   via React's default escaping — never `dangerouslySetInnerHTML`.
 - Relative-time rendering **reuses the inbox row's existing relative-time formatter** so
@@ -415,8 +423,8 @@ viewport). Turning it on, with real data backing the rail, completes #309's defe
 - **Hook** (vitest): poll cadence; error path; last-good retention.
 - **Rail** (vitest): actor phrasing render; empty-state copy; degraded note distinct
   from empty; in-app link parse (valid GitHub PR URL → `/pr/…` Link; malformed → safe
-  external fallback, no throw); **bot toggle filters `ActorIsBot` items client-side and
-  re-caps to 12**; toggle reads/writes `inbox.activityRailShowBots`.
+  external fallback, no throw); **bot toggle defaults to hidden, reveals `ActorIsBot`
+  items client-side and re-caps to 12** (transient `useState`, no preference read/write).
 - **Settings toggle:** reflects + writes `inbox.showActivityRail`.
 - **e2e:** rail visual baseline with real-shaped fake data via a Test-env activity fake
   seam mirroring `PRISM_E2E_FAKE_REVIEW` (`ASPNETCORE_ENVIRONMENT=Test`). **Prefer the
@@ -435,8 +443,8 @@ viewport). Turning it on, with real data backing the rail, completes #309's defe
       items open the PR in-app.
 - [ ] Within-feed dedup collapses **re-emitted duplicates by event `id`** while keeping
       genuinely distinct same-actor events; no "pushed" verb (confirmed unavailable).
-- [ ] In-rail bot toggle (default show) filters `[bot]`/known-bot actors client-side and
-      re-caps to 12; choice persists via `inbox.activityRailShowBots`.
+- [ ] In-rail bot toggle (**default hidden**) reveals `[bot]`/known-bot actors
+      client-side and re-caps to 12; transient `useState`, **not** persisted.
 - [ ] Watching `<section>` not rendered; loading skeleton shows a single panel.
 - [ ] Empty state reads "No pull-request activity in the last 24h"; degraded note is
       visually distinct from empty.
