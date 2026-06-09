@@ -4,7 +4,6 @@ using PRism.AI.Contracts.Provider;
 using PRism.Core.Ai;
 using PRism.Core.Config;
 using PRism.Web.Tests.TestHelpers;
-using System.Net.Http.Json;
 using System.Text.Json;
 using Xunit;
 
@@ -16,7 +15,7 @@ namespace PRism.Web.Tests.Endpoints;
 /// Live + provider available + consented → summary depends on registered seams (empty in test host,
 /// so still false, but disabledReason="none").
 /// </summary>
-public class CapabilitiesConsentTests
+public sealed class CapabilitiesConsentTests
 {
     [Fact]
     public async Task Live_available_no_consent_reports_consent_required()

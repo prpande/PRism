@@ -35,9 +35,11 @@ public sealed class AiCapabilityResolverTests
     public void Live_in_P0_all_flags_false_and_surfaces_probe_reason()
     {
         var unavailable = LlmAvailability.Unavailable("cli-not-installed");
-        var caps = EmptyP0.Resolve(AiMode.Live, unavailable, consented: false);
+        // consented:true so probe-unavailability is the unambiguous driver of all-flags-false here
+        // (the P0 story is "CLI not installed", not "user hasn't consented").
+        var caps = EmptyP0.Resolve(AiMode.Live, unavailable, consented: true);
         caps.Summary.Should().BeFalse(); // no real impl registered in P0
-        AiCapabilityResolver.DisabledReason(AiMode.Live, unavailable, consented: false).Should().Be("cli-not-installed");
+        AiCapabilityResolver.DisabledReason(AiMode.Live, unavailable, consented: true).Should().Be("cli-not-installed");
     }
 
     [Fact]
