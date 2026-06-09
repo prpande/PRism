@@ -58,6 +58,21 @@ public static class ServiceCollectionExtensions
             config.Changed += (_, args) => state.Mode = args.Config.Ui.Ai.Mode;
             return state;
         });
+        services.AddSingleton<AiConsentState>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var state = new AiConsentState();
+            state.Set(config.Current.Ui.Ai.Consent);
+            config.Changed += (_, args) => state.Set(args.Config.Ui.Ai.Consent);
+            return state;
+        });
+        services.AddSingleton<AiFeatureState>(sp =>
+        {
+            var config = sp.GetRequiredService<IConfigStore>();
+            var state = new AiFeatureState(config.Current.Ui.Ai.Features);
+            config.Changed += (_, args) => state.Set(args.Config.Ui.Ai.Features);
+            return state;
+        });
         services.AddSingleton<IAppStateStore>(_ => new AppStateStore(dataDir));
         // In the e2e Test backend, persist tokens to an unprotected file instead
         // of the OS keyring. The browser e2e runs in a headless Linux container
