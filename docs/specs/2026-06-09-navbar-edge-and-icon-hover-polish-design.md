@@ -21,7 +21,7 @@ Two unrelated-but-cohesive nav-bar rough edges, both pure presentation:
    defined edge and must be preserved.
 
 2. **#290 — divergent icon hover.** The Inbox tab hover (`.tab:hover,
-   .tab:focus-visible`, lines 29–39) is an accent glow (`--accent-hover` text + faint
+.tab:focus-visible`, lines 29–39) is an accent glow (`--accent-hover` text + faint
    `--accent` tint + `0 0 12px -2px --accent-ring`). The Settings/Help icons
    (`.gear:hover`, lines 91–94) get a neutral `surface-3` grey swap with no accent —
    accent-independent (identical in indigo/amber/teal). `.gear:focus-visible` is a
@@ -34,13 +34,19 @@ Both are confirmed by before-shots against `main` (desktop shell, light theme).
 
 ### #289 — Approach B: crisp hairline + contained drop (light desktop-shell only)
 
-Replace the diffuse `--shadow-2` on the desktop-shell `.header` **in light theme
-only** with:
-- a solid 1px hairline (`0 1px 0 var(--border-2)`) that reads unambiguously as a
-  line, reinforcing the existing `border-bottom`, **plus**
-- one tight, **negative-spread** drop (`0 6px 10px -6px oklch(0.20 0.01 250 / 0.10)`,
-  the same slate base color the `--shadow-*` tokens use) so a hint of elevation
-  remains but the blur is pulled in and cannot smear past the bar.
+The base `.header` keeps `border-bottom: 1px solid var(--border-1)` in desktop mode,
+so make **that border** the defined line rather than stacking a shadow hairline below
+it. In light theme only:
+
+- lift the existing border to the slightly darker `--border-2` (`border-bottom-color:
+var(--border-2)`) so it reads as one crisp line, **and**
+- replace the diffuse `--shadow-2` with **only** a tight, **negative-spread** drop
+  (`0 6px 10px -6px oklch(0.20 0.01 250 / 0.10)`, the same slate base color the
+  `--shadow-*` tokens use) so a hint of elevation remains but the blur is pulled in
+  and cannot smear past the bar.
+
+Using the border for the line (not a `0 1px 0` shadow hairline stacked under the
+already-present `border-bottom`) avoids a double-line edge — a preflight-review catch.
 
 Negative spread is the key: it keeps the "elevated top bar" read (AC #2 below)
 without the fuzz (AC #1). Dark is left on `--shadow-2` untouched (AC #2).
@@ -54,8 +60,8 @@ override wins the cascade regardless of source order (placed right after the bas
 rule for readability). All referenced tokens verified present (`--border-2`,
 `--shadow-2`, light/dark variants).
 
-**Rejected:** *A — border-only* (drop the shadow) flattens the bar, failing the
-"still elevated" criterion. *C — tighten-only* (one lower-blur layer) is a middle
+**Rejected:** _A — border-only_ (drop the shadow) flattens the bar, failing the
+"still elevated" criterion. _C — tighten-only_ (one lower-blur layer) is a middle
 ground that still blurs rather than presenting a defined line.
 
 ### #290 — Option A: gear/help adopt the tab's accent glow
@@ -70,7 +76,7 @@ review surfaced, all mirrored from how the tab already solves them:
 - **Keyboard focus keeps a crisp ring (F4).** Rather than relying on the diffuse glow
   alone — which is a weaker focus indicator on the accent-tinted desktop bar, a
   WCAG 2.4.7/2.4.13 concern for the 32px icon target — `.gear:focus-visible` **keeps**
-  a crisp `outline: 2px solid var(--accent-ring)` *on top of* the glow. Hover and focus
+  a crisp `outline: 2px solid var(--accent-ring)` _on top of_ the glow. Hover and focus
   share the accent glow (AC #3: consistent), and keyboard focus additionally gets the
   ring the icon leans on more than a text tab does. A focused-gear screenshot is added
   to the B1 matrix so the gate can see the focus state, not just hover.
@@ -83,7 +89,7 @@ review surfaced, all mirrored from how the tab already solves them:
   extending the existing `@media (prefers-reduced-motion: reduce)` block to reset
   `.gear` alongside `.tab`.
 
-**Rejected:** *Option B — a deliberately distinct icon-button hover* — no product
+**Rejected:** _Option B — a deliberately distinct icon-button hover_ — no product
 reason for icons to read differently from text tabs; Option A is the issue's own
 recommendation and matches the established #120 accent-glow language.
 
@@ -116,9 +122,9 @@ a two-rule CSS tweak. Green CI (existing suites) backstops no-regression.
 1. [ ] **#289:** light navbar bottom edge reads as a clean, defined line (no fuzzy edge).
 2. [ ] **#289:** dark mode not regressed; navbar still reads as the elevated top bar.
 3. [ ] **#290:** Settings/Help icon hover and `:focus-visible` are styled by one
-   accent-glow treatment matching the Inbox tab's (accent text + accent tint + ring),
-   so all nav-bar items share one hover language; keyboard `:focus-visible` also keeps
-   a crisp ring.
+       accent-glow treatment matching the Inbox tab's (accent text + accent tint + ring),
+       so all nav-bar items share one hover language; keyboard `:focus-visible` also keeps
+       a crisp ring.
 4. [ ] **#290:** verified across light + dark and all three accents — hover, keyboard
-   focus, and the active (`.gearOn`) state.
+       focus, and the active (`.gearOn`) state.
 5. [ ] Before/after screenshots in the PR for both issues (incl. a keyboard-focused gear).
