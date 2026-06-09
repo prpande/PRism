@@ -20,6 +20,10 @@ export const CANONICAL_DEFAULT_ORDER_STRING = CANONICAL_WORK_ORDER.join(',');
 
 const RECENTLY_CLOSED = 'recently-closed';
 
+// Sentinel rank that forces a section to the very bottom of the inbox, below every
+// work section. recently-closed (the archive) is the only id that gets it today.
+const PINNED_LAST_RANK = Number.MAX_SAFE_INTEGER;
+
 function parseSavedIds(savedOrder: string | undefined): string[] {
   return (savedOrder ?? '')
     .split(',')
@@ -40,7 +44,7 @@ export function orderInboxSections(
 ): InboxSection[] {
   const saved = parseSavedIds(savedOrder);
   const rank = (id: string): number => {
-    if (id === RECENTLY_CLOSED) return Number.MAX_SAFE_INTEGER;
+    if (id === RECENTLY_CLOSED) return PINNED_LAST_RANK;
     const savedIndex = saved.indexOf(id);
     if (savedIndex >= 0) return savedIndex;
     const canonicalIndex = (CANONICAL_WORK_ORDER as readonly string[]).indexOf(id);

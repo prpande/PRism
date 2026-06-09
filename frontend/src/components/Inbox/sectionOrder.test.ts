@@ -78,6 +78,26 @@ describe('orderInboxSections', () => {
     const out = orderInboxSections(subset, 'mentioned,authored-by-me,review-requested,awaiting-author');
     expect(ids(out)).toEqual(['mentioned', 'review-requested']);
   });
+
+  it('orders two unlisted sections by canonical order, not input order', () => {
+    // Neither live section is in the saved order, so both fall through to the
+    // canonical-index tiebreak. authored-by-me (canonical idx 2) must precede
+    // mentioned (idx 3) even though input order is the reverse — this pins the
+    // "appended in canonical order" contract, not just stable input order.
+    const out = orderInboxSections([sec('mentioned'), sec('authored-by-me')], 'review-requested,awaiting-author');
+    expect(ids(out)).toEqual(['authored-by-me', 'mentioned']);
+  });
+
+  it('tolerates surrounding whitespace around saved ids', () => {
+    const out = orderInboxSections(live, ' mentioned , review-requested , awaiting-author , authored-by-me ');
+    expect(ids(out)).toEqual([
+      'mentioned',
+      'review-requested',
+      'awaiting-author',
+      'authored-by-me',
+      'recently-closed',
+    ]);
+  });
 });
 
 describe('orderedWorkSectionIds', () => {
