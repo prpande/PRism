@@ -88,6 +88,13 @@ public sealed class GitHubCiFailingDetectorTests
         { "state": "pending", "statuses": [ { "context": "ci/legacy", "state": "pending" } ] }
         """;
 
+    // A registered legacy commit status that has SUCCEEDED (total_count > 0, success).
+    // Distinct from AllPassingStatus, whose empty statuses array means "no legacy
+    // statuses registered" → None under #286 semantics.
+    private const string SuccessRegisteredStatus = """
+        { "state": "success", "total_count": 1, "statuses": [ { "context": "ci/legacy", "state": "success" } ] }
+        """;
+
     [Fact]
     public async Task Failing_check_run_marks_failing()
     {
@@ -214,6 +221,35 @@ public sealed class GitHubCiFailingDetectorTests
 
         result.Items.Should().HaveCount(1);
         result.Items[0].Ci.Should().Be(CiStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Combined_status_success_with_registered_statuses_marks_passing()
+    {
+        // A registered legacy status that succeeded is a positive signal. With empty
+        // check-runs, (None, Passing) → Passing (#264).
+        var handler = RouterHandler(EmptyCheckRuns, SuccessRegisteredStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Passing);
+    }
+
+    [Fact]
+    public async Task Combined_status_success_with_no_registered_statuses_marks_none()
+    {
+        // #286 reinforcement on the success branch: state="success" with NO registered
+        // statuses (empty statuses, no total_count) is "no legacy CI configured", not a
+        // positive signal. With empty check-runs too → None (no false green tick).
+        var handler = RouterHandler(EmptyCheckRuns, AllPassingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
     }
 
     [Fact]

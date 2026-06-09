@@ -235,6 +235,9 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         {
             "failure" or "error" => CiStatus.Failing,
             "pending" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Pending,
+            // A registered success is a positive signal → Passing. Success with no
+            // registered statuses stays None (the #286 "no legacy CI" case). (#264)
+            "success" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Passing,
             _ => CiStatus.None,
         };
         return (status, false);
