@@ -74,6 +74,13 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         // the incomplete read, so they must re-probe rather than cache an untrustworthy result.
         if (checks == CiStatus.Failing || statuses == CiStatus.Failing) return (CiStatus.Failing, false);
         if (checks == CiStatus.Pending || statuses == CiStatus.Pending) return (CiStatus.Pending, degraded);
+        // Passing is degraded-flagged like Pending/None: a Passing read from one source
+        // while the OTHER source returned a non-2xx could mask a hidden Failing, so a
+        // DEGRADED Passing must not be cached (DetectAsync caches only when `!degraded`).
+        // A fully-successful, non-degraded Passing IS cached normally; Failing is special
+        // only in that it's returned non-degraded EVEN when the other source degraded, so
+        // it's the one status cacheable despite a degraded read. (#264/#213)
+        if (checks == CiStatus.Passing || statuses == CiStatus.Passing) return (CiStatus.Passing, degraded);
         return (CiStatus.None, degraded);
     }
 
@@ -88,6 +95,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var anyFailing = false;
         var anyPending = false;
         var anyPage = false;
+        var anySuccess = false; // ≥1 check-run completed with conclusion "success". #264
 
         // GitHub paginates /check-runs when a PR has > per_page entries (monorepo
         // matrix builds routinely cross 100). Follow the rel="next" link until
@@ -135,6 +143,12 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             {
                 if (anyFailing) return (CiStatus.Failing, false);
                 if (anyPending) return (CiStatus.Pending, true);
+                // anySuccess from earlier pages is deliberately discarded here: an incomplete
+                // read (a later page 5xx'd) cannot confirm Passing — a not-yet-read page could
+                // carry a Failing. Degrade to None-not-cached so the next tick re-probes the
+                // full set. (anyPending above is safe to surface through degradation; a worse
+                // state can't hide behind it. Passing can. Covered by
+                // All_passing_first_page_then_degraded_next_page_marks_none_not_passing.) #264
                 return (CiStatus.None, true);
             }
             var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
@@ -154,13 +168,28 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
                 var conclusion = r.TryGetProperty("conclusion", out var cn) ? cn.GetString() : null;
                 if (status != "completed") { anyPending = true; continue; }
                 if (conclusion is "failure" or "timed_out" or "cancelled") anyFailing = true;
+                else if (conclusion == "success") anySuccess = true;
+                // Other completed conclusions (skipped / neutral / action_required /
+                // startup_failure / stale) contribute neither failing nor success: a PR whose
+                // checks were all skipped (path filters, matrix exclusions) is NOT a positive
+                // signal and must not show a false green tick — it stays None unless a real
+                // success exists. `action_required` (a manual gate awaiting human action) is
+                // DELIBERATELY left as None here rather than mapped to Failing/Pending —
+                // surfacing manual-gate state in the 4-state inbox model is a separate design
+                // call tracked in #305, not an oversight. #264
             }
 
             nextUri = TryGetNextLink(resp);
             if (nextUri is null) break;
         }
 
-        return (anyFailing ? CiStatus.Failing : (anyPending ? CiStatus.Pending : CiStatus.None), false);
+        // A successful run with nothing failing/pending → Passing. Only conclusion=="success"
+        // counts (anySuccess) — empty/no check_runs, or all-skipped/neutral, → None. #264
+        return (anyFailing
+            ? CiStatus.Failing
+            : anyPending
+                ? CiStatus.Pending
+                : anySuccess ? CiStatus.Passing : CiStatus.None, false);
     }
 
     // Parses the GitHub Link response header and returns the URL whose attributes
@@ -224,6 +253,9 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         {
             "failure" or "error" => CiStatus.Failing,
             "pending" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Pending,
+            // A registered success is a positive signal → Passing. Success with no
+            // registered statuses stays None (the #286 "no legacy CI" case). (#264)
+            "success" when HasRegisteredStatuses(doc.RootElement) => CiStatus.Passing,
             _ => CiStatus.None,
         };
         return (status, false);

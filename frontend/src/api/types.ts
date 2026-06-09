@@ -79,7 +79,7 @@ export interface ConnectResponse {
   warning?: 'no-repos-selected';
 }
 
-export type CiStatus = 'none' | 'pending' | 'failing';
+export type CiStatus = 'none' | 'pending' | 'failing' | 'passing';
 
 export interface PrReference {
   owner: string;

@@ -49,7 +49,11 @@ public sealed class GitHubCiFailingDetectorTests
         }
         """;
 
-    private const string AllPassingStatus = """{ "state": "success", "statuses": [] }""";
+    // "success" combined-status with NO registered legacy statuses (empty statuses, no
+    // total_count) → HasRegisteredStatuses=false → contributes None (the #286 "no legacy
+    // CI" case), NOT Passing. Named for what it CONTRIBUTES, not the wire "state": tests
+    // that use this as the status source get their Passing from the check-runs source.
+    private const string SuccessNoLegacyStatus = """{ "state": "success", "statuses": [] }""";
 
     private const string FailingCheckRun = """
         {
@@ -73,6 +77,27 @@ public sealed class GitHubCiFailingDetectorTests
 
     private const string EmptyCheckRuns = """{ "check_runs": [] }""";
 
+    // All check-runs COMPLETED but with non-success conclusions (skipped/neutral) — the
+    // common path-filtered / matrix-excluded case. Not failing, not pending, not success.
+    private const string SkippedCheckRuns = """
+        {
+          "check_runs": [
+            { "name": "ci/build", "status": "completed", "conclusion": "skipped" },
+            { "name": "ci/lint",  "status": "completed", "conclusion": "neutral" }
+          ]
+        }
+        """;
+
+    // A real success alongside a skipped run — the success is still a positive signal.
+    private const string SuccessAndSkippedCheckRuns = """
+        {
+          "check_runs": [
+            { "name": "ci/build", "status": "completed", "conclusion": "success" },
+            { "name": "ci/lint",  "status": "completed", "conclusion": "skipped" }
+          ]
+        }
+        """;
+
     // GitHub's combined-status endpoint reports state="pending" with total_count=0 when no
     // legacy commit statuses are registered — the default for an Actions-only or no-CI PR (#286).
     private const string EmptyPendingStatus = """{ "state": "pending", "total_count": 0, "statuses": [] }""";
@@ -88,10 +113,17 @@ public sealed class GitHubCiFailingDetectorTests
         { "state": "pending", "statuses": [ { "context": "ci/legacy", "state": "pending" } ] }
         """;
 
+    // A registered legacy commit status that has SUCCEEDED (total_count > 0, success).
+    // Distinct from SuccessNoLegacyStatus, whose empty statuses array means "no legacy
+    // statuses registered" → None under #286 semantics.
+    private const string SuccessRegisteredStatus = """
+        { "state": "success", "total_count": 1, "statuses": [ { "context": "ci/legacy", "state": "success" } ] }
+        """;
+
     [Fact]
     public async Task Failing_check_run_marks_failing()
     {
-        var handler = RouterHandler(FailingCheckRun, AllPassingStatus);
+        var handler = RouterHandler(FailingCheckRun, SuccessNoLegacyStatus);
         var sut = BuildSut(handler);
 
         var result = await sut.DetectAsync([Raw(1)], default);
@@ -125,15 +157,64 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
-    public async Task All_passing_marks_none()
+    public async Task All_passing_marks_passing()
     {
-        var handler = RouterHandler(AllPassingCheckRuns, AllPassingStatus);
+        // All check-runs completed successfully and the combined status is success
+        // with no registered legacy statuses → (Passing, None) → Passing (#264).
+        var handler = RouterHandler(AllPassingCheckRuns, SuccessNoLegacyStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Passing);
+    }
+
+    [Fact]
+    public async Task Empty_check_runs_with_no_statuses_marks_none()
+    {
+        // An EMPTY check_runs array is "no checks", NOT "all checks passed". The
+        // detector only marks Passing when a run completed with conclusion "success"
+        // (anySuccess) — an empty array has none, so a no-CI PR stays None (the
+        // passing-side analogue of the #286 false-amber bug). SuccessNoLegacyStatus is
+        // success+empty-statuses → None, so both sources are None → None.
+        var handler = RouterHandler(EmptyCheckRuns, SuccessNoLegacyStatus);
         var sut = BuildSut(handler);
 
         var result = await sut.DetectAsync([Raw(1)], default);
 
         result.Items.Should().HaveCount(1);
         result.Items[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task All_skipped_or_neutral_check_runs_mark_none()
+    {
+        // #264 (adversarial-review finding): completed-but-not-success conclusions
+        // (skipped / neutral / action_required / stale) are NOT a positive signal. A PR
+        // whose checks were all skipped (path filters, matrix exclusions) must not show a
+        // false green tick — only conclusion="success" makes Passing. Both sources None → None.
+        var handler = RouterHandler(SkippedCheckRuns, SuccessNoLegacyStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task Success_among_skipped_check_runs_marks_passing()
+    {
+        // A real success is a positive signal even when other runs were skipped — the
+        // anySuccess gate must not require ALL runs to succeed, only at least one. (#264)
+        var handler = RouterHandler(SuccessAndSkippedCheckRuns, SuccessNoLegacyStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Passing);
     }
 
     [Fact]
@@ -198,6 +279,76 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
+    public async Task Combined_status_success_with_registered_statuses_marks_passing()
+    {
+        // A registered legacy status that succeeded is a positive signal. With empty
+        // check-runs, (None, Passing) → Passing (#264).
+        var handler = RouterHandler(EmptyCheckRuns, SuccessRegisteredStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Passing);
+    }
+
+    [Fact]
+    public async Task Combined_status_success_with_no_registered_statuses_marks_none()
+    {
+        // #286 reinforcement on the success branch: state="success" with NO registered
+        // statuses (empty statuses, no total_count) is "no legacy CI configured", not a
+        // positive signal. With empty check-runs too → None (no false green tick).
+        var handler = RouterHandler(EmptyCheckRuns, SuccessNoLegacyStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task Passing_checks_with_pending_status_marks_pending()
+    {
+        // Precedence: Pending outranks Passing. Green check-runs + a genuinely
+        // in-progress legacy status → (Passing, Pending) → Pending (#264).
+        var handler = RouterHandler(AllPassingCheckRuns, RegisteredPendingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items[0].Ci.Should().Be(CiStatus.Pending);
+    }
+
+    [Fact]
+    public async Task Passing_while_other_source_degraded_is_not_cached()
+    {
+        // #264/#213: a Passing observed while the OTHER source 5xx'd must NOT be cached —
+        // the unread source could hide a Failing. The next tick must re-probe and reflect
+        // the recovered status (here the combined-status endpoint recovers to failure).
+        var recovered = false;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, AllPassingCheckRuns);
+            // /status: degraded (503) first tick, then recovers to a failure status.
+            return recovered
+                ? Respond(HttpStatusCode.OK, FailureStatus)
+                : Respond(HttpStatusCode.ServiceUnavailable, "{}");
+        });
+        var sut = BuildSut(handler);
+
+        var first = await sut.DetectAsync([Raw(1)], default);
+        first.Items[0].Ci.Should().Be(CiStatus.Passing,
+            "checks are green and the degraded status source contributes nothing this tick");
+
+        recovered = true;
+        var second = await sut.DetectAsync([Raw(1)], default);
+        second.Items[0].Ci.Should().Be(CiStatus.Failing,
+            "the degraded Passing must not have been cached — the recovered tick re-probes and sees the failure");
+    }
+
+    [Fact]
     public async Task Cache_hit_skips_http()
     {
         var requestCount = 0;
@@ -206,7 +357,7 @@ public sealed class GitHubCiFailingDetectorTests
             Interlocked.Increment(ref requestCount);
             if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
                 return Respond(HttpStatusCode.OK, AllPassingCheckRuns);
-            return Respond(HttpStatusCode.OK, AllPassingStatus);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
         });
         var sut = BuildSut(handler);
 
@@ -229,7 +380,7 @@ public sealed class GitHubCiFailingDetectorTests
             Interlocked.Increment(ref requestCount);
             if (req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal))
                 return Respond(HttpStatusCode.OK, AllPassingCheckRuns);
-            return Respond(HttpStatusCode.OK, AllPassingStatus);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
         });
         var sut = BuildSut(handler);
 
@@ -253,7 +404,7 @@ public sealed class GitHubCiFailingDetectorTests
                 ? (recovered
                     ? Respond(HttpStatusCode.OK, FailingCheckRun)
                     : Respond(HttpStatusCode.ServiceUnavailable, "{}"))
-                : Respond(HttpStatusCode.OK, AllPassingStatus));
+                : Respond(HttpStatusCode.OK, SuccessNoLegacyStatus));
         var sut = BuildSut(handler);
 
         var first = await sut.DetectAsync([Raw(1)], default);
@@ -388,7 +539,7 @@ public sealed class GitHubCiFailingDetectorTests
                 return resp;
             }
             if (uri.Contains("/status", StringComparison.Ordinal))
-                return Respond(HttpStatusCode.OK, AllPassingStatus);
+                return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
             return Respond(HttpStatusCode.NotFound, "{}");
         });
         var sut = BuildSut(handler);
@@ -398,6 +549,45 @@ public sealed class GitHubCiFailingDetectorTests
         result.Items.Should().HaveCount(1);
         result.Items[0].Ci.Should().Be(CiStatus.Failing,
             "a failing check_run on page 2 must be observed via Link-header pagination");
+    }
+
+    [Fact]
+    public async Task All_passing_first_page_then_degraded_next_page_marks_none_not_passing()
+    {
+        // #264 (claude[bot] F2): page 1 is all-green (anySuccess) with a Link to page 2;
+        // page 2 returns 503. An incomplete read must NOT claim Passing — a not-yet-read
+        // page could carry a Failing. The tick degrades to None (not cached) so it re-probes
+        // next tick. (Contrast the paginating-Failing test above: Failing IS definitive
+        // across a degraded page; Passing is not.)
+        var passingRuns = string.Join(",",
+            Enumerable.Repeat(
+                """{ "name": "ci/build", "status": "completed", "conclusion": "success" }""",
+                100));
+        var page1Body = $$"""{ "check_runs": [{{passingRuns}}] }""";
+        const string nextUrl = "https://api.github.com/repos/acme/api/commits/sha/check-runs?per_page=100&page=2";
+
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            var uri = req.RequestUri!.AbsoluteUri;
+            if (uri.Contains("/check-runs", StringComparison.Ordinal))
+            {
+                if (uri.Contains("page=2", StringComparison.Ordinal))
+                    return Respond(HttpStatusCode.ServiceUnavailable, "{}");
+                var resp = Respond(HttpStatusCode.OK, page1Body);
+                resp.Headers.TryAddWithoutValidation("Link", $"<{nextUrl}>; rel=\"next\"");
+                return resp;
+            }
+            if (uri.Contains("/status", StringComparison.Ordinal))
+                return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
+            return Respond(HttpStatusCode.NotFound, "{}");
+        });
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items[0].Ci.Should().Be(CiStatus.None,
+            "an incomplete read (page 2 degraded) cannot confirm Passing from page 1's green runs");
+        result.Complete.Should().BeFalse("the degraded read must not be cached");
     }
 
     [Fact]
@@ -467,7 +657,7 @@ public sealed class GitHubCiFailingDetectorTests
                 resp.Headers.Add("Retry-After", "45");
                 return resp;
             }
-            return Respond(HttpStatusCode.OK, AllPassingStatus);
+            return Respond(HttpStatusCode.OK, SuccessNoLegacyStatus);
         });
         var sut = BuildSut(handler);
 
@@ -484,7 +674,7 @@ public sealed class GitHubCiFailingDetectorTests
         var handler = new FakeHttpMessageHandler(req =>
             req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
                 ? Respond(HttpStatusCode.Forbidden, "{}")
-                : Respond(HttpStatusCode.OK, AllPassingStatus));
+                : Respond(HttpStatusCode.OK, SuccessNoLegacyStatus));
         var sut = BuildSut(handler);
 
         var result = await sut.DetectAsync([Raw(1)], default);
@@ -494,8 +684,11 @@ public sealed class GitHubCiFailingDetectorTests
     }
 
     [Fact]
-    public async Task Forbidden_combined_status_degrades_to_none_not_throw()
+    public async Task Forbidden_combined_status_degrades_to_passing_not_throw()
     {
+        // #264: check-runs returned all-passing → Passing; combined-status 403'd → degraded
+        // None. ProbeAsync combines: (Passing, None) → Passing (degraded=true, non-cached).
+        // Pre-#264 the result was None because there was no Passing status to emit.
         var handler = new FakeHttpMessageHandler(req =>
             req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
                 ? Respond(HttpStatusCode.OK, AllPassingCheckRuns)
@@ -505,7 +698,8 @@ public sealed class GitHubCiFailingDetectorTests
         var result = await sut.DetectAsync([Raw(1)], default);
 
         result.Items.Should().HaveCount(1);
-        result.Items[0].Ci.Should().Be(CiStatus.None);
+        result.Items[0].Ci.Should().Be(CiStatus.Passing);
+        result.Complete.Should().BeFalse("combined-status 403 → degraded result must not be marked complete");
     }
 
     [Fact]
@@ -519,7 +713,7 @@ public sealed class GitHubCiFailingDetectorTests
         var handler = new FakeHttpMessageHandler(req =>
             req.RequestUri!.AbsoluteUri.Contains("/check-runs", StringComparison.Ordinal)
                 ? Respond(HttpStatusCode.ServiceUnavailable, "{}")
-                : Respond(HttpStatusCode.OK, AllPassingStatus));
+                : Respond(HttpStatusCode.OK, SuccessNoLegacyStatus));
         var sut = BuildSut(handler);
 
         var result = await sut.DetectAsync([Raw(1)], default);
