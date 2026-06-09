@@ -28,7 +28,7 @@ describe('CollapsedComposerAffordance', () => {
     expect(screen.getByText('saved')).toBeInTheDocument();
   });
 
-  it('is inert under readOnly (no open on click)', () => {
+  it('is truly inert under readOnly — natively disabled, out of tab order, no open on click', () => {
     const onOpen = vi.fn();
     render(
       <CollapsedComposerAffordance
@@ -38,7 +38,11 @@ describe('CollapsedComposerAffordance', () => {
         onOpen={onOpen}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Reply to thread' }));
+    const btn = screen.getByRole('button', { name: 'Reply to thread' });
+    // Native `disabled` removes it from the tab order and lets assistive tech
+    // announce it as disabled — not a focusable button that silently no-ops.
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
     expect(onOpen).not.toHaveBeenCalled();
   });
 });

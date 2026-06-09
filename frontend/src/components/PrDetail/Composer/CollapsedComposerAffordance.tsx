@@ -10,7 +10,10 @@ export interface CollapsedComposerAffordanceProps {
 
 // Input-placeholder affordance shared by the diff reply button and Overview's
 // reply button. A <button> (Enter/Space activate natively); cursor:text reads
-// like a field. Inert (no expand) under cross-tab readOnly.
+// like a field. Under cross-tab readOnly it uses the native `disabled` attribute
+// so it is truly inert — out of the tab order and announced as disabled by
+// assistive tech — matching the other readOnly gates in this surface (the inline
+// composer's Save/Discard buttons), not a focusable button that no-ops on click.
 export function CollapsedComposerAffordance({
   label,
   ariaLabel,
@@ -23,11 +26,8 @@ export function CollapsedComposerAffordance({
       type="button"
       className={styles.affordance}
       aria-label={ariaLabel}
-      data-readonly={readOnly || undefined}
-      onClick={() => {
-        if (readOnly) return;
-        onOpen();
-      }}
+      disabled={readOnly}
+      onClick={onOpen}
     >
       <span className={styles.label}>{label}</span>
       {hasDraft && (

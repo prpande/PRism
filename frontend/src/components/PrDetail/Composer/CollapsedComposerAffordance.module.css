@@ -21,11 +21,15 @@
   border-color: var(--border-strong);
   color: var(--text-2);
 }
-.affordance[data-readonly] {
+/* Cross-tab readOnly → native `disabled`. Style it explicitly so it keeps the
+   resting muted-placeholder look (no browser-default opacity dimming) while
+   reading as inert: default cursor, no hover brighten. */
+.affordance:disabled {
   cursor: default;
   color: var(--text-3);
+  opacity: 1;
 }
-.affordance[data-readonly]:hover {
+.affordance:disabled:hover {
   border-color: var(--border-1);
   color: var(--text-3);
 }
