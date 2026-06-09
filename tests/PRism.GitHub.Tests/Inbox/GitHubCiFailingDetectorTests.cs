@@ -73,6 +73,27 @@ public sealed class GitHubCiFailingDetectorTests
 
     private const string EmptyCheckRuns = """{ "check_runs": [] }""";
 
+    // All check-runs COMPLETED but with non-success conclusions (skipped/neutral) — the
+    // common path-filtered / matrix-excluded case. Not failing, not pending, not success.
+    private const string SkippedCheckRuns = """
+        {
+          "check_runs": [
+            { "name": "ci/build", "status": "completed", "conclusion": "skipped" },
+            { "name": "ci/lint",  "status": "completed", "conclusion": "neutral" }
+          ]
+        }
+        """;
+
+    // A real success alongside a skipped run — the success is still a positive signal.
+    private const string SuccessAndSkippedCheckRuns = """
+        {
+          "check_runs": [
+            { "name": "ci/build", "status": "completed", "conclusion": "success" },
+            { "name": "ci/lint",  "status": "completed", "conclusion": "skipped" }
+          ]
+        }
+        """;
+
     // GitHub's combined-status endpoint reports state="pending" with total_count=0 when no
     // legacy commit statuses are registered — the default for an Actions-only or no-CI PR (#286).
     private const string EmptyPendingStatus = """{ "state": "pending", "total_count": 0, "statuses": [] }""";
@@ -149,10 +170,10 @@ public sealed class GitHubCiFailingDetectorTests
     public async Task Empty_check_runs_with_no_statuses_marks_none()
     {
         // An EMPTY check_runs array is "no checks", NOT "all checks passed". The
-        // detector must count check-run *entries*, not the array's presence —
-        // otherwise a no-CI PR shows a false green tick (the passing-side analogue
-        // of the #286 false-amber bug). AllPassingStatus is success+empty-statuses
-        // → None, so both sources are None → None.
+        // detector only marks Passing when a run completed with conclusion "success"
+        // (anySuccess) — an empty array has none, so a no-CI PR stays None (the
+        // passing-side analogue of the #286 false-amber bug). AllPassingStatus is
+        // success+empty-statuses → None, so both sources are None → None.
         var handler = RouterHandler(EmptyCheckRuns, AllPassingStatus);
         var sut = BuildSut(handler);
 
@@ -160,6 +181,36 @@ public sealed class GitHubCiFailingDetectorTests
 
         result.Items.Should().HaveCount(1);
         result.Items[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task All_skipped_or_neutral_check_runs_mark_none()
+    {
+        // #264 (adversarial-review finding): completed-but-not-success conclusions
+        // (skipped / neutral / action_required / stale) are NOT a positive signal. A PR
+        // whose checks were all skipped (path filters, matrix exclusions) must not show a
+        // false green tick — only conclusion="success" makes Passing. Both sources None → None.
+        var handler = RouterHandler(SkippedCheckRuns, AllPassingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.None);
+    }
+
+    [Fact]
+    public async Task Success_among_skipped_check_runs_marks_passing()
+    {
+        // A real success is a positive signal even when other runs were skipped — the
+        // anySuccess gate must not require ALL runs to succeed, only at least one. (#264)
+        var handler = RouterHandler(SuccessAndSkippedCheckRuns, AllPassingStatus);
+        var sut = BuildSut(handler);
+
+        var result = await sut.DetectAsync([Raw(1)], default);
+
+        result.Items.Should().HaveCount(1);
+        result.Items[0].Ci.Should().Be(CiStatus.Passing);
     }
 
     [Fact]

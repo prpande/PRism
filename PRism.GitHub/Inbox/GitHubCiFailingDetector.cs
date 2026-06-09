@@ -92,7 +92,7 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         var anyFailing = false;
         var anyPending = false;
         var anyPage = false;
-        var anyRun = false; // at least one check-run ENTRY seen (not just the array). #264
+        var anySuccess = false; // ≥1 check-run completed with conclusion "success". #264
 
         // GitHub paginates /check-runs when a PR has > per_page entries (monorepo
         // matrix builds routinely cross 100). Follow the rel="next" link until
@@ -155,23 +155,28 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
             // invalidates an old cancellation) is not handled here; v2 may refine.
             foreach (var r in runs.EnumerateArray())
             {
-                anyRun = true; // a check-run entry exists → eligible for Passing. #264
                 var status = r.GetProperty("status").GetString();
                 var conclusion = r.TryGetProperty("conclusion", out var cn) ? cn.GetString() : null;
                 if (status != "completed") { anyPending = true; continue; }
                 if (conclusion is "failure" or "timed_out" or "cancelled") anyFailing = true;
+                else if (conclusion == "success") anySuccess = true;
+                // Other completed conclusions (skipped / neutral / action_required / stale)
+                // contribute neither failing nor success: a PR whose checks were all skipped
+                // (path filters, matrix exclusions) is NOT a positive signal and must not show
+                // a false green tick — it stays None unless a real success exists. #264
             }
 
             nextUri = TryGetNextLink(resp);
             if (nextUri is null) break;
         }
 
-        // anyRun (≥1 entry) + nothing failing/pending → Passing; no entries → None. #264
+        // A successful run with nothing failing/pending → Passing. Only conclusion=="success"
+        // counts (anySuccess) — empty/no check_runs, or all-skipped/neutral, → None. #264
         return (anyFailing
             ? CiStatus.Failing
             : anyPending
                 ? CiStatus.Pending
-                : anyRun ? CiStatus.Passing : CiStatus.None, false);
+                : anySuccess ? CiStatus.Passing : CiStatus.None, false);
     }
 
     // Parses the GitHub Link response header and returns the URL whose attributes

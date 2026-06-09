@@ -69,6 +69,7 @@
   align-items: flex-start;
   gap: 6px;
   margin-bottom: 4px;
+  min-width: 0; /* bound the flex row so .title's -webkit-line-clamp holds in any ancestor layout */
 }
 
 /* CI suffix octicon — bare check / cross / amber dot, no enclosing circle, so
