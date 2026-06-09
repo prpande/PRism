@@ -19,6 +19,10 @@ public sealed class ServiceRegistrationTests : IDisposable
         using var sp = services.BuildServiceProvider(validateScopes: true);
 
         sp.GetService<ILlmProvider>().Should().BeOfType<ClaudeCodeLlmProvider>();
+        // Asserts the ISOLATED AddPrismClaudeCode layer only. In the full production
+        // composition, AddPrismAi (called after AddPrismClaudeCode in Program.cs) wraps
+        // this with CachedLlmAvailabilityProbe — verified by
+        // PRism.Web.Tests/Ai/AvailabilityProbeRegistrationTests.cs.
         sp.GetService<ILlmAvailabilityProbe>().Should().BeOfType<ClaudeCodeAvailabilityProbe>();
         sp.GetService<ITokenUsageTracker>().Should().BeOfType<JsonlTokenUsageTracker>();
         sp.GetRequiredService<ILlmProvider>().Should().BeSameAs(sp.GetRequiredService<ILlmProvider>());
