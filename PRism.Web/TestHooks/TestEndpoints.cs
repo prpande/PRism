@@ -443,6 +443,30 @@ internal static class TestEndpoints
             return Results.Json(fake.Inspect(new PrReference(owner, repo, number)));
         });
 
+        // #302 Task 12 — flat snapshot of all review comments (inline + reply) created since
+        // the last Reset(). Used by e2e specs (Task 13) to assert the post-now path: the spec
+        // can confirm body, path/line/side (inline) or parentThreadId (reply), and the numeric
+        // id returned to the frontend (for the databaseId de-dup check). No PR scoping — the
+        // fake keeps a single global list, same as SnapshotIssueComments(). Returns an array of
+        // { kind, path, lineNumber, side, body, parentThreadId, assignedId, pr }.
+        app.MapGet("/test/submit/inspect-review-comments", (IServiceProvider sp) =>
+        {
+            var fake = AsFake(sp);
+            if (fake is null) return SubmitterMissing("/test/submit/inspect-review-comments");
+            var snapshot = fake.SnapshotReviewComments();
+            return Results.Json(snapshot.Select(r => new
+            {
+                pr = new { owner = r.Pr.Owner, repo = r.Pr.Repo, number = r.Pr.Number },
+                kind = r.Kind,
+                path = r.Path,
+                lineNumber = r.LineNumber,
+                side = r.Side,
+                body = r.Body,
+                parentThreadId = r.ParentThreadId,
+                assignedId = r.AssignedId,
+            }).ToList());
+        });
+
         // S6 PR4 — acquire a SubmitLockRegistry slot synthetically so the
         // Replace-token-submit-in-flight e2e spec can observe the aria-disabled
         // AuthSection link without spinning up the full submit pipeline. Does NOT
