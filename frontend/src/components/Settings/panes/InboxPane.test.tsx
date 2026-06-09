@@ -123,6 +123,16 @@ describe('InboxPane reorder', () => {
     await waitFor(() => expect(other).toBeEnabled());
   });
 
+  it('re-enables reorder controls after a FAILED move POST (no permanent lock)', async () => {
+    // If the POST rejects, the in-flight guard must still release via .finally —
+    // otherwise a single failed move would lock the reorder UI forever.
+    renderInboxPane({ set: () => Promise.reject(new Error('boom')) });
+    await userEvent.click(screen.getByRole('button', { name: 'Move Review requested down' }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Move Authored by me up' })).toBeEnabled(),
+    );
+  });
+
   it('disables Restore default order when already at the canonical default', () => {
     renderInboxPane();
     expect(screen.getByRole('button', { name: 'Restore default order' })).toBeDisabled();
