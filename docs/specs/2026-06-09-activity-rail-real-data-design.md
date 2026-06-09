@@ -51,8 +51,9 @@ mock deleted, toggle wired) and no Phase-2 wire surface was ever shipped.
 |---|---|---|
 | **Activity source** | `received_events` only (carries the actor) | + `notifications` merged in (fresh, you-relevant) |
 | **Watching panel** | hidden (rail shows Activity only) | `/user/subscriptions` + count |
-| **Merge engine** | trivial: one source → window → sort → cap | full: two-stage cross-feed dedup, actor-preserving merge, event-slot reservation |
-| **Verb phrasing** | actor always present | + actorless templates (notifications carry no actor) |
+| **Merge engine** | one source → window → within-feed dedup → sort | full: two-stage cross-feed dedup, actor-preserving merge, event-slot reservation |
+| **Verb phrasing** | actor always present (reviewed/commented/opened/merged; no "pushed") | + actorless templates (notifications carry no actor) |
+| **Bot filter** | in-rail toggle, default show, persisted (`activityRailShowBots`) | (unchanged) |
 | **Refresh** | ~90s poll, last-good retention | + ~60s server TTL cache (3 calls/miss) + visibility-pause |
 | **Routing** | in-app `<Link>` (received_events always carry a PR URL) | + external/fallback handling for varied notification URLs |
 | **New classic scope** | none (`repo` covers received_events) | none (`repo` covers notifications + subscriptions) |
@@ -123,22 +124,38 @@ Every Activity item is **anchored to a pull request**, so every row is clickable
 real PR and the dedup key is unambiguous (a real PR number — an Issue #5 and a PR #5
 never collide).
 
-**[P1] received_events type set** (each yields a PR number, all carry an actor):
+**[P1] received_events type set** — **verified live against the owner's real feed**
+(78 PR-anchored events, 100% carrying both actor and PR number). Each row below was
+observed; reviews dominate (~48), then review-comments (~14), then PR lifecycle (~11):
 
 | Event type | → Verb | PR number from |
 |---|---|---|
-| `PullRequestEvent` action `opened`/`reopened` | Opened/Reopened | `payload.pull_request.number` |
-| `PullRequestEvent` action `synchronize` | **Pushed** (new commits to the PR) | `payload.pull_request.number` |
-| `PullRequestEvent` action `closed` | Closed / Merged (if `merged`) | `payload.pull_request.number` |
 | `PullRequestReviewEvent` | Reviewed | `payload.pull_request.number` |
 | `PullRequestReviewCommentEvent` | Commented | `payload.pull_request.number` |
 | `IssueCommentEvent` **only when `payload.issue.pull_request` present** | Commented | `payload.issue.number` |
+| `PullRequestEvent` action `opened`/`reopened` | Opened / Reopened | `payload.pull_request.number` |
+| `PullRequestEvent` action `closed` | Closed / Merged (if `payload.pull_request.merged`) | `payload.pull_request.number` |
 
-`PushEvent` is **excluded** — it references a branch/commits and carries **no PR
-number**; the "pushed to a PR" signal comes from `PullRequestEvent` action
-`synchronize` (which does carry the number). `IssueCommentEvent` on a plain issue
-(no `pull_request` marker) is dropped. Any unmapped type → dropped (not `Other`, to
-keep the feed PR-clean).
+**No "pushed" verb (confirmed gap).** `PushEvent` references a branch/commits and
+carries **no PR number**, and the PR `synchronize` action (the "new commits on the PR"
+signal) is **filtered out of the Events API** — verified against three busy public
+repos (0 `synchronize` in 300 events) *and* the owner's live feed. So the original
+mock's "pushed iter N to #PR" line is **not buildable from `received_events`**; the
+value comes from reviewed / commented / opened / merged instead (which the live feed
+has in abundance). `IssueCommentEvent` on a plain issue (no `pull_request` marker) is
+dropped. Any unmapped type → dropped (not `Other`, to keep the feed PR-clean).
+
+**Bots appear and are kept by default.** The live feed includes bot actors
+(`mergewatch-playlist[bot]`, `Copilot`, etc.). They are **kept** by default and
+filtered via an in-rail toggle (see § P1 frontend). Each item is server-tagged
+`ActorIsBot` — detected by the `[bot]` login suffix, **plus a small known-bot
+allowlist** for suffix-less review bots (e.g. `Copilot`, whose login lacked the suffix
+in the live feed — confirm the exact login at implementation).
+
+**Within-feed dedup (Phase 1, required).** The live feed emits the *same* actor / verb
+/ PR more than once (e.g. `Copilot reviewed #195` appeared twice). Phase 1's builder
+therefore collapses duplicates on **`(Repo, PrNumber, Verb, ActorLogin)`**, keeping the
+most recent. (This is the single-source precursor to Phase 2's cross-feed merge.)
 
 **[P2] notifications scope:** only `subject.type == "PullRequest"`; Issue / Discussion
 / Release / CheckSuite (`ci_activity`) / Commit subjects are **dropped**. Non-PR
@@ -150,11 +167,12 @@ subjects (notably `ci_activity`) are in § Out of scope as a deferred extension.
 // --- P1 ---
 public enum ActivitySource { ReceivedEvent }                 // wire: kebab-case; P2 adds Notification
 public enum ActivityVerb {                                    // wire: kebab-case; P1 emits a subset
-  Opened, Reopened, Closed, Merged, Pushed, Reviewed, Commented, Other
+  Opened, Reopened, Closed, Merged, Reviewed, Commented, Other   // NB: no Pushed — not derivable (see § Scope)
 }                                                             // P2 adds ReviewRequested, Mentioned
 
 public sealed record ActivityItem(
   string? ActorLogin, string? ActorAvatarUrl,   // P1 always populates (events carry actor); nullable so P2 notifications fit
+  bool ActorIsBot,                              // server-tagged; client filters on the in-rail toggle
   ActivityVerb Verb, string Repo,
   int PrNumber, string? Title, string Url,
   DateTimeOffset Timestamp, ActivitySource Source);
@@ -193,19 +211,25 @@ catches transport / 429 / 403 / cancellation-adjacent failures, returns **empty 
 
 ### Builder (`PRism.Core/Activity/ActivityFeedBuilder`) — single-source form
 
-Pure, unit-testable with a fake reader. One source → no dedup, no slot reservation:
+Pure, unit-testable with a fake reader. One source, but real data showed it still
+needs a within-feed dedup:
 
 1. **Normalize** each event in the [P1] type set → `ActivityItem` (`ActorLogin` +
-   `ActorAvatarUrl` from `actor`, `Verb` per the table, `Repo`, `PrNumber` from the
-   payload field named in the table, `Url`, `Timestamp = created_at`,
-   `Source = ReceivedEvent`). Events outside the set are dropped. **If `actor` is
-   unexpectedly absent, drop the item** — this keeps the P1 guarantee that every
-   emitted item has a non-null `ActorLogin`.
+   `ActorAvatarUrl` from `actor`, `ActorIsBot` per the detection rule (`[bot]` suffix +
+   known-bot allowlist), `Verb` per the table, `Repo`, `PrNumber` from the payload
+   field named in the table, `Url`, `Timestamp = created_at`, `Source = ReceivedEvent`).
+   Events outside the set are dropped. **If `actor` is unexpectedly absent, drop the
+   item** — keeps the P1 guarantee that every emitted item has a non-null `ActorLogin`.
 2. **Window** to the last 24h.
-3. **Sort** by `Timestamp` desc; **cap** at `MaxActivityItems` (12).
+3. **Within-feed dedup** on `(Repo, PrNumber, Verb, ActorLogin)`, keeping the most
+   recent (the live feed repeats the same actor/verb/PR — e.g. `Copilot reviewed #195`
+   twice).
+4. **Sort** by `Timestamp` desc. **Do NOT cap server-side** — return the deduped 24h
+   set up to a safety max (`MaxRawItems`, ~50) so the client can filter bots and *then*
+   cap to `MaxActivityItems` (12) without leaving gaps (see § P1 frontend).
 
 The builder leaves a clean seam for Phase 2 to insert the notification source + the
-dedup/merge/slot-reservation stages between normalize and cap.
+cross-feed dedup/merge/slot-reservation stages.
 
 ### Endpoint (`PRism.Web/Endpoints/ActivityEndpoints.cs`)
 
@@ -244,8 +268,18 @@ Consumes `useActivity`; renders **only the Activity panel** in P1 — the Watchi
 not stretched to inbox height.
 
 - **Verb phrasing:** every P1 item has an actor → `{actor} {verbPhrase} {prRef}`
-  (e.g. "amelia.cho pushed to #1842", "noah.s reviewed #1810"), with a small avatar +
-  login. (Actorless templates arrive in P2 with notifications.)
+  (e.g. "noah.s reviewed #1810", "rohitpradhan03 commented on MindBodyPOS#5436",
+  "jules.t merged #1827"), with a small avatar + login. (Actorless templates arrive in
+  P2 with notifications.)
+- **Bot filter toggle (in-rail header):** a small control at the top of the Activity
+  panel toggles bot-authored items in/out — default **show** (`mergewatch[bot]`,
+  `Copilot`, etc. visible). Filtering is **client-side and instant**: the hook holds the
+  full deduped set (`ActorIsBot`-tagged); the rail filters per the toggle, **then** caps
+  to `MaxActivityItems` (12) — so hiding bots backfills with human activity instead of
+  leaving gaps. The toggle state **persists** as an inbox preference
+  `inbox.activityRailShowBots` (Bool, default `true`) via the existing scalar-config
+  pipeline (#275 pattern) + `InboxPreferencesDto`, so the choice survives reloads. This
+  is distinct from the Settings "Show activity rail" master toggle.
 - **Clickable items (in-app):** received_events items always carry a GitHub PR
   `html_url` (`github.com/{owner}/{repo}/pull/{n}`). A small parser extracts
   owner/repo/number from that URL into a `PrReference` and builds the **in-app router
@@ -302,10 +336,12 @@ viewport). Turning it on, with real data backing the rail, completes #309's defe
 
 ## P1 testing (TDD red → green)
 
-- **Builder** (fake reader): the type→verb table incl. `synchronize`→Pushed and
-  `closed`+merged→Merged; `IssueCommentEvent` kept only when `payload.issue.
+- **Builder** (fake reader): the type→verb table (Review/ReviewComment/IssueComment-on-
+  PR/PR-opened/closed-merged); `IssueCommentEvent` kept only when `payload.issue.
   pull_request` present (plain-issue comment dropped); `PushEvent` dropped; actor-absent
-  event dropped; 24h windowing; sort + cap.
+  event dropped; **`ActorIsBot` tagging** (`[bot]` suffix + allowlist; `Copilot` → bot);
+  **within-feed dedup** collapses repeated `(Repo,PrNumber,Verb,ActorLogin)` keeping the
+  newest; 24h windowing; sort; returns up to `MaxRawItems` (no server cap to 12).
 - **Reader** (mocked `HttpClient`): received_events shape parsing; PR-number extraction
   per type; 429 / 403 → empty + degraded.
 - **Endpoint:** 200 happy; 200 degraded; no-token → empty + degraded; served behind
@@ -313,7 +349,8 @@ viewport). Turning it on, with real data backing the rail, completes #309's defe
 - **Hook** (vitest): poll cadence; error path; last-good retention.
 - **Rail** (vitest): actor phrasing render; empty-state copy; degraded note distinct
   from empty; in-app link parse (valid GitHub PR URL → `/pr/…` Link; malformed → safe
-  external fallback, no throw).
+  external fallback, no throw); **bot toggle filters `ActorIsBot` items client-side and
+  re-caps to 12**; toggle reads/writes `inbox.activityRailShowBots`.
 - **Settings toggle:** reflects + writes `inbox.showActivityRail`.
 - **e2e:** rail visual baseline with real-shaped fake data via a Test-env activity fake
   seam mirroring `PRISM_E2E_FAKE_REVIEW` (`ASPNETCORE_ENVIRONMENT=Test`). Seam shape is
@@ -322,9 +359,13 @@ viewport). Turning it on, with real data backing the rail, completes #309's defe
 
 ## P1 acceptance criteria
 
-- [ ] Activity panel renders real `received_events` (PR-anchored type set), actor +
-      verb + PR ref + relative time; items open the PR in-app.
-- [ ] `synchronize`→"pushed" line works (the flagship signal) and carries the PR number.
+- [ ] Activity panel renders real `received_events` (PR-anchored type set: reviewed /
+      commented / opened / closed / merged), actor + verb + PR ref + relative time;
+      items open the PR in-app.
+- [ ] Within-feed dedup collapses repeated actor/verb/PR; no "pushed" verb (confirmed
+      unavailable).
+- [ ] In-rail bot toggle (default show) filters `[bot]`/known-bot actors client-side and
+      re-caps to 12; choice persists via `inbox.activityRailShowBots`.
 - [ ] Watching `<section>` not rendered; loading skeleton shows a single panel.
 - [ ] Empty state reads "No pull-request activity in the last 24h"; degraded note is
       visually distinct from empty.
@@ -480,7 +521,9 @@ could be served the prior identity's feed data for up to 60s.
 ## Constants *(shared)*
 
 - Activity window: **24h** (matches the existing "last 24h" label). Not configurable.
-- `MaxActivityItems` = 12; `MinEventSlots` (P2) = 4; `MaxWatchingRows` (P2) = 8.
+- `MaxActivityItems` = 12 (**visible cap, applied client-side after bot-filter**);
+  `MaxRawItems` ≈ 50 (server returns the deduped 24h set up to this so the client can
+  filter + re-cap without gaps); `MinEventSlots` (P2) = 4; `MaxWatchingRows` (P2) = 8.
 - Poll cadence: ~90s client. Server TTL cache (~60s) is **P2 only**.
 
 ## Out of scope / deferred *(shared)*
