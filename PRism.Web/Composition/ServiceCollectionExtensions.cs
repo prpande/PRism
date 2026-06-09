@@ -67,7 +67,8 @@ internal static class ServiceCollectionExtensions
                 [typeof(IInboxRanker)] = sp.GetRequiredService<PlaceholderInboxRanker>(),
             },
             real: realSeams,
-            liveAvailable: () => false));            // P0: no live features; P1 wires the cached probe-availability
+            consent: sp.GetRequiredService<AiConsentState>(),
+            features: sp.GetRequiredService<AiFeatureState>()));
 
         return services;
     }
