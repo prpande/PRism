@@ -33,9 +33,11 @@ function setHooks(
     isLoading?: boolean;
     error?: unknown;
     hasUpdate?: boolean;
-    // aiPreview now controls the inboxRanking gate (ActivityRail visibility)
     aiPreview?: boolean;
     inboxEnrichment?: boolean;
+    // #283 the ActivityRail is gated on preferences.inbox.showActivityRail (default false),
+    // decoupled from the AI-preview toggle.
+    showActivityRail?: boolean;
     sectionOrder?: string;
   } = {},
 ) {
@@ -79,6 +81,8 @@ function setHooks(
         },
         sectionOrder:
           opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned',
+        // #283 the rail reads this dedicated flag, not the AI gate.
+        showActivityRail: opts.showActivityRail ?? false,
       },
       github: {
         host: 'https://github.com',
@@ -90,12 +94,10 @@ function setHooks(
     refetch: vi.fn().mockResolvedValue(undefined),
     set: vi.fn().mockResolvedValue(undefined),
   });
-  // Wire useAiGate: inboxEnrichment → showCategoryChip, inboxRanking → showActivityRail.
-  // aiPreview maps to inboxRanking because showActivityRail was previously gated on
-  // preferences.ui.aiPreview (see migration note in InboxPage.tsx).
+  // #283 useAiGate only gates the category chip now (inboxEnrichment). The ActivityRail
+  // is gated on preferences.inbox.showActivityRail above, not via useAiGate.
   vi.mocked(useAiGate).mockImplementation((key) => {
     if (key === 'inboxEnrichment') return opts.inboxEnrichment ?? false;
-    if (key === 'inboxRanking') return opts.aiPreview ?? false;
     return false;
   });
 }
@@ -199,14 +201,16 @@ describe('InboxPage', () => {
     expect(screen.getByRole('button', { name: /reload/i })).toBeInTheDocument();
   });
 
-  it('renders ActivityRail when aiPreview is on', () => {
-    setHooks({ data: sampleData, aiPreview: true });
+  it('renders ActivityRail when inbox.showActivityRail is on', () => {
+    // #283 decoupled from AI: even with aiPreview off, the rail shows when its flag is on.
+    setHooks({ data: sampleData, aiPreview: false, showActivityRail: true });
     renderPage();
     expect(screen.getByRole('complementary', { name: /activity/i })).toBeInTheDocument();
   });
 
-  it('hides ActivityRail when aiPreview is off', () => {
-    setHooks({ data: sampleData, aiPreview: false });
+  it('hides ActivityRail when inbox.showActivityRail is off even with aiPreview on', () => {
+    // #283 decoupled from AI: AI on must NOT surface the fabricated rail.
+    setHooks({ data: sampleData, aiPreview: true, showActivityRail: false });
     renderPage();
     expect(screen.queryByRole('complementary', { name: /activity/i })).not.toBeInTheDocument();
   });
@@ -318,6 +322,7 @@ describe('InboxPage — useAiGate migrations', () => {
           },
           defaultSort: 'updated',
           sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+          showActivityRail: false,
         },
         github: {
           host: 'https://github.com',
@@ -331,7 +336,33 @@ describe('InboxPage — useAiGate migrations', () => {
     });
   });
 
-  it('calls useAiGate("inboxEnrichment") and useAiGate("inboxRanking")', () => {
+  // #283: re-point usePreferences with a chosen showActivityRail; AI preview stays whatever
+  // the beforeEach set (off) to prove the rail does not ride the AI gate.
+  function setShowActivityRail(showActivityRail: boolean) {
+    vi.mocked(usePreferences).mockReturnValue({
+      preferences: {
+        ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+        inbox: {
+          sections: {
+            'review-requested': true,
+            'awaiting-author': true,
+            'authored-by-me': true,
+            mentioned: true,
+            'recently-closed': true,
+          },
+          defaultSort: 'updated',
+          sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+          showActivityRail,
+        },
+        github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+      } as PreferencesResponse,
+      error: null,
+      refetch: vi.fn().mockResolvedValue(undefined),
+      set: vi.fn().mockResolvedValue(undefined),
+    });
+  }
+
+  it('uses useAiGate for the category chip but NOT for the activity rail (#283 decouple)', () => {
     vi.mocked(useAiGate).mockReturnValue(false);
     render(
       <MemoryRouter initialEntries={['/']}>
@@ -342,11 +373,12 @@ describe('InboxPage — useAiGate migrations', () => {
     );
     const calls = vi.mocked(useAiGate).mock.calls.map((c) => c[0]);
     expect(calls).toContain('inboxEnrichment');
-    expect(calls).toContain('inboxRanking');
+    expect(calls).not.toContain('inboxRanking'); // rail no longer rides the AI gate
   });
 
-  it('hides the activity rail when inboxRanking gate is off', () => {
-    vi.mocked(useAiGate).mockImplementation((key) => key === 'inboxEnrichment');
+  it('hides the activity rail when inbox.showActivityRail is false', () => {
+    vi.mocked(useAiGate).mockReturnValue(false);
+    setShowActivityRail(false);
     const { container } = render(
       <MemoryRouter initialEntries={['/']}>
         <OpenTabsProvider>
@@ -357,8 +389,9 @@ describe('InboxPage — useAiGate migrations', () => {
     expect(container.querySelector('[data-testid="activity-rail"]')).toBeNull();
   });
 
-  it('shows the activity rail when inboxRanking gate is on', () => {
-    vi.mocked(useAiGate).mockImplementation((key) => key === 'inboxRanking');
+  it('shows the activity rail when inbox.showActivityRail is true (AI gate off)', () => {
+    vi.mocked(useAiGate).mockReturnValue(false); // AI fully off — rail still shows
+    setShowActivityRail(true);
     const { container } = render(
       <MemoryRouter initialEntries={['/']}>
         <OpenTabsProvider>

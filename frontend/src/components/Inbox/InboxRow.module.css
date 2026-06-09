@@ -190,6 +190,18 @@
   white-space: nowrap;
 }
 
+/* #283 AI-preview marker inside the category chip. Muted (--text-3), distinct from the
+   chip's --accent category text, so the canned "Refactor" reads as a sample not a real
+   label. Fixed-width / non-shrinking so the category text absorbs any width pressure
+   ("shorten category, not marker"). Hides with the chip below the 560px breakpoint. */
+.chipMarker {
+  flex: none;
+  margin-right: 5px;
+  color: var(--text-3);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
 /* Done-state badge — text is the primary signal, colour is secondary */
 .stateBadge {
   display: inline-flex;

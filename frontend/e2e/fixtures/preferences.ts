@@ -45,6 +45,8 @@ export function makeDefaultPreferences() {
       // #275: the real GET /api/preferences always emits sectionOrder; keep the
       // shared mock in contract with it (canonical order = no reorder applied).
       sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+      // #283: real GET always emits showActivityRail; default false (rail hidden).
+      showActivityRail: false,
     },
     github: {
       host: 'https://github.com',

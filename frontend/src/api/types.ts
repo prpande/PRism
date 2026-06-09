@@ -30,6 +30,9 @@ export interface InboxPreferences {
   sections: InboxSectionsPreferences;
   defaultSort: SortKey;
   sectionOrder: string;
+  // #283 gates the (fabricated, non-AI) activity rail. Decoupled from the AI-preview
+  // toggle onto this dedicated flag; default false (config-only, no Settings UI yet).
+  showActivityRail: boolean;
 }
 
 export interface GithubPreferences {

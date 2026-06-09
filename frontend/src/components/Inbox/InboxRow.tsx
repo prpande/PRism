@@ -99,7 +99,15 @@ export function InboxRow({
           )}
           {showCategoryChip && enrichment?.categoryChip && (
             <span className={styles.chipWrap}>
-              <span className={styles.chip}>{enrichment.categoryChip}</span>
+              {/* #283 visual AI-preview marker. The fake category is visual-only (the row's
+                  aria-label omits it and the button swallows descendant labels), so this is a
+                  sighted-user cue, not an a11y mechanism. The marker is fixed-width (flex:none)
+                  so the category text — not the marker — absorbs any width pressure, and it
+                  hides together with the chip below the 560px breakpoint. */}
+              <span className={styles.chip}>
+                <span className={styles.chipMarker} aria-hidden="true">AI</span>
+                {enrichment.categoryChip}
+              </span>
               <span className={styles.dotsep}>·</span>
             </span>
           )}

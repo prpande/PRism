@@ -18,7 +18,8 @@ public class ConfigStoreTests
 
         store.Current.Ui.Theme.Should().Be("system");
         store.Current.Ui.Accent.Should().Be("indigo");
-        store.Current.Ui.AiPreview.Should().BeFalse();
+        store.Current.Ui.AiPreview.Should().BeTrue();   // #283 AI preview ON by default for fresh installs
+        store.Current.Inbox.ShowActivityRail.Should().BeFalse(); // #283 rail decoupled from AI, default OFF
         store.Current.Github.Host.Should().Be("https://github.com");
         File.Exists(Path.Combine(dir.Path, "config.json")).Should().BeTrue();
     }
@@ -165,7 +166,10 @@ public class ConfigStoreTests
 
         store.Current.Github.Host.Should().Be("https://ghe.acme.com"); // user value preserved
         store.Current.Ui.Should().NotBeNull();
-        store.Current.Ui.AiPreview.Should().BeFalse();              // from default
+        // #283: a legacy `ui`-less config inherits AppConfig.Default.Ui, whose AiPreview is
+        // now true. This is the accepted "ui-section-absent flips ON" edge documented in the
+        // spec — such a config predates the ui section and never carried an AI value to preserve.
+        store.Current.Ui.AiPreview.Should().BeTrue();               // from default (now ON)
         store.Current.Polling.Should().NotBeNull();
         store.Current.Polling.InboxSeconds.Should().Be(120);        // from default
         store.Current.Review.Should().NotBeNull();
@@ -175,6 +179,42 @@ public class ConfigStoreTests
         store.Current.Inbox.Should().NotBeNull();
         store.Current.Inbox.Deduplicate.Should().BeTrue();
         store.Current.Inbox.Sections.ReviewRequested.Should().BeTrue();
+    }
+
+    // #283 AC #1: an EXISTING config that carries ui.aiPreview = false is preserved on load
+    // (the new default-on does NOT overwrite a value physically present on disk).
+    [Fact]
+    public async Task LoadAsync_preserves_existing_aiPreview_false()
+    {
+        using var dir = new TempDataDir();
+        var json = """
+            { "ui": { "theme": "system", "accent": "indigo", "aiPreview": false, "density": "comfortable", "contentScale": "m" } }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), json);
+
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Ui.AiPreview.Should().BeFalse(); // saved value wins over the new default
+    }
+
+    // #283: a config whose `ui` section is present but lacks the `aiPreview` key deserializes
+    // the non-nullable bool to default(false) — it stays OFF, NOT the new default-on. Documents
+    // the precise preservation boundary (key-present vs ui-section-present-but-key-absent).
+    [Fact]
+    public async Task LoadAsync_with_ui_present_but_aiPreview_key_absent_is_off()
+    {
+        using var dir = new TempDataDir();
+        var json = """
+            { "ui": { "theme": "dark", "accent": "amber" } }
+            """;
+        await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), json);
+
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Ui.Theme.Should().Be("dark");          // ui section honored
+        store.Current.Ui.AiPreview.Should().BeFalse();       // missing key → default(bool), not new default-on
     }
 
     [Fact]

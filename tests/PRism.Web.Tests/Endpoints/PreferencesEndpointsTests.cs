@@ -31,7 +31,7 @@ public class PreferencesEndpointsTests
         var ui = body.GetProperty("ui");
         ui.GetProperty("theme").GetString().Should().Be("system");
         ui.GetProperty("accent").GetString().Should().Be("indigo");
-        ui.GetProperty("aiPreview").GetBoolean().Should().BeFalse();
+        ui.GetProperty("aiPreview").GetBoolean().Should().BeTrue();   // #283 AI preview ON by default
         ui.GetProperty("density").GetString().Should().Be("comfortable");
         ui.GetProperty("contentScale").GetString().Should().Be("m");
 
@@ -40,6 +40,8 @@ public class PreferencesEndpointsTests
         sections.GetProperty("awaiting-author").GetBoolean().Should().BeTrue();
         sections.GetProperty("authored-by-me").GetBoolean().Should().BeTrue();
         sections.GetProperty("mentioned").GetBoolean().Should().BeTrue();
+        // #283 the activity rail is decoupled from AI onto this dedicated flag, default OFF.
+        body.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeFalse();
 
         var github = body.GetProperty("github");
         github.GetProperty("host").GetString().Should().Be("https://github.com");
@@ -172,5 +174,34 @@ public class PreferencesEndpointsTests
         var after = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
         after.GetProperty("inbox").GetProperty("sectionOrder").GetString()
             .Should().Be("mentioned,authored-by-me,review-requested,awaiting-author");
+    }
+
+    // #283: inbox.showActivityRail surfaces in GET (default false) and round-trips through POST.
+    [Fact]
+    public async Task GET_inbox_showActivityRail_defaults_false_and_POST_round_trips()
+    {
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        var origin = client.BaseAddress!.GetLeftPart(UriPartial.Authority);
+
+        var initial = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
+        initial.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeFalse();
+
+        using var content = new StringContent(
+            """{ "inbox.showActivityRail": true }""",
+            System.Text.Encoding.UTF8,
+            "application/json");
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri("/api/preferences", UriKind.Relative))
+        {
+            Content = content,
+        };
+        req.Headers.Add("Origin", origin);
+        var post = await client.SendAsync(req);
+        post.StatusCode.Should().Be(HttpStatusCode.OK);
+        var postBody = await post.Content.ReadFromJsonAsync<JsonElement>();
+        postBody.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeTrue();
+
+        var after = await client.GetFromJsonAsync<JsonElement>(new Uri("/api/preferences", UriKind.Relative));
+        after.GetProperty("inbox").GetProperty("showActivityRail").GetBoolean().Should().BeTrue();
     }
 }

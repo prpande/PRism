@@ -24,7 +24,9 @@ export function InboxPage() {
   const initialSort = preferences?.inbox.defaultSort ?? 'updated';
 
   const showCategoryChip = useAiGate('inboxEnrichment');
-  const showActivityRail = useAiGate('inboxRanking');
+  // #283 the activity rail is a fabricated, non-AI mockup — decoupled from the AI-preview
+  // toggle onto a dedicated inbox flag (default false), so default-on AI no longer surfaces it.
+  const showActivityRail = preferences?.inbox.showActivityRail ?? false;
   const sections = data?.sections ?? [];
   const allEmpty = sections.length > 0 && sections.every((s) => s.items.length === 0);
 

@@ -22,7 +22,8 @@ public class AiEndpointsTests
     public async Task Get_ai_summary_returns_204_when_aiPreview_is_off()
     {
         using var factory = new PRismWebApplicationFactory();
-        // Default state: AiPreviewState.IsOn = false → NoopPrSummarizer.
+        // #283 the default is now AiPreview ON; set OFF explicitly to exercise the Noop path.
+        factory.Services.GetRequiredService<AiPreviewState>().IsOn = false;
         var client = factory.CreateClient();
 
         var resp = await client.GetAsync(new Uri("/api/pr/octo/repo/1/ai/summary", UriKind.Relative));
