@@ -289,8 +289,14 @@ export function FilesTab() {
     // (and reappears via findExistingDraft when the user clicks back to its
     // line); discarding it is an explicit action on the composer's Discard
     // button. The flush is fire-and-forget — it reads the latest body before
-    // the composer unmounts, and onSaved refetches when it lands.
-    void activeComposerFlushRef.current?.();
+    // the composer unmounts, and onSaved refetches when it lands. We don't
+    // block the switch on it, but a rejection is logged rather than swallowed:
+    // the unmounted composer has no badge to surface the failure, and the
+    // dropped edit is otherwise invisible (the draft's last-saved state stays
+    // intact).
+    activeComposerFlushRef.current?.().catch((err) => {
+      console.error('[FilesTab] flush on line-switch failed; latest edit may be unsaved', err);
+    });
     openComposerAt(rawAnchor);
   }
 
