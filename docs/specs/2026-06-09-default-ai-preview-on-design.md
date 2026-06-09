@@ -14,8 +14,8 @@ re-check.
 Make AI preview features **on by default for fresh installs**, so a new user sees
 the AI surfaces without first discovering the Settings → Appearance toggle. AI is
 still backed by **placeholder** (canned, local) implementations — no real LLM is
-wired — so the surfaces shown by default must honestly read as an *in-development
-preview*, never as a finished or broken feature.
+wired — so the surfaces shown by default must honestly read as an _in-development
+preview_, never as a finished or broken feature.
 
 This is an accepted, deliberate choice (owner): flip the default **now**, with
 placeholder output visible. Existing users keep their saved value (see the
@@ -40,37 +40,38 @@ A single boolean, `UiConfig.AiPreview`, gates every AI surface:
   capabilities are uniformly AllOn/AllOff from `AiPreviewState.IsOn`.
 
 ### Existing-user preservation — the precise rule
+
 `ConfigStore.ReadFromDiskAsync` (`ConfigStore.cs:226-297`): a **missing file**
 writes `AppConfig.Default`; a **present file** is deserialized and only **null
 top-level sub-records** are backfilled (`Ui = parsed.Ui ?? AppConfig.Default.Ui`,
 whole-record granularity — not field-level). `UiConfig.AiPreview` is a
 non-nullable `bool`. Consequences after the flip:
 
-| On-disk config shape | Resulting `AiPreview` | Note |
-|---|---|---|
-| No file (true fresh install) | **true** (Default written) | the target case |
-| `ui.aiPreview` key present | **its saved value** | genuine existing users preserved |
-| `ui` present, `aiPreview` key absent | **false** | `System.Text.Json` → `default(bool)`; stays OFF |
-| `ui` section entirely absent (legacy partial) | **true** | inherits `Default.Ui` via backfill |
+| On-disk config shape                          | Resulting `AiPreview`      | Note                                            |
+| --------------------------------------------- | -------------------------- | ----------------------------------------------- |
+| No file (true fresh install)                  | **true** (Default written) | the target case                                 |
+| `ui.aiPreview` key present                    | **its saved value**        | genuine existing users preserved                |
+| `ui` present, `aiPreview` key absent          | **false**                  | `System.Text.Json` → `default(bool)`; stays OFF |
+| `ui` section entirely absent (legacy partial) | **true**                   | inherits `Default.Ui` via backfill              |
 
 The last row is the only behavior change for a pre-existing file: a legacy
 `ui`-less config flips ON. This is **accepted** (such a config predates the `ui`
 section entirely; the user never had or saw an AI toggle), but it is tested and
 documented rather than asserted away. AC #1's "existing preserved" therefore means
-*preserved when the `aiPreview` key is physically on disk*.
+_preserved when the `aiPreview` key is physically on disk_.
 
 ## Honesty audit (what a fresh default-on user actually sees)
 
-| Surface | Renders on a real fresh install? | Marked as preview today? |
-|---|---|---|
-| PR summary card | Yes, always | ✅ "AI preview — sample content, not generated from this PR" |
-| Pre-submit validator | On submit | ✅ same chip |
-| Composer assistant / Ask-AI | When composing | ✅ "AI preview — composer suggestions appear here" |
-| **Inbox category chip** ("Refactor" on every row) | **Yes — every inbox row** | ❌ bare chip, no marker |
-| **Activity rail** (two fabricated sections — see below) | **Yes — inbox sidebar** | ❌ no marker |
-| File-focus dots | No* | n/a (renders nothing) |
-| Hunk annotations | No* | n/a (renders nothing) |
-| Draft suggestions | No** | n/a (renders nothing) |
+| Surface                                                 | Renders on a real fresh install? | Marked as preview today?                                     |
+| ------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------ |
+| PR summary card                                         | Yes, always                      | ✅ "AI preview — sample content, not generated from this PR" |
+| Pre-submit validator                                    | On submit                        | ✅ same chip                                                 |
+| Composer assistant / Ask-AI                             | When composing                   | ✅ "AI preview — composer suggestions appear here"           |
+| **Inbox category chip** ("Refactor" on every row)       | **Yes — every inbox row**        | ❌ bare chip, no marker                                      |
+| **Activity rail** (two fabricated sections — see below) | **Yes — inbox sidebar**          | ❌ no marker                                                 |
+| File-focus dots                                         | No\*                             | n/a (renders nothing)                                        |
+| Hunk annotations                                        | No\*                             | n/a (renders nothing)                                        |
+| Draft suggestions                                       | No\*\*                           | n/a (renders nothing)                                        |
 
 \* Matching is **exact path** (`FileTree.tsx:194` map lookup by `node.path`;
 `DiffPane.tsx:184` `a.path !== selectedPath`). The canned anchor is `src/Calc.cs`.
@@ -78,19 +79,20 @@ So these render nothing **unless the user's real diff contains a file at exactly
 `src/Calc.cs`** — a low-probability path collision, **accepted** (not a structural
 guarantee). Not "renders nothing" as an absolute.
 
-\*\* Draft suggestions are safe for a *stronger* reason: `UnresolvedPanel.tsx:186`
+\*\* Draft suggestions are safe for a _stronger_ reason: `UnresolvedPanel.tsx:186`
 renders one only when a **real stale draft already exists** at the exact
 `src/Calc.cs:3` coordinate — effectively unreachable on a real install, not merely
 a path-collision bet.
 
 **The activity rail is worse than a single fabricated list.** `ActivityRail.tsx`
 renders **two** `<section>`s over static `activityData.ts`:
+
 1. **Activity** — a fabricated teammate feed ("amelia.cho pushed iter 3 to #1842",
    "ci-bot marked CI failing on #1827").
 2. **Watching** — fabricated watched repos ("platform/billing-svc · 2",
    "platform/tenants-api · 1").
 
-Two problems: (a) the rail is a **pure static mockup** — it is *not* backed by the
+Two problems: (a) the rail is a **pure static mockup** — it is _not_ backed by the
 `IInboxRanker` placeholder seam or any data pipeline, so wiring a real LLM would not
 make it real; (b) the "Watching" section is fabricated **telemetry**, not AI output
 at all, so an "AI preview" label on it would itself be inaccurate.
@@ -98,18 +100,27 @@ at all, so an "AI preview" label on it would itself be inaccurate.
 ## Scope (owner-approved base: scope A — "mark what shows"), with one open decision
 
 ### Code changes
+
 1. **Flip the default** — `AppConfig.cs:24` `AiPreview` `false → true`.
 2. **Mark the inbox category chip** (C2) so it reads as an AI-preview sample.
 3. **Decouple the activity rail from AI** (C3) — the rail is a non-AI, fully
    fabricated mockup. Gate it on a **new `inbox.showActivityRail` config flag
    (default `false`)** instead of `useAiGate('inboxRanking')`. It no longer appears
-   for a default-on install (or any install) unless the flag is set in `config.json`.
+   for a default-on install (or any install) unless the flag is enabled. Note the
+   two key forms: `inbox.showActivityRail` is the **PATCH/allowlist** key (the
+   `POST /api/preferences` wire shape, camelCase dotted-path); the **on-disk
+   `config.json`** uses the Storage kebab-case nested shape —
+   `{ "inbox": { "show-activity-rail": true } }` — so a manual edit must use that
+   form, not the PATCH key. (Same kebab-vs-camel distinction flagged by Copilot on
+   PR #309.)
 
 ### Verification (no code)
+
 4. **Copy audit** (C4) — confirm welcome / Help / Settings copy is consistent with
    default-on. No change expected.
 
 ### Test coverage
+
 5. Backend default + preservation-edge tests; the egress-guard test; frontend marker
    tests; e2e regression. (See Testing strategy.)
 
@@ -124,6 +135,7 @@ is replaced in the live DI registration — because the default-on flag will alr
 be shipping to every fresh install.
 
 ### Rejected / held alternatives
+
 - **B — full per-surface marker pass (all 9 seams).** Most work lands on surfaces
   that never render on a real install. Gold-plating; rejected.
 - **Mark the rail in place (keep it AI-gated, label the aside).** Rejected by the
@@ -136,6 +148,7 @@ be shipping to every fresh install.
 ## Component designs
 
 ### C1 — Default flip + test ripple (`PRism.Core/Config/AppConfig.cs`)
+
 Change the third `UiConfig` positional arg `false → true`. One line.
 
 **Ripple — the real mechanism.** Affected tests do **not** construct a `UiConfig`;
@@ -143,7 +156,8 @@ they rely on the server default via `PRismWebApplicationFactory` (real `ConfigSt
 over a fresh temp `DataDir`, no override seam) and toggle behavior by setting
 `factory.Services.GetRequiredService<AiPreviewState>().IsOn = …`. The sweep:
 
-**(a) Flip the assertion to `true`** (these assert the *default*):
+**(a) Flip the assertion to `true`** (these assert the _default_):
+
 - `tests/PRism.Core.Tests/Config/ConfigStoreTests.cs:21`
   (`LoadAsync_creates_defaults_when_file_missing`) → `AiPreview.Should().BeTrue()`.
 - `tests/PRism.Web.Tests/Endpoints/PreferencesEndpointsTests.cs:34`
@@ -155,8 +169,9 @@ over a fresh temp `DataDir`, no override seam) and toggle behavior by setting
   it an isolated factory; keep the AllOff case by setting `IsOn = false` explicitly
   on an isolated factory.
 
-**(b) Make "off" explicit** (these assert behavior *when off*, today via the
+**(b) Make "off" explicit** (these assert behavior _when off_, today via the
 default — set `IsOn = false` to keep them meaningful):
+
 - `AiEndpointsTests.cs:22-31`, `AiFileFocusEndpointTests.cs:19-27`,
   `AiDraftSuggestionsEndpointTests.cs:19-27`, `AiHunkAnnotationsEndpointTests.cs:19-27`.
 
@@ -166,6 +181,7 @@ do **not** over-sweep `InboxRefreshOrchestratorTests.cs:321` (injects its own
 `useAiGate => false`).
 
 ### C2 — Inbox category chip marker (`frontend/src/components/Inbox/InboxRow.tsx:100-104`)
+
 Today: `<span className={chipWrap}><span className={chip}>{categoryChip}</span>…</span>`.
 
 **The fake category is visual-only — so the marker is a visual treatment.** The row
@@ -179,6 +195,7 @@ users who see the chip. (Do **not** rely on a chip `aria-label` as an a11y
 mechanism — it's swallowed. A `title` may stay as a mouse-hover tooltip only.)
 
 **Marker form (concrete, so the implementer doesn't guess):**
+
 - Prepend a **separate** element inside the chip: `<span className={chipMarker}>AI</span>`
   before the category text — i.e. renders as `AI Refactor`, not a single blob.
 - `chipMarker` uses a **muted token (`--text-3`), not `--accent`** (the chip shares
@@ -208,7 +225,7 @@ Watching), **not** backed by the `IInboxRanker` seam or any data pipeline — an
 `IInboxRanker.RankAsync` is **never called in the live inbox pipeline**
 (`InboxRefreshOrchestrator.cs:248` resolves only `IInboxItemEnricher`; the ranker
 seam is registered in DI but never resolved). NB: the one live `RankAsync` call,
-`AiEndpoints.cs:40`, is **`IFileFocusRanker`.RankAsync** — a *different* interface
+`AiEndpoints.cs:40`, is **`IFileFocusRanker`.RankAsync** — a _different_ interface
 that shares the method name, on the PR-detail file-focus surface, unrelated to the
 inbox. So the only thing `inboxRanking` gates is the rail's visibility, and the rail
 does not belong under the AI preview toggle.
@@ -260,6 +277,7 @@ This is the one place the review changed the originally-approved "mark everythin
 shown" framing — the owner chose to take the rail out of AI scope entirely.
 
 ### C4 — Copy audit (verify-only)
+
 - **Welcome** (`WelcomePage.tsx:20`): "AI that surfaces the hunks worth a closer
   look, still in active development." Already in-development framing → consistent. No
   change.
@@ -269,15 +287,17 @@ shown" framing — the owner chose to take the rail out of AI scope entirely.
 - Audit conclusion recorded in PR `## Proof`; AC #3 satisfied by verification.
 
 ### C5 — Egress guard (one cheap, non-brittle test)
+
 `PRism.AI.Placeholder` references only `Microsoft.Extensions.DependencyInjection.Abstractions`
-+ `PRism.AI.Contracts`; every seam returns `Task.FromResult(<canned>)` — zero
-egress today. Because the flip makes this assembly **ship enabled by default to
-every fresh install**, the zero-egress claim is now load-bearing. Add a single
-**assembly-reference assertion**: `PRism.AI.Placeholder` (and `PRism.AI.Contracts`)
-do not reference `System.Net.Http`. This is the non-brittle form of the rejected
-"runtime no-network" test — it fails only if someone deliberately adds a
-network-capable dependency to the placeholder assembly, which is exactly when it
-should fail.
+
+- `PRism.AI.Contracts`; every seam returns `Task.FromResult(<canned>)` — zero
+  egress today. Because the flip makes this assembly **ship enabled by default to
+  every fresh install**, the zero-egress claim is now load-bearing. Add a single
+  **assembly-reference assertion**: `PRism.AI.Placeholder` (and `PRism.AI.Contracts`)
+  do not reference `System.Net.Http`. This is the non-brittle form of the rejected
+  "runtime no-network" test — it fails only if someone deliberately adds a
+  network-capable dependency to the placeholder assembly, which is exactly when it
+  should fail.
 
 ## Testing strategy
 
@@ -322,7 +342,7 @@ should fail.
 ## B1 visual gate
 
 At green-and-ready, post Playwright screenshots for the owner's eyeball-assert:
-(a) the **inbox in a realistic fresh-install state** — a *sparse* real inbox (the
+(a) the **inbox in a realistic fresh-install state** — a _sparse_ real inbox (the
 true first impression), showing the marked category chip and **no activity rail**
 (decoupled, default off); (b) a PR-detail summary card with its marked AI summary.
 Using a sparse inbox (not seeded demo data) is deliberate — it shows what a new user

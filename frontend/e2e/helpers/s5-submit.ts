@@ -37,6 +37,9 @@ export const SubmitMethod = {
   DeletePendingReviewThread: 'DeletePendingReviewThreadAsync',
   FindOwn: 'FindOwnPendingReviewAsync',
   CreateIssueComment: 'CreateIssueCommentAsync',
+  // #302 Task 12 — post-now (inline + reply)
+  CreateReviewComment: 'CreateReviewCommentAsync',
+  CreateReviewCommentReply: 'CreateReviewCommentReplyAsync',
 } as const;
 
 // One-shot failure on the next call to `method`. afterEffect=true → the side effect lands first,
@@ -124,6 +127,28 @@ export async function inspectPendingReview(
   if (!resp.ok())
     throw new Error(`GET inspect-pending-review failed: ${resp.status()} ${await resp.text()}`);
   return (await resp.json()) as InspectPendingReview;
+}
+
+// #302 Task 12 — snapshot of all review comments (inline + reply) created since the last Reset().
+// Used by Task 13 e2e specs to assert the post-now path.
+export interface InspectReviewComment {
+  pr: { owner: string; repo: string; number: number };
+  kind: 'inline' | 'reply';
+  path: string | null;
+  lineNumber: number | null;
+  side: string | null;
+  body: string;
+  parentThreadId: string | null;
+  assignedId: number;
+}
+
+export async function inspectReviewComments(
+  request: APIRequestContext,
+): Promise<InspectReviewComment[]> {
+  const resp = await request.get(`${BACKEND}/test/submit/inspect-review-comments`);
+  if (!resp.ok())
+    throw new Error(`GET inspect-review-comments failed: ${resp.status()} ${await resp.text()}`);
+  return (await resp.json()) as InspectReviewComment[];
 }
 
 // Flips the scenario PR's open/closed/merged state.

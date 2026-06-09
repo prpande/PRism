@@ -28,6 +28,7 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
     private readonly Dictionary<string, FakePendingReview> _pendingByRef = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (Exception Ex, bool AfterEffect)> _failureByMethod = new(StringComparer.Ordinal);
     private readonly List<(PrReference Pr, string Body)> _issueCommentsCreated = new();
+    private readonly List<FakeReviewCommentRecord> _reviewCommentsCreated = new();
     private int _nextId = 1;
     private int _beginDelayMs;
     private int _findOwnReturnsNullFromCall = int.MaxValue;
@@ -52,6 +53,7 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
             _attachReplyCallCount = 0;
             _deleteThreadCallCount = 0;
             _issueCommentsCreated.Clear();
+            _reviewCommentsCreated.Clear();
         }
     }
 
@@ -223,6 +225,58 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
         lock (_gate) return _issueCommentsCreated.ToList();
     }
 
+    // #302 Task 12 — real in-memory implementations for the two post-now methods.
+    // Mirror CreateIssueCommentAsync: honour one-shot failure injection (pre- and
+    // after-effect), append to the introspection list, increment the shared id counter.
+    // DateTimeOffset.UtcNow is used deliberately — the same pattern as CreateIssueCommentAsync
+    // and BeginPendingReviewAsync; the fake's timestamps are not asserted by any test.
+    public Task<CreatedReviewCommentResult> CreateReviewCommentAsync(
+        PrReference reference, ReviewCommentRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentNullException.ThrowIfNull(request);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (TryTakeFailure(nameof(CreateReviewCommentAsync), afterEffectWanted: false, out var pre)) throw pre;
+            var id = (long)_nextId++;
+            _reviewCommentsCreated.Add(new FakeReviewCommentRecord(
+                reference, Kind: "inline",
+                Path: request.FilePath, LineNumber: request.LineNumber, Side: request.Side,
+                Body: request.BodyMarkdown, ParentThreadId: null, AssignedId: id));
+            if (TryTakeFailure(nameof(CreateReviewCommentAsync), afterEffectWanted: true, out var post)) throw post;
+            return Task.FromResult(new CreatedReviewCommentResult(id, DateTimeOffset.UtcNow));
+        }
+    }
+
+    public Task<CreatedReviewCommentResult> CreateReviewCommentReplyAsync(
+        PrReference reference, string parentThreadId, string bodyMarkdown, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(reference);
+        ArgumentNullException.ThrowIfNull(parentThreadId);
+        ArgumentNullException.ThrowIfNull(bodyMarkdown);
+        ct.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (TryTakeFailure(nameof(CreateReviewCommentReplyAsync), afterEffectWanted: false, out var pre)) throw pre;
+            var id = (long)_nextId++;
+            _reviewCommentsCreated.Add(new FakeReviewCommentRecord(
+                reference, Kind: "reply",
+                Path: null, LineNumber: null, Side: null,
+                Body: bodyMarkdown, ParentThreadId: parentThreadId, AssignedId: id));
+            if (TryTakeFailure(nameof(CreateReviewCommentReplyAsync), afterEffectWanted: true, out var post)) throw post;
+            return Task.FromResult(new CreatedReviewCommentResult(id, DateTimeOffset.UtcNow));
+        }
+    }
+
+    // Returns a locked snapshot of all review comments (inline + reply) created since
+    // the last Reset(). Parallel to SnapshotIssueComments(); consumed by unit tests
+    // and the /test/submit/inspect-review-comments endpoint (Task 12).
+    public IReadOnlyList<FakeReviewCommentRecord> SnapshotReviewComments()
+    {
+        lock (_gate) return _reviewCommentsCreated.ToList();
+    }
+
     public Task<OwnPendingReviewSnapshot?> FindOwnPendingReviewAsync(PrReference reference, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(reference);
@@ -315,6 +369,20 @@ internal sealed class FakeReviewSubmitter : IReviewSubmitter
         string Body, bool IsResolved, List<FakeComment> Replies, DateTimeOffset CreatedAt = default);
 
     internal sealed record FakeComment(string Id, string Body);
+
+    // Introspection record for CreateReviewCommentAsync (Kind="inline") and
+    // CreateReviewCommentReplyAsync (Kind="reply"). Inline entries populate Path/LineNumber/Side;
+    // reply entries populate ParentThreadId. Both carry the numeric id assigned by the fake
+    // (mirrors how SnapshotIssueComments keeps (Pr, Body) tuples).
+    internal sealed record FakeReviewCommentRecord(
+        PrReference Pr,
+        string Kind,
+        string? Path,
+        int? LineNumber,
+        string? Side,
+        string Body,
+        string? ParentThreadId,
+        long AssignedId);
 
     // ----- introspection projections (returned by /test/submit/inspect-pending-review as JSON) -----
 

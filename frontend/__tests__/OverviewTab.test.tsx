@@ -31,6 +31,9 @@ function fakeDraftSession(overrides: Partial<UseDraftSessionResult> = {}): UseDr
     getPrRootHolder: () => null,
     outOfBandToast: null,
     clearOutOfBandToast: () => undefined,
+    postingInProgress: false,
+    beginPosting: () => undefined,
+    endPosting: () => undefined,
     ...overrides,
   };
 }

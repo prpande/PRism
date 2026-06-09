@@ -133,6 +133,10 @@ test.describe('parity baselines — Inbox', () => {
     // visual baseline. resetBackendState in beforeEach restores the default
     // (showActivityRail=false) between tests, so this enable is per-test.
     //
+    // NB: #137 rewrote the rail onto real received_events — its appearance CHANGED,
+    // so the inbox-activity-rail.png baseline is regenerated from the CI artifact
+    // (not the pre-#137 mock baseline).
+    //
     // Wire shape: POST /api/preferences accepts exactly one flat dotted-path
     // field per patch (see PRism.Web/Endpoints/PreferencesEndpoints.cs and
     // frontend/src/hooks/usePreferences.ts) — NOT a nested

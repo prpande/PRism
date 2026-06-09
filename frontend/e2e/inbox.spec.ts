@@ -48,7 +48,17 @@ const authedAuthState = {
 // throws. Caught by Playwright on PR #69 (4 inbox tests failed at "Refactor auth
 // flow" never rendering).
 const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+  // aiPreview is a deliberate client-side override (false) for these mock-driven tests
+  // even though the backend default is now true (#283); contentScale + sectionOrder are
+  // always present on the real GET /api/preferences wire, so keep the fixture in contract
+  // (Copilot PR #309).
+  ui: {
+    theme: 'system',
+    accent: 'indigo',
+    aiPreview: false,
+    density: 'comfortable',
+    contentScale: 'm',
+  },
   inbox: {
     sections: {
       'review-requested': true,
@@ -58,6 +68,7 @@ const defaultPreferences = {
       'recently-closed': true,
     },
     defaultSort: 'updated',
+    sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
     showActivityRail: false, // #283 rail decoupled from AI, default off
   },
   github: {

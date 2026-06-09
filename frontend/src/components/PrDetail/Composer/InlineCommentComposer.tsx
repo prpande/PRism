@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useComposerAutoSave, COMPOSER_CREATE_THRESHOLD } from '../../../hooks/useComposerAutoSave';
 import { sendPatch } from '../../../api/draft';
+import { postComment } from '../../../api/comment';
 import { Modal } from '../../Modal/Modal';
 import { AiComposerAssistant } from '../../Ai/AiComposerAssistant';
 import { ComposerMarkdownPreview } from './ComposerMarkdownPreview';
@@ -43,7 +44,15 @@ export interface InlineCommentComposerProps {
   // pending (debounced) edit *before* swapping composers on a diff-line switch.
   // Without it, the now-modal-less immediate swap would drop edits typed within
   // the last debounce window. Cleared on unmount.
-  flushRef?: React.MutableRefObject<(() => Promise<void>) | null>;
+  flushRef?: React.MutableRefObject<(() => Promise<string | null>) | null>;
+  // #302 — post-now support. Optional (Task 11 wires them; defaults preserve
+  // the existing FilesTab call-site with zero changes).
+  anyOtherDraftsStaged?: boolean;
+  beginPosting?: () => void;
+  endPosting?: () => void;
+  // #302 Task 11b — carries the posted body so the parent can render an
+  // optimistic placeholder card immediately (before the refetch lands).
+  onPosted?: (postedCommentId: number, body: string) => void;
 }
 
 function composerAriaLabel(anchor: InlineAnchor): string {
@@ -62,6 +71,10 @@ export function InlineCommentComposer({
   readOnly = false,
   onSaved,
   flushRef,
+  anyOtherDraftsStaged = false,
+  beginPosting,
+  endPosting,
+  onPosted,
 }: InlineCommentComposerProps) {
   const [body, setBody] = useState(initialBody);
   const [previewMode, setPreviewMode] = useState(false);
@@ -194,6 +207,43 @@ export function InlineCommentComposer({
     await flush();
   };
 
+  const [postError, setPostError] = useState<string | null>(null);
+  const [posting, setPosting] = useState(false);
+
+  // Post-now derived values — computed before handlePostNow so the handler
+  // can close over them without a temporal dead zone issue.
+  const postNowDisabled = saveDisabled || posting || anyOtherDraftsStaged;
+  const postNowTooltip = anyOtherDraftsStaged
+    ? 'You have a review in progress — submit or discard it to post a single comment.'
+    : saveTooltip;
+
+  const handlePostNow = async () => {
+    if (postNowDisabled) return;
+    setPostError(null);
+    setPosting(true);
+    beginPosting?.(); // synchronous, BEFORE flush (no flicker)
+    try {
+      const id = (await flush()) ?? draftId; // id assigned during flush; prop is stale
+      if (!id) {
+        setPostError('Could not save the draft. Try again.');
+        return;
+      }
+      const res = await postComment(prRef, id);
+      if (res.ok) {
+        onPosted?.(res.postedCommentId, body);
+        onClose();
+      } else {
+        setPostError(res.message);
+      }
+    } finally {
+      // Safe even when onClose() above triggers unmount: endPosting is an
+      // idempotent ref-counter decrement (balanced 1:1 with beginPosting),
+      // and setPosting after unmount is a React-18 no-op.
+      setPosting(false);
+      endPosting?.();
+    }
+  };
+
   const handleRecoveryRecreate = async () => {
     recoveryModalOpenRef.current = false;
     setRecoveryModalOpen(false);
@@ -238,6 +288,9 @@ export function InlineCommentComposer({
 
   const closedBanner = prState !== 'open';
 
+  // Post-now footer logic (#302 Task 9)
+  const addLabel = anyOtherDraftsStaged ? 'Add review comment' : 'Add to review';
+
   return (
     <div
       role="form"
@@ -246,12 +299,6 @@ export function InlineCommentComposer({
       data-testid="inline-comment-composer"
       className={`inline-comment-composer composer-frame ${styles.inlineCommentComposer}`}
     >
-      {closedBanner && (
-        <div className="composer-closed-banner muted" role="status">
-          PR {prState === 'closed' ? 'closed' : 'merged'} — text not saved
-        </div>
-      )}
-
       {previewMode ? (
         <ComposerMarkdownPreview body={body} />
       ) : (
@@ -298,16 +345,38 @@ export function InlineCommentComposer({
           Discard
         </button>
 
+        {!closedBanner && (
+          <button
+            type="button"
+            className="composer-save btn btn-primary btn-sm"
+            aria-disabled={saveDisabled}
+            title={saveTooltip}
+            onClick={handleSaveClick}
+            disabled={readOnly}
+          >
+            {addLabel}
+          </button>
+        )}
         <button
           type="button"
-          className="composer-save"
-          aria-disabled={saveDisabled}
-          title={saveTooltip}
-          onClick={handleSaveClick}
-          disabled={readOnly}
+          className="composer-post-now"
+          aria-disabled={postNowDisabled}
+          title={postNowTooltip}
+          onClick={handlePostNow}
+          disabled={readOnly || posting}
         >
-          Save
+          {posting ? 'Posting…' : 'Comment'}
         </button>
+        {closedBanner && (
+          <span className="composer-merged-note">
+            {prState === 'closed' ? 'PR is closed' : 'PR is merged'} — comments post immediately
+          </span>
+        )}
+        {postError && (
+          <div className="composer-error" role="alert">
+            {postError}
+          </div>
+        )}
       </div>
 
       <Modal
