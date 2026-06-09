@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using PRism.AI.Contracts.Dtos;
 using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
@@ -10,8 +11,10 @@ namespace PRism.Web.Ai;
 /// <summary>The first real <see cref="IPrSummarizer"/>: composes the LLM provider + sanitizer + diff
 /// + token tracker behind a per-process in-memory cache (KTD-4). Emits a free-text body and a minimal
 /// validated category on one call (spec §4). Provider failures propagate (mapped to 503 at the
-/// endpoint) and are NOT cached, so reopening the PR re-invokes.</summary>
-internal sealed class ClaudeCodeSummarizer : IPrSummarizer
+/// endpoint) and are NOT cached, so reopening the PR re-invokes. Token-tracker failures are logged
+/// and non-fatal (spec §9): a failed usage write must not deny the user a valid summary that was
+/// already computed and egressed.</summary>
+internal sealed partial class ClaudeCodeSummarizer : IPrSummarizer
 {
     /// <summary>Diff source: (prRef, ct) → (diff, title, description, headSha). Production wiring closes
     /// over PrDetailLoader; tests inject a stub.</summary>
@@ -31,20 +34,23 @@ internal sealed class ClaudeCodeSummarizer : IPrSummarizer
     private readonly ILlmProvider _provider;
     private readonly ITokenUsageTracker _tracker;
     private readonly DiffResolver _resolveDiff;
+    private readonly ILogger<ClaudeCodeSummarizer> _logger;
     private readonly ConcurrentDictionary<string, PrSummary> _cache = new();
 
-    internal ClaudeCodeSummarizer(ILlmProvider provider, ITokenUsageTracker tracker, DiffResolver resolveDiff)
+    internal ClaudeCodeSummarizer(ILlmProvider provider, ITokenUsageTracker tracker, DiffResolver resolveDiff,
+        ILogger<ClaudeCodeSummarizer> logger)
     {
         _provider = provider;
         _tracker = tracker;
         _resolveDiff = resolveDiff;
+        _logger = logger;
     }
 
     public async Task<PrSummary?> SummarizeAsync(PrReference pr, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(pr);
         var (diff, title, description, headSha) = await _resolveDiff(pr, ct).ConfigureAwait(false);
-        var key = $"{pr}#{headSha}";
+        var key = $"{pr.PrId}#{headSha}"; // canonical form: "owner/repo#number" — PrId never contains '#'
         if (_cache.TryGetValue(key, out var cached)) return cached;
 
         var userContent =
@@ -58,14 +64,32 @@ internal sealed class ClaudeCodeSummarizer : IPrSummarizer
 
         var (body, category) = PrCategoryParser.Parse(result.Text);
         var summary = new PrSummary(body, category);
+        _cache[key] = summary; // cache the successful result first — tracking is best-effort (spec §9)
 
-        await _tracker.RecordAsync(new TokenUsageRecord(
-            Feature: "pr-summary", ProviderId: ClaudeProviderId,
-            InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
-            CacheReadInputTokens: result.CacheReadInputTokens,
-            EstimatedCostUsd: result.EstimatedCostUsd, IsRetry: false), ct).ConfigureAwait(false);
+#pragma warning disable CA1031 // deliberate broad catch: budget-visibility tracking is non-fatal (spec §9). Cancellation is excluded so request aborts still propagate.
+        try
+        {
+            await _tracker.RecordAsync(new TokenUsageRecord(
+                Feature: "pr-summary", ProviderId: ClaudeProviderId,
+                InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
+                CacheReadInputTokens: result.CacheReadInputTokens,
+                EstimatedCostUsd: result.EstimatedCostUsd, IsRetry: false), ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Budget-visibility tracking is non-fatal (spec §9): a failed usage write must not deny
+            // the user a valid summary that was already computed and egressed.
+            Log.TrackerFailed(_logger, ex);
+        }
+#pragma warning restore CA1031
 
-        _cache[key] = summary; // success only
         return summary;
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning,
+            Message = "pr-summary: token-usage tracking failed; summary already cached and returned (spec §9 non-fatal)")]
+        internal static partial void TrackerFailed(ILogger logger, Exception ex);
     }
 }

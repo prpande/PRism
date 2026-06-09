@@ -1,6 +1,7 @@
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using PRism.AI.Contracts.Provider;
 using PRism.Core.Contracts;
 using PRism.Web.Ai;
@@ -28,6 +29,11 @@ public sealed class ClaudeCodeSummarizerTests
         public TokenUsageRecord? Last;
         public Task RecordAsync(TokenUsageRecord record, CancellationToken ct) { Last = record; return Task.CompletedTask; }
     }
+    private sealed class ThrowingTracker : ITokenUsageTracker
+    {
+        public Task RecordAsync(TokenUsageRecord record, CancellationToken ct)
+            => throw new InvalidOperationException("tracker-unavailable");
+    }
 
     private static readonly PrReference Pr = new("o", "r", 1);
 
@@ -35,7 +41,8 @@ public sealed class ClaudeCodeSummarizerTests
     // test bypasses PrDetailLoader. Production wiring closes over PrDetailLoader (Task 9).
     private static ClaudeCodeSummarizer Build(ILlmProvider p, ITokenUsageTracker t,
         string diff = "+ added line", string title = "Fix poller", string desc = "Body", string headSha = "abc123")
-        => new(p, t, (_, _) => Task.FromResult((diff, title, desc, headSha)));
+        => new(p, t, (_, _) => Task.FromResult((diff, title, desc, headSha)),
+            NullLogger<ClaudeCodeSummarizer>.Instance);
 
     [Fact]
     public async Task Success_ParsesCategory_RecordsUsage()
@@ -65,6 +72,11 @@ public sealed class ClaudeCodeSummarizerTests
         p.Last!.UserContent.Should().Contain("<diff>");
         p.Last.UserContent.Should().Contain("<title>");
         p.Last.UserContent.Should().Contain("<description>");
+        // The payload injected "</title>" must be neutralized (U+200B inserted after '</'). The genuine
+        // closing sentinel appears exactly once, so splitting on the real "</title>" yields exactly 2
+        // parts (one split-point = one real occurrence, the injected one was broken by the sanitizer).
+        p.Last.UserContent.Split("</title>").Length.Should().Be(2,
+            "the payload's </title> must be neutralized; only the genuine closing sentinel remains");
     }
 
     [Fact]
@@ -85,5 +97,25 @@ public sealed class ClaudeCodeSummarizerTests
         var summary = await Build(p, new FakeTracker()).SummarizeAsync(Pr, CancellationToken.None);
         summary!.Category.Should().Be("");
         summary.Body.Should().Be("Body.");
+    }
+
+    [Fact]
+    public async Task TrackerThrows_StillReturnsSummary_AndCaches()
+    {
+        // Arrange: tracker always throws; provider succeeds.
+        var p = new FakeProvider(); // Response = "CATEGORY: fix\nSummary body."
+        var s = Build(p, new ThrowingTracker());
+
+        // Act — first call: tracker throws but must NOT propagate.
+        var summary = await s.SummarizeAsync(Pr, CancellationToken.None);
+
+        // Assert — valid summary returned despite tracker failure (spec §9 non-fatal).
+        summary!.Body.Should().Be("Summary body.");
+        summary.Category.Should().Be("fix");
+
+        // Second call: summary must have been cached (provider Calls == 1, not 2).
+        var summary2 = await s.SummarizeAsync(Pr, CancellationToken.None);
+        summary2!.Body.Should().Be("Summary body.");
+        p.Calls.Should().Be(1, "summary was cached despite tracker failure — second call is a cache hit");
     }
 }
