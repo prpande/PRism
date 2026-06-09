@@ -430,4 +430,70 @@ public class ConfigStorePatchAsyncDottedPathTests
         store.Current.Inbox.SectionOrder
             .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
     }
+
+    // #275: a valid 4-id permutation patches through to InboxConfig.SectionOrder and persists.
+    [Fact]
+    public async Task Patch_sets_valid_section_order()
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        await store.PatchAsync(
+            new Dictionary<string, object?>
+                { ["inbox.sectionOrder"] = "mentioned,review-requested,authored-by-me,awaiting-author" },
+            CancellationToken.None);
+        store.Current.Inbox.SectionOrder
+            .Should().Be("mentioned,review-requested,authored-by-me,awaiting-author");
+    }
+
+    [Fact]
+    public async Task Patch_section_order_persists_across_reload()
+    {
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        var store = new ConfigStore(dir);
+        await store.InitAsync(CancellationToken.None);
+        await store.PatchAsync(
+            new Dictionary<string, object?>
+                { ["inbox.sectionOrder"] = "authored-by-me,mentioned,review-requested,awaiting-author" },
+            CancellationToken.None);
+
+        var roundTrip = new ConfigStore(dir);
+        await roundTrip.InitAsync(CancellationToken.None);
+        roundTrip.Current.Inbox.SectionOrder
+            .Should().Be("authored-by-me,mentioned,review-requested,awaiting-author");
+    }
+
+    // Each malformed value must be rejected with a ConfigPatchException naming the field
+    // (→ 400 at the endpoint), not silently persisted.
+    public static TheoryData<string> InvalidSectionOrders() => new()
+    {
+        "review-requested,awaiting-author,authored-by-me",                            // incomplete (3)
+        "review-requested,awaiting-author,authored-by-me,mentioned,recently-closed",  // too long / pinned id
+        "review-requested,review-requested,authored-by-me,mentioned",                 // duplicate
+        "review-requested,awaiting-author,authored-by-me,bogus",                      // unknown id
+        "",                                                                            // empty
+        "recently-closed,review-requested,awaiting-author,mentioned",                 // includes pinned id
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidSectionOrders))]
+    public async Task Patch_rejects_invalid_section_order(string value)
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.sectionOrder"] = value }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>().WithMessage("*inbox.sectionOrder*");
+    }
+
+    // Non-string value (number/null/bool) is rejected by the per-key type check.
+    [Fact]
+    public async Task Patch_rejects_nonstring_section_order()
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.sectionOrder"] = 42 }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>()
+            .Where(e => e.Message.Contains("inbox.sectionOrder") && e.Message.Contains("string"));
+    }
 }
