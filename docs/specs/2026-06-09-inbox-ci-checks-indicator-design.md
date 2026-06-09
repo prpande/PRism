@@ -43,7 +43,14 @@ This builds directly on **#286** (merged, `470a8209`), which corrected the
 - **Mergeability** ("can this PR merge / has conflicts"). A separate axis, not
   in the inbox payload today; folded into **#259**. Passing CI ≠ mergeable.
 - **Sort / filter changes.** #262 already shipped the `ci-failing` filter axis;
-  this slice only upgrades the per-row glyph that axis points at.
+  this slice only upgrades the per-row glyph that axis points at. Concretely,
+  the CI filter facet (`FilterBar.tsx` `CI_VALUES = ['failing', 'pending']`)
+  stays as-is — `'passing'` is **not** added as a filter option. Widening the
+  `CiStatus` union does not break that typed array (a subset is still valid),
+  and because filters are opt-in (`applyInboxFilters` only filters when
+  `f.ci.length > 0`), a PR that now classifies `passing` (formerly `none`)
+  behaves identically under every existing filter — no regression. Offering a
+  "passing" filter is a separate product call, deferred.
 - **Row-layout changes.** #227 shipped the row layout and the status slot; this
   slice reuses the slot as-is.
 - **Pending motion.** The pending glyph is static (see Decision 3).
@@ -64,11 +71,18 @@ work is distinguishing "all checks green" from "no checks at all", which today
 both return `None`:
 
 - **`FetchChecksAsync`:** today a fully-successful PR returns `None` (the method
-  only emits `Failing`/`Pending`/`None`). Track whether *any* check-run was
-  observed across all pages. If runs exist and none are failing or pending →
-  **`Passing`**. No runs at all (missing or empty `check_runs`) → `None`
-  (unchanged). The existing "completed + conclusion failure/timed_out/cancelled
-  → failing" and "status != completed → pending" classification is unchanged.
+  only emits `Failing`/`Pending`/`None`). Add a new flag (`anyRun`) set **inside
+  the `foreach` over `check_runs` entries** — i.e. it tracks whether at least one
+  check-run *object* was seen, NOT whether the `check_runs` array was present.
+  This distinction is load-bearing: the existing `anyPage` flag is already set
+  true for an **empty** `check_runs: []`, so reusing it would misclassify a
+  no-CI PR (empty array) as `Passing`. The final return becomes
+  `anyFailing ? Failing : anyPending ? Pending : anyRun ? Passing : None`. So:
+  runs exist and none failing/pending → **`Passing`**; missing or empty
+  `check_runs` (`anyRun` false) → `None` (unchanged — avoids a false green tick,
+  the passing-side analogue of the #286 false-amber bug). The existing
+  "completed + conclusion failure/timed_out/cancelled → failing" and
+  "status != completed → pending" classification is unchanged.
 
 - **`FetchCombinedStatusAsync`:** `state="success"` **with** registered
   statuses (reuse the #286 `HasRegisteredStatuses` helper) → **`Passing`**.
@@ -109,11 +123,25 @@ both return `None`:
 | `none` | nothing rendered, slot width reserved | — |
 
 - Inline SVG paths, the same pattern as the existing comment octicon already in
-  this row. Glyph size tuned to the current slot at the B1 pass (the comment
-  octicon uses a 12px render in a 16-viewBox; the CI glyph follows suit).
+  this row. The status slot is the **leading** column of the row (not the tail
+  where the comment glyph lives), so it does not interact with the #227
+  fixed-tail reserve. Glyph renders at **14px in a 16-viewBox**, vertically
+  centred in the `.status` slot via the existing `flex` centring — slightly
+  larger than the 12px comment octicon so the ✓/✗ interior knockout stays
+  legible (see Decision 1); final size confirmed at the B1 pass.
+- Each glyph is a **non-interactive `<span>`** — no `role`, no `tabIndex`, never
+  wrapped in a `<button>` or `<a>`. The whole row is already the click target
+  (a `<button>`); a nested interactive element would break keyboard nav and
+  WCAG 4.1.2. The aria-label on the row carries the CI state (below).
 - The slot keeps `flex: none` and a reserved width so the title column stays
-  aligned across all four states (matching today's invisible-placeholder
-  behaviour for `none`).
+  aligned across all four states. `none` renders an `aria-hidden`, width-only
+  placeholder (today's invisible-`.dot` span behaviour, preserved via the
+  `.status` slot's min-width rather than a `.dot` element).
+- The current `InboxRow.module.css` `.dot` / `.dotFailing` / `.dotPending` rules
+  and the JSX that renders them are **deleted**. These classes are module-scoped
+  to `InboxRow`; the identically-named `.dot` in `AccentSwatches`,
+  `WindowControls`, and `PrTabStrip` are separate scoped classes and are
+  untouched.
 
 **Accessibility:**
 
@@ -123,9 +151,10 @@ both return `None`:
   `none` contributes nothing (no CI to announce).
 - A `title=` tooltip on each glyph (`CI passing` / `CI failing` / `CI pending`)
   for sighted hover.
-- Hue-independent readability is preserved because ✓, ✗, and ● are
-  shape-distinct — state survives greyscale, colour-blindness, and any
-  user-chosen accent, honouring the #227 design intent.
+- State is distinguished by the glyph's **interior mark** (✓ vs ✗ vs the plain
+  pending dot), not hue alone — so it survives colour-blindness and any
+  user-chosen accent. See Decision 1 for the honest limit of this claim and the
+  B1 greyscale-legibility check that backstops it.
 
 ## Testing
 
@@ -140,15 +169,28 @@ both return `None`:
   - existing Failing/Pending/None tests remain green.
 
 - **Frontend (`InboxRow` unit tests):**
-  - each state renders its expected glyph; `none` renders no glyph
-  - `aria-label` carries the correct `· CI <state>` suffix per state
+  - each visible state (`passing`/`failing`/`pending`) renders its expected
+    glyph; `none` renders no glyph (only the width placeholder)
+  - `aria-label` carries the correct `· CI <state>` suffix for the three visible
+    states; `none` adds no suffix
   - existing failing/pending assertions updated from dot/ring markup to the
     octicon markup.
 
 - **B1 visual gate:** Playwright screenshots of the inbox showing all four
   states in **both** light and dark themes, posted to the PR for owner
-  sign-off before merge. Contrast of `--success-fg` / `--danger-fg` /
-  `--warning-fg` against the row surface verified AA in both themes.
+  sign-off before merge. The four states are produced by **mocking the
+  `/api/inbox` payload** in the Playwright route (the same approach used for the
+  #272/#273 inbox B1 shots) so one PR per `ci` value is on screen — the
+  `FakePrDiscovery` test seam only ever emits `CiStatus.None`, so it cannot
+  exercise the new glyphs. Two checks at this gate:
+  - **Contrast:** `--success-fg` / `--danger-fg` / `--warning-fg` against the
+    row surface verified AA in both themes. These are **existing, already-shipped
+    semantic tokens** with light+dark values defined in the theme — no new colour
+    tokens are introduced — so this confirms the glyph use of them, not fresh
+    colour derivation.
+  - **Greyscale legibility:** the screenshots are inspected desaturated to
+    confirm `passing` (✓) and `failing` (✗) are distinguishable at the shipped
+    glyph size (see Decision 1).
 
 ## Decisions
 
@@ -156,8 +198,21 @@ both return `None`:
    passing would make passing-green and failing-red both filled dots
    distinguished only by hue, breaking the greyscale/colour-blind
    distinguishability the #227 hollow-ring specifically protected. GitHub-style
-   octicons (✓ / ✗ / ●) are inherently shape-distinct, are what the issue asks
-   for, and are already house style (the comment octicon in this same row).
+   octicons (✓ / ✗ / ●) carry an **interior mark** that distinguishes state
+   beyond hue, are what the issue asks for, and are already house style (the
+   comment octicon in this same row).
+
+   **Honest limit:** `check-circle-fill` and `x-circle-fill` share the same
+   circular *silhouette* — the only greyscale difference is the interior ✓-vs-✗
+   knockout, which can collapse at very small sizes (this is also true of
+   GitHub's own list icons; full hue-independence is not achievable with these
+   glyphs). Two mitigations: (a) render at 14px (larger than the 12px comment
+   octicon) so the interior mark stays readable; (b) the **B1 visual gate
+   includes an explicit greyscale-legibility check** — the all-four-states
+   screenshots are inspected desaturated to confirm passing and failing remain
+   tellable apart at the shipped size. If they do not, fall back to keeping
+   `pending` as the #227 hollow ring (a genuinely distinct silhouette) and/or
+   bump the size — decided at B1, not assumed here.
 
 2. **`none` renders nothing (width reserved).** Matches GitHub's PR list. Most
    `none` PRs are no-CI sandbox/doc PRs; a neutral marker on every one of them
