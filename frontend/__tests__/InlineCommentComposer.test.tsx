@@ -69,18 +69,18 @@ describe('InlineCommentComposer — accessibility (A3)', () => {
     expect(form).toHaveAttribute('aria-label', 'Draft comment on src/Foo.cs line 42');
   });
 
-  it('Save button is aria-disabled when body is empty', () => {
+  it('"Add to review" button is aria-disabled when body is empty', () => {
     render(<Harness />);
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Add to review' });
     expect(save).toHaveAttribute('aria-disabled', 'true');
     expect(save).toHaveAttribute('title', 'Type something to save.');
   });
 
-  it('Save button is enabled (aria-disabled=false) once body is non-empty', async () => {
+  it('"Add to review" button is enabled (aria-disabled=false) once body is non-empty', async () => {
     render(<Harness />);
     const textarea = screen.getByLabelText('Comment body') as HTMLTextAreaElement;
     fireEvent.change(textarea, { target: { value: 'hello' } });
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Add to review' });
     expect(save).toHaveAttribute('aria-disabled', 'false');
   });
 });
