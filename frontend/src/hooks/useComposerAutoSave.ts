@@ -39,6 +39,10 @@ export interface UseComposerAutoSaveProps {
   // succeeds. Composer uses this to unmount (per spec § 5.4 "no confirmation
   // — instant delete").
   onLocalDelete?: () => void;
+  // Fired after any successful persist (create / update / delete). #299 — the
+  // parent uses this to refetch the shared draft session so the Drafts tab
+  // reflects the just-saved draft live, rather than waiting for composer close.
+  onSaved?: () => void;
 }
 
 export interface UseComposerAutoSaveResult {
@@ -114,6 +118,7 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
           draftIdRef.current = result.assignedId;
           setBadge('saved');
           p.onAssignedId?.(result.assignedId);
+          p.onSaved?.();
           return result.assignedId;
         }
         applyErrorBadge(result, setBadge);
@@ -148,6 +153,7 @@ export function useComposerAutoSave(props: UseComposerAutoSaveProps): UseCompose
     const result = await sendPatch(p.prRef, makeUpdatePatch(id, currentBody, p.anchor));
     if (result.ok) {
       setBadge('saved');
+      p.onSaved?.();
       return;
     }
     if (result.kind === 'draft-not-found') {

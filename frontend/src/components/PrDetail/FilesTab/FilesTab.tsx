@@ -1,7 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { ApiError } from '../../../api/client';
 import { postFileViewed } from '../../../api/fileViewed';
-import { sendPatch } from '../../../api/draft';
 import { useFileDiff } from '../../../hooks/useFileDiff';
 import { useUnionDiff } from '../../../hooks/useUnionDiff';
 import { useFilesTabShortcuts } from '../../../hooks/useFilesTabShortcuts';
@@ -23,7 +22,6 @@ import { buildAllRange } from '../range';
 import { buildTree, flattenPaths } from './treeBuilder';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
-import { Modal } from '../../Modal/Modal';
 import { usePrDetailContext } from '../prDetailContext';
 import styles from './FilesTab.module.css';
 
@@ -240,12 +238,9 @@ export function FilesTab() {
   // `usePrDetailContext` rather than re-instantiating its own hook.
 
   // Active inline composer state. activeAnchor + composerDraftId together
-  // describe "the composer the user is currently in". pendingNewAnchor is
-  // set when the user clicks a different line while a saved-draft composer
-  // is open (A2 flow).
+  // describe "the composer the user is currently in".
   const [activeAnchor, setActiveAnchor] = useState<InlineAnchor | null>(null);
   const [composerDraftId, setComposerDraftId] = useState<string | null>(null);
-  const [pendingNewAnchor, setPendingNewAnchor] = useState<InlineAnchor | null>(null);
 
   function findExistingDraft(anchor: InlineAnchor): { id: string; bodyMarkdown: string } | null {
     const session = draftSession.session;
@@ -282,59 +277,13 @@ export function FilesTab() {
     ) {
       return;
     }
-    // No active composer → open immediately.
-    if (activeAnchor === null) {
-      openComposerAt(rawAnchor);
-      return;
-    }
-    // Active composer with no persisted draft id → close (no PUT) + open new.
-    if (composerDraftId === null) {
-      openComposerAt(rawAnchor);
-      return;
-    }
-    // Active composer WITH a persisted draft id → A2 transition modal.
-    setPendingNewAnchor({ ...rawAnchor, anchoredSha: prDetail.pr.headSha });
-  }
-
-  async function handleTransitionDiscard() {
-    if (composerDraftId !== null) {
-      let result;
-      try {
-        result = await sendPatch(prRef, {
-          kind: 'deleteDraftComment',
-          payload: { id: composerDraftId },
-        });
-      } catch {
-        // Network / non-ApiError. Keep the transition modal open; the
-        // user retries or hits Keep.
-        return;
-      }
-      if (!result.ok) {
-        // Backend rejection (404 / 422 / 409 / 5xx). Don't proceed —
-        // closing the modal and opening the new composer would
-        // optimistically appear that the saved draft was discarded
-        // when the server still has it.
-        return;
-      }
-      // Sync local session so the deleted draft doesn't surface as
-      // existing data when the new composer's hydrate-from-session path
-      // (or any later render) runs.
-      await draftSession.refetch();
-    }
-    if (pendingNewAnchor) {
-      openComposerAt(pendingNewAnchor);
-    }
-    setPendingNewAnchor(null);
-  }
-
-  function handleTransitionKeep() {
-    // Leave the saved draft persisted; just close the composer panel and
-    // open a new one at the new line. The kept draft remains in
-    // session.draftComments and will reappear if the user navigates back.
-    if (pendingNewAnchor) {
-      openComposerAt(pendingNewAnchor);
-    }
-    setPendingNewAnchor(null);
+    // #299 — drafts auto-save as the author types, so switching lines never
+    // needs a "keep or discard?" prompt: whatever was being drafted is already
+    // persisted. Just open the composer at the new line. A saved draft left
+    // behind stays persisted (and reappears via findExistingDraft when the user
+    // clicks back to its line); discarding it is an explicit action on the
+    // composer's own Discard button.
+    openComposerAt(rawAnchor);
   }
 
   function handleComposerClose() {
@@ -346,6 +295,16 @@ export function FilesTab() {
     // just-saved/just-deleted state and avoids creating a duplicate draft.
     void draftSession.refetch();
   }
+
+  // #299 — refresh the shared draft session after each successful auto-save so
+  // the Drafts tab reflects the just-saved draft live, without waiting for the
+  // composer to close. The diff-and-prefer merge in useDraftSession preserves
+  // this still-open composer's local body across the refetch. GET /draft is a
+  // local backend read (no GitHub call), so the per-save cost is a cheap
+  // loopback alongside the write that already happened.
+  const handleComposerSaved = useCallback(() => {
+    void draftSession.refetch();
+  }, [draftSession]);
 
   const prState: 'open' | 'closed' | 'merged' = prDetail.pr.isMerged
     ? 'merged'
@@ -368,6 +327,7 @@ export function FilesTab() {
         onDraftIdChange={setComposerDraftId}
         registerOpenComposer={draftSession.registerOpenComposer}
         onClose={handleComposerClose}
+        onSaved={handleComposerSaved}
         readOnly={readOnly}
       />
     );
@@ -509,21 +469,6 @@ export function FilesTab() {
           />
         </div>
       </div>
-
-      <Modal
-        open={pendingNewAnchor !== null}
-        title="Discard or keep your saved draft?"
-        defaultFocus="cancel"
-        onClose={() => setPendingNewAnchor(null)}
-      >
-        <p>You have a saved draft on the line you&apos;re leaving. Switch to the new line and:</p>
-        <button type="button" data-modal-role="cancel" onClick={handleTransitionKeep}>
-          Keep
-        </button>
-        <button type="button" data-modal-role="primary" onClick={handleTransitionDiscard}>
-          Discard
-        </button>
-      </Modal>
     </div>
   );
 }

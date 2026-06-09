@@ -36,6 +36,9 @@ export interface InlineCommentComposerProps {
   // PR. Disables the textarea and the action buttons; auto-save short-
   // circuits via useComposerAutoSave's `disabled` gate.
   readOnly?: boolean;
+  // #299 — fired after each successful auto-save so the parent can refresh the
+  // shared draft session and the Drafts tab reflects the draft live.
+  onSaved?: () => void;
 }
 
 function composerAriaLabel(anchor: InlineAnchor): string {
@@ -52,6 +55,7 @@ export function InlineCommentComposer({
   registerOpenComposer,
   onClose,
   readOnly = false,
+  onSaved,
 }: InlineCommentComposerProps) {
   const [body, setBody] = useState(initialBody);
   const [previewMode, setPreviewMode] = useState(false);
@@ -101,6 +105,7 @@ export function InlineCommentComposer({
     onAssignedId: handleAssignedId,
     onDraftDeletedByServer: handleDraftDeletedByServer,
     onLocalDelete: handleLocalDelete,
+    onSaved,
     disabled: readOnly,
   });
 
