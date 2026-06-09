@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DraftReplyDto, PrReference, ReviewThreadDto } from '../../../../api/types';
-import { Avatar } from '../../../Avatar/Avatar';
-import { MarkdownRenderer } from '../../../Markdown/MarkdownRenderer';
+import { CommentCard } from '../../Comment/CommentCard';
+import { CollapsedComposerAffordance } from '../../Composer/CollapsedComposerAffordance';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
 import styles from './ExistingCommentWidget.module.css';
 import type { ComposerOwnerKey } from '../../../../hooks/useDraftSession';
@@ -80,31 +80,32 @@ function ThreadView({
       className={`comment-thread${thread.isResolved ? ' comment-thread--resolved' : ''} ${styles.commentThread}${thread.isResolved ? ` ${styles.commentThreadResolved}` : ''}`}
       data-thread-id={thread.threadId}
     >
-      {thread.comments.map((comment) => (
-        <div key={comment.commentId} className={`comment-entry ${styles.commentEntry}`}>
-          <div className={`comment-meta ${styles.commentMeta}`}>
-            <Avatar src={comment.avatarUrl} login={comment.author} size="sm" />
-            <span className={`comment-author ${styles.commentAuthor}`}>{comment.author}</span>
-            <time className={`comment-time ${styles.commentTime}`} dateTime={comment.createdAt}>
-              {new Date(comment.createdAt).toLocaleDateString()}
-            </time>
-          </div>
-          <div className={`comment-body ${styles.commentBody}`}>
-            <MarkdownRenderer source={comment.body} />
-          </div>
-        </div>
+      {thread.comments.map((comment, i) => (
+        <CommentCard
+          key={comment.commentId}
+          author={comment.author}
+          avatarUrl={comment.avatarUrl}
+          createdAt={comment.createdAt}
+          body={comment.body}
+          density="compact"
+          data-testid="inline-comment-card"
+          bandEnd={
+            thread.isResolved && i === 0 ? (
+              <span aria-label="Resolved thread">Resolved</span>
+            ) : undefined
+          }
+        />
       ))}
 
       {replyContext && !composerOpen && (
         <div className={`comment-thread-actions ${styles.commentThreadActions}`}>
-          <button
-            type="button"
-            className="comment-thread-reply btn btn-ghost btn-sm"
-            aria-label={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
-            onClick={handleReplyClick}
-          >
-            Reply
-          </button>
+          <CollapsedComposerAffordance
+            label={existingDraft ? 'Continue draft…' : 'Reply…'}
+            ariaLabel={`Reply to thread on ${thread.filePath} line ${thread.lineNumber}`}
+            hasDraft={!!existingDraft}
+            readOnly={replyContext.readOnly}
+            onOpen={handleReplyClick}
+          />
         </div>
       )}
 

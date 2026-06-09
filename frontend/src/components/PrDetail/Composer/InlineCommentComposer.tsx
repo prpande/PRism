@@ -244,7 +244,7 @@ export function InlineCommentComposer({
       aria-label={composerAriaLabel(anchor)}
       data-composer="true"
       data-testid="inline-comment-composer"
-      className={`inline-comment-composer ${styles.inlineCommentComposer}`}
+      className={`inline-comment-composer composer-frame ${styles.inlineCommentComposer}`}
     >
       {closedBanner && (
         <div className="composer-closed-banner muted" role="status">

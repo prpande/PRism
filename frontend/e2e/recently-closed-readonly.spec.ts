@@ -156,7 +156,7 @@ for (const { state, label } of [
     // is hard-blocked identically (PrRootBodyEditor renders the banner;
     // useComposerAutoSave no-ops on a done PR).
     await page.goto('/pr/acme/api/123');
-    await page.getByRole('button', { name: /^reply$/i }).click();
+    await page.getByRole('button', { name: /^reply to the PR conversation$/i }).click();
     const rootComposer = page.getByRole('form', { name: /reply to this pr/i });
     await expect(rootComposer).toBeVisible({ timeout: 10_000 });
     await expect(rootComposer.getByText(/text not saved/i)).toBeVisible();

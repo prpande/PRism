@@ -186,7 +186,7 @@ export function ReplyComposer({
       aria-label={replyAriaLabel(parentThreadId)}
       data-composer="true"
       data-testid="reply-composer"
-      className={`reply-composer ${styles.replyComposer}`}
+      className={`reply-composer composer-frame ${styles.replyComposer}`}
     >
       {closedBanner && (
         <div className="composer-closed-banner muted" role="status">
