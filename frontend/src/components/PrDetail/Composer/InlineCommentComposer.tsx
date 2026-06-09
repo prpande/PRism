@@ -39,6 +39,11 @@ export interface InlineCommentComposerProps {
   // #299 — fired after each successful auto-save so the parent can refresh the
   // shared draft session and the Drafts tab reflects the draft live.
   onSaved?: () => void;
+  // #299 — the parent stores this composer's `flush` here so it can persist any
+  // pending (debounced) edit *before* swapping composers on a diff-line switch.
+  // Without it, the now-modal-less immediate swap would drop edits typed within
+  // the last debounce window. Cleared on unmount.
+  flushRef?: React.MutableRefObject<(() => Promise<void>) | null>;
 }
 
 function composerAriaLabel(anchor: InlineAnchor): string {
@@ -56,6 +61,7 @@ export function InlineCommentComposer({
   onClose,
   readOnly = false,
   onSaved,
+  flushRef,
 }: InlineCommentComposerProps) {
   const [body, setBody] = useState(initialBody);
   const [previewMode, setPreviewMode] = useState(false);
@@ -108,6 +114,17 @@ export function InlineCommentComposer({
     onSaved,
     disabled: readOnly,
   });
+
+  // #299 — publish this composer's flush to the parent so a diff-line switch
+  // can persist a pending debounced edit before swapping composers. Cleared on
+  // unmount so a stale flush can't fire against a torn-down composer.
+  useEffect(() => {
+    if (!flushRef) return;
+    flushRef.current = flush;
+    return () => {
+      flushRef.current = null;
+    };
+  }, [flush, flushRef]);
 
   // Keep the merge predicate truthy for as long as this composer is mounted
   // for a persisted draft. The refcount handles the rare case where two

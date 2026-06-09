@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { ApiError } from '../../../api/client';
 import { postFileViewed } from '../../../api/fileViewed';
 import { useFileDiff } from '../../../hooks/useFileDiff';
@@ -241,6 +241,10 @@ export function FilesTab() {
   // describe "the composer the user is currently in".
   const [activeAnchor, setActiveAnchor] = useState<InlineAnchor | null>(null);
   const [composerDraftId, setComposerDraftId] = useState<string | null>(null);
+  // #299 — holds the active composer's flush so a line switch can persist a
+  // pending debounced edit before the composer is swapped out (the modal that
+  // used to bridge that gap is gone). The composer (un)registers it itself.
+  const activeComposerFlushRef = useRef<(() => Promise<void>) | null>(null);
 
   function findExistingDraft(anchor: InlineAnchor): { id: string; bodyMarkdown: string } | null {
     const session = draftSession.session;
@@ -279,10 +283,14 @@ export function FilesTab() {
     }
     // #299 — drafts auto-save as the author types, so switching lines never
     // needs a "keep or discard?" prompt: whatever was being drafted is already
-    // persisted. Just open the composer at the new line. A saved draft left
-    // behind stays persisted (and reappears via findExistingDraft when the user
-    // clicks back to its line); discarding it is an explicit action on the
-    // composer's own Discard button.
+    // persisted. Flush any pending (sub-debounce) edit of the current composer
+    // first so a fast line switch doesn't drop the last keystrokes, then open
+    // the composer at the new line. A saved draft left behind stays persisted
+    // (and reappears via findExistingDraft when the user clicks back to its
+    // line); discarding it is an explicit action on the composer's Discard
+    // button. The flush is fire-and-forget — it reads the latest body before
+    // the composer unmounts, and onSaved refetches when it lands.
+    void activeComposerFlushRef.current?.();
     openComposerAt(rawAnchor);
   }
 
@@ -304,7 +312,7 @@ export function FilesTab() {
   // loopback alongside the write that already happened.
   const handleComposerSaved = useCallback(() => {
     void draftSession.refetch();
-  }, [draftSession]);
+  }, [draftSession.refetch]);
 
   const prState: 'open' | 'closed' | 'merged' = prDetail.pr.isMerged
     ? 'merged'
@@ -328,6 +336,7 @@ export function FilesTab() {
         registerOpenComposer={draftSession.registerOpenComposer}
         onClose={handleComposerClose}
         onSaved={handleComposerSaved}
+        flushRef={activeComposerFlushRef}
         readOnly={readOnly}
       />
     );

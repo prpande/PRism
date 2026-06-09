@@ -306,4 +306,48 @@ describe('FilesTab — A2 click-another-line flow (addendum A2)', () => {
     });
     expect(deleteCalls).toHaveLength(0);
   });
+
+  it('RapidLineSwitch_FlushesPendingDraft_NoLostWork', async () => {
+    // #299 acceptance: no lost-draft on rapid line-to-line authoring. With the
+    // transition modal gone, a line switch unmounts the composer immediately;
+    // without a flush, an edit typed within the 250ms debounce window would be
+    // dropped. Typing then switching lines before the debounce fires must still
+    // persist the in-progress draft.
+    const tracker = { calls: [] as { url: string; body: unknown }[] };
+    globalThis.fetch = makeRouteHandler(
+      onefileDiff,
+      emptySession(),
+      tracker,
+    ) as unknown as typeof fetch;
+    renderFilesTab();
+
+    await waitFor(() => {
+      fireEvent.click(screen.getByText('main.ts'));
+    });
+
+    const line1 = await screen.findByRole('button', { name: 'Add comment on line 1' });
+    fireEvent.click(line1);
+    const textarea = (await screen.findByLabelText('Comment body')) as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: 'flush me before switching' } });
+
+    // Switch lines immediately — do NOT wait for the debounce.
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment on line 3' }));
+
+    await waitFor(() => {
+      const creates = tracker.calls.filter((c) => {
+        const b = c.body as Record<string, unknown> | null;
+        return !!b && 'newDraftComment' in b;
+      });
+      expect(creates).toHaveLength(1);
+    });
+    const create = tracker.calls.find((c) => {
+      const b = c.body as Record<string, unknown> | null;
+      return !!b && 'newDraftComment' in b;
+    });
+    const payload = (
+      create!.body as { newDraftComment: { bodyMarkdown: string; lineNumber: number } }
+    ).newDraftComment;
+    expect(payload.bodyMarkdown).toBe('flush me before switching');
+    expect(payload.lineNumber).toBe(1);
+  });
 });
