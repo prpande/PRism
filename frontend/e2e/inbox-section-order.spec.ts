@@ -127,7 +127,14 @@ test('moving a section down in Settings reorders the inbox and persists across r
   await page.getByRole('button', { name: 'Move Review requested down' }).click();
   await postPromise;
 
-  // Navigate to the inbox and assert section header DOM order.
+  // Navigate to the inbox and assert section header DOM order. The /api/inbox mock is
+  // intentionally STATIC (it never echoes sectionOrder): inbox ordering is a pure
+  // client-side sort (InboxPage runs orderInboxSections over the prefs), so the order
+  // here is driven by the mutated /api/preferences store, not the inbox payload. If
+  // ordering ever moves server-side, this mock would need to reflect it — without that,
+  // the assertion would go vacuous rather than fail.
+  // page.goto is a hard navigation, so it resets the routed-settings-modal state (the
+  // modal does not bleed into the inbox we inspect below).
   await page.goto('/');
 
   // All four work-section headers are rendered as <button> elements whose text
