@@ -87,6 +87,17 @@ public static class ServiceCollectionExtensions
             return new GitHubCiFailingDetector(factory, () => tokens.ReadAsync(CancellationToken.None));
         });
 
+        services.AddSingleton<PRism.Core.Activity.IReceivedEventsReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var viewerLogin = sp.GetRequiredService<IViewerLoginProvider>();   // live SSOT login cache
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            return new PRism.GitHub.Activity.GitHubReceivedEventsReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                () => Task.FromResult(viewerLogin.Get() is { Length: > 0 } l ? l : null));
+        });
+
         // Feedback always targets github.com (the feedback repo lives there),
         // independent of the user's configured host (§4.1).
         services.AddHttpClient(GitHubFeedbackSubmitter.ClientName, client =>

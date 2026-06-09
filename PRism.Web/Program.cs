@@ -70,6 +70,7 @@ builder.Services.AddPrismGitHub();
 builder.Services.AddPrismAi();
 builder.Services.AddPrismWeb();
 builder.Services.AddSingleton<SessionTokenProvider>();
+builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Core.Activity.ActivityProvider>();
 
 // Test environment: opt-in swap GitHubReviewService → the split fakes so Playwright
 // can drive the backend without needing a real GitHub PAT. The swap also makes /test/*
