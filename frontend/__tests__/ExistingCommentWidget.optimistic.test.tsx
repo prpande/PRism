@@ -1,10 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import { ExistingCommentWidget } from '../src/components/PrDetail/FilesTab/DiffPane/ExistingCommentWidget';
-import type {
-  ReviewThreadDto,
-  ReviewCommentDto,
-} from '../src/api/types';
+import type { ReviewThreadDto, ReviewCommentDto } from '../src/api/types';
 import type { ExistingCommentWidgetReplyContext } from '../src/components/PrDetail/FilesTab/DiffPane/ExistingCommentWidget';
 import type { OptimisticComment } from '../src/components/PrDetail/FilesTab/optimisticComment';
 
@@ -59,12 +56,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
       createdAt: '2026-05-18T12:00:00Z',
       postedCommentId: 4242,
     };
-    render(
-      <ExistingCommentWidget
-        threads={[t]}
-        replyContext={replyContext({ t1: [opt] })}
-      />,
-    );
+    render(<ExistingCommentWidget threads={[t]} replyContext={replyContext({ t1: [opt] })} />);
 
     const optimisticCard = screen.getByTestId('inline-comment-card-optimistic');
     expect(optimisticCard).toBeInTheDocument();
@@ -96,12 +88,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
       createdAt: '2026-05-18T12:00:00Z',
       postedCommentId: 4242,
     };
-    render(
-      <ExistingCommentWidget
-        threads={[t]}
-        replyContext={replyContext({ t1: [opt] })}
-      />,
-    );
+    render(<ExistingCommentWidget threads={[t]} replyContext={replyContext({ t1: [opt] })} />);
 
     expect(screen.queryByTestId('inline-comment-card-optimistic')).not.toBeInTheDocument();
     // The real comment (now with databaseId) is rendered as a normal card.
@@ -141,10 +128,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
 
     // Phase 2: refetch lands a real comment matching postedCommentId 4242
     const threadWithReal = thread({
-      comments: [
-        comment(),
-        comment({ commentId: 'c-real', body: SHARED_BODY, databaseId: 4242 }),
-      ],
+      comments: [comment(), comment({ commentId: 'c-real', body: SHARED_BODY, databaseId: 4242 })],
     });
 
     rerender(
@@ -174,12 +158,7 @@ describe('ExistingCommentWidget — optimistic reply card', () => {
       createdAt: '2026-05-18T12:00:00Z',
       postedCommentId: 4242,
     };
-    render(
-      <ExistingCommentWidget
-        threads={[t]}
-        replyContext={replyContext({ t1: [opt] })}
-      />,
-    );
+    render(<ExistingCommentWidget threads={[t]} replyContext={replyContext({ t1: [opt] })} />);
 
     expect(screen.getByTestId('inline-comment-card-optimistic')).toBeInTheDocument();
   });

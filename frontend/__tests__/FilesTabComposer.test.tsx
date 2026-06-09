@@ -127,7 +127,10 @@ function makeRouteHandler(
         );
       }
       if (url.endsWith('/comment/post') && method === 'POST') {
-        patchTracker?.calls.push({ url, body: init?.body ? JSON.parse(init.body as string) : null });
+        patchTracker?.calls.push({
+          url,
+          body: init?.body ? JSON.parse(init.body as string) : null,
+        });
         return Promise.resolve(
           new Response(JSON.stringify({ postedCommentId: 12345 }), {
             status: 200,
@@ -386,13 +389,11 @@ describe('FilesTab — inline post-now wiring (#302 Task 11a)', () => {
 
     // Count GET /draft fetches up to this point so we can assert a *new* one
     // (the refetch) fires after the post lands.
-    const getDraftCallsBefore = handler.mock.calls.filter(
-      (call: unknown[]) => {
-        const u = call[0];
-        const init = call[1] as RequestInit | undefined;
-        return typeof u === 'string' && u.endsWith('/draft') && (init?.method ?? 'GET') === 'GET';
-      },
-    ).length;
+    const getDraftCallsBefore = handler.mock.calls.filter((call: unknown[]) => {
+      const u = call[0];
+      const init = call[1] as RequestInit | undefined;
+      return typeof u === 'string' && u.endsWith('/draft') && (init?.method ?? 'GET') === 'GET';
+    }).length;
 
     // Click "Comment" (post-now). With a valid persisted draft and no other
     // staged drafts, the button is enabled.

@@ -25,7 +25,7 @@ const r = (id: string): DraftReplyDto => ({
 });
 
 describe('computeAnyOtherDraftsStaged', () => {
-  it('false when the only draft is the composer\'s own', () =>
+  it("false when the only draft is the composer's own", () =>
     expect(computeAnyOtherDraftsStaged([c('mine')], [], 'mine', false)).toBe(false));
   it('true when another draft is staged', () =>
     expect(computeAnyOtherDraftsStaged([c('mine'), c('other')], [], 'mine', false)).toBe(true));

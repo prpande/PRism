@@ -15,7 +15,10 @@ interface HarnessProps {
   prState?: 'open' | 'closed' | 'merged';
   registerOpenComposer?: (draftId: string, ownerKey: string) => () => void;
   onBodyChange?: (body: string) => void;
-  onAutosaveControl?: (control: { flush: () => Promise<string | null>; badge: ComposerSaveBadge }) => void;
+  onAutosaveControl?: (control: {
+    flush: () => Promise<string | null>;
+    badge: ComposerSaveBadge;
+  }) => void;
   onDraftLost?: () => void;
 }
 

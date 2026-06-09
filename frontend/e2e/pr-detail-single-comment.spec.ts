@@ -113,9 +113,7 @@ test('#302 inline post-now — Comment button posts immediately, no pending revi
   // eventually the real card (or still the optimistic, pre-dedup) shows the body.
   // The placeholder may appear and disappear quickly; wait for either the
   // optimistic card OR the text to become visible within the line widget.
-  await expect(
-    page.getByText(body).first(),
-  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(body).first()).toBeVisible({ timeout: 10_000 });
 
   // Backend assertion: exactly one inline review-comment record was created.
   const reviewComments = await inspectReviewComments(page.request);
@@ -145,23 +143,22 @@ test('#302 inline post-now — Comment button posts immediately, no pending revi
 // renders no existing comment threads and there is no ReplyComposer to interact
 // with via the UI. Until that endpoint is added, this test is left as fixme so
 // it shows up in the test report as blocked, not silently skipped.
-test.fixme(
-  '#302 reply post-now — Comment button posts reply immediately, inspectReviewComments shows kind:reply',
-  async ({ page }) => {
-    // WHEN /test/seed-review-thread is available, the setup should be:
-    //   1. resetBackendState (done in beforeEach)
-    //   2. POST /test/seed-review-thread { filePath:'src/Calc.cs', lineNumber:3, body:'initial comment' }
-    //      → captures the assigned threadId
-    //   3. setupAndOpenScenarioPr → navigate to Files tab → click Calc.cs
-    //   4. The ExistingCommentWidget renders for the seeded thread at line 3;
-    //      click "Reply…" to open the ReplyComposer
-    //   5. Type body ≥3 chars → click "Comment"
-    //   6. Assert: POST /comment/post → 200; inspectReviewComments shows 1 reply
-    //      with kind:'reply', parentThreadId == seeded threadId, correct body.
-    //   7. Assert: no pending review created (pendingReview null, attachReplyCallCount 0).
-    void page;
-  },
-);
+test.fixme('#302 reply post-now — Comment button posts reply immediately, inspectReviewComments shows kind:reply', async ({
+  page,
+}) => {
+  // WHEN /test/seed-review-thread is available, the setup should be:
+  //   1. resetBackendState (done in beforeEach)
+  //   2. POST /test/seed-review-thread { filePath:'src/Calc.cs', lineNumber:3, body:'initial comment' }
+  //      → captures the assigned threadId
+  //   3. setupAndOpenScenarioPr → navigate to Files tab → click Calc.cs
+  //   4. The ExistingCommentWidget renders for the seeded thread at line 3;
+  //      click "Reply…" to open the ReplyComposer
+  //   5. Type body ≥3 chars → click "Comment"
+  //   6. Assert: POST /comment/post → 200; inspectReviewComments shows 1 reply
+  //      with kind:'reply', parentThreadId == seeded threadId, correct body.
+  //   7. Assert: no pending review created (pendingReview null, attachReplyCallCount 0).
+  void page;
+});
 
 // ---------------------------------------------------------------------------
 // Test 3 — Mutual exclusion: staged draft disables "Comment" on other composers
@@ -307,9 +304,9 @@ test('#302 regression — atomic review submit still works', async ({ page }) =>
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: /^confirm submit$/i }).click();
 
-  await expect(
-    page.getByRole('heading', { name: /review submitted/i }),
-  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('heading', { name: /review submitted/i })).toBeVisible({
+    timeout: 15_000,
+  });
 
   // Confirm no review comments were posted via the post-now path (the submit
   // pipeline uses AttachThread, not CreateReviewCommentAsync).

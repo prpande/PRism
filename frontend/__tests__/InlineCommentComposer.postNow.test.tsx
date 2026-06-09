@@ -269,7 +269,10 @@ describe('InlineCommentComposer — post-now (Task 9)', () => {
     await settle(0);
 
     // sendPatch must have been called (draft was staged)
-    expect(draftApi.sendPatch).toHaveBeenCalledWith(ref, expect.objectContaining({ kind: 'newDraftComment' }));
+    expect(draftApi.sendPatch).toHaveBeenCalledWith(
+      ref,
+      expect.objectContaining({ kind: 'newDraftComment' }),
+    );
 
     // postComment must have been called with the id returned by sendPatch
     expect(commentApi.postComment).toHaveBeenCalledWith(ref, 'new-merged-draft-id');

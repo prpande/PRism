@@ -409,9 +409,7 @@ export function FilesTab() {
         o.threadId == null &&
         o.anchorKey != null &&
         o.anchorKey.startsWith(`${filePath}:${lineNumber}:`) &&
-        !allRealComments.some(
-          (c) => c.databaseId != null && c.databaseId === o.postedCommentId,
-        ),
+        !allRealComments.some((c) => c.databaseId != null && c.databaseId === o.postedCommentId),
     );
 
     if (!composerHere && placeholdersHere.length === 0) return null;

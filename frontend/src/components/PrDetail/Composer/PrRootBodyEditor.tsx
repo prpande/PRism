@@ -32,7 +32,10 @@ export interface PrRootBodyEditorProps {
   // mirror the badge into its own action bar.
   // Read from a ref and invoked on flush/badge changes only, NOT on
   // callback-identity change — consumers may pass inline callbacks safely.
-  onAutosaveControl?: (control: { flush: () => Promise<string | null>; badge: ComposerSaveBadge }) => void;
+  onAutosaveControl?: (control: {
+    flush: () => Promise<string | null>;
+    badge: ComposerSaveBadge;
+  }) => void;
   // Fired when the user discards from the 404-recovery modal. The consumer
   // decides what to do (composer closes; SubmitDialog clears its editor).
   onDraftLost?: () => void;

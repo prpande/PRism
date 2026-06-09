@@ -10,10 +10,7 @@ export type PostCommentResult =
   | { ok: false; status: number; code: string; message: string; postedCommentId?: number };
 
 // Single endpoint; the backend discriminates inline vs reply by draft kind.
-export async function postComment(
-  prRef: PrReference,
-  draftId: string,
-): Promise<PostCommentResult> {
+export async function postComment(prRef: PrReference, draftId: string): Promise<PostCommentResult> {
   try {
     const res = await apiClient.post<{ postedCommentId: number }>(
       `${prPath(prRef)}/comment/post`,

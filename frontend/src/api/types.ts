@@ -207,7 +207,7 @@ export interface ReviewCommentDto {
   createdAt: string;
   body: string;
   editedAt: string | null;
-  databaseId?: number | null;   // #302 — REST numeric id for optimistic de-dup
+  databaseId?: number | null; // #302 — REST numeric id for optimistic de-dup
 }
 
 export interface ReviewThreadDto {

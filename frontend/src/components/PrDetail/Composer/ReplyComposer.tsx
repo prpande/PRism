@@ -170,18 +170,26 @@ export function ReplyComposer({
     if (postNowDisabled) return;
     setPostError(null);
     setPosting(true);
-    beginPosting?.();                            // synchronous, BEFORE flush (no flicker)
+    beginPosting?.(); // synchronous, BEFORE flush (no flicker)
     try {
-      const id = (await flush()) ?? draftId;     // id assigned during flush; prop is stale
-      if (!id) { setPostError('Could not save the draft. Try again.'); return; }
+      const id = (await flush()) ?? draftId; // id assigned during flush; prop is stale
+      if (!id) {
+        setPostError('Could not save the draft. Try again.');
+        return;
+      }
       const res = await postComment(prRef, id);
-      if (res.ok) { onPosted?.(res.postedCommentId, body); onClose(); }
-      else { setPostError(res.message); }
+      if (res.ok) {
+        onPosted?.(res.postedCommentId, body);
+        onClose();
+      } else {
+        setPostError(res.message);
+      }
     } finally {
       // Safe even when onClose() above triggers unmount: endPosting is an
       // idempotent ref-counter decrement (balanced 1:1 with beginPosting),
       // and setPosting after unmount is a React-18 no-op.
-      setPosting(false); endPosting?.();
+      setPosting(false);
+      endPosting?.();
     }
   };
 
@@ -306,7 +314,9 @@ export function ReplyComposer({
           </span>
         )}
         {postError && (
-          <div className="composer-error" role="alert">{postError}</div>
+          <div className="composer-error" role="alert">
+            {postError}
+          </div>
         )}
       </div>
 
