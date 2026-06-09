@@ -259,6 +259,12 @@ describe('InboxRow chip + badge placement (on the meta line, not the metrics tai
     // the fixed-width metrics tail (where it would be clipped — see #227 B1)
     expect(chip.closest('[class*="meta"]')).not.toBeNull();
     expect(chip.closest('[class*="tail"]')).toBeNull();
+    // #283: the chip carries a visual "AI" preview marker (aria-hidden — the fake
+    // category is visual-only) so the canned category reads as a sample, not a real label.
+    const marker = chip.querySelector('[class*="chipMarker"]');
+    expect(marker).not.toBeNull();
+    expect(marker).toHaveTextContent('AI');
+    expect(marker).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('shows merged state via the leading icon + aria, not a meta-line badge', () => {

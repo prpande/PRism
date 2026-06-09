@@ -21,7 +21,7 @@ public sealed record AppConfig(
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
-        new UiConfig("system", "indigo", false, "comfortable", "m"),
+        new UiConfig("system", "indigo", true, "comfortable", "m"),
         new GithubConfig(new[]
         {
             new GithubAccountConfig(
@@ -44,7 +44,14 @@ public sealed record InboxConfig(
     // deliberately absent — it is an archive pinned to the bottom in the frontend,
     // never part of the reorderable/persisted order. Validated as a permutation of
     // these four ids in ConfigStore.PatchAsync.
-    string SectionOrder = "review-requested,awaiting-author,authored-by-me,mentioned");
+    string SectionOrder = "review-requested,awaiting-author,authored-by-me,mentioned",
+    // #283 the activity rail is a fully fabricated, non-AI mockup (no seam backing).
+    // It was previously gated on the AI-preview toggle (useAiGate('inboxRanking'));
+    // #283 decouples it onto this dedicated flag, default OFF, so flipping AI preview
+    // ON for fresh installs does not surface a fabricated feed. Config-only (no
+    // Settings UI) until the rail carries real data. Appended LAST so the positional
+    // `new InboxConfig(true, …, 14)` default construction stays valid.
+    bool ShowActivityRail = false);
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,

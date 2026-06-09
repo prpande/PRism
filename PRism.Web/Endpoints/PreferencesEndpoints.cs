@@ -69,7 +69,8 @@ internal static class PreferencesEndpoints
                     Mentioned:       sections.Mentioned,
                     RecentlyClosed:  sections.RecentlyClosed),
                 config.Current.Inbox.DefaultSort,
-                config.Current.Inbox.SectionOrder),
+                config.Current.Inbox.SectionOrder,
+                config.Current.Inbox.ShowActivityRail),
             Github: new GithubPreferencesDto(
                 Host:       config.Current.Github.Host,
                 ConfigPath: config.ConfigPath,

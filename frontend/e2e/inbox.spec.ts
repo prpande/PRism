@@ -48,7 +48,17 @@ const authedAuthState = {
 // throws. Caught by Playwright on PR #69 (4 inbox tests failed at "Refactor auth
 // flow" never rendering).
 const defaultPreferences = {
-  ui: { theme: 'system', accent: 'indigo', aiPreview: false, density: 'comfortable' },
+  // aiPreview is a deliberate client-side override (false) for these mock-driven tests
+  // even though the backend default is now true (#283); contentScale + sectionOrder are
+  // always present on the real GET /api/preferences wire, so keep the fixture in contract
+  // (Copilot PR #309).
+  ui: {
+    theme: 'system',
+    accent: 'indigo',
+    aiPreview: false,
+    density: 'comfortable',
+    contentScale: 'm',
+  },
   inbox: {
     sections: {
       'review-requested': true,
@@ -58,6 +68,8 @@ const defaultPreferences = {
       'recently-closed': true,
     },
     defaultSort: 'updated',
+    sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
+    showActivityRail: false, // #283 rail decoupled from AI, default off
   },
   github: {
     host: 'https://github.com',
@@ -269,11 +281,15 @@ test('URL paste with host mismatch shows inline error', async ({ page }) => {
 
 // ---------------------------------------------------------------------------
 
-test('AI preview toggle reveals activity rail', async ({ page }) => {
-  // Stateful mock: the POST handler flips aiPreview and subsequent GETs reflect it.
-  // usePreferences.set() in the frontend POSTs and immediately calls setPreferences(next)
-  // with the response body, so the component re-renders without a separate GET.
-  let aiPreview = false;
+test('activity rail is gated by inbox.showActivityRail, independent of AI preview', async ({
+  page,
+}) => {
+  // #283: the activity rail is a fabricated, non-AI mockup decoupled from the AI-preview
+  // toggle onto inbox.showActivityRail (config-only, default false). This test proves the
+  // decouple: with AI preview ON the whole time, the rail stays hidden while the flag is
+  // false and only appears once the flag is flipped (simulating a config.json edit — there
+  // is deliberately no Settings UI for it).
+  let showActivityRail = false;
 
   await page.route('**/api/auth/state', (route: Route) =>
     route.fulfill({
@@ -283,42 +299,26 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
     }),
   );
   await page.route('**/api/preferences', async (route: Route) => {
-    if (route.request().method() === 'POST') {
-      // POST body is still the single-field flat shape (spec § 2.3): the client
-      // sends `{ "aiPreview": <bool> }`. Only the GET/POST RESPONSE shape changed
-      // to nested in PR1.
-      const body = JSON.parse(route.request().postData() ?? '{}') as { aiPreview?: boolean };
-      if (typeof body.aiPreview === 'boolean') {
-        aiPreview = body.aiPreview;
-      }
-    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      // Response shape is nested per S6 PR1 (spec § 2.4) — the aiPreview override
-      // belongs under `ui`, not at the top level, or the frontend's
-      // preferences.ui.aiPreview consumer never sees the flip.
+      // AI preview stays ON (the new default) the whole time, to prove the rail's
+      // visibility is driven purely by inbox.showActivityRail, not by AI.
       body: JSON.stringify({
         ...defaultPreferences,
-        ui: { ...defaultPreferences.ui, aiPreview },
+        ui: { ...defaultPreferences.ui, aiPreview: true },
+        inbox: { ...defaultPreferences.inbox, showActivityRail },
       }),
     });
   });
-  // Capabilities are coupled to aiPreview on the real backend (CapabilitiesEndpoints.cs
-  // returns AllOn xor AllOff from AiPreviewState.IsOn). Task 17 migrated InboxPage to
-  // useAiGate('inboxRanking') which now checks BOTH capabilities.inboxRanking AND
-  // preferences.ui.aiPreview. The mock must mirror the coupling or the ActivityRail
-  // gate stays off even when aiPreview flips true. useCapabilities also subscribes to
-  // window.focus — the dispatchEvent below triggers both refetches simultaneously.
+  // AI fully on — proves the rail does NOT ride the AI gate.
   await page.route('**/api/capabilities', (route: Route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(
-        aiPreview
-          ? { ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true } }
-          : allOffCapabilities,
-      ),
+      body: JSON.stringify({
+        ai: { ...allOffCapabilities.ai, inboxRanking: true, inboxEnrichment: true },
+      }),
     }),
   );
   await page.route('**/api/events', (route: Route) =>
@@ -331,39 +331,15 @@ test('AI preview toggle reveals activity rail', async ({ page }) => {
       body: JSON.stringify(sampleInbox),
     }),
   );
-  // SettingsPage > AuthSection consumes GET /api/submit/in-flight (via
-  // useSubmitInFlight). Mock it so /settings renders without falling through to
-  // the dev server.
-  await page.route('**/api/submit/in-flight', (route: Route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ inFlight: false, prRef: null }),
-    }),
-  );
 
+  // Flag off (default) + AI on → rail NOT rendered.
   await page.goto('/');
   await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
-
-  // Activity rail is not rendered at all when aiPreview is false
-  // (InboxPage renders {showActivityRail && <ActivityRail />}).
   await expect(page.getByRole('complementary', { name: /activity/i })).not.toBeAttached();
 
-  // The navbar quick-toggle was removed; AI preview now lives only on the
-  // Settings page (AppearanceSection's `<input role="switch">`). Flip it there,
-  // then re-navigate to "/". A fresh navigation remounts InboxPage so
-  // usePreferences + useCapabilities refetch and see aiPreview=true AND
-  // inboxRanking=true from the now-mutated mock state — this replaces the old
-  // window.dispatchEvent(new Event('focus')) trick.
-  await page.goto('/settings');
-  const aiToggle = page.getByRole('switch', { name: /ai preview/i });
-  await aiToggle.waitFor({ timeout: 30_000 });
-  const toggleResponse = page.waitForResponse(
-    (r) => r.url().includes('/api/preferences') && r.request().method() === 'POST',
-  );
-  await aiToggle.click();
-  await toggleResponse;
-
+  // Flip the dedicated flag on (config-edit equivalent — no UI control by design) and
+  // remount: the rail now appears, with AI preview unchanged.
+  showActivityRail = true;
   await page.goto('/');
   await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole('complementary', { name: /activity/i })).toBeVisible({

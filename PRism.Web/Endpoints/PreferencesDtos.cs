@@ -23,7 +23,9 @@ internal sealed record PreferencesResponse(
 
 internal sealed record UiPreferencesDto(string Theme, string Accent, bool AiPreview, string Density, string ContentScale);
 
-internal sealed record InboxPreferencesDto(InboxSectionsDto Sections, string DefaultSort, string SectionOrder);
+// #283 ShowActivityRail serializes as `showActivityRail` natively under the camelCase
+// policy — no [JsonPropertyName] needed. Default false; gates the fabricated activity rail.
+internal sealed record InboxPreferencesDto(InboxSectionsDto Sections, string DefaultSort, string SectionOrder, bool ShowActivityRail);
 
 internal sealed record InboxSectionsDto(
     [property: JsonPropertyName("review-requested")] bool ReviewRequested,
