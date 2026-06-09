@@ -467,11 +467,17 @@ public class ConfigStorePatchAsyncDottedPathTests
     public static TheoryData<string> InvalidSectionOrders() => new()
     {
         "review-requested,awaiting-author,authored-by-me",                            // incomplete (3)
-        "review-requested,awaiting-author,authored-by-me,mentioned,recently-closed",  // too long / pinned id
+        "review-requested,awaiting-author,authored-by-me,mentioned,recently-closed",  // too long (5)
         "review-requested,review-requested,authored-by-me,mentioned",                 // duplicate
         "review-requested,awaiting-author,authored-by-me,bogus",                      // unknown id
         "",                                                                            // empty
-        "recently-closed,review-requested,awaiting-author,mentioned",                 // includes pinned id
+        // 4 ids but a valid one (authored-by-me) is replaced by the pinned id —
+        // rejected because authored-by-me is MISSING, not because recently-closed is present.
+        "recently-closed,review-requested,awaiting-author,mentioned",
+        // Strict-write: a trailing/leading/double comma yields an empty segment that the
+        // count check must reject — NOT silently drop. (Copilot PR #303.)
+        "review-requested,awaiting-author,authored-by-me,mentioned,",                 // trailing comma
+        "review-requested,,awaiting-author,authored-by-me,mentioned",                 // double comma
     };
 
     [Theory]

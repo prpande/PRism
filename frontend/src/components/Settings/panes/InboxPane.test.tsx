@@ -133,6 +133,16 @@ describe('InboxPane reorder', () => {
     );
   });
 
+  it('announces the move via a polite live region for screen readers', async () => {
+    renderInboxPane();
+    await userEvent.click(screen.getByRole('button', { name: 'Move Review requested down' }));
+    await waitFor(() =>
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Review requested moved to position 2 of 4',
+      ),
+    );
+  });
+
   it('disables Restore default order when already at the canonical default', () => {
     renderInboxPane();
     expect(screen.getByRole('button', { name: 'Restore default order' })).toBeDisabled();

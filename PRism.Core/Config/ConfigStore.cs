@@ -57,6 +57,9 @@ public sealed class ConfigStore : IConfigStore, IDisposable
     // of exactly these four work-section ids (recently-closed is pinned in the frontend
     // and never part of the persisted order). Validated BEFORE the gate so a malformed
     // value returns 400, not a persisted order the frontend can't render coherently.
+    // Keep in sync with the frontend SSOT CANONICAL_WORK_ORDER in
+    // frontend/src/components/Inbox/sectionOrder.ts — if a 5th work section is ever
+    // added it must be added in both places (and the default in AppConfig.SectionOrder).
     private static readonly string[] _workSectionIds =
         { "review-requested", "awaiting-author", "authored-by-me", "mentioned" };
 
@@ -153,8 +156,11 @@ public sealed class ConfigStore : IConfigStore, IDisposable
 
         if (key == "inbox.sectionOrder")
         {
-            var ids = ((string)value!).Split(
-                ',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            // TrimEntries (tolerate surrounding spaces) but NOT RemoveEmptyEntries:
+            // an empty segment from a trailing/leading/double comma must survive so the
+            // count check rejects it. Dropping empties would silently accept (and persist)
+            // a malformed string like "a,b,c,d," — violating strict-write. (Copilot PR #303.)
+            var ids = ((string)value!).Split(',', StringSplitOptions.TrimEntries);
             var ordered = new HashSet<string>(ids, StringComparer.Ordinal);
             if (ids.Length != _workSectionIds.Length
                 || ordered.Count != ids.Length

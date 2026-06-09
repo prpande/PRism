@@ -37,6 +37,7 @@ function Chevron({ dir }: { dir: 'up' | 'down' }) {
 export function InboxPane() {
   const { preferences, set } = usePreferences();
   const [pending, setPending] = useState(false);
+  const [announcement, setAnnouncement] = useState('');
   if (!preferences) return null;
 
   const sections = preferences.inbox.sections;
@@ -59,8 +60,12 @@ export function InboxPane() {
   const move = (index: number, delta: -1 | 1) => {
     const j = index + delta;
     if (j < 0 || j >= order.length) return;
+    const moved = order[index];
     const next = [...order];
     [next[index], next[j]] = [next[j], next[index]];
+    // Announce the move for screen-reader / keyboard users — the buttons alone give
+    // no feedback that the row position changed (claude[bot] PR #303).
+    setAnnouncement(`${WORK_LABELS[moved]} moved to position ${j + 1} of ${order.length}`);
     writeOrder(next);
   };
 
@@ -89,6 +94,9 @@ export function InboxPane() {
       </p>
 
       <div role="group" aria-label="Inbox section order">
+        <div className="sr-only" role="status" aria-live="polite">
+          {announcement}
+        </div>
         {order.map((id, index) => (
           <div key={id} className={pane.row}>
             <label className={pane.label} htmlFor={`inbox-section-${id}`}>
