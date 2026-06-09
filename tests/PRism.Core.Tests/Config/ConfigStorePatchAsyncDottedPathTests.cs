@@ -401,4 +401,105 @@ public class ConfigStorePatchAsyncDottedPathTests
             new Dictionary<string, object?> { ["inbox.defaultSort"] = "bogus" }, CancellationToken.None);
         await act.Should().ThrowAsync<ConfigPatchException>().WithMessage("*inbox.defaultSort*");
     }
+
+    // #275: SectionOrder is a new trailing-defaulted string parameter on InboxConfig.
+    // AppConfig.Default (what feature code reads at runtime) must expose the canonical
+    // work-section order — recently-closed is pinned in the frontend, so it is absent here.
+    [Fact]
+    public void Default_SectionOrder_IsCanonicalWorkOrder()
+    {
+        AppConfig.Default.Inbox.SectionOrder
+            .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
+    }
+
+    // #275: a config.json written before the field existed must load with the canonical
+    // default via STJ's record-positional-default path (same mechanism as DefaultSort).
+    [Fact]
+    public async Task InitAsync_LegacyConfigWithoutSectionOrder_DefaultsToCanonical()
+    {
+        using var dir = new TempDataDir();
+        var path = Path.Combine(dir.Path, "config.json");
+        await File.WriteAllTextAsync(path, """
+            {
+              "inbox": { "deduplicate": true, "sections": { "review-requested": true } }
+            }
+            """);
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        store.Current.Inbox.SectionOrder
+            .Should().Be("review-requested,awaiting-author,authored-by-me,mentioned");
+    }
+
+    // #275: a valid 4-id permutation patches through to InboxConfig.SectionOrder and persists.
+    [Fact]
+    public async Task Patch_sets_valid_section_order()
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        await store.PatchAsync(
+            new Dictionary<string, object?>
+                { ["inbox.sectionOrder"] = "mentioned,review-requested,authored-by-me,awaiting-author" },
+            CancellationToken.None);
+        store.Current.Inbox.SectionOrder
+            .Should().Be("mentioned,review-requested,authored-by-me,awaiting-author");
+    }
+
+    [Fact]
+    public async Task Patch_section_order_persists_across_reload()
+    {
+        var dir = Directory.CreateTempSubdirectory().FullName;
+        var store = new ConfigStore(dir);
+        await store.InitAsync(CancellationToken.None);
+        await store.PatchAsync(
+            new Dictionary<string, object?>
+                { ["inbox.sectionOrder"] = "authored-by-me,mentioned,review-requested,awaiting-author" },
+            CancellationToken.None);
+
+        var roundTrip = new ConfigStore(dir);
+        await roundTrip.InitAsync(CancellationToken.None);
+        roundTrip.Current.Inbox.SectionOrder
+            .Should().Be("authored-by-me,mentioned,review-requested,awaiting-author");
+    }
+
+    // Each malformed value must be rejected with a ConfigPatchException naming the field
+    // (→ 400 at the endpoint), not silently persisted.
+    public static TheoryData<string> InvalidSectionOrders() => new()
+    {
+        "review-requested,awaiting-author,authored-by-me",                            // incomplete (3)
+        "review-requested,awaiting-author,authored-by-me,mentioned,recently-closed",  // too long (5)
+        "review-requested,review-requested,authored-by-me,mentioned",                 // duplicate
+        "review-requested,awaiting-author,authored-by-me,bogus",                      // unknown id
+        "",                                                                            // empty
+        // 4 ids but a valid one (authored-by-me) is replaced by the pinned id —
+        // rejected because authored-by-me is MISSING, not because recently-closed is present.
+        "recently-closed,review-requested,awaiting-author,mentioned",
+        // Strict-write: a trailing/leading/double comma yields an empty segment that the
+        // count check must reject — NOT silently drop. (Copilot PR #303.)
+        "review-requested,awaiting-author,authored-by-me,mentioned,",                 // trailing comma
+        "review-requested,,awaiting-author,authored-by-me,mentioned",                 // double comma
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidSectionOrders))]
+    public async Task Patch_rejects_invalid_section_order(string value)
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.sectionOrder"] = value }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>().WithMessage("*inbox.sectionOrder*");
+    }
+
+    // Non-string value (number/null/bool) is rejected by the per-key type check.
+    [Fact]
+    public async Task Patch_rejects_nonstring_section_order()
+    {
+        var store = new ConfigStore(Directory.CreateTempSubdirectory().FullName);
+        await store.InitAsync(CancellationToken.None);
+        var act = async () => await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.sectionOrder"] = 42 }, CancellationToken.None);
+        await act.Should().ThrowAsync<ConfigPatchException>()
+            .Where(e => e.Message.Contains("inbox.sectionOrder") && e.Message.Contains("string"));
+    }
 }

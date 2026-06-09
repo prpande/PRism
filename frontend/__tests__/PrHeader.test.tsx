@@ -204,6 +204,7 @@ describe('PrHeader', () => {
           'recently-closed': true,
         },
         defaultSort: 'updated',
+        sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
       },
       github: {
         host: 'https://github.com',
