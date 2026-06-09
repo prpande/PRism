@@ -3,30 +3,30 @@
 **Issues:** #289 (light-mode navbar bottom edge looks blurred), #290 (Settings/Help
 icon hover inconsistent with the Inbox tab hover)
 **Tier:** T2 · **Risk:** B1 (UI-visual, `design` label) · **Date:** 2026-06-09
-**Scope:** `frontend/src/components/Header/Header.module.css` only. One combined PR
-closing both issues (same file, cohesive nav-bar polish).
+**Code scope:** `frontend/src/components/Header/Header.module.css` only (this spec is
+the only other file in the PR). One combined PR closing both issues (same file,
+cohesive nav-bar polish).
 
 ## Problem
 
 Two unrelated-but-cohesive nav-bar rough edges, both pure presentation:
 
-1. **#289 — fuzzy light edge (desktop shell only).** The Electron navbar uses
-   `:global([data-shell='desktop']) .header { box-shadow: var(--shadow-2) }`
-   (`Header.module.css:129`). In light theme `--shadow-2` is two stacked soft blurs
-   at very low opacity (`0 2px 4px …/0.06, 0 1px 2px …/0.04`, `tokens.css:127`).
-   Over the accent-tinted bar (`color-mix(--accent 12%, --surface-2)`) sitting on
-   `--surface-1` content, the diffuse shadow smears the boundary and washes out the
-   base `1px solid var(--border-1)` (line 8). The edge reads as a gradient, not a line.
-   Dark `--shadow-2` is a heavier black band (`0 2px 6px black/0.40`) that reads as a
-   defined edge and must be preserved.
+1. **#289 — fuzzy light edge (desktop shell only).** The Electron navbar's
+   `:global([data-shell='desktop']) .header` rule carries `box-shadow:
+var(--shadow-2)`. In light theme `--shadow-2` is two stacked soft blurs at very low
+   opacity (`0 2px 4px …/0.06, 0 1px 2px …/0.04` in `tokens.css`). Over the
+   accent-tinted bar (`color-mix(--accent 12%, --surface-2)`) sitting on `--surface-1`
+   content, the diffuse shadow smears the boundary and washes out the base `.header`'s
+   `border-bottom: 1px solid var(--border-1)`. The edge reads as a gradient, not a
+   line. Dark `--shadow-2` is a heavier black band (`0 2px 6px black/0.40`) that reads
+   as a defined edge and must be preserved.
 
 2. **#290 — divergent icon hover.** The Inbox tab hover (`.tab:hover,
-.tab:focus-visible`, lines 29–39) is an accent glow (`--accent-hover` text + faint
-   `--accent` tint + `0 0 12px -2px --accent-ring`). The Settings/Help icons
-   (`.gear:hover`, lines 91–94) get a neutral `surface-3` grey swap with no accent —
-   accent-independent (identical in indigo/amber/teal). `.gear:focus-visible` is a
-   separate `outline`, while the tab's focus-visible reuses the hover glow. Two
-   nav-bar items, two hover languages.
+.tab:focus-visible`) is an accent glow (`--accent-hover` text + faint `--accent`
+   tint + `0 0 12px -2px --accent-ring`). The Settings/Help icons (`.gear:hover`) get a
+   neutral `surface-3` grey swap with no accent — accent-independent (identical in
+   indigo/amber/teal). `.gear:focus-visible` is a separate `outline`, while the tab's
+   focus-visible reuses the hover glow. Two nav-bar items, two hover languages.
 
 Both are confirmed by before-shots against `main` (desktop shell, light theme).
 
@@ -55,9 +55,9 @@ without the fuzz (AC #1). Dark is left on `--shadow-2` untouched (AC #2).
 (`tokens.css` / `desktop/src/main.ts:196`), not nested — so the light override is a
 **compound** selector on the same element, not a descendant chain:
 `:global([data-theme='light'][data-shell='desktop']) .header`. Its specificity
-`(0,3,0)` out-specifies the base desktop-shell rule `(0,2,0)` at line 119, so the
-override wins the cascade regardless of source order (placed right after the base
-rule for readability). All referenced tokens verified present (`--border-2`,
+`(0,3,0)` out-specifies the base `:global([data-shell='desktop']) .header` rule
+`(0,2,0)`, so the override wins the cascade regardless of source order (placed right
+after the base rule for readability). All referenced tokens verified present (`--border-2`,
 `--shadow-2`, light/dark variants).
 
 **Rejected:** _A — border-only_ (drop the shadow) flattens the bar, failing the
