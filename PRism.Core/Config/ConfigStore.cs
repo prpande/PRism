@@ -283,13 +283,24 @@ public sealed class ConfigStore : IConfigStore, IDisposable
                 parsed = parsed with { Github = AppConfig.Default.Github };
             }
 
-            // Nested backfill: an old config with `ui` present but no `ai` key deserializes
-            // Ui.Ai to null. The AiModeState DI seed reads Ui.Ai.Mode, so without this
-            // guard a legacy config would NRE at startup. Symmetric to the Inbox.Sections
-            // backfill above; the check is on a nested property, not the sub-record itself.
+            // Nested backfill: a legacy `ui.ai` with `mode` only (post-PR2 shape) deserializes
+            // Consent/Features to null. The AiConsentState/AiFeatureState DI seeds read them, so
+            // backfill defaults. Symmetric to the Inbox.Sections nested backfill above.
             if (parsed.Ui.Ai is null)
             {
                 parsed = parsed with { Ui = parsed.Ui with { Ai = AppConfig.Default.Ui.Ai } };
+            }
+            else
+            {
+                var ai = parsed.Ui.Ai;
+                if (ai.Consent is null || ai.Features is null)
+                {
+                    parsed = parsed with { Ui = parsed.Ui with { Ai = ai with
+                    {
+                        Consent  = ai.Consent  ?? AppConfig.Default.Ui.Ai.Consent,
+                        Features = ai.Features ?? AppConfig.Default.Ui.Ai.Features,
+                    } } };
+                }
             }
 
             _current = parsed;
