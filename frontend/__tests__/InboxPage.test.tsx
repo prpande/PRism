@@ -354,7 +354,11 @@ describe('InboxPage — useAiGate migrations', () => {
           sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
           showActivityRail,
         },
-        github: { host: 'https://github.com', configPath: '/fake/config.json', logsPath: '/fake/logs' },
+        github: {
+          host: 'https://github.com',
+          configPath: '/fake/config.json',
+          logsPath: '/fake/logs',
+        },
       } as PreferencesResponse,
       error: null,
       refetch: vi.fn().mockResolvedValue(undefined),
