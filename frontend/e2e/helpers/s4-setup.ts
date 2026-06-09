@@ -39,7 +39,7 @@ export async function resetBackendState(request: APIRequestContext): Promise<voi
   // two separate requests — a combined body 400s and resets neither. Best-effort:
   // a non-200 (e.g., config already default) is acceptable and silently ignored
   // rather than failing the beforeEach — the test will fail for its own reason.
-  for (const patch of [{ aiPreview: false }, { contentScale: 'm' }]) {
+  for (const patch of [{ aiPreview: false }, { contentScale: 'm' }, { 'inbox.showActivityRail': false }]) {
     const resp = await request.post(`${BACKEND_ORIGIN}/api/preferences`, {
       headers: { 'Content-Type': 'application/json', Origin: BACKEND_ORIGIN },
       data: JSON.stringify(patch),

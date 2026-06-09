@@ -103,6 +103,8 @@ if (builder.Environment.IsEnvironment("Test")
     builder.Services.AddSingleton<IPrDiscovery, FakePrDiscovery>();
     builder.Services.AddSingleton<IPrReader, FakePrReader>();
     builder.Services.AddSingleton<IReviewSubmitter, FakeReviewSubmitter>();
+    builder.Services.RemoveAll<PRism.Core.Activity.IActivityProvider>();
+    builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Web.TestHooks.FakeActivityProvider>();
 }
 
 // Test env + REAL_INJECT: attach TestFailureInjectionHandler to the "github" named HttpClient.

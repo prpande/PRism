@@ -128,23 +128,23 @@ test.describe('parity baselines — Inbox', () => {
   test('inbox-activity-rail', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
-    // Activity rail only renders when preferences.ui.aiPreview === true; enable
+    // Activity rail only renders when inbox.showActivityRail === true; enable
     // it before the locator wait so the rail mounts and the test can lock the
     // visual baseline. resetBackendState in beforeEach restores the default
-    // (aiPreview=false) between tests, so this enable is per-test.
+    // (showActivityRail=false) between tests, so this enable is per-test.
     //
     // Wire shape: POST /api/preferences accepts exactly one flat dotted-path
     // field per patch (see PRism.Web/Endpoints/PreferencesEndpoints.cs and
     // frontend/src/hooks/usePreferences.ts) — NOT a nested
-    // `{ ui: { aiPreview: true } }`. Origin header matches the loopback pattern
-    // used in helpers/s4-setup.ts (OriginCheckMiddleware requires it on POST).
+    // `{ inbox: { showActivityRail: true } }`. Origin header matches the loopback
+    // pattern used in helpers/s4-setup.ts (OriginCheckMiddleware requires it on POST).
     const prefResp = await page.request.post('/api/preferences', {
-      data: { aiPreview: true },
+      data: { 'inbox.showActivityRail': true },
       headers: { Origin: BACKEND_ORIGIN },
     });
     if (!prefResp.ok()) {
       throw new Error(
-        `POST /api/preferences (aiPreview=true) failed: ${prefResp.status()} ${await prefResp.text()}`,
+        `POST /api/preferences (inbox.showActivityRail=true) failed: ${prefResp.status()} ${await prefResp.text()}`,
       );
     }
     // The SPA reads preferences on initial page load; without reload the rail
