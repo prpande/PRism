@@ -14,7 +14,9 @@ type Preferences = ReturnType<typeof makeDefaultPreferences> & {
   inbox: ReturnType<typeof makeDefaultPreferences>['inbox'] & { sectionOrder: string };
 };
 
-function makePrefsWithOrder(sectionOrder = 'review-requested,awaiting-author,authored-by-me,mentioned'): Preferences {
+function makePrefsWithOrder(
+  sectionOrder = 'review-requested,awaiting-author,authored-by-me,mentioned',
+): Preferences {
   const base = makeDefaultPreferences();
   return {
     ...base,
@@ -141,7 +143,9 @@ test('moving a section down in Settings reorders the inbox and persists across r
   // contains the section label. Collect them in DOM order.
   // The inbox section header button contains the label as a <span> child.
   // We target buttons inside the section elements by their accessible text.
-  const sectionButtons = page.locator('main[data-testid="inbox-page"] section button[aria-expanded]');
+  const sectionButtons = page.locator(
+    'main[data-testid="inbox-page"] section button[aria-expanded]',
+  );
   await expect(sectionButtons.first()).toBeVisible({ timeout: 30_000 });
 
   const labels = await sectionButtons.allInnerTexts();
@@ -159,12 +163,16 @@ test('moving a section down in Settings reorders the inbox and persists across r
   // after reload returns the new sectionOrder string).
   await page.reload();
 
-  const sectionButtonsAfterReload = page.locator('main[data-testid="inbox-page"] section button[aria-expanded]');
+  const sectionButtonsAfterReload = page.locator(
+    'main[data-testid="inbox-page"] section button[aria-expanded]',
+  );
   await expect(sectionButtonsAfterReload.first()).toBeVisible({ timeout: 30_000 });
 
   const labelsAfterReload = await sectionButtonsAfterReload.allInnerTexts();
   const reviewIndexAfterReload = labelsAfterReload.findIndex((t) => t.includes('Review requested'));
-  const awaitingIndexAfterReload = labelsAfterReload.findIndex((t) => t.includes('Needs re-review'));
+  const awaitingIndexAfterReload = labelsAfterReload.findIndex((t) =>
+    t.includes('Needs re-review'),
+  );
 
   expect(reviewIndexAfterReload).toBeGreaterThan(-1);
   expect(awaitingIndexAfterReload).toBeGreaterThan(-1);

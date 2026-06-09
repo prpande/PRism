@@ -60,7 +60,10 @@ export function orderedWorkSectionIds(savedOrder: string | undefined): WorkSecti
   const seen = new Set<WorkSectionId>();
   const valid: WorkSectionId[] = [];
   for (const id of parseSavedIds(savedOrder)) {
-    if ((CANONICAL_WORK_ORDER as readonly string[]).includes(id) && !seen.has(id as WorkSectionId)) {
+    if (
+      (CANONICAL_WORK_ORDER as readonly string[]).includes(id) &&
+      !seen.has(id as WorkSectionId)
+    ) {
       const wid = id as WorkSectionId;
       seen.add(wid);
       valid.push(wid);

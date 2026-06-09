@@ -32,7 +32,13 @@ export type PreferenceKey =
 
 type InboxSectionKey = Exclude<
   PreferenceKey,
-  'theme' | 'accent' | 'aiPreview' | 'density' | 'contentScale' | 'inbox.defaultSort' | 'inbox.sectionOrder'
+  | 'theme'
+  | 'accent'
+  | 'aiPreview'
+  | 'density'
+  | 'contentScale'
+  | 'inbox.defaultSort'
+  | 'inbox.sectionOrder'
 >;
 
 export function readKey(prefs: PreferencesResponse, key: PreferenceKey): unknown {
@@ -78,7 +84,10 @@ export function writeKey(
   if (key === 'inbox.sectionOrder')
     return {
       ...prefs,
-      inbox: { ...prefs.inbox, sectionOrder: value as PreferencesResponse['inbox']['sectionOrder'] },
+      inbox: {
+        ...prefs.inbox,
+        sectionOrder: value as PreferencesResponse['inbox']['sectionOrder'],
+      },
     };
   const id = (key as InboxSectionKey).slice(
     'inbox.sections.'.length,

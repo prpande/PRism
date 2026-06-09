@@ -29,7 +29,10 @@ describe('orderInboxSections', () => {
   ];
 
   it('reorders by the saved permutation, recently-closed pinned last', () => {
-    const out = orderInboxSections(live, 'mentioned,authored-by-me,review-requested,awaiting-author');
+    const out = orderInboxSections(
+      live,
+      'mentioned,authored-by-me,review-requested,awaiting-author',
+    );
     expect(ids(out)).toEqual([
       'mentioned',
       'authored-by-me',
@@ -40,7 +43,10 @@ describe('orderInboxSections', () => {
   });
 
   it('forces recently-closed last even if the saved order lists it first', () => {
-    const out = orderInboxSections(live, 'recently-closed,mentioned,review-requested,awaiting-author,authored-by-me');
+    const out = orderInboxSections(
+      live,
+      'recently-closed,mentioned,review-requested,awaiting-author,authored-by-me',
+    );
     expect(ids(out).at(-1)).toBe('recently-closed');
   });
 
@@ -56,7 +62,10 @@ describe('orderInboxSections', () => {
   });
 
   it('ignores a saved id that matches no live section', () => {
-    const out = orderInboxSections([sec('mentioned'), sec('review-requested')], 'ghost,mentioned,review-requested');
+    const out = orderInboxSections(
+      [sec('mentioned'), sec('review-requested')],
+      'ghost,mentioned,review-requested',
+    );
     expect(ids(out)).toEqual(['mentioned', 'review-requested']);
   });
 
@@ -75,7 +84,10 @@ describe('orderInboxSections', () => {
 
   it('arranges a filter-narrowed subset by the saved order', () => {
     const subset = [sec('mentioned'), sec('review-requested')];
-    const out = orderInboxSections(subset, 'mentioned,authored-by-me,review-requested,awaiting-author');
+    const out = orderInboxSections(
+      subset,
+      'mentioned,authored-by-me,review-requested,awaiting-author',
+    );
     expect(ids(out)).toEqual(['mentioned', 'review-requested']);
   });
 
@@ -84,12 +96,18 @@ describe('orderInboxSections', () => {
     // canonical-index tiebreak. authored-by-me (canonical idx 2) must precede
     // mentioned (idx 3) even though input order is the reverse — this pins the
     // "appended in canonical order" contract, not just stable input order.
-    const out = orderInboxSections([sec('mentioned'), sec('authored-by-me')], 'review-requested,awaiting-author');
+    const out = orderInboxSections(
+      [sec('mentioned'), sec('authored-by-me')],
+      'review-requested,awaiting-author',
+    );
     expect(ids(out)).toEqual(['authored-by-me', 'mentioned']);
   });
 
   it('tolerates surrounding whitespace around saved ids', () => {
-    const out = orderInboxSections(live, ' mentioned , review-requested , awaiting-author , authored-by-me ');
+    const out = orderInboxSections(
+      live,
+      ' mentioned , review-requested , awaiting-author , authored-by-me ',
+    );
     expect(ids(out)).toEqual([
       'mentioned',
       'review-requested',
@@ -102,12 +120,9 @@ describe('orderInboxSections', () => {
 
 describe('orderedWorkSectionIds', () => {
   it('returns exactly the four work ids in saved order', () => {
-    expect(orderedWorkSectionIds('mentioned,authored-by-me,review-requested,awaiting-author')).toEqual([
-      'mentioned',
-      'authored-by-me',
-      'review-requested',
-      'awaiting-author',
-    ]);
+    expect(
+      orderedWorkSectionIds('mentioned,authored-by-me,review-requested,awaiting-author'),
+    ).toEqual(['mentioned', 'authored-by-me', 'review-requested', 'awaiting-author']);
   });
 
   it('appends missing ids canonically and dedups / drops unknowns', () => {

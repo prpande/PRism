@@ -30,7 +30,13 @@ vi.mock('../../../hooks/usePreferences', () => ({
   }),
 }));
 
-function renderInboxPane(opts: { set?: ((...args: unknown[]) => unknown); defaultSort?: SortKey; sectionOrder?: string } = {}) {
+function renderInboxPane(
+  opts: {
+    set?: (...args: unknown[]) => unknown;
+    defaultSort?: SortKey;
+    sectionOrder?: string;
+  } = {},
+) {
   if (opts.set) {
     set.mockImplementation(opts.set as Parameters<typeof set.mockImplementation>[0]);
   }
@@ -101,7 +107,12 @@ describe('InboxPane reorder', () => {
 
   it('disables reorder controls while a move POST is in flight (no lost second click)', async () => {
     let resolve!: (v: unknown) => void;
-    renderInboxPane({ set: () => new Promise((r) => { resolve = r; }) });
+    renderInboxPane({
+      set: () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    });
     const down = screen.getByRole('button', { name: 'Move Review requested down' });
     await userEvent.click(down);
     const other = screen.getByRole('button', { name: 'Move Authored by me up' });
@@ -123,7 +134,10 @@ describe('InboxPane reorder', () => {
     expect(restore).toBeEnabled();
     await userEvent.click(restore);
     await waitFor(() =>
-      expect(set).toHaveBeenCalledWith('inbox.sectionOrder', 'review-requested,awaiting-author,authored-by-me,mentioned'),
+      expect(set).toHaveBeenCalledWith(
+        'inbox.sectionOrder',
+        'review-requested,awaiting-author,authored-by-me,mentioned',
+      ),
     );
   });
 });

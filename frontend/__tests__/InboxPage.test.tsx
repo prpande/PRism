@@ -77,7 +77,8 @@ function setHooks(
           mentioned: true,
           'recently-closed': true,
         },
-        sectionOrder: opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned',
+        sectionOrder:
+          opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned',
       },
       github: {
         host: 'https://github.com',
@@ -244,14 +245,21 @@ describe('InboxPage', () => {
           { id: 'mentioned', label: 'Mentioned', items: [] },
           { id: 'recently-closed', label: 'Recently closed', items: [] },
         ],
-        enrichments: {}, lastRefreshedAt: '', tokenScopeFooterEnabled: false, ciProbeComplete: true,
+        enrichments: {},
+        lastRefreshedAt: '',
+        tokenScopeFooterEnabled: false,
+        ciProbeComplete: true,
       },
       // awaiting-author is in the saved order but absent from `sections` — exercises
       // orderInboxSections' "saved id matching no live section is harmlessly ignored".
       sectionOrder: 'mentioned,authored-by-me,review-requested,awaiting-author',
     });
     render(
-      <MemoryRouter><OpenTabsProvider><InboxPage /></OpenTabsProvider></MemoryRouter>,
+      <MemoryRouter>
+        <OpenTabsProvider>
+          <InboxPage />
+        </OpenTabsProvider>
+      </MemoryRouter>,
     );
     // InboxSection renders a <button> header whose textContent is: caret + label + count.
     // Filter to buttons that contain any of the four section label substrings.
