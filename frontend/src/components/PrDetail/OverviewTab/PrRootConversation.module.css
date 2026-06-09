@@ -91,26 +91,6 @@
   gap: var(--s-2);
 }
 
-.prRootReplyButton {
-  display: inline-flex;
-  align-items: center;
-  text-align: left;
-  font-size: var(--text-sm);
-  color: var(--text-3);
-  background: var(--surface-2);
-  border: 1px solid var(--border-1);
-  border-radius: var(--radius-2);
-  padding: 8px 12px;
-  cursor: text;
-  transition:
-    border-color var(--t-fast),
-    color var(--t-fast);
-}
-
-.prRootReplyButton:hover {
-  border-color: var(--border-strong);
-  color: var(--text-2);
-}
 
 .prRootConversationFooter {
   font-size: var(--text-xs);

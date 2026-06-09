@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { DraftCommentDto, IssueCommentDto, PrReference } from '../../../api/types';
 import { CommentCard } from '../Comment/CommentCard';
+import { CollapsedComposerAffordance } from '../Composer/CollapsedComposerAffordance';
 import { PrRootReplyComposer } from '../Composer/PrRootReplyComposer';
 import { MarkAllReadButton } from './MarkAllReadButton';
 import styles from './PrRootConversation.module.css';
@@ -95,9 +96,13 @@ function PrRootConversationActions({
     <div className={styles.prRootConversationActions}>
       <div className={styles.prRootConversationActionsRow}>
         {!composerOpen && (
-          <button type="button" className={styles.prRootReplyButton} onClick={handleReplyClick}>
-            Reply
-          </button>
+          <CollapsedComposerAffordance
+            label={existingPrRootDraft ? 'Continue draft…' : 'Reply…'}
+            ariaLabel="Reply to the PR conversation"
+            hasDraft={!!existingPrRootDraft}
+            readOnly={readOnly ?? false}
+            onOpen={handleReplyClick}
+          />
         )}
         <MarkAllReadButton prRef={prRef} readOnly={readOnly ?? false} />
       </div>
