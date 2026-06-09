@@ -106,11 +106,31 @@ internal sealed class TestReviewSubmitter : IReviewSubmitter
     public Task<CreatedIssueCommentResult> CreateIssueCommentAsync(PrReference reference, string bodyMarkdown, CancellationToken ct)
         => throw new NotImplementedException("CreateIssueCommentAsync is not exercised by this fake.");
 
+    // #302 — injectable failure for CreateReviewComment* methods (used by PrCommentEndpointTests).
+    // One shared failure slot; consumed on first call (same pattern as PrRootCommentEndpointTests).
+    private Exception? _reviewCommentFailure;
+    private long _nextReviewCommentId = 100;
+
+    public List<(PrReference Pr, ReviewCommentRequest Request)> ReviewComments { get; } = new();
+    public List<(PrReference Pr, string ParentThreadId, string Body)> ReviewCommentReplies { get; } = new();
+
+    public void InjectReviewCommentFailure(Exception ex) => _reviewCommentFailure = ex;
+
     public Task<CreatedReviewCommentResult> CreateReviewCommentAsync(PrReference reference, ReviewCommentRequest request, CancellationToken ct)
-        => throw new NotImplementedException();
+    {
+        if (_reviewCommentFailure is { } ex) { _reviewCommentFailure = null; return Task.FromException<CreatedReviewCommentResult>(ex); }
+        ReviewComments.Add((reference, request));
+        var id = Interlocked.Increment(ref _nextReviewCommentId);
+        return Task.FromResult(new CreatedReviewCommentResult(id, DateTimeOffset.UtcNow));
+    }
 
     public Task<CreatedReviewCommentResult> CreateReviewCommentReplyAsync(PrReference reference, string parentThreadId, string bodyMarkdown, CancellationToken ct)
-        => throw new NotImplementedException();
+    {
+        if (_reviewCommentFailure is { } ex) { _reviewCommentFailure = null; return Task.FromException<CreatedReviewCommentResult>(ex); }
+        ReviewCommentReplies.Add((reference, parentThreadId, bodyMarkdown));
+        var id = Interlocked.Increment(ref _nextReviewCommentId);
+        return Task.FromResult(new CreatedReviewCommentResult(id, DateTimeOffset.UtcNow));
+    }
 }
 
 // Minimal IPrReader for endpoint tests. PollActivePrAsync returns a configurable head sha; the
