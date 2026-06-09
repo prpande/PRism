@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
-import type { DraftReplyDto, PrReference, ReviewThreadDto } from '../../../../api/types';
+import type {
+  DraftCommentDto,
+  DraftReplyDto,
+  PrReference,
+  ReviewThreadDto,
+} from '../../../../api/types';
 import { CommentCard } from '../../Comment/CommentCard';
 import { CollapsedComposerAffordance } from '../../Composer/CollapsedComposerAffordance';
 import { ReplyComposer } from '../../Composer/ReplyComposer';
 import styles from './ExistingCommentWidget.module.css';
-import type { ComposerOwnerKey } from '../../../../hooks/useDraftSession';
+import {
+  computeAnyOtherDraftsStaged,
+  type ComposerOwnerKey,
+} from '../../../../hooks/useDraftSession';
 
 export interface ExistingCommentWidgetReplyContext {
   prRef: PrReference;
@@ -17,6 +25,17 @@ export interface ExistingCommentWidgetReplyContext {
   onReplyComposerClose: () => void;
   // Spec § 5.7a. Forwarded to ReplyComposer; disables textarea + save.
   readOnly?: boolean;
+  // #302 — post-now wiring (Task 11a). The staged-check needs this reply's own
+  // draft id, which only exists here (inside ThreadView). So the parent hands
+  // down the raw pieces and ThreadView calls computeAnyOtherDraftsStaged with
+  // its draftReplyId. All optional so pure-rendering tests can omit them.
+  draftComments?: DraftCommentDto[];
+  postingInProgress?: boolean;
+  beginPosting?: () => void;
+  endPosting?: () => void;
+  // Fired after a successful post-now so the parent refetches the session and
+  // the just-posted comment surfaces (11a: plain refetch; 11b adds optimism).
+  onReplyPosted?: () => void;
 }
 
 export interface ExistingCommentWidgetProps {
@@ -120,6 +139,15 @@ function ThreadView({
           registerOpenComposer={replyContext.registerOpenComposer}
           onClose={handleComposerClose}
           readOnly={replyContext.readOnly ?? false}
+          anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
+            replyContext.draftComments ?? [],
+            replyContext.draftReplies,
+            draftReplyId,
+            replyContext.postingInProgress ?? false,
+          )}
+          beginPosting={replyContext.beginPosting}
+          endPosting={replyContext.endPosting}
+          onPosted={() => replyContext.onReplyPosted?.()}
         />
       )}
     </div>

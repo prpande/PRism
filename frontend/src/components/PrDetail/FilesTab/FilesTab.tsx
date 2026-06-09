@@ -23,6 +23,7 @@ import { buildTree, flattenPaths } from './treeBuilder';
 import { InlineCommentComposer } from '../Composer/InlineCommentComposer';
 import type { InlineAnchor } from '../Composer/InlineCommentComposer';
 import { usePrDetailContext } from '../prDetailContext';
+import { computeAnyOtherDraftsStaged } from '../../../hooks/useDraftSession';
 import styles from './FilesTab.module.css';
 
 // True when the diff fetch failed specifically because the requested commit
@@ -344,6 +345,17 @@ export function FilesTab() {
         onSaved={handleComposerSaved}
         flushRef={activeComposerFlushRef}
         readOnly={readOnly}
+        anyOtherDraftsStaged={computeAnyOtherDraftsStaged(
+          draftSession.session?.draftComments ?? [],
+          draftSession.session?.draftReplies ?? [],
+          composerDraftId,
+          draftSession.postingInProgress,
+        )}
+        beginPosting={draftSession.beginPosting}
+        endPosting={draftSession.endPosting}
+        onPosted={() => {
+          void draftSession.refetch();
+        }}
       />
     );
   }
@@ -367,16 +379,32 @@ export function FilesTab() {
     () => ({
       prRef,
       prState,
+      draftComments: draftSession.session?.draftComments ?? [],
       draftReplies: draftSession.session?.draftReplies ?? [],
+      postingInProgress: draftSession.postingInProgress,
       registerOpenComposer: draftSession.registerOpenComposer,
       onReplyComposerClose: handleReplyComposerClose,
+      // #302 — post-now wiring (Task 11a). The reply's own draft id is known
+      // inside ExistingCommentWidget when it mounts the ReplyComposer, so the
+      // anyOtherDraftsStaged check is computed there from the raw pieces above
+      // (computeAnyOtherDraftsStaged) rather than threaded as a closure here.
+      beginPosting: draftSession.beginPosting,
+      endPosting: draftSession.endPosting,
+      onReplyPosted: () => {
+        void draftSession.refetch();
+      },
       readOnly,
     }),
     [
       prRef,
       prState,
+      draftSession.session?.draftComments,
       draftSession.session?.draftReplies,
+      draftSession.postingInProgress,
       draftSession.registerOpenComposer,
+      draftSession.beginPosting,
+      draftSession.endPosting,
+      draftSession.refetch,
       handleReplyComposerClose,
       readOnly,
     ],
