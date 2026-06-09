@@ -187,8 +187,13 @@ public class ConfigStoreTests
     public async Task LoadAsync_preserves_existing_aiPreview_false()
     {
         using var dir = new TempDataDir();
+        // Keys are kebab-case to match JsonSerializerOptionsFactory.Storage's
+        // KebabCaseJsonNamingPolicy (PropertyNameCaseInsensitive = false). A camelCase
+        // "aiPreview" key would be unrecognized → AiPreview falls back to default(false) and
+        // the test would pass VACUOUSLY (proving "unknown key → false", not preservation).
+        // Caught by claude[bot] on PR #309.
         var json = """
-            { "ui": { "theme": "system", "accent": "indigo", "aiPreview": false, "density": "comfortable", "contentScale": "m" } }
+            { "ui": { "theme": "system", "accent": "indigo", "ai-preview": false, "density": "comfortable", "content-scale": "m" } }
             """;
         await File.WriteAllTextAsync(Path.Combine(dir.Path, "config.json"), json);
 
@@ -231,5 +236,6 @@ public class ConfigStoreTests
         parsed.Inbox.Sections.AwaitingAuthor.Should().BeTrue();
         parsed.Inbox.Sections.AuthoredByMe.Should().BeTrue();
         parsed.Inbox.Sections.Mentioned.Should().BeTrue();
+        parsed.Inbox.ShowActivityRail.Should().BeFalse(); // #283 survives the JSON round-trip, default off
     }
 }

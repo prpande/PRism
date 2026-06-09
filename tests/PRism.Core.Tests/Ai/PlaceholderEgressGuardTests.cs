@@ -17,23 +17,30 @@ namespace PRism.Core.Tests.Ai;
 public class PlaceholderEgressGuardTests
 {
     [Fact]
-    public void Placeholder_assembly_does_not_reference_System_Net_Http()
-        => AssertNoHttpReference(typeof(PlaceholderPrSummarizer).Assembly);   // PRism.AI.Placeholder
+    public void Placeholder_assembly_has_no_network_egress_reference()
+        => AssertNoNetworkReference(typeof(PlaceholderPrSummarizer).Assembly);   // PRism.AI.Placeholder
 
     [Fact]
-    public void Contracts_assembly_does_not_reference_System_Net_Http()
-        => AssertNoHttpReference(typeof(IPrSummarizer).Assembly);             // PRism.AI.Contracts
+    public void Contracts_assembly_has_no_network_egress_reference()
+        => AssertNoNetworkReference(typeof(IPrSummarizer).Assembly);             // PRism.AI.Contracts
 
-    // The obvious managed network-egress vectors. GetReferencedAssemblies only lists an
-    // assembly once a type from it is actually used, so naming these is the non-brittle
-    // tripwire: it fires exactly when someone wires HttpClient (System.Net.Http), a raw
-    // socket (System.Net.Sockets), or WebClient/WebRequest (System.Net.Requests) into the
-    // placeholder/contracts assembly. Not exhaustive (a transitive package could still hide
-    // egress), but it spans the realistic ways a "real model" call gets bolted on.
+    // The managed network-egress vectors, each in its own fine-grained assembly.
+    // GetReferencedAssemblies only lists an assembly once a type from it is actually used,
+    // so naming these is the non-brittle tripwire: it fires exactly when someone wires a
+    // network client into the placeholder/contracts assembly — HttpClient (System.Net.Http),
+    // a raw socket (System.Net.Sockets), WebRequest/HttpWebRequest (System.Net.Requests), or
+    // WebClient (System.Net.WebClient — a DISTINCT assembly from Requests; flagged by Copilot
+    // on PR #309). Not exhaustive (a transitive package could still hide egress), but it spans
+    // the realistic ways a "real model" call gets bolted on.
     private static readonly string[] EgressAssemblies =
-        { "System.Net.Http", "System.Net.Sockets", "System.Net.Requests" };
+    {
+        "System.Net.Http",
+        "System.Net.Sockets",
+        "System.Net.Requests",
+        "System.Net.WebClient",
+    };
 
-    private static void AssertNoHttpReference(Assembly assembly)
+    private static void AssertNoNetworkReference(Assembly assembly)
     {
         var referenced = assembly
             .GetReferencedAssemblies()
