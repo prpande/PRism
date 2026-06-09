@@ -59,9 +59,9 @@ describe('ReplyComposer — accessibility (A3)', () => {
     expect(form).toHaveAttribute('aria-label', `Reply to thread ${PARENT_THREAD_ID}`);
   });
 
-  it('Save button is aria-disabled when body is empty', () => {
+  it('Add to review button is aria-disabled when body is empty', () => {
     render(<Harness />);
-    const save = screen.getByRole('button', { name: 'Save' });
+    const save = screen.getByRole('button', { name: 'Add to review' });
     expect(save).toHaveAttribute('aria-disabled', 'true');
     expect(save).toHaveAttribute('title', 'Type something to save.');
   });
