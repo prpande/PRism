@@ -2,7 +2,12 @@
 
 **Issue:** [#283](https://github.com/prpande/PRism/issues/283)
 **Date:** 2026-06-09
-**Tier / Risk:** T2 — gated B1 (UI-visual; `needs-design` label)
+**Tier / Risk:** T2 (heavy — ~8-10 files, but one coherent unit) — gated B1
+(UI-visual; `needs-design` label). The new `inbox.showActivityRail` field is a
+**backward-compatible additive** config scalar (lenient read backfills the default),
+following the #275 `SectionOrder` precedent — not a `state.json` schema migration, so
+it does not trip the B2 persisted-schema risk surface. Re-confirmed at the pre-PR
+re-check.
 
 ## Goal
 
@@ -95,8 +100,10 @@ at all, so an "AI preview" label on it would itself be inaccurate.
 ### Code changes
 1. **Flip the default** — `AppConfig.cs:24` `AiPreview` `false → true`.
 2. **Mark the inbox category chip** (C2) so it reads as an AI-preview sample.
-3. **Activity rail** (C3) — **OPEN DECISION, see C3.** Either mark the whole aside,
-   or suppress it from the default-on first impression. *Recommended: suppress.*
+3. **Decouple the activity rail from AI** (C3) — the rail is a non-AI, fully
+   fabricated mockup. Gate it on a **new `inbox.showActivityRail` config flag
+   (default `false`)** instead of `useAiGate('inboxRanking')`. It no longer appears
+   for a default-on install (or any install) unless the flag is set in `config.json`.
 
 ### Verification (no code)
 4. **Copy audit** (C4) — confirm welcome / Help / Settings copy is consistent with
@@ -119,8 +126,12 @@ be shipping to every fresh install.
 ### Rejected / held alternatives
 - **B — full per-surface marker pass (all 9 seams).** Most work lands on surfaces
   that never render on a real install. Gold-plating; rejected.
-- **C-for-rail — suppress the activity rail by default.** Promoted from "B1 clutter
-  fallback" to the **recommended** resolution of the C3 open decision (see C3).
+- **Mark the rail in place (keep it AI-gated, label the aside).** Rejected by the
+  owner: the rail is non-AI, fully fabricated, and not seam-backed, so it does not
+  belong under the AI preview toggle at all. Decoupling it (C3) is preferred over
+  labeling a fake feed as "AI preview."
+- **Park/remove the rail (no config control).** Considered; rejected in favor of a
+  config flag so the rail stays real-but-dormant with a clean non-AI control.
 
 ## Component designs
 
@@ -176,27 +187,36 @@ when the chip hides, the fake category disappears from both the visual and a11y
 trees — nothing unmarked is disclosed. Placing the marker inside the chip is
 sufficient; no separate narrow-width disclosure is needed.
 
-### C3 — Activity rail (`frontend/src/components/ActivityRail/ActivityRail.tsx`) — OPEN DECISION
+### C3 — Decouple the activity rail from AI (owner decision: config flag)
 
 The rail is a fully fabricated static mockup with two sections (Activity +
-Watching), not seam-backed (see audit). Two ways to make AC #2 honest:
+Watching), **not** backed by the `IInboxRanker` seam or any data pipeline — and
+`IInboxRanker.RankAsync` is **never called in the live inbox pipeline**
+(`InboxRefreshOrchestrator` does not invoke it), so the only thing `inboxRanking`
+gates is the rail's visibility. It does not belong under the AI preview toggle.
 
-- **Recommended — suppress the rail from the default-on first impression.** The
-  rail does not render for a fresh default-on install. Decouple it from the
-  `useAiGate('inboxRanking')` default so turning AI preview on no longer surfaces a
-  wholly-fabricated, non-seam-backed feed on the calm first screen; keep it
-  available only behind an explicit off-by-default condition (dev/demo). Rationale:
-  marking a 100%-fake feed (incl. non-AI "Watching" telemetry) as "AI preview" is
-  awkward and undercuts the product's calm/honest/local-first identity; its
-  "preview value" is low because no data pipeline will make it real.
-- **Alternative — mark the whole aside.** If the rail stays on by default, the
-  preview marker must scope the **`<aside>` above both `<section>`s** (one header
-  sub-label does **not** cover "Watching"), with wording that honestly frames *both*
-  the fabricated activity *and* the fabricated watched-repos as sample data not from
-  the user's account — e.g. `"AI preview — sample data, not from your account"`.
+**Change:** introduce a new **non-AI** inbox setting and gate the rail on it.
+
+- **Backend config** — add `bool ShowActivityRail = false` to `InboxConfig`
+  (`AppConfig.cs`), following the additive scalar-field pattern used for
+  `SectionOrder`/`DefaultSort` (#275). Default **false**: the rail shows for nobody
+  unless explicitly enabled in `config.json`. Wire it through the existing config
+  surface: the `PatchAsync` allowlist in `ConfigStore`, the preferences DTO/mapping
+  in `PreferencesEndpoints`, and the frontend `Preferences` types + `usePreferences`.
+- **Frontend gate** — in `InboxPage.tsx`, replace
+  `const showActivityRail = useAiGate('inboxRanking')` with a read of
+  `preferences?.inbox.showActivityRail ?? false`. The `<ActivityRail/>` render and
+  the `<InboxSkeleton showRail=…/>` prop now follow the new flag.
+- **No Settings UI toggle** — the rail is still a fabricated mockup; surfacing a
+  "show sample activity" switch to users would be dishonest until the feed is real.
+  Config-only for now; a UI control lands when the rail carries real data.
+- **Orphaned, left in place** — `inboxRanking` (the `AiCapabilities` field) and
+  `PlaceholderInboxRanker`/`NoopInboxRanker` lose their only consumer. They are
+  harmless ceremonial infra; removing them would widen scope into AI-contract
+  cleanup, so they stay. Noted for a future cleanup.
 
 This is the one place the review changed the originally-approved "mark everything
-shown" framing; it is the explicit owner decision recorded in the user-review pass.
+shown" framing — the owner chose to take the rail out of AI scope entirely.
 
 ### C4 — Copy audit (verify-only)
 - **Welcome** (`WelcomePage.tsx:20`): "AI that surfaces the hunks worth a closer
@@ -226,20 +246,31 @@ should fail.
   `true` (documents the accepted legacy-flip edge).
 - **Backend ripple:** apply the C1 (a)/(b)/(c) sweep.
 - **Egress guard (new):** the C5 assembly-reference assertion.
+- **Config round-trip (new):** `inbox.showActivityRail` defaults `false`; survives a
+  GET → PATCH(true) → GET round-trip through the preferences endpoint + allowlist.
 - **Frontend (new):** `InboxRow` — when `showCategoryChip` + an enrichment are
   present, the chip exposes the preview accessible label and the marker is visually
-  present. C3-dependent: either an `ActivityRail` test for the aside-level marker
-  (Alternative) or an `InboxPage` test that the rail does **not** render by default
-  (Recommended).
-- **Frontend (regression):** re-run `ai-gating-sweep.spec.ts` (mock-driven, sets
-  state explicitly — should be unaffected; confirm).
+  present. `InboxPage` — the rail does **not** render when `aiPreview` is on but
+  `inbox.showActivityRail` is false (decoupled), and **does** render when
+  `showActivityRail` is true regardless of `aiPreview`.
+- **Frontend (rewrite, decoupling ripple):** the rail no longer toggles with AI —
+  - `InboxPage.test.tsx:202-212` ("renders/hides ActivityRail when aiPreview on/off")
+    → re-point to `inbox.showActivityRail`.
+  - `frontend/e2e/inbox.spec.ts` "AI preview toggle reveals activity rail" → rewrite
+    to drive the new flag (or remove the rail assertion; keep the AI-toggle test for
+    the chip/PR surfaces).
+  - `frontend/e2e/ai-gating-sweep.spec.ts` step (e) rail assertion → remove (rail is
+    no longer an AI surface); the sweep still covers chip + PR-detail surfaces.
+  - `ActivityRail.test.tsx` (component-internal render) → unchanged.
 
 ## Acceptance criteria mapping
 
 1. Fresh install default `aiPreview = true`; existing **with the key on disk**
    preserved → C1 + backend default/edge tests.
-2. Every default-shown surface honestly reads as in-development → C2 + C3; others
-   already marked or render nothing (barring the accepted `src/Calc.cs` collision).
+2. Every default-shown surface honestly reads as in-development → C2 marks the chip;
+   C3 removes the fabricated rail from the default surface (decoupled to a config
+   flag, default off); other surfaces are already marked or render nothing (barring
+   the accepted `src/Calc.cs` collision).
 3. Welcome/Help/Settings copy consistent → C4 (verify-only).
 4. Placeholder seam has **zero external egress** — no `HttpClient`/`fetch`/URL; all
    `Task.FromResult(<canned>)` — guarded by the C5 assembly-reference test and
@@ -249,8 +280,8 @@ should fail.
 ## B1 visual gate
 
 At green-and-ready, post Playwright screenshots for the owner's eyeball-assert:
-(a) the **inbox in a realistic fresh-install state** — a *sparse/empty* real inbox
-(the true first impression: little real content + whatever AI surfaces ship on),
-showing the marked category chip and the C3 outcome; (b) a PR-detail summary card.
-Using a sparse inbox (not seeded demo data) is deliberate — it shows the contrast a
-new user actually sees.
+(a) the **inbox in a realistic fresh-install state** — a *sparse* real inbox (the
+true first impression), showing the marked category chip and **no activity rail**
+(decoupled, default off); (b) a PR-detail summary card with its marked AI summary.
+Using a sparse inbox (not seeded demo data) is deliberate — it shows what a new user
+actually sees. The marker form on the chip (C2) is the primary thing to eyeball.
