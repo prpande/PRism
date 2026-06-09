@@ -46,25 +46,51 @@
   flex: none;
 }
 
-.dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+/* Leading PR-state octicon — 14px glyph centred in the 16px grid track (the
+   track, not this element, reserves the column). Shown on every row. */
+.prState {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+.prOpen {
+  color: var(--success-fg);
+}
+.prMerged {
+  color: var(--merged-fg);
+}
+.prClosed {
+  color: var(--danger-fg);
 }
 
-.dotFailing {
-  background: var(--danger-fg);
+/* Title row: title (clamped) + trailing CI glyph pinned to the first line. */
+.titleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 4px;
+  min-width: 0; /* bound the flex row so .title's -webkit-line-clamp holds in any ancestor layout */
 }
 
-/* Hollow ring — shape distinguishes pending from failing without relying on
-   hue, so CI state reads in greyscale / for colour-blind users / against any
-   user-chosen accent. Explicit border-box (not just the global reset) keeps the
-   1.5px border inside the 8×8 dot rather than expanding it to ~11px. */
-.dotPending {
-  box-sizing: border-box;
-  background: transparent;
-  border: 1.5px solid var(--warning-fg);
+/* CI suffix octicon — bare check / cross / amber dot, no enclosing circle, so
+   the three shapes stay distinct in greyscale (spec Decision 4). align-self
+   flex-start + a small top offset optically centres it on the title's first
+   line, not the midpoint of a two-line title. */
+.ciSuffix {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.ciPassing {
+  color: var(--success-fg);
+}
+.ciFailing {
+  color: var(--danger-fg);
+}
+.ciPending {
+  color: var(--warning-fg);
 }
 
 /* Main column */
@@ -83,7 +109,8 @@
   font-size: var(--text-sm);
   font-weight: 500;
   color: var(--text-1);
-  margin-bottom: 4px;
+  flex: 1;
+  min-width: 0;
 }
 
 .meta {
@@ -200,23 +227,6 @@
   color: var(--text-3);
   font-weight: 600;
   letter-spacing: 0.03em;
-}
-
-/* Done-state badge — text is the primary signal, colour is secondary */
-.stateBadge {
-  display: inline-flex;
-  align-items: center;
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.badgeMerged {
-  color: var(--merged-fg);
-}
-
-.badgeClosed {
-  color: var(--danger-fg);
 }
 
 .counts {

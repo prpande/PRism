@@ -68,7 +68,7 @@ async function openRootComposerAndType(
   // The PR-root conversation's Reply button (Overview tab). Clicking it mounts
   // the PrRootReplyComposer, which wraps PrRootBodyEditor (aria-label
   // "PR-level body").
-  await page.getByRole('button', { name: /^reply$/i }).click();
+  await page.getByRole('button', { name: /^reply to the PR conversation$/i }).click();
   const textarea = page.getByRole('textbox', { name: /pr-level body/i });
   await textarea.waitFor({ state: 'visible' });
   const savePromise = page.waitForResponse(
@@ -116,13 +116,15 @@ test('S-discard 1 — Post happy path consumes the PR-root draft', async ({ page
 
   // The composer closed: the PR-level body textarea is gone, the Reply button is
   // back, and no post-error surfaced.
-  await expect(page.getByRole('button', { name: /^reply$/i })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('button', { name: /^reply to the PR conversation$/i })).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(page.getByRole('textbox', { name: /pr-level body/i })).toHaveCount(0);
   await expect(page.locator('[data-testid="post-error"]')).toHaveCount(0);
 
   // The draft was consumed server-side (deleted after the post). Reopening Reply
   // hydrates an EMPTY composer — the posted body is gone, not re-loaded as a draft.
-  await page.getByRole('button', { name: /^reply$/i }).click();
+  await page.getByRole('button', { name: /^reply to the PR conversation$/i }).click();
   await expect(page.getByRole('textbox', { name: /pr-level body/i })).toHaveValue('');
 
   // NOTE: the spec's "the comment appears in the PR conversation" assertion is
@@ -155,7 +157,9 @@ test('S-discard 2 — Post failure surfaces the error row + Retry recovers', asy
   // The one-shot injection was consumed on that first call. Retry now succeeds →
   // the composer closes.
   await errorRow.getByRole('button', { name: /^retry$/i }).click();
-  await expect(page.getByRole('button', { name: /^reply$/i })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('button', { name: /^reply to the PR conversation$/i })).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(page.locator('[data-testid="post-error"]')).toHaveCount(0);
 });
 
@@ -186,7 +190,9 @@ test('S-discard 3 — lost-response (afterEffect) Post errors, then a second Pos
   // The one-shot afterEffect injection is consumed. A second Post (same body)
   // runs CreateIssueCommentAsync cleanly → 204 → composer closes.
   await errorRow.getByRole('button', { name: /^retry$/i }).click();
-  await expect(page.getByRole('button', { name: /^reply$/i })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('button', { name: /^reply to the PR conversation$/i })).toBeVisible({
+    timeout: 10_000,
+  });
   await expect(page.locator('[data-testid="post-error"]')).toHaveCount(0);
 
   // SCENARIO-3 NOTE / FINDING: the spec § 7.3 prose says "second Post succeeds
