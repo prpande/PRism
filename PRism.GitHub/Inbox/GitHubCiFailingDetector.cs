@@ -229,18 +229,22 @@ public sealed class GitHubCiFailingDetector : ICiFailingDetector
         return (status, false);
     }
 
-    // The combined-status payload carries `total_count` (number of registered status
-    // contexts) and an inline `statuses` array. Either being non-empty means real
-    // statuses exist; an absent/zero count with an empty array means "none registered",
-    // which GitHub still labels state="pending". total_count is the documented field;
-    // the array length is a defensive fallback if it is ever missing. (#286)
+    // A registered status context surfaces as a positive `total_count` OR a non-empty
+    // inline `statuses` array. The two agree in practice, but OR-ing them (rather than
+    // letting `total_count` short-circuit) matches the documented intent and tolerates
+    // payload quirks. `total_count` is read with TryGetInt32 so an unexpected non-integer
+    // number degrades to the array signal instead of throwing. An absent/zero count with
+    // an empty array means "none registered", which GitHub still labels state="pending". (#286)
     private static bool HasRegisteredStatuses(JsonElement root)
     {
-        if (root.TryGetProperty("total_count", out var count) && count.ValueKind == JsonValueKind.Number)
-            return count.GetInt32() > 0;
-        return root.TryGetProperty("statuses", out var statuses)
+        var hasStatuses = root.TryGetProperty("statuses", out var statuses)
             && statuses.ValueKind == JsonValueKind.Array
             && statuses.GetArrayLength() > 0;
+        var hasCount = root.TryGetProperty("total_count", out var count)
+            && count.ValueKind == JsonValueKind.Number
+            && count.TryGetInt32(out var n)
+            && n > 0;
+        return hasStatuses || hasCount;
     }
 
     private Task<HttpResponseMessage> SendAsync(string url, string? token, CancellationToken ct)
