@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using PRism.AI.ClaudeCode;
 using PRism.AI.Contracts;
 using PRism.AI.Contracts.Noop;
@@ -6,7 +7,9 @@ using PRism.AI.Contracts.Provider;
 using PRism.AI.Contracts.Seams;
 using PRism.AI.Placeholder;
 using PRism.Core.Ai;
+using PRism.Core.Contracts;
 using PRism.Core.Json;
+using PRism.Core.PrDetail;
 using PRism.Web.Ai;
 using PRism.Web.Sse;
 
@@ -51,12 +54,49 @@ internal static class ServiceCollectionExtensions
                 TimeProvider.System,
                 TimeSpan.FromSeconds(30)));
 
-        var realSeams = new Dictionary<Type, object>();   // P0: empty; P1 adds the first real impl here
+        // §1 atomic-ordering point (P1 / spec §1): register the first real seam — ClaudeCodeSummarizer —
+        // and add it to realSeams so both the capability resolver and the selector light up together.
+        // The DiffResolver closes over PrDetailLoader: cold path loads the snapshot first (so
+        // GetOrFetchDiffAsync is never called with empty SHAs from a not-yet-loaded detail view).
+        services.AddSingleton<ClaudeCodeSummarizer>(sp =>
+        {
+            var loader = sp.GetRequiredService<PrDetailLoader>();
+            ClaudeCodeSummarizer.DiffResolver resolve = async (pr, ct) =>
+            {
+                // Cold path: if the detail view hasn't populated the snapshot yet, LOAD it.
+                // Do NOT call GetOrFetchDiffAsync with empty SHAs — that would forward empty
+                // base/head to the GitHub adapter (PR #T9 design constraint).
+                var snapshot = loader.TryGetCachedSnapshot(pr);
+                if (snapshot is null)
+                {
+                    await loader.LoadAsync(pr, ct).ConfigureAwait(false);
+                    snapshot = loader.TryGetCachedSnapshot(pr)
+                        ?? throw new InvalidOperationException($"PR detail unavailable for {pr}");
+                }
+                var baseSha = snapshot.Detail.Pr.BaseSha;
+                var headSha = snapshot.Detail.Pr.HeadSha;
+                var diffDto = await loader.GetOrFetchDiffAsync(pr, new DiffRangeRequest(baseSha, headSha), ct).ConfigureAwait(false);
+                var diffText = PrDiffText.Render(diffDto);
+                return (diffText, snapshot.Detail.Pr.Title, snapshot.Detail.Pr.Body, headSha);
+            };
+            return new ClaudeCodeSummarizer(
+                sp.GetRequiredService<ILlmProvider>(),
+                sp.GetRequiredService<ITokenUsageTracker>(),
+                resolve,
+                sp.GetRequiredService<ILogger<ClaudeCodeSummarizer>>());
+        });
+
+        var realSeams = new Dictionary<Type, object>();   // P1: populated below with the first real impl
         // Pass the live dictionary BY REFERENCE (not a .Keys snapshot) — the resolver and the selector
         // (real: realSeams below) must read the same instance so P1's first real impl lights up both
         // the capability flag and the resolved seam together (PR #250 review).
         services.AddSingleton(new AiCapabilityResolver(realSeams));
-        services.AddSingleton<IAiSeamSelector>(sp => new AiSeamSelector(
+        services.AddSingleton<IAiSeamSelector>(sp =>
+        {
+            // §1: populate realSeams before constructing the selector so both the capability
+            // resolver and the seam selector see the same live entry.
+            realSeams[typeof(IPrSummarizer)] = sp.GetRequiredService<ClaudeCodeSummarizer>();
+            return new AiSeamSelector(
             sp.GetRequiredService<AiModeState>(),
             noop: new Dictionary<Type, object>
             {
@@ -84,7 +124,8 @@ internal static class ServiceCollectionExtensions
             },
             real: realSeams,
             consent: sp.GetRequiredService<AiConsentState>(),
-            features: sp.GetRequiredService<AiFeatureState>()));
+            features: sp.GetRequiredService<AiFeatureState>());
+        });
 
         return services;
     }

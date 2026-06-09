@@ -57,9 +57,9 @@ public sealed class CapabilitiesConsentTests
         var raw = await resp.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(raw);
         doc.RootElement.GetProperty("disabledReason").GetString().Should().Be("none");
-        // No real live seam is registered in the test host (P0 empty dict), so summary is still false —
-        // but the reason is "none" not "consent-required".
-        doc.RootElement.GetProperty("ai").GetProperty("summary").GetBoolean().Should().BeFalse();
+        // T9 registered ClaudeCodeSummarizer as the first real live seam (spec §1), so
+        // summary=true once mode=live + provider available + consent recorded.
+        doc.RootElement.GetProperty("ai").GetProperty("summary").GetBoolean().Should().BeTrue();
     }
 
     [Fact]

@@ -25,6 +25,10 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
     // Live-mode tests to script the provider availability result without touching a real CLI.
     public ILlmAvailabilityProbe? AvailabilityProbeOverride { get; set; }
 
+    // When set, replaces the ILlmProvider binding — used by seam-registration tests that
+    // need a real DI container without spawning the actual claude CLI process.
+    public ILlmProvider? LlmProviderOverride { get; set; }
+
     // Lazily resolved per-process session token (the SessionTokenMiddleware checks
     // X-PRism-Session header / prism-session cookie against this value). Tests that
     // need to assert against the token (e.g. cookie integration) use this property.
@@ -78,6 +82,13 @@ public sealed class PRismWebApplicationFactory : WebApplicationFactory<Program>
             if (AvailabilityProbeOverride is not null)
             {
                 ReplaceSingleton<ILlmAvailabilityProbe>(services, AvailabilityProbeOverride);
+            }
+
+            // Replace the LLM provider with a stub when LlmProviderOverride is set — prevents
+            // the test from spawning a real claude CLI process.
+            if (LlmProviderOverride is not null)
+            {
+                ReplaceSingleton<ILlmProvider>(services, LlmProviderOverride);
             }
         });
     }
