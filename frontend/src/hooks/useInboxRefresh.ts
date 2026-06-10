@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { inboxApi } from '../api/inbox';
 
 const TIMEOUT_MS = 30_000;
@@ -28,6 +28,13 @@ export function useInboxRefresh({ reload, dismiss, onError }: Options): InboxRef
   const inFlight = useRef(false);
   const lastSuccessAt = useRef(0);
   const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    },
+    [],
+  );
 
   const refresh = useCallback(async () => {
     // Re-entrancy guard (synchronous — state updates are async) + min-interval-after-SUCCESS.
