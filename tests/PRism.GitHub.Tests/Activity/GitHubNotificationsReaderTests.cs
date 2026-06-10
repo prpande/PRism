@@ -1,0 +1,116 @@
+using System;
+using System.Globalization;
+using System.Net;
+using System.Threading;
+using FluentAssertions;
+using PRism.GitHub.Activity;
+using PRism.GitHub.Tests.TestHelpers;
+using Xunit;
+
+namespace PRism.GitHub.Tests.Activity;
+
+public sealed class GitHubNotificationsReaderTests
+{
+    private static GitHubNotificationsReader MakeReader(HttpStatusCode code, string json)
+        => new(new FakeHttpClientFactory(
+                FakeHttpMessageHandler.Returns(code, json),
+                new Uri("https://api.github.com/")),
+            () => System.Threading.Tasks.Task.FromResult<string?>("token"));
+
+    [Fact]
+    public async System.Threading.Tasks.Task Parses_pr_notification()
+    {
+        const string json = """
+        [{"reason":"review_requested","updated_at":"2026-06-10T10:00:00Z",
+          "repository":{"full_name":"acme/api"},
+          "subject":{"type":"PullRequest","title":"Fix it",
+                     "url":"https://api.github.com/repos/acme/api/pulls/1842"}}]
+        """;
+        var reader = MakeReader(HttpStatusCode.OK, json);
+        var result = await reader.ReadAsync(DateTimeOffset.UnixEpoch, CancellationToken.None);
+        result.Degraded.Should().BeFalse();
+        var n = result.Notifications.Should().ContainSingle().Subject;
+        n.Repo.Should().Be("acme/api");
+        n.Reason.Should().Be("review_requested");
+        n.PrNumber.Should().Be(1842);
+        n.Title.Should().Be("Fix it");
+        n.Timestamp.Should().Be(DateTimeOffset.Parse("2026-06-10T10:00:00Z", CultureInfo.InvariantCulture));
+        n.Url.Should().Be("https://api.github.com/repos/acme/api/pulls/1842");
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Drops_non_pullrequest_subjects()
+    {
+        const string json = """
+        [{"reason":"subscribed","updated_at":"2026-06-10T10:00:00Z",
+          "repository":{"full_name":"acme/api"},
+          "subject":{"type":"Issue","title":"x","url":"https://api.github.com/repos/acme/api/issues/5"}}]
+        """;
+        var result = await MakeReader(HttpStatusCode.OK, json).ReadAsync(DateTimeOffset.UnixEpoch, CancellationToken.None);
+        result.Notifications.Should().BeEmpty();
+        result.Degraded.Should().BeFalse();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Drops_pullrequest_subject_with_no_pulls_match_in_url()
+    {
+        const string json = """
+        [{"reason":"mention","updated_at":"2026-06-10T10:00:00Z",
+          "repository":{"full_name":"acme/api"},
+          "subject":{"type":"PullRequest","title":"Bad url",
+                     "url":"https://api.github.com/repos/acme/api/issues/99"}}]
+        """;
+        var result = await MakeReader(HttpStatusCode.OK, json).ReadAsync(DateTimeOffset.UnixEpoch, CancellationToken.None);
+        result.Notifications.Should().BeEmpty();
+        result.Degraded.Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData((HttpStatusCode)429)]
+    public async System.Threading.Tasks.Task Faults_degrade(HttpStatusCode code)
+        => (await MakeReader(code, "").ReadAsync(DateTimeOffset.UnixEpoch, CancellationToken.None)).Degraded.Should().BeTrue();
+
+    [Fact]
+    public async System.Threading.Tasks.Task Malformed_json_degrades_without_throwing()
+    {
+        var result = await MakeReader(HttpStatusCode.OK, "NOT JSON AT ALL {{{").ReadAsync(DateTimeOffset.UnixEpoch, CancellationToken.None);
+        result.Notifications.Should().BeEmpty();
+        result.Degraded.Should().BeTrue();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Genuine_cancellation_propagates()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var reader = MakeReader(HttpStatusCode.OK, "[]");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => reader.ReadAsync(DateTimeOffset.UnixEpoch, cts.Token));
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Since_query_param_is_present_in_request_uri()
+    {
+        HttpRequestMessage? captured = null;
+        var handler = new FakeHttpMessageHandler(req =>
+        {
+            captured = req;
+            return new System.Net.Http.HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent("[]", System.Text.Encoding.UTF8, "application/json")
+            };
+        });
+        var reader = new GitHubNotificationsReader(
+            new FakeHttpClientFactory(handler, new Uri("https://api.github.com/")),
+            () => System.Threading.Tasks.Task.FromResult<string?>("token"));
+
+        var since = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        await reader.ReadAsync(since, CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.RequestUri!.Query.Should().Contain("since=");
+        captured.RequestUri.Query.Should().Contain("all=true");
+        captured.RequestUri.Query.Should().Contain("per_page=100");
+    }
+}
