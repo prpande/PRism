@@ -39,32 +39,32 @@
 
 This is test-infrastructure only (no production behavior), so it has no standalone test; it is exercised by Task 2's endpoint tests. Make the change, then confirm the test project still compiles.
 
-- [ ] **Step 1: Add the override hook**
+- [ ] **Step 1: Add the override hook (TWO surgical edits — do NOT rewrite the whole class)**
 
-Replace the `RefreshAsync` method (line 17) and add the property:
+This file already declares `Current`, `WaitOverride`, `RefreshCalls`, `_coldStartKicked`, and `TryColdStartRefresh`. Make exactly two changes; leave everything else (especially `TryColdStartRefresh`) intact.
+
+(a) Add the new property immediately after the existing `WaitOverride` line (line 9):
 
 ```csharp
-    public InboxSnapshot? Current { get; set; }
-    public Func<TimeSpan, CancellationToken, Task<bool>>? WaitOverride { get; set; }
     /// <summary>
     /// Lets a test drive RefreshAsync: throw (to simulate a failed/rate-limited pull)
     /// and/or mutate <see cref="Current"/> (to simulate a committed snapshot) before
     /// returning/throwing. Null → the default no-op success.
     /// </summary>
     public Func<CancellationToken, Task>? RefreshOverride { get; set; }
-    public int RefreshCalls { get; private set; }
+```
 
-    private int _coldStartKicked;
+(b) Replace ONLY the existing one-line `RefreshAsync` body (line 17, `public Task RefreshAsync(CancellationToken ct) { RefreshCalls++; return Task.CompletedTask; }`) with:
 
-    public Task<bool> WaitForFirstSnapshotAsync(TimeSpan timeout, CancellationToken ct)
-        => WaitOverride?.Invoke(timeout, ct) ?? Task.FromResult(Current != null);
-
+```csharp
     public Task RefreshAsync(CancellationToken ct)
     {
         RefreshCalls++;
         return RefreshOverride?.Invoke(ct) ?? Task.CompletedTask;
     }
 ```
+
+Do **not** re-declare `RefreshCalls`/`_coldStartKicked` and do **not** remove `TryColdStartRefresh` (doing so trips CS0102 duplicate-member / CS0535 interface-not-implemented).
 
 - [ ] **Step 2: Verify the test project compiles**
 
@@ -617,7 +617,7 @@ Create `frontend/src/components/Inbox/RefreshButton.module.css`:
   right: calc(100% + var(--s-2));
   white-space: nowrap;
   font-size: var(--text-xs);
-  color: var(--muted-fg);
+  color: var(--text-3); /* muted text token (tokens.css; --muted-fg does NOT exist) */
   pointer-events: none;
   animation: refresh-confirm-in 120ms ease-out;
 }
@@ -640,7 +640,7 @@ Create `frontend/src/components/Inbox/RefreshButton.module.css`:
 }
 ```
 
-> If `--muted-fg` / `--text-xs` are not the exact token names in `tokens.css`, substitute the nearest existing muted-text + extra-small-font tokens (grep `tokens.css` for `--muted` and `--text-xs`). Do not invent new tokens.
+> Token names verified against `tokens.css`: `--text-3` (muted text), `--text-xs`, `--s-2` all exist. Do not invent new tokens.
 
 - [ ] **Step 4: Run to verify it passes**
 
@@ -740,6 +740,26 @@ export function FilterBar({
         </div>
 ```
 
+- [ ] **Step 2b: Update the existing `FilterBar.test.tsx` for the new required props**
+
+`frontend/src/components/Inbox/filters/FilterBar.test.tsx:40` renders `<FilterBar … />` with only the four original props and will now fail to compile. Add the three new props to that render call (the file already imports `vi`):
+
+```tsx
+    render(
+      <FilterBar
+        sections={secs}
+        initialSort="updated"
+        ciProbeComplete
+        onState={onState}
+        refresh={vi.fn()}
+        isRefreshing={false}
+        justRefreshed={false}
+      />,
+    );
+```
+
+(Match the file's existing variable names — `secs`/`onState` above are illustrative; use whatever that test already declares. If there are multiple `<FilterBar>` render sites in the file, update each.)
+
 - [ ] **Step 3: Thread the props through InboxToolbar**
 
 Replace `frontend/src/components/Inbox/InboxToolbar.tsx`:
@@ -790,12 +810,12 @@ export function InboxToolbar({
 - [ ] **Step 4: Typecheck (InboxPage will be a transient error until Task 7)**
 
 Run: `cd frontend && npx tsc -b`
-Expected: the ONLY error is `InboxPage.tsx` missing the new `InboxToolbar` props (fixed in Task 7). FilterBar/InboxToolbar themselves typecheck. If any OTHER file errors, fix it before continuing.
+Expected: the ONLY remaining error is `InboxPage.tsx` missing the new `InboxToolbar` props (fixed in Task 7) — assuming Step 2b updated `FilterBar.test.tsx`. FilterBar/InboxToolbar themselves typecheck. If any OTHER file errors, fix it before continuing.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add frontend/src/components/Inbox/filters/FilterBar.tsx frontend/src/components/Inbox/filters/filters.module.css frontend/src/components/Inbox/InboxToolbar.tsx
+git add frontend/src/components/Inbox/filters/FilterBar.tsx frontend/src/components/Inbox/filters/FilterBar.test.tsx frontend/src/components/Inbox/filters/filters.module.css frontend/src/components/Inbox/InboxToolbar.tsx
 git commit -m "feat(#311): render RefreshButton after Sort; thread props through toolbar"
 ```
 
@@ -866,6 +886,17 @@ Then extend the `<InboxToolbar … />` element with the three new props:
         />
 ```
 
+- [ ] **Step 4b: Scope two existing e2e assertions that will now multi-match `role=status`**
+
+The new always-on announcer adds a second `role=status` node to the inbox (alongside `FilterSummary`'s). Two e2e assertions use a bare, un-scoped `page.getByRole('status')` and will throw Playwright strict-mode "resolved to N elements". Scope them by text in `frontend/e2e/inbox-filter.spec.ts`:
+
+- Line ~292: `await expect(page.getByRole('status')).toContainText(/showing 1 of 5 PRs/i);`
+  → `await expect(page.getByRole('status').filter({ hasText: /showing/i })).toContainText(/showing 1 of 5 PRs/i);`
+- Line ~391: `await expect(page.getByRole('status')).toContainText(/CI status may be incomplete/i);`
+  → `await expect(page.getByRole('status').filter({ hasText: /CI status/i })).toContainText(/CI status may be incomplete/i);`
+
+(`a11y-audit.spec.ts:468` already uses `.first()` and is safe. Grep the e2e dir for any other bare `getByRole('status')` on the inbox and scope those too.) Include `frontend/e2e/inbox-filter.spec.ts` in this task's commit.
+
 - [ ] **Step 5: Typecheck + run the inbox vitest suite**
 
 Run: `cd frontend && npx tsc -b`
@@ -882,7 +913,7 @@ Expected: build succeeds.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add frontend/src/pages/InboxPage.tsx
+git add frontend/src/pages/InboxPage.tsx frontend/e2e/inbox-filter.spec.ts
 git commit -m "feat(#311): wire manual refresh into InboxPage (hook, loading bar, announcer, toast)"
 ```
 
