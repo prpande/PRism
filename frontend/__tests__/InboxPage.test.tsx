@@ -183,6 +183,23 @@ describe('InboxPage', () => {
     expect(screen.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true');
   });
 
+  it('cold-load skeleton hides its rail column below the 1180px breakpoint', () => {
+    // #300 the skeleton's rail column is gated on the SAME showRail as the live rail,
+    // so a narrow viewport drops it even with the toggle on.
+    mockViewportWide(false);
+    setHooks({ data: null, isLoading: true, showActivityRail: true });
+    renderPage();
+    expect(screen.getByTestId('inbox-skeleton')).toBeInTheDocument();
+    expect(screen.queryByTestId('inbox-skeleton-rail')).not.toBeInTheDocument();
+  });
+
+  it('cold-load skeleton shows its rail column when wide and the toggle is on', () => {
+    mockViewportWide(true);
+    setHooks({ data: null, isLoading: true, showActivityRail: true });
+    renderPage();
+    expect(screen.getByTestId('inbox-skeleton-rail')).toBeInTheDocument();
+  });
+
   it('shows error state with retry button when initial fetch fails', () => {
     setHooks({ data: null, isLoading: false, error: new Error('boom') });
     renderPage();
