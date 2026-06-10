@@ -33,16 +33,21 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
     else setMenuOpen((v) => !v); // closed/merged: main opens the menu
   };
 
+  // Spec §4: disabled / aria-disabled / onClick MUST share one predicate so they
+  // never diverge. mainAction === 'none' (closed/merged) is NOT disabled — the main
+  // button stays clickable to open the Drafts menu.
+  const mainInteractiveDisabled = face.mainDisabled && face.mainAction !== 'none';
+
   return (
     <div className={styles.root} data-testid="review-action">
       <button
         type="button"
         data-testid="review-action-main"
         className={`${styles.main} ${styles[`fill-${face.fill}`]}`}
-        disabled={face.mainDisabled && face.mainAction !== 'none'}
-        aria-disabled={face.mainDisabled && face.mainAction !== 'none'}
+        disabled={mainInteractiveDisabled}
+        aria-disabled={mainInteractiveDisabled}
         title={face.mainDisabledReason ?? face.pendingTooltip ?? undefined}
-        onClick={face.mainDisabled && face.mainAction !== 'none' ? undefined : onMainClick}
+        onClick={mainInteractiveDisabled ? undefined : onMainClick}
       >
         {face.needsReconfirm && (
           <span className={styles.reconfirm} data-testid="review-action-reconfirm" aria-hidden="true">⚠</span>
