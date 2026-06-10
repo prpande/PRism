@@ -1,6 +1,9 @@
-/* InboxSection — collapsible section card in the inbox */
+/* InboxSection — collapsible section card in the inbox.
+   No margin-bottom: inter-card spacing is owned solely by the .sections flex gap
+   in InboxPage.module.css. A per-card margin here used to stack on top of that gap
+   (s-4 + s-3) so the space BETWEEN sections was larger than the toolbar→first-section
+   gap (just the grid margin-top), making the rhythm inconsistent (#345 slice). */
 .section {
-  margin-bottom: var(--s-4);
   background: var(--surface-1);
   border: 1px solid var(--border-1);
   border-radius: var(--radius-3);

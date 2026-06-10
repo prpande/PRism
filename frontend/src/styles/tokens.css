@@ -39,6 +39,14 @@
   --radius-3: 8px;
   --radius-4: 12px;
 
+  /* Inbox row hover (light / default). Sits BETWEEN surface-1 (resting row) and
+     surface-2 (repo-header band): in light the header band is DARKER than the rows,
+     so a hover that darkens slightly stays lighter than the band and reads as a hover
+     without repainting to the header colour and merging into it (#347). Derived via
+     lazy var() so it tracks the light surface scale. Dark needs the opposite
+     direction and overrides this below — see [data-theme="dark"]. */
+  --row-hover: color-mix(in oklch, var(--surface-1), var(--surface-2) 60%);
+
   /* timings */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --t-fast: 80ms;
@@ -158,6 +166,14 @@
   --surface-2: oklch(0.235 0.010 250);
   --surface-3: oklch(0.27 0.011 250);
   --surface-inset: oklch(0.20 0.009 250);
+
+  /* Inbox row hover (dark) — overrides the :root value. The dark surface steps are
+     ~4× more compressed than light's AND the header band (surface-2) is LIGHTER than
+     the rows, so a "between surface-1/surface-2" hover is invisible and abuts the
+     header. Go the other way — PAST the header toward surface-3 — so the hovered row
+     lifts clearly above both the resting rows and the header band (#347). Lands just
+     under surface-3 (header hover), so it never collides with a resting header. */
+  --row-hover: color-mix(in oklch, var(--surface-2), var(--surface-3) 70%);
 
   --border-1: oklch(0.30 0.012 250);
   --border-2: oklch(0.34 0.013 250);

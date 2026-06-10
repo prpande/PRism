@@ -7,10 +7,14 @@
 
 ## Summary
 
-Three same-day p3 inbox visual bugs, shipped as one cohesive slice because they share the
-inbox surface and two of the three live in the same file (`InboxRow.module.css`). Two are
-real CSS fixes (#345, #347); one (#346) is already resolved by #137 and is verified-and-closed
-here rather than re-fixed.
+Inbox visual-polish grouped because the items share the inbox surface. The **deliverable** is three
+CSS fixes — #345 (glyph alignment), #347 (row-hover token), and a **section-spacing rhythm** fix
+folded in during live review (owner request) — across `frontend/src/components/Inbox/`,
+`frontend/src/pages/InboxPage.module.css`, and `frontend/src/styles/tokens.css`. #346 carries **no
+CSS** — it was already resolved by #137 (`9ffb7d81`); owner confirmed it resolved live, so it is a
+verification-only close, not a code change in this PR.
+
+All four were verified live against the real inbox at 1920×1080 (real token store, no mocks).
 
 ---
 
@@ -57,13 +61,16 @@ grid column 2) start at the same content-box top, so an identical `start + 2px` 
 pixel-matched **by construction** — no per-row magic numbers. The `2px` is the single tunable;
 adjust it live if the optical centering on the title's first line needs a nudge.
 
-### Validation (running app, Playwright `getBoundingClientRect`)
+### Validation (running app, Playwright `getBoundingClientRect`) — DONE
 
-- Single-line-title row: leading and trailing glyph vertical centers within ~1px.
-- Two-line-title row: both glyphs on the first line, no midpoint drift.
-- `@container inbox-sections (max-width: 560px)` regime: still matched.
+- Single-line-title row: leading and trailing glyph vertical centers **identical (ΔY 0)** on real
+  rows at 1920×1080. Verified.
+- Two-line-title row: no two-line-title row with a CI glyph existed in the live inbox, so this regime
+  was not screenshot-verified. It is guaranteed by construction — both glyphs share the identical
+  `align-self: start; margin-top: 2px` anchor off the same content-box top, which the title growing to
+  two lines does not move; the ΔY-0 single-line result confirms the shared anchor works.
 - Grouped rows (`data-grouped='true'`, left-indented) and the unread accent bar
-  (`[data-unread='true']::before`) unaffected.
+  (`[data-unread='true']::before`) unaffected — verified.
 
 ---
 
@@ -90,19 +97,30 @@ Chosen over `surface-3` (B2: heavier global hover, equals header-hover) and grou
 
 The surface scale is theme-relative — light **descends** (`s1` 0.99 → `s2` 0.925 → `s3` 0.90; header
 band is *darker* than rows), dark **ascends** (`s1` 0.21 → `s2` 0.235 → `s3` 0.27; header *lighter*).
-Either way `surface-2` is one step off the resting row. A hover landing **between `surface-1` and
-`surface-2`** darkens (light) / lightens (dark) the row enough to read as a hover while staying on
-the rows' side of the header band — it never crosses into (`s2`, the merge bug) or past it (`s3`,
-which would make a hovered row heavier than its own group header and invert the hierarchy).
+These are **not symmetric**, and that asymmetry forces a **per-theme** token rather than one derived
+line. The original "land between `surface-1` and `surface-2` in both themes" idea was verified live
+and **rejected for dark**: dark's steps are ~4× more compressed (resting→header ΔL 0.025 vs light's
+0.065), so a between-`s1`/`s2` dark hover (L 0.225) sits only ΔL 0.010 off the header — visually it
+nearly merges with the band (the exact bug). Worse, in dark the header is *lighter* than the rows, so
+"between" can't separate from it. The hover must go the **opposite direction per theme**:
+
+- **Light** — header is darker than rows; hover darkens *between* `s1` and `s2`, staying lighter than
+  the header band. Verified: hover L 0.951 vs resting 0.99 (ΔL 0.039) vs header 0.925 (ΔL 0.026).
+- **Dark** — header is lighter than rows; hover lightens *past* the header toward `s3`, lifting clearly
+  above both. Verified: hover L 0.2595 vs resting 0.21 (ΔL 0.0495) vs header 0.235 (ΔL 0.0245), and it
+  lands just under `s3` (0.27, header-hover) so it never equals a resting header.
 
 ### Mechanism
 
-One theme-adaptive declaration — `var()` resolves lazily against the active theme's surface tokens,
-so a single line covers both themes:
+`:root` carries the light/default value; `[data-theme="dark"]` overrides it. Both derive from the
+active surface scale via lazy `var()`:
 
 ```css
-/* tokens.css, :root */
+/* tokens.css :root — light / default */
 --row-hover: color-mix(in oklch, var(--surface-1), var(--surface-2) 60%);
+
+/* tokens.css [data-theme="dark"] — overrides; goes toward surface-3, not between */
+--row-hover: color-mix(in oklch, var(--surface-2), var(--surface-3) 70%);
 ```
 
 ```css
@@ -110,17 +128,46 @@ so a single line covers both themes:
 .row:hover { background: var(--row-hover); }   /* was: var(--surface-2) */
 ```
 
-`60%` (toward the header from the card) is the live-tunable knob: perceptible as a hover, yet
-distinct from the header band. `.row:hover .comments` stays `--surface-3` and contrasts *better*
-under the lighter row hover — left unchanged.
+`.row:hover .comments` stays `--surface-3` and contrasts fine under both hovers — left unchanged.
+`.row` keeps relying on the global `:focus-visible` ring for keyboard focus (no per-row background
+tint) — intentional: the ring is the focus affordance; adding a focus background is out of scope.
 
-### Validation (running app, both themes)
+### Validation (running app, both themes) — DONE
 
-- Three-way separation holds: row-resting (transparent/surface-1) vs row-hover vs header-resting
-  (surface-2) are all visually distinct — worst case is a row immediately under a header.
-- The header's own `:hover` (surface-3) still reads as distinct from an adjacent hovered row.
-- Flat (ungrouped) list: lighter hover is innocuous (no header to collide with), still reads as a hover.
-- Both `[data-theme="light"]` and `[data-theme="dark"]`.
+Verified live against the real inbox (grouped, row directly under a repo header) at 1920×1080:
+three-way separation (row-resting / row-hover / header-resting) holds in **both** light and dark with
+the ΔL figures above; the real `.row:hover` rule resolves to the correct per-theme value; the header's
+own `:hover` (`surface-3`) stays distinct.
+
+---
+
+## Section-spacing rhythm — toolbar→first gap ≠ section→section gap (folded in, live review)
+
+### Problem (measured live)
+
+The gap above the first section card (toolbar→first) did not match the gaps between section cards.
+Measured at 1920×1080 (compact density): toolbar→first = **10px**, section→section = **24px**.
+
+Root cause is a **double-spacing mechanism**: each `InboxSection .section` carried
+`margin-bottom: var(--s-4)` (14px) **and** the `.sections` flex container added `gap: var(--s-3)`
+(10px), stacking to 24px *between* cards — but the toolbar→first gap is only the grid's
+`margin-top: var(--s-3)` (10px), with no margin-bottom stacking on top of it.
+
+### Decision (owner)
+
+Collapse to **one** spacing mechanism and unify the value on a **density-scaling** token (`--s-4`):
+
+- Remove `InboxSection .section { margin-bottom }` — the flex `gap` is the sole owner of inter-card spacing.
+- `.sections { gap: var(--s-4) }` and `.grid { margin-top: var(--s-4) }` — same token, so toolbar→first
+  and section→section are guaranteed equal and scale together across densities.
+
+Owner chose `--s-4` (density-scaling, 14px compact / 16px comfortable) over `--s-6` (fixed 24px that
+would preserve the current looser rhythm but not scale).
+
+### Validation — DONE
+
+Verified live: toolbar→first = section→section = **14px** (compact), driven by a single `--s-4`;
+`.section` margin-bottom is `0`; the footer gap follows the same flex gap.
 
 ---
 
@@ -141,34 +188,38 @@ With the rail off the grid is one full-width column → `.sections` spans the fu
 matching the full-width toolbar. The reserved-gap root cause no longer exists. #346 was filed
 against the pre-#137 layout.
 
-### Action
+### Action — DONE (owner-confirmed)
 
-Run the app rail-off (`inbox.showActivityRail = false`) at >1179px, screenshot the toolbar and
-section-card right edges, confirm alignment, and **close #346** referencing `9ffb7d81` with the
-screenshot as proof. If a residual misalignment is observed live, reopen the design for it.
+Verified live at 1920×1080: the grid uses `data-has-rail` and resolves to a single full-width `1fr`
+column when the rail is off, so `.sections` spans the full page width and matches the full-width
+toolbar. Owner confirmed the issue is resolved. **Close #346** referencing `9ffb7d81`, no CSS change.
 
 ---
 
 ## Scope / non-goals
 
 - No change to the 3-column row grid, grouped-row indent, or B1-tuned metrics tail (#227).
-- No new behavior, no backend, no test-only seams. Pure CSS for #345/#347; verification-only for #346.
-- `--row-hover` is inbox-row-scoped in use (`InboxRow.module.css .row:hover`); the token is added
-  to `tokens.css` but no other call site is repointed in this slice.
+- No new behavior, no backend, no test-only seams. Pure CSS for #345/#347/spacing; verification-only for #346.
+- `--row-hover` is inbox-row-scoped in use (`InboxRow.module.css .row:hover`); the token is added to
+  `tokens.css` (`:root` + `[data-theme="dark"]` override) but no other call site is repointed in this slice.
+- The spacing fix removes `InboxSection .section { margin-bottom }`; `.section` renders only inside the
+  `.sections` flex column, so the flex `gap` fully replaces it (no other consumer relies on that margin).
 
 ## Testing
 
 - **Unit (vitest):** these are presentation-only CSS changes with no logic; existing InboxRow /
-  RepoGroupAccordion render tests must stay green. No new unit assertions on computed pixel offsets
-  (jsdom has no layout) — alignment is verified via Playwright in the running app.
-- **Visual (Playwright, B1):** the validation bullets above; capture before/after for #345 and #347
-  in both themes, and the #346 rail-off/wide screenshot. Regenerate any affected linux parity
-  baselines from the CI artifact if the inbox visual baselines shift.
+  RepoGroupAccordion / InboxSection render tests must stay green. No new unit assertions on computed
+  pixel offsets (jsdom has no layout) — geometry is verified via Playwright in the running app.
+- **Visual (Playwright, B1):** verified live against the real inbox at 1920×1080 (see per-item
+  "Validation — DONE"). Regenerate any affected linux parity baselines from the CI artifact if the
+  inbox visual baselines shift.
 
 ## References
 
 - `frontend/src/components/Inbox/InboxRow.module.css` — `.status` (#345), `.row:hover` (#347)
 - `frontend/src/components/Inbox/RepoGroupAccordion.module.css` — `.header` resting/hover (#347 context)
-- `frontend/src/styles/tokens.css` — surface scale + new `--row-hover` (#347)
-- `frontend/src/pages/InboxPage.tsx` / `InboxPage.module.css` — #346 verification
+- `frontend/src/components/Inbox/InboxSection.module.css` — `.section` margin-bottom removed (spacing)
+- `frontend/src/styles/tokens.css` — `--row-hover` (`:root` light + `[data-theme="dark"]` override)
+- `frontend/src/pages/InboxPage.module.css` — `.grid` margin-top + `.sections` gap unified on `--s-4` (spacing)
+- `frontend/src/pages/InboxPage.tsx` — #346 verification (`data-has-rail`)
 - Prior art: #264 (flanking status glyphs), #300 (toolbar↔card edge match), #137 (rail column reserve fix)

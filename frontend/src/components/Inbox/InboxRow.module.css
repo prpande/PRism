@@ -20,7 +20,7 @@
 }
 
 .row:hover {
-  background: var(--surface-2);
+  background: var(--row-hover);
 }
 
 /* Unread activity — left-edge accent bar on rows with commits the user hasn't
@@ -38,12 +38,18 @@
   border-radius: 0 2px 2px 0;
 }
 
-/* Status column (16px wide) */
+/* Status column (16px wide). align-self/margin-top mirror .ciSuffix below so the
+   leading PR-state octicon and the trailing CI glyph both pin to the title's first
+   line (same content-box top + identical 2px optical nudge) — matched on single-
+   and two-line titles, instead of the old row-center vs first-line split that left
+   the two flanking glyphs at different heights on single-line rows (#345). */
 .status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
+  align-self: start;
+  margin-top: 2px;
 }
 
 /* Leading PR-state octicon — 14px glyph centred in the 16px grid track (the

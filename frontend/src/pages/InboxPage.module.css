@@ -11,7 +11,10 @@
      rail-off inbox is never squished by an empty reserved column. */
   grid-template-columns: 1fr;
   gap: var(--s-4);
-  margin-top: var(--s-3);
+  /* Same token as the .sections inter-card gap below, so the toolbar→first-section
+     gap equals the section→section gap (one density-scaling source of truth) (#345
+     slice). */
+  margin-top: var(--s-4);
 }
 
 /* Rail ON: fixed-width rail column. The PR column is minmax(0, 1fr) so it can shrink, and
@@ -34,7 +37,10 @@
 .sections {
   display: flex;
   flex-direction: column;
-  gap: var(--s-3);
+  /* Sole owner of inter-section spacing (InboxSection .section has no margin now).
+     Matches .grid margin-top so the toolbar→first-section and section→section gaps
+     are identical and density-scale together (#345 slice). */
+  gap: var(--s-4);
   min-width: 0; /* allow the PR column to shrink instead of overflowing the grid */
   /* Named query container for the inbox rows (InboxRow.module.css @container
      inbox-sections). Named so a future ancestor container can't hijack the
