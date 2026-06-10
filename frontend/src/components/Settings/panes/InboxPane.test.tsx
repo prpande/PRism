@@ -101,6 +101,15 @@ describe('InboxPane', () => {
     expect(setSpy).toHaveBeenCalledWith('inbox.showActivityRail', true);
   });
 
+  it('trailing toggles render visible text labels, not just aria-labels (#219)', () => {
+    renderInboxPane();
+    // The 5 section rows have visible labels; the activity-rail + group-by-repo
+    // rows must too (owner B1 decision). aria-label alone is not rendered text,
+    // so getByText only finds them once a visible <label> exists.
+    expect(screen.getByText('Show activity rail')).toBeInTheDocument();
+    expect(screen.getByText('Group by repository')).toBeInTheDocument();
+  });
+
   it('Group by repository toggle reflects and writes inbox.groupByRepo (#219)', async () => {
     const setSpy = vi.fn().mockResolvedValue(undefined);
     renderInboxPane({ groupByRepo: true, set: setSpy });

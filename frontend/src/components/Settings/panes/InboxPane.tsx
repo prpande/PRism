@@ -177,6 +177,13 @@ export function InboxPane() {
       </div>
 
       <div className={pane.row}>
+        <label className={pane.label} htmlFor="inbox-show-activity-rail">
+          Show activity rail
+        </label>
+        <div className={pane.spring} />
+        <span id="inbox-show-activity-rail-help" className={pane.help}>
+          The rail is hidden on narrow windows.
+        </span>
         <Switch
           id="inbox-show-activity-rail"
           label="Show activity rail"
@@ -184,13 +191,16 @@ export function InboxPane() {
           checked={showActivityRail}
           onChange={(next) => set('inbox.showActivityRail', next).catch(() => {})}
         />
-        <div className={pane.spring} />
-        <span id="inbox-show-activity-rail-help" className={pane.help}>
-          The rail is hidden on narrow windows.
-        </span>
       </div>
 
       <div className={pane.row}>
+        <label className={pane.label} htmlFor="inbox-group-by-repo">
+          Group by repository
+        </label>
+        <div className={pane.spring} />
+        <span id="inbox-group-by-repo-help" className={pane.help}>
+          Off shows a flat PR list in every section.
+        </span>
         <Switch
           id="inbox-group-by-repo"
           label="Group by repository"
@@ -198,10 +208,6 @@ export function InboxPane() {
           checked={groupByRepo}
           onChange={(next) => set('inbox.groupByRepo', next).catch(() => {})}
         />
-        <div className={pane.spring} />
-        <span id="inbox-group-by-repo-help" className={pane.help}>
-          Off shows a flat PR list in every section.
-        </span>
       </div>
     </section>
   );
