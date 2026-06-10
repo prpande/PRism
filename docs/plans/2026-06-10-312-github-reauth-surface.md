@@ -521,7 +521,9 @@ services.AddHttpClient("github", (sp, client) =>
 .AddHttpMessageHandler<GitHubAuthHealthHandler>();
 ```
 
-Add `using PRism.Core.Auth;` to the file's usings.
+Ensure `using PRism.Core.Auth;` is present (already imported in `ServiceCollectionExtensions.cs:4` — a duplicate is harmless and IDE-cleaned).
+
+> **Coverage note (production chaining):** `ServiceRegistrationTests` proves the latch is a singleton and the handler *type* resolves, but not that `.AddHttpMessageHandler<GitHubAuthHealthHandler>()` is actually chained onto the `"github"` client — a regression dropping that chain would leave unit tests green while detection is dead in production. The detection *logic* is proven in Task 3/Task 5 (real handler vs real 401), but the *wiring* is verified by the live smoke in Final Verification (a real github.com 401 in the running app must surface the banner). Treat the live-smoke step as required, not optional, for this reason.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -823,8 +825,32 @@ public class CredentialHealthEndpointTests
         var state = await client.GetFromJsonAsync<AuthStateDto>("/api/auth/state");
         Assert.True(state!.GithubCredentialInvalid); // failed validation never called MarkValid
     }
+
+    [Fact]
+    public async Task Replace_WithValidToken_ClearsLatch()  // positive: MarkValid on success
+    {
+        using var factory = new PRismWebApplicationFactory
+        {
+            // Validation accepts the candidate (Ok=true, a login present).
+            ValidateOverride = () => Task.FromResult(
+                new AuthValidationResult(true, "octocat", null, null, null)),
+        };
+        var client = factory.CreateClient();
+        var health = factory.Services.GetRequiredService<IGitHubCredentialHealth>();
+        health.RecordAuthFailure();
+        health.RecordAuthFailure();
+        Assert.True(health.IsInvalid);
+
+        var resp = await client.PostAsJsonAsync("/api/auth/replace", new { pat = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" });
+        resp.EnsureSuccessStatusCode(); // 200 OK
+
+        var state = await client.GetFromJsonAsync<AuthStateDto>("/api/auth/state");
+        Assert.False(state!.GithubCredentialInvalid); // successful commit called MarkValid → latch cleared
+    }
 }
 ```
+
+> **Why this test matters (adversarial finding):** without it, omitting the `credentialHealth.MarkValid()` line on the commit path (Task 6 Step 4) would pass every other test — the mandatory-valid test only exercises the *failed*-validation branch. This pins the *success* branch that the no-flash recovery depends on.
 
 > Verify the `AuthValidationResult` / `AuthValidationError` constructor shape against `PRism.Core` (grep — the fixture's `StubReviewService` uses the same type). If `ValidateOverride` is not the exact hook name in the current fixture, use the one the fixture exposes (it currently wires `IReviewAuth` from `ValidateOverride`). The `pat` value is an obviously-fake 36-x placeholder (not a real token).
 
@@ -836,7 +862,7 @@ Expected: FAIL — `GithubCredentialInvalid` / `IGitHubCredentialHealth` absent 
 - [ ] **Step 3: Run on the feature branch to verify green**
 
 Run: `dotnet test tests/PRism.Web.Tests --filter FullyQualifiedName~CredentialHealthEndpointTests`
-Expected: PASS (3 tests).
+Expected: PASS (4 tests).
 
 - [ ] **Step 4: Commit**
 
@@ -1227,25 +1253,28 @@ describe('GitHubAuthBanner', () => {
     expect(screen.getByRole('status')).toHaveTextContent('GitHub access token invalid — reconnect');
   });
 
-  it('hides the visible bar on /setup (live region empty)', () => {
+  it('hides the visible bar on /setup but the live region still reflects the invalid credential', () => {
     mockPath = '/setup';
     render(<MemoryRouter><GitHubAuthBanner /></MemoryRouter>);
-    expect(reconnectButton()).toBeNull();
-    expect(screen.getByRole('status')).toHaveTextContent(''); // region mounted, no announcement
+    expect(reconnectButton()).toBeNull(); // visual bar suppressed on the fix screen
+    // Announcement is keyed on the credential edge, not the visible bar, so it does NOT
+    // blank-then-refill (re-announce) as the user moves between /setup and app routes.
+    expect(screen.getByRole('status')).toHaveTextContent('GitHub access token invalid — reconnect');
   });
 
   it('hides the visible bar while the SSE stream is unhealthy', () => {
     mockHealthy = false;
     render(<MemoryRouter><GitHubAuthBanner /></MemoryRouter>);
     expect(reconnectButton()).toBeNull();
-    expect(screen.getByRole('status')).toHaveTextContent('');
+    expect(screen.getByRole('status')).toHaveTextContent('GitHub access token invalid — reconnect'); // credential still invalid
   });
 
-  it('keeps the live region mounted even when valid (no banner)', () => {
+  it('clears the live region and shows no banner when the credential is valid', () => {
     mockInvalid = false;
     render(<MemoryRouter><GitHubAuthBanner /></MemoryRouter>);
     expect(reconnectButton()).toBeNull();
-    expect(screen.getByRole('status')).toBeInTheDocument(); // always mounted
+    expect(screen.getByRole('status')).toBeInTheDocument();       // always mounted
+    expect(screen.getByRole('status')).toHaveTextContent('');     // empty when valid
   });
 
   it('Reconnect navigates to /setup?replace=1', async () => {
@@ -1294,8 +1323,13 @@ export function GitHubAuthBanner() {
 
   return (
     <>
+      {/* Announcement keyed on the CREDENTIAL-INVALID edge (not `show`): the text is
+          MESSAGE whenever the credential is invalid and '' when valid, so the screen
+          reader announces once when the credential goes bad and the content does NOT
+          flip on route/stream-health changes (e.g. navigating off /setup) — avoiding the
+          repeated re-announce that keying on `show` would cause during the gate flow. */}
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {show ? MESSAGE : ''}
+        {invalid ? MESSAGE : ''}
       </div>
       {show && (
         <Snackbar
@@ -1521,7 +1555,7 @@ git commit -m "test(#312): Playwright visual baseline for the re-auth banner"
 ## Self-review checklist (run before handing off)
 
 - [ ] **Spec coverage:** every AC in §4 maps to a task — latch (T1), threshold (T1/T3), surfacing (T6), banner (T11), Reconnect route (T11), transient-no-flip (T1/T3), candidate-skip (T5), epoch race (T1/T3), suppression on /setup + !healthy (T11), exit-gate (T12), github.com-only (T2/T3).
-- [ ] **Red-on-main:** T7 captures the failing-on-main proof for the headline behavior.
+- [ ] **Red-on-main:** T5 (`Validate_WithoutSkip_LatchesAfterTwo`) captures the failing-on-main proof — the real handler observing a real 401. T7's endpoint tests only prove surfacing + mandatory-valid.
 - [ ] **Secrets scan:** the handler/latch touch status codes + the *presence* of an Authorization header only — no token material logged or persisted (confirm in the diff at PR time).
 - [ ] **Type consistency:** `RecordAuthFailure` / `MarkValid` / `BumpEpoch` / `Epoch` / `IsInvalid` used identically across T1, T3, T5, T6; `githubCredentialInvalid` identical across T6, T8, T9, T11; `SkipHealthKey` shared T3/T5; `prism-request-failed` shared T8/T9.
 - [ ] **B1 gate:** banner copy + position go to the owner at green-and-ready (T13 screenshot).
@@ -1531,4 +1565,5 @@ git commit -m "test(#312): Playwright visual baseline for the re-auth banner"
 - [ ] `dotnet test` (Core + GitHub + Web suites) — all green.
 - [ ] `cd frontend && npm run build && npx vitest run` — typecheck clean, all green.
 - [ ] `cd frontend && npx prettier --check` via `rtk proxy npx prettier --check .` (rtk masks the exit code — verify with the proxy).
+- [ ] **Live smoke (required — pins production handler chaining):** run the app, invalidate the stored PAT mid-session (revoke it on GitHub, or point at a token that 401s), and confirm the red banner appears on an app route and the `/setup?replace=1` exit-gate holds until a valid token is committed. This is the only check that proves `.AddHttpMessageHandler<GitHubAuthHealthHandler>()` is actually wired onto the `"github"` client in production (the unit tests can't).
 - [ ] Pre-push checklist per `.ai/docs/development-process.md`.
