@@ -90,8 +90,11 @@ test('re-auth banner is shown on the inbox when the GitHub credential is invalid
   // stable page (not mid-load skeleton).
   await expect(page.locator('[data-testid="inbox-page"]')).toBeVisible({ timeout: 30_000 });
 
-  // The visible banner: message text + Reconnect action.
-  await expect(page.getByText('GitHub access token invalid — reconnect')).toBeVisible();
+  // The visible banner is proven by its Reconnect button, which is unique to the
+  // visible bar. The message text "GitHub access token invalid — reconnect" also
+  // lives in an always-mounted .sr-only live region (a11y, announce-once), so a bare
+  // getByText would match twice and trip strict mode — assert the unique button
+  // instead (the message itself is captured by the screenshot + the unit test).
   await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
 
   // Kill animations/transitions so the snapshot is byte-stable across runs

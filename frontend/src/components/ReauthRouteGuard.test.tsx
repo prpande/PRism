@@ -2,16 +2,20 @@ import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
 import { ReauthRouteGuard } from './ReauthRouteGuard';
 
-const navigate = vi.fn();
-let mockPath = '/setup';
+// vi.hoisted so the hoisted vi.mock factory can read these mutable containers
+// without a TDZ error (repo pattern: frontend/__tests__/PrHeader.test.tsx).
+const { navigate, state } = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  state: { path: '/setup' },
+}));
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useNavigate: () => navigate,
-  useLocation: () => ({ pathname: mockPath }),
+  useLocation: () => ({ pathname: state.path }),
 }));
 
 function renderAt(path: string, invalid: boolean) {
-  mockPath = path;
+  state.path = path;
   return render(<ReauthRouteGuard credentialInvalid={invalid} />);
 }
 
@@ -19,7 +23,7 @@ describe('ReauthRouteGuard', () => {
   it('holds the user on /setup once entered under an invalid credential', () => {
     navigate.mockClear();
     const { rerender } = renderAt('/setup', true);
-    mockPath = '/';
+    state.path = '/';
     rerender(<ReauthRouteGuard credentialInvalid={true} />);
     expect(navigate).toHaveBeenCalledWith('/setup?replace=1', { replace: true });
   });
@@ -27,7 +31,7 @@ describe('ReauthRouteGuard', () => {
   it('does not redirect when credential is valid', () => {
     navigate.mockClear();
     const { rerender } = renderAt('/setup', false);
-    mockPath = '/';
+    state.path = '/';
     rerender(<ReauthRouteGuard credentialInvalid={false} />);
     expect(navigate).not.toHaveBeenCalled();
   });
@@ -41,7 +45,7 @@ describe('ReauthRouteGuard', () => {
   it('releases the user when the credential becomes valid (no bounce)', () => {
     navigate.mockClear();
     const { rerender } = renderAt('/setup', true);
-    mockPath = '/';
+    state.path = '/';
     rerender(<ReauthRouteGuard credentialInvalid={false} />);
     expect(navigate).not.toHaveBeenCalled();
   });

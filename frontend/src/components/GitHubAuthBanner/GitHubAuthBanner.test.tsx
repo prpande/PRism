@@ -4,15 +4,17 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { GitHubAuthBanner } from './GitHubAuthBanner';
 
-const navigate = vi.fn();
-let mockPath = '/';
-let mockInvalid = true;
-let mockHealthy = true;
+// vi.hoisted so the hoisted vi.mock factories can read these mutable containers
+// without a TDZ error (repo pattern: frontend/__tests__/PrHeader.test.tsx).
+const { navigate, state } = vi.hoisted(() => ({
+  navigate: vi.fn(),
+  state: { path: '/', invalid: true, healthy: true },
+}));
 
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useNavigate: () => navigate,
-  useLocation: () => ({ pathname: mockPath }),
+  useLocation: () => ({ pathname: state.path }),
 }));
 vi.mock('../../hooks/useAuth', () => ({
   useAuth: () => ({
@@ -20,14 +22,14 @@ vi.mock('../../hooks/useAuth', () => ({
       hasToken: true,
       host: 'github.com',
       hostMismatch: null,
-      githubCredentialInvalid: mockInvalid,
+      githubCredentialInvalid: state.invalid,
     },
     error: null,
     refetch: vi.fn(),
   }),
 }));
 vi.mock('../../hooks/useStreamHealth', () => ({
-  useStreamHealth: () => ({ healthy: mockHealthy, retry: vi.fn() }),
+  useStreamHealth: () => ({ healthy: state.healthy, retry: vi.fn() }),
 }));
 
 const reconnectButton = () => screen.queryByRole('button', { name: /reconnect/i });
@@ -35,9 +37,9 @@ const reconnectButton = () => screen.queryByRole('button', { name: /reconnect/i 
 describe('GitHubAuthBanner', () => {
   beforeEach(() => {
     navigate.mockClear();
-    mockPath = '/';
-    mockInvalid = true;
-    mockHealthy = true;
+    state.path = '/';
+    state.invalid = true;
+    state.healthy = true;
   });
 
   it('shows the visible bar when invalid + authed + healthy + not on /setup', () => {
@@ -52,7 +54,7 @@ describe('GitHubAuthBanner', () => {
   });
 
   it('hides the visible bar on /setup but the live region still reflects the invalid credential', () => {
-    mockPath = '/setup';
+    state.path = '/setup';
     render(
       <MemoryRouter>
         <GitHubAuthBanner />
@@ -63,7 +65,7 @@ describe('GitHubAuthBanner', () => {
   });
 
   it('hides the visible bar while the SSE stream is unhealthy', () => {
-    mockHealthy = false;
+    state.healthy = false;
     render(
       <MemoryRouter>
         <GitHubAuthBanner />
@@ -74,7 +76,7 @@ describe('GitHubAuthBanner', () => {
   });
 
   it('clears the live region and shows no banner when the credential is valid', () => {
-    mockInvalid = false;
+    state.invalid = false;
     render(
       <MemoryRouter>
         <GitHubAuthBanner />
