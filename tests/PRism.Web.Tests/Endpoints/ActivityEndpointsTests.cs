@@ -59,6 +59,18 @@ public sealed class ActivityEndpointsTests
             "https://github.com/acme/api/pull/7", System.DateTimeOffset.UnixEpoch, ActivitySource.ReceivedEvent)],
         System.DateTimeOffset.UnixEpoch, new ActivityDegradation(false, Notifications: false, Watching: false), []);
 
+    // Two actorless notification items + a Watching list — used by the wire-value pin test.
+    private static ActivityResponse NotificationFeed() => new(
+        [
+            new ActivityItem(null, null, false, ActivityVerb.ReviewRequested, "acme/api", 1842, "PR #1842",
+                "https://github.com/acme/api/pull/1842", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem(null, null, false, ActivityVerb.Mentioned, "acme/api", 1827, "PR #1827",
+                "https://github.com/acme/api/pull/1827", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+        ],
+        System.DateTimeOffset.UnixEpoch,
+        new ActivityDegradation(ReceivedEvents: false, Notifications: false, Watching: false),
+        [new PRism.Core.Activity.WatchedRepoActivity("acme/api", 2, "https://github.com/acme/api")]);
+
     [Fact]
     public async Task Returns_200_with_items_and_kebab_case_enums()
     {
@@ -78,6 +90,43 @@ public sealed class ActivityEndpointsTests
         var body = JsonDocument.Parse(json).RootElement;
         body.GetProperty("items").GetArrayLength().Should().Be(1);
         body.GetProperty("degraded").GetProperty("receivedEvents").GetBoolean().Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Returns_notification_source_watching_and_kebab_case_verbs_on_wire()
+    {
+        // Pin the exact serialized wire values for the new P2 shape so frontend
+        // Tasks 11–12 can key on the literal kebab-case strings, not C# casing.
+        var (inner, outer) = FactoryWith(NotificationFeed());
+        await using var _ = inner;
+        await using var __ = outer;
+        var client = AuthenticatedClient(outer);
+
+        var resp = await client.GetAsync(new System.Uri("/api/activity", System.UriKind.Relative));
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await resp.Content.ReadAsStringAsync();
+
+        // Architectural invariant: ActivitySource.Notification → "notification" (NOT "Notification")
+        json.Should().Contain("\"source\":\"notification\"");
+        // ActivityVerb.ReviewRequested → "review-requested" (NOT "reviewRequested")
+        json.Should().Contain("\"verb\":\"review-requested\"");
+        // ActivityVerb.Mentioned → "mentioned"
+        json.Should().Contain("\"verb\":\"mentioned\"");
+        // watching array is present
+        json.Should().Contain("\"watching\":");
+
+        var body = JsonDocument.Parse(json).RootElement;
+        body.GetProperty("items").GetArrayLength().Should().Be(2);
+
+        // degraded object carries the three P2 flags (camelCase property names, boolean values)
+        var degraded = body.GetProperty("degraded");
+        degraded.GetProperty("notifications").GetBoolean().Should().BeFalse();
+        degraded.GetProperty("watching").GetBoolean().Should().BeFalse();
+        degraded.GetProperty("receivedEvents").GetBoolean().Should().BeFalse();
+
+        // watching array has one entry
+        body.GetProperty("watching").GetArrayLength().Should().Be(1);
     }
 
     [Fact]
