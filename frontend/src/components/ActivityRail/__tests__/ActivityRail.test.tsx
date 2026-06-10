@@ -12,7 +12,8 @@ function resp(partial: Partial<ActivityResponse> = {}): ActivityResponse {
   return {
     items: [],
     generatedAt: new Date().toISOString(),
-    degraded: { receivedEvents: false },
+    degraded: { receivedEvents: false, notifications: false, watching: false },
+    watching: [],
     ...partial,
   };
 }
@@ -95,7 +96,7 @@ describe('ActivityRail (P1)', () => {
 
   test('degraded note shows on backend-degraded flag', () => {
     useActivityMock.mockReturnValue({
-      data: resp({ items: [], degraded: { receivedEvents: true } }),
+      data: resp({ items: [], degraded: { receivedEvents: true, notifications: false, watching: false } }),
       isLoading: false,
       error: null,
     });

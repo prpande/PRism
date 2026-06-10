@@ -22,7 +22,8 @@ const RESP = (n: number): ActivityResponse => ({
     },
   ],
   generatedAt: new Date().toISOString(),
-  degraded: { receivedEvents: false },
+  degraded: { receivedEvents: false, notifications: false, watching: false },
+  watching: [],
 });
 
 beforeEach(() => {

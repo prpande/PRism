@@ -16,6 +16,9 @@ const VERB_PHRASE: Record<ActivityVerb, string> = {
   reviewed: 'reviewed',
   commented: 'commented on',
   other: 'updated',
+  // actorless — no actor prefix; Task 12 wires the full actorless phrasing
+  'review-requested': 'review requested on',
+  mentioned: 'you were mentioned on',
 };
 
 // Parse a github.com PR html_url → the in-app /pr/:owner/:repo/:number path.
