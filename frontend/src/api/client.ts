@@ -75,6 +75,7 @@ async function request<T>(
     if (resp.status === 401) {
       window.dispatchEvent(new CustomEvent('prism-auth-rejected'));
     }
+    window.dispatchEvent(new CustomEvent('prism-request-failed'));
     throw new ApiError(resp.status, requestId, parsed);
   }
   if (resp.status === 204) return undefined as unknown as T;
