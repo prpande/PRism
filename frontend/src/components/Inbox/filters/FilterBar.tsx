@@ -6,6 +6,7 @@ import { SORT_OPTIONS } from './applyInboxFilters';
 import { InboxQueryInput } from './InboxQueryInput';
 import { FilterFacet } from './FilterFacet';
 import { FilterSummary } from './FilterSummary';
+import { RefreshButton } from '../RefreshButton';
 import styles from './filters.module.css';
 
 const CI_VALUES: CiStatus[] = ['failing', 'pending'];
@@ -23,9 +24,21 @@ interface Props {
   initialSort: SortKey;
   ciProbeComplete: boolean;
   onState(state: FilterBarState): void;
+  // #311 — manual refresh, threaded from InboxPage via InboxToolbar.
+  refresh: () => void;
+  isRefreshing: boolean;
+  justRefreshed: boolean;
 }
 
-export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: Props) {
+export function FilterBar({
+  sections,
+  initialSort,
+  ciProbeComplete,
+  onState,
+  refresh,
+  isRefreshing,
+  justRefreshed,
+}: Props) {
   const f = useInboxFilters(sections, initialSort);
   // `onState` MUST be a stable reference (a useState setter like InboxPage's
   // `setFilterState`, or a useCallback) — an inline arrow would re-fire this effect
@@ -70,16 +83,23 @@ export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: P
           onToggle={f.toggleAuthor}
         />
         <span className={styles.spring} />
-        <label className={styles.sort}>
-          Sort:{' '}
-          <select value={f.sort} onChange={(e) => f.setSort(e.target.value as SortKey)}>
-            {SORT_OPTIONS.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className={styles.sortRefreshGroup}>
+          <label className={styles.sort}>
+            Sort:{' '}
+            <select value={f.sort} onChange={(e) => f.setSort(e.target.value as SortKey)}>
+              {SORT_OPTIONS.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <RefreshButton
+            isRefreshing={isRefreshing}
+            justRefreshed={justRefreshed}
+            onRefresh={refresh}
+          />
+        </div>
       </div>
       <FilterSummary
         active={f.active}

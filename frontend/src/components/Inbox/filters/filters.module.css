@@ -270,6 +270,15 @@
   border-color: var(--accent);
 }
 
+/* #311 — keep Sort + Refresh together as ONE flex item so they wrap as a unit
+   when .barRow wraps at narrow container widths (flex-wrap wraps items, not
+   loose sibling groups). */
+.sortRefreshGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
 /* Zero-match state */
 /* used by NoFilterMatches zero-state (Task 15) */
 .noMatch {
