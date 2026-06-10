@@ -70,16 +70,42 @@ export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: P
           onToggle={f.toggleAuthor}
         />
         <span className={styles.spring} />
-        <label className={styles.sort}>
-          Sort:{' '}
-          <select value={f.sort} onChange={(e) => f.setSort(e.target.value as SortKey)}>
+        <span className={styles.sort}>
+          <svg
+            className={styles.sortGlyph}
+            viewBox="0 0 16 16"
+            width="13"
+            height="13"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            {/* Neutral "sorted list" mark (decreasing bars) — NOT an asc/desc arrow;
+                the control has no direction toggle (#300). */}
+            <path d="M0 4.25c0-.414.336-.75.75-.75h11.5a.75.75 0 0 1 0 1.5H.75A.75.75 0 0 1 0 4.25Zm2 4a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 2 8.25Zm2 4a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z" />
+          </svg>
+          <select
+            className={styles.sortSelect}
+            aria-label="Sort"
+            value={f.sort}
+            onChange={(e) => f.setSort(e.target.value as SortKey)}
+          >
             {SORT_OPTIONS.map((s) => (
               <option key={s.key} value={s.key}>
                 {s.label}
               </option>
             ))}
           </select>
-        </label>
+          <svg
+            className={styles.sortCaret}
+            viewBox="0 0 16 16"
+            width="11"
+            height="11"
+            fill="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.94l3.72-3.72a.749.749 0 0 1 1.06 0Z" />
+          </svg>
+        </span>
       </div>
       <FilterSummary
         active={f.active}

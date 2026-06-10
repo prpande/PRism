@@ -1,11 +1,14 @@
 import type { CiStatus, InboxSection, PrInboxItem, SortKey } from '../../../api/types';
 export type { SortKey };
 
+// #300 — direction-encoding labels: each conveys its fixed (descending) sort
+// direction in words, so the control reads consistently with no asc/desc toggle.
+// Keys are unchanged — persisted inbox.defaultSort values keep working.
 export const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: 'updated', label: 'Updated' },
+  { key: 'updated', label: 'Recently updated' },
   { key: 'pushed', label: 'Recently pushed' },
-  { key: 'diff', label: 'Diff size' },
-  { key: 'comments', label: 'Comments' },
+  { key: 'diff', label: 'Largest diff' },
+  { key: 'comments', label: 'Most comments' },
 ];
 
 export interface InboxFilters {
