@@ -24,15 +24,16 @@ export function OpenInGitHubButton({ href }: OpenInGitHubButtonProps) {
 
   return (
     <a
-      className="btn btn-secondary open-in-github-button"
+      className="btn-icon open-in-github-button"
       href={href}
       target="_blank"
       rel="noreferrer"
+      aria-label="Open in GitHub"
+      title="Open in GitHub"
       data-testid="open-in-github-button"
       onClick={handleClick}
     >
       <GitHubMark />
-      Open in GitHub
     </a>
   );
 }
