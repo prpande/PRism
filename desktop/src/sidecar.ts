@@ -14,6 +14,10 @@ export interface SidecarOptions {
   dataDir: string | null;
   parentPid: number;
   startTimeoutMs?: number;
+  /** Fired once the sidecar prints its port (region 4a boundary, #282 timing). */
+  onPortReceived?: () => void;
+  /** Fired once the health poll passes (region 4b boundary, #282 timing). */
+  onHealthy?: () => void;
 }
 
 export interface SpawnPlan {
@@ -91,12 +95,14 @@ export async function startSidecar(opts: SidecarOptions): Promise<Sidecar> {
 
   try {
     const port = await readPortFromStdout(child, opts.startTimeoutMs ?? 15000);
+    fireTimingHook(opts.onPortReceived);
     const baseUrl = `http://127.0.0.1:${port}`;
 
     const healthy = await pollHealth(baseUrl, opts.startTimeoutMs ?? 15000);
     if (!healthy) {
       throw new Error("PRism backend failed its health check.");
     }
+    fireTimingHook(opts.onHealthy);
 
     return {
       baseUrl,
@@ -154,6 +160,18 @@ function readPortFromStdout(child: ChildProcess, timeoutMs: number): Promise<num
     child.on("exit", onExit);
     child.on("error", onError);
   });
+}
+
+// Invoke an optional timing hook (#282) without letting it derail startup: a
+// throwing callback must never convert a healthy sidecar boot into a failure, so
+// swallow anything it throws. The hooks only record an in-memory timestamp.
+function fireTimingHook(hook: (() => void) | undefined): void {
+  if (!hook) return;
+  try {
+    hook();
+  } catch {
+    /* timing is best-effort; never fail startup on a marking error */
+  }
 }
 
 async function stopChild(child: ChildProcess): Promise<void> {
