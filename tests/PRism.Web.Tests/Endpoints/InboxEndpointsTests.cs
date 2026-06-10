@@ -264,7 +264,7 @@ public class InboxEndpointsTests
             reference, "Calc", "author", "acme/api",
             DateTimeOffset.UtcNow, DateTimeOffset.UtcNow,
             1, 0, 1, 0, "HEAD", CiStatus.None,
-            LastViewedHeadSha: "STALE", LastSeenCommentId: null);
+            LastViewedHeadSha: "STALE", LastSeenCommentId: 11);
         var fakeOrch = new FakeInboxRefreshOrchestrator
         {
             Current = MakeSnapshot(new Dictionary<string, IReadOnlyList<PrInboxItem>>
@@ -283,7 +283,7 @@ public class InboxEndpointsTests
         {
             var session = new ReviewSessionState(
                 new Dictionary<string, TabStamp> { ["t1"] = new TabStamp("HEAD", DateTime.UtcNow) },
-                null, null, null,
+                "99", null, null,
                 new Dictionary<string, string>(),
                 new List<DraftComment>(), new List<DraftReply>(),
                 null, DraftVerdictStatus.Draft);
@@ -298,6 +298,8 @@ public class InboxEndpointsTests
         var item = body.GetProperty("sections")[0].GetProperty("items")[0];
         item.GetProperty("lastViewedHeadSha").GetString().Should().Be("HEAD",
             "the GET overlay must re-project the live stamp over the stale baked value");
+        item.GetProperty("lastSeenCommentId").GetInt64().Should().Be(99,
+            "the overlay must re-project lastSeenCommentId too (total replacement, not just head)");
         fakeOrch.RefreshCalls.Should().Be(0,
             "the overlay reflects the write without triggering an orchestrator refresh");
     }
