@@ -4,9 +4,19 @@ import * as fs from "node:fs";
 import { startSidecar, Sidecar } from "./sidecar";
 import { sidecarBinaryName } from "./platform";
 import { isOpenableUrl, windowOpenDecision } from "./urls";
+import { attribute, formatSummary, Phase } from "./startupTimings";
 
 let sidecar: Sidecar | null = null;
 let mainWindow: BrowserWindow | null = null;
+
+// Cold-start timing marks (#282). One marks.set(phase, Date.now()) per fixed
+// bootstrap call site; emitStartupSummary() turns them into a single greppable
+// [startup] line. moduleLoad is marked at the earliest possible JS point —
+// before the single-instance gate — so it anchors region 3 (Electron init).
+// Marking here is a harmless in-memory write even on a rejected second instance;
+// only emitStartupSummary() touches the filesystem and it stays behind the lock.
+const startupMarks = new Map<Phase, number>();
+startupMarks.set("moduleLoad", Date.now());
 
 // Single-instance gate FIRST — before spawning any backend.
 const gotLock = app.requestSingleInstanceLock();
@@ -130,13 +140,19 @@ function resolveDataDir(): string | null {
 }
 
 async function bootstrap(): Promise<void> {
+  startupMarks.set("whenReady", Date.now());
   try {
+    startupMarks.set("sidecarSpawn", Date.now());
     sidecar = await startSidecar({
       binaryPath: resolveBinaryPath(),
       dataDir: resolveDataDir(),
       parentPid: process.pid,
+      onPortReceived: () => startupMarks.set("portReceived", Date.now()),
+      onHealthy: () => startupMarks.set("healthOk", Date.now()),
     });
   } catch (err) {
+    // A failed cold-start is still measured (partial line) before we quit.
+    emitStartupSummary();
     dialog.showErrorBox("PRism failed to start", String(err));
     app.quit();
     return;
@@ -212,4 +228,25 @@ async function bootstrap(): Promise<void> {
   });
 
   await mainWindow.loadURL(sidecar.baseUrl);
+  startupMarks.set("contentLoaded", Date.now());
+  emitStartupSummary();
+}
+
+// Turn the collected marks into one [startup] line and record it (#282). Only
+// ever called from within the gotLock branch (bootstrap + its catch), so a
+// rejected second instance writes nothing. The line is pure timing integers —
+// it never interpolates err.message / sidecar stderr (which can carry paths /
+// diagnostics). process.getCreationTime() is an Electron process augmentation
+// returning epoch-ms or null; null degrades preJs/procToContent to n/a. Every
+// step is best-effort: a logging failure must never abort startup.
+function emitStartupSummary(): void {
+  try {
+    const created = process.getCreationTime();
+    const line = formatSummary(attribute(startupMarks, created));
+    console.log(line);
+    const logPath = path.join(app.getPath("logs"), "startup.log");
+    fs.appendFileSync(logPath, line + "\n");
+  } catch {
+    /* timing log is best-effort — never break startup on a logging error */
+  }
 }
