@@ -24,6 +24,7 @@ function prefs(contentScale: PreferencesResponse['ui']['contentScale']): Prefere
       defaultSort: 'updated',
       sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
       showActivityRail: false,
+      groupByRepo: true,
     },
     github: { host: 'h', configPath: 'c', logsPath: 'l' },
   };
