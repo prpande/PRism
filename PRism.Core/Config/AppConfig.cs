@@ -22,7 +22,7 @@ public sealed record AppConfig(
         new ReviewConfig(true, true),
         new IterationsConfig(60, ClusteringDisabled: false),
         new LoggingConfig("info", true, 30),
-        new UiConfig("system", "indigo", new AiConfig(AiMode.Off), "comfortable", "m"),
+        new UiConfig("system", "indigo", new AiConfig(AiMode.Preview), "comfortable", "m"),
         new GithubConfig(new[]
         {
             new GithubAccountConfig(

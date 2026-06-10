@@ -34,10 +34,9 @@ public class PreferencesEndpointsTests
         var ui = body.GetProperty("ui");
         ui.GetProperty("theme").GetString().Should().Be("system");
         ui.GetProperty("accent").GetString().Should().Be("indigo");
-        // V2 AI model: default ui.ai.mode = Off → derived aiPreview = false (the #283
-        // default-on flip is superseded by V2's tri-state AiMode, default Off).
-        ui.GetProperty("aiPreview").GetBoolean().Should().BeFalse();
-        ui.GetProperty("aiMode").GetString().Should().Be("off");
+        // AI defaults ON: default ui.ai.mode = Preview → derived aiPreview = true.
+        ui.GetProperty("aiPreview").GetBoolean().Should().BeTrue();
+        ui.GetProperty("aiMode").GetString().Should().Be("preview");
         ui.GetProperty("density").GetString().Should().Be("comfortable");
         ui.GetProperty("contentScale").GetString().Should().Be("m");
 

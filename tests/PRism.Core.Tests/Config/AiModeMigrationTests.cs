@@ -54,7 +54,7 @@ public sealed class AiModeMigrationTests
         var act = async () => await store.InitAsync(CancellationToken.None);
 
         await act.Should().NotThrowAsync();
-        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Off); // falls back to Default
+        store.Current.Ui.Ai.Mode.Should().Be(AiMode.Preview); // non-bool left untouched → falls back to Default (on)
     }
 
     [Fact]
