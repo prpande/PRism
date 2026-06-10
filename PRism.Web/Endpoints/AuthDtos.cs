@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace PRism.Web.Endpoints;
 
-internal sealed record AuthStateResponse(bool HasToken, string Host, AuthHostMismatch? HostMismatch);
+internal sealed record AuthStateResponse(bool HasToken, string Host, AuthHostMismatch? HostMismatch, bool GithubCredentialInvalid);
 
 internal sealed record AuthHostMismatch(
     string Old,
