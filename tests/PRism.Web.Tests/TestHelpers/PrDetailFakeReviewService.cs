@@ -64,7 +64,7 @@ public sealed class PrDetailFakeReviewService : IReviewAuth, IPrDiscovery, IPrRe
         => Task.FromResult<CommitInfo?>(new CommitInfo(sha));
 
     // Methods PR-detail tests don't exercise.
-    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) =>
+    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) =>
         Task.FromResult(new AuthValidationResult(true, "tester", new[] { "repo" }, null, null));
     public Task<InboxSection[]> GetInboxAsync(CancellationToken ct) => Task.FromResult(Array.Empty<InboxSection>());
     public bool TryParsePrUrl(string url, out PrReference? reference) { reference = null; return false; }

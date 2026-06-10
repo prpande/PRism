@@ -7,6 +7,6 @@ namespace PRism.Web.TestHooks;
 // the `repo` scope. See FakeReviewBackingStore for the shared scenario state.
 internal sealed class FakeReviewAuth : IReviewAuth
 {
-    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct) =>
+    public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) =>
         Task.FromResult(new AuthValidationResult(true, "e2e-user", FakeReviewBackingStore.AuthScopes, null, null));
 }

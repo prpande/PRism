@@ -66,7 +66,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         _log = log ?? NullLogger<GitHubReviewService>.Instance;
     }
 
-    public async Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct)
+    public async Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false)
     {
         var token = await _readToken().ConfigureAwait(false);
         if (string.IsNullOrEmpty(token))
@@ -79,6 +79,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
+        if (skipCredentialHealth) req.Options.Set(GitHubAuthHealthHandler.SkipHealthKey, true);
 
         try
         {
@@ -89,7 +90,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
             // Fine-grained: probe Search to detect the no-repos-selected case.
             try
             {
-                var warning = await ProbeRepoVisibilityAsync(token, ct).ConfigureAwait(false);
+                var warning = await ProbeRepoVisibilityAsync(token, skipCredentialHealth, ct).ConfigureAwait(false);
                 return primary with { Warning = warning };
             }
             catch (HttpRequestException ex) when (ex.StatusCode is { } c && (int)c >= 500)
@@ -202,16 +203,16 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         return new AuthValidationResult(true, login, scopes, AuthValidationError.None, null);
     }
 
-    private async Task<AuthValidationWarning> ProbeRepoVisibilityAsync(string token, CancellationToken ct)
+    private async Task<AuthValidationWarning> ProbeRepoVisibilityAsync(string token, bool skipCredentialHealth, CancellationToken ct)
     {
-        if (await SearchHasResultsAsync(token, "is:pr author:@me", ct).ConfigureAwait(false))
+        if (await SearchHasResultsAsync(token, "is:pr author:@me", skipCredentialHealth, ct).ConfigureAwait(false))
             return AuthValidationWarning.None;
-        if (await SearchHasResultsAsync(token, "is:pr review-requested:@me", ct).ConfigureAwait(false))
+        if (await SearchHasResultsAsync(token, "is:pr review-requested:@me", skipCredentialHealth, ct).ConfigureAwait(false))
             return AuthValidationWarning.None;
         return AuthValidationWarning.NoReposSelected;
     }
 
-    private async Task<bool> SearchHasResultsAsync(string token, string query, CancellationToken ct)
+    private async Task<bool> SearchHasResultsAsync(string token, string query, bool skipCredentialHealth, CancellationToken ct)
     {
         var url = $"search/issues?q={Uri.EscapeDataString(query)}&per_page=1";
         using var http = _httpFactory.CreateClient("github");
@@ -219,6 +220,7 @@ public sealed partial class GitHubReviewService : IReviewAuth, IPrDiscovery, IPr
         req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
         req.Headers.UserAgent.ParseAdd("PRism/0.1");
         req.Headers.Accept.ParseAdd("application/vnd.github+json");
+        if (skipCredentialHealth) req.Options.Set(GitHubAuthHealthHandler.SkipHealthKey, true);
 
         using var resp = await http.SendAsync(req, ct).ConfigureAwait(false);
         resp.EnsureSuccessStatusCode();
