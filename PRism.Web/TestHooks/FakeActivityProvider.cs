@@ -37,4 +37,7 @@ internal sealed class FakeActivityProvider : IActivityProvider
         return Task.FromResult(new ActivityResponse(items, now,
             new ActivityDegradation(false, Notifications: false, Watching: false), []));
     }
+
+    // No-op: the fake feed is stateless (no cache to invalidate on token rotation).
+    public void Reset() { }
 }

@@ -51,7 +51,12 @@ public sealed record InboxConfig(
     // ON for fresh installs does not surface a fabricated feed. Config-only (no
     // Settings UI) until the rail carries real data. Appended LAST so the positional
     // `new InboxConfig(true, …, 14)` default construction stays valid.
-    bool ShowActivityRail = false);
+    bool ShowActivityRail = false,
+    // #137 additive extra bot logins for the activity rail, comma-separated, matched
+    // case-insensitively on top of the built-in `Copilot` baseline and the `[bot]`
+    // suffix. Default empty. Settings UI tracked separately in #316. Appended LAST so
+    // the positional `new InboxConfig(true, …, 14)` default construction stays valid.
+    string KnownBots = "");
 public sealed record InboxSectionsConfig(
     bool ReviewRequested,
     bool AwaitingAuthor,

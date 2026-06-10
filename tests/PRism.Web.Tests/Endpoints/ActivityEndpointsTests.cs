@@ -18,6 +18,7 @@ public sealed class ActivityEndpointsTests
     private sealed class StubProvider(ActivityResponse resp) : IActivityProvider
     {
         public Task<ActivityResponse> GetActivityAsync(CancellationToken ct) => Task.FromResult(resp);
+        public void Reset() { }
     }
 
     // Builds a factory whose DI has IActivityProvider swapped for a stub.
