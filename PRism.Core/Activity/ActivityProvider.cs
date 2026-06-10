@@ -19,13 +19,16 @@ public sealed partial class ActivityProvider : IActivityProvider
     public async Task<ActivityResponse> GetActivityAsync(CancellationToken ct)
     {
         var read = await _reader.ReadAsync(ct).ConfigureAwait(false);
-        var built = ActivityFeedBuilder.Build(read.Events, DateTimeOffset.UtcNow);
+        // Capture the clock once so the 24h feed-window cutoff and the reported
+        // GeneratedAt are derived from the same instant (no sub-call skew).
+        var now = DateTimeOffset.UtcNow;
+        var built = ActivityFeedBuilder.Build(read.Events, now);
 
         if (built.DroppedRecognized > 0)
             Log.DroppedRecognized(_log, built.DroppedRecognized);
 
         return new ActivityResponse(
-            built.Items, DateTimeOffset.UtcNow, new ActivityDegradation(read.Degraded));
+            built.Items, now, new ActivityDegradation(read.Degraded));
     }
 
     private static partial class Log

@@ -7,8 +7,9 @@ namespace PRism.Core.Inbox;
 /// <param name="Complete">
 /// False when at least one probe degraded this sweep (a non-2xx read such as a
 /// fine-grained-PAT 403 on the Checks API or a transient 5xx). A degraded probe
-/// yields <see cref="CiStatus.None"/>, indistinguishable from "passing" — callers
-/// use this flag to signal that a CI filter may under-match.
+/// yields <see cref="CiStatus.None"/> (unknown/unprobed — distinct from the
+/// explicit <see cref="CiStatus.Passing"/>); callers use Complete=false to signal
+/// that CI-based filters may under-match this sweep.
 /// </param>
 public readonly record struct CiDetectResult(
     IReadOnlyList<(RawPrInboxItem Item, CiStatus Ci)> Items,
