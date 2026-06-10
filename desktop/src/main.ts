@@ -244,8 +244,12 @@ function emitStartupSummary(): void {
     const created = process.getCreationTime();
     const line = formatSummary(attribute(startupMarks, created));
     console.log(line);
-    const logPath = path.join(app.getPath("logs"), "startup.log");
-    fs.appendFileSync(logPath, line + "\n");
+    // Electron does not guarantee the logs dir exists for a fresh user-data dir,
+    // so create it before appending — otherwise appendFileSync throws ENOENT and
+    // the catch below would silently drop the line, losing the measurement.
+    const logsDir = app.getPath("logs");
+    fs.mkdirSync(logsDir, { recursive: true });
+    fs.appendFileSync(path.join(logsDir, "startup.log"), line + "\n");
   } catch {
     /* timing log is best-effort — never break startup on a logging error */
   }
