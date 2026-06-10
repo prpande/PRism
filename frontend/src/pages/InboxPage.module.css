@@ -12,8 +12,8 @@
   grid-template-columns: 1fr;
   gap: var(--s-4);
   /* Same token as the .sections inter-card gap below, so the toolbar→first-section
-     gap equals the section→section gap (one density-scaling source of truth) (#345
-     slice). */
+     gap equals the section→section gap (one density-scaling source of truth)
+     (inbox section-spacing fix, unticketed). */
   margin-top: var(--s-4);
 }
 
@@ -39,7 +39,7 @@
   flex-direction: column;
   /* Sole owner of inter-section spacing (InboxSection .section has no margin now).
      Matches .grid margin-top so the toolbar→first-section and section→section gaps
-     are identical and density-scale together (#345 slice). */
+     are identical and density-scale together (inbox section-spacing fix, unticketed). */
   gap: var(--s-4);
   min-width: 0; /* allow the PR column to shrink instead of overflowing the grid */
   /* Named query container for the inbox rows (InboxRow.module.css @container
