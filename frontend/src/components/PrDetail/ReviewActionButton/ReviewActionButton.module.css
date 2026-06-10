@@ -1,0 +1,28 @@
+.root { position: relative; display: inline-flex; }
+
+.main, .chevron {
+  height: 30px; font-family: var(--font-sans); font-size: var(--text-sm); font-weight: 500;
+  border: 1px solid transparent; display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap; user-select: none; cursor: pointer; line-height: 1;
+}
+.main {
+  /* min-width must hold the widest label incl. the asterisk ("Request changes*").
+     STARTING VALUE ONLY — verified in Task 11's no-reflow check. */
+  min-width: 16ch;
+  justify-content: center; padding: 0 var(--s-3);
+  border-radius: var(--radius-2) 0 0 var(--radius-2);
+}
+.chevron { padding: 0 8px; border-radius: 0 var(--radius-2) var(--radius-2) 0; border-left-color: rgba(0,0,0,0.18); }
+.main:disabled, .chevron:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.fill-accent { background: var(--accent); color: var(--accent-text); }
+.fill-approve { background: var(--success); color: var(--accent-text); }
+.fill-request-changes { background: var(--warning); color: oklch(0.18 0 0); }
+.fill-comment { background: var(--info); color: var(--accent-text); }
+.fill-secondary { background: var(--surface-1); color: var(--text-1); border-color: var(--border-2); }
+
+.label { display: inline-flex; align-items: baseline; gap: 1px; }
+/* `.asterisk` and `.reconfirm` set NO color — they inherit the button's on-fill
+   text color, the same AA pairing the verdict LABEL uses. Verify in Task 12. */
+.asterisk { font-weight: 600; }
+.reconfirm { font-size: 12px; }
