@@ -6,6 +6,7 @@ import { SORT_OPTIONS } from './applyInboxFilters';
 import { InboxQueryInput } from './InboxQueryInput';
 import { FilterFacet } from './FilterFacet';
 import { FilterSummary } from './FilterSummary';
+import { RefreshButton } from '../RefreshButton';
 import styles from './filters.module.css';
 
 const CI_VALUES: CiStatus[] = ['failing', 'pending'];
@@ -23,9 +24,21 @@ interface Props {
   initialSort: SortKey;
   ciProbeComplete: boolean;
   onState(state: FilterBarState): void;
+  // #311 — manual refresh, threaded from InboxPage via InboxToolbar.
+  refresh: () => void;
+  isRefreshing: boolean;
+  justRefreshed: boolean;
 }
 
-export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: Props) {
+export function FilterBar({
+  sections,
+  initialSort,
+  ciProbeComplete,
+  onState,
+  refresh,
+  isRefreshing,
+  justRefreshed,
+}: Props) {
   const f = useInboxFilters(sections, initialSort);
   // `onState` MUST be a stable reference (a useState setter like InboxPage's
   // `setFilterState`, or a useCallback) — an inline arrow would re-fire this effect
@@ -70,42 +83,51 @@ export function FilterBar({ sections, initialSort, ciProbeComplete, onState }: P
           onToggle={f.toggleAuthor}
         />
         <span className={styles.spring} />
-        <span className={styles.sort}>
-          <svg
-            className={styles.sortGlyph}
-            viewBox="0 0 16 16"
-            width="13"
-            height="13"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            {/* Neutral "sorted list" mark (decreasing bars) — NOT an asc/desc arrow;
-                the control has no direction toggle (#300). */}
-            <path d="M0 4.25c0-.414.336-.75.75-.75h11.5a.75.75 0 0 1 0 1.5H.75A.75.75 0 0 1 0 4.25Zm2 4a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 2 8.25Zm2 4a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z" />
-          </svg>
-          <select
-            className={styles.sortSelect}
-            aria-label="Sort"
-            value={f.sort}
-            onChange={(e) => f.setSort(e.target.value as SortKey)}
-          >
-            {SORT_OPTIONS.map((s) => (
-              <option key={s.key} value={s.key}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-          <svg
-            className={styles.sortCaret}
-            viewBox="0 0 16 16"
-            width="11"
-            height="11"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.94l3.72-3.72a.749.749 0 0 1 1.06 0Z" />
-          </svg>
-        </span>
+        {/* #311 — keep #300's restyled Sort control and the manual Refresh button
+            grouped so they wrap together as one unit at narrow container widths. */}
+        <div className={styles.sortRefreshGroup}>
+          <span className={styles.sort}>
+            <svg
+              className={styles.sortGlyph}
+              viewBox="0 0 16 16"
+              width="13"
+              height="13"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              {/* Neutral "sorted list" mark (decreasing bars) — NOT an asc/desc arrow;
+                  the control has no direction toggle (#300). */}
+              <path d="M0 4.25c0-.414.336-.75.75-.75h11.5a.75.75 0 0 1 0 1.5H.75A.75.75 0 0 1 0 4.25Zm2 4a.75.75 0 0 1 .75-.75h7.5a.75.75 0 0 1 0 1.5h-7.5A.75.75 0 0 1 2 8.25Zm2 4a.75.75 0 0 1 .75-.75h3.5a.75.75 0 0 1 0 1.5h-3.5a.75.75 0 0 1-.75-.75Z" />
+            </svg>
+            <select
+              className={styles.sortSelect}
+              aria-label="Sort"
+              value={f.sort}
+              onChange={(e) => f.setSort(e.target.value as SortKey)}
+            >
+              {SORT_OPTIONS.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+            <svg
+              className={styles.sortCaret}
+              viewBox="0 0 16 16"
+              width="11"
+              height="11"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.94l3.72-3.72a.749.749 0 0 1 1.06 0Z" />
+            </svg>
+          </span>
+          <RefreshButton
+            isRefreshing={isRefreshing}
+            justRefreshed={justRefreshed}
+            onRefresh={refresh}
+          />
+        </div>
       </div>
       <FilterSummary
         active={f.active}

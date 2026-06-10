@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useInbox } from '../hooks/useInbox';
 import { useInboxUpdates } from '../hooks/useInboxUpdates';
+import { useInboxRefresh } from '../hooks/useInboxRefresh';
+import { useToast } from '../components/Toast/useToast';
 import { useAiGate } from '../hooks/useAiGate';
 import { usePreferences } from '../hooks/usePreferences';
 import { useMediaQuery } from '../hooks/useMediaQuery';
@@ -22,6 +24,12 @@ import styles from './InboxPage.module.css';
 export function InboxPage() {
   const { data, error, isLoading, reload } = useInbox();
   const updates = useInboxUpdates();
+  const toast = useToast();
+  const { isRefreshing, justRefreshed, announce, refresh } = useInboxRefresh({
+    reload,
+    dismiss: updates.dismiss,
+    onError: (message) => toast.show({ kind: 'error', message }),
+  });
   const { preferences } = usePreferences();
   const initialSort = preferences?.inbox.defaultSort ?? 'updated';
 
@@ -93,8 +101,16 @@ export function InboxPage() {
           "refreshing" signal. Kept a sibling ABOVE <main> (not inside it) so it
           spans the same full width as the cold-load bar above <InboxSkeleton> —
           no width/position jump when the skeleton is replaced by content. */}
-      <LoadingBar active={isLoading} data-testid="inbox-loading-bar" />
+      <LoadingBar active={isLoading || isRefreshing} data-testid="inbox-loading-bar" />
       <main className={styles.page} data-testid="inbox-page" tabIndex={-1}>
+        <div
+          className="sr-only"
+          role="status"
+          aria-live="polite"
+          data-testid="inbox-refresh-status"
+        >
+          {announce}
+        </div>
         {updates.hasUpdate && (
           <InboxBanner summary={updates.summary} onReload={onReload} onDismiss={updates.dismiss} />
         )}
@@ -103,6 +119,9 @@ export function InboxPage() {
           initialSort={initialSort}
           ciProbeComplete={data.ciProbeComplete}
           onState={setFilterState}
+          refresh={refresh}
+          isRefreshing={isRefreshing}
+          justRefreshed={justRefreshed}
         />
         <div className={styles.grid}>
           <div className={styles.sections}>
