@@ -170,7 +170,9 @@ export function ActivityRail() {
   // SPLIT degraded gating: the Activity-list "unavailable" state must NOT fire
   // on a watching-only failure. activityDegraded gates ONLY the Activity list;
   // watchingDegraded gates ONLY the Watching section's own inline note.
-  const activityDegraded = data ? data.degraded.receivedEvents || data.degraded.notifications : !!error;
+  const activityDegraded = data
+    ? data.degraded.receivedEvents || data.degraded.notifications
+    : !!error;
   const watchingDegraded = data?.degraded.watching ?? false;
   const showDegraded = (!data && error) || activityDegraded;
 

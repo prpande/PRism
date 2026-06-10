@@ -96,7 +96,10 @@ describe('ActivityRail (P1)', () => {
 
   test('degraded note shows on backend-degraded flag', () => {
     useActivityMock.mockReturnValue({
-      data: resp({ items: [], degraded: { receivedEvents: true, notifications: false, watching: false } }),
+      data: resp({
+        items: [],
+        degraded: { receivedEvents: true, notifications: false, watching: false },
+      }),
       isLoading: false,
       error: null,
     });
@@ -216,7 +219,9 @@ describe('ActivityRail (P2) — landmarks', () => {
 
   test('Watching section is a named region landmark when present', () => {
     useActivityMock.mockReturnValue({
-      data: resp({ watching: [{ repo: 'acme/api', count: 3, url: 'https://github.com/acme/api' }] }),
+      data: resp({
+        watching: [{ repo: 'acme/api', count: 3, url: 'https://github.com/acme/api' }],
+      }),
       isLoading: false,
       error: null,
     });
@@ -315,7 +320,10 @@ describe('ActivityRail (P2) — Watching section + states', () => {
 
   test('Watching absent when empty and not degraded', () => {
     useActivityMock.mockReturnValue({
-      data: resp({ watching: [], degraded: { receivedEvents: false, notifications: false, watching: false } }),
+      data: resp({
+        watching: [],
+        degraded: { receivedEvents: false, notifications: false, watching: false },
+      }),
       isLoading: false,
       error: null,
     });
@@ -326,13 +334,18 @@ describe('ActivityRail (P2) — Watching section + states', () => {
 
   test('Watching empty + degraded → header omitted, inline note shown', () => {
     useActivityMock.mockReturnValue({
-      data: resp({ watching: [], degraded: { receivedEvents: false, notifications: false, watching: true } }),
+      data: resp({
+        watching: [],
+        degraded: { receivedEvents: false, notifications: false, watching: true },
+      }),
       isLoading: false,
       error: null,
     });
     renderRail();
     expect(screen.queryByText('Watching')).toBeNull();
-    expect(screen.getByText(/subscription list (is|may be)|watch.*unavailable|subscription/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/subscription list (is|may be)|watch.*unavailable|subscription/i),
+    ).toBeInTheDocument();
   });
 
   test('Watching items + degraded → rows render PLUS incomplete note below', () => {
