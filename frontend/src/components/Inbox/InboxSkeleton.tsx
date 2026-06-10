@@ -49,8 +49,8 @@ export function InboxSkeleton({ showRail }: { showRail: boolean }) {
         </div>
         {showRail && (
           <div className={styles.rail} data-testid="inbox-skeleton-rail">
-            {/* P1: single Activity panel. The second (Watching) block returns in P2. */}
             <Skeleton height={120} radius={10} />
+            <Skeleton height={72} radius={10} />
           </div>
         )}
       </div>
