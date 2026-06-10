@@ -292,22 +292,7 @@ public sealed partial class InboxRefreshOrchestrator : IInboxRefreshOrchestrator
         AppState state)
     {
         var ci = ciByRef.TryGetValue(r.Reference, out var c) ? c : CiStatus.None;
-        var sessionKey = r.Reference.ToString();   // canonical slash form, matches PrReference.ToString()
-        string? lastViewedHeadSha = null;
-        long? lastSeenCommentId = null;
-        if (state.Reviews.Sessions.TryGetValue(sessionKey, out var session))
-        {
-            // Inbox projection (spec § 6): the "last viewed head" surfaced to the FE is the
-            // most-recent stamp across all tabs. Cross-tab semantics for the inbox UI are
-            // session-level by design — the user has one inbox, not one per tab.
-            lastViewedHeadSha = session.TabStamps
-                .Values
-                .OrderByDescending(s => s.StampedAtUtc)
-                .FirstOrDefault()?.HeadSha;
-            if (session.LastSeenCommentId != null
-                && long.TryParse(session.LastSeenCommentId, System.Globalization.CultureInfo.InvariantCulture, out var n))
-                lastSeenCommentId = n;
-        }
+        var (lastViewedHeadSha, lastSeenCommentId) = InboxViewedState.Project(r.Reference, state);
         return new PrInboxItem(
             r.Reference, r.Title, r.Author, r.Repo,
             r.UpdatedAt, r.PushedAt,

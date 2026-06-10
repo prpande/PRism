@@ -1,6 +1,7 @@
 using PRism.Core;
 using PRism.Core.Config;
 using PRism.Core.Inbox;
+using PRism.Core.State;
 
 namespace PRism.Web.Endpoints;
 
@@ -30,6 +31,7 @@ internal static class InboxEndpoints
         app.MapGet("/api/inbox", async (
             IInboxRefreshOrchestrator orch,
             IConfigStore config,
+            IAppStateStore stateStore,
             CancellationToken ct) =>
         {
             if (orch.Current == null)
@@ -45,7 +47,11 @@ internal static class InboxEndpoints
                         statusCode: 503,
                         type: "/inbox/initializing");
             }
-            var snap = orch.Current!;
+            // Re-project viewed-state live from state.json onto the cached snapshot, so a
+            // mark-viewed write is reflected immediately (read-only; no GitHub refetch, no
+            // orchestrator mutation). #285.
+            var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
+            var snap = InboxViewedState.ApplyViewedState(orch.Current!, state);
             var sections = snap.Sections
                 .OrderBy(kv =>
                 {

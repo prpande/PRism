@@ -97,6 +97,7 @@ if (builder.Environment.IsEnvironment("Test")
     foreach (var serviceType in new[]
              {
                  typeof(IReviewAuth), typeof(IPrDiscovery), typeof(IPrReader), typeof(IReviewSubmitter),
+                 typeof(PRism.Core.Inbox.ISectionQueryRunner), typeof(PRism.Core.Inbox.IPrEnricher), typeof(PRism.Core.Inbox.ICiFailingDetector),
              })
     {
         // RemoveAll (vs. removing the first match) in case any of these were registered
@@ -108,6 +109,9 @@ if (builder.Environment.IsEnvironment("Test")
     builder.Services.AddSingleton<IPrDiscovery, FakePrDiscovery>();
     builder.Services.AddSingleton<IPrReader, FakePrReader>();
     builder.Services.AddSingleton<IReviewSubmitter, FakeReviewSubmitter>();
+    builder.Services.AddSingleton<PRism.Core.Inbox.ISectionQueryRunner, FakeSectionQueryRunner>();
+    builder.Services.AddSingleton<PRism.Core.Inbox.IPrEnricher, FakePrEnricher>();
+    builder.Services.AddSingleton<PRism.Core.Inbox.ICiFailingDetector, FakeCiFailingDetector>();
     builder.Services.RemoveAll<PRism.Core.Activity.IActivityProvider>();
     builder.Services.AddSingleton<PRism.Core.Activity.IActivityProvider, PRism.Web.TestHooks.FakeActivityProvider>();
 }
