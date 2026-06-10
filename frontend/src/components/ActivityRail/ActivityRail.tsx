@@ -6,7 +6,7 @@ import { useActivity } from '../../hooks/useActivity';
 import type { ActivityItem, ActivityVerb } from '../../api/types';
 import styles from './ActivityRail.module.css';
 
-const MAX_VISIBLE = 12;
+const MAX_VISIBLE = 12; // must match ActivityFeedBuilder.MaxActivityItems
 
 const VERB_PHRASE: Record<ActivityVerb, string> = {
   opened: 'opened',
