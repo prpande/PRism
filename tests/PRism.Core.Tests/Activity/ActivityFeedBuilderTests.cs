@@ -251,6 +251,57 @@ public sealed class ActivityFeedBuilderMergeTests
             .Should().BeGreaterThanOrEqualTo(ActivityFeedBuilder.MinEventSlots);  // >=4 HUMAN events survive client filter
     }
 
+    [Fact] // EDGE: fewer than MinEventSlots non-bot events in a >12 feed — no crash, no over-take, all events kept
+    public void Reservation_keeps_all_non_bot_events_when_fewer_than_min_slots()
+    {
+        var now = DateTimeOffset.UnixEpoch.AddHours(48);
+        var events = new[]                                                  // only 2 non-bot events (< MinEventSlots=4)
+        {
+            Ev("e1", "noah.s", "PullRequestReviewEvent", "", "acme/api", 1, now.AddMinutes(-30)),
+            Ev("e2", "jules.t", "PullRequestReviewEvent", "", "acme/api", 2, now.AddMinutes(-31)),
+        };
+        var notifs = Enumerable.Range(100, 40)                             // fresh you-relevant flood → >12 total
+            .Select(i => Nf("review_requested", "acme/api", i, now.AddMinutes(-1)))
+            .ToList();
+
+        var r = Build([.. events], [.. notifs], [], now);
+
+        // No over-take past the raw ceiling, and BOTH (the few) non-bot events are present.
+        r.Items.Count.Should().BeLessThanOrEqualTo(ActivityFeedBuilder.MaxRawItems);
+        r.Items.Count(i => i.Source == ActivitySource.ReceivedEvent).Should().Be(2);
+        r.Items.Should().Contain(i => i.ActorLogin == "noah.s");
+        r.Items.Should().Contain(i => i.ActorLogin == "jules.t");
+    }
+
+    [Fact] // GUARD the ReferenceEqualityComparer in ReserveEventSlots' taken-set:
+    // two distinct-id events with identical actor/verb/repo/pr/title/url/timestamp map to
+    // VALUE-EQUAL ActivityItems (ActivityItem has no Id field, so the differing event id
+    // disappears in the projection). BuildEventItems keeps both (id-keyed dedup) and MergeFeeds
+    // AddRanges both (same group, no per-actor dedup), so two value-equal instances reach the
+    // sort. A structural taken-set would conflate them and drop one; reference equality keeps
+    // both. They are OLDER than the flood so both must be promoted through the reserve loop.
+    public void Value_equal_items_from_distinct_event_ids_both_survive_reservation()
+    {
+        var now = DateTimeOffset.UnixEpoch.AddHours(48);
+        var ts = now.AddMinutes(-30);                                       // identical ts, older than the flood
+
+        // Same actor/verb/repo/pr → Ev produces identical avatar/title/url too; only the event
+        // id differs, and the id is NOT a field on ActivityItem → the two projections are value-equal.
+        var a = Ev("id-a", "noah.s", "PullRequestReviewEvent", "", "acme/api", 1, ts);
+        var b = Ev("id-b", "noah.s", "PullRequestReviewEvent", "", "acme/api", 1, ts);
+
+        var notifs = Enumerable.Range(100, 40)                             // fresh flood pushes a/b below the head
+            .Select(i => Nf("review_requested", "acme/api", i, now.AddMinutes(-1)))
+            .ToList();
+
+        var r = Build([a, b], [.. notifs], [], now);
+
+        // Both value-equal event items survive ReserveEventSlots' taken-set (count == 2).
+        // With a structural set the second would be conflated with the first and dropped → count 1.
+        r.Items.Count(i => i.Source == ActivitySource.ReceivedEvent && i.ActorLogin == "noah.s")
+            .Should().Be(2);
+    }
+
     [Fact] // ADDITIVE bot config: a configured extra bot login is flagged ActorIsBot
     public void Configured_extra_bot_login_is_flagged_as_bot()
     {

@@ -61,7 +61,18 @@ public static class ActivityFeedBuilder
         // Sort newest-first, then bake the slot reservation into the server's order so the
         // client's first-MaxActivityItems slice (after its bot filter) keeps >=MinEventSlots
         // non-bot event rows. Finally cap to the raw ceiling.
-        var sorted = merged.OrderByDescending(i => i.Timestamp).ToList();
+        // Deterministic tiebreakers (Url ordinal, then Source) keep equal-timestamp rows in a
+        // runtime-stable order independent of dictionary/group enumeration, protecting the e2e
+        // visual baseline from same-second nondeterminism.
+        var sorted = merged
+            .OrderByDescending(i => i.Timestamp)
+            .ThenBy(i => i.Url, StringComparer.Ordinal)
+            .ThenBy(i => i.Source)
+            .ToList();
+
+        // The visible order is intentionally NOT strictly newest-first: ReserveEventSlots may
+        // promote reserved non-bot events above fresher notifications (reservation beats strict
+        // recency, by design). The client renders this order verbatim — no client-side re-sort.
         var ordered = ReserveEventSlots(sorted).Take(MaxRawItems).ToList();
 
         return new ActivityBuildResult(ordered, dropped, watching);
