@@ -16,7 +16,7 @@ test.describe('#131 Open in GitHub', () => {
   test('header shows an Open-in-GitHub link to the PR web page', async ({ page }) => {
     const link = page.locator('[data-testid="open-in-github-button"]');
     await expect(link).toBeVisible();
-    await expect(link).toHaveText(/Open in GitHub/);
+    await expect(link).toHaveAttribute('aria-label', 'Open in GitHub');
     await expect(link).toHaveAttribute('href', /\/acme\/api\/pull\/123$/);
     await expect(link).toHaveAttribute('target', '_blank');
   });

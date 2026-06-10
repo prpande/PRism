@@ -57,9 +57,12 @@ test('S5 closed PR — Discard all drafts removes the saved draft', async ({ pag
 
   await closePrAndRefresh(page);
 
-  // Submit Review is disabled; the bulk-discard button appears next to it.
-  await expect(page.getByRole('button', { name: /^submit review$/i })).toBeDisabled();
-  const discardAll = page.getByRole('button', { name: /discard all drafts/i });
+  // New header UI (#291): on a closed PR the Review split-button shows "Drafts"
+  // and there is no standalone Submit Review control; the only mutation left —
+  // "Discard all drafts" — lives in its caret menu.
+  await expect(page.getByRole('button', { name: /^submit review$/i })).toHaveCount(0);
+  await page.getByTestId('review-action-chevron').click(); // open the caret menu
+  const discardAll = page.getByRole('menuitem', { name: /discard all drafts/i });
   await expect(discardAll).toBeVisible({ timeout: 10_000 });
   await discardAll.click();
 
@@ -71,7 +74,7 @@ test('S5 closed PR — Discard all drafts removes the saved draft', async ({ pag
   // The session is cleared (StateChanged SSE → the page re-fetches). The
   // bulk-discard button hides (no discardable content left) and the Drafts tab
   // shows no draft body.
-  await expect(page.getByRole('button', { name: /discard all drafts/i })).toHaveCount(0, {
+  await expect(page.getByRole('menuitem', { name: /discard all drafts/i })).toHaveCount(0, {
     timeout: 10_000,
   });
   await page.getByRole('tab', { name: /^Drafts/i }).click();
@@ -108,7 +111,9 @@ test('S5 closed PR — a failed courtesy delete surfaces the orphan-cleanup-fail
   });
   await closePrAndRefresh(page);
 
-  const discardAll = page.getByRole('button', { name: /discard all drafts/i });
+  // Discard-all is a caret-menu item on the closed-PR Review split-button (#291).
+  await page.getByTestId('review-action-chevron').click();
+  const discardAll = page.getByRole('menuitem', { name: /discard all drafts/i });
   await expect(discardAll).toBeVisible({ timeout: 10_000 });
   await discardAll.click();
   await page

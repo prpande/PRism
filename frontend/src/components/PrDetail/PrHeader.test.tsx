@@ -3,6 +3,18 @@ import { describe, expect, it } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { PrHeader } from './PrHeader';
 import { AskAiDrawerProvider } from '../../contexts/AskAiDrawerContext';
+import type { ReviewSessionDto } from '../../api/types';
+
+const OPEN_SESSION: ReviewSessionDto = {
+  draftVerdict: 'approve',
+  draftVerdictStatus: 'draft',
+  draftComments: [],
+  draftReplies: [],
+  iterationOverrides: [],
+  pendingReviewId: null,
+  pendingReviewCommitOid: null,
+  fileViewState: { viewedFiles: {} },
+};
 
 function renderHeader(extra: Partial<React.ComponentProps<typeof PrHeader>> = {}) {
   return render(
@@ -53,6 +65,16 @@ describe('PrHeader loading', () => {
     expect(screen.queryByTestId('pr-header-title-skeleton')).toBeNull();
     expect(screen.getByText('Real title')).toBeInTheDocument();
     expect(screen.getByTestId('pr-header-collapse-toggle')).toBeInTheDocument();
+  });
+});
+
+describe('PrHeader unified ReviewActionButton', () => {
+  it('renders the unified ReviewActionButton instead of the old picker+submit cluster', () => {
+    renderHeader({ session: OPEN_SESSION, prState: 'open' });
+    // new split-button must be present
+    expect(screen.getByTestId('review-action')).toBeInTheDocument();
+    // the old VerdictPicker segmented group must be gone from the header
+    expect(screen.queryByRole('group', { name: /review verdict/i })).not.toBeInTheDocument();
   });
 });
 

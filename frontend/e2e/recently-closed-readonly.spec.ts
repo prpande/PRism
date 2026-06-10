@@ -97,11 +97,16 @@ for (const { state, label } of [
     // ---------------------------------------------------------------------
     // (i) Every GitHub-mutating surface is suppressed.
     // ---------------------------------------------------------------------
-    // Submit Review is disabled (PrHeader: disabled when isClosedOrMerged).
-    await expect(page.getByRole('button', { name: /^submit review$/i })).toBeDisabled();
+    // New header UI (#291): on a done PR the Review split-button collapses to a
+    // non-mutating "Drafts" affordance — there is NO Submit Review control at all
+    // (the submit surface is gone, not merely disabled), so the mutation entry
+    // point is fully suppressed.
+    await expect(page.getByTestId('review-action-main')).toContainText(/drafts/i);
+    await expect(page.getByRole('button', { name: /^submit review$/i })).toHaveCount(0);
 
-    // The header verdict picker is ABSENT — PrHeader gates it behind
-    // !isClosedOrMerged (role=group, aria-label "Review verdict").
+    // The header verdict picker is ABSENT — verdicts moved into the caret menu,
+    // which on a done PR offers only "Discard all drafts" (no verdict group, no
+    // submit). The old role=group "Review verdict" picker never renders now.
     await expect(page.getByRole('group', { name: /review verdict/i })).toHaveCount(0);
 
     // ---------------------------------------------------------------------
