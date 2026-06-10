@@ -45,13 +45,13 @@ In the **fully-idle** case — the PAT dies while the user sits on an already-lo
 
 - [ ] A mid-session GitHub 401 on **any** GitHub-backed call (inbox poll, PR load, draft fetch) flips a server-side credential-invalid latch.
 - [ ] `GET /api/auth/state` reports the latch as `githubCredentialInvalid: boolean`.
-- [ ] The frontend renders a **red/danger** app-level snackbar (mirroring `StreamHealthSnackbar`'s shape and dismiss-with-fresh-edge nature) when `hasToken && githubCredentialInvalid`. In the **background/idle** case, surfacing is bounded by the next window-focus or triggered refetch (Approach A, § 10) — it is **not** instantaneous, by design.
-- [ ] The snackbar's **Reconnect** action routes to `/setup?replace=1`.
+- [ ] The frontend renders a **red/danger, non-dismissible** app-level banner (mirroring `StreamHealthSnackbar`'s *appearance*, but persistent — no `×`) whenever `hasToken && githubCredentialInvalid`. In the **background/idle** case, surfacing is bounded by the next window-focus or triggered refetch (Approach A, § 10) — it is **not** instantaneous, by design.
+- [ ] The banner's **Reconnect** action routes to `/setup?replace=1`, and the banner persists until a **valid** token is committed — the replace flow's validate-before-swap (existing) refuses an invalid token, so the user cannot clear the banner with a bad token.
 - [ ] A transient `403 / 429 / 5xx / transport` failure does **not** flip the latch (no false snackbar).
 - [ ] The latch **auto-clears** on the next successful *authenticated* GitHub call, and clears immediately on a successful connect-commit / replace.
 - [ ] A bad **candidate** token during connect/replace validation does **not** flip the latch for the still-stored token (all candidate-token probe paths opt out).
 - [ ] A successful token **replace** does not leave a residual false-invalid latch even if an old-token request was in flight across the swap (epoch guard, § 6.2).
-- [ ] The re-auth snackbar is **suppressed while the SSE stream is unhealthy** (connection-loss takes precedence) **and on the `/setup` route** (the page that fixes it).
+- [ ] The re-auth banner is **suppressed while the SSE stream is unhealthy** (connection-loss takes precedence) **and on the `/setup` route** (the page that fixes it).
 
 ## 5. Architecture overview
 
@@ -210,7 +210,7 @@ window.dispatchEvent(new CustomEvent('prism-request-failed'));
 
 Extract the presentational shape of `StreamHealthSnackbar` into a reusable `Snackbar` (new `components/Snackbar/`):
 
-- Props: `tone: 'warning' | 'danger'`, `message: ReactNode`, `action?: { label: string; onClick: () => void }`, `onDismiss: () => void`, and explicit `role` / `aria-live` (caller-supplied, since the two tones differ — see § 7.4).
+- Props: `tone: 'warning' | 'danger'`, `message: ReactNode`, `action?: { label: string; onClick: () => void }`, `onDismiss?: () => void` (**optional** — the dismiss `×` renders only when provided; the warning/connectivity consumer passes it, the danger/re-auth consumer does not), and explicit `role` / `aria-live` (caller-supplied, since the two tones differ — see § 7.4).
 - CSS module mirrors `StreamHealthSnackbar.module.css` (top-center fixed, `top:100px`, `z-index:200`, slide-in, reduced-motion-aware). Tone maps to design tokens for **all three** facets — background, **border**, and foreground: `warning` → `--warning-soft` / `border 1px solid --warning` / `--warning-fg`; `danger` → `--danger-soft` / `border 1px solid --danger` / `--danger-fg` (theme-aware, `tokens.css:113-115` light / `:187-189` dark). The border is explicit so the danger variant keeps the same visual boundary as the existing warning one.
 - `StreamHealthSnackbar` is re-pointed at `<Snackbar tone="warning" message="Connection lost — reconnecting" action={{label:'Retry now', onClick: retry}} onDismiss={…} role="status" aria-live="polite" />` with **zero visual change** (regression-pinned by its existing test + visual baselines).
 
@@ -218,14 +218,14 @@ Extract the presentational shape of `StreamHealthSnackbar` into a reusable `Snac
 
 ### 7.4 `GitHubAuthSnackbar`
 
-New component, mirroring `StreamHealthSnackbar`'s structure and **nature**:
+New component, mirroring `StreamHealthSnackbar`'s **appearance** (red top-center bar) but with **action-required, non-dismissible** behavior (owner decision: re-auth is mandatory, not optional):
 
 - Reads `useAuth()` for `authState.githubCredentialInvalid && authState.hasToken`, `useStreamHealth()` for `healthy`, and the router location.
-- Renders `null` unless `hasToken && githubCredentialInvalid && healthy && route !== '/setup'` **and** not locally dismissed. (Suppressing on `/setup` avoids showing a "reconnect" prompt on top of the very page that performs the reconnect.)
-- **Dismiss-with-fresh-edge reset:** a `useRef` tracks the previous invalid state; on a `false→true` edge (a fresh revocation) it un-dismisses, exactly like `StreamHealthSnackbar`'s healthy→unhealthy reset.
-- Renders `<Snackbar tone="danger" message="GitHub access token invalid — reconnect" action={{ label: 'Reconnect', onClick: () => navigate('/setup?replace=1') }} onDismiss={…} role="alert" aria-live="assertive" />`.
+- Renders `null` unless `hasToken && githubCredentialInvalid && healthy && route !== '/setup'`. There is **no local dismiss state and no `×`** — the banner stays up the entire time the credential is invalid, on every route except `/setup`. (Suppressing on `/setup` avoids showing a "reconnect" prompt on top of the very page that performs the reconnect.)
+- Renders `<Snackbar tone="danger" message="GitHub access token invalid — reconnect" action={{ label: 'Reconnect', onClick: () => navigate('/setup?replace=1') }} role="alert" aria-live="assertive" />` — **no `onDismiss`**, so the primitive renders no dismiss button.
   - **Copy (revised per design/product review):** "GitHub access token invalid — reconnect" — accurate for revoked / expired / bad-credential cases (the earlier "sign-in expired" implied OAuth-session timeout and misframed a *revoked* token; PRism uses PATs). Final copy is a B1 item the owner confirms at the visual gate.
-  - **a11y:** `role="alert"`/`aria-live="assertive"` (vs the amber one's `status`/`polite`) because the condition is action-required, not self-healing. Following the snackbar convention, it does **not** steal focus on appear (no focus trap); the `Reconnect` button is keyboard-reachable and the dismiss `×` mirrors the existing one. (Matches `StreamHealthSnackbar`'s focus behavior — no regression to the established pattern.)
+  - **a11y:** `role="alert"`/`aria-live="assertive"` (vs the amber one's `status`/`polite`) because the condition is action-required and persistent. Following the snackbar convention it does **not** steal focus on appear; the `Reconnect` button is keyboard-reachable.
+- **Mandatory re-auth (owner directive):** the banner cannot be dismissed, and the only thing that removes it is the latch returning to valid — which happens only when a **valid** token is committed. The `/setup?replace=1` flow already does **validate-before-swap** (`/api/auth/replace`, § 1): an invalid candidate token is rejected with an inline error and **not** committed, so it never clears the credential-invalid state. Net: the user cannot "proceed" out of the degraded state with a bad token — they either commit a working token (banner clears) or stay blocked. The user is not hard-jailed from navigating the (degraded) app, but the non-dismissible banner is omnipresent until resolved. *(If the owner wants a harder full-screen gate — route-lock to `/setup` until valid, like the first-run `!hasToken` gate — that's a small follow-up tweak; the current design keeps the `Banner, not mutation` posture while making re-auth unavoidable.)*
 - **Navigation target is a compile-time string literal** (`/setup?replace=1`); it must never be derived from a server-supplied field, so a compromised/MITM'd response cannot redirect the user to an attacker-controlled setup page.
 - Mounted in `App.tsx` next to `StreamHealthSnackbar` (`App.tsx:184`).
 
@@ -233,7 +233,7 @@ New component, mirroring `StreamHealthSnackbar`'s structure and **nature**:
 
 **Banner-over-UI, not redirect:** `isAuthed = hasToken && !authInvalidated` is **untouched** — the user keeps their context; the snackbar is an overlay, consistent with the `Banner, not mutation` architectural invariant. Recovery (successful replace) bumps the epoch + clears the latch (§ 6.4); the SetupPage refetch then drops the snackbar without a flash.
 
-> **OPEN DECISION FOR THE OWNER (B1 gate) — dismissibility of an action-required condition.** Design-lens (P1) and product-lens (P2) both flag a real asymmetry: `StreamHealthSnackbar` is dismissible because connectivity *self-heals*; a dead PAT does **not** self-heal, so a user who dismisses and forgets sits in a known-broken app (empty inbox, failed loads) with the only affordance gone until a fresh `false→true` edge (which a still-invalid token never produces). The current design matches your "similar in nature to the connectivity popup" directive (dismissible + fresh-edge). The reviewers' new information is the self-healing-vs-action-required distinction. **Options:** (a) keep dismissible-with-fresh-edge (current); (b) non-dismissible while invalid; (c) dismissible but collapse to a persistent header dot/marker until the credential is actually replaced. Defaulting to (a) per your directive — confirm or redirect at the gate.
+> **Resolved (owner decision) — non-dismissible, mandatory re-auth.** Design-lens (P1) and product-lens (P2) flagged that `StreamHealthSnackbar` is dismissible only because connectivity *self-heals*; a dead PAT does **not** self-heal, so a dismissible banner would let the user re-hide the exact silent-broken state #312 exists to fix. Owner chose **(b) non-dismissible while invalid**, with the added requirement that the replace workflow cannot be completed with an invalid token (satisfied by the existing validate-before-swap on `/api/auth/replace`). The banner therefore persists until a valid token is committed.
 
 ## 8. Data flow — the two paths
 
@@ -257,7 +257,8 @@ New component, mirroring `StreamHealthSnackbar`'s structure and **nature**:
 **Frontend (vitest):**
 - `Snackbar` primitive: renders message/action/dismiss; tone class mapping incl. border; reduced-motion.
 - `StreamHealthSnackbar`: unchanged behavior after re-pointing (existing test stays green).
-- `GitHubAuthSnackbar`: shows on `hasToken && invalid && healthy && route!=='/setup'`; hidden when `!hasToken`, `!invalid`, `!healthy`, on `/setup`, or dismissed; fresh `false→true` edge re-shows after dismiss; Reconnect navigates to `/setup?replace=1`.
+- `GitHubAuthSnackbar`: shows on `hasToken && invalid && healthy && route!=='/setup'`; hidden when `!hasToken`, `!invalid`, `!healthy`, or on `/setup`; renders **no dismiss button** and stays mounted while invalid (no dismiss path); Reconnect navigates to `/setup?replace=1`.
+- `Snackbar` primitive: renders the `×` only when `onDismiss` is provided (warning consumer) and omits it otherwise (danger consumer).
 - `useAuth`: `prism-request-failed` triggers a debounced refetch; flag surfaces from `authState`.
 - `apiClient`: a failed response dispatches `prism-request-failed`.
 
@@ -271,7 +272,7 @@ New component, mirroring `StreamHealthSnackbar`'s structure and **nature**:
 - **Per-call-site reporting at the provider seam (issue's literal suggestion).** Rejected vs. the handler: spreads identical reporting across many call sites (drift risk), where one `DelegatingHandler` covers all current and future calls with zero per-site code.
 - **Trigger the foreground refetch on 5xx only.** Rejected (adversarial finding): endpoints that remap a GitHub 401 to a typed 4xx would be missed. Trigger on any failed request instead; the latch is the source of truth (§ 7.2).
 - **Drop the explicit `MarkValid()` on commit as gold-plating.** Rejected (§ 6.4): it prevents a red-snackbar flash on the immediate post-replace `SetupPage` refetch.
-- **Non-dismissible persistent banner.** Currently rejected in favor of matching `StreamHealthSnackbar`'s dismissible-with-fresh-edge nature (owner directive). Re-opened as an explicit owner decision at the gate (§ 7.4 OPEN DECISION) because the self-healing-vs-action-required asymmetry is new information.
+- **Dismissible snackbar (mirroring `StreamHealthSnackbar`'s nature).** Rejected by the owner after design/product review: connectivity self-heals so dismissing is harmless, but a dead PAT does not — a dismissible banner would let the user re-hide the silent-broken state. Chosen instead: **non-dismissible while invalid + mandatory valid re-auth** (§ 7.4).
 
 ## 11. Follow-ups (out of scope)
 
@@ -302,5 +303,5 @@ New component, mirroring `StreamHealthSnackbar`'s structure and **nature**:
 ## 13. Risk / gate
 
 - **B2 (auth/token surface):** this spec is the spec-gate artifact. Owner reviews the *approach* before planning.
-- **B1 (new red snackbar):** visual assert at green-and-ready (screenshots / baseline), plus the **copy** ("GitHub access token invalid — reconnect") and the **dismissibility OPEN DECISION** (§ 7.4) the owner confirms.
+- **B1 (new red banner):** visual assert at green-and-ready (screenshots / baseline), plus the **copy** ("GitHub access token invalid — reconnect") the owner confirms. Behavior resolved: non-dismissible while invalid (§ 7.4).
 - Secrets scan over the diff required at PR time. The handler/latch inspect status codes and the *presence* of an `Authorization` header only — they never read, log, or expose token material (§ 6.1 logging contract).
