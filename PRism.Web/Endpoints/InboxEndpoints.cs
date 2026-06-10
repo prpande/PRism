@@ -59,6 +59,46 @@ internal static class InboxEndpoints
                 config.Current.Inbox.ShowHiddenScopeFooter, snap.CiProbeComplete));
         });
 
+        // #311 — manual "Refresh now". Calls the orchestrator directly and AWAITS the pull
+        // (semantic C) so the client gets a real completion. RefreshAsync is _writerLock-
+        // serialized, so this is safe against the concurrent poller tick.
+        app.MapPost("/api/inbox/refresh", async (
+            IInboxRefreshOrchestrator orch,
+            CancellationToken ct) =>
+        {
+            var before = orch.Current;   // reference identity of the committed snapshot
+            try
+            {
+                await orch.RefreshAsync(ct).ConfigureAwait(false);
+                return Results.Ok();      // pull settled; new snapshot committed
+            }
+            catch (RateLimitExceededException)
+            {
+                // The orchestrator only commits-then-re-throws for a CI-probe 429 (it stashes
+                // the rate-limit, finishes the snapshot, Volatile.Writes _current, THEN re-throws).
+                // A primary section/enrichment 429 propagates BEFORE any commit. We can't cheaply
+                // prove "*this* call committed", so the success test is "did the committed view
+                // ADVANCE past where it was when the request arrived?" — true if this call (or a
+                // concurrent poller tick) advanced it → the view is fresh → 200. If it did not
+                // advance, the manual pull was rate-limited and nothing got fresher → 503.
+                return ReferenceEquals(orch.Current, before)
+                    ? Results.Problem(title: "Inbox refresh rate-limited", statusCode: 503, type: "/inbox/refresh-rate-limited")
+                    : Results.Ok();
+            }
+            catch (OperationCanceledException)
+            {
+                // Client navigated away mid-refresh. Rethrow per house convention — ASP.NET Core
+                // maps an aborted-request OCE to a no-op without error-level log noise.
+                throw;
+            }
+#pragma warning disable CA1031 // catch-all so any GitHub/transport exception surfaces a 503 instead of a bare 500
+            catch (Exception) // snapshot NOT committed (threw before Volatile.Write)
+            {
+                return Results.Problem(title: "Inbox refresh failed", statusCode: 503, type: "/inbox/refresh-failed");
+            }
+#pragma warning restore CA1031
+        });
+
         app.MapPost("/api/inbox/parse-pr-url", async (
             HttpContext ctx,
             IPrDiscovery review,

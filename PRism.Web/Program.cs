@@ -257,6 +257,9 @@ app.UseWhen(
         // rejecting any legitimate request.
         if (HttpMethods.IsPost(method) && path.StartsWithSegments("/api/feedback", StringComparison.Ordinal))
             return true;
+        // #311 — POST /api/inbox/refresh has NO request body, so it is intentionally absent
+        // from this allow-list (nothing to amplify / cap). Listed here so the omission is a
+        // recorded decision, not an oversight.
         if (!path.StartsWithSegments("/api/pr", StringComparison.Ordinal)) return false;
         var value = path.Value!;
         if (HttpMethods.IsPut(method) && value.EndsWith("/draft", StringComparison.Ordinal)) return true;
