@@ -486,10 +486,17 @@ question otherwise):
 
 ---
 
-# Phase 2 — notifications merge + Watching *(gated on the P1 keep decision)*
+# Phase 2 — notifications merge + Watching *(gated on the P1 keep decision)* — **Implemented**
 
 Phase 2 adds the second Activity source and the Watching panel. All merge-engine
 correctness lives here — it only exists once two feeds combine.
+
+> **Status: Implemented.** Notifications merged into the received_events feed (two-stage
+> cross-feed merge), Watching panel from `/user/subscriptions`, ~60s TTL cache invalidated
+> on every token-commit path, and configurable bots via `inbox.knownBots` (additive on the
+> built-in `{Copilot}` baseline) all shipped. The bots **Settings UI** is deferred to
+> [#316](https://github.com/prpande/PRism/issues/316). Plan:
+> [`../plans/2026-06-10-activity-rail-phase2.md`](../plans/2026-06-10-activity-rail-phase2.md).
 
 ## P2 backend
 
@@ -581,11 +588,50 @@ identity's feed data for up to 60s. **Two wiring decisions for the plan:**
   external-link icon, and `aria-label` "opens on GitHub" gain their full treatment here.
 - **Degraded note:** unchanged single generic note, now covering all three sources.
 
-## P2 PAT scopes
+## P2 PAT scopes — **Implemented**
 
-- **Classic:** `repo` covers `/notifications` and `/user/subscriptions`. No new scope.
-- **Fine-grained:** + **Notifications: read**, **Metadata: read**. Documented; missing →
-  graceful degrade.
+- **Classic:** `repo` covers both `/notifications` and `/user/subscriptions`. **No new
+  classic scope** beyond what PRism already requires. Activity-rail data degrades
+  gracefully (empty + `Degraded` flag) if the token lacks access — it never breaks the
+  inbox or the rail's other source.
+- **Fine-grained:** in addition to the existing PRism FG permissions, the two new
+  endpoints need **Notifications: read** and **Metadata: read** (Metadata is auto-included
+  by GitHub for any FG token). Missing either → that source returns empty + `Degraded`;
+  no error surfaces. These are the *only* new scope requirements for Phase 2.
+
+> **PAT-UI copy (Setup screen) intentionally NOT changed in the Phase 2 PR.** The Setup
+> screen (`frontend/src/components/Setup/SetupForm.tsx`) enumerates classic scopes
+> (`repo`, `read:org`) and FG permissions. The classic side needs no edit (`repo` already
+> covers notifications + subscriptions). Adding "Notifications: read" to the FG permission
+> list would be a user-visible change to a B1-sensitive setup surface for an
+> *optional, graceful-degrade* feature; per the gated-PR rule the scope facts are recorded
+> here (and in `## P2 security` below) rather than editing the setup copy. Revisit the FG
+> copy if the activity rail graduates from opt-in to a core surface.
+
+## P2 security — header redaction (verified, automated)
+
+The two new readers send the PAT as an `Authorization: Bearer` header to the named
+`"github"` `HttpClient`. Verification:
+
+- **Structural:** the `"github"` client pipeline has **no header-logging
+  `DelegatingHandler`**. The only handler ever attached is `TestFailureInjectionHandler`
+  (registered solely under `ASPNETCORE_ENVIRONMENT=Test` + `PRISM_E2E_REAL_INJECT=1`,
+  never in production — see `PRism.Web/Program.cs`), and it reads only the request *body*
+  to sniff the GraphQL field name; it never touches `request.Headers.Authorization`.
+- **Automated regression:** `tests/PRism.GitHub.Tests/Activity/GitHubActivityReadersAuthHeaderTests.cs`
+  drives both readers through a capturing handler and asserts the Bearer token is attached
+  on the wire (auth works) and omitted — not sent as a malformed `Bearer ` — when the
+  token store is empty. This is the canary if a future contributor adds a header-inspecting
+  handler to the shared `"github"` pipeline.
+
+## P2 configurable bots
+
+- Activity-rail bot detection is human-configurable via the **`inbox.knownBots`** config
+  key (comma-separated logins; file + `PATCH /api/preferences`), **additive** on top of the
+  always-on built-in `{Copilot}` baseline and the `[bot]`-suffix auto-detection. Configured
+  logins flow through to `ActorIsBot`.
+- The **Settings UI** to edit this list is **deferred to [#316](https://github.com/prpande/PRism/issues/316)** — Phase 2 wires only the
+  config value + builder plumbing.
 
 ## P2 testing (TDD red → green) — merge-engine correctness
 
@@ -611,16 +657,17 @@ identity's feed data for up to 60s. **Two wiring decisions for the plan:**
 
 ## P2 acceptance criteria
 
-- [ ] Activity panel renders merged notifications + received_events (24h), with actor-
+- [x] Activity panel renders merged notifications + received_events (24h), with actor-
       present and actor-absent phrasing both correct.
-- [ ] Merge engine passes all § P2 testing merge cases (two-stage merge, distinct
+- [x] Merge engine passes all § P2 testing merge cases (two-stage merge, distinct
       actors, 3-way, no-counterpart, slot reservation).
-- [ ] Watching panel renders real `/user/subscriptions` repos; `count` = in-window
+- [x] Watching panel renders real `/user/subscriptions` repos; `count` = in-window
       (pre-cap) feed items; `idle` at 0.
-- [ ] `ActivityResponse` / `ActivityDegradation` grown additively; cache invalidated on
+- [x] `ActivityResponse` / `ActivityDegradation` grown additively; cache invalidated on
       identity change.
-- [ ] Classic `repo` covers notifications + subscriptions (verified live); FG
-      Notifications/Metadata read documented + graceful-degrade.
+- [x] Classic `repo` covers notifications + subscriptions; FG
+      Notifications/Metadata read documented + graceful-degrade. No Authorization-header
+      logging (structural + automated test — see `## P2 security`).
 
 ---
 

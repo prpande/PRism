@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PRism.Core;
+using PRism.Core.Activity;
 using PRism.Core.Auth;
 using PRism.Core.Config;
 using PRism.Core.Contracts;
@@ -38,7 +39,7 @@ internal static partial class AuthEndpoints
             return Results.Ok(new AuthStateResponse(hasToken, host, mismatch));
         });
 
-        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewAuth review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, ILogger<Category> log, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect", async (HttpContext ctx, ITokenStore tokens, IReviewAuth review, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IActivityProvider activityProvider, ILogger<Category> log, CancellationToken ct) =>
         {
             JsonDocument doc;
             try
@@ -89,11 +90,15 @@ internal static partial class AuthEndpoints
             var state = await stateStore.LoadAsync(ct).ConfigureAwait(false);
             await stateStore.SaveAsync(state.WithDefaultLastConfiguredGithubHost(config.Current.Github.Host), ct).ConfigureAwait(false);
             viewerLogin.Set(result.Login ?? "");
+            // Token-commit path: invalidate any activity feed cached under a prior token
+            // (#137 Task 8). The soft-warning early return above commits no token and so
+            // does NOT reset — resetting there would needlessly evict a still-valid cache.
+            activityProvider.Reset();
             Log.ConnectCommitted(log, result.Login ?? "(empty)");
             return Results.Ok(new AuthConnectSuccess(Ok: true, Login: result.Login, Host: config.Current.Github.Host));
         });
 
-        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, ILogger<Category> log, CancellationToken ct) =>
+        app.MapPost("/api/auth/connect/commit", async (ITokenStore tokens, IAppStateStore stateStore, IConfigStore config, IViewerLoginProvider viewerLogin, IActivityProvider activityProvider, ILogger<Category> log, CancellationToken ct) =>
         {
             // Read the validated login BEFORE CommitAsync clears it.
             var login = await tokens.ReadTransientLoginAsync(ct).ConfigureAwait(false);
@@ -113,6 +118,8 @@ internal static partial class AuthEndpoints
             // Mirror the connect-path Set to keep the cache in lockstep — empty string here
             // overwrites any stale login from a prior session rather than leaving it intact.
             viewerLogin.Set(login ?? "");
+            // Token-commit path: invalidate any activity feed cached under a prior token (#137 Task 8).
+            activityProvider.Reset();
             Log.CommitSucceeded(log, login ?? "(empty)");
             return Results.Ok(new AuthCommitSuccess(Ok: true, Host: config.Current.Github.Host));
         });
@@ -166,6 +173,7 @@ internal static partial class AuthEndpoints
             IActivePrCache activePrCache,
             ActivePrSubscriberRegistry activeRegistry,
             InboxPoller inboxPoller,
+            IActivityProvider activityProvider,
             ILogger<Category> log,
             CancellationToken ct) =>
         {
@@ -366,6 +374,15 @@ internal static partial class AuthEndpoints
                 activeRegistry.RemoveAll();
                 bus.Publish(new IdentityChanged(AccountKeys.Default, priorLogin!, newLogin));
             }
+
+            // Token-commit path (#137 Task 8): invalidate the activity feed cached under the
+            // prior token. This MUST live OUTSIDE the if(identityChanged) block so it fires on
+            // EVERY successful replace — including the same-login token-rotation case
+            // (identityChanged == false), where the new token may carry different repo scopes
+            // than the old one. The IdentityChanged bus message is published only inside that
+            // block, so subscribing to it would reproduce the same-login-rotation gap; an
+            // unconditional imperative Reset() here closes it.
+            activityProvider.Reset();
 
             return Results.Ok(new AuthReplaceResponse(
                 Ok: true,
