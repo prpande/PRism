@@ -527,3 +527,40 @@ export interface ResumeForeignPendingReviewResponse {
   replyCount: number;
   threads: ImportedThread[];
 }
+
+// #137 Activity rail (Phase 1). Mirrors PRism.Core/Activity contracts; enums are
+// the kebab-case wire strings. P2 grows ActivityResponse (Watching) + ActivityVerb
+// (review-requested, mentioned) + degraded flags additively — read leniently.
+export type ActivityVerb =
+  | 'opened'
+  | 'reopened'
+  | 'closed'
+  | 'merged'
+  | 'reviewed'
+  | 'commented'
+  | 'other';
+
+export type ActivitySource = 'received-event';
+
+export interface ActivityItem {
+  actorLogin: string | null;
+  actorAvatarUrl: string | null;
+  actorIsBot: boolean;
+  verb: ActivityVerb;
+  repo: string;
+  prNumber: number;
+  title: string | null;
+  url: string;
+  timestamp: string;
+  source: ActivitySource;
+}
+
+export interface ActivityDegradation {
+  receivedEvents: boolean;
+}
+
+export interface ActivityResponse {
+  items: ActivityItem[];
+  generatedAt: string;
+  degraded: ActivityDegradation;
+}

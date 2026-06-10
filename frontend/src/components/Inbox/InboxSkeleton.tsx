@@ -22,9 +22,10 @@ function Row() {
 
 /**
  * Content-shaped inbox skeleton. Mirrors the paste-URL toolbar, section headers,
- * and InboxRow shape. `showRail` is supplied by InboxPage from
- * useAiGate('inboxRanking') so the skeleton stays presentational. Renders no
- * buttons (loading state shows no clickable affordances — same rule as PR-detail).
+ * and InboxRow shape. `showRail` is supplied by InboxPage from the
+ * inbox.showActivityRail preference (#137/#309) so the skeleton stays
+ * presentational. Renders no buttons (loading state shows no clickable
+ * affordances — same rule as PR-detail).
  */
 export function InboxSkeleton({ showRail }: { showRail: boolean }) {
   return (
@@ -48,8 +49,8 @@ export function InboxSkeleton({ showRail }: { showRail: boolean }) {
         </div>
         {showRail && (
           <div className={styles.rail} data-testid="inbox-skeleton-rail">
+            {/* P1: single Activity panel. The second (Watching) block returns in P2. */}
             <Skeleton height={120} radius={10} />
-            <Skeleton height={160} radius={10} />
           </div>
         )}
       </div>

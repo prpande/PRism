@@ -9,6 +9,7 @@ import { InboxPane } from './InboxPane';
 const set = vi.fn().mockResolvedValue(undefined);
 let defaultSort: SortKey = 'updated';
 let sectionOrder: string = 'review-requested,awaiting-author,authored-by-me,mentioned';
+let showActivityRail: boolean = false;
 vi.mock('../../../hooks/usePreferences', () => ({
   usePreferences: () => ({
     preferences: {
@@ -23,6 +24,7 @@ vi.mock('../../../hooks/usePreferences', () => ({
         },
         defaultSort,
         sectionOrder,
+        showActivityRail,
       },
       github: {},
     },
@@ -35,6 +37,7 @@ function renderInboxPane(
     set?: (...args: unknown[]) => unknown;
     defaultSort?: SortKey;
     sectionOrder?: string;
+    showActivityRail?: boolean;
   } = {},
 ) {
   if (opts.set) {
@@ -42,6 +45,7 @@ function renderInboxPane(
   }
   defaultSort = opts.defaultSort ?? 'updated';
   sectionOrder = opts.sectionOrder ?? 'review-requested,awaiting-author,authored-by-me,mentioned';
+  showActivityRail = opts.showActivityRail ?? false;
   return render(<InboxPane />);
 }
 
@@ -50,6 +54,7 @@ beforeEach(() => {
   set.mockResolvedValue(undefined);
   defaultSort = 'updated';
   sectionOrder = 'review-requested,awaiting-author,authored-by-me,mentioned';
+  showActivityRail = false;
 });
 
 describe('InboxPane', () => {
@@ -65,9 +70,10 @@ describe('InboxPane', () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith('inbox.sections.awaiting-author', true));
   });
 
-  it('renders five section rows without ci-failing and with the re-review label', () => {
+  it('renders five section rows + the activity-rail toggle (6 switches), without ci-failing and with the re-review label', () => {
     renderInboxPane();
-    expect(screen.getAllByRole('switch')).toHaveLength(5);
+    // 5 section toggles + the "Show activity rail" toggle (#137).
+    expect(screen.getAllByRole('switch')).toHaveLength(6);
     expect(screen.queryByText('CI failing on my PRs')).toBeNull();
     expect(screen.getByText('Needs re-review')).toBeInTheDocument();
   });
@@ -77,6 +83,17 @@ describe('InboxPane', () => {
     const select = screen.getByLabelText('Default sort');
     fireEvent.change(select, { target: { value: 'pushed' } });
     expect(set).toHaveBeenCalledWith('inbox.defaultSort', 'pushed');
+  });
+
+  it('Show activity rail toggle reflects and writes inbox.showActivityRail', async () => {
+    const setSpy = vi.fn().mockResolvedValue(undefined);
+    renderInboxPane({ showActivityRail: false, set: setSpy });
+
+    const toggle = screen.getByRole('switch', { name: /show activity rail/i });
+    expect(toggle).not.toBeChecked();
+
+    await userEvent.click(toggle);
+    expect(setSpy).toHaveBeenCalledWith('inbox.showActivityRail', true);
   });
 });
 

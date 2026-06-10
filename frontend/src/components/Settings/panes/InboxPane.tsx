@@ -48,6 +48,8 @@ export function InboxPane() {
     ? preferences.inbox.defaultSort
     : 'updated';
 
+  const showActivityRail = preferences.inbox.showActivityRail;
+
   // Apply-on-success model (PreferencesContext.set is NOT optimistic): disable all
   // reorder controls while a move POST is pending so order-dependent moves serialize
   // and a rapid second click can't compute from a stale order (#275 spec, Unit 4).
@@ -171,6 +173,20 @@ export function InboxPane() {
             </option>
           ))}
         </select>
+      </div>
+
+      <div className={pane.row}>
+        <Switch
+          id="inbox-show-activity-rail"
+          label="Show activity rail"
+          describedById="inbox-show-activity-rail-help"
+          checked={showActivityRail}
+          onChange={(next) => set('inbox.showActivityRail', next).catch(() => {})}
+        />
+        <div className={pane.spring} />
+        <span id="inbox-show-activity-rail-help" className={pane.help}>
+          The rail is hidden on narrow windows.
+        </span>
       </div>
     </section>
   );

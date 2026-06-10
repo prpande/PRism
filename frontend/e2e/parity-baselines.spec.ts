@@ -128,15 +128,19 @@ test.describe('parity baselines — Inbox', () => {
   test('inbox-activity-rail', async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await setupAndOpenScenarioPr(page);
-    // #283 the activity rail is decoupled from AI onto a dedicated, non-AI
-    // inbox.showActivityRail flag (default false) — it no longer rides aiPreview.
-    // Enable it before the locator wait so the rail mounts and the test can lock
-    // the visual baseline. (The rail's appearance is unchanged, so the existing
-    // inbox-activity-rail.png baseline still matches.)
+    // Activity rail only renders when inbox.showActivityRail === true; enable
+    // it before the locator wait so the rail mounts and the test can lock the
+    // visual baseline. resetBackendState in beforeEach restores the default
+    // (showActivityRail=false) between tests, so this enable is per-test.
+    //
+    // NB: #137 rewrote the rail onto real received_events — its appearance CHANGED,
+    // so the inbox-activity-rail.png baseline is regenerated from the CI artifact
+    // (not the pre-#137 mock baseline).
     //
     // Wire shape: POST /api/preferences accepts exactly one flat dotted-path
     // field per patch (see PRism.Web/Endpoints/PreferencesEndpoints.cs and
-    // frontend/src/hooks/usePreferences.ts). Origin header matches the loopback
+    // frontend/src/hooks/usePreferences.ts) — NOT a nested
+    // `{ inbox: { showActivityRail: true } }`. Origin header matches the loopback
     // pattern used in helpers/s4-setup.ts (OriginCheckMiddleware requires it on POST).
     const prefResp = await page.request.post('/api/preferences', {
       data: { 'inbox.showActivityRail': true },
