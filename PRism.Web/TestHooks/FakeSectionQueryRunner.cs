@@ -23,21 +23,31 @@ internal sealed class FakeSectionQueryRunner : ISectionQueryRunner
         var result = new Dictionary<string, IReadOnlyList<RawPrInboxItem>>();
         lock (_store.Gate)
         {
-            if (_store.InboxSeeded && visibleSectionIds.Contains("review-requested"))
+            // Mirror the real GitHubSectionQueryRunner's 401 fallback: EVERY visible section
+            // gets a key (empty unless seeded), so the unseeded rendered inbox is identical to
+            // the prior real-GitHub empty state (5 section headers), not a 1-section divergence.
+            foreach (var id in visibleSectionIds)
             {
-                var item = new RawPrInboxItem(
-                    Reference: FakeReviewBackingStore.Scenario,
-                    Title: "Calc utilities",
-                    Author: "e2e-user",
-                    Repo: "acme/api",
-                    UpdatedAt: _store.Now,
-                    PushedAt: _store.Now,
-                    CommentCount: 0,
-                    Additions: 8,
-                    Deletions: 0,
-                    HeadSha: _store.CurrentHeadSha,
-                    IterationNumberApprox: _store.Iterations.Count);
-                result["review-requested"] = new[] { item };
+                if (_store.InboxSeeded && id == "review-requested")
+                {
+                    var item = new RawPrInboxItem(
+                        Reference: FakeReviewBackingStore.Scenario,
+                        Title: "Calc utilities",
+                        Author: "e2e-user",
+                        Repo: "acme/api",
+                        UpdatedAt: _store.Now,
+                        PushedAt: _store.Now,
+                        CommentCount: 0,
+                        Additions: 8,
+                        Deletions: 0,
+                        HeadSha: _store.CurrentHeadSha,
+                        IterationNumberApprox: _store.Iterations.Count);
+                    result[id] = new[] { item };
+                }
+                else
+                {
+                    result[id] = Array.Empty<RawPrInboxItem>();
+                }
             }
         }
         return Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<RawPrInboxItem>>>(result);
