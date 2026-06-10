@@ -6,20 +6,27 @@
 
 .grid {
   display: grid;
-  /* Fixed-width rail column: the PR column is minmax(0, 1fr) so it can shrink, and the
-     rail is a fixed 300px. An `auto` rail column would size to its content, letting a
-     long activity title/username widen the rail and compress the PR list — the rail must
-     never resize the PR section, so its width is pinned and its own content ellipsizes. */
-  grid-template-columns: minmax(0, 1fr) 380px;
+  /* Rail OFF (default): single column so the PR list spans the full width. The fixed rail
+     column is reserved ONLY when the rail is actually rendered (data-has-rail), so a
+     rail-off inbox is never squished by an empty reserved column. */
+  grid-template-columns: 1fr;
   gap: var(--s-4);
   margin-top: var(--s-3);
+}
+
+/* Rail ON: fixed-width rail column. The PR column is minmax(0, 1fr) so it can shrink, and
+   the rail is a fixed 380px. An `auto` rail column would size to its content, letting a
+   long activity title/username widen the rail and compress the PR list — the rail must
+   never resize the PR section, so its width is pinned and its own content ellipsizes. */
+.grid[data-has-rail] {
+  grid-template-columns: minmax(0, 1fr) 380px;
 }
 
 /* #300 — 1179px == INBOX_RAIL_MIN_WIDTH (1180) − 1. Below it the grid is single-column
    (Layout B); InboxPage's useMediaQuery gate (same const) also stops rendering the rail.
    Keep these two boundaries in sync — see frontend/src/components/Inbox/inboxLayout.ts. */
 @media (max-width: 1179px) {
-  .grid {
+  .grid[data-has-rail] {
     grid-template-columns: 1fr;
   }
 }
