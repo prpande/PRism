@@ -366,7 +366,7 @@ test('manual Refresh button drives the loading bar and re-enables', async ({ pag
   // Stub the refresh POST with a short delay so the active loading-bar / disabled-button
   // transition is observable, without an arbitrary long sleep.
   await page.route('**/api/inbox/refresh', async (route: Route) => {
-    await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 800));
     await route.fulfill({ status: 200, contentType: 'application/json', body: '' });
   });
 
