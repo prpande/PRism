@@ -35,40 +35,46 @@ vertical boxes:
 On a single-line row the row's vertical center sits *below* the title's first-line center (the
 meta line pulls it down), so the two glyphs diverge by a few px. Two-line titles mask it.
 
-### Decision (forced, not a free choice)
+### Decision (revised after live review)
 
-There are only two ways to give both glyphs one reference:
+The CI glyph isn't visually paired with the leading octicon — it sits at the **right edge of the
+title column, immediately left of the diff bar**, reading as part of the right-side metrics cluster.
+Owner observed the first-line pin left it floating ~11.5px **above** the row-centered metrics it sits
+beside, looking out of place. So the reference is the **row center the metrics already use**, not the
+title's first line:
 
-- Center the CI glyph to the row → **reintroduces the two-line-title midpoint drift** that the
-  `margin-top: 2px` pin was added in #264 to fix. **Rejected** — contradicts a prior decision.
-- Pin the leading glyph to the title's first line → both flank the first line, matched on 1-line
-  *and* 2-line titles, no drift. **Chosen.**
+- ~~Pin both glyphs to the title's first line~~ — initial choice; **reversed**. It aligned the CI glyph
+  with the leading octicon but left it misaligned with the adjacent metrics (the more salient
+  neighbor) and pushed the leading glyph off the row center too.
+- **Row-center everything** — leading octicon, CI glyph, and metrics all share the row's vertical
+  center. **Chosen.** This also still satisfies #345's original "matched pair" concern (leading == CI),
+  just anchored to the metrics' center line. The #264 two-line "optically center on the first line"
+  intent is dropped in favor of metric alignment (owner call).
 
 ### Mechanism
 
-Give `.status` the same alignment treatment `.ciSuffix` already has:
+`.status` stays grid-row-centered (revert — no `align-self`/`margin-top`). The CI glyph is the harder
+case: it lived inside `.titleRow` at the top of `.main`, so it could only ever pin to the first line.
+Move it **out of `.titleRow`** to be a sibling of `.main` inside a new row-centering flex wrapper
+`.midCol` (grid column 2):
 
-```css
-.status {
-  /* was: relies on the row grid's align-items: center */
-  align-self: start;
-  margin-top: 2px;
-}
+```
+.midCol (flex, align-items: center)     ← row-centers its children
+  .main (flex: 1, column: titleRow + meta)
+  .ciSuffix (flex: none)                 ← lands at the column's right edge, row-centered
 ```
 
-Both glyphs are 14px and both `.status` (grid column 1) and `.titleRow` (first child of `.main`,
-grid column 2) start at the same content-box top, so an identical `start + 2px` offset lands them
-pixel-matched **by construction** — no per-row magic numbers. The `2px` is the single tunable;
-adjust it live if the optical centering on the title's first line needs a nudge.
+`.main { flex: 1 }` fills the column so the `flex: none` CI glyph sits at its right edge — the same
+x it occupied before (≈ left of the diff bar). `align-items: center` on `.midCol` puts the glyph on
+the row's vertical center. `.ciSuffix` drops its `align-self: flex-start; margin-top: 2px` pin.
 
 ### Validation (running app, Playwright `getBoundingClientRect`) — DONE
 
-- Single-line-title row: leading and trailing glyph vertical centers **identical (ΔY 0)** on real
-  rows at 1920×1080. Verified.
-- Two-line-title row: no two-line-title row with a CI glyph existed in the live inbox, so this regime
-  was not screenshot-verified. It is guaranteed by construction — both glyphs share the identical
-  `align-self: start; margin-top: 2px` anchor off the same content-box top, which the title growing to
-  two lines does not move; the ΔY-0 single-line result confirms the shared anchor works.
+Verified live at 1920×1080 on real CI-bearing rows: leading octicon, CI glyph, and metrics
+(diff/counts/comments) vertical centers **all identical (ΔY 0)** — CI vs metrics and CI vs leading
+both 0. The CI glyph kept its horizontal position (x≈1091, just left of the diff bar at x≈1124). No
+two-line-title CI row existed in live data; the row-centering is title-height-independent
+(`.midCol align-items: center` centers on `.main`'s full height regardless of title lines).
 - Grouped rows (`data-grouped='true'`, left-indented) and the unread accent bar
   (`[data-unread='true']::before`) unaffected — verified.
 
@@ -199,7 +205,9 @@ toolbar. Owner confirmed the issue is resolved. **Close #346** referencing `9ffb
 ## Scope / non-goals
 
 - No change to the 3-column row grid, grouped-row indent, or B1-tuned metrics tail (#227).
-- No new behavior, no backend, no test-only seams. Pure CSS for #345/#347/spacing; verification-only for #346.
+- No new behavior, no backend, no test-only seams. CSS + one presentational DOM rewrap for #345
+  (CI glyph relocated within the row, no markup-visible/aria change); pure CSS for #347/spacing;
+  verification-only for #346.
 - `--row-hover` is inbox-row-scoped in use (`InboxRow.module.css .row:hover`); the token is added to
   `tokens.css` (`:root` + `[data-theme="dark"]` override) but no other call site is repointed in this slice.
 - The spacing fix removes `InboxSection .section { margin-bottom }`; `.section` renders only inside the
@@ -216,7 +224,8 @@ toolbar. Owner confirmed the issue is resolved. **Close #346** referencing `9ffb
 
 ## References
 
-- `frontend/src/components/Inbox/InboxRow.module.css` — `.status` (#345), `.row:hover` (#347)
+- `frontend/src/components/Inbox/InboxRow.tsx` — CI glyph moved out of `.titleRow` into `.midCol` (#345)
+- `frontend/src/components/Inbox/InboxRow.module.css` — `.midCol`/`.main`/`.ciSuffix` row-center (#345), `.row:hover` (#347)
 - `frontend/src/components/Inbox/RepoGroupAccordion.module.css` — `.header` resting/hover (#347 context)
 - `frontend/src/components/Inbox/InboxSection.module.css` — `.section` margin-bottom removed (spacing)
 - `frontend/src/styles/tokens.css` — `--row-hover` (`:root` light + `[data-theme="dark"]` override)
