@@ -487,7 +487,6 @@ public class ServiceRegistrationTests
     public void RegistersCredentialHealthSingleton()
     {
         var services = new ServiceCollection();
-        services.AddSingleton<PRism.Core.Config.IConfigStore, FakeConfigStore>(); // existing test fake
         services.AddPrismGitHub();
         using var sp = services.BuildServiceProvider();
 
@@ -499,7 +498,7 @@ public class ServiceRegistrationTests
 }
 ```
 
-> If `FakeConfigStore` does not already exist in `PRism.GitHub.Tests`, reuse the existing config-store fake used by other tests in that project (grep for `IConfigStore` test doubles); the registration only needs `IConfigStore` resolvable because `AddHttpClient("github")` reads `config.Current.Github.Host`.
+> Note: no `IConfigStore` registration is needed here. `AddPrismGitHub` registers `IConfigStore`-dependent singletons (`GitHubReviewService`, the inbox pipeline) as **lazy factory** singletons; this test resolves only `IGitHubCredentialHealth` and `GitHubAuthHealthHandler`, neither of which depends on `IConfigStore`, so those factories never fire. (The `AddHttpClient("github", …)` lambda that reads `config.Current.Github.Host` also runs only when a client is created, which this test does not do.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -541,11 +540,14 @@ git commit -m "feat(#312): register credential-health latch + handler on the git
 ### Task 5: Thread `skipCredentialHealth` through `ValidateCredentialsAsync`
 
 **Files:**
-- Modify: the `IReviewAuth` interface (grep `Task<AuthValidationResult> ValidateCredentialsAsync` in `PRism.Core`)
-- Modify: `PRism.GitHub/GitHubReviewService.cs:69` (`ValidateCredentialsAsync`) + the fine-grained probe `ProbeRepoVisibilityAsync`
+- Modify: `PRism.Core/IReviewAuth.cs:9` (the interface method)
+- Modify: `PRism.GitHub/GitHubReviewService.cs:69` (`ValidateCredentialsAsync`) + the fine-grained probe chain `ProbeRepoVisibilityAsync` (`:205`) → `SearchHasResultsAsync` (builds the request at `:218`)
+- Modify (fakes that re-declare the signature — these BREAK otherwise, CS0535): `tests/PRism.Core.Tests/TestHelpers/StubReviewAuth.cs:24`, `PRism.Web/TestHooks/FakeReviewAuth.cs:10`, `tests/PRism.Web.Tests/TestHelpers/PRismWebApplicationFactory.cs:129` (`StubReviewService`), `tests/PRism.Web.Tests/TestHelpers/PrDetailFakeReviewService.cs:67`, `tests/PRism.Web.Tests/Endpoints/AuthReplaceEndpointTests.cs:101`, `tests/PRism.Web.Tests/Endpoints/AuthEndpointsLoggingTests.cs:81` (also grep `ValidateCredentialsAsync(CancellationToken ct)` for any other hand-written implementer, e.g. an `AuthEndpointsTests.cs` stub)
 - Test: `tests/PRism.GitHub.Tests/GitHubReviewServiceValidateSkipTests.cs` (create)
 
-**Rationale:** `ValidateCredentialsAsync` has three callers — connect, replace (candidate tokens → skip), and `ViewerLoginHydrator` (stored token → do NOT skip, so a dead stored token latches at startup). The flag must be a parameter, not hardcoded (spec §6.3).
+**Rationale:** `ValidateCredentialsAsync` has three production callers — connect, replace (candidate tokens → skip), and `ViewerLoginHydrator` (stored token → do NOT skip, so a dead stored token contributes a failure at startup). The flag must be a parameter, not hardcoded (spec §6.3).
+
+> **Implementer note (threshold interaction):** with `THRESHOLD = 2`, the hydrator's single startup 401 does NOT flip the latch by itself — it records one failure; the second arrives on the first inbox-poll 401, flipping it within one cadence. This is expected (spec §6.1) — do not "fix" it by lowering the threshold.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -638,21 +640,35 @@ public async Task<AuthValidationResult> ValidateCredentialsAsync(CancellationTok
     // ... unchanged from here; pass `skipCredentialHealth` into ProbeRepoVisibilityAsync below.
 ```
 
-In the fine-grained branch, thread the flag:
+In the fine-grained branch, thread the flag down the probe chain. `ProbeRepoVisibilityAsync` (`:205`) builds **no** request — it delegates to `SearchHasResultsAsync` (`:218`), which constructs the `HttpRequestMessage`. So thread the flag through **both**:
 
 ```csharp
+// in the fine-grained branch of ValidateCredentialsAsync:
 var warning = await ProbeRepoVisibilityAsync(token, ct, skipCredentialHealth).ConfigureAwait(false);
 ```
 
-Update `ProbeRepoVisibilityAsync`'s signature to accept `bool skipCredentialHealth` and, where it builds its `HttpRequestMessage`, add `if (skipCredentialHealth) req.Options.Set(GitHubAuthHealthHandler.SkipHealthKey, true);`. (Grep `ProbeRepoVisibilityAsync` for its definition around `GitHubReviewService.cs:217`.)
+- `ProbeRepoVisibilityAsync(string token, CancellationToken ct, bool skipCredentialHealth)` — forward the flag into each `SearchHasResultsAsync(token, query, ct, skipCredentialHealth)` call.
+- `SearchHasResultsAsync(string token, string query, CancellationToken ct, bool skipCredentialHealth)` — where it builds the request (`:218`), add `if (skipCredentialHealth) req.Options.Set(GitHubAuthHealthHandler.SkipHealthKey, true);`.
 
-Add `using PRism.GitHub;` is unnecessary (same namespace); ensure `GitHubAuthHealthHandler.SkipHealthKey` resolves.
+`GitHubAuthHealthHandler.SkipHealthKey` is in the same `PRism.GitHub` namespace — no extra using needed.
 
-- [ ] **Step 4: Run the test + full GitHub-suite build**
+- [ ] **Step 3b: Update the hand-written `IReviewAuth` fakes**
+
+The interface method now has two parameters; hand-written implementers declaring `ValidateCredentialsAsync(CancellationToken ct)` will fail with CS0535. Update each (listed in **Files** above) to match the new signature, e.g.:
+
+```csharp
+public Task<AuthValidationResult> ValidateCredentialsAsync(CancellationToken ct, bool skipCredentialHealth = false) => _validate();
+```
+
+(Moq-based fakes — e.g. `ViewerLoginHydratorTests` — need no change: `Setup(r => r.ValidateCredentialsAsync(It.IsAny<CancellationToken>()))` still binds via the default.) Run `dotnet build` across the test projects to confirm zero CS0535 errors before moving on.
+
+- [ ] **Step 4: Run the test + full build across all suites**
 
 Run: `dotnet test tests/PRism.GitHub.Tests --filter FullyQualifiedName~ValidateSkip`
 Expected: PASS.
-Run: `dotnet build PRism.GitHub` and `dotnet build PRism.Core` — Expected: no errors (the optional parameter keeps existing call sites compiling).
+Run: `dotnet build` (solution) — Expected: no errors. Existing *callers* keep compiling via the default arg; the *implementer* fakes were fixed in Step 3b. If any CS0535 remains, an implementer fake was missed — grep `ValidateCredentialsAsync(CancellationToken ct)` again.
+
+> **Red-on-main detection proof:** `Validate_WithoutSkip_LatchesAfterTwo` drives the **real** `GitHubAuthHealthHandler` (registered via `AddHttpMessageHandler`) against two real 401 status responses and asserts `health.IsInvalid` — i.e. the genuine end-to-end detection path, not a poked latch. On `origin/main` it cannot compile (`GitHubAuthHealthHandler` / `IGitHubCredentialHealth` absent). This is the headline behavioral proof; Task 7's endpoint test only proves `/api/auth/state` *surfaces* the latch.
 
 - [ ] **Step 5: Commit**
 
@@ -739,78 +755,83 @@ git commit -m "feat(#312): surface githubCredentialInvalid on /api/auth/state; c
 
 ## Phase 3 — Backend integration tests
 
-### Task 7: Integration tests (red-on-main proof + guards)
+### Task 7: Endpoint integration tests (surfacing + mandatory-valid)
 
 **Files:**
-- Test: `tests/PRism.Web.Tests/Auth/CredentialHealthEndpointTests.cs` (create)
+- Test: `tests/PRism.Web.Tests/Endpoints/CredentialHealthEndpointTests.cs` (create)
 
-Use the project's existing `WebApplicationFactory` test host pattern (grep for an existing `/api/auth/state` integration test to copy the host/fake setup, including the fake `IReviewAuth`/`"github"` client wiring). The host must let a test drive the `"github"` client to a 401 (e.g. via the existing fake handler the test host injects) so the real `GitHubAuthHealthHandler` records failures.
+**Division of proof (no test-theater):** the **detection** path (real `GitHubAuthHealthHandler` observing a real 401 status → latch flips) is proven end-to-end in **Task 5** (`Validate_WithoutSkip_LatchesAfterTwo`, the red-on-main proof). The real test host (`PRismWebApplicationFactory`) fakes `IReviewAuth` and does **not** route through the real `"github"` HttpClient, so it cannot drive a transport 401 — and that's fine: Task 7's job is only to prove (a) `/api/auth/state` **surfaces** the latch, and (b) the latch-clear is **validation-gated** (a bad replace token can't clear it). Both use the real singleton latch (`IGitHubCredentialHealth`) resolved from `factory.Services` (the same instance the endpoint reads) plus the fixture's `ValidateOverride`.
 
 - [ ] **Step 1: Write the failing tests**
 
 ```csharp
 using System.Net;
 using System.Net.Http.Json;
+using Microsoft.Extensions.DependencyInjection;
+using PRism.Core.Auth;
+using PRism.Core.Contracts;
+using PRism.Web.Tests.TestHelpers;
 using Xunit;
 
-namespace PRism.Web.Tests.Auth;
+namespace PRism.Web.Tests.Endpoints;
 
-public class CredentialHealthEndpointTests : IClassFixture<PrismWebFactory> // reuse existing factory
+public class CredentialHealthEndpointTests
 {
-    private readonly PrismWebFactory _factory;
-    public CredentialHealthEndpointTests(PrismWebFactory factory) => _factory = factory;
+    private sealed record AuthStateDto(bool HasToken, string Host, object? HostMismatch, bool GithubCredentialInvalid);
 
     [Fact]
     public async Task State_DefaultsToValid()
     {
-        var client = _factory.CreateAuthedClient(); // existing helper that sets up a stored token
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient(); // authed client (session token auto-injected)
         var state = await client.GetFromJsonAsync<AuthStateDto>("/api/auth/state");
         Assert.False(state!.GithubCredentialInvalid);
     }
 
     [Fact]
-    public async Task TwoGitHub401s_FlipFlag()  // RED-ON-MAIN proof
+    public async Task State_ReflectsInvalidLatch()
     {
-        var client = _factory.CreateAuthedClient();
-        _factory.SetGitHubResponse(HttpStatusCode.Unauthorized); // drive the "github" client to 401
-        // Trigger two authenticated github calls (e.g. two inbox refreshes or PR loads).
-        await _factory.TriggerGitHubCallAsync();
-        await _factory.TriggerGitHubCallAsync();
+        using var factory = new PRismWebApplicationFactory();
+        var client = factory.CreateClient();
+        // Poke the SAME singleton the endpoint reads (two failures crosses THRESHOLD).
+        var health = factory.Services.GetRequiredService<IGitHubCredentialHealth>();
+        health.RecordAuthFailure();
+        health.RecordAuthFailure();
+
         var state = await client.GetFromJsonAsync<AuthStateDto>("/api/auth/state");
         Assert.True(state!.GithubCredentialInvalid);
     }
 
     [Fact]
-    public async Task Replace_WithInvalidToken_DoesNotClearFlag()  // mandatory-valid guarantee
+    public async Task Replace_WithInvalidToken_DoesNotClearLatch()  // mandatory-valid guarantee
     {
-        var client = _factory.CreateAuthedClient();
-        _factory.SetGitHubResponse(HttpStatusCode.Unauthorized);
-        await _factory.TriggerGitHubCallAsync();
-        await _factory.TriggerGitHubCallAsync();
-        var resp = await client.PostAsJsonAsync("/api/auth/replace", new { pat = "ghp_stillbad" });
-        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
-        var state = await client.GetFromJsonAsync<AuthStateDto>("/api/auth/state");
-        Assert.True(state!.GithubCredentialInvalid); // bad token cannot clear it
-    }
+        using var factory = new PRismWebApplicationFactory
+        {
+            // Validation rejects the candidate (simulates a still-bad token).
+            ValidateOverride = () => Task.FromResult(
+                new AuthValidationResult(false, null, null, AuthValidationError.InvalidToken, "bad")),
+        };
+        var client = factory.CreateClient();
+        var health = factory.Services.GetRequiredService<IGitHubCredentialHealth>();
+        health.RecordAuthFailure();
+        health.RecordAuthFailure();
+        Assert.True(health.IsInvalid);
 
-    private sealed record AuthStateDto(bool HasToken, string Host, object? HostMismatch, bool GithubCredentialInvalid);
+        var resp = await client.PostAsJsonAsync("/api/auth/replace", new { pat = "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" });
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+
+        var state = await client.GetFromJsonAsync<AuthStateDto>("/api/auth/state");
+        Assert.True(state!.GithubCredentialInvalid); // failed validation never called MarkValid
+    }
 }
 ```
 
-> Adapt `PrismWebFactory`, `CreateAuthedClient`, `SetGitHubResponse`, and `TriggerGitHubCallAsync` to the repo's actual test-host helpers. If the existing host exposes a fake `IReviewAuth` rather than a fake `"github"` HttpClient, the flag-flip test should instead drive two real authenticated github.com 401s through whatever seam the host provides; if no such seam exists, register a test `IGitHubCredentialHealth` you can poke and assert the endpoint reflects it — but prefer driving the handler end-to-end for the red-on-main proof.
+> Verify the `AuthValidationResult` / `AuthValidationError` constructor shape against `PRism.Core` (grep — the fixture's `StubReviewService` uses the same type). If `ValidateOverride` is not the exact hook name in the current fixture, use the one the fixture exposes (it currently wires `IReviewAuth` from `ValidateOverride`). The `pat` value is an obviously-fake 36-x placeholder (not a real token).
 
-- [ ] **Step 2: Capture red-on-main**
+- [ ] **Step 2: Run to verify they fail**
 
-```bash
-git stash --include-untracked   # set aside the working changes
-git switch --detach origin/main
-# Re-add ONLY the test file to confirm it fails to compile / returns false on main:
-# (document the failure — the field/handler don't exist on main)
-git switch -   # back to feature branch
-git stash pop
-```
-
-Record in the PR Proof: on `origin/main` the test does not compile (`GithubCredentialInvalid` / handler absent) — the signal does not exist. Paste the failing output.
+Run: `dotnet test tests/PRism.Web.Tests --filter FullyQualifiedName~CredentialHealthEndpointTests`
+Expected: FAIL — `GithubCredentialInvalid` / `IGitHubCredentialHealth` absent (won't compile on a pre-Task-6 tree). On `origin/main` the file cannot compile at all (handler/field/latch absent) — note this in the Proof; the **behavioral** red-on-main proof is Task 5's handler test.
 
 - [ ] **Step 3: Run on the feature branch to verify green**
 
@@ -820,8 +841,8 @@ Expected: PASS (3 tests).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tests/PRism.Web.Tests/Auth/CredentialHealthEndpointTests.cs
-git commit -m "test(#312): credential-health endpoint integration (red-on-main proof + mandatory-valid)"
+git add tests/PRism.Web.Tests/Endpoints/CredentialHealthEndpointTests.cs
+git commit -m "test(#312): /api/auth/state surfaces latch; replace cannot clear it with a bad token"
 ```
 
 ---
@@ -1039,13 +1060,16 @@ export interface SnackbarProps {
   message: ReactNode;
   action?: { label: string; onClick: () => void };
   onDismiss?: () => void;
-  role: 'status' | 'alert';
-  ariaLive: 'polite' | 'assertive';
+  // Optional: omit when the consumer announces via its own always-mounted live
+  // region (GitHubAuthBanner does this — Task 11) so the visible bar isn't a
+  // second live region that double-announces.
+  role?: 'status' | 'alert';
+  ariaLive?: 'polite' | 'assertive';
 }
 
 export function Snackbar({ tone, message, action, onDismiss, role, ariaLive }: SnackbarProps) {
   return (
-    <div className={`${styles.snackbar} ${styles[tone]}`} role={role} aria-live={ariaLive} aria-atomic="true">
+    <div className={`${styles.snackbar} ${styles[tone]}`} role={role} aria-live={ariaLive} aria-atomic={ariaLive ? 'true' : undefined}>
       <span className={styles.message}>{message}</span>
       {action && (
         <button type="button" className={styles.action} onClick={action.onClick}>
@@ -1165,48 +1189,72 @@ git commit -m "refactor(#312): extract shared Snackbar primitive; re-point Strea
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { GitHubAuthBanner } from './GitHubAuthBanner';
 
 const navigate = vi.fn();
+let mockPath = '/';
+let mockInvalid = true;
+let mockHealthy = true;
+
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useNavigate: () => navigate,
   useLocation: () => ({ pathname: mockPath }),
 }));
-let mockPath = '/';
+vi.mock('../../hooks/useAuth', () => ({
+  useAuth: () => ({
+    authState: { hasToken: true, host: 'github.com', hostMismatch: null, githubCredentialInvalid: mockInvalid },
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+vi.mock('../../hooks/useStreamHealth', () => ({ useStreamHealth: () => ({ healthy: mockHealthy, retry: vi.fn() }) }));
 
-const authState = { hasToken: true, host: 'github.com', hostMismatch: null, githubCredentialInvalid: true };
-vi.mock('../../hooks/useAuth', () => ({ useAuth: () => ({ authState, error: null, refetch: vi.fn() }) }));
-vi.mock('../../hooks/useStreamHealth', () => ({ useStreamHealth: () => ({ healthy: true, retry: vi.fn() }) }));
+// The visible bar is the Reconnect button; the live region (role=status) is always present.
+const reconnectButton = () => screen.queryByRole('button', { name: /reconnect/i });
 
 describe('GitHubAuthBanner', () => {
-  it('shows when invalid + authed + healthy + not on /setup', () => {
-    mockPath = '/';
+  beforeEach(() => { navigate.mockClear(); mockPath = '/'; mockInvalid = true; mockHealthy = true; });
+
+  it('shows the visible bar when invalid + authed + healthy + not on /setup', () => {
     render(<MemoryRouter><GitHubAuthBanner /></MemoryRouter>);
-    expect(screen.getByText(/reconnect/i)).toBeInTheDocument();
+    expect(reconnectButton()).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /dismiss/i })).toBeNull(); // non-dismissible
+    expect(screen.getByRole('status')).toHaveTextContent('GitHub access token invalid — reconnect');
   });
 
-  it('hidden on /setup', () => {
+  it('hides the visible bar on /setup (live region empty)', () => {
     mockPath = '/setup';
     render(<MemoryRouter><GitHubAuthBanner /></MemoryRouter>);
-    expect(screen.queryByText(/reconnect/i)).toBeNull();
+    expect(reconnectButton()).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent(''); // region mounted, no announcement
+  });
+
+  it('hides the visible bar while the SSE stream is unhealthy', () => {
+    mockHealthy = false;
+    render(<MemoryRouter><GitHubAuthBanner /></MemoryRouter>);
+    expect(reconnectButton()).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent('');
+  });
+
+  it('keeps the live region mounted even when valid (no banner)', () => {
+    mockInvalid = false;
+    render(<MemoryRouter><GitHubAuthBanner /></MemoryRouter>);
+    expect(reconnectButton()).toBeNull();
+    expect(screen.getByRole('status')).toBeInTheDocument(); // always mounted
   });
 
   it('Reconnect navigates to /setup?replace=1', async () => {
-    mockPath = '/';
     render(<MemoryRouter><GitHubAuthBanner /></MemoryRouter>);
-    await userEvent.click(screen.getByRole('button', { name: /reconnect/i }));
+    await userEvent.click(reconnectButton()!);
     expect(navigate).toHaveBeenCalledWith('/setup?replace=1');
   });
 });
 ```
-
-> If mocking `useAuth`/`useStreamHealth` per-test is awkward, restructure the component to accept the three inputs (`invalid`, `healthy`, `pathname`, `onReconnect`) and test a presentational inner component, with a thin wrapper that wires the hooks. Either is fine; keep the suppression logic unit-tested.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1221,10 +1269,18 @@ import { useAuth } from '../../hooks/useAuth';
 import { useStreamHealth } from '../../hooks/useStreamHealth';
 import { Snackbar } from '../Snackbar';
 
+const MESSAGE = 'GitHub access token invalid — reconnect';
+
 /**
- * #312: non-dismissible re-auth banner. Shows whenever the stored GitHub credential
- * is invalid and we're authed, the SSE stream is healthy, and we're not already on
- * the /setup screen (which IS the fix). No dismiss — only a valid token clears it.
+ * #312: non-dismissible re-auth banner. The VISIBLE bar shows whenever the stored
+ * GitHub credential is invalid and we're authed, the SSE stream is healthy, and we're
+ * not on /setup (which IS the fix). No dismiss — only a valid token clears it.
+ *
+ * a11y (spec §7.4): the polite live region is ALWAYS mounted (the component never
+ * returns null) with its text toggling on the invalid edge, so a screen reader
+ * announces once when the banner appears and once when it clears — not on every
+ * render, and reliably (region exists in the DOM before text is added). The visible
+ * Snackbar carries NO role/aria-live so it isn't a second, double-announcing region.
  */
 export function GitHubAuthBanner() {
   const { authState } = useAuth();
@@ -1234,19 +1290,26 @@ export function GitHubAuthBanner() {
 
   const invalid = authState?.hasToken === true && authState?.githubCredentialInvalid === true;
   const onSetup = location.pathname === '/setup';
-  if (!invalid || !healthy || onSetup) return null;
+  const show = invalid && healthy && !onSetup;
 
   return (
-    <Snackbar
-      tone="danger"
-      message="GitHub access token invalid — reconnect"
-      action={{ label: 'Reconnect', onClick: () => navigate('/setup?replace=1') }}
-      role="status"
-      ariaLive="polite"
-    />
+    <>
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {show ? MESSAGE : ''}
+      </div>
+      {show && (
+        <Snackbar
+          tone="danger"
+          message={MESSAGE}
+          action={{ label: 'Reconnect', onClick: () => navigate('/setup?replace=1') }}
+        />
+      )}
+    </>
   );
 }
 ```
+
+(`.sr-only` is the project's existing visually-hidden utility — grep `sr-only` to confirm; if its containing pane could clip an absolutely-positioned variant, this one is a normal-flow hidden `<div>` so it's unaffected.)
 
 `index.ts`:
 
@@ -1319,8 +1382,21 @@ describe('ReauthRouteGuard', () => {
     renderAt('/', true); // invalid but on an app route, never on /setup
     expect(navigate).not.toHaveBeenCalled();
   });
+
+  it('releases the user when the credential becomes valid (no bounce)', () => {
+    // The recovery flow: on /setup with invalid=true, SetupPage commits a valid token,
+    // `await refetch()` flips credentialInvalid=false, THEN navigate('/'). The guard must
+    // see valid by the time the route is '/', so it releases instead of bouncing back.
+    navigate.mockClear();
+    const { rerender } = renderAt('/setup', true);            // entered the gate
+    mockPath = '/';
+    rerender(<ReauthRouteGuard credentialInvalid={false} />); // credential now valid + route changed
+    expect(navigate).not.toHaveBeenCalled();                  // released, no infinite bounce
+  });
 });
 ```
+
+> **Implementer note (recovery ordering):** this release depends on `SetupPage` doing `await refetch()` *before* `navigate('/')` on a successful replace (so `credentialInvalid` is already `false` when the route changes). Confirm `SetupPage`'s replace-success path awaits the refetch before navigating; if it ever navigates first, the guard would bounce. Do not change the guard to compensate — fix the ordering at the navigation site.
 
 - [ ] **Step 2: Run test to verify it fails**
 
