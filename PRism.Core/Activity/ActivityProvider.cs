@@ -62,6 +62,12 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
         try
         {
             gen = Volatile.Read(ref _generation);                  // re-read under the gate
+            // Re-read the clock AFTER the wait: a request that queued behind a slow
+            // (>TTL) in-flight fetch captured `now` before WaitAsync, so the pre-wait
+            // value would make a just-stale entry look fresh and would skew the
+            // notifications `since` window. The fast-path check above legitimately uses
+            // the pre-wait `now` (no wait happened there).
+            now = _clock.GetUtcNow();
             if (_cache is { } c && c.Generation == gen && now - c.At < Ttl)
                 return c.Response;
 

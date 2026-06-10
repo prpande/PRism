@@ -183,6 +183,32 @@ public sealed class ActivityProviderTests
     }
 
     [Fact]
+    public async Task Waiter_past_ttl_refetches_using_post_wait_time()
+    {
+        // A request that queues behind a slow (>TTL) in-flight fetch must judge cache
+        // freshness by the clock AFTER the wait, not the value captured before it.
+        var clock = Clock();
+        var release = new TaskCompletionSource();
+        var ev = new GatedReceivedEventsReader(release.Task);
+        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(),
+            clock, Config(), NullLogger<ActivityProvider>.Instance);
+
+        var a = p.GetActivityAsync(default);                       // A: enters reader, holds the gate
+        await ev.Entered.Task;                                     // A is inside ReadAsync
+
+        var b = p.GetActivityAsync(default);                      // B: misses fast path, parks on the gate
+                                                                   //    (captures pre-wait `now` synchronously here)
+        clock.Advance(TimeSpan.FromSeconds(61));                   // >TTL elapses while B waits
+        release.SetResult();                                       // A completes, caches with its own (pre-advance) timestamp
+        await a;
+        await b;                                                   // B acquires the gate
+
+        // With pre-wait `now`, B would see A's entry as 0s old and serve it (Calls == 1).
+        // With post-wait `now`, B sees it as 61s old → stale → refetch.
+        ev.Calls.Should().Be(2);
+    }
+
+    [Fact]
     public async Task Aggregates_degradation_from_three_sources()
     {
         var p = new ActivityProvider(new DegradedReceivedEventsReader(), new DegradedNotifReader(),

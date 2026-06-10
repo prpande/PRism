@@ -66,7 +66,12 @@ public sealed partial class GitHubNotificationsReader : INotificationsReader
         if (string.IsNullOrEmpty(apiUrl)) return null;
         var m = PullsUrl().Match(apiUrl);
         if (!m.Success) return null;
-        var pr = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+        // TryParse, not Parse: the regex guarantees digits but not magnitude. A malformed
+        // or oversized digit run would overflow int and throw OverflowException, which the
+        // ReadAsync catch filter does NOT cover (only Http/Json/TaskCanceled) — it would
+        // escape and 500 /api/activity, violating degrade-don't-throw. Drop instead.
+        if (!int.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var pr))
+            return null;
 
         var repo = el.TryGetProperty("repository", out var r) && r.TryGetProperty("full_name", out var fn)
             ? fn.GetString() : null;

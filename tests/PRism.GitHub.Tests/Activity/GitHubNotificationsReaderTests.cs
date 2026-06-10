@@ -65,6 +65,22 @@ public sealed class GitHubNotificationsReaderTests
         result.Degraded.Should().BeFalse();
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task Drops_pr_with_oversized_number_without_throwing()
+    {
+        // 20-digit PR number overflows int. Parse() must drop it (degrade-don't-throw),
+        // not let OverflowException escape the reader's catch filter and 500 /api/activity.
+        const string json = """
+        [{"reason":"review_requested","updated_at":"2026-06-10T10:00:00Z",
+          "repository":{"full_name":"acme/api"},
+          "subject":{"type":"PullRequest","title":"huge",
+                     "url":"https://api.github.com/repos/acme/api/pulls/99999999999999999999"}}]
+        """;
+        var result = await MakeReader(HttpStatusCode.OK, json).ReadAsync(DateTimeOffset.UnixEpoch, CancellationToken.None);
+        result.Notifications.Should().BeEmpty();
+        result.Degraded.Should().BeFalse();
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Forbidden)]
     [InlineData((HttpStatusCode)429)]
