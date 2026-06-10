@@ -37,7 +37,10 @@ test.describe('inbox unread bar resets on view (#285)', () => {
     await page.goBack();
     await page.waitForURL((url) => url.pathname === '/');
 
-    // The overlay re-projects the fresh stamp → row is no longer unread.
+    // The overlay re-projects the fresh stamp → row is no longer unread. This depends on
+    // `GET /api/inbox` being re-issued on the inbox remount (useInbox's mount-effect fetch);
+    // if the frontend ever cached the inbox response across navigation, this could pass on
+    // stale data — the reset is driven by the fresh GET, not client state.
     await expect(page.getByRole('button', { name: /Calc utilities/i })).toHaveAttribute(
       'data-unread',
       'false',

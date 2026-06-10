@@ -58,6 +58,23 @@ public class InboxViewedStateTests
     }
 
     [Fact]
+    public void Project_returns_null_head_when_session_has_no_tab_stamps()
+    {
+        // A session can exist with a seen-comment but no tab ever stamped (e.g. the comment
+        // was seen via a path that doesn't write a TabStamp). The head must project to null,
+        // while the comment id still projects — pins the empty-TabStamps edge of the
+        // FirstOrDefault()?.HeadSha chain.
+        var reference = new PrReference("acme", "api", 3);
+        var session = Session(new Dictionary<string, TabStamp>(), lastSeenCommentId: "7");
+        var state = StateWithSession(reference.ToString(), session);
+
+        var (lastViewedHeadSha, lastSeenCommentId) = InboxViewedState.Project(reference, state);
+
+        lastViewedHeadSha.Should().BeNull();
+        lastSeenCommentId.Should().Be(7);
+    }
+
+    [Fact]
     public void ApplyViewedState_overwrites_a_stale_baked_value_with_the_live_stamp()
     {
         var reference = new PrReference("acme", "api", 1);
