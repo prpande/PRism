@@ -30,11 +30,15 @@ public static class ServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
+        services.AddSingleton<IGitHubCredentialHealth, GitHubCredentialHealth>();
+        services.AddTransient<GitHubAuthHealthHandler>();
+
         services.AddHttpClient("github", (sp, client) =>
         {
             var config = sp.GetRequiredService<IConfigStore>();
             client.BaseAddress = HostUrlResolver.ApiBase(config.Current.Github.Host);
-        });
+        })
+        .AddHttpMessageHandler<GitHubAuthHealthHandler>();
 
         // GitHubReviewService implements all four capability interfaces (ADR-S5-1). Register
         // the concrete type once and bind each interface to that shared singleton so a single
