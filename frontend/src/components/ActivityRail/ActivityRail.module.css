@@ -73,6 +73,26 @@
   color: inherit;
   text-decoration: none;
   min-width: 0;
+  /* The whole row is clickable, but it should read as a list row, not a link: keep the
+     default cursor (the hand appears only over the #pr token, below) and signal hover with
+     a subtle table-row highlight rather than an underline. */
+  cursor: default;
+  border-radius: var(--radius-2);
+  padding: 3px 6px;
+  margin: 0 -6px; /* bleed the highlight slightly toward the section edges */
+  transition: background-color 0.1s ease;
+}
+
+.rowLink:hover {
+  background: var(--surface-2);
+  text-decoration: none; /* override the global a:hover underline — the row is not a link visually */
+}
+
+/* ...but on row hover the PR number DOES underline, marking it as the click target
+   (and only it — the timestamp/lead stay plain). Out-specifies .rowLink:hover above. */
+.rowLink:hover .pr {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .lead {
@@ -119,6 +139,7 @@
   flex-shrink: 0;
   color: var(--accent);
   font-weight: 500;
+  cursor: pointer; /* the pointer hand appears only over the PR number */
 }
 
 .when {
@@ -126,11 +147,6 @@
   margin-left: 4px;
   font-size: var(--text-xs);
   color: var(--text-3);
-}
-
-.rowLink:hover .pr {
-  text-decoration: underline;
-  text-underline-offset: 3px;
 }
 
 /* Watching panel title — lighter weight than the Activity title so Activity
@@ -142,13 +158,23 @@
 }
 
 /* Watching row: repo (left, ellipsized) + count/idle (right). No external icon and
-   no hover underline — the affordance lives in the hover tooltip ("Open … on GitHub"). */
+   no hover underline — the affordance lives in the hover tooltip ("Open … on GitHub").
+   Same subtle table-row highlight as the activity rows for a consistent feel. */
 .watchRow {
   display: flex;
   align-items: center;
   color: inherit;
   text-decoration: none;
   min-width: 0;
+  border-radius: var(--radius-2);
+  padding: 3px 6px;
+  margin: 0 -6px;
+  transition: background-color 0.1s ease;
+}
+
+.watchRow:hover {
+  background: var(--surface-2);
+  text-decoration: none; /* override the global a:hover underline */
 }
 
 .repo {
