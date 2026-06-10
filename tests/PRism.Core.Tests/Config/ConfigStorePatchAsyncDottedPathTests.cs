@@ -53,6 +53,27 @@ public class ConfigStorePatchAsyncDottedPathTests
         store.Current.Inbox.Sections.RecentlyClosed.Should().BeFalse();
     }
 
+    // #219 inbox group-by-repo toggle: inbox.groupByRepo is a new Bool allowlisted key.
+    [Fact]
+    public async Task PatchAsync_GroupByRepo_TogglesField()
+    {
+        using var dir = new TempDataDir();
+        using var store = new ConfigStore(dir.Path);
+        await store.InitAsync(CancellationToken.None);
+
+        await store.PatchAsync(
+            new Dictionary<string, object?> { ["inbox.groupByRepo"] = false },
+            CancellationToken.None);
+
+        store.Current.Inbox.GroupByRepo.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Default_GroupByRepo_IsTrue()
+    {
+        AppConfig.Default.Inbox.GroupByRepo.Should().BeTrue();
+    }
+
     [Fact]
     public void Default_RecentlyClosed_IsTrue()
     {
@@ -128,6 +149,8 @@ public class ConfigStorePatchAsyncDottedPathTests
         { "inbox.sections.mentioned", null },
         { "inbox.sections.recently-closed", null },
         { "inbox.sections.recently-closed", 42 },
+        { "inbox.groupByRepo", null },
+        { "inbox.groupByRepo", "false" },
     };
 
     [Theory]
@@ -337,6 +360,27 @@ public class ConfigStorePatchAsyncDottedPathTests
         var options = JsonSerializerOptionsFactory.Storage;
         var cfg = JsonSerializer.Deserialize<AppConfig>(json, options);
         cfg!.Inbox.RecentlyClosedWindowDays.Should().Be(14);
+    }
+
+    // #219 inbox group-by-repo: GroupByRepo is a new trailing-defaulted parameter on
+    // InboxConfig (default true). An existing config.json without the kebab-case
+    // `group-by-repo` key must deserialize with the default so existing users keep
+    // grouping on. Mirrors LegacyConfig_WithoutRecentlyClosedWindowDays_DefaultsTo14.
+    [Fact]
+    public void LegacyConfig_WithoutGroupByRepo_DefaultsToTrue()
+    {
+        const string json = """
+        {
+          "inbox": {
+            "deduplicate": true,
+            "sections": { "review-requested": true },
+            "show-hidden-scope-footer": true
+          }
+        }
+        """;
+        var options = JsonSerializerOptionsFactory.Storage;
+        var cfg = JsonSerializer.Deserialize<AppConfig>(json, options);
+        cfg!.Inbox.GroupByRepo.Should().BeTrue();
     }
 
     // #262: ci-failing was removed as a section. A config.json written by an older build

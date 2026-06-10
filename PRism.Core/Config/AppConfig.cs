@@ -45,13 +45,18 @@ public sealed record InboxConfig(
     // never part of the reorderable/persisted order. Validated as a permutation of
     // these four ids in ConfigStore.PatchAsync.
     string SectionOrder = "review-requested,awaiting-author,authored-by-me,mentioned",
-    // #283 the activity rail is a fully fabricated, non-AI mockup (no seam backing).
-    // It was previously gated on the AI-preview toggle (useAiGate('inboxRanking'));
-    // #283 decouples it onto this dedicated flag, default OFF, so flipping AI preview
-    // ON for fresh installs does not surface a fabricated feed. Config-only (no
-    // Settings UI) until the rail carries real data. Appended LAST so the positional
-    // `new InboxConfig(true, …, 14)` default construction stays valid.
+    // #283 the activity rail (a non-AI inbox panel) was previously gated on the
+    // AI-preview toggle (useAiGate('inboxRanking')); #283 decoupled it onto this
+    // dedicated flag, default OFF. #137 then wired it to the real /api/activity
+    // endpoint and surfaced it as a Settings toggle (InboxPane). A trailing-defaulted
+    // param, so the positional `new InboxConfig(true, …, 14)` default construction
+    // stays valid.
     bool ShowActivityRail = false,
+    // #219 user toggle to switch the Inbox between grouped-by-repo (default) and flat
+    // rendering. A pure frontend-render preference — it does NOT reshape the backend
+    // feed. A trailing-defaulted param so the positional
+    // `new InboxConfig(true, …, 14)` default construction stays valid.
+    bool GroupByRepo = true,
     // #137 additive extra bot logins for the activity rail, comma-separated, matched
     // case-insensitively on top of the built-in `Copilot` baseline and the `[bot]`
     // suffix. Default empty. Settings UI tracked separately in #316. Appended LAST so

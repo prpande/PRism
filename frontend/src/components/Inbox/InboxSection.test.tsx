@@ -28,7 +28,10 @@ function prFor(owner: string, repo: string, n: number): PrInboxItem {
 function makeSection(id: string, items: PrInboxItem[]): InboxSectionDto {
   return { id, label: id, items };
 }
-function renderSection(section: InboxSectionDto, props?: { defaultOpen?: boolean }) {
+function renderSection(
+  section: InboxSectionDto,
+  props?: { defaultOpen?: boolean; groupByRepo?: boolean },
+) {
   return render(
     <MemoryRouter>
       <OpenTabsProvider>
@@ -38,6 +41,7 @@ function renderSection(section: InboxSectionDto, props?: { defaultOpen?: boolean
           showCategoryChip={false}
           maxDiff={100}
           defaultOpen={props?.defaultOpen ?? true}
+          groupByRepo={props?.groupByRepo}
         />
       </OpenTabsProvider>
     </MemoryRouter>,
@@ -85,6 +89,27 @@ describe('InboxSection grouping', () => {
     expect(screen.queryByRole('button', { name: /pull requests?/i })).not.toBeInTheDocument();
     expect(screen.getByText('PR 1')).toBeInTheDocument();
     expect(screen.getAllByText('acme/api').length).toBeGreaterThan(0);
+  });
+
+  it('renders flat rows (no accordion) for a multi-repo section when groupByRepo is off (#219)', () => {
+    renderSection(
+      makeSection('review-requested', [prFor('acme', 'api', 1), prFor('acme', 'web', 2)]),
+      { groupByRepo: false },
+    );
+    // No repo accordions — every PR is a flat InboxRow.
+    expect(screen.queryByRole('button', { name: /pull requests?/i })).not.toBeInTheDocument();
+    expect(screen.getByText('PR 1')).toBeInTheDocument();
+    expect(screen.getByText('PR 2')).toBeInTheDocument();
+    // Flat rows keep the repo name (InboxRow showRepo default stays true).
+    expect(screen.getAllByText('acme/api').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('acme/web').length).toBeGreaterThan(0);
+  });
+
+  it('groupByRepo defaults on: multi-repo section still groups when the prop is omitted (#219)', () => {
+    renderSection(
+      makeSection('review-requested', [prFor('acme', 'api', 1), prFor('acme', 'web', 2)]),
+    );
+    expect(screen.getByRole('button', { name: /acme\/api, 1 pull request/i })).toBeInTheDocument();
   });
 
   it('recently-closed repo groups start collapsed and the caption renders', () => {

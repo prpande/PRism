@@ -206,6 +206,7 @@ describe('PrHeader', () => {
         defaultSort: 'updated',
         sectionOrder: 'review-requested,awaiting-author,authored-by-me,mentioned',
         showActivityRail: false,
+        groupByRepo: true,
       },
       github: {
         host: 'https://github.com',
