@@ -12,6 +12,10 @@ export interface PrDetailContextValue {
   prDetail: PrDetailDto;
   draftSession: UseDraftSessionResult;
   readOnly: boolean;
+  // true only after the SSE subscribe POST settles (propagated from
+  // useActivePrUpdates). Gates AI fetches that must not fire before the
+  // subscription is established (D111 204 race guard).
+  subscribed: boolean;
   // Switches the active sub-tab. Replaces the old navigate(`${base}/files`)
   // call sites (OverviewTab CTA, DraftsTab handleEdit, StaleDraftRow handleShowMe).
   onSelectSubTab: (tab: PrTabId) => void;

@@ -134,6 +134,7 @@ vi.mock('../../hooks/useActivePrUpdates', () => ({
     commentCountDelta: 0,
     isMerged: false,
     isClosed: false,
+    subscribed: true,
     clear: updatesClearSpy,
   }),
 }));
@@ -190,7 +191,9 @@ vi.mock('../../hooks/useFileDiff', () => ({
 vi.mock('../../hooks/useUnionDiff', () => ({
   useUnionDiff: () => ({ data: null, isLoading: false, showSkeleton: false, error: null }),
 }));
-vi.mock('../../hooks/useAiSummary', () => ({ useAiSummary: () => null }));
+vi.mock('../../hooks/useAiSummary', () => ({
+  useAiSummary: () => ({ summary: null, loading: false, error: false }),
+}));
 vi.mock('../../hooks/useAiFileFocus', () => ({ useAiFileFocus: () => null }));
 vi.mock('../../hooks/useAiDraftSuggestions', () => ({ useAiDraftSuggestions: () => null }));
 vi.mock('../../hooks/useFilesTabShortcuts', () => ({ useFilesTabShortcuts: () => {} }));

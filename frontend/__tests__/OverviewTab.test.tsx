@@ -195,8 +195,9 @@ function providerValue(
   prDetail: PrDetailDto,
   draftSession: UseDraftSessionResult,
   onSelectSubTab: (tab: 'overview' | 'files' | 'drafts') => void,
+  subscribed = true,
 ): PrDetailContextValue {
-  return { prRef: ref, prDetail, draftSession, readOnly: false, onSelectSubTab };
+  return { prRef: ref, prDetail, draftSession, readOnly: false, subscribed, onSelectSubTab };
 }
 
 function mountOverview(opts: MockOptions = {}) {

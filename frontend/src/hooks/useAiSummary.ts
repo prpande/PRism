@@ -1,31 +1,43 @@
 import { useEffect, useState } from 'react';
-import { getAiSummary } from '../api/aiSummary';
+import { getAiSummaryResult } from '../api/aiSummary';
 import type { PrReference, PrSummary } from '../api/types';
 
-export function useAiSummary(prRef: PrReference, enabled: boolean): PrSummary | null {
-  const [summary, setSummary] = useState<PrSummary | null>(null);
+export interface AiSummaryState {
+  summary: PrSummary | null;
+  loading: boolean;
+  error: boolean;
+}
+
+export function useAiSummary(
+  prRef: PrReference,
+  enabled: boolean,
+  subscribed: boolean,
+): AiSummaryState {
+  const [state, setState] = useState<AiSummaryState>({
+    summary: null,
+    loading: false,
+    error: false,
+  });
 
   useEffect(() => {
-    if (!enabled) {
-      setSummary(null);
+    // Gate on subscription-established (spec §6): a fetch fired before the SSE subscription
+    // registers would hit the D111 204 and never recover, since this effect's deps wouldn't change.
+    if (!enabled || !subscribed) {
+      setState({ summary: null, loading: false, error: false });
       return;
     }
     let cancelled = false;
-    getAiSummary(prRef)
-      .then((result) => {
-        if (cancelled) return;
-        setSummary(result);
-      })
-      .catch(() => {
-        // Silent failure — AI summary is best-effort cosmetic; the rest of the
-        // Overview tab renders without it. Errors surface in the network tab
-        // for development, but no inline UI signals the failure.
-        if (!cancelled) setSummary(null);
-      });
+    setState({ summary: null, loading: true, error: false });
+    getAiSummaryResult(prRef).then((r) => {
+      if (cancelled) return;
+      if (r.kind === 'ok') setState({ summary: r.summary, loading: false, error: false });
+      else if (r.kind === 'error') setState({ summary: null, loading: false, error: true });
+      else setState({ summary: null, loading: false, error: false }); // absent (204) → hidden
+    });
     return () => {
       cancelled = true;
     };
-  }, [prRef.owner, prRef.repo, prRef.number, enabled]);
+  }, [prRef.owner, prRef.repo, prRef.number, enabled, subscribed]);
 
-  return summary;
+  return state;
 }

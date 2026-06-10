@@ -12,11 +12,12 @@ import { ReviewFilesCta } from './ReviewFilesCta';
 import styles from './OverviewTab.module.css';
 
 export function OverviewTab() {
-  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab } = usePrDetailContext();
+  const { prRef, prDetail, draftSession, readOnly, onSelectSubTab, subscribed } =
+    usePrDetailContext();
   const aiOn = useAiGate('summary');
 
   const diff = useFileDiff(prRef, buildAllRange(prDetail.pr));
-  const aiSummary = useAiSummary(prRef, aiOn);
+  const { summary: aiSummary } = useAiSummary(prRef, aiOn, subscribed);
 
   const filesCount = diff.data?.files.length ?? 0;
   const threadsCount = prDetail.reviewComments.length;
