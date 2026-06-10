@@ -92,3 +92,37 @@ describe('deriveFace — pending / reconfirm / action / disabled', () => {
     expect(f.mainDisabled).toBe(true);
   });
 });
+
+import { deriveMenu } from './reviewActionState';
+
+const ids = (sections: ReturnType<typeof deriveMenu>) => sections.flatMap((s) => s.items.map((it) => it.id));
+
+describe('deriveMenu', () => {
+  it('normal verdict menu: 3 verdicts + submit, checked reflects draftVerdict', () => {
+    const m = deriveMenu(inputs({ draftVerdict: 'approve' }));
+    expect(ids(m)).toEqual(['verdict:approve', 'verdict:request-changes', 'verdict:comment', 'submit']);
+    const approve = m.flatMap((s) => s.items).find((it) => it.id === 'verdict:approve');
+    expect(approve?.checked).toBe(true);
+  });
+  it('pending menu: resume + verdicts + discard-pending', () => {
+    const m = deriveMenu(inputs({ draftVerdict: 'approve', pendingReviewId: 'PR_1' }));
+    expect(ids(m)).toContain('resume');
+    expect(ids(m)).toContain('discard-pending');
+  });
+  it('pending + dialogOpen → discard-pending suppressed (invariant)', () => {
+    const m = deriveMenu({ ...inputs({ draftVerdict: 'approve', pendingReviewId: 'PR_1' }), dialogOpen: true });
+    expect(ids(m)).not.toContain('discard-pending');
+  });
+  it('closed/merged → discard-all only', () => {
+    const m = deriveMenu({ ...inputs({ draftComments: [{} as never] }), prState: 'merged' });
+    expect(ids(m)).toEqual(['discard-all']);
+  });
+  it('closed/merged with no drafts → empty menu', () => {
+    const m = deriveMenu({ ...inputs(), prState: 'closed' });
+    expect(ids(m)).toEqual([]);
+  });
+  it('needs-reconfirm → reconfirm note in the verdict section', () => {
+    const m = deriveMenu(inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }));
+    expect(ids(m)).toContain('reconfirm-note');
+  });
+});

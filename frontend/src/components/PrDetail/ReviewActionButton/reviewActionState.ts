@@ -82,3 +82,65 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
     pendingTooltip: pending ? 'Pending review on GitHub — not yet submitted' : null,
   };
 }
+
+export interface ReviewActionMenuItem {
+  id: string;
+  label: string;
+  kind: 'verdict' | 'action' | 'danger' | 'note'; // 'note' = non-interactive label row
+  verdict?: DraftVerdict;
+  checked?: boolean;
+}
+export interface ReviewActionMenuSection {
+  header?: string;
+  items: ReviewActionMenuItem[];
+}
+
+const VERDICT_ITEMS = (current: DraftVerdict | null): ReviewActionMenuItem[] =>
+  (Object.keys(VERDICT_LABEL) as DraftVerdict[]).map((v) => ({
+    id: `verdict:${v}`,
+    label: VERDICT_LABEL[v],
+    kind: 'verdict',
+    verdict: v,
+    checked: current === v,
+  }));
+
+const RECONFIRM_NOTE: ReviewActionMenuItem = {
+  id: 'reconfirm-note',
+  label: 'Verdict needs re-confirmation',
+  kind: 'note',
+};
+
+export function deriveMenu(i: ReviewActionInputs): ReviewActionMenuSection[] {
+  const { session, prState, dialogOpen } = i;
+  const isClosedOrMerged = prState !== 'open';
+  const pending = session.pendingReviewId !== null;
+  const needsReconfirm = session.draftVerdictStatus === 'needs-reconfirm';
+  const hasDrafts = session.draftComments.length > 0 || session.draftReplies.length > 0;
+  // Spec §4.5: needs-reconfirm is surfaced in TWO places — the button face (Task 4)
+  // and a menu note. Re-selecting the verdict re-confirms it (existing patchVerdict).
+  const note: ReviewActionMenuItem[] = needsReconfirm ? [RECONFIRM_NOTE] : [];
+
+  if (isClosedOrMerged) {
+    return hasDrafts
+      ? [{ items: [{ id: 'discard-all', label: 'Discard all drafts', kind: 'danger' }] }]
+      : [];
+  }
+
+  if (pending) {
+    const items: ReviewActionMenuItem[] = [
+      { id: 'resume', label: 'Resume & submit…', kind: 'action' },
+      ...note,
+      ...VERDICT_ITEMS(session.draftVerdict),
+    ];
+    // Mutual-exclusion invariant: only one discard-pending path live at a time.
+    const danger: ReviewActionMenuSection[] = dialogOpen
+      ? []
+      : [{ items: [{ id: 'discard-pending', label: 'Discard pending review', kind: 'danger' }] }];
+    return [{ header: 'Pending review on GitHub', items }, ...danger];
+  }
+
+  return [
+    { header: 'Verdict', items: [...note, ...VERDICT_ITEMS(session.draftVerdict)] },
+    { items: [{ id: 'submit', label: 'Submit review…', kind: 'action' }] },
+  ];
+}
