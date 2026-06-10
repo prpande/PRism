@@ -1,8 +1,12 @@
 .tab {
   position: fixed;
-  /* anti-collision: parked below the Files-tab toolbar band. STARTING VALUE —
-     measured/confirmed in Task 9. Do not assume 160px is final. */
-  top: 160px;
+  /* anti-collision: parked below the Files-tab toolbar band.
+     MEASURED in Task 11 Playwright anti-collision test:
+       toolbar bottom @ 1440px: 302px
+       toolbar bottom @ 900px:  302px  (toolbar does not wrap with 3 controls)
+       max toolbar bottom:      302px  → top = 302 + 12px gutter = 314px
+     Verified by D-anti-collision-1 and D-anti-collision-2 tests. */
+  top: 314px;
   right: 0;
   z-index: 49; /* under the drawer (50) so the open drawer covers transit */
   display: flex;
