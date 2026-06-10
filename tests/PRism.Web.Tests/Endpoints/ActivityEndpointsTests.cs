@@ -18,6 +18,7 @@ public sealed class ActivityEndpointsTests
     private sealed class StubProvider(ActivityResponse resp) : IActivityProvider
     {
         public Task<ActivityResponse> GetActivityAsync(CancellationToken ct) => Task.FromResult(resp);
+        public void Reset() { }
     }
 
     // Builds a factory whose DI has IActivityProvider swapped for a stub.
@@ -56,7 +57,19 @@ public sealed class ActivityEndpointsTests
     private static ActivityResponse OneReviewed() => new(
         [new ActivityItem("alice", null, false, ActivityVerb.Reviewed, "acme/api", 7, "Fix",
             "https://github.com/acme/api/pull/7", System.DateTimeOffset.UnixEpoch, ActivitySource.ReceivedEvent)],
-        System.DateTimeOffset.UnixEpoch, new ActivityDegradation(false));
+        System.DateTimeOffset.UnixEpoch, new ActivityDegradation(false, Notifications: false, Watching: false), []);
+
+    // Two actorless notification items + a Watching list — used by the wire-value pin test.
+    private static ActivityResponse NotificationFeed() => new(
+        [
+            new ActivityItem(null, null, false, ActivityVerb.ReviewRequested, "acme/api", 1842, "PR #1842",
+                "https://github.com/acme/api/pull/1842", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem(null, null, false, ActivityVerb.Mentioned, "acme/api", 1827, "PR #1827",
+                "https://github.com/acme/api/pull/1827", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+        ],
+        System.DateTimeOffset.UnixEpoch,
+        new ActivityDegradation(ReceivedEvents: false, Notifications: false, Watching: false),
+        [new PRism.Core.Activity.WatchedRepoActivity("acme/api", 2, "https://github.com/acme/api")]);
 
     [Fact]
     public async Task Returns_200_with_items_and_kebab_case_enums()
@@ -80,10 +93,84 @@ public sealed class ActivityEndpointsTests
     }
 
     [Fact]
+    public async Task Returns_notification_source_watching_and_kebab_case_verbs_on_wire()
+    {
+        // Pin the exact serialized wire values for the new P2 shape so frontend
+        // Tasks 11–12 can key on the literal kebab-case strings, not C# casing.
+        var (inner, outer) = FactoryWith(NotificationFeed());
+        await using var _ = inner;
+        await using var __ = outer;
+        var client = AuthenticatedClient(outer);
+
+        var resp = await client.GetAsync(new System.Uri("/api/activity", System.UriKind.Relative));
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await resp.Content.ReadAsStringAsync();
+
+        // Architectural invariant: ActivitySource.Notification → "notification" (NOT "Notification")
+        json.Should().Contain("\"source\":\"notification\"");
+        // ActivityVerb.ReviewRequested → "review-requested" (NOT "reviewRequested")
+        json.Should().Contain("\"verb\":\"review-requested\"");
+        // ActivityVerb.Mentioned → "mentioned"
+        json.Should().Contain("\"verb\":\"mentioned\"");
+        // watching array is present
+        json.Should().Contain("\"watching\":");
+
+        var body = JsonDocument.Parse(json).RootElement;
+        body.GetProperty("items").GetArrayLength().Should().Be(2);
+
+        // degraded object carries the three P2 flags (camelCase property names, boolean values)
+        var degraded = body.GetProperty("degraded");
+        degraded.GetProperty("notifications").GetBoolean().Should().BeFalse();
+        degraded.GetProperty("watching").GetBoolean().Should().BeFalse();
+        degraded.GetProperty("receivedEvents").GetBoolean().Should().BeFalse();
+
+        // watching array has one entry
+        body.GetProperty("watching").GetArrayLength().Should().Be(1);
+    }
+
+    // Enrichment verbs (resolved from the GraphQL timeline) must serialize kebab-case so the
+    // frontend ActivityVerb union keys match — the compound verb is the one that bites.
+    private static ActivityResponse EnrichedFeed() => new(
+        [
+            new ActivityItem("dave", null, false, ActivityVerb.Approved, "acme/api", 1, "t",
+                "https://github.com/acme/api/pull/1", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem("erin", null, false, ActivityVerb.ChangesRequested, "acme/api", 2, "t",
+                "https://github.com/acme/api/pull/2", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem("dependabot[bot]", null, true, ActivityVerb.Pushed, "acme/api", 3, "t",
+                "https://github.com/acme/api/pull/3", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem(null, null, false, ActivityVerb.CiActivity, "acme/api", 4, "t",
+                "https://github.com/acme/api/pull/4", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem(null, null, false, ActivityVerb.Authored, "acme/api", 5, "t",
+                "https://github.com/acme/api/pull/5", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+        ],
+        System.DateTimeOffset.UnixEpoch, new ActivityDegradation(false, false, false), []);
+
+    [Fact]
+    public async Task Enrichment_verbs_serialize_kebab_case_on_wire()
+    {
+        var (inner, outer) = FactoryWith(EnrichedFeed());
+        await using var _ = inner;
+        await using var __ = outer;
+        var client = AuthenticatedClient(outer);
+
+        var resp = await client.GetAsync(new System.Uri("/api/activity", System.UriKind.Relative));
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await resp.Content.ReadAsStringAsync();
+        json.Should().Contain("\"verb\":\"approved\"");
+        json.Should().Contain("\"verb\":\"changes-requested\"");
+        json.Should().Contain("\"verb\":\"pushed\"");
+        json.Should().Contain("\"verb\":\"ci-activity\"");
+        json.Should().Contain("\"verb\":\"authored\"");
+    }
+
+    [Fact]
     public async Task Returns_200_degraded_with_empty_items()
     {
         var (inner, outer) = FactoryWith(new ActivityResponse(
-            [], System.DateTimeOffset.UnixEpoch, new ActivityDegradation(true)));
+            [], System.DateTimeOffset.UnixEpoch,
+            new ActivityDegradation(true, Notifications: false, Watching: false), []));
         await using var _ = inner;
         await using var __ = outer;
         var client = AuthenticatedClient(outer);

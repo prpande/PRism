@@ -60,7 +60,12 @@ The current build is an unsigned preview (`v0.2.0`). PRism is open source and un
 
 ### Windows
 
-Run the installer, or launch the portable executable. Windows SmartScreen shows **"Windows protected your PC"** because the binary isn't code-signed. Click **More info → Run anyway**. PRism opens to the Setup screen, served on a local port in the `5180–5199` range.
+Two builds are offered, and both work the same once running — pick whichever fits how you want to install:
+
+- **Installer** (`PRism Setup …exe`) — unpacks once at install time (no admin rights needed), then launches like any installed app.
+- **Portable** (`PRism …exe`) — runs without installing, but re-extracts the full app to your temp folder on **every** launch, so its cold-start is noticeably slower than the installer's, especially the first time on a new machine.
+
+Run the installer, or launch the portable executable. Windows SmartScreen shows **"Windows protected your PC"** because the binary isn't code-signed. Click **More info → Run anyway**. The first launch of an unsigned build can take a while as Windows Defender scans the freshly-extracted files; this is a one-time, OS-level cost. PRism opens to the Setup screen, served on a local port in the `5180–5199` range.
 
 ### macOS
 
