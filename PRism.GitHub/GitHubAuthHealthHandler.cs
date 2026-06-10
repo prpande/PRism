@@ -53,6 +53,11 @@ public sealed class GitHubAuthHealthHandler : DelegatingHandler
         }
         else if (response.IsSuccessStatusCode)
         {
+            // Not staleness-guarded: a 2xx that was in flight before the token was
+            // revoked could briefly clear a latch two later 401s had set. This
+            // self-heals — the next authenticated call with the now-bad token 401s
+            // and re-accumulates toward the threshold within a poll cadence. Strict
+            // monotonicity isn't worth the added sequencing on a self-correcting edge.
             _health.MarkValid();
         }
 
