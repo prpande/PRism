@@ -20,6 +20,7 @@ const inputs = (over: Partial<ReviewSessionDto> = {}, rest = {}) => ({
   validatorResults: [],
   inSubmitFlow: false,
   dialogOpen: false,
+  sessionLoaded: true,
   ...rest,
 });
 
@@ -99,6 +100,11 @@ describe('deriveFace — pending / reconfirm / action / disabled', () => {
     expect(f.mainAction).toBe('none');
     expect(f.mainDisabled).toBe(true);
   });
+  it('session not loaded → frozen + mainDisabled (chevron + main inert, mirrors old disabled override)', () => {
+    const f = deriveFace({ ...inputs({ draftVerdict: 'approve' }), sessionLoaded: false });
+    expect(f.frozen).toBe(true);
+    expect(f.mainDisabled).toBe(true);
+  });
 });
 
 import { deriveMenu } from './reviewActionState';
@@ -147,5 +153,20 @@ describe('deriveMenu', () => {
       inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }),
     );
     expect(ids(m)).toContain('reconfirm-note');
+  });
+  it('empty open session (submit disabled, reason a) → NO submit item, only the Verdict section', () => {
+    const m = deriveMenu(inputs());
+    expect(ids(m)).toEqual(['verdict:approve', 'verdict:request-changes', 'verdict:comment']);
+    expect(ids(m)).not.toContain('submit');
+  });
+  it('needs-reconfirm (submit disabled) → submit item omitted (no bypass of the disabled main)', () => {
+    const m = deriveMenu(
+      inputs({ draftVerdict: 'approve', draftVerdictStatus: 'needs-reconfirm' }),
+    );
+    expect(ids(m)).not.toContain('submit');
+  });
+  it('session not loaded → submit item omitted', () => {
+    const m = deriveMenu({ ...inputs({ draftVerdict: 'approve' }), sessionLoaded: false });
+    expect(ids(m)).not.toContain('submit');
   });
 });

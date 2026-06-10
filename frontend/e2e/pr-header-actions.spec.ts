@@ -207,17 +207,13 @@ test.describe('#291 ReviewActionButton + AskAiPullTab', () => {
     await page.waitForSelector('[data-testid="pr-header"]');
 
     const main = page.getByTestId('review-action-main');
-    // The label should say "Resume review".
+    // The accessible label is "Resume review" (the asterisk is aria-hidden so it
+    // doesn't change the accessible name — it's a purely visual dirty-marker).
     await expect(main).toHaveText(/Resume review/);
-    // The pending asterisk is aria-hidden so it doesn't affect the accessible name,
-    // but it is visually present in the DOM.
-    await expect(main.locator('[data-testid="review-action-reconfirm"], .asterisk')).toHaveCount(
-      0,
-      { timeout: 100 },
-    );
-    // Check asterisk via inner text (aria-hidden span IS in the DOM/textContent).
-    const innerText = await main.evaluate((el) => el.textContent ?? '');
-    expect(innerText).toContain('*');
+    // The pending marker ("*") IS rendered in the DOM (aria-hidden span with its
+    // own testid — a stable hook, unlike the runtime-hashed CSS-module class).
+    await expect(main.getByTestId('review-action-pending')).toBeVisible();
+    await expect(main).toContainText('*');
 
     // Tooltip reflects pending state.
     const title = await main.getAttribute('title');

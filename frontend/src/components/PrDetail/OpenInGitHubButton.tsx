@@ -24,7 +24,7 @@ export function OpenInGitHubButton({ href }: OpenInGitHubButtonProps) {
 
   return (
     <a
-      className="btn-icon open-in-github-button"
+      className="btn btn-icon open-in-github-button"
       href={href}
       target="_blank"
       rel="noreferrer"

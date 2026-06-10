@@ -219,25 +219,28 @@ test('S-discard 3 — lost-response (afterEffect) Post errors, then a second Pos
   // papered over.
 });
 
-test('S-discard 4 — Discard the idle pending review via the PrHeader pill', async ({ page }) => {
+test('S-discard 4 — Discard the idle pending review via the caret menu', async ({ page }) => {
   await stageLeftoverPendingReview(page);
 
   // Sanity: the leftover pending review exists on github.com (the fake's store).
   expect((await inspectPendingReview(page.request, PR)).pendingReview).not.toBeNull();
 
-  // With the dialog closed, the pill surfaces next to Submit.
-  const pill = page.locator('[data-testid="pending-review-pill"]');
-  await expect(pill).toBeVisible({ timeout: 10_000 });
-  await pill.click();
+  // New header UI (#291): with the submit dialog closed, an idle pending review
+  // surfaces as the "*" dirty-marker on the "Resume review" split-button (the old
+  // standalone pill is gone); discarding it is a caret-menu action.
+  const main = page.getByTestId('review-action-main');
+  await expect(main.getByTestId('review-action-pending')).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId('review-action-chevron').click(); // open the caret menu
+  await page.getByRole('menuitem', { name: /discard pending review/i }).click();
 
   // The shared confirmation modal → confirm the discard.
   const modal = page.locator('[data-testid="discard-pending-review-modal"]');
   await expect(modal).toBeVisible();
   await page.locator('[data-testid="confirm-discard-pending"]').click();
 
-  // The pill disappears (session.pendingReviewId cleared → StateChanged refetch)
-  // and the pending review is gone on github.com.
-  await expect(pill).toHaveCount(0, { timeout: 10_000 });
+  // The pending marker disappears (session.pendingReviewId cleared → StateChanged
+  // refetch) and the pending review is gone on github.com.
+  await expect(main.getByTestId('review-action-pending')).toHaveCount(0, { timeout: 10_000 });
   await expect
     .poll(async () => (await inspectPendingReview(page.request, PR)).pendingReview, {
       timeout: 10_000,

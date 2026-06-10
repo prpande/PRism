@@ -471,6 +471,7 @@ export function PrHeader({
             <OpenInGitHubButton href={htmlUrl} />
             <ReviewActionButton
               session={session ?? EMPTY_SESSION}
+              sessionLoaded={session !== null}
               prState={prState}
               headShaDrift={headShaDrift}
               validatorResults={validatorResults}

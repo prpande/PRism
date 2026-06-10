@@ -31,6 +31,7 @@ const props = (over = {}, h = handlers()) => ({
   validatorResults: [],
   inSubmitFlow: false,
   dialogOpen: false,
+  sessionLoaded: true,
   ...h,
   ...over,
 });
@@ -76,6 +77,24 @@ describe('ReviewActionButton — menu', () => {
     await userEvent.click(screen.getByTestId('review-action-chevron'));
     await userEvent.tab();
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+  it('selecting a menu item returns focus to the chevron (keyboard a11y)', async () => {
+    render(<ReviewActionButton {...props({ session: session({ draftVerdict: 'approve' }) })} />);
+    const chevron = screen.getByTestId('review-action-chevron');
+    await userEvent.click(chevron);
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Request changes' }));
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(chevron).toHaveFocus();
+  });
+  it('session not loaded → main + chevron both inert (no patch before session arrives)', async () => {
+    const h = handlers();
+    render(
+      <ReviewActionButton
+        {...props({ sessionLoaded: false, session: session({ draftVerdict: 'approve' }) }, h)}
+      />,
+    );
+    expect(screen.getByTestId('review-action-chevron')).toBeDisabled();
+    expect(screen.getByTestId('review-action-main')).toBeDisabled();
   });
   it('frozen (inSubmitFlow) disables the chevron — no menu', async () => {
     render(

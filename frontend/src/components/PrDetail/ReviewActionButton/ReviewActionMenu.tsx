@@ -6,7 +6,10 @@ import styles from './ReviewActionButton.module.css';
 
 interface Props {
   sections: ReviewActionMenuSection[];
-  onClose: () => void;
+  // restoreFocus tells the parent whether to return focus to the trigger:
+  // true for Escape (intentional keyboard dismiss), false for Tab / outside
+  // click (let the browser's natural focus flow proceed — don't steal focus).
+  onClose: (opts?: { restoreFocus?: boolean }) => void;
   onSelect: (id: string, verdict?: DraftVerdict) => void;
   triggerRef?: React.RefObject<HTMLElement | null>;
 }
@@ -24,16 +27,17 @@ export function ReviewActionMenu({ sections, onClose, onSelect, triggerRef }: Pr
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        onClose();
+        onClose({ restoreFocus: true }); // intentional keyboard dismiss → focus the trigger
       }
       // Tab closes the menu without trapping focus (ARIA APG menu pattern) —
-      // do NOT preventDefault, so focus flows naturally past the control.
-      else if (e.key === 'Tab') onClose();
+      // do NOT preventDefault and do NOT restore focus, so focus flows naturally
+      // past the control to the next tab stop.
+      else if (e.key === 'Tab') onClose({ restoreFocus: false });
     };
     const onDocClick = (e: MouseEvent) => {
       const t = e.target as Node;
       if (ref.current && !ref.current.contains(t) && !triggerRef?.current?.contains(t)) {
-        onClose();
+        onClose({ restoreFocus: false }); // outside click → don't steal focus from the target
       }
     };
     document.addEventListener('keydown', onKey);

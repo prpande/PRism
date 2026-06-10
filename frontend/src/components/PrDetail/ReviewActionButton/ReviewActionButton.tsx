@@ -34,9 +34,14 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
   const face = deriveFace(props);
   const [menuOpen, setMenuOpen] = useState(false);
   const chevronRef = useRef<HTMLButtonElement>(null);
-  const closeMenu = useCallback(() => {
+  // Return focus to the chevron ONLY on intentional keyboard dismissal (Escape)
+  // or after activating a menu item. On Tab / outside-click the menu's document
+  // handler fires before the user's intended target settles, so forcing focus
+  // back to the chevron would steal it (Copilot review). Those paths pass
+  // restoreFocus:false and let the browser's natural focus flow proceed.
+  const closeMenu = useCallback((opts?: { restoreFocus?: boolean }) => {
     setMenuOpen(false);
-    chevronRef.current?.focus();
+    if (opts?.restoreFocus) chevronRef.current?.focus();
   }, []);
 
   const onMainClick = () => {
@@ -73,7 +78,11 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
         <span className={styles.label}>
           {face.label}
           {face.pending && (
-            <span className={styles.asterisk} aria-hidden="true">
+            <span
+              className={styles.asterisk}
+              data-testid="review-action-pending"
+              aria-hidden="true"
+            >
               *
             </span>
           )}
@@ -106,7 +115,9 @@ export function ReviewActionButton(props: ReviewActionButtonProps) {
             else if (id === 'discard-pending') props.onDiscardPending();
             else if (id === 'discard-all') props.onDiscardAllDrafts();
             else if (id === 'reconfirm-note') return; // non-interactive label
-            setMenuOpen(false);
+            // Keyboard activation (Enter/Space) unmounts the focused menuitem;
+            // restore focus to the chevron so focus never lands on document.body.
+            closeMenu({ restoreFocus: true });
           }}
         />
       )}

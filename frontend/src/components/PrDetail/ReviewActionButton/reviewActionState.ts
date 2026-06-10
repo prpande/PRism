@@ -11,6 +11,11 @@ export interface ReviewActionInputs {
   validatorResults: ValidatorResult[];
   inSubmitFlow: boolean;
   dialogOpen: boolean;
+  // False while the draft session GET is still in flight (PrHeader passes
+  // `session === null`). The old VerdictPicker/SubmitButton cluster was disabled
+  // until the real session arrived; we mirror that by freezing the whole control
+  // so the chevron menu can't patch a verdict against the EMPTY_SESSION stand-in.
+  sessionLoaded: boolean;
 }
 
 export interface ReviewActionFace {
@@ -65,7 +70,9 @@ export function deriveFace(i: ReviewActionInputs): ReviewActionFace {
   const REASON_A = 'Pick a verdict or add a comment, reply, or summary before submitting.';
   const submitReason =
     rawReason === REASON_A ? 'Pick a verdict using the ▾ menu, or add a comment.' : rawReason;
-  const frozen = i.inSubmitFlow;
+  // Freeze (disable main + chevron, gate the menu) while in the submit flow OR
+  // before the draft session has loaded — see ReviewActionInputs.sessionLoaded.
+  const frozen = i.inSubmitFlow || !i.sessionLoaded;
   const mainDisabled = isClosedOrMerged || frozen || submitReason !== null;
 
   return {
@@ -142,8 +149,21 @@ export function deriveMenu(i: ReviewActionInputs): ReviewActionMenuSection[] {
     return [{ header: 'Pending review on GitHub', items }, ...danger];
   }
 
+  // Gate the menu's "Submit review…" item on the SAME predicate as the main
+  // button (Copilot review): when submit is disabled — frozen, session not yet
+  // loaded, or submitDisabledReason is non-null (empty session / head drift /
+  // needs-reconfirm) — omit the item rather than offer an inconsistent entry
+  // point that bypasses the disabled main button. For reason (a) this leaves
+  // just the Verdict section, which is exactly where the user resolves it.
+  const submitDisabled =
+    i.inSubmitFlow ||
+    !i.sessionLoaded ||
+    submitDisabledReason(session, i.headShaDrift, i.validatorResults) !== null;
+  const submitSection: ReviewActionMenuSection[] = submitDisabled
+    ? []
+    : [{ items: [{ id: 'submit', label: 'Submit review…', kind: 'action' }] }];
   return [
     { header: 'Verdict', items: [...note, ...VERDICT_ITEMS(session.draftVerdict)] },
-    { items: [{ id: 'submit', label: 'Submit review…', kind: 'action' }] },
+    ...submitSection,
   ];
 }
