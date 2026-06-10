@@ -349,6 +349,46 @@ test('activity rail is gated by inbox.showActivityRail, independent of AI previe
 
 // ---------------------------------------------------------------------------
 
+test('manual Refresh button drives the loading bar and re-enables', async ({ page }) => {
+  // #311: clicking the inbox Refresh button POSTs /api/inbox/refresh, which drives
+  // the inbox loading bar active (button disabled during the in-flight request) and
+  // then re-enables once the refresh settles. Note: the GET '**/api/inbox' route glob
+  // does NOT match '/api/inbox/refresh' (no trailing wildcard), so the POST is otherwise
+  // unhandled — it must be stubbed explicitly here.
+  await setupBaseMocks(page);
+  await page.route('**/api/inbox', (route: Route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(sampleInbox),
+    }),
+  );
+  // Stub the refresh POST with a short delay so the active loading-bar / disabled-button
+  // transition is observable, without an arbitrary long sleep.
+  await page.route('**/api/inbox/refresh', async (route: Route) => {
+    await new Promise((r) => setTimeout(r, 800));
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '' });
+  });
+
+  await page.goto('/');
+  await expect(page.getByText('Refactor auth flow')).toBeVisible({ timeout: 30_000 });
+
+  const refreshButton = page.getByTestId('inbox-refresh-button');
+  await expect(refreshButton).toBeVisible();
+  await expect(refreshButton).toBeEnabled();
+
+  await refreshButton.click();
+
+  // The loading bar reaches the active state while the refresh POST is in flight…
+  await expect(page.getByTestId('inbox-loading-bar')).toHaveAttribute('data-active', 'true');
+
+  // …and once the refresh settles, the button re-enables (timing-tolerant: we assert the
+  // settled end-state rather than racing the loading-bar's exact off frame).
+  await expect(refreshButton).toBeEnabled();
+});
+
+// ---------------------------------------------------------------------------
+
 test.skip('SSE banner appears on inbox-updated event', () => {
   // Deferred: Playwright's route mocking does not naturally support streaming
   // SSE responses. Driving an event mid-test would require a fake EventSource

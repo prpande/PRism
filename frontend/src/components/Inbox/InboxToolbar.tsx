@@ -8,11 +8,22 @@ interface Props {
   initialSort: SortKey;
   ciProbeComplete: boolean;
   onState(state: FilterBarState): void;
+  refresh: () => void;
+  isRefreshing: boolean;
+  justRefreshed: boolean;
 }
 
-// One merged input (filter + paste-to-open) lives inside FilterBar now — the
-// toolbar just wraps it (padding / background / bottom border).
-export function InboxToolbar({ sections, initialSort, ciProbeComplete, onState }: Props) {
+// One merged input (filter + paste-to-open) lives inside FilterBar; the toolbar wraps it
+// (padding / background / bottom border) and forwards the manual-refresh props (#311).
+export function InboxToolbar({
+  sections,
+  initialSort,
+  ciProbeComplete,
+  onState,
+  refresh,
+  isRefreshing,
+  justRefreshed,
+}: Props) {
   return (
     <div className={styles.toolbar}>
       <FilterBar
@@ -20,6 +31,9 @@ export function InboxToolbar({ sections, initialSort, ciProbeComplete, onState }
         initialSort={initialSort}
         ciProbeComplete={ciProbeComplete}
         onState={onState}
+        refresh={refresh}
+        isRefreshing={isRefreshing}
+        justRefreshed={justRefreshed}
       />
     </div>
   );
