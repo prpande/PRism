@@ -328,7 +328,7 @@ git add PRism.Core/Activity/RawNotification.cs PRism.Core/Activity/INotification
 git commit -m "feat(#137): notification + watched-repos reader interfaces (since param) and raw types"
 ```
 
-> **Open decision for owner (B2):** `all=false` (unread-only, Task 4) couples the rail to GitHub's read-state — reading a notification on github.com clears it from the rail. The alternative `all=true&since=` shows recent activity regardless of read-state (more complete, noisier). Plan ships `all=false&since={24h}` (fresh + bounded), matching the live-data probe. Flagged for owner; reversible by flipping one query flag in Task 4.
+> **Owner decision (resolved 2026-06-10):** use `all=true&since={24h}` — recent activity regardless of GitHub read-state (decoupled from github.com reads; more complete, noisier). The volume this surfaces is what #315's group-by-repo/scroll is for.
 
 ---
 
@@ -338,7 +338,7 @@ git commit -m "feat(#137): notification + watched-repos reader interfaces (since
 - Create: `PRism.GitHub/Activity/GitHubNotificationsReader.cs`
 - Test: `tests/PRism.GitHub.Tests/Activity/GitHubNotificationsReaderTests.cs`
 
-Mirror `GitHubReceivedEventsReader` (ctor: `IHttpClientFactory` + `Func<Task<string?>> readToken`; no login — `/notifications` is the authed user's). Endpoint: `GET notifications?all=false&since={since:O}&per_page=100`. Parse each: `repository.full_name`, `reason`, `subject.type` (keep only `"PullRequest"`), `subject.url` → trailing `/pulls/{n}` for `PrNumber` (drop if none), `subject.title`, `updated_at`.
+Mirror `GitHubReceivedEventsReader` (ctor: `IHttpClientFactory` + `Func<Task<string?>> readToken`; no login — `/notifications` is the authed user's). Endpoint: `GET notifications?all=true&since={since:O}&per_page=100` (owner chose `all=true` — recent activity regardless of read-state). Parse each: `repository.full_name`, `reason`, `subject.type` (keep only `"PullRequest"`), `subject.url` → trailing `/pulls/{n}` for `PrNumber` (drop if none), `subject.title`, `updated_at`.
 
 - [ ] **Step 1: Write failing tests (mocked HttpClient)** — copy the `MakeReader` mock-handler helper from `GitHubReceivedEventsReaderTests`. Cover:
   - Parses a PullRequest-subject notification (reason, repo, prNumber from subject.url, title, updated_at).
@@ -419,7 +419,7 @@ public sealed partial class GitHubNotificationsReader : INotificationsReader
             using var http = _httpFactory.CreateClient("github");
             var sinceParam = Uri.EscapeDataString(since.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
             using var req = new HttpRequestMessage(HttpMethod.Get,
-                $"notifications?all=false&since={sinceParam}&per_page={PerPage}");
+                $"notifications?all=true&since={sinceParam}&per_page={PerPage}");
             if (!string.IsNullOrEmpty(token))
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             req.Headers.UserAgent.ParseAdd("PRism/0.1");
@@ -1178,5 +1178,5 @@ git commit -m "feat(#137): inbox skeleton shows Activity + Watching rail panels"
 
 - **Out-of-band PAT rotation** (editing the credential store directly, not via any `/api/auth/*` endpoint) is not detectable by the process; the stale-feed window is bounded to the 60s TTL. Accepted for the single-user localhost threat model.
 - **Notification pagination:** `per_page=100` is not paginated. A user with >100 unread in-window PR notifications gets a truncated feed (and a possibly-undercounted Watching count) with no truncation signal. Accepted bound for v1; revisit if it bites in dogfood.
-- **`all=false` read-state coupling** (see Task 3 owner decision): reading a notification on github.com removes it from the rail. Shipping `all=false`; flip to `all=true` if the trial shows it feels lossy.
-- **GHES host:** URLs use the configured host (default `github.com`). If PRism never targets GHES this is moot; the host plumbing keeps it correct if it ever does.
+- **Notification volume (`all=true`):** owner chose read-decoupled `all=true&since=24h`, which is noisier than unread-only (returns all subscribed activity in-window). Bounded by `per_page=100` + the 24h window + the visible-12 cap; the broader organization of that volume is #315's job (group-by-repo + scroll).
+- **GHES host:** owner chose to keep the host configurable. URLs use the configured GitHub host (default `github.com`), so Watching/notification links stay correct on a GHES instance.
