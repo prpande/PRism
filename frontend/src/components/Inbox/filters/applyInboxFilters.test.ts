@@ -3,6 +3,7 @@ import {
   applyInboxFilters,
   looksLikePrUrl,
   looksLikeUrl,
+  SORT_OPTIONS,
   type InboxFilters,
   type SortKey,
 } from './applyInboxFilters';
@@ -185,4 +186,15 @@ describe('looksLikeUrl', () => {
     expect(looksLikeUrl('')).toBe(false);
     expect(looksLikeUrl('github.com/o/r')).toBe(false); // no scheme
   });
+});
+
+it('sort labels are direction-encoding and keys are unchanged', () => {
+  // #300 — labels read consistently and convey their fixed (descending) direction
+  // without a toggle. Keys MUST be unchanged so persisted inbox.defaultSort survives.
+  expect(SORT_OPTIONS).toEqual([
+    { key: 'updated', label: 'Recently updated' },
+    { key: 'pushed', label: 'Recently pushed' },
+    { key: 'diff', label: 'Largest diff' },
+    { key: 'comments', label: 'Most comments' },
+  ]);
 });
