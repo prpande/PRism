@@ -78,6 +78,16 @@ const EMPTY_SESSION: ReviewSessionDto = {
   fileViewState: { viewedFiles: {} },
 };
 
+// The PR-root review summary is the draft comment with both filePath and lineNumber
+// null; its body lives in draftComments. Named here so the discard-all modal can
+// count inline threads separately from the summary (mirrors the helper that used to
+// live in DiscardAllDraftsButton, removed in this slice).
+function prRootSummaryBody(s: ReviewSessionDto): string {
+  return (
+    s.draftComments.find((d) => d.filePath === null && d.lineNumber === null)?.bodyMarkdown ?? ''
+  ).trim();
+}
+
 interface PrHeaderProps {
   reference: PrReference;
   title: string;
@@ -559,17 +569,14 @@ export function PrHeader({
         <DiscardAllConfirmationModal
           open={discardAllModalOpen}
           prState={prState}
+          // Inline threads only — exclude the PR-root summary (filePath/lineNumber
+          // null), which is named separately via hasSummary, to avoid double-counting.
           threadCount={
             session.draftComments.filter((d) => !(d.filePath === null && d.lineNumber === null))
               .length
           }
           replyCount={session.draftReplies.length}
-          hasSummary={
-            (
-              session.draftComments.find((d) => d.filePath === null && d.lineNumber === null)
-                ?.bodyMarkdown ?? ''
-            ).trim().length > 0
-          }
+          hasSummary={prRootSummaryBody(session).length > 0}
           hasPendingReview={!!session.pendingReviewId}
           onConfirm={() => {
             setDiscardAllModalOpen(false);
