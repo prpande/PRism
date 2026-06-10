@@ -51,7 +51,7 @@
      one perceptible step off --row-hover so the pill still reads as a raised chip on
      a hovered row. surface-3 clears the light --row-hover (0.951) by ~0.05 L. Dark
      overrides this below: dark --row-hover sits right next to surface-3, so the dark
-     pill needs a different value (#347 follow-up, claude[bot] review). */
+     pill needs a different value (#347 follow-up). */
   --row-hover-pill: var(--surface-3);
 
   /* timings */

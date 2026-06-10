@@ -276,7 +276,7 @@
 
 /* Keep the comment-pill readable as a raised chip on a hovered row. Per-theme token:
    surface-3 in light, but a distinct value in dark where --row-hover sits next to
-   surface-3 (claude[bot] review on #356). */
+   surface-3 (#347). */
 .row:hover .comments {
   background: var(--row-hover-pill);
 }
