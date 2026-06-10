@@ -19,7 +19,6 @@ export function AskAiPullTab() {
       className={`${styles.tab} ${isOpen ? styles.open : ''}`}
       aria-label={label}
       aria-expanded={isOpen}
-      title={label}
       data-testid="ask-ai-pull-tab"
       onClick={toggle}
     >
