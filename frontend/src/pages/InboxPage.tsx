@@ -123,7 +123,7 @@ export function InboxPage() {
           isRefreshing={isRefreshing}
           justRefreshed={justRefreshed}
         />
-        <div className={styles.grid}>
+        <div className={styles.grid} data-has-rail={showRail || undefined}>
           <div className={styles.sections}>
             {!filterActive && allEmpty && <EmptyAllSections />}
             {zeroMatch && <NoFilterMatches onClear={() => filterState?.clear()} />}
