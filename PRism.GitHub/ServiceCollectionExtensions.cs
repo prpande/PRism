@@ -120,6 +120,20 @@ public static class ServiceCollectionExtensions
                 () => tokens.ReadAsync(CancellationToken.None));
         });
 
+        // Activity-rail enrichment: batched GraphQL timeline reader. Needs the host late-bound
+        // (Func<string>) to build the absolute GraphQL endpoint — same late-binding rationale as
+        // the feedback submitter, so a github.com → GHES host change takes effect without restart.
+        services.AddSingleton<PRism.Core.Activity.IPrTimelineReader>(sp =>
+        {
+            var tokens = sp.GetRequiredService<ITokenStore>();
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var config = sp.GetRequiredService<IConfigStore>();
+            return new PRism.GitHub.Activity.GitHubPrTimelineReader(
+                factory,
+                () => tokens.ReadAsync(CancellationToken.None),
+                () => config.Current.Github.Host);
+        });
+
         // Feedback always targets github.com (the feedback repo lives there),
         // independent of the user's configured host (§4.1).
         services.AddHttpClient(GitHubFeedbackSubmitter.ClientName, client =>

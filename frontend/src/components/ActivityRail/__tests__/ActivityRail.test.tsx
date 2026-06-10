@@ -179,7 +179,7 @@ describe('ActivityRail (P2) — actorless phrasing', () => {
     expect(link.getAttribute('aria-label')).not.toMatch(/null/);
   });
 
-  test('actorless other → generic fallback "Activity on #N", never a dangling fragment/null', () => {
+  test('actorless other → generic fallback "New update on #N", never a dangling fragment/null', () => {
     useActivityMock.mockReturnValue({
       data: resp({
         items: [item({ actorLogin: null, verb: 'other', prNumber: 12, source: 'notification' })],
@@ -188,8 +188,22 @@ describe('ActivityRail (P2) — actorless phrasing', () => {
       error: null,
     });
     renderRail();
-    const link = screen.getByRole('link', { name: /activity on #12/i });
+    const link = screen.getByRole('link', { name: /new update on #12/i });
     expect(link.getAttribute('aria-label')).not.toMatch(/null/);
+  });
+
+  test('enriched notification row renders actor + resolved action ("dave approved #N")', () => {
+    useActivityMock.mockReturnValue({
+      data: resp({
+        items: [
+          item({ actorLogin: 'dave', verb: 'approved', prNumber: 88, source: 'notification' }),
+        ],
+      }),
+      isLoading: false,
+      error: null,
+    });
+    renderRail();
+    expect(screen.getByRole('link', { name: /dave approved #88/i })).toBeInTheDocument();
   });
 
   test('actorless opened → "Opened #N", never null', () => {

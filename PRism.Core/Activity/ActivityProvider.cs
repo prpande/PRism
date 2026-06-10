@@ -14,10 +14,14 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
     private readonly IReceivedEventsReader _events;
     private readonly INotificationsReader _notifs;
     private readonly IWatchedReposReader _watched;
+    private readonly IPrTimelineReader _timeline;
     private readonly TimeProvider _clock;
     private readonly IConfigStore _config;
     private readonly ILogger<ActivityProvider> _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    private static readonly IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor> NoEnrichment =
+        new Dictionary<(string, int), TimelineActor>();
 
     // volatile reference: publish (new CacheEntry) and clear (null) are each a single
     // atomic reference store on every CLR — no torn read, unlike a multi-word value tuple.
@@ -30,6 +34,7 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
         IReceivedEventsReader events,
         INotificationsReader notifs,
         IWatchedReposReader watched,
+        IPrTimelineReader timeline,
         TimeProvider clock,
         IConfigStore config,
         ILogger<ActivityProvider> log)
@@ -37,6 +42,7 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
         _events = events;
         _notifs = notifs;
         _watched = watched;
+        _timeline = timeline;
         _clock = clock;
         _config = config;
         _log = log;
@@ -79,10 +85,24 @@ public sealed partial class ActivityProvider : IActivityProvider, IDisposable
             var nf = await nfT.ConfigureAwait(false);
             var wt = await wtT.ConfigureAwait(false);
 
+            // Enrich the vague notification rows (no actor of their own) with the latest
+            // timeline actor/action via ONE batched GraphQL call. Sequential after the fetch
+            // because the PR set isn't known until notifications return. Best-effort: the
+            // reader degrades to an empty map on failure → rows stay actorless. Runs only on a
+            // cache miss (gated below) and only when /api/activity is hit, i.e. the rail is shown.
+            var enrichTargets = nf.Notifications
+                .Where(n => NotificationReasonMap.IsEnrichmentCandidate(NotificationReasonMap.ToVerb(n.Reason)))
+                .Select(n => (n.Repo, n.PrNumber))
+                .Distinct()
+                .ToList();
+            var enrichment = enrichTargets.Count > 0
+                ? await _timeline.ReadLatestAsync(enrichTargets, ct).ConfigureAwait(false)
+                : NoEnrichment;
+
             var cfg = _config.Current;                             // read host + bots fresh per fetch
             var host = cfg.Github.Host.TrimEnd('/');
             var extraBots = ParseExtraBots(cfg.Inbox.KnownBots);
-            var built = ActivityFeedBuilder.Build(ev.Events, nf.Notifications, wt.Repos, host, extraBots, now);
+            var built = ActivityFeedBuilder.Build(ev.Events, nf.Notifications, wt.Repos, host, extraBots, now, enrichment);
 
             if (built.DroppedRecognized > 0)
                 Log.DroppedRecognized(_log, built.DroppedRecognized);

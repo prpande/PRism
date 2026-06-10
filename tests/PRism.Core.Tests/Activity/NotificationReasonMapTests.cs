@@ -11,9 +11,11 @@ public sealed class NotificationReasonMapTests
     [InlineData("mention", ActivityVerb.Mentioned)]
     [InlineData("team_mention", ActivityVerb.Mentioned)]
     [InlineData("comment", ActivityVerb.Commented)]
+    [InlineData("ci_activity", ActivityVerb.CiActivity)]
+    [InlineData("author", ActivityVerb.Authored)]
     [InlineData("subscribed", ActivityVerb.Other)]
     [InlineData("state_change", ActivityVerb.Other)]
-    [InlineData("ci_activity", ActivityVerb.Other)]
+    [InlineData("manual", ActivityVerb.Other)]
     [InlineData("", ActivityVerb.Other)]
     [InlineData("totally-unknown", ActivityVerb.Other)]
     public void Maps_reason_to_verb(string reason, ActivityVerb expected)
@@ -23,6 +25,8 @@ public sealed class NotificationReasonMapTests
     [InlineData(ActivityVerb.ReviewRequested, true)]
     [InlineData(ActivityVerb.Mentioned, true)]
     [InlineData(ActivityVerb.Commented, false)]
+    [InlineData(ActivityVerb.CiActivity, false)]
+    [InlineData(ActivityVerb.Authored, false)]
     [InlineData(ActivityVerb.Other, false)]
     public void Flags_you_relevant_verbs(ActivityVerb v, bool expected)
         => NotificationReasonMap.IsYouRelevant(v).Should().Be(expected);

@@ -4,6 +4,7 @@
   gap: var(--s-4);
   position: sticky;
   top: var(--s-4);
+  min-width: 0; /* never let rail content force the grid column wider */
 }
 
 .section {
@@ -11,6 +12,7 @@
   border: 1px solid var(--border-1);
   border-radius: var(--radius-3);
   padding: var(--s-3) var(--s-4) var(--s-4);
+  min-width: 0;
 }
 
 .head {
@@ -40,26 +42,95 @@
   flex-direction: column;
 }
 
+/* Scrollable Activity list: a bounded height with internal scroll so the feed can
+   hold all returned rows without growing the rail (or the page) unbounded. */
+.scroll {
+  max-height: 460px;
+  overflow-y: auto;
+  /* room so the scrollbar doesn't sit on top of the row text */
+  margin-right: calc(var(--s-3) * -1);
+  padding-right: var(--s-3);
+}
+
 .item {
-  font-size: var(--text-xs);
-  line-height: 1.5;
+  font-size: var(--text-sm);
+  line-height: 1.55;
   padding-bottom: var(--s-3);
   color: var(--text-2);
+  min-width: 0;
 }
 
 .item:last-child {
   padding-bottom: 0;
 }
 
+/* Single-line activity row: avatar/icon + lead (ellipsizes) + #pr + age.
+   #pr and age never shrink, so the descriptive lead truncates first. */
+.rowLink {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+
+.lead {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Actor name: fixed maximum width, ellipsized; full login shows on hover (title). */
 .actor {
+  display: inline-block;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
   color: var(--text-1);
   font-weight: 600;
 }
 
-/* Actorless rows (review-requested / mentioned / standalone comment notifications):
-   the phrase carries no actor prefix, so it reads as ordinary body text. */
+.verb {
+  color: var(--text-2);
+}
+
+/* Actorless (notification) lead — ordinary body text, no actor emphasis. */
 .actorless {
   color: var(--text-2);
+}
+
+/* Bell icon slot for actorless rows — matches the sm avatar footprint (20px). */
+.notifIcon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+
+.pr {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.when {
+  flex-shrink: 0;
+  margin-left: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-3);
+}
+
+.rowLink:hover .pr {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* Watching panel title — lighter weight than the Activity title so Activity
@@ -70,26 +141,24 @@
   font-size: var(--text-sm);
 }
 
-.pr {
-  color: var(--accent);
+/* Watching row: repo (left, ellipsized) + count/idle (right). No external icon and
+   no hover underline — the affordance lives in the hover tooltip ("Open … on GitHub"). */
+.watchRow {
+  display: flex;
+  align-items: center;
+  color: inherit;
   text-decoration: none;
-  font-weight: 500;
-}
-
-.pr:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.when {
-  font-size: var(--text-2xs);
-  color: var(--text-3);
+  min-width: 0;
 }
 
 .repo {
   font-family: var(--font-mono);
   color: var(--text-2);
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .count {
@@ -106,29 +175,13 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   margin-left: 8px;
+  flex-shrink: 0;
 }
 
 /* Idle (count 0) watching repo — muted, no pill emphasis. */
 .idle {
   margin-left: 8px;
   font-size: var(--text-2xs);
-  color: var(--text-3);
-}
-
-/* Watching row link: repo (left) + count/idle + external icon (right). */
-.watchRow {
-  display: flex;
-  align-items: center;
-  color: inherit;
-  text-decoration: none;
-}
-.watchRow:hover .repo {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.extIcon {
-  margin-left: 6px;
   color: var(--text-3);
   flex-shrink: 0;
 }
@@ -161,15 +214,7 @@
   border-color: var(--accent);
   background: var(--accent-soft);
 }
-.rowLink {
-  color: inherit;
-  text-decoration: none;
-  display: block;
-}
-.rowLink:hover .pr {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
+
 .empty,
 .degraded {
   font-size: var(--text-xs);

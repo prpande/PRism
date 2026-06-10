@@ -6,8 +6,8 @@ import { useActivity } from '../../hooks/useActivity';
 import type { ActivityItem, ActivityVerb, WatchedRepoActivity } from '../../api/types';
 import styles from './ActivityRail.module.css';
 
-const MAX_VISIBLE = 12; // must match ActivityFeedBuilder.MaxActivityItems
-
+// Verb phrasing for ACTOR rows ("{actor} {verb} #n"). received_events always carry
+// an actor; these read as "alice reviewed #12", "bot commented on #5".
 const VERB_PHRASE: Record<ActivityVerb, string> = {
   opened: 'opened',
   reopened: 'reopened',
@@ -16,27 +16,34 @@ const VERB_PHRASE: Record<ActivityVerb, string> = {
   reviewed: 'reviewed',
   commented: 'commented on',
   other: 'updated',
-  // actorless verbs — never reached for actor rows (these verbs always arrive
-  // actorLogin:null and route through ACTORLESS_PHRASE). Kept complete so the
-  // Record<ActivityVerb,…> type stays exhaustive.
-  'review-requested': 'review requested on',
+  'review-requested': 'requested review on',
   mentioned: 'mentioned you on',
+  'ci-activity': 'ran checks on',
+  authored: 'updated',
+  approved: 'approved',
+  'changes-requested': 'requested changes on',
+  pushed: 'pushed to',
 };
 
-// Actorless phrasing — covers EVERY verb (incl. a generic `other` fallback) so
-// an actorless row is never a dangling fragment and never leaks literal `null`
-// into the accessible name. Each entry takes the PR number and returns a
-// complete, self-standing phrase.
-const ACTORLESS_PHRASE: Record<ActivityVerb, (pr: number) => string> = {
-  'review-requested': (pr) => `Review requested on #${pr}`,
-  mentioned: (pr) => `You were mentioned in #${pr}`,
-  commented: (pr) => `New comment on #${pr}`,
-  opened: (pr) => `Opened #${pr}`,
-  reopened: (pr) => `Reopened #${pr}`,
-  closed: (pr) => `Closed #${pr}`,
-  merged: (pr) => `Merged #${pr}`,
-  reviewed: (pr) => `Reviewed #${pr}`,
-  other: (pr) => `Activity on #${pr}`,
+// Actorless leads for NOTIFICATION rows. GitHub notifications carry no actor and,
+// for reason=subscribed, no specific action — so each verb gets a straightforward,
+// human lead instead of a repeated "Activity on …". Each is a self-standing phrase
+// that reads naturally followed by "#<pr>".
+const ACTORLESS_LEAD: Record<ActivityVerb, string> = {
+  'review-requested': 'Review requested on',
+  mentioned: 'You were mentioned in',
+  commented: 'New comment on',
+  opened: 'Opened',
+  reopened: 'Reopened',
+  closed: 'Closed',
+  merged: 'Merged',
+  reviewed: 'New review on',
+  'ci-activity': 'Checks ran on',
+  authored: 'Update on your PR',
+  approved: 'Approved',
+  'changes-requested': 'Changes requested on',
+  pushed: 'New commits on',
+  other: 'New update on',
 };
 
 // Parse a github.com PR html_url → the in-app /pr/:owner/:repo/:number path.
@@ -47,53 +54,66 @@ function inAppPrPath(url: string): string | null {
   return `/pr/${m[1]}/${m[2]}/${m[3]}`;
 }
 
-// Strip the "owner/" prefix for display; full name lives in the title attr.
-function shortRepo(repo: string): string {
-  return repo.includes('/') ? repo.split('/')[1] : repo;
+// Hover tooltip (title attr): full repo name + PR title — the detail kept OUT of the
+// visible single-line row so the rail stays narrow and unambiguous.
+function rowTooltip(item: ActivityItem): string {
+  return item.title ? `${item.repo} — ${item.title}` : item.repo;
 }
 
-function prRef(item: ActivityItem): string {
-  // Repo names from received_events are "owner/repo"; show the short repo + #n,
-  // matching the spec phrasing examples ("MindBodyPOS#5436", "#1810").
-  return `${shortRepo(item.repo)}#${item.prNumber}`;
+// Bell octicon for actorless (notification) rows — fills the avatar slot so rows stay
+// aligned, and signals "subscription update" rather than a specific person's action.
+function NotifIcon() {
+  return (
+    <span className={styles.notifIcon} aria-hidden="true">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 16a2 2 0 0 0 1.985-1.75c.017-.137-.097-.25-.235-.25h-3.5c-.138 0-.252.113-.235.25A2 2 0 0 0 8 16ZM3 5a5 5 0 0 1 10 0v2.947c0 .05.015.098.042.139l1.703 2.555A1.519 1.519 0 0 1 13.482 13H2.518a1.516 1.516 0 0 1-1.263-2.36l1.703-2.554A.255.255 0 0 0 3 7.947Zm5-3.5A3.5 3.5 0 0 0 4.5 5v2.947c0 .346-.102.683-.294.97l-1.703 2.556a.017.017 0 0 0-.003.01l.001.006c0 .002.002.004.004.006l.006.004.007.001h10.964l.007-.001.006-.004.004-.006.001-.007a.017.017 0 0 0-.003-.01l-1.703-2.554a1.745 1.745 0 0 1-.294-.97V5A3.5 3.5 0 0 0 8 1.5Z" />
+      </svg>
+    </span>
+  );
 }
 
 function Row({ item }: { item: ActivityItem }) {
   const path = inAppPrPath(item.url);
   const actorless = item.actorLogin == null;
+  const ageText = formatAge(item.timestamp);
+  const tip = rowTooltip(item);
 
-  // actorless rows build BOTH the accessible name and the visible text from the
-  // actorless phrase — never reference item.actorLogin when it is null so no
-  // `null` leaks into the accessible name.
+  // Accessible name carries the full detail (incl. title) that the visible row keeps
+  // in the tooltip; never reference item.actorLogin when null so no `null` leaks.
   const label = actorless
-    ? `${ACTORLESS_PHRASE[item.verb](item.prNumber)}${item.title ? ` — ${item.title}` : ''}`
+    ? `${ACTORLESS_LEAD[item.verb]} #${item.prNumber}${item.title ? ` — ${item.title}` : ''}`
     : `${item.actorLogin} ${VERB_PHRASE[item.verb]} #${item.prNumber}${
         item.title ? ` — ${item.title}` : ''
       }`;
 
-  // Avatar self-sets aria-hidden internally, so the row's aria-label is the sole
-  // accessible name (no double announcement). Actorless rows render the Avatar
-  // placeholder so the avatar column width matches actor rows (text stays aligned).
-  const inner = actorless ? (
+  const inner = (
     <>
-      <Avatar src={undefined} login="" size="sm" />
-      <span className={styles.actorless}>{ACTORLESS_PHRASE[item.verb](item.prNumber)}</span>{' '}
-      <span className={styles.pr}>{prRef(item)}</span>
-      <span className={styles.when}> · {formatAge(item.timestamp)}</span>
-    </>
-  ) : (
-    <>
-      <Avatar src={item.actorAvatarUrl} login={item.actorLogin ?? ''} size="sm" />
-      <span className={styles.actor}>{item.actorLogin}</span> {VERB_PHRASE[item.verb]}{' '}
-      <span className={styles.pr}>{prRef(item)}</span>
-      <span className={styles.when}> · {formatAge(item.timestamp)}</span>
+      {actorless ? (
+        <NotifIcon />
+      ) : (
+        <Avatar src={item.actorAvatarUrl} login={item.actorLogin ?? ''} size="sm" />
+      )}
+      <span className={styles.lead}>
+        {actorless ? (
+          <span className={styles.actorless}>{ACTORLESS_LEAD[item.verb]}</span>
+        ) : (
+          <>
+            <span className={styles.actor} title={item.actorLogin ?? undefined}>
+              {item.actorLogin}
+            </span>{' '}
+            <span className={styles.verb}>{VERB_PHRASE[item.verb]}</span>
+          </>
+        )}
+      </span>
+      <span className={styles.pr}>#{item.prNumber}</span>
+      <span className={styles.when}>· {ageText}</span>
     </>
   );
 
   return (
     <li className={styles.item}>
       {path ? (
-        <Link to={path} className={styles.rowLink} aria-label={label}>
+        <Link to={path} className={styles.rowLink} aria-label={label} title={tip}>
           {inner}
         </Link>
       ) : (
@@ -101,6 +121,7 @@ function Row({ item }: { item: ActivityItem }) {
           href={item.url}
           className={styles.rowLink}
           aria-label={label}
+          title={tip}
           target="_blank"
           rel="noreferrer"
         >
@@ -111,26 +132,8 @@ function Row({ item }: { item: ActivityItem }) {
   );
 }
 
-// External-link octicon, decorative (aria-hidden) — the link's aria-label
-// already carries "opens on GitHub".
-function ExternalIcon() {
-  return (
-    <svg
-      className={styles.extIcon}
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <path d="M3.75 2A1.75 1.75 0 0 0 2 3.75v8.5C2 13.216 2.784 14 3.75 14h8.5A1.75 1.75 0 0 0 14 12.25v-3a.75.75 0 0 0-1.5 0v3a.25.25 0 0 1-.25.25h-8.5a.25.25 0 0 1-.25-.25v-8.5a.25.25 0 0 1 .25-.25h3a.75.75 0 0 0 0-1.5h-3Z" />
-      <path d="M8.75 2a.75.75 0 0 0 0 1.5h2.69L5.97 8.97a.75.75 0 1 0 1.06 1.06l5.47-5.47v2.69a.75.75 0 0 0 1.5 0V2.75A.75.75 0 0 0 13.25 2h-4.5Z" />
-    </svg>
-  );
-}
-
 function WatchRow({ w }: { w: WatchedRepoActivity }) {
-  const display = shortRepo(w.repo);
+  const display = w.repo.includes('/') ? w.repo.split('/')[1] : w.repo;
   const label =
     w.count > 0
       ? `${display} — ${w.count} recent ${w.count === 1 ? 'item' : 'items'}, opens on GitHub`
@@ -141,7 +144,7 @@ function WatchRow({ w }: { w: WatchedRepoActivity }) {
         href={w.url}
         className={styles.watchRow}
         aria-label={label}
-        title={w.repo}
+        title={`Open ${w.repo} on GitHub`}
         target="_blank"
         rel="noreferrer"
       >
@@ -151,7 +154,6 @@ function WatchRow({ w }: { w: WatchedRepoActivity }) {
         ) : (
           <span className={styles.idle}>idle</span>
         )}
-        <ExternalIcon />
       </a>
     </li>
   );
@@ -162,10 +164,9 @@ export function ActivityRail() {
   const [showBots, setShowBots] = useState(false); // transient; default HIDDEN
 
   const all = data?.items ?? [];
-  const visible = useMemo(
-    () => all.filter((i) => showBots || !i.actorIsBot).slice(0, MAX_VISIBLE),
-    [all, showBots],
-  );
+  // No client-side count cap: the server already ceilings at MaxRawItems and the list
+  // is scrollable, so render every (bot-filtered) row and let the user scroll.
+  const visible = useMemo(() => all.filter((i) => showBots || !i.actorIsBot), [all, showBots]);
 
   // SPLIT degraded gating: the Activity-list "unavailable" state must NOT fire
   // on a watching-only failure. activityDegraded gates ONLY the Activity list;
@@ -215,7 +216,7 @@ export function ActivityRail() {
         ) : visible.length === 0 ? (
           <p className={styles.empty}>No pull-request activity in the last 24h</p>
         ) : (
-          <ol className={styles.list}>
+          <ol className={`${styles.list} ${styles.scroll}`}>
             {visible.map((it, idx) => (
               // idx tiebreaker: two distinct events can share url+verb+timestamp (sub-second
               // precision isn't guaranteed); the list is sorted + display-only so index keys are safe.

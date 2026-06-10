@@ -85,6 +85,36 @@ public sealed class ActivityProviderTests
             Task.FromResult(new WatchedReposResult([], Degraded: true));
     }
 
+    private sealed class SingleNotifReader(RawNotification n) : INotificationsReader
+    {
+        public Task<NotificationsResult> ReadAsync(DateTimeOffset since, CancellationToken ct) =>
+            Task.FromResult(new NotificationsResult([n], Degraded: false));
+    }
+
+    // No-op enrichment (default): every PR resolves to "no actor" → rows stay actorless.
+    private sealed class EmptyTimelineReader : IPrTimelineReader
+    {
+        public Task<IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor>> ReadLatestAsync(
+            IReadOnlyCollection<(string Repo, int PrNumber)> pullRequests, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor>>(
+                new Dictionary<(string Repo, int PrNumber), TimelineActor>());
+    }
+
+    // Records the PRs it was asked to enrich and returns a fixed map.
+    private sealed class StubTimelineReader(IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor> map)
+        : IPrTimelineReader
+    {
+        public List<(string Repo, int PrNumber)> Requested { get; } = [];
+        public Task<IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor>> ReadLatestAsync(
+            IReadOnlyCollection<(string Repo, int PrNumber)> pullRequests, CancellationToken ct)
+        {
+            Requested.AddRange(pullRequests);
+            return Task.FromResult(map);
+        }
+    }
+
+    private static IPrTimelineReader Timeline() => new EmptyTimelineReader();
+
     // Gates the fetch mid-flight: signals Entered when ReadAsync is first entered,
     // then awaits the injected release task. Entered is set BEFORE awaiting release
     // so the test can observe entry without deadlocking on the gate.
@@ -110,7 +140,7 @@ public sealed class ActivityProviderTests
     public async Task Maps_reader_output_into_response()
     {
         var reader = new SingleEventReceivedEventsReader(Review("1"));
-        var sut = new ActivityProvider(reader, new EmptyNotifReader(), new EmptyWatchReader(),
+        var sut = new ActivityProvider(reader, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
             Clock(), Config(), NullLogger<ActivityProvider>.Instance);
 
         var resp = await sut.GetActivityAsync(default);
@@ -123,7 +153,7 @@ public sealed class ActivityProviderTests
     public async Task Propagates_degradation_with_empty_items()
     {
         var sut = new ActivityProvider(new DegradedReceivedEventsReader(), new EmptyNotifReader(),
-            new EmptyWatchReader(), Clock(), Config(), NullLogger<ActivityProvider>.Instance);
+            new EmptyWatchReader(), Timeline(), Clock(), Config(), NullLogger<ActivityProvider>.Instance);
 
         var resp = await sut.GetActivityAsync(default);
 
@@ -137,7 +167,7 @@ public sealed class ActivityProviderTests
     {
         var clock = Clock();
         var ev = new CountingReceivedEventsReader();
-        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(),
+        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
             clock, Config(), NullLogger<ActivityProvider>.Instance);
 
         await p.GetActivityAsync(default);
@@ -154,7 +184,7 @@ public sealed class ActivityProviderTests
     {
         var clock = Clock();
         var ev = new CountingReceivedEventsReader();
-        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(),
+        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
             clock, Config(), NullLogger<ActivityProvider>.Instance);
 
         await p.GetActivityAsync(default);
@@ -169,7 +199,7 @@ public sealed class ActivityProviderTests
         var clock = Clock();
         var release = new TaskCompletionSource();                  // gates the reader mid-fetch
         var ev = new GatedReceivedEventsReader(release.Task);
-        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(),
+        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
             clock, Config(), NullLogger<ActivityProvider>.Instance);
 
         var inflight = p.GetActivityAsync(default);                // starts fetch #1, blocks on release
@@ -190,7 +220,7 @@ public sealed class ActivityProviderTests
         var clock = Clock();
         var release = new TaskCompletionSource();
         var ev = new GatedReceivedEventsReader(release.Task);
-        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(),
+        var p = new ActivityProvider(ev, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
             clock, Config(), NullLogger<ActivityProvider>.Instance);
 
         var a = p.GetActivityAsync(default);                       // A: enters reader, holds the gate
@@ -212,7 +242,7 @@ public sealed class ActivityProviderTests
     public async Task Aggregates_degradation_from_three_sources()
     {
         var p = new ActivityProvider(new DegradedReceivedEventsReader(), new DegradedNotifReader(),
-            new DegradedWatchReader(), Clock(), Config(), NullLogger<ActivityProvider>.Instance);
+            new DegradedWatchReader(), Timeline(), Clock(), Config(), NullLogger<ActivityProvider>.Instance);
 
         (await p.GetActivityAsync(default)).Degraded
             .Should().Be(new ActivityDegradation(true, true, true));
@@ -224,11 +254,37 @@ public sealed class ActivityProviderTests
     public async Task Configured_extra_bot_flags_event_actor_as_bot()
     {
         var reader = new SingleEventReceivedEventsReader(Review("1", actor: "acme-ci"));
-        var p = new ActivityProvider(reader, new EmptyNotifReader(), new EmptyWatchReader(),
+        var p = new ActivityProvider(reader, new EmptyNotifReader(), new EmptyWatchReader(), Timeline(),
             Clock(), Config(knownBots: "acme-ci"), NullLogger<ActivityProvider>.Instance);
 
         var resp = await p.GetActivityAsync(default);
 
         resp.Items.Should().ContainSingle().Which.ActorIsBot.Should().BeTrue();
+    }
+
+    // A vague (reason=subscribed → Other) notification is enriched with the latest timeline
+    // actor + action: the row gains an actor and the verb resolves to the timeline event.
+    [Fact]
+    public async Task Enriches_vague_notification_with_timeline_actor()
+    {
+        var clock = Clock();
+        var now = clock.GetUtcNow();
+        var notif = new RawNotification("acme/api", "subscribed", 7, "Title",
+            "https://github.com/acme/api/pull/7", now);
+        var timeline = new StubTimelineReader(new Dictionary<(string Repo, int PrNumber), TimelineActor>
+        {
+            [("acme/api", 7)] = new TimelineActor("dave", "https://avatar/dave", IsBot: false, ActivityVerb.Approved),
+        });
+        var p = new ActivityProvider(new CountingReceivedEventsReader(), new SingleNotifReader(notif),
+            new EmptyWatchReader(), timeline, clock, Config(), NullLogger<ActivityProvider>.Instance);
+
+        var resp = await p.GetActivityAsync(default);
+
+        var item = resp.Items.Should().ContainSingle().Subject;
+        item.ActorLogin.Should().Be("dave");
+        item.ActorAvatarUrl.Should().Be("https://avatar/dave");
+        item.Verb.Should().Be(ActivityVerb.Approved);
+        // the provider asked the timeline reader for exactly the vague PR
+        timeline.Requested.Should().ContainSingle().Which.Should().Be(("acme/api", 7));
     }
 }

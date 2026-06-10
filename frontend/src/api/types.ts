@@ -545,7 +545,12 @@ export type ActivityVerb =
   | 'commented'
   | 'other'
   | 'review-requested'
-  | 'mentioned';
+  | 'mentioned'
+  | 'ci-activity'
+  | 'authored'
+  | 'approved'
+  | 'changes-requested'
+  | 'pushed';
 
 export type ActivitySource = 'received-event' | 'notification';
 

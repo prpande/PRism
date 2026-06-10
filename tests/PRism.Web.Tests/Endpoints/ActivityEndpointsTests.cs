@@ -129,6 +129,42 @@ public sealed class ActivityEndpointsTests
         body.GetProperty("watching").GetArrayLength().Should().Be(1);
     }
 
+    // Enrichment verbs (resolved from the GraphQL timeline) must serialize kebab-case so the
+    // frontend ActivityVerb union keys match — the compound verb is the one that bites.
+    private static ActivityResponse EnrichedFeed() => new(
+        [
+            new ActivityItem("dave", null, false, ActivityVerb.Approved, "acme/api", 1, "t",
+                "https://github.com/acme/api/pull/1", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem("erin", null, false, ActivityVerb.ChangesRequested, "acme/api", 2, "t",
+                "https://github.com/acme/api/pull/2", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem("dependabot[bot]", null, true, ActivityVerb.Pushed, "acme/api", 3, "t",
+                "https://github.com/acme/api/pull/3", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem(null, null, false, ActivityVerb.CiActivity, "acme/api", 4, "t",
+                "https://github.com/acme/api/pull/4", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+            new ActivityItem(null, null, false, ActivityVerb.Authored, "acme/api", 5, "t",
+                "https://github.com/acme/api/pull/5", System.DateTimeOffset.UnixEpoch, ActivitySource.Notification),
+        ],
+        System.DateTimeOffset.UnixEpoch, new ActivityDegradation(false, false, false), []);
+
+    [Fact]
+    public async Task Enrichment_verbs_serialize_kebab_case_on_wire()
+    {
+        var (inner, outer) = FactoryWith(EnrichedFeed());
+        await using var _ = inner;
+        await using var __ = outer;
+        var client = AuthenticatedClient(outer);
+
+        var resp = await client.GetAsync(new System.Uri("/api/activity", System.UriKind.Relative));
+        resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var json = await resp.Content.ReadAsStringAsync();
+        json.Should().Contain("\"verb\":\"approved\"");
+        json.Should().Contain("\"verb\":\"changes-requested\"");
+        json.Should().Contain("\"verb\":\"pushed\"");
+        json.Should().Contain("\"verb\":\"ci-activity\"");
+        json.Should().Contain("\"verb\":\"authored\"");
+    }
+
     [Fact]
     public async Task Returns_200_degraded_with_empty_items()
     {

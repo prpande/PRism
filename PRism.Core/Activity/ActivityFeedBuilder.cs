@@ -29,19 +29,38 @@ public static class ActivityFeedBuilder
         IReadOnlyList<RawReceivedEvent> events, DateTimeOffset now)
         => Build(events, [], [], "https://github.com", [], now);
 
+    // Empty enrichment map for the no-enrichment overload and tests.
+    private static readonly IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor> NoEnrichment =
+        new Dictionary<(string, int), TimelineActor>();
+
+    // No-enrichment overload — keeps existing call sites / pure-builder tests unchanged.
+    public static ActivityBuildResult Build(
+        IReadOnlyList<RawReceivedEvent> events,
+        IReadOnlyList<RawNotification> notifications,
+        IReadOnlyList<string> watchedRepos,
+        string host,
+        IReadOnlyCollection<string> extraBotLogins,
+        DateTimeOffset now)
+        => Build(events, notifications, watchedRepos, host, extraBotLogins, now, NoEnrichment);
+
     public static ActivityBuildResult Build(
         IReadOnlyList<RawReceivedEvent> events,
         IReadOnlyList<RawNotification> notifications,
         IReadOnlyList<string> watchedRepos,
         string host,                 // FULL configured GitHub host URL incl. scheme, e.g. "https://github.com" — NOT a bare hostname; URLs build as $"{host}/..."
         IReadOnlyCollection<string> extraBotLogins,  // user-configured extra bot logins; ADDITIVE on top of BuiltInBots
-        DateTimeOffset now)
+        DateTimeOffset now,
+        // Enrichment map (Repo, PrNumber) → latest timeline actor/action. Applied to vague
+        // notification rows so they read "{actor} approved/pushed to #n" instead of a generic
+        // "New update on #n". Empty when enrichment is disabled or failed (degrade gracefully).
+        IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor> enrichment)
     {
         ArgumentNullException.ThrowIfNull(events);
         ArgumentNullException.ThrowIfNull(notifications);
         ArgumentNullException.ThrowIfNull(watchedRepos);
         ArgumentNullException.ThrowIfNull(host);
         ArgumentNullException.ThrowIfNull(extraBotLogins);
+        ArgumentNullException.ThrowIfNull(enrichment);
 
         var bots = new HashSet<string>(BuiltInBots, StringComparer.OrdinalIgnoreCase);
         bots.UnionWith(extraBotLogins);
@@ -49,7 +68,7 @@ public static class ActivityFeedBuilder
         var cutoff = now.AddHours(-WindowHours);
 
         var (eventItems, dropped) = BuildEventItems(events, cutoff, bots);
-        var notifItems = BuildNotificationItems(notifications, cutoff, host);
+        var notifItems = BuildNotificationItems(notifications, cutoff, host, enrichment, bots);
 
         // Two-stage cross-feed merge keyed on (Repo, PrNumber, Verb).
         var merged = MergeFeeds(eventItems, notifItems);
@@ -121,18 +140,37 @@ public static class ActivityFeedBuilder
     }
 
     private static List<ActivityItem> BuildNotificationItems(
-        IReadOnlyList<RawNotification> notifications, DateTimeOffset cutoff, string host)
+        IReadOnlyList<RawNotification> notifications, DateTimeOffset cutoff, string host,
+        IReadOnlyDictionary<(string Repo, int PrNumber), TimelineActor> enrichment, HashSet<string> bots)
     {
         var items = new List<ActivityItem>();
         foreach (var n in notifications)
         {
             if (n.Timestamp < cutoff) continue;          // window-filter notifications too
 
+            var verb = NotificationReasonMap.ToVerb(n.Reason);
+            string? actorLogin = null;
+            string? actorAvatar = null;
+            var actorIsBot = false;
+
+            // Enrich vague rows (Other/CiActivity/Authored) with the latest timeline actor +
+            // action. A notification has no actor of its own, so absent enrichment the row
+            // stays actorless. Bot flag ORs the GraphQL __typename with the same [bot]-suffix /
+            // built-in detection used for event actors.
+            if (NotificationReasonMap.IsEnrichmentCandidate(verb)
+                && enrichment.TryGetValue((n.Repo, n.PrNumber), out var actor))
+            {
+                actorLogin = actor.Login;
+                actorAvatar = actor.AvatarUrl;
+                actorIsBot = actor.IsBot || IsBot(actor.Login, bots);
+                verb = actor.Verb;
+            }
+
             items.Add(new ActivityItem(
-                ActorLogin: null,
-                ActorAvatarUrl: null,
-                ActorIsBot: false,                       // a notification has NO actor — never bot-flagged
-                Verb: NotificationReasonMap.ToVerb(n.Reason),
+                ActorLogin: actorLogin,
+                ActorAvatarUrl: actorAvatar,
+                ActorIsBot: actorIsBot,
+                Verb: verb,
                 Repo: n.Repo,
                 PrNumber: n.PrNumber,
                 Title: n.Title,

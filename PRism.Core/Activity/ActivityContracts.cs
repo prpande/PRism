@@ -21,6 +21,17 @@ public enum ActivityVerb
     // from the Events API (see spec § Scope).
     ReviewRequested,      // wire: "review-requested"; notification reason "review_requested" (actorless)
     Mentioned,            // wire: "mentioned"; notification reason "mention"/"team_mention" (actorless)
+    // Notification-only verbs (no received_event ever produces them, so they always
+    // render as their own actorless row). Surfaced so a notification's `reason` is not
+    // flattened into the generic "Other" bucket — it carries real meaning the rail shows.
+    CiActivity,           // wire: "ci-activity"; notification reason "ci_activity" (actorless)
+    Authored,             // wire: "authored"; notification reason "author" (actorless)
+    // Enrichment verbs: a vague notification (Other/CiActivity/Authored) resolved to a real
+    // actor + action via the batched GraphQL timeline query (IPrTimelineReader). The latest
+    // timeline item's type/state maps here so the row reads "{actor} approved/pushed to #n".
+    Approved,             // wire: "approved"; PullRequestReview state APPROVED
+    ChangesRequested,     // wire: "changes-requested"; PullRequestReview state CHANGES_REQUESTED
+    Pushed,               // wire: "pushed"; PullRequestCommit (commit author)
 }
 
 // Every Phase-1 item is PR-anchored and carries an actor (events always do).
