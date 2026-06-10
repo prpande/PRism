@@ -25,7 +25,9 @@ public sealed partial class ActivityProvider : IActivityProvider
             Log.DroppedRecognized(_log, built.DroppedRecognized);
 
         return new ActivityResponse(
-            built.Items, DateTimeOffset.UtcNow, new ActivityDegradation(read.Degraded));
+            built.Items, DateTimeOffset.UtcNow,
+            new ActivityDegradation(read.Degraded, Notifications: false, Watching: false),
+            []);
     }
 
     private static partial class Log

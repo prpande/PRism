@@ -56,7 +56,7 @@ public sealed class ActivityEndpointsTests
     private static ActivityResponse OneReviewed() => new(
         [new ActivityItem("alice", null, false, ActivityVerb.Reviewed, "acme/api", 7, "Fix",
             "https://github.com/acme/api/pull/7", System.DateTimeOffset.UnixEpoch, ActivitySource.ReceivedEvent)],
-        System.DateTimeOffset.UnixEpoch, new ActivityDegradation(false));
+        System.DateTimeOffset.UnixEpoch, new ActivityDegradation(false, Notifications: false, Watching: false), []);
 
     [Fact]
     public async Task Returns_200_with_items_and_kebab_case_enums()
@@ -83,7 +83,8 @@ public sealed class ActivityEndpointsTests
     public async Task Returns_200_degraded_with_empty_items()
     {
         var (inner, outer) = FactoryWith(new ActivityResponse(
-            [], System.DateTimeOffset.UnixEpoch, new ActivityDegradation(true)));
+            [], System.DateTimeOffset.UnixEpoch,
+            new ActivityDegradation(true, Notifications: false, Watching: false), []));
         await using var _ = inner;
         await using var __ = outer;
         var client = AuthenticatedClient(outer);

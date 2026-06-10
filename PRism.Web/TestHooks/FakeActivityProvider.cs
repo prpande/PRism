@@ -34,6 +34,7 @@ internal sealed class FakeActivityProvider : IActivityProvider
             It("rohit", false, ActivityVerb.Opened, 1842, 180),
             It("noah.s", false, ActivityVerb.Merged, 1815, 300),
         };
-        return Task.FromResult(new ActivityResponse(items, now, new ActivityDegradation(false)));
+        return Task.FromResult(new ActivityResponse(items, now,
+            new ActivityDegradation(false, Notifications: false, Watching: false), []));
     }
 }
